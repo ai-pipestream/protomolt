@@ -106,7 +106,7 @@ limits.
 | `protomolt-server-jdk` | JDK `HttpServer` | Default; no extra HTTP dependencies, virtual-thread dispatch |
 | `protomolt-server-vertx` | Vert.x 5 | Standalone Vert.x (Quarkus 3.x is still on Vert.x 4) |
 | `protomolt-server-netty` | Netty 4.2 | `HttpServerCodec` + aggregator pipeline |
-| `protomolt-server-spring` | Spring MVC | Controller mounted at `${pipestream.proto.rest.path-prefix:/grpc-json}` |
+| `protomolt-server-spring` | Spring MVC | Controller mounted at `${protomolt.rest.path-prefix:/grpc-json}` |
 | `protomolt-server-micronaut` | Micronaut | Facade; annotation wiring lives in the application |
 | `protomolt-server-quarkus` | JAX-RS / RESTEasy | Until Quarkus moves to Vert.x 5 |
 

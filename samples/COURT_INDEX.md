@@ -1,7 +1,7 @@
 # Court Documents → NDJSON → Lucene
 
 End-to-end path over real court opinions: CourtListener JSONL → the platform's
-generic `ai.pipestream.proto.repo.v1.Document` → projected NDJSON → Lucene
+generic `ai.protomolt.proto.repo.v1.Document` → projected NDJSON → Lucene
 (text fields + HNSW float vectors), with one demo kNN query and one demo text
 query at the end.
 

@@ -1,0 +1,169 @@
+package ai.protomolt.proto.registry.service;
+
+import ai.protomolt.proto.actions.ActionCatalog;
+import ai.protomolt.proto.authz.CallerResolver;
+import ai.protomolt.proto.actions.ActionContext;
+import ai.protomolt.proto.actions.ProtoAction;
+import ai.protomolt.proto.actions.ScopeBudgets;
+import ai.protomolt.proto.composer.NodeContext;
+import ai.protomolt.proto.composer.ServiceModule;
+import ai.protomolt.proto.composer.ServiceMount;
+import ai.protomolt.proto.registry.GitSchemaRegistryStore;
+import ai.protomolt.proto.registry.RegistryFederation;
+import ai.protomolt.proto.workflow.WorkflowRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Optional;
+import java.util.function.Function;
+
+/**
+ * The git-backed schema registry as a mountable role. Wiring creates the
+ * store and contributes it (plus a {@link WorkflowRepository} view of it)
+ * for later-wired modules: the parse module registers workflows, the jobs
+ * module reads definitions and contributes its verbs. Starting builds the
+ * actions catalog from everything contributed, adds the federation verbs
+ * ({@code registry-remotes}, {@code registry-sync}) over the store, and
+ * serves HTTP.
+ */
+public final class RegistryModule implements ServiceModule {
+
+    /** The role name. */
+    public static final String ROLE = "registry";
+
+    private final Path repositoryDir;
+    private final SchemaRegistryServerConfig serverConfig;
+    private final CallerResolver callers;
+    private GitSchemaRegistryStore store;
+    private SchemaRegistryServer server;
+    private int httpPort = -1;
+
+    /**
+     * Creates the module.
+     *
+     * @param repositoryDir the git repository backing the registry
+     * @param serverConfig the HTTP server configuration
+     */
+    public RegistryModule(Path repositoryDir, SchemaRegistryServerConfig serverConfig) {
+        this(repositoryDir, serverConfig, null);
+    }
+
+    /**
+     * Creates the module with an access-policy resolver: a credential the
+     * policy names authenticates as its principal and is scope-checked on
+     * every route. Requires the server config to carry the operator token.
+     *
+     * @param repositoryDir the git repository backing the registry
+     * @param serverConfig the HTTP server configuration
+     * @param callers resolves access-policy credentials, or {@code null}
+     *        for the operator token alone
+     */
+    public RegistryModule(Path repositoryDir, SchemaRegistryServerConfig serverConfig,
+            CallerResolver callers) {
+        if (repositoryDir == null) {
+            throw new IllegalArgumentException("repositoryDir must not be null");
+        }
+        if (serverConfig == null) {
+            throw new IllegalArgumentException("serverConfig must not be null");
+        }
+        if (callers != null && serverConfig.apiToken() == null) {
+            throw new IllegalArgumentException(
+                    "an access-policy resolver requires the operator api token");
+        }
+        this.repositoryDir = repositoryDir;
+        this.serverConfig = serverConfig;
+        this.callers = callers;
+    }
+
+    @Override
+    public String role() {
+        return ROLE;
+    }
+
+    @Override
+    public ServiceMount wire(NodeContext context) {
+        store = GitSchemaRegistryStore.builder().repositoryDir(repositoryDir).build();
+        context.contributions().contribute(GitSchemaRegistryStore.class, store);
+        context.contributions().contribute(WorkflowRepository.class, workflowRepository(store));
+        // The node's one spending ledger, taken at wire so the catalog built at start
+        // shares it with the roles that guard their own gRPC surfaces.
+        ScopeBudgets budgets = context.contributions()
+                .shared(ScopeBudgets.class, ScopeBudgets::new);
+        return new ServiceMount() {
+            @Override
+            public void start() {
+                List<ActionContext> contexts = context.contributions().all(ActionContext.class);
+                ActionContext actionContext =
+                        contexts.isEmpty() ? ActionContext.create() : contexts.getFirst();
+                for (Descriptors.FileDescriptor descriptor
+                        : context.contributions().all(Descriptors.FileDescriptor.class)) {
+                    actionContext.registry().registerFile(descriptor);
+                }
+                ActionCatalog catalog = ActionCatalog.defaults(actionContext, budgets);
+                for (ProtoAction action : context.contributions().all(ProtoAction.class)) {
+                    catalog = catalog.register(action);
+                }
+                RegistryFederation federation = RegistryFederation.over(store);
+                catalog = catalog.register(new RegistryRemotesAction(federation))
+                        .register(new RegistrySyncAction(federation))
+                        .register(new PublishConfigAction(store));
+                server = new SchemaRegistryServer(serverConfig, store, catalog, callers);
+                httpPort = server.start();
+            }
+
+            @Override
+            public void close() {
+                if (server != null) {
+                    server.close();
+                }
+                store.close();
+            }
+        };
+    }
+
+    /** The store this node serves; valid after wiring. */
+    public GitSchemaRegistryStore store() {
+        if (store == null) {
+            throw new IllegalStateException("registry module has not wired");
+        }
+        return store;
+    }
+
+    /** The bound HTTP port; only valid after start. */
+    public int httpPort() {
+        if (httpPort < 0) {
+            throw new IllegalStateException("registry module has not started");
+        }
+        return httpPort;
+    }
+
+    /**
+     * A read view of the store's workflow definitions as parsed JSON. A stored
+     * workflow that is not a JSON object is corrupt state, not a missing
+     * workflow: it fails loudly instead of reading as "not found".
+     */
+    public static WorkflowRepository workflowRepository(GitSchemaRegistryStore store) {
+        return workflowRepository(store::workflow);
+    }
+
+    /** The same view over any workflow-text lookup; the seam for tests. */
+    static WorkflowRepository workflowRepository(Function<String, Optional<String>> store) {
+        ObjectMapper json = new ObjectMapper();
+        return name -> store.apply(name).map(t -> {
+            final com.fasterxml.jackson.databind.JsonNode node;
+            try {
+                node = json.readTree(t);
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                throw new IllegalStateException(
+                        "Stored workflow '" + name + "' is not valid JSON", e);
+            }
+            if (!(node instanceof ObjectNode workflow)) {
+                throw new IllegalStateException(
+                        "Stored workflow '" + name + "' is not a JSON object");
+            }
+            return workflow;
+        });
+    }
+}

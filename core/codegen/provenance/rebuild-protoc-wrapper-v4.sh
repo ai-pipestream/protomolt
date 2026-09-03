@@ -8,7 +8,7 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # The checksum file records its path relative to core/, so every path here
 # hangs off that directory rather than the repository root.
 core_dir=$(cd -- "${script_dir}/../.." && pwd)
-destination="${core_dir}/codegen/src/main/resources/ai/pipestream/proto/codegen/protoc-wrapper-v4.wasm"
+destination="${core_dir}/codegen/src/main/resources/ai/protomolt/proto/codegen/protoc-wrapper-v4.wasm"
 work_dir=$(mktemp -d)
 trap 'rm -rf "${work_dir}"' EXIT
 

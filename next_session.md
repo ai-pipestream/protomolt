@@ -92,8 +92,8 @@ renamed package keeps its old `.class` files. JUnit scans the whole test output
 directory, loads an orphan, and fails with `NoClassDefFoundError` naming a type
 deleted weeks earlier, which reads as a code fault rather than a stale working
 copy. CI is immune because CI starts empty. The ADR-002 search rename left 27
-orphaned trees and 595 MB in one working copy, and its stale
-`ai.pipestream.proto.chunk` classes failed the suite on 2026-09-01.
+orphaned trees and 595 MB in one working copy, and its stale classes from the
+old chunk package failed the suite on 2026-09-01.
 `scripts/check-stale-build-output.sh` names them.
 
 **krick-1 needs its environment spelled out.** A `BatchMode` ssh has no

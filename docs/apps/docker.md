@@ -116,7 +116,7 @@ you like:
 ./gradlew :protomolt-acp-agent:acpGrpcLive \
   -Pagent="docker run -i --rm --network protomolt_default protomolt-acp-agent:local" \
   -Ptarget="serve:9090" \
-  -Pmethod="ai.pipestream.proto.grpc.service.v1.ProtoMoltService/ListTypes"
+  -Pmethod="ai.protomolt.proto.grpc.service.v1.ProtoMoltService/ListTypes"
 ```
 
 ## Prove both surfaces at once

@@ -109,7 +109,7 @@ compose stack's, with a system property or environment variable:
 
 | Property | Environment variable | Default |
 |---|---|---|
-| `pipestream.it.apicurio.url` | `PIPESTREAM_IT_APICURIO_URL` | the suite's Testcontainers registry |
+| `protomolt.it.apicurio.url` | `PROTOMOLT_IT_APICURIO_URL` | the suite's Testcontainers registry |
 
 ```shell
 ./gradlew :protomolt-schema-apicurio:test \

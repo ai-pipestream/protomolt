@@ -126,7 +126,7 @@ surface with scoped source paths.
 ## Keys declared in the schema
 
 Joins need keys, and the schema should say what they are. A declared-key
-field option in the metadata standards (`ai.pipestream.proto.meta.v1`)
+field option in the metadata standards (`ai.protomolt.proto.meta.v1`)
 lets a message state its identity once; key-based stream joins, dedup,
 Kafka record keys, and upsert semantics all derive from it instead of
 being configured per deployment. Same philosophy as validation rules and

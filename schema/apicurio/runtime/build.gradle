@@ -33,8 +33,8 @@ tasks.matching { it.name == 'validateExtension' }.configureEach {
 // Forward the integration-test endpoint override (see docs/operations/building.md "Integration tests")
 // to the test JVM. Without an override the suites use their Testcontainers registry.
 tasks.withType(Test).configureEach {
-    def apicurioUrl = providers.systemProperty('pipestream.it.apicurio.url')
+    def apicurioUrl = providers.systemProperty('protomolt.it.apicurio.url')
     if (apicurioUrl.isPresent()) {
-        systemProperty 'pipestream.it.apicurio.url', apicurioUrl.get()
+        systemProperty 'protomolt.it.apicurio.url', apicurioUrl.get()
     }
 }

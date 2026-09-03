@@ -1,0 +1,473 @@
+package ai.protomolt.proto.metric.service;
+
+import ai.protomolt.proto.actions.ActionCatalog;
+import ai.protomolt.proto.actions.ActionContext;
+import ai.protomolt.proto.actions.ActionException;
+import ai.protomolt.proto.actions.ProtoAction;
+import ai.protomolt.proto.metric.Aggregate;
+import ai.protomolt.proto.metric.DescribeMappingRequest;
+import ai.protomolt.proto.metric.DescribeMappingResponse;
+import ai.protomolt.proto.metric.MemberRole;
+import ai.protomolt.proto.metric.MetricBackend;
+import ai.protomolt.proto.metric.MetricRow;
+import ai.protomolt.proto.metric.MetricServiceGrpc;
+import ai.protomolt.proto.metric.QueryMetricsRequest;
+import ai.protomolt.proto.metric.QueryMetricsResponse;
+import ai.protomolt.proto.metric.TimeGrain;
+import ai.protomolt.proto.metric.spi.CompiledMetricQuery;
+import ai.protomolt.proto.metric.spi.MetricExecutor;
+import ai.protomolt.proto.metric.spi.MetricMapping.FieldKind;
+import ai.protomolt.proto.metric.spi.MetricMapping.MetricMember;
+import ai.protomolt.proto.metric.spi.MetricMapping;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.grpc.ManagedChannel;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import io.grpc.inprocess.InProcessChannelBuilder;
+import io.grpc.inprocess.InProcessServerBuilder;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/**
+ * The metric service's contract: the validating interceptor answers shape
+ * violations before the handler, membership refusals carry the stable code
+ * in brackets with an honest status, and the two catalog verbs round-trip
+ * proto3 JSON with refusal codes and legal sets in details.
+ */
+class MetricServicesTest {
+
+    static class FakeExecutor implements MetricExecutor {
+        CompiledMetricQuery executed;
+
+        @Override
+        public MetricBackend backend() {
+            return MetricBackend.METRIC_BACKEND_LUCENE;
+        }
+
+        @Override
+        public Capabilities capabilities() {
+            return new Capabilities(
+                    Set.of(Aggregate.AGGREGATE_COUNT, Aggregate.AGGREGATE_SUM), true, true);
+        }
+
+        @Override
+        public Result execute(CompiledMetricQuery query) {
+            executed = query;
+            return new Result(List.of(MetricRow.newBuilder()
+                    .putDimensions("segment", "smb")
+                    .putMeasures("revenue", 180.0).build()), "fake-plan");
+        }
+    }
+
+    static MetricServices service;
+    static ManagedChannel channel;
+    static MetricServiceGrpc.MetricServiceBlockingStub stub;
+    static Map<String, ServedMetricSubject> subjects;
+
+    @BeforeAll
+    static void boot() throws Exception {
+        Map<String, MetricMember> members = new LinkedHashMap<>();
+        members.put("segment", new MetricMember("segment",
+                MemberRole.MEMBER_ROLE_DIMENSION, Aggregate.AGGREGATE_UNSPECIFIED,
+                "segment", "segment", FieldKind.KEYWORD, List.of(), "", List.of(),
+                TimeGrain.TIME_GRAIN_UNSPECIFIED, "Sales segment", "internal"));
+        members.put("revenue", new MetricMember("revenue",
+                MemberRole.MEMBER_ROLE_MEASURE, Aggregate.AGGREGATE_SUM,
+                "amount_cents", "amount_cents", FieldKind.NUMERIC, List.of(), "", List.of(),
+                TimeGrain.TIME_GRAIN_UNSPECIFIED, "", ""));
+        MetricMapping mapping = new MetricMapping("orders", "test.Order", members);
+        subjects = Map.of("orders", new ServedMetricSubject(mapping,
+                Map.of(MetricBackend.METRIC_BACKEND_LUCENE, new FakeExecutor())));
+
+        service = MetricServices.build(subjects);
+        String name = InProcessServerBuilder.generateName();
+        service.startInProcess(name);
+        channel = InProcessChannelBuilder.forName(name).build();
+        stub = MetricServiceGrpc.newBlockingStub(channel);
+    }
+
+    @AfterAll
+    static void shutdown() {
+        channel.shutdownNow();
+        service.close();
+    }
+
+    static QueryMetricsRequest.Builder query() {
+        return QueryMetricsRequest.newBuilder()
+                .setMappingSubject("orders").addMeasures("revenue").setLimit(10);
+    }
+
+    @Test
+    void theValidatingInterceptorAnswersShapeViolationsBeforeTheHandler() {
+        // limit 0 violates the request proto's own declared bound; the
+        // refusal wording is the interceptor's, not this service's.
+        assertThatThrownBy(() -> stub.queryMetrics(query().setLimit(0).build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                    assertThat(e.getStatus().getCode())
+                            .isEqualTo(Status.Code.INVALID_ARGUMENT);
+                    assertThat(e.getStatus().getDescription())
+                            .contains("violates the schema's declared rules")
+                            .contains("limit");
+                });
+    }
+
+    @Test
+    void unknownSubjectsAreRefusedWithTheCodeAndTheServedList() {
+        assertThatThrownBy(() -> stub.queryMetrics(
+                query().setMappingSubject("nope").build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                    assertThat(e.getStatus().getCode())
+                            .isEqualTo(Status.Code.INVALID_ARGUMENT);
+                    assertThat(e.getStatus().getDescription())
+                            .contains("[unknown-subject]")
+                            .contains("orders");
+                });
+    }
+
+    @Test
+    void rangeBoundsAreSchemaBoundedDateLiteralsNotFreeStrings() {
+        // The subject is unknown, so a handler answer would be
+        // [unknown-subject]: the violation naming the bound proves the
+        // interceptor refused the shape before any handler ran.
+        assertThatThrownBy(() -> stub.queryMetrics(
+                QueryMetricsRequest.newBuilder()
+                        .setMappingSubject("nope")
+                        .addMeasures("revenue")
+                        .setLimit(10)
+                        .addFilters(ai.protomolt.proto.metric.MetricFilter.newBuilder()
+                                .setMember("created_at")
+                                .setRange(ai.protomolt.proto.types.DateRange
+                                        .newBuilder().setBegin("July 1st, 2026")))
+                        .build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                    assertThat(e.getStatus().getCode())
+                            .isEqualTo(Status.Code.INVALID_ARGUMENT);
+                    assertThat(e.getStatus().getDescription()).contains("begin");
+                });
+    }
+
+    @Test
+    void refusalStatusesSplitCallerErrorsFromMountPreconditions() {
+        assertThatThrownBy(() -> stub.queryMetrics(
+                query().clearMeasures().addMeasures("nope").build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                    assertThat(e.getStatus().getCode())
+                            .isEqualTo(Status.Code.INVALID_ARGUMENT);
+                    assertThat(e.getStatus().getDescription()).contains("[unknown-member]");
+                });
+        assertThatThrownBy(() -> stub.queryMetrics(
+                query().setBackend(MetricBackend.METRIC_BACKEND_ICEBERG).build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                    assertThat(e.getStatus().getCode())
+                            .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                    assertThat(e.getStatus().getDescription()).contains("[unknown-backend]");
+                });
+    }
+
+    @Test
+    void aDistinctBoundRefusalMapsToFailedPrecondition() throws Exception {
+        // The engine refuses mid-collection when a count_distinct passes
+        // its bound; the service maps that to the mount-precondition status,
+        // because the caller fixes it by picking the engine that spills.
+        MetricExecutor bounded = new FakeExecutor() {
+            @Override
+            public Result execute(CompiledMetricQuery query) {
+                throw new ai.protomolt.proto.metric.spi.MetricRefusal(
+                        ai.protomolt.proto.metric.spi.MetricRefusal.DISTINCT_BOUND,
+                        "count_distinct over 'revenue' passed this engine's bound",
+                        List.of());
+            }
+        };
+        try (MetricServices boundedService = MetricServices.build(Map.of(
+                "orders", new ServedMetricSubject(
+                        subjects.get("orders").mapping(),
+                        Map.of(MetricBackend.METRIC_BACKEND_LUCENE, bounded))))) {
+            String name = InProcessServerBuilder.generateName();
+            boundedService.startInProcess(name);
+            ManagedChannel boundedChannel = InProcessChannelBuilder.forName(name).build();
+            try {
+                assertThatThrownBy(() -> MetricServiceGrpc.newBlockingStub(boundedChannel)
+                        .queryMetrics(query().build()))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                            assertThat(e.getStatus().getCode())
+                                    .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                            assertThat(e.getStatus().getDescription())
+                                    .contains("[distinct-bound]");
+                        });
+            } finally {
+                boundedChannel.shutdownNow();
+            }
+        }
+    }
+
+    /** A rollup sink that records the one replace it receives. */
+    static final class FakeRollupSink implements ai.protomolt.proto.metric.spi.RollupSink {
+        String sourceSubject;
+        String table;
+        List<String> dimensions;
+        List<MeasureColumn> measures;
+        List<MetricRow> rows;
+
+        @Override
+        public Written replace(String sourceSubject, String table, List<String> dimensions,
+                List<MeasureColumn> measures, List<MetricRow> rows) {
+            this.sourceSubject = sourceSubject;
+            this.table = table;
+            this.dimensions = dimensions;
+            this.measures = measures;
+            this.rows = rows;
+            return new Written("protomolt." + table, rows.size(), 42L);
+        }
+    }
+
+    private static ai.protomolt.proto.metric.RebuildRollupRequest.Builder rebuild() {
+        return ai.protomolt.proto.metric.RebuildRollupRequest.newBuilder()
+                .setMappingSubject("orders")
+                .addMeasures("revenue")
+                .addDimensions(ai.protomolt.proto.metric.MemberRef.newBuilder()
+                        .setName("segment"))
+                .setTable("revenue_by_segment");
+    }
+
+    @Test
+    void aResolverServesSubjectsBeyondTheStaticSetOnEveryService() throws Exception {
+        // The resolver answers after the static set misses, identically
+        // for the RPC and the verbs; a name it does not know still falls
+        // through to the unknown-subject refusal.
+        ai.protomolt.proto.metric.spi.MetricSubjectResolver resolver = name ->
+                name.equals("rollup:orders_rollup")
+                        ? new ai.protomolt.proto.metric.spi.MetricSubjectResolver.Resolved(
+                                subjects.get("orders").mapping(), new FakeExecutor())
+                        : null;
+        try (MetricServices resolving = MetricServices.build(
+                subjects, null, resolver)) {
+            String name = InProcessServerBuilder.generateName();
+            resolving.startInProcess(name);
+            ManagedChannel resolvingChannel = InProcessChannelBuilder.forName(name).build();
+            try {
+                QueryMetricsResponse answered = MetricServiceGrpc
+                        .newBlockingStub(resolvingChannel)
+                        .queryMetrics(query()
+                                .setMappingSubject("rollup:orders_rollup").build());
+                assertThat(answered.getRows(0).getMeasuresOrThrow("revenue"))
+                        .isEqualTo(180.0);
+                assertThatThrownBy(() -> MetricServiceGrpc
+                        .newBlockingStub(resolvingChannel)
+                        .queryMetrics(query().setMappingSubject("rollup:nope").build()))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
+                                assertThat(e.getStatus().getDescription())
+                                        .contains("[unknown-subject]"));
+            } finally {
+                resolvingChannel.shutdownNow();
+            }
+        }
+
+        List<ProtoAction> actions = MetricActions.over(subjects, null, resolver);
+        ObjectMapper mapper = new ObjectMapper();
+        ObjectNode describeInput = mapper.createObjectNode()
+                .put("mappingSubject", "rollup:orders_rollup");
+        ObjectNode described = dispatch(actions, 0, describeInput);
+        assertThat(described.get("messageType").asText()).isEqualTo("test.Order");
+    }
+
+    @Test
+    void rebuildRollupRunsTheQueryAndHandsTheAnswerToTheSink() throws Exception {
+        FakeRollupSink rollups = new FakeRollupSink();
+        try (MetricServices rollupService = MetricServices.build(subjects, rollups)) {
+            String name = InProcessServerBuilder.generateName();
+            rollupService.startInProcess(name);
+            ManagedChannel rollupChannel = InProcessChannelBuilder.forName(name).build();
+            try {
+                ai.protomolt.proto.metric.RebuildRollupResponse written =
+                        MetricServiceGrpc.newBlockingStub(rollupChannel)
+                                .rebuildRollup(rebuild().build());
+                assertThat(written.getTable()).isEqualTo("protomolt.revenue_by_segment");
+                assertThat(written.getRowsWritten()).isEqualTo(1);
+                assertThat(written.getSnapshotId()).isEqualTo(42L);
+                assertThat(written.getPhysicalPlan()).isEqualTo("fake-plan");
+                assertThat(written.getBackend())
+                        .isEqualTo(MetricBackend.METRIC_BACKEND_LUCENE);
+                assertThat(rollups.sourceSubject).isEqualTo("orders");
+                assertThat(rollups.table).isEqualTo("revenue_by_segment");
+                assertThat(rollups.dimensions).containsExactly("segment");
+                assertThat(rollups.measures).containsExactly(
+                        new ai.protomolt.proto.metric.spi.RollupSink.MeasureColumn(
+                                "revenue", Aggregate.AGGREGATE_SUM));
+                assertThat(rollups.rows).hasSize(1);
+            } finally {
+                rollupChannel.shutdownNow();
+            }
+        }
+    }
+
+    @Test
+    void rebuildRollupWithoutASinkRefusesWithMissingSink() {
+        assertThatThrownBy(() -> stub.rebuildRollup(rebuild().build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                    assertThat(e.getStatus().getCode())
+                            .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                    assertThat(e.getStatus().getDescription())
+                            .contains("[missing-sink]");
+                });
+    }
+
+    @Test
+    void aRollupThatFillsTheGroupBudgetRefusesInsteadOfTruncating() throws Exception {
+        // An engine answering exactly the budget cannot attest the rollup
+        // complete, so nothing lands: exact or refused, never truncated.
+        MetricExecutor wide = new FakeExecutor() {
+            @Override
+            public Result execute(CompiledMetricQuery query) {
+                List<MetricRow> rows = new java.util.ArrayList<>();
+                for (int i = 0; i < 1000; i++) {
+                    rows.add(MetricRow.newBuilder()
+                            .putDimensions("segment", "s" + i)
+                            .putMeasures("revenue", (double) i).build());
+                }
+                return new Result(rows, "wide-plan");
+            }
+        };
+        FakeRollupSink rollups = new FakeRollupSink();
+        try (MetricServices wideService = MetricServices.build(Map.of(
+                "orders", new ServedMetricSubject(
+                        subjects.get("orders").mapping(),
+                        Map.of(MetricBackend.METRIC_BACKEND_LUCENE, wide))), rollups)) {
+            String name = InProcessServerBuilder.generateName();
+            wideService.startInProcess(name);
+            ManagedChannel wideChannel = InProcessChannelBuilder.forName(name).build();
+            try {
+                assertThatThrownBy(() -> MetricServiceGrpc.newBlockingStub(wideChannel)
+                        .rebuildRollup(rebuild().build()))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                            assertThat(e.getStatus().getCode())
+                                    .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                            assertThat(e.getStatus().getDescription())
+                                    .contains("[rollup-budget]");
+                        });
+                assertThat(rollups.table).as("nothing landed").isNull();
+            } finally {
+                wideChannel.shutdownNow();
+            }
+        }
+    }
+
+    @Test
+    void describeAndQueryRoundTrip() {
+        DescribeMappingResponse described = stub.describeMapping(
+                DescribeMappingRequest.newBuilder().setMappingSubject("orders").build());
+        assertThat(described.getMessageType()).isEqualTo("test.Order");
+        assertThat(described.getMembersList()).hasSize(2);
+        assertThat(described.getMembers(0).getDescription()).isEqualTo("Sales segment");
+        assertThat(described.getMembers(0).getSensitivity()).isEqualTo("internal");
+        assertThat(described.getBackendsList())
+                .containsExactly(MetricBackend.METRIC_BACKEND_LUCENE);
+
+        QueryMetricsResponse answered = stub.queryMetrics(query().build());
+        assertThat(answered.getRowCount()).isEqualTo(1);
+        assertThat(answered.getRows(0).getMeasuresOrThrow("revenue")).isEqualTo(180.0);
+        assertThat(answered.getPhysicalPlan()).isEqualTo("fake-plan");
+    }
+
+    // ------------------------------------------------------------- the verbs
+
+    @Test
+    void theVerbsRoundTripProto3JsonWithRefusalCodesInDetails() throws Exception {
+        List<ProtoAction> actions = MetricActions.over(subjects);
+        assertThat(actions).extracting(ProtoAction::name)
+                .containsExactly("describe-mapping", "query-metrics", "rebuild-rollup");
+        ActionContext context = ActionContext.create();
+        ObjectMapper mapper = new ObjectMapper();
+
+        ObjectNode describeInput = mapper.createObjectNode().put("mappingSubject", "orders");
+        ObjectNode described = dispatch(actions, 0, describeInput);
+        assertThat(described.get("messageType").asText()).isEqualTo("test.Order");
+
+        // The envelope IS the request message, not a wrapper around one.
+        ObjectNode queryInput = mapper.createObjectNode()
+                .put("mappingSubject", "orders")
+                .put("limit", 10);
+        queryInput.putArray("measures").add("revenue");
+        ObjectNode answered = dispatch(actions, 1, queryInput);
+        assertThat(answered.get("rows").get(0).get("measures").get("revenue").asDouble())
+                .isEqualTo(180.0);
+
+        ObjectNode unknown = mapper.createObjectNode().put("mappingSubject", "nope");
+        assertThatThrownBy(() -> dispatch(actions, 0, unknown))
+                .isInstanceOfSatisfying(ActionException.class, e -> {
+                    assertThat(e.code()).isEqualTo("unknown-subject");
+                    assertThat(e.details().orElseThrow().get("legal").get(0).asText())
+                            .isEqualTo("orders");
+                });
+
+        ObjectNode badMember = mapper.createObjectNode()
+                .put("mappingSubject", "orders")
+                .put("limit", 10);
+        badMember.putArray("measures").add("nope");
+        assertThatThrownBy(() -> dispatch(actions, 1, badMember))
+                .isInstanceOfSatisfying(ActionException.class, e ->
+                        assertThat(e.code()).isEqualTo("unknown-member"));
+
+        ObjectNode garbage = mapper.createObjectNode().put("limit", "not-a-number");
+        assertThatThrownBy(() -> dispatch(actions, 1, garbage))
+                .isInstanceOfSatisfying(ActionException.class, e ->
+                        assertThat(e.code()).isEqualTo("invalid-input"));
+    }
+
+    @Test
+    void theRebuildRollupVerbRunsTheSharedRebuildAndSurfacesRefusalCodes()
+            throws Exception {
+        FakeRollupSink rollups = new FakeRollupSink();
+        List<ProtoAction> actions = MetricActions.over(subjects, rollups);
+        
+        ActionContext context = ActionContext.create();
+        ObjectMapper mapper = new ObjectMapper();
+
+        ObjectNode input = mapper.createObjectNode();
+        input.put("mappingSubject", "orders");
+        input.put("table", "revenue_by_segment");
+        input.putArray("measures").add("revenue");
+        input.putArray("dimensions").addObject().put("name", "segment");
+        ObjectNode written = dispatch(actions, 2, input);
+        assertThat(written.get("table").asText()).isEqualTo("protomolt.revenue_by_segment");
+        assertThat(written.get("rowsWritten").asText()).isEqualTo("1");
+        assertThat(written.get("physicalPlan").asText()).isEqualTo("fake-plan");
+        assertThat(rollups.table).isEqualTo("revenue_by_segment");
+        assertThat(rollups.dimensions).containsExactly("segment");
+
+        // Without a sink the verb refuses exactly like the RPC.
+        List<ProtoAction> sinkless = MetricActions.over(subjects);
+        assertThatThrownBy(() -> dispatch(sinkless, 2, input))
+                .isInstanceOfSatisfying(ActionException.class, e ->
+                        assertThat(e.code()).isEqualTo("missing-sink"));
+
+        // The catalog path is not behind the validating interceptor, so the verb enforces the
+        // request message's declared rules itself. A missing table is a 'required' violation.
+        ObjectNode noTable = mapper.createObjectNode()
+                .put("mappingSubject", "orders");
+        noTable.putArray("measures").add("revenue");
+        assertThatThrownBy(() -> dispatch(actions, 2, noTable))
+                .isInstanceOfSatisfying(ActionException.class, e ->
+                        assertThat(e.code()).isEqualTo("invalid-input"));
+    }
+
+    /**
+     * Dispatches a verb the way every surface does: through a catalog holding it. The
+     * request contract is checked there, so calling a verb directly would skip it.
+     */
+    private static ObjectNode dispatch(List<ProtoAction> actions, int index, ObjectNode input)
+            throws ActionException {
+        ActionCatalog catalog = ActionCatalog.defaults(ActionContext.create());
+        actions.forEach(catalog::replace);
+        return catalog.execute(actions.get(index).name(), input);
+    }
+
+}

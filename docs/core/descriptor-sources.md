@@ -87,10 +87,10 @@ cannot be resolved is skipped with a warning rather than failing the load.
 Under Quarkus, the loader is wired from configuration:
 
 ```properties
-pipestream.proto.apicurio.enabled=true
-pipestream.proto.apicurio.registry-url=http://localhost:8080/apis/registry/v3
-pipestream.proto.apicurio.group-id=default
-pipestream.proto.apicurio.auto-load-on-startup=false
+protomolt.apicurio.enabled=true
+protomolt.apicurio.registry-url=http://localhost:8080/apis/registry/v3
+protomolt.apicurio.group-id=default
+protomolt.apicurio.auto-load-on-startup=false
 ```
 
 ### Parsing without the registry

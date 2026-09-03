@@ -204,7 +204,7 @@ services:
       - |
         grpcurl -plaintext \
           -d "{\"name\": \"$${DELEGATION_DRIVE}\", \"account_id\": \"protomolt\", \"drive_type\": \"DRIVE_TYPE_CUSTOM\", \"bucket\": \"protomolt\"}" \
-          repo-service:9090 ai.pipestream.proto.repo.v1.DriveService/CreateDrive
+          repo-service:9090 ai.protomolt.proto.repo.v1.DriveService/CreateDrive
     restart: "no"
 
   jobs-init:

@@ -1,5 +1,5 @@
 <template>
-  <!-- Reference picker (x-pipestream-lookup) -->
+  <!-- Reference picker (x-protomolt-lookup) -->
   <LookupField
     v-if="kind === 'lookup'"
     :model-value="modelValue"

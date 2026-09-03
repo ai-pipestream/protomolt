@@ -6,7 +6,7 @@
  */
 import { findProfileByContract, invokeUnary } from './services'
 
-export const SEARCH_SERVICE = 'ai.pipestream.proto.search.v1.SearchService'
+export const SEARCH_SERVICE = 'ai.protomolt.proto.search.v1.SearchService'
 
 export interface SearchSubject {
   subject: string

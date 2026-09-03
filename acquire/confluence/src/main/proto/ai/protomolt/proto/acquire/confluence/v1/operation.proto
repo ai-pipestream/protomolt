@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.acquire.confluence.v1;
+
+import "ai/protomolt/proto/index/hints/v1/indexing_hints.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.acquire.confluence.v1";
+
+// ============================================================================
+// OPERATION - permitted-operations checks on entities.
+// ============================================================================
+
+// One operation permitted on an entity.
+message Operation {
+  // The type of operation (e.g. "read", "update", "delete").
+  string operation = 1 [
+    (ai.protomolt.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+  // The type of entity the operation type targets.
+  string target_type = 2 [
+    (ai.protomolt.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_KEYWORD }
+  ];
+}
+
+// The list of operations permitted on an entity.
+message PermittedOperationsResponse {
+  // The operations permitted on the entity.
+  repeated Operation operations = 1;
+}

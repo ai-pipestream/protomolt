@@ -85,5 +85,5 @@ tasks.withType(Test).configureEach {
 }
 
 application {
-    mainClass = 'ai.pipestream.proto.platform.DocumentPlatformMain'
+    mainClass = 'ai.protomolt.proto.platform.DocumentPlatformMain'
 }

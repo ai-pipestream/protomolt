@@ -1,0 +1,517 @@
+package ai.protomolt.proto.validate.source;
+
+import ai.protomolt.proto.validate.BoolRules;
+import ai.protomolt.proto.validate.BytesRules;
+import ai.protomolt.proto.validate.CelRule;
+import ai.protomolt.proto.validate.DoubleRules;
+import ai.protomolt.proto.validate.DurationRules;
+import ai.protomolt.proto.validate.EnumRules;
+import ai.protomolt.proto.validate.FieldRules;
+import ai.protomolt.proto.validate.FloatRules;
+import ai.protomolt.proto.validate.Int32Rules;
+import ai.protomolt.proto.validate.Int64Rules;
+import ai.protomolt.proto.validate.MapRules;
+import ai.protomolt.proto.validate.MessageRules;
+import ai.protomolt.proto.validate.RepeatedRules;
+import ai.protomolt.proto.validate.StringRules;
+import ai.protomolt.proto.validate.TimestampRules;
+import ai.protomolt.proto.validate.RuleCompilationException;
+import ai.protomolt.proto.validate.UInt32Rules;
+import ai.protomolt.proto.validate.UInt64Rules;
+import ai.protomolt.proto.validate.ValidateProto;
+import ai.protomolt.proto.validate.model.BoolConstraints;
+import ai.protomolt.proto.validate.model.BytesConstraints;
+import ai.protomolt.proto.validate.model.CelConstraint;
+import ai.protomolt.proto.validate.model.DurationConstraints;
+import ai.protomolt.proto.validate.model.EnumConstraints;
+import ai.protomolt.proto.validate.model.FieldConstraints;
+import ai.protomolt.proto.validate.model.FloatingConstraints;
+import ai.protomolt.proto.validate.model.IntegralConstraints;
+import ai.protomolt.proto.validate.model.MapConstraints;
+import ai.protomolt.proto.validate.model.MessageConstraints;
+import ai.protomolt.proto.validate.model.RepeatedConstraints;
+import ai.protomolt.proto.validate.model.StringConstraints;
+import ai.protomolt.proto.validate.model.StringFormat;
+import ai.protomolt.proto.validate.model.TimestampConstraints;
+import ai.protomolt.proto.validate.spi.ValidationRuleSource;
+import com.google.protobuf.DescriptorProtos;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Descriptors.FieldDescriptor;
+import com.google.protobuf.ExtensionRegistry;
+import com.google.protobuf.InvalidProtocolBufferException;
+
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.OptionalDouble;
+import java.util.OptionalInt;
+import java.util.OptionalLong;
+
+/**
+ * Built-in {@link ValidationRuleSource} reading the Pipestream {@code validate.v1}
+ * options — {@code (ai.protomolt.proto.validate.v1.field)} and {@code (…​.message)} —
+ * off protobuf descriptors and translating them into the neutral rule model.
+ */
+public final class ProtomoltRuleSource implements ValidationRuleSource {
+
+    private static final ExtensionRegistry EXTENSIONS = createExtensionRegistry();
+
+    private static ExtensionRegistry createExtensionRegistry() {
+        ExtensionRegistry registry = ExtensionRegistry.newInstance();
+        ValidateProto.registerAllExtensions(registry);
+        return registry;
+    }
+
+    @Override
+    public Optional<FieldConstraints> fieldConstraints(FieldDescriptor field) {
+        FieldRules rules = fieldRules(field.getOptions());
+        return rules == null ? Optional.empty() : Optional.of(toFieldConstraints(rules));
+    }
+
+    @Override
+    public Optional<MessageConstraints> messageConstraints(Descriptor message) {
+        MessageRules rules = messageRules(message.getOptions());
+        if (rules == null) {
+            return Optional.empty();
+        }
+        List<CelConstraint> cel = new ArrayList<>(rules.getCelList().size());
+        for (CelRule rule : rules.getCelList()) {
+            cel.add(toCel(rule));
+        }
+        return Optional.of(new MessageConstraints(cel, List.of(), List.of(), rules.getSkipWhen()));
+    }
+
+    /**
+     * The {@code (ai.protomolt.proto.validate.v1.field)} rules on {@code options}, or null when
+     * absent. Descriptors linked without this extension registered carry the annotation only as
+     * an unknown field; reparse the options against a knowing registry rather than silently
+     * dropping rules — a validator that cannot see a schema's rules pronounces every message
+     * clean, which is the failure mode that reports success.
+     */
+    private static FieldRules fieldRules(DescriptorProtos.FieldOptions options) {
+        if (options.hasExtension(ValidateProto.field)) {
+            return options.getExtension(ValidateProto.field);
+        }
+        if (!options.getUnknownFields().hasField(ValidateProto.field.getNumber())) {
+            return null;
+        }
+        return reparse(options, DescriptorProtos.FieldOptions::parseFrom,
+                "(ai.protomolt.proto.validate.v1.field)")
+                .getExtension(ValidateProto.field);
+    }
+
+    /** As {@link #fieldRules} for the {@code (ai.protomolt.proto.validate.v1.message)} extension. */
+    private static MessageRules messageRules(DescriptorProtos.MessageOptions options) {
+        if (options.hasExtension(ValidateProto.message)) {
+            return options.getExtension(ValidateProto.message);
+        }
+        if (!options.getUnknownFields().hasField(ValidateProto.message.getNumber())) {
+            return null;
+        }
+        return reparse(options, DescriptorProtos.MessageOptions::parseFrom,
+                "(ai.protomolt.proto.validate.v1.message)")
+                .getExtension(ValidateProto.message);
+    }
+
+    /** Parses {@code options}' bytes against {@link #EXTENSIONS}; failures are schema errors. */
+    private static <T extends com.google.protobuf.Message> T reparse(
+            T options, OptionsParser<T> parser, String extensionName) {
+        try {
+            return parser.parse(options.toByteString(), EXTENSIONS);
+        } catch (InvalidProtocolBufferException e) {
+            throw new RuleCompilationException(
+                    "cannot reparse options carrying " + extensionName + ": " + e.getMessage(), e);
+        }
+    }
+
+    @FunctionalInterface
+    private interface OptionsParser<T> {
+        T parse(com.google.protobuf.ByteString bytes, ExtensionRegistry registry)
+                throws InvalidProtocolBufferException;
+    }
+
+    /** Recursively translates {@link FieldRules} (also used for items/keys/values). */
+    private static FieldConstraints toFieldConstraints(FieldRules rules) {
+        FieldConstraints.Builder builder = FieldConstraints.builder().required(rules.getRequired());
+        if (rules.getIgnoreIfZero()) {
+            builder.ignore(ai.protomolt.proto.validate.model.IgnoreMode.IF_ZERO_VALUE);
+        }
+        builder.inspectOnly(rules.getInspectOnly());
+        if (rules.hasString()) {
+            builder.string(toStringConstraints(rules.getString()));
+        }
+        // A field carries at most one numeric rule set; prefer the wider signed set,
+        // then the unsigned sets, when more than one is populated.
+        if (rules.hasInt64()) {
+            builder.integral(toInt64(rules.getInt64()));
+        } else if (rules.hasInt32()) {
+            builder.integral(toInt32(rules.getInt32()));
+        } else if (rules.hasUint64()) {
+            builder.integral(toUInt64(rules.getUint64()));
+        } else if (rules.hasUint32()) {
+            builder.integral(toUInt32(rules.getUint32()));
+        }
+        if (rules.hasDouble()) {
+            builder.floating(toDouble(rules.getDouble()));
+        } else if (rules.hasFloat()) {
+            builder.floating(toFloat(rules.getFloat()));
+        }
+        if (rules.hasBool()) {
+            builder.bool(toBool(rules.getBool()));
+        }
+        if (rules.hasBytes()) {
+            builder.bytes(toBytes(rules.getBytes()));
+        }
+        if (rules.hasEnum()) {
+            builder.enumeration(toEnum(rules.getEnum()));
+        }
+        if (rules.hasRepeated()) {
+            builder.repeated(toRepeated(rules.getRepeated()));
+        }
+        if (rules.hasMap()) {
+            builder.map(toMap(rules.getMap()));
+        }
+        if (rules.hasTimestamp()) {
+            builder.timestamp(toTimestamp(rules.getTimestamp()));
+        }
+        if (rules.hasDuration()) {
+            builder.duration(toDuration(rules.getDuration()));
+        }
+        for (CelRule cel : rules.getCelList()) {
+            builder.addCel(toCel(cel));
+        }
+        builder.taxonomy(rules.getTaxonomy());
+        return builder.build();
+    }
+
+    private static CelConstraint toCel(CelRule rule) {
+        return new CelConstraint(rule.getId(), rule.getExpression(), rule.getMessage());
+    }
+
+    private static StringConstraints toStringConstraints(StringRules rules) {
+        StringConstraints.Builder b = StringConstraints.builder();
+        if (rules.hasConst()) {
+            b.constant(rules.getConst());
+        }
+        if (rules.hasLen()) {
+            b.len(rules.getLen());
+        }
+        if (rules.hasMinLen()) {
+            b.minLen(rules.getMinLen());
+        }
+        if (rules.hasMaxLen()) {
+            b.maxLen(rules.getMaxLen());
+        }
+        if (rules.hasPattern() && !rules.getPattern().isEmpty()) {
+            b.pattern(rules.getPattern());
+        }
+        if (rules.hasPrefix()) {
+            b.prefix(rules.getPrefix());
+        }
+        if (rules.hasSuffix()) {
+            b.suffix(rules.getSuffix());
+        }
+        if (rules.hasContains()) {
+            b.contains(rules.getContains());
+        }
+        if (rules.hasNotContains()) {
+            b.notContains(rules.getNotContains());
+        }
+        b.in(rules.getInList());
+        b.notIn(rules.getNotInList());
+        if (rules.getEmail()) {
+            b.format(StringFormat.EMAIL);
+        }
+        if (rules.getUuid()) {
+            b.format(StringFormat.UUID);
+        }
+        if (rules.getHostname()) {
+            b.format(StringFormat.HOSTNAME);
+        }
+        if (rules.getUri()) {
+            b.format(StringFormat.URI);
+        }
+        if (rules.getIp()) {
+            b.format(StringFormat.IP);
+        }
+        if (rules.getIpv4()) {
+            b.format(StringFormat.IPV4);
+        }
+        if (rules.getIpv6()) {
+            b.format(StringFormat.IPV6);
+        }
+        if (rules.getDate()) {
+            b.format(StringFormat.DATE);
+        }
+        if (rules.getDateTime()) {
+            b.format(StringFormat.DATE_TIME);
+        }
+        if (rules.getMimeType()) {
+            b.format(StringFormat.MIME_TYPE);
+        }
+        if (rules.getLanguageTag()) {
+            b.format(StringFormat.LANGUAGE_TAG);
+        }
+        if (rules.getCurrencyCode()) {
+            b.format(StringFormat.CURRENCY_CODE);
+        }
+        if (rules.getPhoneNumber()) {
+            b.format(StringFormat.PHONE_NUMBER);
+        }
+        if (rules.getSha256Hex()) {
+            b.format(StringFormat.SHA256_HEX);
+        }
+        if (rules.getSha1Hex()) {
+            b.format(StringFormat.SHA1_HEX);
+        }
+        if (rules.getHex()) {
+            b.format(StringFormat.HEX);
+        }
+        if (rules.getBase64()) {
+            b.format(StringFormat.BASE64);
+        }
+        if (rules.getSlug()) {
+            b.format(StringFormat.SLUG);
+        }
+        if (rules.getRegionCode()) {
+            b.format(StringFormat.REGION_CODE);
+        }
+        if (rules.getProtobufFqn()) {
+            b.format(StringFormat.PROTOBUF_FQN);
+        }
+        if (rules.getPathSafeName()) {
+            b.format(StringFormat.PATH_SAFE_NAME);
+        }
+        if (rules.getGtin()) {
+            b.format(StringFormat.GTIN);
+        }
+        if (rules.getDecimal()) {
+            b.format(StringFormat.DECIMAL);
+        }
+        if (rules.getEndpointAddress()) {
+            b.format(StringFormat.ENDPOINT_ADDRESS);
+        }
+        if (rules.getIdentifier()) {
+            b.format(StringFormat.IDENTIFIER);
+        }
+        return b.build();
+    }
+
+    private static IntegralConstraints toInt32(Int32Rules r) {
+        IntegralConstraints.Builder b = IntegralConstraints.builder("int32");
+        if (r.hasConst()) {
+            b.constant(r.getConst());
+        }
+        if (r.hasGt()) {
+            b.gt(r.getGt());
+        }
+        if (r.hasGte()) {
+            b.gte(r.getGte());
+        }
+        if (r.hasLt()) {
+            b.lt(r.getLt());
+        }
+        if (r.hasLte()) {
+            b.lte(r.getLte());
+        }
+        b.in(r.getInList().stream().map(Integer::longValue).toList());
+        b.notIn(r.getNotInList().stream().map(Integer::longValue).toList());
+        return b.build();
+    }
+
+    private static IntegralConstraints toInt64(Int64Rules r) {
+        IntegralConstraints.Builder b = IntegralConstraints.builder("int64");
+        if (r.hasConst()) {
+            b.constant(r.getConst());
+        }
+        if (r.hasGt()) {
+            b.gt(r.getGt());
+        }
+        if (r.hasGte()) {
+            b.gte(r.getGte());
+        }
+        if (r.hasLt()) {
+            b.lt(r.getLt());
+        }
+        if (r.hasLte()) {
+            b.lte(r.getLte());
+        }
+        b.in(r.getInList());
+        b.notIn(r.getNotInList());
+        return b.build();
+    }
+
+    private static IntegralConstraints toUInt32(UInt32Rules r) {
+        IntegralConstraints.Builder b = IntegralConstraints.unsignedBuilder("uint32");
+        if (r.hasConst()) {
+            b.constant(Integer.toUnsignedLong(r.getConst()));
+        }
+        if (r.hasGt()) {
+            b.gt(Integer.toUnsignedLong(r.getGt()));
+        }
+        if (r.hasGte()) {
+            b.gte(Integer.toUnsignedLong(r.getGte()));
+        }
+        if (r.hasLt()) {
+            b.lt(Integer.toUnsignedLong(r.getLt()));
+        }
+        if (r.hasLte()) {
+            b.lte(Integer.toUnsignedLong(r.getLte()));
+        }
+        b.in(r.getInList().stream().map(Integer::toUnsignedLong).toList());
+        b.notIn(r.getNotInList().stream().map(Integer::toUnsignedLong).toList());
+        return b.build();
+    }
+
+    private static IntegralConstraints toUInt64(UInt64Rules r) {
+        IntegralConstraints.Builder b = IntegralConstraints.unsignedBuilder("uint64");
+        if (r.hasConst()) {
+            b.constant(r.getConst());
+        }
+        if (r.hasGt()) {
+            b.gt(r.getGt());
+        }
+        if (r.hasGte()) {
+            b.gte(r.getGte());
+        }
+        if (r.hasLt()) {
+            b.lt(r.getLt());
+        }
+        if (r.hasLte()) {
+            b.lte(r.getLte());
+        }
+        b.in(r.getInList());
+        b.notIn(r.getNotInList());
+        return b.build();
+    }
+
+    private static FloatingConstraints toFloat(FloatRules r) {
+        FloatingConstraints.Builder b = FloatingConstraints.builder("float");
+        if (r.hasConst()) {
+            b.constant(r.getConst());
+        }
+        if (r.hasGt()) {
+            b.gt(r.getGt());
+        }
+        if (r.hasGte()) {
+            b.gte(r.getGte());
+        }
+        if (r.hasLt()) {
+            b.lt(r.getLt());
+        }
+        if (r.hasLte()) {
+            b.lte(r.getLte());
+        }
+        b.in(r.getInList().stream().map(Float::doubleValue).toList());
+        b.notIn(r.getNotInList().stream().map(Float::doubleValue).toList());
+        b.finite(r.getFinite());
+        return b.build();
+    }
+
+    private static FloatingConstraints toDouble(DoubleRules r) {
+        FloatingConstraints.Builder b = FloatingConstraints.builder("double");
+        if (r.hasConst()) {
+            b.constant(r.getConst());
+        }
+        if (r.hasGt()) {
+            b.gt(r.getGt());
+        }
+        if (r.hasGte()) {
+            b.gte(r.getGte());
+        }
+        if (r.hasLt()) {
+            b.lt(r.getLt());
+        }
+        if (r.hasLte()) {
+            b.lte(r.getLte());
+        }
+        b.in(r.getInList());
+        b.notIn(r.getNotInList());
+        b.finite(r.getFinite());
+        return b.build();
+    }
+
+    private static BoolConstraints toBool(BoolRules r) {
+        return new BoolConstraints(
+                r.hasConst() ? Optional.of(r.getConst()) : Optional.empty());
+    }
+
+    private static BytesConstraints toBytes(BytesRules r) {
+        BytesConstraints.Builder b = BytesConstraints.builder();
+        if (r.hasLen()) {
+            b.len(r.getLen());
+        }
+        if (r.hasMinLen()) {
+            b.minLen(r.getMinLen());
+        }
+        if (r.hasMaxLen()) {
+            b.maxLen(r.getMaxLen());
+        }
+        if (r.hasPrefix()) {
+            b.prefix(r.getPrefix());
+        }
+        if (r.hasSuffix()) {
+            b.suffix(r.getSuffix());
+        }
+        if (r.hasContains()) {
+            b.contains(r.getContains());
+        }
+        return b.build();
+    }
+
+    private static EnumConstraints toEnum(EnumRules r) {
+        return new EnumConstraints(
+                r.hasConst() ? OptionalInt.of(r.getConst()) : OptionalInt.empty(),
+                r.getDefinedOnly(),
+                r.getInList(),
+                r.getNotInList());
+    }
+
+    private static RepeatedConstraints toRepeated(RepeatedRules r) {
+        return new RepeatedConstraints(
+                r.hasMinItems() ? OptionalLong.of(r.getMinItems()) : OptionalLong.empty(),
+                r.hasMaxItems() ? OptionalLong.of(r.getMaxItems()) : OptionalLong.empty(),
+                r.getUnique(),
+                r.hasItems() ? Optional.of(toFieldConstraints(r.getItems())) : Optional.empty());
+    }
+
+    private static MapConstraints toMap(MapRules r) {
+        return new MapConstraints(
+                r.hasMinPairs() ? OptionalLong.of(r.getMinPairs()) : OptionalLong.empty(),
+                r.hasMaxPairs() ? OptionalLong.of(r.getMaxPairs()) : OptionalLong.empty(),
+                r.hasKeys() ? Optional.of(toFieldConstraints(r.getKeys())) : Optional.empty(),
+                r.hasValues() ? Optional.of(toFieldConstraints(r.getValues())) : Optional.empty());
+    }
+
+    private static TimestampConstraints toTimestamp(TimestampRules r) {
+        return new TimestampConstraints(
+                Optional.empty(),
+                r.hasGt() ? Optional.of(toInstant(r.getGt())) : Optional.empty(),
+                r.hasGte() ? Optional.of(toInstant(r.getGte())) : Optional.empty(),
+                r.hasLt() ? Optional.of(toInstant(r.getLt())) : Optional.empty(),
+                r.hasLte() ? Optional.of(toInstant(r.getLte())) : Optional.empty(),
+                r.getLtNow(),
+                r.getGtNow(),
+                r.hasWithin() ? Optional.of(toJavaDuration(r.getWithin())) : Optional.empty());
+    }
+
+    private static DurationConstraints toDuration(DurationRules r) {
+        return new DurationConstraints(
+                Optional.empty(),
+                r.hasGt() ? Optional.of(toJavaDuration(r.getGt())) : Optional.empty(),
+                r.hasGte() ? Optional.of(toJavaDuration(r.getGte())) : Optional.empty(),
+                r.hasLt() ? Optional.of(toJavaDuration(r.getLt())) : Optional.empty(),
+                r.hasLte() ? Optional.of(toJavaDuration(r.getLte())) : Optional.empty(),
+                java.util.List.of(),
+                java.util.List.of());
+    }
+
+    private static Instant toInstant(com.google.protobuf.Timestamp ts) {
+        return Instant.ofEpochSecond(ts.getSeconds(), ts.getNanos());
+    }
+
+    private static java.time.Duration toJavaDuration(com.google.protobuf.Duration d) {
+        return java.time.Duration.ofSeconds(d.getSeconds(), d.getNanos());
+    }
+}

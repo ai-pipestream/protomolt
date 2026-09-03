@@ -57,5 +57,5 @@ dependencies {
 }
 
 application {
-    mainClass = 'ai.pipestream.proto.repo.service.RepoServiceMain'
+    mainClass = 'ai.protomolt.proto.repo.service.RepoServiceMain'
 }

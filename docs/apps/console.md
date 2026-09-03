@@ -187,7 +187,7 @@ Search is served by a document-platform node rather than by `protomolt-serve`,
 so the console reaches it the way it reaches any remote gRPC service: through a
 registered service profile and the `ServiceInvoke` verb. The page finds that
 profile by contract rather than by name, looking for the registered profile
-whose reflected services include `ai.pipestream.proto.search.v1.SearchService`.
+whose reflected services include `ai.protomolt.proto.search.v1.SearchService`.
 Profiles are inspected concurrently so one slow endpoint cannot stall the page,
 the first match in registration order wins, and a profile whose endpoint
 refuses inspection is not the profile today. When nothing exposes the contract,
@@ -207,7 +207,7 @@ in [The search service](../search/service.md).
 ## Metrics
 
 Metrics follows the same pattern against
-`ai.pipestream.proto.metric.v1.MetricService`, found by contract and reached
+`ai.protomolt.proto.metric.v1.MetricService`, found by contract and reached
 through `ServiceInvoke`. The page starts from a mapping subject: describing it
 returns the mapping's members, and the members' roles fill the pickers, so
 measures and dimensions are offered because the mapping declares them rather

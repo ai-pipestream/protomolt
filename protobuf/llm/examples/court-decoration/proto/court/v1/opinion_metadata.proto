@@ -2,9 +2,9 @@ syntax = "proto3";
 
 package court.v1;
 
-import "ai/pipestream/proto/llm/v1/llm.proto";
-import "ai/pipestream/proto/meta/v1/metadata.proto";
-import "ai/pipestream/proto/validate/v1/validate.proto";
+import "ai/protomolt/proto/llm/v1/llm.proto";
+import "ai/protomolt/proto/meta/v1/metadata.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
 
 // Disposition of the appeal, taken from the holding rather than the
 // procedural history.
@@ -25,14 +25,14 @@ enum Posture {
 
 // Cataloging metadata extracted from a court opinion.
 message OpinionMetadata {
-  option (ai.pipestream.proto.meta.v1.message) = {
+  option (ai.protomolt.proto.meta.v1.message) = {
     description: "Cataloging metadata extracted from a court opinion."
   };
-  option (ai.pipestream.proto.llm.v1.message) = {
+  option (ai.protomolt.proto.llm.v1.message) = {
     instruction: "Fill this form from the opinion text alone."
     safeguards: "Do not use outside legal knowledge."
   };
-  option (ai.pipestream.proto.validate.v1.message) = {
+  option (ai.protomolt.proto.validate.v1.message) = {
     skip_when: "incomplete"
     cel: {
       id: "incomplete-needs-reason"
@@ -43,14 +43,14 @@ message OpinionMetadata {
 
   // The issuing court, as it appears in the caption.
   string court = 1 [
-    (ai.pipestream.proto.validate.v1.field) = {
+    (ai.protomolt.proto.validate.v1.field) = {
       required: true
       string: {max_len: 200}
     },
-    (ai.pipestream.proto.meta.v1.field) = {
+    (ai.protomolt.proto.meta.v1.field) = {
       description: "The issuing court, as it appears in the caption."
     },
-    (ai.pipestream.proto.llm.v1.field) = {
+    (ai.protomolt.proto.llm.v1.field) = {
       instruction: "Name the court exactly as it appears in the caption."
       safeguards: "Do not abbreviate."
     }
@@ -58,31 +58,31 @@ message OpinionMetadata {
 
   // The parties as named in the caption.
   string caption = 2 [
-    (ai.pipestream.proto.validate.v1.field) = {
+    (ai.protomolt.proto.validate.v1.field) = {
       required: true
       string: {max_len: 500}
     },
-    (ai.pipestream.proto.meta.v1.field) = {
+    (ai.protomolt.proto.meta.v1.field) = {
       description: "The parties as named in the caption."
     },
-    (ai.pipestream.proto.llm.v1.field) = {
+    (ai.protomolt.proto.llm.v1.field) = {
       instruction: "Use the full caption, including appellant/appellee designations if printed."
     }
   ];
 
   // The docket number as printed.
   string docket_number = 3 [
-    (ai.pipestream.proto.validate.v1.field) = {
+    (ai.protomolt.proto.validate.v1.field) = {
       cel: {
         id: "no-prose-values"
         message: "docket_number must be the printed number or absent, never prose"
         expression: "!this.matches('(?i)(not (specified|provided)|example|unknown)')"
       }
     },
-    (ai.pipestream.proto.meta.v1.field) = {
+    (ai.protomolt.proto.meta.v1.field) = {
       description: "The docket number as printed."
     },
-    (ai.pipestream.proto.llm.v1.field) = {
+    (ai.protomolt.proto.llm.v1.field) = {
       instruction: "Copy the docket number character-for-character as printed."
       safeguards: "When no docket number is printed, leave this field out entirely; never write 'not specified', an example value, or an invented number."
     }
@@ -90,20 +90,20 @@ message OpinionMetadata {
 
   // The year the decision was issued.
   int32 year = 4 [
-    (ai.pipestream.proto.validate.v1.field) = {
+    (ai.protomolt.proto.validate.v1.field) = {
       int32: {gte: 1600, lte: 2100}
     },
-    (ai.pipestream.proto.llm.v1.field) = {
+    (ai.protomolt.proto.llm.v1.field) = {
       instruction: "The decision year, not the argument year, when both appear."
     }
   ];
 
   // The disposition of the appeal.
   Posture posture = 5 [
-    (ai.pipestream.proto.validate.v1.field) = {
+    (ai.protomolt.proto.validate.v1.field) = {
       enum: {defined_only: true}
     },
-    (ai.pipestream.proto.llm.v1.field) = {
+    (ai.protomolt.proto.llm.v1.field) = {
       instruction: "Take the disposition from the holding, not the procedural history."
       safeguards: "When the disposition is genuinely unclear, use POSTURE_UNSPECIFIED rather than guessing."
     }
@@ -111,30 +111,30 @@ message OpinionMetadata {
 
   // The judges on the panel.
   repeated string panel = 6 [
-    (ai.pipestream.proto.validate.v1.field) = {
+    (ai.protomolt.proto.validate.v1.field) = {
       repeated: {max_items: 15, unique: true}
     },
-    (ai.pipestream.proto.llm.v1.field) = {
+    (ai.protomolt.proto.llm.v1.field) = {
       instruction: "Last names only, in the order the opinion lists them."
     }
   ];
 
   // Broad subject labels a researcher would search under.
   repeated string topics = 7 [
-    (ai.pipestream.proto.validate.v1.field) = {
+    (ai.protomolt.proto.validate.v1.field) = {
       repeated: {min_items: 1, max_items: 10, unique: true}
     },
-    (ai.pipestream.proto.llm.v1.field) = {
+    (ai.protomolt.proto.llm.v1.field) = {
       instruction: "Broad subject labels a researcher would search under."
     }
   ];
 
   // Cases the opinion relies on as controlling authority.
   repeated string leading_authorities = 8 [
-    (ai.pipestream.proto.validate.v1.field) = {
+    (ai.protomolt.proto.validate.v1.field) = {
       repeated: {max_items: 20, unique: true}
     },
-    (ai.pipestream.proto.llm.v1.field) = {
+    (ai.protomolt.proto.llm.v1.field) = {
       instruction: "Cases the opinion relies on as controlling authority, cited as printed on first use."
       volatile: true
     }
@@ -142,13 +142,13 @@ message OpinionMetadata {
 
   // One-paragraph summary of the holding.
   string headnote = 9 [
-    (ai.pipestream.proto.validate.v1.field) = {
+    (ai.protomolt.proto.validate.v1.field) = {
       string: {max_len: 1500}
     },
-    (ai.pipestream.proto.meta.v1.field) = {
+    (ai.protomolt.proto.meta.v1.field) = {
       description: "One-paragraph summary of the holding."
     },
-    (ai.pipestream.proto.llm.v1.field) = {
+    (ai.protomolt.proto.llm.v1.field) = {
       instruction: "Holding first, present tense, under 120 words."
       safeguards: "Do not editorialize; state what the court held, not whether it was right."
     }
@@ -156,10 +156,10 @@ message OpinionMetadata {
 
   // True when the text cannot support a truthful fill of this form.
   bool incomplete = 10 [
-    (ai.pipestream.proto.meta.v1.field) = {
+    (ai.protomolt.proto.meta.v1.field) = {
       description: "Set when the document cannot support a truthful fill."
     },
-    (ai.pipestream.proto.llm.v1.field) = {
+    (ai.protomolt.proto.llm.v1.field) = {
       instruction: "Set true only when the text genuinely cannot support a truthful fill — e.g. it is not an opinion, is truncated mid-caption, or lacks the holding. A hard or old document is NOT incomplete; fill what it supports and omit what it does not."
       safeguards: "Never set true to avoid difficult extraction; never invent data to avoid setting true."
     }
@@ -167,13 +167,13 @@ message OpinionMetadata {
 
   // Why the form could not be filled, in the filler's own words.
   string incomplete_reason = 11 [
-    (ai.pipestream.proto.validate.v1.field) = {
+    (ai.protomolt.proto.validate.v1.field) = {
       string: {max_len: 500}
     },
-    (ai.pipestream.proto.meta.v1.field) = {
+    (ai.protomolt.proto.meta.v1.field) = {
       description: "Why the fill was declared incomplete."
     },
-    (ai.pipestream.proto.llm.v1.field) = {
+    (ai.protomolt.proto.llm.v1.field) = {
       instruction: "One or two sentences naming exactly what the text lacks."
     }
   ];

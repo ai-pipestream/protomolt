@@ -26,13 +26,9 @@ build bundles it, with the same-origin API bridges provided by the server
 (`/api/protomolt` to the in-process registry, `/api/serve` to the verbs).
 Any reverse proxy that mirrors those paths works too.
 
-## Provenance
+## Layout
 
-The application source (views, components, services, tests) was originally
-written inside the platform frontend's working tree by mistake and recovered
-from the snapshot taken before that tree was reset; this scaffold makes it a
-standalone app. `reference/platform-integration.patch` records how it was
-once mounted in the platform, and `reference/schemaRegistryProxy.ts` is the
-BFF proxy the vite dev proxy replaces. The schema-form and descriptor
-utilities under `src/lib/` are vendored from the platform packages they came
-from.
+The application is a standalone Vue app that talks only to `protomolt-serve`.
+The schema-form and descriptor utilities under `src/lib/` are part of this
+app; `x-protomolt-lookup` is the schema annotation its reference pickers
+resolve, with the resolver registry in `src/lib/schema-form/lookups.ts`.

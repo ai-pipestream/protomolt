@@ -25,7 +25,7 @@ via `AutoConfiguration.imports`). It provides, each guarded by
 The default token validator rejects all tokens; define a
 `ProtoApiTokenValidator` bean to accept real credentials. The Spring MVC
 host reads its mount point from
-`pipestream.proto.rest.path-prefix` (default `/grpc-json`).
+`protomolt.rest.path-prefix` (default `/grpc-json`).
 
 ## Quarkus (`protomolt-integration-quarkus`)
 
@@ -37,13 +37,13 @@ into the registry: contributing a new descriptor source is just producing
 a bean.
 
 The Apicurio module ships Quarkus wiring of its own, configured under
-`pipestream.proto.apicurio.*`:
+`protomolt.apicurio.*`:
 
 ```properties
-pipestream.proto.apicurio.enabled=true
-pipestream.proto.apicurio.registry-url=http://localhost:8080/apis/registry/v3
-pipestream.proto.apicurio.group-id=default
-pipestream.proto.apicurio.auto-load-on-startup=false
+protomolt.apicurio.enabled=true
+protomolt.apicurio.registry-url=http://localhost:8080/apis/registry/v3
+protomolt.apicurio.group-id=default
+protomolt.apicurio.auto-load-on-startup=false
 ```
 
 ## Micronaut and others

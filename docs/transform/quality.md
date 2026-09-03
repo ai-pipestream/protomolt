@@ -7,10 +7,10 @@ measure any instance against them. Validation says whether data is
 admissible; quality says how good the admissible data is.
 
 ```protobuf
-import "ai/pipestream/proto/quality/v1/quality.proto";
+import "ai/protomolt/proto/quality/v1/quality.proto";
 
 message Article {
-  option (ai.pipestream.proto.quality.v1.quality) = {
+  option (ai.protomolt.proto.quality.v1.quality) = {
     dimension: { id: "titled" cel: "this.title != ''" }
     dimension: { id: "sized"  weight: 3.0
                  cel: "clamp(double(this.body.size()) / 500.0, 0.0, 1.0)" }

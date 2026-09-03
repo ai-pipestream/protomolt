@@ -46,7 +46,7 @@ checked exception. Whoever obtained a provider closes it.
 provider on the classpath keyed by id, and `byId(String)` resolves one,
 failing with the list of available ids when the requested provider is not
 there. Registration is the standard
-`META-INF/services/ai.pipestream.proto.search.embedding.EmbeddingProvider` file.
+`META-INF/services/ai.protomolt.proto.search.embedding.EmbeddingProvider` file.
 
 ## The embedding lane
 
@@ -121,11 +121,11 @@ them, the mapper produces the document, the embedder fills the vector, and
 the sink lands it in OpenSearch:
 
 ```protobuf
-import "ai/pipestream/proto/index/hints/v1/indexing_hints.proto";
+import "ai/protomolt/proto/index/hints/v1/indexing_hints.proto";
 
 message Sentence {
-  string sentence = 1 [(ai.pipestream.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_TEXT }];
-  repeated float embedding = 2 [(ai.pipestream.proto.index.hints.v1.index) = {
+  string sentence = 1 [(ai.protomolt.proto.index.hints.v1.index) = { type: INDEX_FIELD_TYPE_TEXT }];
+  repeated float embedding = 2 [(ai.protomolt.proto.index.hints.v1.index) = {
     type: INDEX_FIELD_TYPE_VECTOR
     vector_dims: 256
   }];

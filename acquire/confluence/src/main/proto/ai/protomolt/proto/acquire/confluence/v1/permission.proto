@@ -1,0 +1,248 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.acquire.confluence.v1;
+
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.acquire.confluence.v1";
+
+// ============================================================================
+// SPACE PERMISSIONS, SPACE ROLES, SPACE PERMISSION TRANSITION
+// ============================================================================
+
+// The principal type of a space role assignment.
+enum PrincipalType {
+  // Not specified.
+  PRINCIPAL_TYPE_UNSPECIFIED = 0;
+  // A user principal.
+  PRINCIPAL_TYPE_USER = 1;
+  // A group principal.
+  PRINCIPAL_TYPE_GROUP = 2;
+  // An access-class principal.
+  PRINCIPAL_TYPE_ACCESS_CLASS = 3;
+}
+
+// The principal of a space role assignment.
+message Principal {
+  // The kind of principal (user, group, or access class).
+  PrincipalType principal_type = 1;
+  // The principal ID.
+  string principal_id = 2;
+}
+
+// The type of a space role.
+enum RoleType {
+  // Not specified.
+  ROLE_TYPE_UNSPECIFIED = 0;
+  // A built-in role provided by Confluence.
+  ROLE_TYPE_SYSTEM = 1;
+  // A role created by a tenant administrator.
+  ROLE_TYPE_CUSTOM = 2;
+}
+
+// The principal kind of a space permission assignment.
+enum SpacePermissionPrincipalType {
+  // Not specified.
+  SPACE_PERMISSION_PRINCIPAL_TYPE_UNSPECIFIED = 0;
+  // A user.
+  SPACE_PERMISSION_PRINCIPAL_TYPE_USER = 1;
+  // A group.
+  SPACE_PERMISSION_PRINCIPAL_TYPE_GROUP = 2;
+  // A space role.
+  SPACE_PERMISSION_PRINCIPAL_TYPE_ROLE = 3;
+}
+
+// The entity a space permission corresponds to (an inline object in the
+// spec).
+message SpacePermissionPrincipal {
+  // The kind of entity (user, group, or role) `id` refers to.
+  SpacePermissionPrincipalType type = 1;
+  // ID of the entity.
+  string id = 2;
+}
+
+// The operation key of a space permission.
+enum SpacePermissionOperationKey {
+  // Not specified.
+  SPACE_PERMISSION_OPERATION_KEY_UNSPECIFIED = 0;
+  // Use the product (access the space's content).
+  SPACE_PERMISSION_OPERATION_KEY_USE = 1;
+  // Create content of the target type.
+  SPACE_PERMISSION_OPERATION_KEY_CREATE = 2;
+  // Read content of the target type.
+  SPACE_PERMISSION_OPERATION_KEY_READ = 3;
+  // Update content of the target type.
+  SPACE_PERMISSION_OPERATION_KEY_UPDATE = 4;
+  // Delete content of the target type.
+  SPACE_PERMISSION_OPERATION_KEY_DELETE = 5;
+  // Copy content of the target type.
+  SPACE_PERMISSION_OPERATION_KEY_COPY = 6;
+  // Move content of the target type.
+  SPACE_PERMISSION_OPERATION_KEY_MOVE = 7;
+  // Export content of the target type.
+  SPACE_PERMISSION_OPERATION_KEY_EXPORT = 8;
+  // Permanently purge content of the target type (from the trash).
+  SPACE_PERMISSION_OPERATION_KEY_PURGE = 9;
+  // Permanently purge historical versions of content.
+  SPACE_PERMISSION_OPERATION_KEY_PURGE_VERSION = 10;
+  // Administer the space.
+  SPACE_PERMISSION_OPERATION_KEY_ADMINISTER = 11;
+  // Restore content of the target type (from the trash).
+  SPACE_PERMISSION_OPERATION_KEY_RESTORE = 12;
+  // Create a space.
+  SPACE_PERMISSION_OPERATION_KEY_CREATE_SPACE = 13;
+  // Apply or remove restrictions on content of the target type.
+  SPACE_PERMISSION_OPERATION_KEY_RESTRICT_CONTENT = 14;
+  // Archive content of the target type.
+  SPACE_PERMISSION_OPERATION_KEY_ARCHIVE = 15;
+}
+
+// The content kind a space permission operation targets.
+enum SpacePermissionOperationTargetType {
+  // Not specified.
+  SPACE_PERMISSION_OPERATION_TARGET_TYPE_UNSPECIFIED = 0;
+  // A page.
+  SPACE_PERMISSION_OPERATION_TARGET_TYPE_PAGE = 1;
+  // A blog post.
+  SPACE_PERMISSION_OPERATION_TARGET_TYPE_BLOGPOST = 2;
+  // A comment.
+  SPACE_PERMISSION_OPERATION_TARGET_TYPE_COMMENT = 3;
+  // An attachment.
+  SPACE_PERMISSION_OPERATION_TARGET_TYPE_ATTACHMENT = 4;
+  // A whiteboard.
+  SPACE_PERMISSION_OPERATION_TARGET_TYPE_WHITEBOARD = 5;
+  // A database.
+  SPACE_PERMISSION_OPERATION_TARGET_TYPE_DATABASE = 6;
+  // An embed.
+  SPACE_PERMISSION_OPERATION_TARGET_TYPE_EMBED = 7;
+  // A folder.
+  SPACE_PERMISSION_OPERATION_TARGET_TYPE_FOLDER = 8;
+  // A space.
+  SPACE_PERMISSION_OPERATION_TARGET_TYPE_SPACE = 9;
+  // An application.
+  SPACE_PERMISSION_OPERATION_TARGET_TYPE_APPLICATION = 10;
+  // A user profile.
+  SPACE_PERMISSION_OPERATION_TARGET_TYPE_USER_PROFILE = 11;
+}
+
+// The operation a space permission corresponds to (an inline object in the
+// spec).
+message SpacePermissionOperation {
+  // The operation key (e.g. read, update, delete).
+  SpacePermissionOperationKey key = 1;
+  // The content kind the operation targets.
+  SpacePermissionOperationTargetType target_type = 2;
+}
+
+// A space permission definition (Space Permissions group).
+message SpacePermission {
+  // The identifier for the space permission.
+  string id = 1;
+  // The display name for the space permission.
+  string display_name = 2;
+  // Describes the space permission's usage.
+  string description = 3;
+  // The permissions required for this permission to be enabled.
+  repeated string required_permission_ids = 4;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// The assignment of one space permission to a principal.
+message SpacePermissionAssignment {
+  // ID of the space permission.
+  string id = 1;
+  // The entity the space permission corresponds to.
+  SpacePermissionPrincipal principal = 2;
+  // The operation the space permission corresponds to.
+  SpacePermissionOperation operation = 3;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// A space role: a named set of space permissions (Space Roles group).
+message SpaceRole {
+  // The identifier for the space role.
+  string id = 1;
+  // The type of the space role (system-provided or custom).
+  RoleType type = 2;
+  // The name for the space role.
+  string name = 3;
+  // The description for the space role's usage.
+  string description = 4;
+  // The space permissions the space role is comprised of.
+  repeated string space_permissions = 5;
+  // Extensible key-value metadata (extension-metadata map - see convention).
+  map<string, string> metadata = 99;
+}
+
+// The assignment of a space role to a principal.
+message SpaceRoleAssignment {
+  // The principal the role is assigned to.
+  Principal principal = 1;
+  // The role to which the principal is assigned.
+  string role_id = 2;
+}
+
+// ============================================================================
+// SPACE PERMISSION TRANSITION (read side: observed permission combinations
+// and the status of submitted bulk tasks)
+// ============================================================================
+
+// The status of an async bulk permission-transition task.
+enum BulkTransitionTaskStatus {
+  // Not specified.
+  BULK_TRANSITION_TASK_STATUS_UNSPECIFIED = 0;
+  // The task is still running.
+  BULK_TRANSITION_TASK_STATUS_IN_PROGRESS = 1;
+  // The task finished successfully.
+  BULK_TRANSITION_TASK_STATUS_COMPLETED = 2;
+  // The task failed; see `error_message` for details.
+  BULK_TRANSITION_TASK_STATUS_FAILED = 3;
+}
+
+// One decoded space permission inside a combination.
+message BulkTransitionDecodedPermission {
+  // The platform id of the permission (e.g. `VIEW_CONTENT`).
+  string id = 1;
+  // Human-readable name of the permission.
+  string display_name = 2;
+}
+
+// One unique combination of space permissions observed on the tenant.
+message BulkTransitionCombinationEntry {
+  // The opaque id identifying this unique combination of space permissions.
+  string combination_id = 1;
+  // Number of spaces that currently have this combination.
+  int64 space_count = 2;
+  // Number of principals (users, groups, etc.) that currently have this
+  // combination.
+  int64 principal_count = 3;
+  // The decoded space permissions that make up this combination.
+  repeated BulkTransitionDecodedPermission permissions = 4;
+  // The principal types that currently hold this combination.
+  repeated string principal_types = 5;
+}
+
+// One page of unassigned permission combinations.
+message ListSpacePermissionCombinationsResponse {
+  // One page of unassigned permission combinations, sorted by principal_count
+  // descending.
+  repeated BulkTransitionCombinationEntry results = 1;
+  // When the last audit run populated the combinations table. Absent if the
+  // audit task has never run on this tenant.
+  optional google.protobuf.Timestamp generated_at = 2;
+}
+
+// The status of an async bulk transition task.
+message BulkTransitionTaskStatusResponse {
+  // The ID of the task.
+  string task_id = 1 [(ai.protomolt.proto.validate.v1.field) = { required: true }];
+  // The current status of the task.
+  BulkTransitionTaskStatus status = 2;
+  // Human-readable error message describing why the task failed. Only present
+  // when status is FAILED.
+  optional string error_message = 3;
+}
