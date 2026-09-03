@@ -1,6 +1,6 @@
 package ai.protomolt.proto.validate.spi;
 
-import ai.protomolt.proto.validate.source.AiPipestreamRuleSource;
+import ai.protomolt.proto.validate.source.ProtomoltRuleSource;
 import ai.protomolt.proto.validate.source.GoogleTypeRuleSource;
 import org.junit.jupiter.api.Test;
 
@@ -20,7 +20,7 @@ class ValidationRuleSourcesTest {
         // contributes nothing beyond the two built-in readers: the Pipestream dialect
         // first, then the google.type well-known constraints.
         assertThat(sources).hasSize(2);
-        assertThat(sources.get(0)).isInstanceOf(AiPipestreamRuleSource.class);
+        assertThat(sources.get(0)).isInstanceOf(ProtomoltRuleSource.class);
         assertThat(sources.get(1)).isInstanceOf(GoogleTypeRuleSource.class);
     }
 
@@ -29,17 +29,17 @@ class ValidationRuleSourcesTest {
         List<ValidationRuleSource> first = ValidationRuleSources.defaults();
         List<ValidationRuleSource> second = ValidationRuleSources.defaults();
 
-        assertThatThrownBy(() -> first.add(new AiPipestreamRuleSource()))
+        assertThatThrownBy(() -> first.add(new ProtomoltRuleSource()))
                 .isInstanceOf(UnsupportedOperationException.class);
         assertThat(first).isNotSameAs(second);
         assertThat(first).hasSameSizeAs(second);
     }
 
     @Test
-    void pipestreamOnlyIsExactlyTheBuiltInReader() {
-        List<ValidationRuleSource> sources = ValidationRuleSources.pipestreamOnly();
+    void protomoltOnlyIsExactlyTheBuiltInReader() {
+        List<ValidationRuleSource> sources = ValidationRuleSources.protomoltOnly();
 
         assertThat(sources).hasSize(1);
-        assertThat(sources.get(0)).isInstanceOf(AiPipestreamRuleSource.class);
+        assertThat(sources.get(0)).isInstanceOf(ProtomoltRuleSource.class);
     }
 }

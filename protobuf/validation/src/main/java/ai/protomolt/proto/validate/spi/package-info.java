@@ -9,9 +9,9 @@
  *
  * <p>{@link ai.protomolt.proto.validate.spi.ValidationRuleSources} assembles the chain a
  * validator uses. {@code defaults()} places the built-in
- * {@link ai.protomolt.proto.validate.source.AiPipestreamRuleSource} first and appends any
+ * {@link ai.protomolt.proto.validate.source.ProtomoltRuleSource} first and appends any
  * implementation found through {@link java.util.ServiceLoader}, so an optional dialect module
- * takes effect by being on the classpath; {@code pipestreamOnly()} pins the built-in reader.
+ * takes effect by being on the classpath; {@code protomoltOnly()} pins the built-in reader.
  * Every source in the chain is consulted for every field and message and all violations are
  * merged.
  *

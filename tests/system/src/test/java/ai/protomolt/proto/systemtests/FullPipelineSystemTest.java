@@ -74,7 +74,7 @@ import static org.assertj.core.groups.Tuple.tuple;
  * {@code ai.protomolt.proto.validate.v1} options-in-text. The gather path compiles with the
  * Wire-based {@link ai.protomolt.proto.sources.ProtoSourceCompiler}, and nothing in the repo
  * demonstrates Wire compiling {@code extend google.protobuf.FieldOptions} declarations plus
- * option usages into descriptors that {@code AiPipestreamRuleSource} could read back (the
+ * option usages into descriptors that {@code ProtomoltRuleSource} could read back (the
  * validation module compiles its option-bearing fixtures with protoc via the protobuf Gradle
  * plugin instead). So this test exercises the sanctioned programmatic path: a
  * {@link ValidationRuleSource} supplies the same neutral-model constraints the options would

@@ -5,7 +5,7 @@ import ai.protomolt.proto.validate.model.FloatingConstraints;
 import ai.protomolt.proto.validate.model.IgnoreMode;
 import ai.protomolt.proto.validate.model.MessageConstraints;
 import ai.protomolt.proto.validate.model.RepeatedConstraints;
-import ai.protomolt.proto.validate.source.AiPipestreamRuleSource;
+import ai.protomolt.proto.validate.source.ProtomoltRuleSource;
 import ai.protomolt.proto.validate.spi.ValidationRuleSource;
 import ai.protomolt.proto.validate.testdata.ImplicitGauntlet;
 import ai.protomolt.proto.validate.testdata.RepeatedGauntlet;
@@ -143,7 +143,7 @@ class PresenceAndIgnoreTest {
                                 OptionalLong.empty(), OptionalLong.empty(), false, Optional.of(items)))
                         .build());
         ProtoValidator validator = ProtoValidator.create(
-                List.of(new AiPipestreamRuleSource(), ignoreItems));
+                List.of(new ProtomoltRuleSource(), ignoreItems));
 
         RepeatedGauntlet message = RepeatedGauntlet.newBuilder()
                 .addTags("ab")

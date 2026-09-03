@@ -4,7 +4,7 @@ import ai.protomolt.proto.validate.model.FieldConstraints;
 import ai.protomolt.proto.validate.model.IgnoreMode;
 import ai.protomolt.proto.validate.model.MapConstraints;
 import ai.protomolt.proto.validate.model.MessageConstraints;
-import ai.protomolt.proto.validate.source.AiPipestreamRuleSource;
+import ai.protomolt.proto.validate.source.ProtomoltRuleSource;
 import ai.protomolt.proto.validate.spi.ValidationRuleSource;
 import ai.protomolt.proto.validate.testdata.MapGauntlet;
 import ai.protomolt.proto.validate.testdata.RepeatedGauntlet;
@@ -121,7 +121,7 @@ class CollectionRulesTest {
     @Test
     void ignoredMapValuesSkipEmbeddedValidation() {
         ProtoValidator validator = ProtoValidator.create(
-                List.of(new AiPipestreamRuleSource(), new IgnoreMapValuesRuleSource()));
+                List.of(new ProtomoltRuleSource(), new IgnoreMapValuesRuleSource()));
 
         MapGauntlet message = MapGauntlet.newBuilder()
                 .putScores("ab", 1)

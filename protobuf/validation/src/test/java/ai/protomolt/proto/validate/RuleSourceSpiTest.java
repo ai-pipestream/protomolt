@@ -4,7 +4,7 @@ import ai.protomolt.proto.validate.model.CelConstraint;
 import ai.protomolt.proto.validate.model.FieldConstraints;
 import ai.protomolt.proto.validate.model.IntegralConstraints;
 import ai.protomolt.proto.validate.model.MessageConstraints;
-import ai.protomolt.proto.validate.source.AiPipestreamRuleSource;
+import ai.protomolt.proto.validate.source.ProtomoltRuleSource;
 import ai.protomolt.proto.validate.spi.ValidationRuleSource;
 import ai.protomolt.proto.validate.testdata.Person;
 import com.google.protobuf.Descriptors.Descriptor;
@@ -45,7 +45,7 @@ class RuleSourceSpiTest {
 
     @Test
     void foreignSourceMergesWithBuiltIn() {
-        List<ValidationRuleSource> chain = List.of(new AiPipestreamRuleSource(), new AgeCapRuleSource());
+        List<ValidationRuleSource> chain = List.of(new ProtomoltRuleSource(), new AgeCapRuleSource());
         ProtoValidator validator = ProtoValidator.forMessageType(Person.getDescriptor(), chain);
 
         // age 36 is fine for the built-in int32 rules but violates the foreign cap of 10.
@@ -66,7 +66,7 @@ class RuleSourceSpiTest {
     @Test
     void builtInAloneIgnoresForeignConstraints() {
         ProtoValidator validator = ProtoValidator.forMessageType(
-                Person.getDescriptor(), List.of(new AiPipestreamRuleSource()));
+                Person.getDescriptor(), List.of(new ProtomoltRuleSource()));
 
         Person person = Person.newBuilder()
                 .setName("Ada")

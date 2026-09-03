@@ -15,7 +15,7 @@
  * dialect onto that model lives behind
  * {@link ai.protomolt.proto.validate.spi.ValidationRuleSource}. The built-in reader for the
  * Pipestream {@code validate.v1} options is
- * {@link ai.protomolt.proto.validate.source.AiPipestreamRuleSource}; further dialects are
+ * {@link ai.protomolt.proto.validate.source.ProtomoltRuleSource}; further dialects are
  * discovered on the classpath through {@link java.util.ServiceLoader}. Custom rules are evaluated
  * as CEL, with the format functions in {@link ai.protomolt.proto.validate.cel} registered into the
  * validation environment.

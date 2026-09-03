@@ -2,7 +2,7 @@ package ai.protomolt.proto.validate;
 
 import ai.protomolt.proto.validate.model.FieldConstraints;
 import ai.protomolt.proto.validate.model.MessageConstraints;
-import ai.protomolt.proto.validate.source.AiPipestreamRuleSource;
+import ai.protomolt.proto.validate.source.ProtomoltRuleSource;
 import ai.protomolt.proto.validate.testdata.DraftForm;
 import ai.protomolt.proto.validate.testdata.Item;
 import ai.protomolt.proto.validate.testdata.MultiNumericGauntlet;
@@ -16,9 +16,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * translated model matches the declared options, and a field carrying several numeric rule sets
  * is reduced to one by the documented precedence (wider signed, then signed over unsigned).
  */
-class AiPipestreamRuleSourceTest {
+class ProtomoltRuleSourceTest {
 
-    private static final AiPipestreamRuleSource SOURCE = new AiPipestreamRuleSource();
+    private static final ProtomoltRuleSource SOURCE = new ProtomoltRuleSource();
     private static final ProtoValidator VALIDATOR = ProtoValidator.create();
 
     @Test
@@ -63,7 +63,7 @@ class AiPipestreamRuleSourceTest {
 
     @Test
     void sourceIdDefaultsToTheClassName() {
-        assertThat(SOURCE.sourceId()).isEqualTo("AiPipestreamRuleSource");
+        assertThat(SOURCE.sourceId()).isEqualTo("ProtomoltRuleSource");
     }
 
     @Test

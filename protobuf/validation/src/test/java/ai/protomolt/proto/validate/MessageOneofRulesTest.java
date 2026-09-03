@@ -2,7 +2,7 @@ package ai.protomolt.proto.validate;
 
 import ai.protomolt.proto.validate.model.FieldConstraints;
 import ai.protomolt.proto.validate.model.MessageConstraints;
-import ai.protomolt.proto.validate.source.AiPipestreamRuleSource;
+import ai.protomolt.proto.validate.source.ProtomoltRuleSource;
 import ai.protomolt.proto.validate.spi.ValidationRuleSource;
 import ai.protomolt.proto.validate.testdata.Choice;
 import ai.protomolt.proto.validate.testdata.SyntheticOneofGauntlet;
@@ -39,7 +39,7 @@ class MessageOneofRulesTest {
     /** The dialect plus a synthetic oneof over {@code alpha}/{@code beta}. */
     private static ProtoValidator syntheticOneofValidator(boolean required) {
         return ProtoValidator.create(List.of(
-                new AiPipestreamRuleSource(),
+                new ProtomoltRuleSource(),
                 new MessageSource(new MessageConstraints(List.of(),
                         List.of(new MessageConstraints.Oneof(List.of("alpha", "beta"), required)),
                         List.of()))));

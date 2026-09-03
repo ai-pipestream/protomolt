@@ -14,7 +14,7 @@ import java.util.Optional;
  * one dialect's option types.
  *
  * <p>This is the extension seam for constraint compatibility. The built-in
- * {@link ai.protomolt.proto.validate.source.AiPipestreamRuleSource} reads the
+ * {@link ai.protomolt.proto.validate.source.ProtomoltRuleSource} reads the
  * Pipestream {@code validate.v1} options. Additional dialects (for example a
  * {@code buf.validate} reader in a separate, optional module) implement this interface
  * and are picked up automatically via {@link java.util.ServiceLoader} — see

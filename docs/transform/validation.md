@@ -95,11 +95,11 @@ cleanly by dropping the dependency. The chain can also be pinned explicitly:
 
 ```java
 // Built-in dialect only, ignoring classpath extensions
-ProtoValidator.forMessageType(desc, ValidationRuleSources.pipestreamOnly());
+ProtoValidator.forMessageType(desc, ValidationRuleSources.protomoltOnly());
 
 // Explicit multi-dialect chain
 ProtoValidator.forMessageType(desc,
-    List.of(new AiPipestreamRuleSource(), new ProtovalidateRuleSource()));
+    List.of(new ProtomoltRuleSource(), new ProtovalidateRuleSource()));
 ```
 
 ## Protovalidate interoperability

@@ -53,7 +53,7 @@ import java.util.OptionalLong;
  * options — {@code (ai.protomolt.proto.validate.v1.field)} and {@code (…​.message)} —
  * off protobuf descriptors and translating them into the neutral rule model.
  */
-public final class AiPipestreamRuleSource implements ValidationRuleSource {
+public final class ProtomoltRuleSource implements ValidationRuleSource {
 
     private static final ExtensionRegistry EXTENSIONS = createExtensionRegistry();
 

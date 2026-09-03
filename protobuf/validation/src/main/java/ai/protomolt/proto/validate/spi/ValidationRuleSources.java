@@ -1,6 +1,6 @@
 package ai.protomolt.proto.validate.spi;
 
-import ai.protomolt.proto.validate.source.AiPipestreamRuleSource;
+import ai.protomolt.proto.validate.source.ProtomoltRuleSource;
 import ai.protomolt.proto.validate.source.GoogleTypeRuleSource;
 
 import java.util.ArrayList;
@@ -25,7 +25,7 @@ public final class ValidationRuleSources {
      */
     public static List<ValidationRuleSource> defaults() {
         List<ValidationRuleSource> sources = new ArrayList<>();
-        sources.add(new AiPipestreamRuleSource());
+        sources.add(new ProtomoltRuleSource());
         sources.add(new GoogleTypeRuleSource());
         for (ValidationRuleSource discovered : ServiceLoader.load(ValidationRuleSource.class)) {
             boolean known = sources.stream()
@@ -38,7 +38,7 @@ public final class ValidationRuleSources {
     }
 
     /** Just the built-in Pipestream reader, ignoring any {@link ServiceLoader} extensions. */
-    public static List<ValidationRuleSource> pipestreamOnly() {
-        return List.of(new AiPipestreamRuleSource());
+    public static List<ValidationRuleSource> protomoltOnly() {
+        return List.of(new ProtomoltRuleSource());
     }
 }
