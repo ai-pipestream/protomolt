@@ -32,7 +32,9 @@ The coordinator offers a bounded `TaskSpec` with:
 - allowed repository or workspace scope;
 - constraints;
 - required acceptance checks;
-- context artifact references; and
+- context artifact references;
+- an optional deliverable contract naming the message the task must produce
+  (see [Deliverable contract](#deliverable-contract)); and
 - a lease duration and expiry.
 
 The worker accepts or rejects the offer. An accepted attempt may send
@@ -42,12 +44,91 @@ checkpoint.
 
 A worker cannot mark its own task complete. It submits a completion candidate
 with evidence for every required check and at least one commit or artifact
-reference. The coordinator either accepts that revision or requests another
+reference, plus the typed deliverable when the spec named one. The coordinator either accepts that revision or requests another
 revision with structured feedback.
 
 Blocked, failed, cancelled, rejected, expired, and accepted attempts are
 terminal. Reassignment uses a new attempt and lease. Coordinator cancellation
 wins a race with a later completion candidate.
+
+## Deliverable contract
+
+A task spec may also name the message the task must produce. `TaskSpec.contract`
+is a `DeliverableContract`:
+
+- `descriptor_set`: a serialized `FileDescriptorSet` defining the deliverable
+  message and the files it imports. It travels with the offer, so the rules a
+  deliverable is held to are the rules the coordinator stated when the task
+  opened, not whatever the running process has on its classpath, and a worker
+  needs no registry, no shared build, and no protoc. One frame is capped at
+  1 MiB, which bounds a practical set well below the field's 4 MiB limit.
+- `type_name`: the full proto name of the deliverable message inside that set.
+- `json_schema`: the JSON schema of that message. Leave it empty on the offer
+  request: the coordinator renders it with `ProtoJsonSchemaGenerator` from the
+  descriptor set and writes it onto the spec that goes on the wire.
+
+An offer naming a type its own descriptor set does not define is refused while
+the caller still holds it (`invalid-input` on `delegation-offer`).
+
+`CompletionCandidate.result` is the deliverable, packed as a
+`google.protobuf.Any`. When the spec declares a contract the reducer checks it
+before any reviewer reads the summary, and every problem is a finding of kind
+`contract`:
+
+| Situation | Finding |
+|---|---|
+| Spec declares a contract, candidate has no `result` | `... declares a deliverable contract for X and the candidate carries no result` |
+| `result.type_url` does not end in `/<type_name>` | `the deliverable is a Y but the task's contract names X` |
+| The packed bytes do not parse as the named type | `the deliverable does not parse as X: ...` |
+| A declared rule fails | `the deliverable violates <ruleId> at result.<path>: <rule message>` |
+| Candidate has a `result` but the spec declares no contract | `... the offer's spec declares no deliverable contract; an unstated deliverable cannot be checked` |
+
+The rules come from the contract's own descriptor set, parsed with the house
+option extensions registered, so declared field rules and message CEL inside it
+are options rather than unknown fields. The deliverable is unpacked into a
+`DynamicMessage` and run through `ProtoValidator.forMessageType`, exactly the
+way the index write path validates a payload unpacked from an `Any`; violation
+paths are prefixed with `result`. Linked descriptors and their validators are
+cached by the bytes of the descriptor set, because a transcript is reduced from
+the beginning on each appended frame.
+
+A task whose spec declares no contract behaves exactly as before: the required
+acceptance checks alone decide whether a candidate is reviewable.
+
+### The JSON form
+
+Over gRPC the `Any` is bytes and needs nothing. Over the catalog verbs the
+candidate is proto3 JSON, where an `Any` is written as its own members under a
+`@type` URL:
+
+```json
+{
+  "workerId": "worker-kimi-1",
+  "taskId": "…",
+  "candidate": {
+    "attempt": 1,
+    "revision": 1,
+    "summary": "the review report is written",
+    "evidence": [{"checkName": "unit-tests", "verdict": "CHECK_VERDICT_PASSED",
+                  "ranAt": "2026-09-04T12:00:00Z", "detail": "312 tests, 0 failures"}],
+    "commits": [{"repository": "…", "commit": "…", "subject": "…"}],
+    "result": {
+      "@type": "type.googleapis.com/delivery.v1.ReviewReport",
+      "headline": "the parser handles nested oneofs",
+      "findings": 4
+    }
+  }
+}
+```
+
+`@type` is the only accepted spelling of the deliverable's type; there is no
+wrapper member and no side channel for the type name. A JSON parser can only
+build a packed message when it can locate the type, and the deliverable's type
+is not one the server was compiled with, so the delegation verbs publish a type
+registry built from the contracts of the coordinator's live tasks. That
+registry is used on the way in by `delegation-candidate` and on the way out by
+`delegation-watch` and `delegation-transcript`, which print recorded frames
+back.
 
 ## Ordering and idempotency
 
@@ -71,6 +152,9 @@ changes. It reports findings for:
 - checkpoint regression;
 - completion after cancellation; and
 - changes after a terminal state.
+
+- a deliverable that is absent, of the wrong type, unparseable, or in breach of
+  a rule the task's contract declares.
 
 The reducer never repairs input. `DelegationValidation` handles structural
 contract validation before lifecycle replay.
@@ -117,6 +201,10 @@ InProcessDelegationCoordinator coordinator =
         new InProcessDelegationCoordinator(
                 admissionPolicy, candidateReviewer, clock, transcripts);
 ```
+
+A candidate's typed deliverable is transcript state like any other frame field:
+the snapshot is protobuf, so a recorded `result` round-trips through the
+encrypted envelope and is restored with the rest of the task.
 
 Every accepted frame is durable before it enters the event feed or reaches a
 worker. A failed write does not consume a coordinator sequence, mutate task

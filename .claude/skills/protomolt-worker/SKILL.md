@@ -108,9 +108,36 @@ the offer is the whole budget for this attempt. Tell the user what you accepted.
   reported, with the reason), `ranAt` as an ISO timestamp, `detail` = the exact command
   and its result;
 - `commits`: `{repository, commit (full 40-hex sha1), subject}` for every commit that
-  carries the work, or `artifacts`: `{sha256, mediaType, sizeBytes}` for produced files.
+  carries the work, or `artifacts`: `{sha256, mediaType, sizeBytes}` for produced files;
+- `result`: the typed deliverable, but **only** when the offer's
+  `spec.contract` was set. See below.
 
 Then go back to watching: the coordinator answers with `accepted` or `revision`.
+
+### The typed deliverable
+
+When the offer carries `spec.contract`, the task is judged on a message, not only on
+prose. The contract gives you `typeName` (the message you must produce) and
+`jsonSchema` (that message's shape and bounds, already rendered; you do not need
+protoc or the descriptor set). Build the deliverable against that schema and send it as
+`candidate.result` in the packed `Any` spelling:
+
+```json
+"result": {
+  "@type": "type.googleapis.com/<typeName>",
+  "<field>": "<value>"
+}
+```
+
+`@type` is the only accepted spelling, and `<typeName>` must match the contract exactly.
+The coordinator unpacks the message and runs it against the rules the contract's own
+descriptor set declares, before any human or model reviews it, so a missing required
+field, a string that is too short, or a failed cross-field rule refuses the candidate
+mechanically. The refusal names the rule and the field (`the deliverable violates
+string.min_len at result.headline: ...`); fix it and resubmit with `revision` + 1.
+
+Two matching errors are refused the same way: sending no `result` when the offer named a
+contract, and sending a `result` when it did not.
 
 ### Token accounting
 
@@ -145,6 +172,13 @@ Pick a worker whose capabilities cover the task's tags and tier, then `delegatio
   java-gradle, proto-buf`), then rules (`no pushes to main`, `tests first`);
 - `spec.requiredChecks`: slug names with a description of the command that proves each
   one (`gradle-gate: ./gradlew clean build test exits 0 on the branch tip`);
+- `spec.contract`: the typed deliverable, when the task must produce a message rather
+  than only a commit. `descriptorSet` is a serialized `FileDescriptorSet` as base64
+  bytes, taken from `reflect` (a live service), `compile` (inline `.proto` sources),
+  or a registry read. `typeName` is the full proto name of the message inside it.
+  Leave `jsonSchema` empty: the coordinator renders it from the descriptor set and the
+  worker reads it off the offer. An offer naming a type its descriptor set does not
+  define is refused as `invalid-input`;
 - `resumeFrom`: the worker's last checkpoint token when re-offering after a lease
   expiry or restart.
 
@@ -162,7 +196,10 @@ direction is GUIDANCE. Relay progress and checkpoints to the user as they arrive
 ### Review
 
 On a `completion` event, verify the evidence yourself before deciding; the reviewer
-seam ships only manual and accept-all implementations:
+seam ships only manual and accept-all implementations. A candidate that reached you at
+all already satisfies the task's deliverable contract, if it declared one: the
+coordinator checks `result` against the contract's rules before the candidate becomes
+reviewable, so the mechanical part is done and what is left is judgement:
 
 - every commit: `git fetch <repo> && git cat-file -t <sha>` (or
   `git merge-base --is-ancestor <sha> origin/<branch>` when the check says "on main");

@@ -85,6 +85,16 @@ class RepositoryServiceTranscriptRepositoryTest {
         assertThat(repository().load()).contains(transcript);
     }
 
+    /** A typed deliverable is transcript state like any other frame field. */
+    @Test
+    void roundTripsACandidateCarryingItsTypedDeliverable() {
+        Transcript transcript = deliverableTranscript();
+
+        repository().save(transcript);
+
+        assertThat(repository().load()).contains(transcript);
+    }
+
     @Test
     void rejectsRepositoryWriteWithoutExactIntegrityConfirmation() {
         service.wrongWriteDigest = true;
@@ -199,6 +209,28 @@ class RepositoryServiceTranscriptRepositoryTest {
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             throw new AssertionError(e);
         }
+    }
+
+    private static Transcript deliverableTranscript() {
+        var taskSpec = spec("build").toBuilder()
+                .setContract(DeliverableFixtures.contract())
+                .build();
+        var candidate = ai.protomolt.proto.delegation.v1.CompletionCandidate.newBuilder()
+                .setAttempt(1)
+                .setRevision(1)
+                .setSummary("the review report is written")
+                .addEvidence(DelegationFixtures.evidence("build"))
+                .addCommits(DelegationFixtures.commit("deliverable"))
+                .setResult(DeliverableFixtures.result("a headline long enough", 4))
+                .build();
+        return new DelegationFixtures.TranscriptBuilder()
+                .hello(WORKER)
+                .admit(WORKER)
+                .offer(TASK, WORKER, 1, taskSpec)
+                .accept(TASK, WORKER, 1)
+                .candidateWith(TASK, WORKER, 1, candidate)
+                .accepted(TASK, WORKER, 1, "verified")
+                .build();
     }
 
     private static Transcript acceptedTranscript(String objective) {

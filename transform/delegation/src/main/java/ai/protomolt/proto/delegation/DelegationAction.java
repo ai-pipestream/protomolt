@@ -22,6 +22,20 @@ abstract class DelegationAction implements ProtoAction {
         return Scopes.WORKER_COORDINATE;
     }
 
+    /**
+     * The deliverable types the coordinator's live tasks declare.
+     *
+     * <p>A candidate's {@code result} is an {@code Any} whose type the offer named, so it is
+     * not on this process's classpath and the default registry resolves nothing. Every
+     * delegation verb publishes the coordinator's own types: the candidate verb needs them to
+     * parse a submitted deliverable, and the watch and transcript verbs need them to print a
+     * recorded one back.
+     */
+    @Override
+    public com.google.protobuf.util.JsonFormat.TypeRegistry typeRegistry() {
+        return bridge.deliverableTypes();
+    }
+
     /** One cursor-addressable transcript event as its declared contract message. */
     static ObservedEvent observed(InProcessDelegationCoordinator.Event event) {
         return ObservedEvent.newBuilder()

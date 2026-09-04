@@ -22,6 +22,11 @@ exactly one tier tag, and a worker holds the tiers it is trusted with.
 | `tier-2` | A feature or refactor across modules, or a new module. Design notes expected. | Commits on a branch, the full repo gate green, a pull request opened. |
 | `tier-3` | Production and contract changes: deploys, releases, wire-level or published-API breaks, data resets. | Everything in `tier-2` plus a named person's acceptance in the review verdict. |
 
+A tier is about scope, so it is orthogonal to the deliverable: any tier's offer may also
+declare `spec.contract`, and then a candidate's typed `result` has to satisfy that
+contract's rules before the proof above is even looked at. See
+[Deliverable contract](../transform/delegation.md#deliverable-contract).
+
 ## Skill tags
 
 | Tag | Holder can |
