@@ -14,7 +14,7 @@ explain the frames you will send and receive.
 
 1. **Load the tools.** The `delegation-*` tools are deferred; their schemas are not in
    context until you fetch them. Call
-   `ToolSearch` with `select:mcp__protomolt__delegation-worker-register,mcp__protomolt__delegation-worker-list,mcp__protomolt__delegation-watch,mcp__protomolt__delegation-accept,mcp__protomolt__delegation-progress,mcp__protomolt__delegation-checkpoint,mcp__protomolt__delegation-candidate,mcp__protomolt__delegation-message,mcp__protomolt__delegation-review,mcp__protomolt__delegation-cancel,mcp__protomolt__delegation-transcript`.
+   `ToolSearch` with `select:mcp__protomolt__delegation-worker-register,mcp__protomolt__delegation-worker-list,mcp__protomolt__delegation-watch,mcp__protomolt__delegation-accept,mcp__protomolt__delegation-progress,mcp__protomolt__delegation-checkpoint,mcp__protomolt__delegation-candidate,mcp__protomolt__delegation-message,mcp__protomolt__delegation-offer,mcp__protomolt__delegation-review,mcp__protomolt__delegation-cancel,mcp__protomolt__delegation-transcript`.
    If nothing comes back, the `protomolt` MCP server is not connected in this session:
    stop and tell the user to add it (`claude mcp add --transport http protomolt
    https://protomolt.rokkon.com/mcp --header "Authorization: Bearer <serve token>"`).
@@ -84,8 +84,9 @@ Before `delegation-accept` (`workerId`, `taskId`, `attempt` from the offer) make
 every `requiredChecks` entry is something you can run and every `allowedScope` entry is
 something you can reach. If not, send `delegation-message` with
 `kind: TASK_MESSAGE_KIND_QUESTION`, `sender: <workerId>`, `recipient: coordinator`, and
-wait for the ANSWER before accepting. The lease starts at acceptance; `leaseDuration` in
-the offer is the whole budget for this attempt. Tell the user what you accepted.
+wait for the ANSWER before accepting. The lease clock runs from the offer, not from acceptance: `expiresAt` in
+the offer is the deadline for the attempt, so accept promptly and plan the
+work inside what remains. Tell the user what you accepted.
 
 ### Work, report, checkpoint
 
