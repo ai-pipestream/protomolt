@@ -10,6 +10,8 @@ option java_package = "ai.protomolt.proto.projection.test";
 option java_outer_classname = "ProjectionTestProto";
 
 import "ai/protomolt/proto/projection/v1/projection.proto";
+import "google/protobuf/any.proto";
+import "google/protobuf/duration.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -161,6 +163,13 @@ message ZooNested {
   string leaf = 1;
 }
 
+// Recursive message used to prove descriptor-driven conversion terminates on
+// the actual value tree rather than rejecting a cyclic descriptor graph.
+message RecursiveNode {
+  string label = 1;
+  RecursiveNode child = 2;
+}
+
 // One source carrying every construct the coercion and presence rules touch,
 // so the target fixtures below can each read from a single shared source.
 message ScalarZoo {
@@ -197,6 +206,14 @@ message ScalarZoo {
   }
   // Nested message reached by a dotted path.
   ZooNested nested = 15;
+  // Arbitrary packed protobuf used by the Any projection conformance case.
+  google.protobuf.Any packed = 16;
+  // Recursive value and descriptor graph.
+  RecursiveNode tree = 17;
+  // Message-valued map exercises element conversion rather than scalar-only maps.
+  map<string, RecursiveNode> nodes = 18;
+  // Second well-known temporal type.
+  google.protobuf.Duration elapsed = 19;
 }
 
 // Fallback provenance. The primary source wins whenever it resolves, and the
@@ -341,16 +358,18 @@ message BadParseDoc {
   }];
 }
 
-// Map targets are refused outright. The refusal is a declared limitation
-// rather than an oversight, so it is pinned here.
+// Scalar and message-valued maps are projected entry by entry through their
+// synthetic map-entry descriptors.
 message MapDoc {
   option (ai.protomolt.proto.projection.v1.sources) = {
     source: "ai.protomolt.proto.projection.test.v1.ScalarZoo"
   };
 
-  // A map target, which the engine must reject with an unsupported error.
   map<string, int32> counts = 1 [(ai.protomolt.proto.projection.v1.from) = {
     paths: {path: "counts"}
+  }];
+  map<string, RecursiveNode> nodes = 2 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "nodes"}
   }];
 }
 
@@ -364,5 +383,63 @@ message SingularFromRepeatedDoc {
   // Singular target fed from a repeated source field.
   int32 first = 1 [(ai.protomolt.proto.projection.v1.from) = {
     paths: {path: "scores"}
+  }];
+}
+
+// Both output fields share a oneof. A source may populate either one, but a
+// projection producing both must fail rather than silently letting the later
+// assignment clear the earlier one.
+message OneofDoc {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.ScalarZoo"
+  };
+
+  oneof selection {
+    string label = 1 [(ai.protomolt.proto.projection.v1.from) = {
+      paths: {path: "choice_text"}
+    }];
+    int64 amount = 2 [(ai.protomolt.proto.projection.v1.from) = {
+      paths: {path: "choice_num"}
+    }];
+  }
+}
+
+// Deliberately conflicts in its target oneof because both source paths are
+// present. The engine must identify both fields and the oneof in its refusal.
+message ConflictingOneofDoc {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.ScalarZoo"
+  };
+
+  oneof selection {
+    string label = 1 [(ai.protomolt.proto.projection.v1.from) = {
+      paths: {path: "name"}
+    }];
+    int32 amount = 2 [(ai.protomolt.proto.projection.v1.from) = {
+      paths: {path: "small"}
+    }];
+  }
+}
+
+message AnyDoc {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.ScalarZoo"
+  };
+
+  google.protobuf.Any packed = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "packed"}
+  }];
+}
+
+message RecursiveDoc {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.ScalarZoo"
+  };
+
+  RecursiveNode tree = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "tree"}
+  }];
+  google.protobuf.Duration elapsed = 2 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "elapsed"}
   }];
 }

@@ -1,6 +1,7 @@
 package ai.protomolt.proto.projection;
 
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
+import ai.protomolt.proto.descriptors.DescriptorIdentity;
 import com.google.protobuf.Descriptors.Descriptor;
 
 import java.util.Collection;
@@ -10,10 +11,9 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Resolves declared source type names to descriptors. Used only for eager
- * validation when a {@link MessageProjection} is built; at projection time the
- * descriptor is taken from the source message itself, so an unresolvable name
- * is not fatal — it only means CEL rules cannot be pre-checked against that type.
+ * Resolves declared source type names to descriptors when a {@link MessageProjection}
+ * is compiled. Every declared source must resolve. The compiled projection records
+ * its exact descriptor identity and rejects same-named schema drift at execution time.
  */
 @FunctionalInterface
 public interface SourceResolver {
@@ -40,17 +40,20 @@ public interface SourceResolver {
     /**
      * Resolves names against a fixed set of descriptors.
      *
-     * @throws IllegalArgumentException when two descriptors share a fully-qualified name;
-     *         resolution would otherwise depend on iteration order
+     * @throws IllegalArgumentException when two descriptors share a fully-qualified name but
+     *         have different canonical descriptor identities
      */
     static SourceResolver of(Collection<Descriptor> sources) {
         Objects.requireNonNull(sources, "sources");
         Map<String, Descriptor> byName = new LinkedHashMap<>();
         for (Descriptor source : sources) {
+            Objects.requireNonNull(source, "sources contains null");
             Descriptor previous = byName.putIfAbsent(source.getFullName(), source);
-            if (previous != null && previous != source) {
+            if (previous != null
+                    && !DescriptorIdentity.of(previous).equals(DescriptorIdentity.of(source))) {
                 throw new IllegalArgumentException("Two different descriptors were given for "
-                        + source.getFullName() + "; source types must be unique by name");
+                        + source.getFullName() + "; source types must be unique by exact "
+                        + "descriptor identity");
             }
         }
         return name -> Optional.ofNullable(byName.get(name));

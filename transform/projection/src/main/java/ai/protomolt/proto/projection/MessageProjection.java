@@ -4,6 +4,7 @@ import ai.protomolt.proto.cel.CelCompilationException;
 import ai.protomolt.proto.cel.CelEnvironmentFactory;
 import ai.protomolt.proto.cel.CelEvaluationException;
 import ai.protomolt.proto.cel.CelEvaluator;
+import ai.protomolt.proto.descriptors.DescriptorIdentity;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.helpers.TypeConverter;
 import ai.protomolt.proto.mapper.MappingException;
@@ -13,6 +14,8 @@ import com.google.protobuf.DescriptorProtos.FieldOptions;
 import com.google.protobuf.DescriptorProtos.MessageOptions;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
+import com.google.protobuf.Descriptors.FileDescriptor;
+import com.google.protobuf.Descriptors.OneofDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.ExtensionRegistry;
 import com.google.protobuf.FieldMask;
@@ -21,6 +24,7 @@ import com.google.protobuf.Message;
 import com.google.protobuf.Value;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -107,19 +111,30 @@ public final class MessageProjection {
     }
 
     private final Descriptor targetType;
+    private final DescriptorIdentity targetIdentity;
     private final List<String> declaredSources;
+    private final Map<String, DescriptorIdentity> sourceIdentities;
+    private final Map<String, Descriptor> sourceTypes;
     private final List<FieldRule> rules;
     private final ProtoFieldMapper fieldMapper;
     private final TypeConverter typeConverter = new TypeConverter();
-    private final ConcurrentHashMap<String, CelEvaluator> evaluators = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<DescriptorIdentity, CelEvaluator> evaluators =
+            new ConcurrentHashMap<>();
 
     private MessageProjection(
             Descriptor targetType,
+            Map<String, Descriptor> sourceTypes,
             List<String> declaredSources,
             List<FieldRule> rules,
             ProtoFieldMapper fieldMapper) {
         this.targetType = targetType;
+        this.targetIdentity = DescriptorIdentity.of(targetType);
         this.declaredSources = List.copyOf(declaredSources);
+        this.sourceTypes = Map.copyOf(sourceTypes);
+        Map<String, DescriptorIdentity> identities = new LinkedHashMap<>();
+        sourceTypes.forEach((name, descriptor) ->
+                identities.put(name, DescriptorIdentity.of(descriptor)));
+        this.sourceIdentities = Map.copyOf(identities);
         this.rules = List.copyOf(rules);
         this.fieldMapper = fieldMapper;
     }
@@ -146,17 +161,16 @@ public final class MessageProjection {
 
     /**
      * Builds a projection for {@code target} when it declares projection
-     * sources. The resolver feeds eager CEL validation only; projection itself
-     * works against any message whose type is named in {@code (sources)},
-     * resolvable or not.
+     * sources. Every declared source must resolve so compilation can bind the
+     * mapping to an exact descriptor identity before any message is processed.
      *
      * @return the projection, or empty when the target carries no
      *         {@code (sources)} option
-     * @throws ProjectionException when a CEL rule compiles against no
-     *         resolvable declared source
+     * @throws ProjectionException when a declared source cannot be resolved or
+     *         a CEL rule compiles against no declared source
      */
     public static Optional<MessageProjection> forTarget(Descriptor target, SourceResolver sources) {
-        return forTarget(target, sources, new ProtoFieldMapperImpl(DescriptorRegistry.create(false)));
+        return forTarget(target, sources, null);
     }
 
     private static Optional<MessageProjection> forTarget(
@@ -172,6 +186,7 @@ public final class MessageProjection {
             throw new ProjectionException(
                     "Projection target " + target.getFullName() + " declares no source types");
         }
+        Map<String, Descriptor> resolvedSources = resolveSources(target, declared, sources);
 
         List<FieldRule> rules = new ArrayList<>();
         for (FieldDescriptor field : target.getFields()) {
@@ -191,9 +206,59 @@ public final class MessageProjection {
             rules.add(new FieldRule(field, from, defaultFrom));
         }
 
-        MessageProjection projection = new MessageProjection(target, declared, rules, fieldMapper);
-        projection.validateCel(sources);
+        ProtoFieldMapper resolvedMapper = fieldMapper != null
+                ? fieldMapper : new ProtoFieldMapperImpl(registryFor(target, resolvedSources));
+        MessageProjection projection = new MessageProjection(
+                target, resolvedSources, declared, rules, resolvedMapper);
+        projection.validateCel();
         return Optional.of(projection);
+    }
+
+    private static Map<String, Descriptor> resolveSources(
+            Descriptor target, List<String> declared, SourceResolver sources) {
+        Map<String, Descriptor> resolved = new LinkedHashMap<>();
+        for (String name : declared) {
+            if (name.isBlank()) {
+                throw new ProjectionException(
+                        "Projection target " + target.getFullName()
+                                + " declares a blank source type");
+            }
+            Descriptor descriptor = sources.resolve(name).orElseThrow(() ->
+                    new ProjectionException("Projection target " + target.getFullName()
+                            + " cannot resolve declared source " + name
+                            + "; exact descriptor identity is required at compilation"));
+            if (!descriptor.getFullName().equals(name)) {
+                throw new ProjectionException("Projection source resolver returned "
+                        + descriptor.getFullName() + " for declared source " + name);
+            }
+            Descriptor previous = resolved.putIfAbsent(name, descriptor);
+            if (previous != null) {
+                throw new ProjectionException("Projection target " + target.getFullName()
+                        + " declares source " + name + " more than once");
+            }
+        }
+        return resolved;
+    }
+
+    private static DescriptorRegistry registryFor(
+            Descriptor target, Map<String, Descriptor> sources) {
+        DescriptorRegistry registry = DescriptorRegistry.create(false);
+        registerClosure(registry, target.getFile(), new LinkedHashSet<>());
+        for (Descriptor source : sources.values()) {
+            registerClosure(registry, source.getFile(), new LinkedHashSet<>());
+        }
+        return registry;
+    }
+
+    private static void registerClosure(
+            DescriptorRegistry registry, FileDescriptor file, Set<String> registered) {
+        if (!registered.add(file.getName())) {
+            return;
+        }
+        for (FileDescriptor dependency : file.getDependencies()) {
+            registerClosure(registry, dependency, registered);
+        }
+        registry.registerFile(file);
     }
 
     private static Rule toRule(
@@ -225,18 +290,12 @@ public final class MessageProjection {
     }
 
     /**
-     * Pre-compiles every CEL rule against each resolvable declared source type.
+     * Pre-compiles every CEL rule against each declared source type.
      * A rule that compiles nowhere is a authoring error and fails fast; a rule
      * that compiles for some sources is absent for the others at project time.
      */
-    private void validateCel(SourceResolver sources) {
-        List<Descriptor> resolvable = declaredSources.stream()
-                .map(sources::resolve)
-                .flatMap(Optional::stream)
-                .toList();
-        if (resolvable.isEmpty()) {
-            return;
-        }
+    private void validateCel() {
+        List<Descriptor> resolvable = List.copyOf(sourceTypes.values());
         for (FieldRule fieldRule : rules) {
             validateCelRule(fieldRule.from(), resolvable);
             validateCelRule(fieldRule.defaultFrom(), resolvable);
@@ -268,14 +327,25 @@ public final class MessageProjection {
         return targetType;
     }
 
+    /** The exact name and descriptor-closure fingerprint of the target type. */
+    public DescriptorIdentity targetIdentity() {
+        return targetIdentity;
+    }
+
     /** The declared source type names, as written in the {@code (sources)} option. */
     public List<String> declaredSources() {
         return declaredSources;
     }
 
-    /** Whether {@code sourceType} is one of the declared sources (by full name). */
+    /** The exact compiled descriptor identity for every declared source, keyed by full name. */
+    public Map<String, DescriptorIdentity> sourceIdentities() {
+        return sourceIdentities;
+    }
+
+    /** Whether {@code sourceType} is one of the exact compiled source definitions. */
     public boolean supports(Descriptor sourceType) {
-        return declaredSources.contains(sourceType.getFullName());
+        DescriptorIdentity expected = sourceIdentities.get(sourceType.getFullName());
+        return expected != null && expected.matches(sourceType);
     }
 
     /**
@@ -306,8 +376,7 @@ public final class MessageProjection {
      */
     public SourceMask sourceMask(Descriptor sourceType) {
         if (!supports(sourceType)) {
-            throw new ProjectionException("Type " + sourceType.getFullName()
-                    + " is not a declared source of projection " + targetType.getFullName());
+            throw sourceMismatch(sourceType);
         }
         Set<String> paths = new LinkedHashSet<>();
         boolean complete = true;
@@ -342,22 +411,22 @@ public final class MessageProjection {
     }
 
     /**
-     * Whether a dotted path resolves against {@code type}. Map fields end the
-     * check: their keys are dynamic, so anything below a map counts as
-     * resolvable.
+     * Whether a dotted path resolves against {@code type}. A map itself is a
+     * valid terminal value. Dynamic map keys are not field-path segments.
      */
     private static boolean resolves(Descriptor type, String path) {
         Descriptor current = type;
-        for (String segment : path.trim().split("\\.")) {
+        String[] segments = path.trim().split("\\.");
+        for (int index = 0; index < segments.length; index++) {
             if (current == null) {
                 return false;
             }
-            FieldDescriptor field = current.findFieldByName(segment);
+            FieldDescriptor field = current.findFieldByName(segments[index]);
             if (field == null) {
                 return false;
             }
             if (field.isMapField()) {
-                return true;
+                return index == segments.length - 1;
             }
             current = field.getJavaType() == FieldDescriptor.JavaType.MESSAGE
                     ? field.getMessageType() : null;
@@ -376,21 +445,33 @@ public final class MessageProjection {
         Objects.requireNonNull(source, "source");
         Descriptor sourceType = source.getDescriptorForType();
         if (!supports(sourceType)) {
-            throw new ProjectionException("Type " + sourceType.getFullName()
-                    + " is not a declared source of projection " + targetType.getFullName()
-                    + " (declared: " + String.join(", ", declaredSources) + ")");
+            throw sourceMismatch(sourceType);
         }
         DynamicMessage.Builder out = DynamicMessage.newBuilder(targetType);
+        Map<OneofDescriptor, FieldDescriptor> selectedOneofs = new LinkedHashMap<>();
         for (FieldRule rule : rules) {
             Object value = resolve(rule.from(), source, sourceType);
             if (value == null) {
                 value = resolve(rule.defaultFrom(), source, sourceType);
             }
             if (value != null) {
-                assign(out, rule.field(), value);
+                assign(out, rule.field(), value, selectedOneofs);
             }
         }
         return out.build();
+    }
+
+    private ProjectionException sourceMismatch(Descriptor sourceType) {
+        DescriptorIdentity expected = sourceIdentities.get(sourceType.getFullName());
+        if (expected == null) {
+            return new ProjectionException("Type " + sourceType.getFullName()
+                    + " is not a declared source of projection " + targetType.getFullName()
+                    + " (declared: " + String.join(", ", declaredSources) + ")");
+        }
+        return new ProjectionException("Descriptor identity mismatch for source "
+                + sourceType.getFullName() + " of projection " + targetType.getFullName()
+                + ": compiled " + expected.fingerprint() + " but received "
+                + DescriptorIdentity.fingerprint(sourceType));
     }
 
     private Object resolve(Rule rule, Message source, Descriptor sourceType) {
@@ -433,12 +514,23 @@ public final class MessageProjection {
         }
     }
 
-    private void assign(DynamicMessage.Builder out, FieldDescriptor field, Object value) {
+    private void assign(
+            DynamicMessage.Builder out,
+            FieldDescriptor field,
+            Object value,
+            Map<OneofDescriptor, FieldDescriptor> selectedOneofs) {
+        OneofDescriptor oneof = field.getContainingOneof();
+        if (oneof != null) {
+            FieldDescriptor selected = selectedOneofs.putIfAbsent(oneof, field);
+            if (selected != null && selected != field) {
+                throw new ProjectionException("Projection produced both "
+                        + selected.getFullName() + " and " + field.getFullName()
+                        + " in target oneof " + oneof.getFullName());
+            }
+        }
         if (field.isMapField()) {
-            // Map values arrive as java.util.Map from generated sources but as MapEntry
-            // lists from DynamicMessage sources; support them deliberately, not by accident.
-            throw new ProjectionException(
-                    "Map fields are not yet supported by projection: " + field.getFullName());
+            assignMap(out, field, value);
+            return;
         }
         try {
             if (field.isRepeated()) {
@@ -462,8 +554,47 @@ public final class MessageProjection {
         }
     }
 
+    private void assignMap(DynamicMessage.Builder out, FieldDescriptor field, Object value) {
+        FieldDescriptor keyField = field.getMessageType().findFieldByName("key");
+        FieldDescriptor valueField = field.getMessageType().findFieldByName("value");
+        Map<Object, Object> entries = new LinkedHashMap<>();
+        if (value instanceof Map<?, ?> sourceMap) {
+            sourceMap.forEach(entries::put);
+        } else if (value instanceof List<?> sourceEntries) {
+            for (Object sourceEntry : sourceEntries) {
+                if (!(sourceEntry instanceof Message message)
+                        || !message.getDescriptorForType().getOptions().getMapEntry()) {
+                    throw new ProjectionException("Value for map projection field "
+                            + field.getFullName() + " contains a non-map-entry value");
+                }
+                FieldDescriptor sourceKey = message.getDescriptorForType().findFieldByName("key");
+                FieldDescriptor sourceValue = message.getDescriptorForType().findFieldByName("value");
+                entries.put(message.getField(sourceKey), message.getField(sourceValue));
+            }
+        } else {
+            throw new ProjectionException("Value for map projection field "
+                    + field.getFullName() + " is neither a map nor map-entry list: "
+                    + value.getClass().getName());
+        }
+        try {
+            for (Map.Entry<Object, Object> entry : entries.entrySet()) {
+                DynamicMessage mapEntry = DynamicMessage.newBuilder(field.getMessageType())
+                        .setField(keyField,
+                                typeConverter.convertToFieldType(entry.getKey(), keyField))
+                        .setField(valueField,
+                                typeConverter.convertToFieldType(entry.getValue(), valueField))
+                        .build();
+                out.addRepeatedField(field, mapEntry);
+            }
+        } catch (IllegalArgumentException e) {
+            throw new ProjectionException(
+                    "Cannot coerce map entry for projection field " + field.getFullName(), e);
+        }
+    }
+
     private CelEvaluator evaluatorFor(Descriptor sourceType) {
-        return evaluators.computeIfAbsent(sourceType.getFullName(), name ->
+        DescriptorIdentity identity = DescriptorIdentity.of(sourceType);
+        return evaluators.computeIfAbsent(identity, ignored ->
                 new CelEvaluator(CelEnvironmentFactory.builder()
                         .addMessageVar("source", sourceType)
                         .build()));

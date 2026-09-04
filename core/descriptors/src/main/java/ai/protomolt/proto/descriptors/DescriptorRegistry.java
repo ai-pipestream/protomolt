@@ -93,6 +93,16 @@ public class DescriptorRegistry {
             register(com.google.protobuf.Duration.getDescriptor());
             register(com.google.protobuf.Any.getDescriptor());
             register(com.google.protobuf.Empty.getDescriptor());
+            register(com.google.protobuf.FieldMask.getDescriptor());
+            register(com.google.protobuf.BoolValue.getDescriptor());
+            register(com.google.protobuf.BytesValue.getDescriptor());
+            register(com.google.protobuf.DoubleValue.getDescriptor());
+            register(com.google.protobuf.FloatValue.getDescriptor());
+            register(com.google.protobuf.Int32Value.getDescriptor());
+            register(com.google.protobuf.Int64Value.getDescriptor());
+            register(com.google.protobuf.StringValue.getDescriptor());
+            register(com.google.protobuf.UInt32Value.getDescriptor());
+            register(com.google.protobuf.UInt64Value.getDescriptor());
         } catch (Exception e) {
             LOG.warn("Failed to register some well-known protobuf types", e);
         }

@@ -439,6 +439,37 @@ public class TypeConverter {
                 break;
             case STRING:
                 return value.toString();
+            case ENUM:
+                if (value instanceof EnumValueDescriptor enumValue) {
+                    if (!enumValue.getType().getFullName()
+                            .equals(field.getEnumType().getFullName())) {
+                        break;
+                    }
+                    EnumValueDescriptor aligned = field.getEnumType()
+                            .findValueByNumber(enumValue.getNumber());
+                    if (aligned == null) {
+                        throw new IllegalArgumentException(
+                                "Enum value " + enumValue.getNumber() + " from "
+                                        + enumValue.getType().getFullName()
+                                        + " is not defined by target field "
+                                        + field.getFullName());
+                    }
+                    return aligned;
+                }
+                if (value instanceof Number number) {
+                    EnumValueDescriptor aligned = field.getEnumType()
+                            .findValueByNumber(numberToInt(number, field));
+                    if (aligned != null) {
+                        return aligned;
+                    }
+                }
+                if (value instanceof String name) {
+                    EnumValueDescriptor aligned = field.getEnumType().findValueByName(name);
+                    if (aligned != null) {
+                        return aligned;
+                    }
+                }
+                break;
             case MESSAGE:
                 Object aligned = alignMessage(value, field);
                 if (aligned != null) {
@@ -472,7 +503,8 @@ public class TypeConverter {
             case BOOLEAN -> value instanceof Boolean;
             case STRING -> value instanceof String;
             case BYTE_STRING -> value instanceof ByteString;
-            case ENUM -> value instanceof EnumValueDescriptor;
+            case ENUM -> value instanceof EnumValueDescriptor enumValue
+                    && enumValue.getType() == field.getEnumType();
             // Descriptor INSTANCES must match: the same type compiled twice (generated
             // versus runtime) is wire-identical but rejected by setField, so those go
             // through alignMessage instead of passing as-is.
@@ -492,6 +524,10 @@ public class TypeConverter {
         Message candidate = null;
         if (value instanceof Message message) {
             candidate = message;
+            if (target.equals(Any.getDescriptor().getFullName())
+                    && !message.getDescriptorForType().getFullName().equals(target)) {
+                candidate = Any.pack(message);
+            }
         } else if (target.equals(Value.getDescriptor().getFullName())) {
             if (value instanceof String text) {
                 candidate = Value.newBuilder().setStringValue(text).build();

@@ -1,28 +1,24 @@
 package ai.protomolt.proto.mesh;
 
+import ai.protomolt.proto.descriptors.DescriptorIdentity;
+
 import com.google.protobuf.Any;
-import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HexFormat;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Canonical protobuf hashing for the mesh contract.
  *
  * <p><b>Descriptor-set fingerprints.</b> A schema fingerprint is the lowercase SHA-256 hex of the
- * canonical encoding of a {@link FileDescriptorSet}: the {@link FileDescriptorProto}s sorted by
- * file name and serialized in that order. protobuf-java serializes each proto deterministically
- * (fields in tag order; no maps occur in descriptor protos), so the fingerprint depends on content
- * alone, never on assembly order. This matches the workflow and pipeline convention, so a mesh
+ * canonical encoding of a {@link FileDescriptorSet}: files sorted by name and written with
+ * protobuf's deterministic binary encoder. The fingerprint depends on content alone, never on
+ * assembly order. This matches the workflow and pipeline convention, so a mesh
  * fingerprint is directly comparable with a {@code ServiceProfile} or pipeline dependency
  * fingerprint computed over the same set.
  *
@@ -59,12 +55,7 @@ public final class MeshDigest {
      * @return the lowercase SHA-256 hex fingerprint
      */
     public static String fingerprint(FileDescriptorSet set) {
-        FileDescriptorSet canonical = FileDescriptorSet.newBuilder()
-                .addAllFile(set.getFileList().stream()
-                        .sorted(Comparator.comparing(FileDescriptorProto::getName))
-                        .toList())
-                .build();
-        return sha256(canonical.toByteArray());
+        return DescriptorIdentity.fingerprint(set);
     }
 
     /**
@@ -74,9 +65,7 @@ public final class MeshDigest {
      * @return the lowercase SHA-256 hex fingerprint
      */
     public static String fingerprint(List<FileDescriptor> files) {
-        return fingerprint(FileDescriptorSet.newBuilder()
-                .addAllFile(files.stream().map(FileDescriptor::toProto).toList())
-                .build());
+        return DescriptorIdentity.fingerprintFiles(files);
     }
 
     /**
@@ -89,11 +78,7 @@ public final class MeshDigest {
      * @return the closure as a descriptor set
      */
     public static FileDescriptorSet closure(Descriptor type) {
-        Map<String, FileDescriptorProto> byName = new LinkedHashMap<>();
-        collect(type.getFile(), byName);
-        return FileDescriptorSet.newBuilder()
-                .addAllFile(new ArrayList<>(byName.values()))
-                .build();
+        return DescriptorIdentity.closure(type);
     }
 
     /**
@@ -104,7 +89,7 @@ public final class MeshDigest {
      * @return the lowercase SHA-256 hex fingerprint
      */
     public static String fingerprintOf(Descriptor type) {
-        return fingerprint(closure(type));
+        return DescriptorIdentity.fingerprint(type);
     }
 
     /**
@@ -118,18 +103,4 @@ public final class MeshDigest {
         return sha256(payload.getValue().toByteArray());
     }
 
-    private static void collect(FileDescriptor file, Map<String, FileDescriptorProto> byName) {
-        if (byName.containsKey(file.getName())) {
-            return;
-        }
-        // Dependencies first, so the assembled set is in a loadable order even before the
-        // canonical sort the fingerprint applies.
-        for (FileDescriptor dependency : file.getDependencies()) {
-            collect(dependency, byName);
-        }
-        for (FileDescriptor dependency : file.getPublicDependencies()) {
-            collect(dependency, byName);
-        }
-        byName.put(file.getName(), file.toProto());
-    }
 }

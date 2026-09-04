@@ -71,8 +71,11 @@ does not silently disappear.
 
 Values are coerced to the target field type with the usual rules
 (`TypeConverter`): exact types pass through, scalars widen, messages re-parse
-across descriptor instances of the same type, repeated fields copy
-element-wise.
+across equivalent descriptor instances of the same type, enums align by type
+name and numeric value, repeated fields copy element-wise, and scalar- or
+message-valued maps rebuild through their synthetic entry descriptors. A
+non-`Any` message projected into `google.protobuf.Any` is packed as protobuf
+binary; it is never converted to a generic object tree.
 
 ## Usage
 
@@ -89,10 +92,13 @@ DynamicMessage doc = projection.project(caseMessage);   // or a Matter
 ```
 
 `forTarget` returns empty for messages that are not projection targets. The
-`SourceResolver` feeds eager CEL validation only. Projection itself takes the
-source type from the message, so sources that were not resolvable at build
-time still project. Instances are immutable and thread-safe; CEL programs are
-compiled once per source type and cached.
+Every source named by the target must resolve while the projection is compiled.
+The projection records the source and target full names together with SHA-256
+fingerprints of their canonical descriptor closures. An independently built
+descriptor pool with the same canonical bytes is accepted; a same-named type
+whose schema drifted is rejected before any field is read. Instances are
+immutable and thread-safe; CEL programs are compiled once per exact source
+identity and cached.
 
 ## Deriving FieldMasks
 
@@ -120,18 +126,27 @@ This is the bridge to `google.protobuf.FieldMask` tooling: projections replace
 hand-written masks for the mapping itself, and the derived masks feed the
 request-time field-selection APIs where FieldMask is the right mechanism.
 
-## Limits and sharp edges (v1)
+## Conformance and sharp edges
 
-- **Map fields are not supported.** Projection fails with a deliberate error
-  naming the field rather than guessing at generated-vs-dynamic runtime shapes.
+- **Maps follow protobuf parse semantics.** Scalar- and message-valued maps work
+  for generated and dynamic messages. If dynamic input contains duplicate map
+  entries, the last value for a key wins.
+- **Target oneofs are conflict checked.** A projection may populate one member.
+  If two rules produce values for different members of the same target oneof,
+  projection fails naming both fields and the oneof instead of silently
+  clearing the earlier value.
+- **Descriptor identity is binary.** Identity includes the defining file and
+  all transitive imports, unknown fields, and unresolved custom options. It is
+  independent of descriptor-set assembly order and never uses JSON or source
+  text normalization.
 - **Proto3 implicit defaults count as absent.** A source field at its default
   (`0`, `""`, `false`) does not project, even if application code set it
   explicitly, because proto3 cannot tell the difference. Use a CEL rule
   (`source.count`) when the zero value is meaningful.
 - **Coercion follows `TypeConverter`.** Widening (`int32`→`int64`, numbers to
-  strings, string parsing back to numbers) is safe; narrowing a fractional
-  double into an integer target truncates. One failed field fails the whole
-  projection with the field named in the error.
+  strings, string parsing back to numbers) is supported. Integral targets
+  reject fractional and out-of-range values instead of truncating. One failed
+  field fails the whole projection with the field named in the error.
 - **CEL sees real values**, including proto3 defaults, so path fallback and CEL
   can legitimately disagree about "absent" for the same field.
 - **Defaults apply during projection, not mutation.** `default_from` fills a

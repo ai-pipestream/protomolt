@@ -1,12 +1,10 @@
 package ai.protomolt.proto.pipeline;
 
-import ai.protomolt.proto.grpc.profile.ServiceProfileValidation;
-import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
+import ai.protomolt.proto.descriptors.DescriptorIdentity;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.Descriptors.ServiceDescriptor;
 
-import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -26,13 +24,7 @@ final class DescriptorSets {
      * descriptor set its compiled pipeline declares.
      */
     static String fingerprint(List<FileDescriptor> files) {
-        FileDescriptorSet set = FileDescriptorSet.newBuilder()
-                .addAllFile(files.stream()
-                        .map(FileDescriptor::toProto)
-                        .sorted(Comparator.comparing(proto -> proto.getName()))
-                        .toList())
-                .build();
-        return ServiceProfileValidation.sha256(set.toByteArray());
+        return DescriptorIdentity.fingerprintFiles(files);
     }
 
     /**

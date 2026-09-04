@@ -7,10 +7,12 @@ import ai.protomolt.proto.projection.test.FlatDoc;
 import ai.protomolt.proto.projection.test.Matter;
 import ai.protomolt.proto.projection.test.RuntimeErrorProjection;
 import ai.protomolt.proto.projection.test.SearchDoc;
+import ai.protomolt.proto.descriptors.DescriptorIdentity;
+import com.google.protobuf.DescriptorProtos.DescriptorProto;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.DynamicMessage;
 import org.junit.jupiter.api.Test;
-
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -112,13 +114,12 @@ class MessageProjectionTest {
     }
 
     @Test
-    void buildsWithoutAnyResolvableSourceForEagerValidation() {
-        Optional<MessageProjection> projection =
-                MessageProjection.forTarget(SearchDoc.getDescriptor(), SourceResolver.of());
-        assertThat(projection).isPresent();
-        // Runtime resolution comes from the message itself, so projection still works.
-        assertThat(projection.orElseThrow().project(aCase()).getField(
-                SearchDoc.getDescriptor().findFieldByName("doc_id"))).isEqualTo("24-cv-00117");
+    void refusesCompilationWithoutEveryDeclaredSourceDescriptor() {
+        assertThatThrownBy(() ->
+                MessageProjection.forTarget(SearchDoc.getDescriptor(), SourceResolver.of()))
+                .isInstanceOf(ProjectionException.class)
+                .hasMessageContaining("cannot resolve declared source")
+                .hasMessageContaining("exact descriptor identity is required");
     }
 
     @Test
@@ -130,6 +131,13 @@ class MessageProjectionTest {
                 "ai.protomolt.proto.projection.test.v1.Matter");
         assertThat(projection.supports(Case.getDescriptor())).isTrue();
         assertThat(projection.supports(Address.getDescriptor())).isFalse();
+        assertThat(projection.targetIdentity())
+                .isEqualTo(DescriptorIdentity.of(SearchDoc.getDescriptor()));
+        assertThat(projection.sourceIdentities())
+                .containsEntry(Case.getDescriptor().getFullName(),
+                        DescriptorIdentity.of(Case.getDescriptor()))
+                .containsEntry(Matter.getDescriptor().getFullName(),
+                        DescriptorIdentity.of(Matter.getDescriptor()));
     }
 
     @Test
@@ -170,15 +178,23 @@ class MessageProjectionTest {
         assertThat(matterMask.complete()).isTrue();
     }
 
-    /** A standalone descriptor for {@code dup.Thing}; two calls give two distinct descriptors. */
-    private static com.google.protobuf.Descriptors.Descriptor thing() throws Exception {
+    /** A standalone descriptor for {@code dup.Thing}; calls give distinct descriptor pools. */
+    private static Descriptor thing(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.Type type)
+            throws Exception {
         com.google.protobuf.DescriptorProtos.FileDescriptorProto file =
                 com.google.protobuf.DescriptorProtos.FileDescriptorProto.newBuilder()
                         .setName("dup/thing.proto")
                         .setSyntax("proto3")
                         .setPackage("dup")
                         .addMessageType(com.google.protobuf.DescriptorProtos.DescriptorProto
-                                .newBuilder().setName("Thing"))
+                                .newBuilder().setName("Thing")
+                                .addField(com.google.protobuf.DescriptorProtos.FieldDescriptorProto
+                                        .newBuilder()
+                                        .setName("value")
+                                        .setNumber(1)
+                                        .setLabel(com.google.protobuf.DescriptorProtos
+                                                .FieldDescriptorProto.Label.LABEL_OPTIONAL)
+                                        .setType(type)))
                         .build();
         return com.google.protobuf.Descriptors.FileDescriptor
                 .buildFrom(file, new com.google.protobuf.Descriptors.FileDescriptor[0])
@@ -186,22 +202,67 @@ class MessageProjectionTest {
     }
 
     /**
-     * Duplicate names used to surface as the map collector's {@code IllegalStateException},
-     * which names the colliding values but not what the caller did wrong.
+     * Independent pools carrying identical descriptor bytes are the same schema identity.
      */
     @Test
-    void twoDifferentDescriptorsForOneNameAreRejected() throws Exception {
-        assertThatThrownBy(() -> SourceResolver.of(java.util.List.of(thing(), thing())))
+    void twoEquivalentDescriptorsForOneNameAreAccepted() throws Exception {
+        Descriptor first = thing(com.google.protobuf.DescriptorProtos
+                .FieldDescriptorProto.Type.TYPE_STRING);
+        Descriptor second = thing(com.google.protobuf.DescriptorProtos
+                .FieldDescriptorProto.Type.TYPE_STRING);
+        assertThat(first).isNotSameAs(second);
+        assertThat(SourceResolver.of(java.util.List.of(first, second)).resolve("dup.Thing"))
+                .contains(first);
+    }
+
+    @Test
+    void sameNamedDescriptorsWithSchemaDriftAreRejected() throws Exception {
+        Descriptor stringThing = thing(com.google.protobuf.DescriptorProtos
+                .FieldDescriptorProto.Type.TYPE_STRING);
+        Descriptor longThing = thing(com.google.protobuf.DescriptorProtos
+                .FieldDescriptorProto.Type.TYPE_INT64);
+        assertThatThrownBy(() -> SourceResolver.of(java.util.List.of(stringThing, longThing)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("dup.Thing")
-                .hasMessageContaining("must be unique by name");
+                .hasMessageContaining("exact descriptor identity");
     }
 
     @Test
     void theSameDescriptorListedTwiceIsAccepted() throws Exception {
-        com.google.protobuf.Descriptors.Descriptor thing = thing();
+        Descriptor thing = thing(com.google.protobuf.DescriptorProtos
+                .FieldDescriptorProto.Type.TYPE_STRING);
         assertThat(SourceResolver.of(java.util.List.of(thing, thing)).resolve("dup.Thing"))
                 .contains(thing);
+    }
+
+    @Test
+    void acceptsAnEquivalentSourceFromAnotherDescriptorPool() throws Exception {
+        FileDescriptor original = Case.getDescriptor().getFile();
+        FileDescriptor rebuilt = FileDescriptor.buildFrom(original.toProto(),
+                original.getDependencies().toArray(FileDescriptor[]::new));
+        Descriptor rebuiltCase = rebuilt.findMessageTypeByName("Case");
+        DynamicMessage source = DynamicMessage.parseFrom(rebuiltCase, aCase().toByteString());
+
+        assertThat(searchDocProjection().supports(rebuiltCase)).isTrue();
+        assertThat(searchDocProjection().project(source).getField(
+                SearchDoc.getDescriptor().findFieldByName("doc_id")))
+                .isEqualTo("24-cv-00117");
+    }
+
+    @Test
+    void rejectsSameNamedSourceDriftBeforeReadingFields() throws Exception {
+        FileDescriptor original = Case.getDescriptor().getFile();
+        FileDescriptor driftedFile = FileDescriptor.buildFrom(original.toProto().toBuilder()
+                        .addMessageType(DescriptorProto.newBuilder().setName("DriftMarker"))
+                        .build(),
+                original.getDependencies().toArray(FileDescriptor[]::new));
+        Descriptor driftedCase = driftedFile.findMessageTypeByName("Case");
+        DynamicMessage source = DynamicMessage.parseFrom(driftedCase, aCase().toByteString());
+
+        assertThatThrownBy(() -> searchDocProjection().project(source))
+                .isInstanceOf(ProjectionException.class)
+                .hasMessageContaining("Descriptor identity mismatch")
+                .hasMessageContaining(DescriptorIdentity.fingerprint(driftedCase));
     }
 
     @Test

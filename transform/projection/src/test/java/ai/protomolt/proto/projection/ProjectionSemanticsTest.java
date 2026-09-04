@@ -1,17 +1,27 @@
 package ai.protomolt.proto.projection;
 
 import ai.protomolt.proto.projection.test.BadParseDoc;
+import ai.protomolt.proto.projection.test.AnyDoc;
 import ai.protomolt.proto.projection.test.CoercionDoc;
+import ai.protomolt.proto.projection.test.ConflictingOneofDoc;
 import ai.protomolt.proto.projection.test.DefaultedDoc;
 import ai.protomolt.proto.projection.test.MapDoc;
+import ai.protomolt.proto.projection.test.OneofDoc;
 import ai.protomolt.proto.projection.test.PresenceDoc;
+import ai.protomolt.proto.projection.test.RecursiveDoc;
+import ai.protomolt.proto.projection.test.RecursiveNode;
 import ai.protomolt.proto.projection.test.ScalarZoo;
 import ai.protomolt.proto.projection.test.SingularFromRepeatedDoc;
 import ai.protomolt.proto.projection.test.ZooNested;
 import ai.protomolt.proto.projection.test.ZooStatus;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.EnumValueDescriptor;
+import com.google.protobuf.Any;
+import com.google.protobuf.ByteString;
+import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.DynamicMessage;
+import com.google.protobuf.Duration;
+import com.google.protobuf.Message;
 import com.google.protobuf.Struct;
 import com.google.protobuf.Timestamp;
 import com.google.protobuf.Value;
@@ -49,7 +59,12 @@ class ProjectionSemanticsTest {
                 .setWhen(Timestamp.newBuilder().setSeconds(1752900000L).build())
                 .setAttrs(Struct.newBuilder()
                         .putFields("k", Value.newBuilder().setStringValue("v").build()))
-                .setNested(ZooNested.newBuilder().setLeaf("deep"));
+                .setNested(ZooNested.newBuilder().setLeaf("deep"))
+                .setPacked(Any.pack(ZooNested.newBuilder().setLeaf("packed").build()))
+                .setTree(RecursiveNode.newBuilder().setLabel("root")
+                        .setChild(RecursiveNode.newBuilder().setLabel("leaf")))
+                .putNodes("left", RecursiveNode.newBuilder().setLabel("mapped").build())
+                .setElapsed(Duration.newBuilder().setSeconds(12).setNanos(34));
     }
 
     private static Object field(DynamicMessage message, Descriptor descriptor, String name) {
@@ -182,10 +197,101 @@ class ProjectionSemanticsTest {
     }
 
     @Test
-    void rejectsMapFieldsWithADeliberateError() {
-        assertThatThrownBy(() -> projection(MapDoc.getDescriptor()).project(zoo().build()))
+    void projectsScalarAndMessageValuedMaps() throws Exception {
+        DynamicMessage out = projection(MapDoc.getDescriptor()).project(zoo().build());
+        MapDoc mapped = MapDoc.parseFrom(out.toByteString());
+
+        assertThat(mapped.getCountsMap()).containsEntry("a", 1);
+        assertThat(mapped.getNodesMap().get("left").getLabel()).isEqualTo("mapped");
+    }
+
+    @Test
+    void projectsMapsFromDynamicMessages() throws Exception {
+        DynamicMessage source = DynamicMessage.parseFrom(
+                ScalarZoo.getDescriptor(), zoo().build().toByteString());
+        MapDoc mapped = MapDoc.parseFrom(projection(MapDoc.getDescriptor())
+                .project(source).toByteString());
+
+        assertThat(mapped.getCountsMap()).containsEntry("a", 1);
+        assertThat(mapped.getNodesMap().get("left").getLabel()).isEqualTo("mapped");
+    }
+
+    @Test
+    void duplicateMapKeysUseTheLastEntryLikeProtobufParsing() throws Exception {
+        Descriptor sourceType = ScalarZoo.getDescriptor();
+        FieldDescriptor counts = sourceType.findFieldByName("counts");
+        FieldDescriptor key = counts.getMessageType().findFieldByName("key");
+        FieldDescriptor value = counts.getMessageType().findFieldByName("value");
+        DynamicMessage first = DynamicMessage.newBuilder(counts.getMessageType())
+                .setField(key, "same").setField(value, 1).build();
+        DynamicMessage second = DynamicMessage.newBuilder(counts.getMessageType())
+                .setField(key, "same").setField(value, 2).build();
+        DynamicMessage source = DynamicMessage.newBuilder(sourceType)
+                .setField(sourceType.findFieldByName("small"), 7)
+                .addRepeatedField(counts, first)
+                .addRepeatedField(counts, second)
+                .build();
+
+        MapDoc mapped = MapDoc.parseFrom(projection(MapDoc.getDescriptor())
+                .project(source).toByteString());
+        assertThat(mapped.getCountsMap()).containsExactlyEntriesOf(java.util.Map.of("same", 2));
+    }
+
+    @Test
+    void projectsExactlyOneTargetOneofMember() {
+        DynamicMessage text = projection(OneofDoc.getDescriptor())
+                .project(zoo().setChoiceText("selected").build());
+        assertThat(text.getOneofFieldDescriptor(
+                OneofDoc.getDescriptor().getOneofs().getFirst()).getName())
+                .isEqualTo("label");
+
+        DynamicMessage number = projection(OneofDoc.getDescriptor())
+                .project(zoo().setChoiceNum(19).build());
+        assertThat(number.getOneofFieldDescriptor(
+                OneofDoc.getDescriptor().getOneofs().getFirst()).getName())
+                .isEqualTo("amount");
+    }
+
+    @Test
+    void refusesTwoWritesToOneTargetOneof() {
+        assertThatThrownBy(() -> projection(ConflictingOneofDoc.getDescriptor())
+                .project(zoo().build()))
                 .isInstanceOf(ProjectionException.class)
-                .hasMessageContaining("Map fields are not yet supported");
+                .hasMessageContaining("ConflictingOneofDoc.label")
+                .hasMessageContaining("ConflictingOneofDoc.amount")
+                .hasMessageContaining("ConflictingOneofDoc.selection");
+    }
+
+    @Test
+    void projectsAnyWithoutConvertingItsPayloadToStruct() throws Exception {
+        AnyDoc out = AnyDoc.parseFrom(projection(AnyDoc.getDescriptor())
+                .project(zoo().build()).toByteString());
+        assertThat(out.getPacked().getTypeUrl())
+                .endsWith(ZooNested.getDescriptor().getFullName());
+        assertThat(out.getPacked().unpack(ZooNested.class).getLeaf()).isEqualTo("packed");
+    }
+
+    @Test
+    void projectsRecursiveMessagesAndDuration() throws Exception {
+        RecursiveDoc out = RecursiveDoc.parseFrom(projection(RecursiveDoc.getDescriptor())
+                .project(zoo().build()).toByteString());
+        assertThat(out.getTree().getChild().getLabel()).isEqualTo("leaf");
+        assertThat(out.getElapsed()).isEqualTo(
+                Duration.newBuilder().setSeconds(12).setNanos(34).build());
+    }
+
+    @Test
+    void preservesUnknownFieldsOnPassThroughMessages() {
+        RecursiveNode tree = RecursiveNode.newBuilder().setLabel("root")
+                .setUnknownFields(com.google.protobuf.UnknownFieldSet.newBuilder()
+                        .addField(99, com.google.protobuf.UnknownFieldSet.Field.newBuilder()
+                                .addLengthDelimited(ByteString.copyFromUtf8("future")).build())
+                        .build())
+                .build();
+        DynamicMessage out = projection(RecursiveDoc.getDescriptor())
+                .project(zoo().setTree(tree).build());
+        Message projectedTree = (Message) field(out, RecursiveDoc.getDescriptor(), "tree");
+        assertThat(projectedTree.getUnknownFields().hasField(99)).isTrue();
     }
 
     @Test
@@ -195,4 +301,5 @@ class ProjectionSemanticsTest {
                 .isInstanceOf(ProjectionException.class)
                 .hasMessageContaining("is a list");
     }
+
 }
