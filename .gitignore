@@ -26,3 +26,7 @@ deploy/krick/.env
 # Python bytecode caches (scripts/ has stdlib-only utilities and their unittest files)
 __pycache__/
 *.pyc
+
+# Skills are tracked; the rest of .claude/ (worktrees, local settings) stays ignored
+# by the global ignore file.
+!.claude/skills/
