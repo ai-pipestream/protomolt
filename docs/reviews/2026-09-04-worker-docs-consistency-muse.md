@@ -1,4 +1,4 @@
-# Worker-docs consistency review — 2026-09-04
+# Worker-docs consistency review — 2026-09-04 (amended)
 
 Reviewed in full, at `origin/main` (`f745fae6`):
 
@@ -6,92 +6,100 @@ Reviewed in full, at `origin/main` (`f745fae6`):
 - `.claude/skills/protomolt-worker/SKILL.md`
 - `docs/transform/delegation.md` (Task lifecycle, Deliverable contract, and the
   surrounding sections on how a task is judged)
+- cross-checked against `transform/delegation/src/main/proto/ai/protomolt/proto/delegation/v1/delegation.proto`
+  and `delegation_actions.proto` as the source of truth
 
-Four statements in `docs/transform/delegation.md` contradict the worker skill
-and the twelve-verb catalog: the lifecycle promises frames a worker or
-coordinator can send (reject, heartbeat, renew, context) that no documented
-verb produces. Everything else checked agrees: contract field semantics,
-`@type` spelling, revision numbering from 1, evidence shape
-(`checkName`/`verdict`/`ranAt`/`detail`), commit shape
-(`repository`/`commit` 40-hex/`subject`), reducer-before-reviewer ordering,
-refusing a `result` exactly when no contract is declared and vice versa, and
-the end-of-task `tokens-spent` NOTE.
+Correction to the first version of this report: the lifecycle sentences quoted
+below faithfully describe the gRPC stream contract (`TaskReject`,
+`Heartbeat`, `LeaseRenewal`, `TaskSpec.context` all exist in
+`delegation.proto`). The inconsistency is one layer up: the twelve-verb
+MCP/actions surface (`delegation_actions.proto`: `OfferTask`, `AcceptTask`,
+`CancelTask`, `SubmitCandidate`, `RecordCheckpoint`, `SendTaskMessage`,
+`ReportProgress`, `ReviewCandidate`, `ReadTranscript`, `WatchEvents`,
+`ListWorkers`, `RegisterWorker`) and the worker skill give a worker no way to
+send four of those stream members. A session working only through the skill
+and the MCP verbs cannot reject an offer, heartbeat a lease, renew a lease,
+or read task context — while the lifecycle says attempts do these things.
+
+What still agrees: contract field semantics, `@type` spelling, revision
+numbering from 1, evidence shape (`checkName`/`verdict`/`ranAt`/`detail`),
+commit shape (`repository`/`commit` 40-hex/`subject`),
+reducer-before-reviewer ordering, refusing a `result` exactly when no
+contract is declared and vice versa, and the end-of-task `tokens-spent` NOTE.
 
 ## Findings
 
-### 1. No way to reject an offer
+### 1. No way to reject an offer over MCP
 
-Quote (`docs/transform/delegation.md`):
+Quote (`transform/delegation/src/main/proto/ai/protomolt/proto/delegation/v1/delegation.proto`):
 
-> The worker accepts or rejects the offer. An accepted attempt may send
+> description: "Offer rejection with a bounded reason; terminal for the attempt."
 
-Conflicts with `.claude/skills/protomolt-worker/SKILL.md`:
+`TaskReject` is field 12 of the worker-to-coordinator frame, so "accepts or
+rejects" is true on the stream. But `delegation_actions.proto` has
+`AcceptTask` and no reject RPC, and the skill's flow is accept-or-ask
+(`.claude/skills/protomolt-worker/SKILL.md`: "| `offer` for your worker id |
+read the spec, then accept or ask (below) |"). An MCP-only worker that must
+decline can only stall in QUESTION.
 
-> | `offer` for your worker id | read the spec, then accept or ask (below) |
+Proposed: add a reject RPC to the actions surface and the skill's
+accept-or-ask step, or document the decline path (QUESTION stating inability,
+coordinator cancels).
 
-and with the twelve catalog verbs in `docs/transform/delegation.md`
-(`delegation-worker-register`, `delegation-worker-list`, `delegation-offer`,
-`delegation-accept`, `delegation-progress`, `delegation-checkpoint`,
-`delegation-candidate`, `delegation-review`, `delegation-cancel`,
-`delegation-message`, `delegation-watch`, `delegation-transcript`), which
-contain `delegation-accept` but no reject verb. A worker that must decline can
-only stall in QUESTION.
+### 2. No heartbeat verb, though heartbeats keep the lease
 
-Proposed: change the lifecycle sentence to "The worker accepts the offer, or
-asks before accepting", and either add a `delegation-reject` verb or document
-the decline path (e.g. QUESTION stating inability, coordinator cancels).
+Quote (`transform/delegation/src/main/proto/ai/protomolt/proto/delegation/v1/delegation.proto`):
 
-### 2. No heartbeat verb
+> // Leases are explicit: an offer grants one attempt's lease, heartbeats keep
 
-Quote (`docs/transform/delegation.md`):
+`Heartbeat` is field 13 ("Liveness signal on the active lease"), and the
+lease "runs without renewal" per its own comment — yet the actions surface
+has no heartbeat RPC and the skill never mentions heartbeats. An MCP-only
+worker cannot send the liveness signal the lease model relies on; only
+accept/progress/checkpoint/candidate frames mark it alive.
 
-> heartbeats, monotonic progress, and resumable checkpoints. The coordinator may
+Proposed: add a heartbeat RPC (or state that lifecycle frames double as
+liveness for MCP workers) and mention it in the skill's Work/report section.
 
-Conflicts with the twelve catalog verbs, which have no heartbeat verb, and
-with the skill, which never mentions heartbeats (progress and checkpoints
-only). An accepted attempt cannot send what the lifecycle says it may send.
+### 3. No lease-renewal verb, though renewals move the expiry
 
-Proposed: drop "heartbeats, " from the sentence, or add the heartbeat verb to
-the catalog and the skill's Work/report/checkpoint section.
+Quote (`transform/delegation/src/main/proto/ai/protomolt/proto/delegation/v1/delegation.proto`):
 
-### 3. No lease-renewal verb
+> description: "Lease renewal: the new coordinator-declared expiry, strictly advancing."
 
-Quote (`docs/transform/delegation.md`):
+`LeaseRenewal` is field 12 of the coordinator-to-worker frame, but the
+actions surface has no renew RPC and the skill's Offer section only sets
+`leaseSeconds`. The skill documents re-offer with `resumeFrom` after expiry,
+which is expiry-plus-replacement, not renewal of the live lease.
 
-> renew or expire the lease. A later attempt can resume from a recorded
-
-Conflicts with the twelve catalog verbs (no renew verb) and with the skill's
-Offer section (`leaseSeconds` with no renewal step). The skill documents
-re-offer with `resumeFrom` after expiry, which is expiry-plus-replacement, not
-renewal of the live lease.
-
-Proposed: change to "may expire the lease and re-offer with `resumeFrom`",
-or add a renewal verb and its skill step.
+Proposed: add a renewal RPC and its skill step, or change the lifecycle
+wording to expiry-and-re-offer for the MCP path.
 
 ### 4. Skill's offer shape omits `context`
 
-Quote (`docs/transform/delegation.md`):
+Quote (`transform/delegation/src/main/proto/ai/protomolt/proto/delegation/v1/delegation.proto`):
 
-> - context artifact references;
+> repeated ai.protomolt.proto.grpc.workflow.v1.ArtifactReference context = 5 [
 
-Conflicts with the skill's Coordinator/Offer member list (`workerId`,
-`leaseSeconds`, `spec.objective`, `spec.allowedScope`, `spec.constraints`,
-`spec.requiredChecks`, `spec.contract`, `resumeFrom`), which has no `context`
-member. A coordinator following only the skill never sends the context
-artifact references the lifecycle says a `TaskSpec` carries.
+`TaskSpec.context` ("Content-addressed context the worker starts from") is
+in the proto and in the lifecycle list ("context artifact references"), but
+the skill's Coordinator/Offer member list (`workerId`, `leaseSeconds`,
+`spec.objective`, `spec.allowedScope`, `spec.constraints`,
+`spec.requiredChecks`, `spec.contract`, `resumeFrom`) has no `context`
+member. A coordinator following only the skill never sends starting context.
 
-Proposed: add a `spec.context` bullet to the skill's Offer section (artifact
-references the worker may read), mirroring the lifecycle list.
+Proposed: add a `spec.context` bullet to the skill's Offer section.
 
 ## Verification
 
-- All three documents read in full (this review quotes the worktree copies).
+- All three documents read in full, plus the two proto files (this review
+  quotes the worktree copies).
 - Each quote above verified with `grep -F -- '<quote>' <document>` (exit 0).
 - Report committed on branch `agent/muse-1`; `git status` clean.
 
 ```json
 {
-  "headline": "Lifecycle promises reject, heartbeat, renew and context frames that no documented verb can send",
+  "headline": "Stream contract has reject, heartbeat, renew and context members the MCP verbs and skill cannot send",
   "documentsReviewed": [
     "docs/design/work-tags.md",
     ".claude/skills/protomolt-worker/SKILL.md",
@@ -99,27 +107,27 @@ references the worker may read), mirroring the lifecycle list.
   ],
   "findings": [
     {
-      "document": "docs/transform/delegation.md",
-      "quote": "The worker accepts or rejects the offer. An accepted attempt may send",
-      "problem": "Lifecycle promises a rejection path, but the twelve catalog verbs contain delegation-accept and no reject verb, and the skill's flow is accept-or-ask; a worker that must decline can only stall in QUESTION.",
-      "proposed": "Change to 'The worker accepts the offer, or asks before accepting', and either add a delegation-reject verb or document the decline path."
+      "document": "transform/delegation/src/main/proto/ai/protomolt/proto/delegation/v1/delegation.proto",
+      "quote": "description: \"Offer rejection with a bounded reason; terminal for the attempt.\"",
+      "problem": "TaskReject exists on the stream, but the actions surface has AcceptTask and no reject RPC, and the skill flow is accept-or-ask; an MCP-only worker cannot decline an offer.",
+      "proposed": "Add a reject RPC and skill step, or document the decline path (QUESTION, coordinator cancels)."
     },
     {
-      "document": "docs/transform/delegation.md",
-      "quote": "heartbeats, monotonic progress, and resumable checkpoints. The coordinator may",
-      "problem": "Lifecycle says an accepted attempt may send heartbeats, but no heartbeat verb exists in the catalog and the skill never mentions heartbeats.",
-      "proposed": "Drop 'heartbeats, ' from the sentence, or add the heartbeat verb to the catalog and the skill."
+      "document": "transform/delegation/src/main/proto/ai/protomolt/proto/delegation/v1/delegation.proto",
+      "quote": "// Leases are explicit: an offer grants one attempt's lease, heartbeats keep",
+      "problem": "Heartbeats keep the lease on the stream, but no heartbeat RPC exists and the skill never mentions heartbeats; only lifecycle frames mark an MCP worker alive.",
+      "proposed": "Add a heartbeat RPC, or state that lifecycle frames double as liveness for MCP workers."
     },
     {
-      "document": "docs/transform/delegation.md",
-      "quote": "renew or expire the lease. A later attempt can resume from a recorded",
-      "problem": "Lifecycle says the coordinator may renew the lease, but no renew verb exists; the skill only documents re-offer with resumeFrom after expiry, which is replacement, not renewal.",
-      "proposed": "Change to 'may expire the lease and re-offer with resumeFrom', or add a renewal verb and its skill step."
+      "document": "transform/delegation/src/main/proto/ai/protomolt/proto/delegation/v1/delegation.proto",
+      "quote": "description: \"Lease renewal: the new coordinator-declared expiry, strictly advancing.\"",
+      "problem": "LeaseRenewal exists on the stream, but no renew RPC exists; the skill only re-offers with resumeFrom after expiry, which is replacement, not renewal.",
+      "proposed": "Add a renewal RPC and skill step, or reword the lifecycle to expiry-and-re-offer for the MCP path."
     },
     {
-      "document": "docs/transform/delegation.md",
-      "quote": "- context artifact references;",
-      "problem": "Lifecycle lists context artifact references as TaskSpec members, but the skill's Coordinator/Offer member list has no spec.context entry, so a skill-following coordinator never sends them.",
+      "document": "transform/delegation/src/main/proto/ai/protomolt/proto/delegation/v1/delegation.proto",
+      "quote": "repeated ai.protomolt.proto.grpc.workflow.v1.ArtifactReference context = 5 [",
+      "problem": "TaskSpec.context is in the proto and the lifecycle list, but the skill's Offer member list has no spec.context entry, so a skill-following coordinator never sends starting context.",
       "proposed": "Add a spec.context bullet to the skill's Offer section."
     }
   ],
