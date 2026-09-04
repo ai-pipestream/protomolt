@@ -9,6 +9,8 @@ import ai.protomolt.proto.delegation.v1.Transcript;
 import ai.protomolt.proto.delegation.v1.WorkerCapability;
 import ai.protomolt.proto.delegation.v1.WorkerHello;
 import com.google.protobuf.Timestamp;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.Test;
 
@@ -227,6 +229,22 @@ class TranscriptRepositoryCoordinatorTest {
             assertThat(retryResponses.error).isNull();
             assertThat(retryResponses.values).hasSize(1);
             assertThat(coordinator.transcript().getEntriesCount()).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void repositoryOutageReportsFailureReasonOnTheStream() {
+        FailingRepository repository = new FailingRepository();
+        repository.failWrites = true;
+        try (InProcessDelegationCoordinator coordinator = new InProcessDelegationCoordinator(
+                AdmissionPolicy.allowAll(), CandidateReviewer.manual(), CLOCK, repository)) {
+            CapturingResponses responses = new CapturingResponses();
+            coordinator.delegate(responses).onNext(helloFrame(1));
+            assertThat(responses.error).isInstanceOf(StatusRuntimeException.class);
+            StatusRuntimeException failure = (StatusRuntimeException) responses.error;
+            assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.INTERNAL);
+            assertThat(failure.getStatus().getDescription()).contains("IllegalStateException")
+                    .contains("repository unavailable");
         }
     }
 

@@ -55,6 +55,9 @@ public final class InProcessDelegationCoordinator
         extends AgentDelegationServiceGrpc.AgentDelegationServiceImplBase
         implements AutoCloseable {
 
+    private static final System.Logger LOG =
+            System.getLogger(InProcessDelegationCoordinator.class.getName());
+
     private static final StreamObserver<DelegateResponse> DISCONNECTED_RESPONSES =
             new StreamObserver<>() {
                 @Override
@@ -158,8 +161,18 @@ public final class InProcessDelegationCoordinator
                 } catch (RuntimeException e) {
                     ended = true;
                     markDisconnected(session);
+                    String cause = e.getClass().getSimpleName();
+                    if (e.getMessage() != null) {
+                        cause += ": " + e.getMessage();
+                    }
+                    LOG.log(System.Logger.Level.WARNING,
+                            session == null
+                                    ? "worker stream failed before a session opened: " + cause
+                                    : "worker stream failed for worker " + session.workerId
+                                            + ": " + cause,
+                            e);
                     responseObserver.onError(Status.INTERNAL
-                            .withDescription("delegation coordinator failed")
+                            .withDescription("delegation coordinator failed: " + cause)
                             .withCause(e).asRuntimeException());
                 }
             }
