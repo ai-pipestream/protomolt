@@ -39,16 +39,25 @@ final class AgentHost implements AutoCloseable {
      *     may be rejoined by discarding the local transcript position. Off by default:
      *     resuming against a transcript that is gone would invent continuity. On, it is the
      *     operator stating that the loss is real, which is what a rebuilt coordinator means.
+     * @param maxBatchFailures how many consecutive rejected model replies on the same batch
+     *     (same saved cursor) {@link #run()} tolerates before it gives up on that batch and
+     *     stops the host. Only {@link ModelReplyException} counts toward this limit.
      */
     record Config(AgentRole role, String identity, String model, Path workspace,
-                  Duration pollTimeout, int maxEvents, boolean resetOnTranscriptLoss) {
+                  Duration pollTimeout, int maxEvents, boolean resetOnTranscriptLoss,
+                  int maxBatchFailures) {
+
+        /** The default {@code --max-batch-failures}, matching AgentHostMain's own default. */
+        private static final int DEFAULT_MAX_BATCH_FAILURES = 6;
+
         Config {
             if (role == null || identity == null
                     || !identity.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
                     || workspace == null || !workspace.isAbsolute()
                     || pollTimeout == null || pollTimeout.isNegative()
                     || pollTimeout.compareTo(Duration.ofSeconds(30)) > 0
-                    || maxEvents < 1 || maxEvents > 256) {
+                    || maxEvents < 1 || maxEvents > 256
+                    || maxBatchFailures < 1) {
                 throw new IllegalArgumentException("invalid agent host configuration");
             }
         }
@@ -56,9 +65,25 @@ final class AgentHost implements AutoCloseable {
         /** A configuration that refuses to rejoin across transcript loss. */
         Config(AgentRole role, String identity, String model, Path workspace,
                Duration pollTimeout, int maxEvents) {
-            this(role, identity, model, workspace, pollTimeout, maxEvents, false);
+            this(role, identity, model, workspace, pollTimeout, maxEvents, false,
+                    DEFAULT_MAX_BATCH_FAILURES);
+        }
+
+        /** The default {@code maxBatchFailures}. */
+        Config(AgentRole role, String identity, String model, Path workspace,
+               Duration pollTimeout, int maxEvents, boolean resetOnTranscriptLoss) {
+            this(role, identity, model, workspace, pollTimeout, maxEvents,
+                    resetOnTranscriptLoss, DEFAULT_MAX_BATCH_FAILURES);
         }
     }
+
+    /** A sleep seam so tests can drive minutes-scale backoff without a real wait. */
+    @FunctionalInterface
+    interface Sleeper {
+        void sleep(Duration duration) throws InterruptedException;
+    }
+
+    private static final Sleeper REAL_SLEEPER = Thread::sleep;
 
     private final Config config;
     private final McpHttpClient mcp;
@@ -66,17 +91,26 @@ final class AgentHost implements AutoCloseable {
     private final AgentHostStateStore states;
     /** The deliverable contracts of the tasks this host was offered, by task id. */
     private final Map<String, DeliverableContract> contracts = new LinkedHashMap<>();
+    private final Sleeper sleeper;
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final AtomicBoolean gaveUp = new AtomicBoolean();
 
     private AgentHostState state;
 
     AgentHost(Config config, McpHttpClient mcp, AgentProvider provider,
               AgentHostStateStore states, AgentHostState state) {
+        this(config, mcp, provider, states, state, REAL_SLEEPER);
+    }
+
+    /** Test seam: a caller-supplied {@link Sleeper} replaces the real minutes/seconds wait. */
+    AgentHost(Config config, McpHttpClient mcp, AgentProvider provider,
+              AgentHostStateStore states, AgentHostState state, Sleeper sleeper) {
         this.config = config;
         this.mcp = mcp;
         this.provider = provider;
         this.states = states;
         this.state = state;
+        this.sleeper = sleeper;
         state.contracts().forEach((taskId, json) -> {
             DeliverableContract.Builder contract = DeliverableContract.newBuilder();
             try {
@@ -268,13 +302,55 @@ final class AgentHost implements AutoCloseable {
         }
     }
 
-    /** Runs until closed, keeping long waits and model turns on one virtual thread. */
+    /**
+     * Runs until closed, keeping long waits and model turns on one virtual thread.
+     *
+     * <p>A {@link ModelReplyException} is a rejected model reply, not a transport or MCP
+     * failure: retrying the identical batch on a seconds-scale backoff just burns model
+     * context on the same bad answer, so consecutive rejections on the same saved cursor
+     * back off in minutes instead (1, 2, 4, 8, capped at 15), and after
+     * {@code config.maxBatchFailures()} of them the host gives up on that batch entirely,
+     * leaving the cursor untouched so a restart re-presents it to an operator or a fixed
+     * model. A batch is identified by the cursor the failure left {@link #state} at: a
+     * success resets the count, and a failure on a different (advanced) cursor starts a new
+     * one. Every other {@link AgentHostException} keeps the original uncapped seconds-scale
+     * backoff.
+     */
     void run() {
         int failures = 0;
+        int batchFailures = 0;
+        long batchCursor = -1;
         while (!closed.get()) {
             try {
                 pollOnce();
                 failures = 0;
+                batchFailures = 0;
+                batchCursor = -1;
+            } catch (ModelReplyException e) {
+                if (closed.get()) {
+                    return;
+                }
+                long cursor = state.cursor();
+                batchFailures = cursor == batchCursor ? batchFailures + 1 : 1;
+                batchCursor = cursor;
+                if (batchFailures >= config.maxBatchFailures()) {
+                    System.err.println("agent-host: giving up on the batch after cursor "
+                            + cursor + " after " + batchFailures
+                            + " rejected replies; operator action needed");
+                    close();
+                    gaveUp.set(true);
+                    return;
+                }
+                long minutes = batchFailures <= 4 ? (1L << (batchFailures - 1)) : 15;
+                System.err.println("agent-host: batch after cursor " + cursor + " rejected "
+                        + batchFailures + " time(s): " + e.getMessage()
+                        + "; next attempt in " + minutes + " minutes");
+                try {
+                    sleeper.sleep(Duration.ofMinutes(minutes));
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
             } catch (AgentHostException e) {
                 if (closed.get()) {
                     return;
@@ -282,13 +358,18 @@ final class AgentHost implements AutoCloseable {
                 failures = Math.min(failures + 1, 5);
                 System.err.println("agent-host: " + e.getMessage());
                 try {
-                    Thread.sleep(Duration.ofSeconds(1L << (failures - 1)));
+                    sleeper.sleep(Duration.ofSeconds(1L << (failures - 1)));
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
                     return;
                 }
             }
         }
+    }
+
+    /** Whether {@link #run()} stopped because a batch exhausted its rejected-reply limit. */
+    boolean gaveUp() {
+        return gaveUp.get();
     }
 
     AgentHostState state() {
@@ -389,7 +470,7 @@ final class AgentHost implements AutoCloseable {
                 tools.contains(command.tool())
                         && taskId.equals(command.arguments().path("taskId").asText()));
         if (!present) {
-            throw new AgentHostException(message + " for task " + taskId);
+            throw new ModelReplyException(message + " for task " + taskId);
         }
     }
 
@@ -416,7 +497,7 @@ final class AgentHost implements AutoCloseable {
                     && completionTasks.contains(taskId);
         });
         if (!present) {
-            throw new AgentHostException("a worker accept, progress, or checkpoint "
+            throw new ModelReplyException("a worker accept, progress, or checkpoint "
                     + "requires coordinator guidance or cancellation for task " + taskId);
         }
     }

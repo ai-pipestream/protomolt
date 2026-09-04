@@ -38,7 +38,8 @@ public final class AgentHostMain {
                 options.endpoint(), options.tokenEnvironment());
         AgentHost.Config config = new AgentHost.Config(options.role(), options.identity(),
                 options.model(), options.workspace(), options.pollTimeout(),
-                options.maxEvents(), options.resetOnTranscriptLoss());
+                options.maxEvents(), options.resetOnTranscriptLoss(),
+                options.maxBatchFailures());
         try (AgentHost host = new AgentHost(config, mcp, provider, store, state)) {
             host.connect();
             if (options.bootstrap() != null) {
@@ -63,6 +64,12 @@ public final class AgentHostMain {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
+            if (host.gaveUp()) {
+                // A batch exhausted its rejected-reply limit: the host stopped itself with
+                // the cursor untouched, and the exit code is how an operator or a supervisor
+                // finds out without watching the log.
+                System.exit(3);
+            }
         }
     }
 
@@ -85,7 +92,8 @@ public final class AgentHostMain {
                    String model, Path workspace, Path state, String tokenEnvironment,
                    Path bootstrap, Duration pollTimeout, Duration turnTimeout,
                    int maxEvents, AcpClient.PermissionPolicy permissionPolicy,
-                   URI providerEndpoint, boolean once, boolean resetOnTranscriptLoss) {
+                   URI providerEndpoint, boolean once, boolean resetOnTranscriptLoss,
+                   int maxBatchFailures) {
 
         static Options parse(String[] args) {
             String endpoint = environment("PROTOMOLT_AGENT_MCP_ENDPOINT");
@@ -101,6 +109,7 @@ public final class AgentHostMain {
             long pollSeconds = 30;
             long turnMinutes = 30;
             int maxEvents = 64;
+            int maxBatchFailures = 6;
             AcpClient.PermissionPolicy permissionPolicy =
                     AcpClient.PermissionPolicy.ALLOW_SINGLE;
             boolean once = false;
@@ -123,6 +132,8 @@ public final class AgentHostMain {
                             value(args, ++i), "--turn-minutes");
                     case "--max-events" -> maxEvents = positiveInt(
                             value(args, ++i), "--max-events");
+                    case "--max-batch-failures" -> maxBatchFailures = positiveInt(
+                            value(args, ++i), "--max-batch-failures");
                     case "--acp-permissions" -> permissionPolicy = permissionPolicy(
                             value(args, ++i));
                     case "--once" -> once = true;
@@ -183,7 +194,7 @@ public final class AgentHostMain {
                     Path.of(state).toAbsolutePath().normalize(), tokenEnvironment,
                     bootstrapPath, Duration.ofSeconds(pollSeconds),
                     Duration.ofMinutes(turnMinutes), maxEvents, permissionPolicy,
-                    providerEndpointUri, once, resetOnTranscriptLoss);
+                    providerEndpointUri, once, resetOnTranscriptLoss, maxBatchFailures);
         }
 
         static String usage() {
@@ -193,7 +204,8 @@ public final class AgentHostMain {
                     + "[--model <name>] [--provider-endpoint <http://host:port/v1>] "
                     + "[--token-env <ENV_NAME>] "
                     + "[--bootstrap <objective-file>] [--acp-permissions "
-                    + "<allow-single|reject>] [--reset-on-transcript-loss]";
+                    + "<allow-single|reject>] [--reset-on-transcript-loss] "
+                    + "[--max-batch-failures <count>]";
         }
 
         private static String value(String[] args, int index) {

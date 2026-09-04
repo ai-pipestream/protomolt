@@ -145,7 +145,7 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
             }
             start = trimmed.indexOf('{', start + 1);
         }
-        throw new AgentHostException("agent response is not JSON: "
+        throw new ModelReplyException("agent response is not JSON: "
                 + whole.getOriginalMessage() + " at line " + whole.getLocation().getLineNr()
                 + " column " + whole.getLocation().getColumnNr());
     }
@@ -200,27 +200,27 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
     static AgentTurn parse(String text, AgentRole role, List<Long> expectedCursors,
                            String identity, Map<String, DeliverableContract> contracts) {
         if (text == null || text.length() > MAX_RESPONSE_CHARS) {
-            throw new AgentHostException("agent response exceeds the 256 KiB limit");
+            throw new ModelReplyException("agent response exceeds the 256 KiB limit");
         }
         JsonNode parsed = readResponse(text);
         if (!parsed.isObject()) {
-            throw new AgentHostException("agent response must be one JSON object");
+            throw new ModelReplyException("agent response must be one JSON object");
         }
         ObjectNode root = (ObjectNode) parsed;
         Set<String> fields = new HashSet<>();
         root.fieldNames().forEachRemaining(fields::add);
         if (!Set.of("handledEventCursors", "commands").containsAll(fields)) {
-            throw new AgentHostException("agent response contains unknown fields");
+            throw new ModelReplyException("agent response contains unknown fields");
         }
         List<Long> cursors = readCursors(root.get("handledEventCursors"));
         if (!cursors.equals(expectedCursors)) {
-            throw new AgentHostException("handledEventCursors must exactly match "
+            throw new ModelReplyException("handledEventCursors must exactly match "
                     + expectedCursors);
         }
         JsonNode commandNodes = root.get("commands");
         if (commandNodes == null || !commandNodes.isArray()
                 || commandNodes.isEmpty() || commandNodes.size() > MAX_COMMANDS) {
-            throw new AgentHostException("commands must contain 1 to "
+            throw new ModelReplyException("commands must contain 1 to "
                     + MAX_COMMANDS + " entries");
         }
         List<String> allowed = tools(role);
@@ -229,12 +229,12 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
             JsonNode node = commandNodes.get(i);
             if (!node.isObject() || !node.path("tool").isTextual()
                     || !node.path("arguments").isObject() || node.size() != 2) {
-                throw new AgentHostException("command " + i
+                throw new ModelReplyException("command " + i
                         + " must contain a tool and object arguments");
             }
             String tool = node.path("tool").asText();
             if (!allowed.contains(tool)) {
-                throw new AgentHostException("tool '" + tool + "' is not allowed for "
+                throw new ModelReplyException("tool '" + tool + "' is not allowed for "
                         + role.name().toLowerCase(Locale.ROOT));
             }
             ObjectNode arguments = ((ObjectNode) node.path("arguments")).deepCopy();
@@ -276,7 +276,7 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
         try {
             JsonFormat.parser().merge(arguments.toString(), builder);
         } catch (InvalidProtocolBufferException e) {
-            throw new AgentHostException(where + " is not a " + descriptor.getName()
+            throw new ModelReplyException(where + " is not a " + descriptor.getName()
                     + ": " + e.getMessage());
         }
         Message request = builder.build();
@@ -287,7 +287,7 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
         if (result.valid()) {
             return;
         }
-        throw new AgentHostException(violations(where, result));
+        throw new ModelReplyException(violations(where, result));
     }
 
     /**
@@ -306,10 +306,10 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
         } catch (InvalidProtocolBufferException e) {
             String reason = e.getMessage() == null ? "" : e.getMessage();
             if (reason.contains("Cannot resolve type")) {
-                throw new AgentHostException(where + ": result names a type for which no"
+                throw new ModelReplyException(where + ": result names a type for which no"
                         + " deliverable contract is known (" + reason + ")");
             }
-            throw new AgentHostException(where + " is not a SubmitCandidateRequest: "
+            throw new ModelReplyException(where + " is not a SubmitCandidateRequest: "
                     + reason);
         }
         SubmitCandidateRequest request = builder.build();
@@ -319,26 +319,26 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
                                 request.getDescriptorForType()))
                 .validate(request);
         if (!result.valid()) {
-            throw new AgentHostException(violations(where, result));
+            throw new ModelReplyException(violations(where, result));
         }
         DeliverableContract contract = contracts.get(request.getTaskId());
         boolean carried = request.getCandidate().hasResult();
         if (contract == null) {
             if (carried) {
-                throw new AgentHostException(where + ": the candidate carries a"
+                throw new ModelReplyException(where + ": the candidate carries a"
                         + " deliverable but no deliverable contract is known for task "
                         + request.getTaskId());
             }
             return;
         }
         if (!carried) {
-            throw new AgentHostException(where + ": the task's deliverable contract requires"
+            throw new ModelReplyException(where + ": the task's deliverable contract requires"
                     + " a result of type " + contract.getTypeName());
         }
         Any deliverable = request.getCandidate().getResult();
         List<String> problems = DeliverableContracts.check(contract, deliverable);
         if (!problems.isEmpty()) {
-            throw new AgentHostException(where + ": " + String.join("; ", problems));
+            throw new ModelReplyException(where + ": " + String.join("; ", problems));
         }
     }
 
@@ -383,7 +383,7 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
         for (Map.Entry<String, JsonNode> member : node.properties()) {
             FieldDescriptor field = member(descriptor, member.getKey());
             if (field == null) {
-                throw new AgentHostException(where + " contains unknown field '"
+                throw new ModelReplyException(where + " contains unknown field '"
                         + member.getKey() + "'");
             }
             if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE
@@ -803,13 +803,13 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
 
     private static List<Long> readCursors(JsonNode node) {
         if (node == null || !node.isArray()) {
-            throw new AgentHostException("handledEventCursors must be an array");
+            throw new ModelReplyException("handledEventCursors must be an array");
         }
         List<Long> cursors = new ArrayList<>();
         long previous = -1;
         for (JsonNode entry : node) {
             if (!entry.canConvertToLong() || entry.asLong() <= previous) {
-                throw new AgentHostException(
+                throw new ModelReplyException(
                         "handledEventCursors must be strictly increasing integers");
             }
             previous = entry.asLong();
@@ -839,7 +839,7 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
     private static void requireCompatible(ObjectNode arguments, String field, String value) {
         JsonNode present = arguments.get(field);
         if (present != null && (!present.isTextual() || !value.equals(present.asText()))) {
-            throw new AgentHostException("agent cannot override " + field);
+            throw new ModelReplyException("agent cannot override " + field);
         }
     }
 
@@ -847,7 +847,7 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
         if (arguments.size() != 1 || !arguments.path("reason").isTextual()
                 || arguments.path("reason").asText().isBlank()
                 || arguments.path("reason").asText().length() > 1_024) {
-            throw new AgentHostException(
+            throw new ModelReplyException(
                     "host-ack arguments must contain one bounded reason");
         }
     }
