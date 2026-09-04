@@ -42,6 +42,22 @@ the schema, and the check on the reply without a second edit here.
 Invalid model output gets one repair turn. A second invalid response leaves the
 cursor unchanged so the event batch remains available after restart.
 
+A rejected model reply (the parse, required-action, or deliverable-contract
+checks) is a `ModelReplyException`, tracked separately from transport, MCP,
+and provider failures. `run()` backs it off in minutes instead of seconds —
+1, 2, 4, 8, capped at 15 — because retrying the identical batch on a short
+clock just resends the same bad prompt and, with a process model whose
+context grows every turn, burns tokens without changing the outcome.
+Consecutive rejections on the same saved cursor count as one batch; a
+successful batch, or a rejection after the cursor has advanced, resets the
+count. After `--max-batch-failures` consecutive rejections on one batch
+(default 6) the host gives up: it logs the batch's cursor and rejection
+count, closes the provider, and stops, leaving the cursor untouched so a
+restart re-presents the same batch to an operator or a fixed model instead
+of retrying it forever. `protomolt-agent-host` then exits with status 3.
+Every other `AgentHostException` keeps the original uncapped seconds-scale
+retry.
+
 ## Deliverable contracts
 
 An offer whose spec names a deliverable contract (see
