@@ -19,11 +19,13 @@ public final class Hostnames {
 
     /** Returns whether {@code value} is a syntactically valid hostname. */
     public static boolean isHostname(String value) {
-        if (value.isEmpty() || value.length() > MAX_NAME) {
+        if (value.isEmpty()) {
             return false;
         }
+        // The cap applies to the name without its optional trailing dot: a 253-character
+        // name is valid root-qualified as well (protovalidate 63347b8).
         String name = value.endsWith(".") ? value.substring(0, value.length() - 1) : value;
-        if (name.isEmpty()) {
+        if (name.isEmpty() || name.length() > MAX_NAME) {
             return false;
         }
 

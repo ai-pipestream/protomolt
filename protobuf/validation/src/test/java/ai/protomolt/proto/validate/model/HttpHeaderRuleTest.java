@@ -37,9 +37,13 @@ class HttpHeaderRuleTest {
         assertThat(HttpHeaderRule.NAME_STRICT.matches("X-Custom-Header")).isTrue();
         // Every specials character from protovalidate's class, including the backtick.
         assertThat(HttpHeaderRule.NAME_STRICT.matches("!#$%&'*+-.^_|~`")).isTrue();
-        // The "+-." span in the regex class is a range, so the comma between '+' and '.'
-        // is admitted too — a documented quirk of the source regex.
-        assertThat(HttpHeaderRule.NAME_STRICT.matches("a,b")).isTrue();
+        // protovalidate 63347b8 moved the hyphen to the end of the class, so "+-." is no
+        // longer a range and the comma it used to admit is refused.
+        assertThat(HttpHeaderRule.NAME_STRICT.matches("a,b")).isFalse();
+        assertThat(HttpHeaderRule.NAME_STRICT.matches("foo,bar")).isFalse();
+        assertThat(HttpHeaderRule.NAME_STRICT.matches(
+                "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!#$%&'*+-.^_|~`"))
+                .isTrue();
         assertThat(HttpHeaderRule.NAME_STRICT.matches("has space")).isFalse();
         assertThat(HttpHeaderRule.NAME_STRICT.matches("trail:")).isFalse();
         assertThat(HttpHeaderRule.NAME_STRICT.matches("")).isFalse();
