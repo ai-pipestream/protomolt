@@ -138,6 +138,48 @@ Do not use a host Docker socket or a Kubernetes administrative credential as
 the execution protocol. Image builds should go through an explicitly enabled
 rootless or remote builder with separate credentials and policy.
 
+### Model profiles and routing policy
+
+Today a coordinator names one worker in an offer, a worker registers one
+`provider` and `model` string, and the choice of which model does which work is a
+judgement made outside the protocol. Two registry-stored messages make it data.
+
+`ModelProfile` describes one model as a worker host can run it: `provider`,
+`model_id`, `model_version`, the tier tags it is rated for and the skill tags it
+holds (both from `work-tags.md`), `structured_output` (`NONE`, `PROMPTED`,
+`ENFORCED`), `tool_use`, `context_window`, `latency_class`, `max_turn` as a
+duration, and `cost_input` / `cost_output` per million tokens with a currency.
+A host registers the profiles it can serve instead of one model string; a profile
+whose model is chosen by the provider (Cursor's `auto`) is its own profile, and the
+settlement note names `model_used` after the fact. Price fields are maintained by
+hand; providers publish no uniform price feed.
+
+`RoutingPolicy` is a list of `RoutingRule {id, when, action, weight, message}` where
+`when` is a CEL predicate over two typed inputs, `offer` (the `TaskSpec` plus lease
+and contract) and `profile`, and `action` is `REQUIRE`, `EXCLUDE` or `PREFER`.
+Evaluation is fixed: apply every `REQUIRE` and `EXCLUDE` rule as a filter, sum the
+`PREFER` weights over the profiles that remain, and break ties on cost, then on
+profile id. That is a decision tree over as many dimensions as the two messages
+expose, not a ladder; a rule such as "a task with a deliverable contract needs
+`structured_output == ENFORCED`" is one line, and it encodes what the first Kimi
+run showed the hard way. Because the inputs are typed, a rule that names a field
+neither message has fails when the policy is written to the registry, through the
+same CEL type check the validator uses, not when a task is offered.
+
+Two policies run through one evaluator. The poster's policy runs in the coordinator
+at acceptance and says which profiles may take the offer; each provider host's policy
+runs when the host decides which of its profiles to bid with, so Cursor, Kimi,
+Anthropic and Meta ladders differ without code changes. The transcript ledger feeds
+`profile.score[tag]` (accepted, revised and cancelled outcomes, tokens and wall time
+per tag) so a rule can branch on evidence rather than on a vendor's claim.
+
+Landing order: the two messages in the registry and `RegisterWorkerRequest`
+carrying profile ids; the evaluator on the coordinator's acceptance path and on the
+host's bid path; a `--provider-token-env` option on the OpenAI-compatible adapter,
+which today sends no credential, so the Meta and Gemini endpoints can join and give
+the first cost and quality points outside Kimi; a Cursor adapter; the scorecard.
+The routing keys on the deliverable contract, so it follows the contract work.
+
 ## Retrieval and metadata
 
 ### Retrieval evidence
