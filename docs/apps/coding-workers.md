@@ -62,6 +62,9 @@ Keep each kind of state at its narrowest boundary:
 | Source tree and language caches | coding worker | mounted workspace or named volumes |
 | Codex login | Codex provider | mounted `.codex` directory |
 | Kimi login and CLI | Kimi provider | mounted `.kimi-code` directory |
+| Cursor login and CLI | Cursor provider | mounted `.cursor` directory and the `agent` binary |
+| Antigravity login and CLI | Antigravity provider | mounted `.gemini` directory and the `agy` binary |
+| Muse login, sessions and CLI | Muse provider | mounted `.config/muse` and `.local/share/muse` directories and the `muse` binary |
 | ProtoMolt API token | agent host control link | runtime secret or environment variable |
 | Local OpenAI-compatible model access | local Compose network | no bearer token in the verified loopback deployment |
 

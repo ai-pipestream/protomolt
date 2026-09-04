@@ -1,5 +1,6 @@
 package ai.protomolt.proto.acp;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
@@ -162,5 +163,72 @@ class AcpClientTest {
     private static ObjectNode option(String id, String kind) {
         return MAPPER.createObjectNode().put("optionId", id).put("kind", kind)
                 .put("name", id);
+    }
+
+    @Test
+    void authenticateSendsTheAdvertisedMethodId() {
+        TestPipes.End[] ends = TestPipes.pair();
+        AcpConnection server = AcpConnection.over(ends[1].in(), ends[1].out()).start();
+        server.onRequest((method, params) -> {
+            assertThat(method).isEqualTo("authenticate");
+            assertThat(params.path("methodId").asText()).isEqualTo("cursor_login");
+            return MAPPER.createObjectNode();
+        });
+        try (AcpClient client = AcpClient.over(ends[0].in(), ends[0].out())) {
+            assertThat(client.authenticate("cursor_login").isObject()).isTrue();
+        } finally {
+            server.close();
+        }
+    }
+
+    @Test
+    void advertisedAuthMethodsAreReadFromTheInitializeResult() {
+        ObjectNode initialized = MAPPER.createObjectNode();
+        initialized.putArray("authMethods").addObject().put("id", "cursor_login");
+        assertThat(AcpClient.advertisesAuthMethod(initialized, "cursor_login")).isTrue();
+        assertThat(AcpClient.advertisesAuthMethod(initialized, "other")).isFalse();
+        assertThat(AcpClient.advertisesAuthMethod(MAPPER.createObjectNode(), "cursor_login"))
+                .isFalse();
+    }
+
+    @Test
+    void extensionHandlerAnswersAgentRequestsThePolicyDoesNotCover() throws Exception {
+        TestPipes.End[] ends = TestPipes.pair();
+        AcpConnection server = AcpConnection.over(ends[1].in(), ends[1].out()).start();
+        try (AcpClient client = AcpClient.over(ends[0].in(), ends[0].out())
+                .withPermissionPolicy(AcpClient.PermissionPolicy.REJECT)
+                .withExtensionHandler((method, params) -> "cursor/create_plan".equals(method)
+                        ? MAPPER.createObjectNode().put("answered",
+                                params.path("toolCallId").asText())
+                        : null)) {
+            ObjectNode plan = MAPPER.createObjectNode().put("toolCallId", "call-7");
+            assertThat(server.request("cursor/create_plan", plan).get(30, TimeUnit.SECONDS)
+                    .path("answered").asText()).isEqualTo("call-7");
+            assertThatThrownBy(() -> server.request("cursor/unknown", plan)
+                    .get(30, TimeUnit.SECONDS))
+                    .cause().isInstanceOf(AcpError.class)
+                    .hasMessageContaining("unknown method: cursor/unknown");
+        } finally {
+            server.close();
+        }
+    }
+
+    @Test
+    void permissionOptionKindsMatchWithHyphensToo() throws Exception {
+        TestPipes.End[] ends = TestPipes.pair();
+        AcpConnection server = AcpConnection.over(ends[1].in(), ends[1].out()).start();
+        try (AcpClient client = AcpClient.over(ends[0].in(), ends[0].out())
+                .withPermissionPolicy(AcpClient.PermissionPolicy.ALLOW_SINGLE)) {
+            ObjectNode request = MAPPER.createObjectNode();
+            ObjectNode allow = request.putArray("options").addObject();
+            allow.put("kind", "allow-once");
+            allow.put("optionId", "yes");
+            JsonNode outcome = server.request("session/request_permission", request)
+                    .get(30, TimeUnit.SECONDS).path("outcome");
+            assertThat(outcome.path("outcome").asText()).isEqualTo("selected");
+            assertThat(outcome.path("optionId").asText()).isEqualTo("yes");
+        } finally {
+            server.close();
+        }
     }
 }

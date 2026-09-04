@@ -3,6 +3,8 @@ package ai.protomolt.proto.agenthost;
 import ai.protomolt.proto.acp.AcpClient;
 import ai.protomolt.proto.acp.AcpError;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -22,6 +24,11 @@ final class AcpAgentProvider implements AgentProvider {
             "Invalid params: Unknown sessionId: ";
 
     private final Path workspace;
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    private final String name;
+    /** The name as it reads in a message: "Kimi", "Cursor". */
+    private final String label;
     private final List<String> command;
     private final Duration timeout;
     private final AcpClient.PermissionPolicy permissionPolicy;
@@ -32,8 +39,24 @@ final class AcpAgentProvider implements AgentProvider {
     private int responseChars;
     private boolean responseTooLarge;
 
+    /** The Kimi provider: {@code kimi acp} with the default session handling. */
     AcpAgentProvider(Path workspace, String savedSessionId, List<String> command,
                      Duration timeout, AcpClient.PermissionPolicy permissionPolicy) {
+        this("kimi", workspace, savedSessionId, command, timeout, permissionPolicy);
+    }
+
+    /**
+     * An ACP provider under its own name. Cursor ({@code agent acp}) advertises the
+     * {@code cursor_login} authentication method, which the provider runs after the
+     * handshake, and raises blocking extension requests that an unattended host answers
+     * without a person: a multiple-choice question is skipped with a reason that points the
+     * agent at the coordinator, and a plan is accepted.
+     */
+    AcpAgentProvider(String name, Path workspace, String savedSessionId, List<String> command,
+                     Duration timeout, AcpClient.PermissionPolicy permissionPolicy) {
+        this.name = name;
+        this.label = name.isEmpty() ? name
+                : Character.toUpperCase(name.charAt(0)) + name.substring(1);
         this.workspace = workspace.toAbsolutePath().normalize();
         this.sessionId = savedSessionId == null ? "" : savedSessionId;
         this.command = List.copyOf(command);
@@ -44,7 +67,7 @@ final class AcpAgentProvider implements AgentProvider {
 
     @Override
     public String name() {
-        return "kimi";
+        return name;
     }
 
     @Override
@@ -64,7 +87,7 @@ final class AcpAgentProvider implements AgentProvider {
             try {
                 client.prompt(sessionId, prompt);
             } catch (AcpError second) {
-                throw new AgentHostException("Kimi ACP prompt failed after reconnect", second);
+                throw new AgentHostException(label + " ACP prompt failed after reconnect", second);
             }
         }
         return completedResponse();
@@ -72,14 +95,16 @@ final class AcpAgentProvider implements AgentProvider {
 
     private void connect() {
         if (command.isEmpty()) {
-            throw new AgentHostException("Kimi ACP command is empty");
+            throw new AgentHostException(label + " ACP command is empty");
         }
         try {
             client = AcpClient.launch(command.toArray(String[]::new))
                     .withRequestTimeout(timeout)
                     .withPermissionPolicy(permissionPolicy)
+                    .withExtensionHandler(AcpAgentProvider::extension)
                     .onSessionUpdate(this::sessionUpdate);
             JsonNode initialized = client.initialize();
+            authenticate(initialized);
             boolean canLoad = initialized.path("agentCapabilities")
                     .path("loadSession").asBoolean();
             if (!sessionId.isBlank() && canLoad) {
@@ -89,7 +114,50 @@ final class AcpAgentProvider implements AgentProvider {
             }
         } catch (IOException | RuntimeException e) {
             closeClient();
-            throw new AgentHostException("could not start Kimi ACP", e);
+            throw new AgentHostException("could not start " + label + " ACP", e);
+        }
+    }
+
+    /**
+     * Runs the agent's advertised authentication method when there is exactly one, or the
+     * Cursor login when it is among several. The credential itself is never here: Cursor
+     * reads its CLI login or {@code CURSOR_API_KEY} from the environment.
+     */
+    private void authenticate(JsonNode initialized) {
+        JsonNode methods = initialized.path("authMethods");
+        String methodId = null;
+        if (AcpClient.advertisesAuthMethod(initialized, "cursor_login")) {
+            methodId = "cursor_login";
+        } else if (methods.isArray() && methods.size() == 1) {
+            methodId = methods.get(0).path("id").asText(null);
+        }
+        if (methodId != null && !methodId.isBlank()) {
+            client.authenticate(methodId);
+        }
+    }
+
+    /**
+     * Cursor's blocking extension requests, answered without a person. A question the agent
+     * needs answered belongs to the coordinator, so it is skipped with that direction; a
+     * plan is accepted so the agent proceeds to the work the packet asked for.
+     */
+    static JsonNode extension(String method, JsonNode params) {
+        ObjectNode response = MAPPER.createObjectNode();
+        ObjectNode outcome = response.putObject("outcome");
+        switch (method) {
+            case "cursor/ask_question" -> {
+                outcome.put("outcome", "skipped");
+                outcome.put("reason", "unattended host: put the question to the coordinator"
+                        + " with delegation-message and continue with the rest of the packet");
+                return response;
+            }
+            case "cursor/create_plan" -> {
+                outcome.put("outcome", "accepted");
+                return response;
+            }
+            default -> {
+                return null;
+            }
         }
     }
 
@@ -154,11 +222,11 @@ final class AcpAgentProvider implements AgentProvider {
 
     private synchronized String completedResponse() {
         if (responseTooLarge) {
-            throw new AgentHostException("Kimi ACP response exceeds the 256 KiB limit");
+            throw new AgentHostException(label + " ACP response exceeds the 256 KiB limit");
         }
         String response = String.join("", messageChunks).trim();
         if (response.isEmpty()) {
-            throw new AgentHostException("Kimi ACP returned no agent message");
+            throw new AgentHostException(label + " ACP returned no agent message");
         }
         return response;
     }
