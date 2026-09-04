@@ -65,6 +65,22 @@ public interface ProtoAction {
     }
 
     /**
+     * The types this verb can resolve inside a packed {@code google.protobuf.Any} on the
+     * JSON path, in either direction.
+     *
+     * <p>Empty for almost every verb: a message with no {@code Any} in it needs nothing, and
+     * a payload of a type the process was compiled against already resolves. Override where
+     * the payload type is declared by the caller rather than by the build — the type is not
+     * on this process's classpath, so without a registry the {@code "@type"} URL names
+     * nothing and the envelope is refused as unparseable.
+     *
+     * <p>Called once per JSON call, so an implementation may answer from live state.
+     */
+    default com.google.protobuf.util.JsonFormat.TypeRegistry typeRegistry() {
+        return com.google.protobuf.util.JsonFormat.TypeRegistry.getEmptyTypeRegistry();
+    }
+
+    /**
      * Executes the action.
      *
      * @param request a {@link #requestType()} message, already checked against its rules

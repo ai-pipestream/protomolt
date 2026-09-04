@@ -127,9 +127,25 @@ public final class CatalogContract {
      */
     public static Message read(ObjectNode document, Descriptor descriptor, String what)
             throws ActionException {
+        return read(document, descriptor, what, JsonFormat.TypeRegistry.getEmptyTypeRegistry());
+    }
+
+    /**
+     * Reads a document as {@code descriptor} without applying the message's rules, resolving
+     * packed {@code Any} members against {@code registry}.
+     *
+     * <p>Proto3 JSON writes an {@code Any} as its members under a {@code "@type"} URL, and a
+     * parser can only build the packed message when it can find that type. The default
+     * registry knows the types the running process was compiled against, which is exactly the
+     * wrong set for a document whose payload type was declared by the caller: a verb that
+     * accepts one supplies the registry that resolves it.
+     */
+    public static Message read(ObjectNode document, Descriptor descriptor, String what,
+            JsonFormat.TypeRegistry registry) throws ActionException {
         DynamicMessage.Builder builder = DynamicMessage.newBuilder(descriptor);
         try {
-            JsonFormat.parser().merge(document.toString(), builder);
+            JsonFormat.parser().usingTypeRegistry(registry)
+                    .merge(document.toString(), builder);
         } catch (InvalidProtocolBufferException e) {
             throw new ActionException("invalid-input",
                     what + " is not a " + descriptor.getName() + ": " + e.getMessage());
@@ -151,10 +167,27 @@ public final class CatalogContract {
      */
     public static Message toRequest(ObjectNode input, Descriptor descriptor, String verb)
             throws ActionException {
+        return toRequest(input, descriptor, verb,
+                JsonFormat.TypeRegistry.getEmptyTypeRegistry());
+    }
+
+    /**
+     * Parses an envelope into the request message a verb accepts, resolving packed
+     * {@code Any} members against {@code registry} and refusing what the message does not
+     * allow.
+     *
+     * <p>A verb whose request carries an {@code Any} of a type the caller declared cannot be
+     * parsed by the default registry: the type is not on the running process's classpath, so
+     * the {@code "@type"} URL resolves to nothing and the whole envelope is refused. Such a
+     * verb publishes the registry that resolves its own payload types, and the same document
+     * then reaches it over every JSON surface.
+     */
+    public static Message toRequest(ObjectNode input, Descriptor descriptor, String verb,
+            JsonFormat.TypeRegistry registry) throws ActionException {
         EnvelopeTypes.check(input, descriptor, "");
         DynamicMessage.Builder builder = DynamicMessage.newBuilder(descriptor);
         try {
-            JsonFormat.parser().merge(input.toString(), builder);
+            JsonFormat.parser().usingTypeRegistry(registry).merge(input.toString(), builder);
         } catch (InvalidProtocolBufferException e) {
             throw new ActionException("invalid-input",
                     verb + " expects a " + descriptor.getName() + ": " + e.getMessage());
@@ -270,6 +303,21 @@ public final class CatalogContract {
     public static ObjectNode toReply(MessageOrBuilder message, String verb)
             throws ActionException {
         return print(COMPLETE_PRINTER, message, verb, "result");
+    }
+
+    /**
+     * A response rendered as JSON, resolving packed {@code Any} members against
+     * {@code registry}.
+     *
+     * <p>A reply that carries back a payload of a caller-declared type has the same problem
+     * the request had: without the registry the printer cannot name what it is holding and
+     * the whole reply fails to render. A verb that accepts such a payload has to be able to
+     * show it again.
+     */
+    public static ObjectNode toReply(MessageOrBuilder message, String verb,
+            JsonFormat.TypeRegistry registry) throws ActionException {
+        return print(JsonFormat.printer().usingTypeRegistry(registry)
+                .alwaysPrintFieldsWithNoPresence(), message, verb, "result");
     }
 
     private static ObjectNode print(JsonFormat.Printer printer, MessageOrBuilder message,

@@ -22,9 +22,11 @@ import ai.protomolt.proto.delegation.v1.TranscriptEntry;
 import ai.protomolt.proto.delegation.v1.WorkerHello;
 import ai.protomolt.proto.grpc.workflow.v1.ArtifactReference;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Duration;
 import com.google.protobuf.Timestamp;
 import com.google.protobuf.util.Durations;
+import com.google.protobuf.util.JsonFormat;
 import com.google.protobuf.util.Timestamps;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
@@ -33,11 +35,13 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -206,6 +210,10 @@ public final class InProcessDelegationCoordinator
         if (leaseDuration.isZero() || leaseDuration.isNegative()) {
             throw new IllegalArgumentException("leaseDuration must be positive");
         }
+        // A contract is linked here rather than at the first candidate: an offer naming a
+        // type its own descriptor set does not declare is refused while the caller is still
+        // holding it, and the schema every worker reads is rendered onto the offered spec.
+        TaskSpec offeredSpec = DeliverableContracts.rendered(spec);
         synchronized (lock) {
             requireOpen();
             Session session = requireAdmittedSession(workerId);
@@ -217,7 +225,7 @@ public final class InProcessDelegationCoordinator
             Instant expiry = clock.instant().plus(leaseDuration);
             TaskOffer.Builder offerBuilder = TaskOffer.newBuilder()
                     .setAttempt(attempt)
-                    .setSpec(spec)
+                    .setSpec(offeredSpec)
                     .setLeaseDuration(toProtoDuration(leaseDuration))
                     .setExpiresAt(toTimestamp(expiry));
             if (resumeFrom != null) {
@@ -422,6 +430,38 @@ public final class InProcessDelegationCoordinator
             }
             return expired;
         }
+    }
+
+    /**
+     * The deliverable types the offered tasks declare, as a proto3 JSON type registry.
+     *
+     * <p>A deliverable's type is declared by the offer, not by this process's build, so a
+     * caller sending or reading one as JSON needs the types the live tasks name and nothing
+     * else can supply them. A contract that does not link contributes no type: every
+     * candidate against it is refused by the reducer anyway.
+     *
+     * @return a registry over every distinct deliverable type the coordinator's tasks declare
+     */
+    public JsonFormat.TypeRegistry deliverableTypes() {
+        List<Descriptor> types = new ArrayList<>();
+        Set<String> named = new HashSet<>();
+        synchronized (lock) {
+            for (TaskRuntime task : tasks.values()) {
+                if (task.offer == null || !task.offer.getSpec().hasContract()) {
+                    continue;
+                }
+                try {
+                    Descriptor type = DeliverableContracts
+                            .compile(task.offer.getSpec().getContract()).descriptor();
+                    if (named.add(type.getFullName())) {
+                        types.add(type);
+                    }
+                } catch (IllegalArgumentException e) {
+                    // A contract that does not link names no resolvable type.
+                }
+            }
+        }
+        return JsonFormat.TypeRegistry.newBuilder().add(types).build();
     }
 
     /** Returns the current replayable transcript. */

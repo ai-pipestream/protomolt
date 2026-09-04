@@ -12,12 +12,66 @@ checks all of the following before calling a tool:
 - every relevant event cursor appears exactly once and in order;
 - the tool is allowed for the configured worker or coordinator role;
 - worker and coordinator identities cannot be overridden by model output;
-- the command count is between 1 and 16; and
+- the command count is between 1 and 16;
+- every command is the delegation verb's own request message; and
 - every MCP command succeeds before the saved cursor advances.
 
-`host-ack` records an explicit decision to take no protocol action. Invalid
-model output gets one repair turn. A second invalid response leaves the cursor
-unchanged so the event batch remains available after restart.
+A command's arguments are the canonical proto3 JSON of the request message the
+verb takes: `delegation-accept` carries an `AcceptTaskRequest`,
+`delegation-candidate` a `SubmitCandidateRequest`, and so on for the six other
+delegation commands. The host parses the arguments into that message, refusing
+any member no field declares, and applies the message's own validation rules.
+Those are the rules the coordinator applies when the call arrives, message-level
+CEL included. A refusal quotes the rule's own words, so the repair turn reads
+`command 0 delegation-candidate: candidate a completion candidate must
+reference at least one commit or artifact; saying done is not evidence` rather
+than a paraphrase. `host-ack` is the one command with no request message: it is
+host-local, takes a single bounded `reason`, and records an explicit decision to
+take no protocol action.
+
+The command schema offered to providers that take a structured-output schema,
+and the argument contract stated in the prompt, are rendered from the same
+request descriptors. Every object in the schema is closed and names every
+member it accepts; a member the message does not require is offered as
+nullable, because proto3 JSON reads a null as the field being absent. The
+identity members the host sets itself (the worker id on a worker command, the
+sender and recipient on a message) are left out of what the model is asked
+for. A rule added to `delegation_actions.proto` therefore reaches the prompt,
+the schema, and the check on the reply without a second edit here.
+
+Invalid model output gets one repair turn. A second invalid response leaves the
+cursor unchanged so the event batch remains available after restart.
+
+A rejected model reply (the parse, required-action, or deliverable-contract
+checks) is a `ModelReplyException`, tracked separately from transport, MCP,
+and provider failures. `run()` backs it off in minutes instead of seconds —
+1, 2, 4, 8, capped at 15 — because retrying the identical batch on a short
+clock just resends the same bad prompt and, with a process model whose
+context grows every turn, burns tokens without changing the outcome.
+Consecutive rejections on the same saved cursor count as one batch; a
+successful batch, or a rejection after the cursor has advanced, resets the
+count. After `--max-batch-failures` consecutive rejections on one batch
+(default 6) the host gives up: it logs the batch's cursor and rejection
+count, closes the provider, and stops, leaving the cursor untouched so a
+restart re-presents the same batch to an operator or a fixed model instead
+of retrying it forever. `protomolt-agent-host` then exits with status 3.
+Every other `AgentHostException` keeps the original uncapped seconds-scale
+retry.
+
+## Deliverable contracts
+
+An offer whose spec names a deliverable contract (see
+[Agent delegation](../transform/delegation.md#deliverable-contract)) reaches the model
+with the contract's type name and its rendered JSON Schema in place of the descriptor
+bytes, and the prompt names the type each open task's candidate must return. The host
+keeps every contract it was offered in its state file, keyed by task, so a restart still
+knows how to read a deliverable. A candidate's `result` is parsed with the contract's
+type and checked with the coordinator's own gate before the command is sent: a missing
+result, a result for a task without a contract, a wrong type, or a rule violation is
+a repair turn here, worded as the coordinator would word it, and never costs an attempt.
+Providers with enforced structured output receive the schema again whenever the known
+contracts change; with no contract known the schema leaves the deliverable out, since an
+open object is not expressible to a strict endpoint.
 
 A model that narrates around its answer is not invalid output. The ACP
 provider joins every message chunk of a turn, so a Kimi reply arrives as the
@@ -131,8 +185,8 @@ apps/agent-host/build/install/protomolt-agent-host/bin/protomolt-agent-host \
 ```
 
 The provider posts each turn to `<base>/chat/completions` with a JSON object
-response request, so the host-side closed command schema still validates
-every reply and a malformed reply gets the same single repair turn as the
+response request, so the host-side check against the request messages still
+validates every reply and a malformed reply gets the same single repair turn as the
 process providers. A bounded in-memory conversation lets the repair turn see
 the rejected answer. The client sends no bearer credential and no arbitrary
 headers, which matches a loopback sidecar; endpoint response bodies are never

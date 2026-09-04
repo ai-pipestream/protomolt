@@ -7,6 +7,7 @@ import ai.protomolt.proto.delegation.v1.CheckpointReference;
 import ai.protomolt.proto.delegation.v1.CompletionCandidate;
 import ai.protomolt.proto.delegation.v1.DelegateRequest;
 import ai.protomolt.proto.delegation.v1.DelegateResponse;
+import ai.protomolt.proto.delegation.v1.DeliverableContract;
 import ai.protomolt.proto.delegation.v1.Lane;
 import ai.protomolt.proto.delegation.v1.TaskOffer;
 import ai.protomolt.proto.delegation.v1.TaskSpec;
@@ -60,6 +61,12 @@ import java.util.Set;
  * current offer's spec ran, with a passing verdict, exactly once per check. Missing,
  * unknown, duplicated, or failed-check evidence is a finding; a candidate with no
  * commit or artifact reference does not pass structural validation at all.</p>
+ *
+ * <p>When the offer's spec declares a {@link DeliverableContract}, the candidate is also
+ * judged on the typed deliverable it carries: the result must name the contract's type and
+ * must satisfy every rule the contract's own descriptor set declares. Each violation is a
+ * {@code contract} finding, so a deliverable that does not hold is refused before a reviewer
+ * reads the summary. See {@link DeliverableContracts}.</p>
  */
 public final class DelegationReducer {
 
@@ -67,8 +74,8 @@ public final class DelegationReducer {
      * One problem found in the transcript. {@code taskId} is empty for session-scope
      * findings; {@code kind} is one of {@code envelope}, {@code session},
      * {@code sequence}, {@code duplicate}, {@code transition}, {@code lease},
-     * {@code progress}, {@code checkpoint}, {@code revision}, {@code evidence}, or
-     * {@code terminal}.
+     * {@code progress}, {@code checkpoint}, {@code revision}, {@code evidence},
+     * {@code contract}, or {@code terminal}.
      */
     public record Finding(String taskId, String frameId, String kind, String error) {
     }
@@ -477,7 +484,9 @@ public final class DelegationReducer {
                             + "; stale or skipped revisions are not reviewable"));
             return;
         }
-        if (!verifyEvidence(candidate, task, frameId, findings)) {
+        boolean evidenceHolds = verifyEvidence(candidate, task, frameId, findings);
+        boolean deliverableHolds = verifyDeliverable(candidate, task, frameId, findings);
+        if (!evidenceHolds || !deliverableHolds) {
             return;
         }
         task.phase = Phase.CANDIDATE;
@@ -515,6 +524,43 @@ public final class DelegationReducer {
                             + missing + "; every required check must be proven"));
         }
         return findings.size() == initialFindings;
+    }
+
+    /**
+     * Judges the candidate's typed deliverable against the contract the offer's spec
+     * declared. A task without a contract is unaffected; a task with one is refused unless
+     * the candidate carries a result of the named type that satisfies every rule the
+     * contract's own descriptor set declares. A result on a task that declared no contract
+     * is refused too: nothing states what it is, so nothing can check it.
+     */
+    private static boolean verifyDeliverable(CompletionCandidate candidate, TaskTrack task,
+                                             String frameId, List<Finding> findings) {
+        boolean declared = task.spec != null && task.spec.hasContract();
+        if (!declared) {
+            if (!candidate.hasResult()) {
+                return true;
+            }
+            findings.add(new Finding(task.taskId, frameId, "contract",
+                    "the candidate carries a deliverable of type "
+                            + DeliverableContracts.typeName(
+                                    candidate.getResult().getTypeUrl())
+                            + " but the offer's spec declares no deliverable contract;"
+                            + " an unstated deliverable cannot be checked"));
+            return false;
+        }
+        DeliverableContract contract = task.spec.getContract();
+        if (!candidate.hasResult()) {
+            findings.add(new Finding(task.taskId, frameId, "contract",
+                    "the offer's spec declares a deliverable contract for "
+                            + contract.getTypeName()
+                            + " and the candidate carries no result"));
+            return false;
+        }
+        List<String> problems =
+                DeliverableContracts.check(contract, candidate.getResult());
+        problems.forEach(problem ->
+                findings.add(new Finding(task.taskId, frameId, "contract", problem)));
+        return problems.isEmpty();
     }
 
     private static void reduceCoordinator(String workerId, DelegateResponse frame,

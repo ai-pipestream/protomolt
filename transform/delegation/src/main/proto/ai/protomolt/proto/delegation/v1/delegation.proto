@@ -5,6 +5,7 @@ package ai.protomolt.proto.delegation.v1;
 import "ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto";
 import "ai/protomolt/proto/meta/v1/metadata.proto";
 import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/any.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -406,6 +407,63 @@ message TaskSpec {
   // holds. Absent means the lease expiry alone bounds the work.
   google.protobuf.Duration deadline = 6 [
     (ai.protomolt.proto.validate.v1.field).duration.gte = {nanos: 1},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The typed deliverable the task must produce. Absent means the task is
+  // judged on its acceptance checks alone, exactly as before contracts
+  // existed; present means the completion candidate must carry a
+  // CompletionCandidate.result of the named type and that message must
+  // satisfy every rule its own descriptor set declares.
+  DeliverableContract contract = 7 [
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// The typed deliverable a task must produce: the descriptor set that defines
+// the message, the message's full name inside that set, and the JSON schema
+// rendered from it. The coordinator checks a candidate's result against this
+// before any reviewer sees it, so "the deliverable is wrong" is a mechanical
+// answer rather than a reading of prose.
+message DeliverableContract {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "The typed deliverable of a task: the descriptor set defining it, the message name, and the rendered JSON schema."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The serialized FileDescriptorSet that defines the deliverable message and
+  // every file it depends on. It travels with the offer so a worker needs no
+  // registry, no protoc, and no shared build to read the shape, and so the
+  // coordinator validates against the rules the offer declared rather than
+  // whatever the running process happens to have on its classpath. One frame
+  // is capped at 1 MiB, which bounds a practical set well below this limit.
+  bytes descriptor_set = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      bytes: {
+        min_len: 1
+        max_len: 4194304
+      }
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The full proto name of the deliverable message, which must be declared in
+  // descriptor_set. The candidate's result type_url must end in this name.
+  string type_name = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {
+        max_len: 512
+        pattern: "^[A-Za-z_][A-Za-z0-9_]*([.][A-Za-z_][A-Za-z0-9_]*)*$"
+      }
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The JSON schema of the deliverable, rendered from the descriptor set. The
+  // coordinator fills it in on the offer path when a request leaves it empty,
+  // so every worker reads the shape and its bounds without a toolchain.
+  string json_schema = 3 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 262144,
     (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
   ];
 }
@@ -872,6 +930,14 @@ message CompletionCandidate {
       gte: 1
       lte: 1024
     },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The typed deliverable, when the offer's spec declared a contract. Its
+  // type_url must name the contract's type_name, and the packed message must
+  // satisfy the rules its descriptor set declares; the coordinator refuses the
+  // candidate otherwise. A result on a task whose spec declared no contract is
+  // refused too: nothing states what it is, so nothing can check it.
+  google.protobuf.Any result = 7 [
     (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
   ];
 }

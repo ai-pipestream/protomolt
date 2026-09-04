@@ -1,5 +1,11 @@
 package ai.protomolt.proto.agenthost;
 
+import ai.protomolt.proto.delegation.v1.DeliverableContract;
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.util.JsonFormat;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -33,16 +39,25 @@ final class AgentHost implements AutoCloseable {
      *     may be rejoined by discarding the local transcript position. Off by default:
      *     resuming against a transcript that is gone would invent continuity. On, it is the
      *     operator stating that the loss is real, which is what a rebuilt coordinator means.
+     * @param maxBatchFailures how many consecutive rejected model replies on the same batch
+     *     (same saved cursor) {@link #run()} tolerates before it gives up on that batch and
+     *     stops the host. Only {@link ModelReplyException} counts toward this limit.
      */
     record Config(AgentRole role, String identity, String model, Path workspace,
-                  Duration pollTimeout, int maxEvents, boolean resetOnTranscriptLoss) {
+                  Duration pollTimeout, int maxEvents, boolean resetOnTranscriptLoss,
+                  int maxBatchFailures) {
+
+        /** The default {@code --max-batch-failures}, matching AgentHostMain's own default. */
+        private static final int DEFAULT_MAX_BATCH_FAILURES = 6;
+
         Config {
             if (role == null || identity == null
                     || !identity.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
                     || workspace == null || !workspace.isAbsolute()
                     || pollTimeout == null || pollTimeout.isNegative()
                     || pollTimeout.compareTo(Duration.ofSeconds(30)) > 0
-                    || maxEvents < 1 || maxEvents > 256) {
+                    || maxEvents < 1 || maxEvents > 256
+                    || maxBatchFailures < 1) {
                 throw new IllegalArgumentException("invalid agent host configuration");
             }
         }
@@ -50,25 +65,62 @@ final class AgentHost implements AutoCloseable {
         /** A configuration that refuses to rejoin across transcript loss. */
         Config(AgentRole role, String identity, String model, Path workspace,
                Duration pollTimeout, int maxEvents) {
-            this(role, identity, model, workspace, pollTimeout, maxEvents, false);
+            this(role, identity, model, workspace, pollTimeout, maxEvents, false,
+                    DEFAULT_MAX_BATCH_FAILURES);
+        }
+
+        /** The default {@code maxBatchFailures}. */
+        Config(AgentRole role, String identity, String model, Path workspace,
+               Duration pollTimeout, int maxEvents, boolean resetOnTranscriptLoss) {
+            this(role, identity, model, workspace, pollTimeout, maxEvents,
+                    resetOnTranscriptLoss, DEFAULT_MAX_BATCH_FAILURES);
         }
     }
+
+    /** A sleep seam so tests can drive minutes-scale backoff without a real wait. */
+    @FunctionalInterface
+    interface Sleeper {
+        void sleep(Duration duration) throws InterruptedException;
+    }
+
+    private static final Sleeper REAL_SLEEPER = Thread::sleep;
 
     private final Config config;
     private final McpHttpClient mcp;
     private final AgentProvider provider;
     private final AgentHostStateStore states;
+    /** The deliverable contracts of the tasks this host was offered, by task id. */
+    private final Map<String, DeliverableContract> contracts = new LinkedHashMap<>();
+    private final Sleeper sleeper;
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final AtomicBoolean gaveUp = new AtomicBoolean();
 
     private AgentHostState state;
 
     AgentHost(Config config, McpHttpClient mcp, AgentProvider provider,
               AgentHostStateStore states, AgentHostState state) {
+        this(config, mcp, provider, states, state, REAL_SLEEPER);
+    }
+
+    /** Test seam: a caller-supplied {@link Sleeper} replaces the real minutes/seconds wait. */
+    AgentHost(Config config, McpHttpClient mcp, AgentProvider provider,
+              AgentHostStateStore states, AgentHostState state, Sleeper sleeper) {
         this.config = config;
         this.mcp = mcp;
         this.provider = provider;
         this.states = states;
         this.state = state;
+        this.sleeper = sleeper;
+        state.contracts().forEach((taskId, json) -> {
+            DeliverableContract.Builder contract = DeliverableContract.newBuilder();
+            try {
+                JsonFormat.parser().merge(json, contract);
+                contracts.put(taskId, contract.build());
+            } catch (InvalidProtocolBufferException unreadable) {
+                // a contract the state file cannot describe is not one this host can use
+            }
+        });
+        provider.outputSchema(AgentTurn.outputSchema(config.role(), contracts));
         syncProviderSession();
     }
 
@@ -192,11 +244,12 @@ final class AgentHost implements AutoCloseable {
             states.save(state);
             return true;
         }
+        noteContracts(relevant);
         ObjectNode packet = MAPPER.createObjectNode();
         packet.put("kind", "delegation-events");
         packet.put("role", config.role().name().toLowerCase(java.util.Locale.ROOT));
         packet.put("identity", config.identity());
-        packet.set("events", relevant);
+        packet.set("events", presented(relevant));
         AgentTurn turn = prompt(packet, relevantCursors);
         state = state.withPending(new AgentHostState.PendingTurn(
                 targetCursor, relevantCursors, turn.commands(), 0, false));
@@ -249,13 +302,55 @@ final class AgentHost implements AutoCloseable {
         }
     }
 
-    /** Runs until closed, keeping long waits and model turns on one virtual thread. */
+    /**
+     * Runs until closed, keeping long waits and model turns on one virtual thread.
+     *
+     * <p>A {@link ModelReplyException} is a rejected model reply, not a transport or MCP
+     * failure: retrying the identical batch on a seconds-scale backoff just burns model
+     * context on the same bad answer, so consecutive rejections on the same saved cursor
+     * back off in minutes instead (1, 2, 4, 8, capped at 15), and after
+     * {@code config.maxBatchFailures()} of them the host gives up on that batch entirely,
+     * leaving the cursor untouched so a restart re-presents it to an operator or a fixed
+     * model. A batch is identified by the cursor the failure left {@link #state} at: a
+     * success resets the count, and a failure on a different (advanced) cursor starts a new
+     * one. Every other {@link AgentHostException} keeps the original uncapped seconds-scale
+     * backoff.
+     */
     void run() {
         int failures = 0;
+        int batchFailures = 0;
+        long batchCursor = -1;
         while (!closed.get()) {
             try {
                 pollOnce();
                 failures = 0;
+                batchFailures = 0;
+                batchCursor = -1;
+            } catch (ModelReplyException e) {
+                if (closed.get()) {
+                    return;
+                }
+                long cursor = state.cursor();
+                batchFailures = cursor == batchCursor ? batchFailures + 1 : 1;
+                batchCursor = cursor;
+                if (batchFailures >= config.maxBatchFailures()) {
+                    System.err.println("agent-host: giving up on the batch after cursor "
+                            + cursor + " after " + batchFailures
+                            + " rejected replies; operator action needed");
+                    close();
+                    gaveUp.set(true);
+                    return;
+                }
+                long minutes = batchFailures <= 4 ? (1L << (batchFailures - 1)) : 15;
+                System.err.println("agent-host: batch after cursor " + cursor + " rejected "
+                        + batchFailures + " time(s): " + e.getMessage()
+                        + "; next attempt in " + minutes + " minutes");
+                try {
+                    sleeper.sleep(Duration.ofMinutes(minutes));
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
             } catch (AgentHostException e) {
                 if (closed.get()) {
                     return;
@@ -263,7 +358,7 @@ final class AgentHost implements AutoCloseable {
                 failures = Math.min(failures + 1, 5);
                 System.err.println("agent-host: " + e.getMessage());
                 try {
-                    Thread.sleep(Duration.ofSeconds(1L << (failures - 1)));
+                    sleeper.sleep(Duration.ofSeconds(1L << (failures - 1)));
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
                     return;
@@ -272,8 +367,18 @@ final class AgentHost implements AutoCloseable {
         }
     }
 
+    /** Whether {@link #run()} stopped because a batch exhausted its rejected-reply limit. */
+    boolean gaveUp() {
+        return gaveUp.get();
+    }
+
     AgentHostState state() {
         return state;
+    }
+
+    /** The deliverable contracts this host knows, by task id. */
+    Map<String, DeliverableContract> contracts() {
+        return Collections.unmodifiableMap(new LinkedHashMap<>(contracts));
     }
 
     private AgentTurn prompt(ObjectNode packet, List<Long> expectedCursors) {
@@ -296,7 +401,7 @@ final class AgentHost implements AutoCloseable {
     private AgentTurn parseTurn(String response, ObjectNode packet,
                                 List<Long> expectedCursors) {
         AgentTurn turn = AgentTurn.parse(response, config.role(), expectedCursors,
-                config.identity());
+                config.identity(), contracts);
         validateRequiredActions(packet, turn);
         return turn;
     }
@@ -365,7 +470,7 @@ final class AgentHost implements AutoCloseable {
                 tools.contains(command.tool())
                         && taskId.equals(command.arguments().path("taskId").asText()));
         if (!present) {
-            throw new AgentHostException(message + " for task " + taskId);
+            throw new ModelReplyException(message + " for task " + taskId);
         }
     }
 
@@ -392,17 +497,109 @@ final class AgentHost implements AutoCloseable {
                     && completionTasks.contains(taskId);
         });
         if (!present) {
-            throw new AgentHostException("a worker accept, progress, or checkpoint "
+            throw new ModelReplyException("a worker accept, progress, or checkpoint "
                     + "requires coordinator guidance or cancellation for task " + taskId);
         }
     }
 
+    /**
+     * Records the deliverable contract of each offer in the batch and forgets the contract
+     * of each task the batch closes, persisting the change and handing providers with
+     * enforced structured output the schema that now applies.
+     */
+    private void noteContracts(ArrayNode events) {
+        if (config.role() != AgentRole.WORKER) {
+            return;
+        }
+        boolean changed = false;
+        for (JsonNode event : events) {
+            JsonNode frame = event.path("entry").path("coordinatorFrame");
+            String taskId = event.path("taskId").asText();
+            JsonNode contract = frame.path("offer").path("spec").path("contract");
+            if (contract.isObject()) {
+                DeliverableContract.Builder builder = DeliverableContract.newBuilder();
+                try {
+                    JsonFormat.parser().merge(contract.toString(), builder);
+                    contracts.put(taskId, builder.build());
+                    changed = true;
+                } catch (InvalidProtocolBufferException unreadable) {
+                    System.err.println("agent-host: the offer for task " + taskId
+                            + " names a deliverable contract this host cannot read: "
+                            + unreadable.getMessage());
+                }
+            } else if (frame.has("offer") && contracts.remove(taskId) != null) {
+                changed = true;
+            }
+            if ((frame.has("accepted") || frame.has("cancellation") || frame.has("expired"))
+                    && contracts.remove(taskId) != null) {
+                changed = true;
+            }
+        }
+        if (!changed) {
+            return;
+        }
+        Map<String, String> serialized = new LinkedHashMap<>();
+        contracts.forEach((taskId, contract) -> {
+            try {
+                serialized.put(taskId, JsonFormat.printer().omittingInsignificantWhitespace()
+                        .print(contract));
+            } catch (InvalidProtocolBufferException e) {
+                throw new AgentHostException("could not record the contract of task "
+                        + taskId, e);
+            }
+        });
+        state = state.withContracts(serialized);
+        states.save(state);
+        provider.outputSchema(AgentTurn.outputSchema(config.role(), contracts));
+    }
+
+    /**
+     * The batch as the model reads it: an offer's contract shows its type name and its
+     * rendered schema as an object, and the descriptor bytes the host resolves itself are
+     * replaced by a note, since base64 is noise to a model and the bytes are large.
+     */
+    private static ArrayNode presented(ArrayNode events) {
+        ArrayNode shown = events.deepCopy();
+        for (JsonNode event : shown) {
+            JsonNode contract = event.path("entry").path("coordinatorFrame").path("offer")
+                    .path("spec").path("contract");
+            if (!(contract instanceof ObjectNode visible)) {
+                continue;
+            }
+            JsonNode bytes = visible.remove("descriptorSet");
+            if (bytes != null) {
+                visible.put("descriptorSetNote", "the host holds the descriptor set ("
+                        + bytes.asText().length() + " base64 characters) and reads the"
+                        + " result with it");
+            }
+            JsonNode schema = visible.remove("jsonSchema");
+            if (schema != null && schema.isTextual()) {
+                try {
+                    visible.set("schema", MAPPER.readTree(schema.asText()));
+                } catch (java.io.IOException notJson) {
+                    visible.put("schema", schema.asText());
+                }
+            }
+        }
+        return shown;
+    }
+
+    /** One sentence per known contract, so the model knows which type each task returns. */
+    private String contractLines() {
+        if (contracts.isEmpty()) {
+            return "";
+        }
+        StringBuilder lines = new StringBuilder();
+        contracts.forEach((taskId, contract) -> lines.append(" Task ").append(taskId)
+                .append(" requires delegation-candidate with candidate.result of type ")
+                .append(contract.getTypeName())
+                .append(" (\"@type\": \"type.googleapis.com/").append(contract.getTypeName())
+                .append("\" plus the fields of the schema in its offer)."));
+        return lines.toString();
+    }
+
     private String promptText(ObjectNode packet, List<Long> expectedCursors, String error) {
-        String allowed = config.role() == AgentRole.WORKER
-                ? "host-ack, delegation-accept, delegation-message, delegation-progress, "
-                + "delegation-checkpoint, delegation-candidate"
-                : "host-ack, delegation-offer, delegation-message, delegation-review, "
-                + "delegation-cancel";
+        String allowed = String.join(", ", AgentTurn.tools(config.role()));
         StringBuilder prompt = new StringBuilder();
         prompt.append("You are the ")
                 .append(config.role().name().toLowerCase(java.util.Locale.ROOT))
@@ -414,7 +611,7 @@ final class AgentHost implements AutoCloseable {
                         + "with a short reason when an event needs no protocol action. Do not "
                         + "claim completion without the required passing evidence and a commit "
                         + "or artifact. Do not add Markdown fences or prose outside the JSON. ")
-                .append(commandContract());
+                .append(commandContract()).append(contractLines());
         if (error != null) {
             prompt.append(" Your previous response was rejected: ").append(error)
                     .append(". Correct the response for the same packet.");
@@ -423,33 +620,26 @@ final class AgentHost implements AutoCloseable {
         return prompt.toString();
     }
 
+    /**
+     * What a command may contain, in the words of the delegation request messages.
+     *
+     * <p>The shape and the message rules are rendered from the same descriptors the turn
+     * is validated against, so the prompt cannot describe a command the host would refuse.
+     * What follows them is the host's own policy: which event obliges which verb, which is
+     * a property of the loop rather than of any request message.
+     */
     private String commandContract() {
+        String contract = AgentTurn.commandContract(config.role());
         return config.role() == AgentRole.WORKER
-                ? "Worker argument contract: host-ack={reason}; "
-                + "delegation-accept={taskId,attempt}; "
-                + "delegation-message={taskId,kind,text}; "
-                + "delegation-progress={taskId,attempt,message}; "
-                + "delegation-checkpoint={taskId,attempt,resumeToken,note}; "
-                + "delegation-candidate={taskId,candidate}, where candidate has "
-                + "attempt,revision,summary,evidence:[{checkName,verdict,ranAt,detail}],"
-                + "commits:[{repository,commit,subject}]. verdict must be "
-                + "CHECK_VERDICT_PASSED and commit must be a full 40-character SHA. "
-                + "An offer requires delegation-accept. A question requires "
+                ? contract + " An offer requires delegation-accept. A question requires "
                 + "delegation-message. Guidance and revision requests require a task "
-                + "action and cannot use host-ack alone. Use exactly these field names "
-                + "and no others."
-                : "Coordinator argument contract: host-ack={reason}; "
-                + "delegation-offer={workerId,taskId,leaseSeconds,spec}; "
-                + "delegation-message={taskId,recipient,kind,text}; "
-                + "delegation-review accept={taskId,decision,verdict}; "
-                + "delegation-review revise={taskId,decision,feedback,failedChecks}; "
-                + "delegation-cancel={taskId,reason}. A completion candidate requires "
-                + "delegation-review. A question requires delegation-message. A worker "
-                + "accept, progress, or checkpoint requires guidance (a delegation-message "
-                + "of kind TASK_MESSAGE_KIND_GUIDANCE) or delegation-cancel; "
-                + "delegation-review also answers them when the same batch carries the "
-                + "task's completion candidate. Use "
-                + "exactly these field names and no others.";
+                + "action and cannot use host-ack alone."
+                : contract + " A completion candidate requires delegation-review. A "
+                + "question requires delegation-message. A worker accept, progress, or "
+                + "checkpoint requires guidance (a delegation-message of kind "
+                + "TASK_MESSAGE_KIND_GUIDANCE) or delegation-cancel; delegation-review "
+                + "also answers them when the same batch carries the task's completion "
+                + "candidate.";
     }
 
     /** The worker command that takes on a task. */

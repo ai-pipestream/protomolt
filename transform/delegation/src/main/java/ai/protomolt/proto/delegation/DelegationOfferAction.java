@@ -33,8 +33,11 @@ final class DelegationOfferAction extends DelegationAction {
         return "Offers a bounded task to an admitted worker: the task spec (objective, scope, "
                 + "constraints, required acceptance checks, context artifacts), the lease in "
                 + "seconds, and an optional resume checkpoint, as a proto3-JSON "
-                + "OfferTaskRequest. Returns the emitted offer. The coordinator owns the "
-                + "lifecycle; this only adapts.";
+                + "OfferTaskRequest. A spec may also declare a deliverable contract: a "
+                + "serialized FileDescriptorSet as base64 bytes plus the full name of the "
+                + "message the candidate must produce. The returned offer carries that "
+                + "contract's JSON schema, rendered from the descriptor set. Returns the "
+                + "emitted offer. The coordinator owns the lifecycle; this only adapts.";
     }
 
     @Override
@@ -63,6 +66,17 @@ final class DelegationOfferAction extends DelegationAction {
         int leaseSeconds = request.getLeaseSeconds() == 0
                 ? DEFAULT_LEASE_SECONDS
                 : request.getLeaseSeconds();
+        // A contract is the caller's own input, so a set that does not link or does not
+        // declare the type it names is bad input rather than a coordinator failure.
+        if (request.getSpec().hasContract()) {
+            try {
+                DeliverableContracts.compile(request.getSpec().getContract());
+            } catch (IllegalArgumentException e) {
+                throw new ActionException("invalid-input",
+                        name() + " cannot use the spec's deliverable contract: "
+                                + e.getMessage());
+            }
+        }
         CheckpointReference resumeFrom = request.hasResumeFrom() ? request.getResumeFrom() : null;
         TaskOffer offer;
         try {

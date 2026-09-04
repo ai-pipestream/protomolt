@@ -186,9 +186,11 @@ public final class ActionCatalog {
         // Before the envelope is looked at: a caller who may not run the verb learns only
         // that, not whether the request they sent would have been accepted.
         requireScope(action, caller);
+        com.google.protobuf.util.JsonFormat.TypeRegistry registry = action.typeRegistry();
         Message request = CatalogContract.toRequest(
-                Inputs.requireEnvelope(input), action.requestType(), name);
-        return CatalogContract.toReply(dispatch(action, name, request, caller), name);
+                Inputs.requireEnvelope(input), action.requestType(), name, registry);
+        return CatalogContract.toReply(
+                dispatch(action, name, request, caller), name, registry);
     }
 
     /** Dispatches a typed request to the named action with process authority. */
@@ -256,10 +258,11 @@ public final class ActionCatalog {
             JsonStreamEmitter emitter) throws ActionException {
         ProtoAction action = get(name);
         requireScope(action, caller);
+        com.google.protobuf.util.JsonFormat.TypeRegistry registry = action.typeRegistry();
         Message request = CatalogContract.toRequest(
-                Inputs.requireEnvelope(input), action.requestType(), name);
+                Inputs.requireEnvelope(input), action.requestType(), name, registry);
         executeStreaming(name, request, caller,
-                message -> emitter.emit(CatalogContract.toReply(message, name)));
+                message -> emitter.emit(CatalogContract.toReply(message, name, registry)));
     }
 
     /** Spends the caller's budget on the action's scope, refusing when it is exhausted. */

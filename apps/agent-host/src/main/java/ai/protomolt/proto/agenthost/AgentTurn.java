@@ -1,5 +1,24 @@
 package ai.protomolt.proto.agenthost;
 
+import ai.protomolt.proto.delegation.v1.AcceptTaskRequest;
+import ai.protomolt.proto.delegation.v1.DeliverableContract;
+import com.google.protobuf.util.JsonFormat.TypeRegistry;
+import com.google.protobuf.Any;
+import ai.protomolt.proto.delegation.DeliverableContracts;
+import ai.protomolt.proto.delegation.v1.CancelTaskRequest;
+import ai.protomolt.proto.delegation.v1.OfferTaskRequest;
+import ai.protomolt.proto.delegation.v1.RecordCheckpointRequest;
+import ai.protomolt.proto.delegation.v1.ReportProgressRequest;
+import ai.protomolt.proto.delegation.v1.ReviewCandidateRequest;
+import ai.protomolt.proto.delegation.v1.SendTaskMessageRequest;
+import ai.protomolt.proto.delegation.v1.SubmitCandidateRequest;
+import ai.protomolt.proto.http.jsonschema.ProtoJsonSchemaGenerator;
+import ai.protomolt.proto.validate.ProtoValidator;
+import ai.protomolt.proto.validate.ValidationResult;
+import ai.protomolt.proto.validate.model.CelConstraint;
+import ai.protomolt.proto.validate.model.MessageConstraints;
+import ai.protomolt.proto.validate.spi.ValidationRuleSource;
+import ai.protomolt.proto.validate.spi.ValidationRuleSources;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -7,31 +26,77 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Descriptors.FieldDescriptor;
+import com.google.protobuf.DynamicMessage;
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.Message;
+import com.google.protobuf.util.JsonFormat;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashSet;
-import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Pattern;
+import java.util.concurrent.ConcurrentHashMap;
 
-/** A validated set of delegation commands acknowledging an exact event batch. */
+/**
+ * A validated set of delegation commands acknowledging an exact event batch.
+ *
+ * <p>A command is one delegation verb's request message. The tool names the message, the
+ * arguments are that message's canonical proto3 JSON, and both the schema the model is
+ * given and the check applied to what it returns come from the request descriptor. The
+ * coordinator validates the same rules server-side; applying them here means a violation
+ * is answered by a repair turn quoting the proto's own rule text rather than by a failed
+ * tool call halfway through a batch.
+ */
 record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final int MAX_COMMANDS = 16;
     private static final int MAX_RESPONSE_CHARS = 256 * 1024;
-    /** The review decision that completes a task, as the review verb names it. */
-    private static final String ACCEPT = "REVIEW_DECISION_ACCEPT";
-    /** The review decision that returns a candidate for another revision. */
-    private static final String REVISE = "REVIEW_DECISION_REVISE";
-    private static final Set<String> WORKER_TOOLS = Set.of(
-            "host-ack", "delegation-accept", "delegation-message",
+    /** The command that records a decision to take no protocol action; host-local. */
+    private static final String ACK = "host-ack";
+    /** The command whose sender and recipient the host pins on both sides. */
+    private static final String MESSAGE = "delegation-message";
+    private static final String CANDIDATE = "delegation-candidate";
+    private static final String TYPE_URL_PREFIX = "type.googleapis.com/";
+    private static final String CANDIDATE_TYPE =
+            "ai.protomolt.proto.delegation.v1.CompletionCandidate";
+    /** How deep the prose contract expands nested request messages. */
+    private static final int CONTRACT_DEPTH = 3;
+
+    /** The delegation request message each tool carries, by tool name. */
+    private static final Map<String, Descriptor> REQUESTS = Map.of(
+            "delegation-accept", AcceptTaskRequest.getDescriptor(),
+            "delegation-progress", ReportProgressRequest.getDescriptor(),
+            "delegation-checkpoint", RecordCheckpointRequest.getDescriptor(),
+            "delegation-candidate", SubmitCandidateRequest.getDescriptor(),
+            MESSAGE, SendTaskMessageRequest.getDescriptor(),
+            "delegation-offer", OfferTaskRequest.getDescriptor(),
+            "delegation-review", ReviewCandidateRequest.getDescriptor(),
+            "delegation-cancel", CancelTaskRequest.getDescriptor());
+
+    private static final List<String> WORKER_TOOLS = List.of(
+            ACK, "delegation-accept", MESSAGE,
             "delegation-progress", "delegation-checkpoint", "delegation-candidate");
-    private static final Set<String> COORDINATOR_TOOLS = Set.of(
-            "host-ack", "delegation-offer", "delegation-message",
+    private static final List<String> COORDINATOR_TOOLS = List.of(
+            ACK, "delegation-offer", MESSAGE,
             "delegation-review", "delegation-cancel");
+
+    /** One validator per request type, so CEL programs are compiled once. */
+    private static final Map<String, ProtoValidator> VALIDATORS = new ConcurrentHashMap<>();
+
+    private static final ProtoJsonSchemaGenerator SCHEMAS = ProtoJsonSchemaGenerator.create();
+
+    /** The rule readers the validator and the schema generator both run on. */
+    private static final List<ValidationRuleSource> RULE_SOURCES =
+            ValidationRuleSources.defaults();
 
     /** Rejects text after the JSON value, so a candidate object is the whole candidate. */
     private static final ObjectReader STRICT = MAPPER.reader()
@@ -42,7 +107,6 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
             arguments = arguments.deepCopy();
         }
     }
-
     /**
      * Reads the JSON value in a provider reply. Providers that join every message chunk of
      * a turn (the ACP provider) hand over the model's narration between tool calls as well
@@ -81,7 +145,7 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
             }
             start = trimmed.indexOf('{', start + 1);
         }
-        throw new AgentHostException("agent response is not JSON: "
+        throw new ModelReplyException("agent response is not JSON: "
                 + whole.getOriginalMessage() + " at line " + whole.getLocation().getLineNr()
                 + " column " + whole.getLocation().getColumnNr());
     }
@@ -130,56 +194,269 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
 
     static AgentTurn parse(String text, AgentRole role, List<Long> expectedCursors,
                            String identity) {
+        return parse(text, role, expectedCursors, identity, Map.of());
+    }
+
+    static AgentTurn parse(String text, AgentRole role, List<Long> expectedCursors,
+                           String identity, Map<String, DeliverableContract> contracts) {
         if (text == null || text.length() > MAX_RESPONSE_CHARS) {
-            throw new AgentHostException("agent response exceeds the 256 KiB limit");
+            throw new ModelReplyException("agent response exceeds the 256 KiB limit");
         }
         JsonNode parsed = readResponse(text);
         if (!parsed.isObject()) {
-            throw new AgentHostException("agent response must be one JSON object");
+            throw new ModelReplyException("agent response must be one JSON object");
         }
         ObjectNode root = (ObjectNode) parsed;
         Set<String> fields = new HashSet<>();
         root.fieldNames().forEachRemaining(fields::add);
         if (!Set.of("handledEventCursors", "commands").containsAll(fields)) {
-            throw new AgentHostException("agent response contains unknown fields");
+            throw new ModelReplyException("agent response contains unknown fields");
         }
         List<Long> cursors = readCursors(root.get("handledEventCursors"));
         if (!cursors.equals(expectedCursors)) {
-            throw new AgentHostException("handledEventCursors must exactly match "
+            throw new ModelReplyException("handledEventCursors must exactly match "
                     + expectedCursors);
         }
         JsonNode commandNodes = root.get("commands");
         if (commandNodes == null || !commandNodes.isArray()
                 || commandNodes.isEmpty() || commandNodes.size() > MAX_COMMANDS) {
-            throw new AgentHostException("commands must contain 1 to "
+            throw new ModelReplyException("commands must contain 1 to "
                     + MAX_COMMANDS + " entries");
         }
-        Set<String> allowed = role == AgentRole.WORKER ? WORKER_TOOLS : COORDINATOR_TOOLS;
+        List<String> allowed = tools(role);
         List<Command> commands = new ArrayList<>();
         for (int i = 0; i < commandNodes.size(); i++) {
             JsonNode node = commandNodes.get(i);
             if (!node.isObject() || !node.path("tool").isTextual()
                     || !node.path("arguments").isObject() || node.size() != 2) {
-                throw new AgentHostException("command " + i
+                throw new ModelReplyException("command " + i
                         + " must contain a tool and object arguments");
             }
             String tool = node.path("tool").asText();
             if (!allowed.contains(tool)) {
-                throw new AgentHostException("tool '" + tool + "' is not allowed for "
-                        + role.name().toLowerCase(java.util.Locale.ROOT));
+                throw new ModelReplyException("tool '" + tool + "' is not allowed for "
+                        + role.name().toLowerCase(Locale.ROOT));
             }
             ObjectNode arguments = ((ObjectNode) node.path("arguments")).deepCopy();
-            if ("host-ack".equals(tool)) {
+            if (ACK.equals(tool)) {
                 validateAck(arguments);
+            } else {
+                enforceIdentity(role, identity, tool, arguments);
+                validateRequest(tool, arguments, i, contracts);
             }
-            enforceIdentity(role, identity, tool, arguments);
-            validateArguments(role, tool, arguments, i);
             commands.add(new Command(tool, arguments));
         }
         return new AgentTurn(List.copyOf(cursors), List.copyOf(commands));
     }
 
+    /** The commands a role may issue, host-local acknowledgement first. */
+    static List<String> tools(AgentRole role) {
+        return role == AgentRole.WORKER ? WORKER_TOOLS : COORDINATOR_TOOLS;
+    }
+
+    /**
+     * Refuses a command its delegation request message does not accept.
+     *
+     * <p>The arguments are the request message's canonical proto3 JSON, so the message is
+     * what says whether they are a request at all: an unknown member is a field the caller
+     * did not mean, and the declared rules are the ones the coordinator applies when the
+     * call arrives. Running them here costs one parse and turns a mid-batch tool failure
+     * into a repair turn that quotes the rule the model broke.
+     */
+    private static void validateRequest(String tool, ObjectNode arguments, int index,
+                                        Map<String, DeliverableContract> contracts) {
+        Descriptor descriptor = REQUESTS.get(tool);
+        String where = "command " + index + " " + tool;
+        refuseUnknownMembers(arguments, descriptor, where);
+        if (CANDIDATE.equals(tool)) {
+            validateCandidate(arguments, where, contracts);
+            return;
+        }
+        DynamicMessage.Builder builder = DynamicMessage.newBuilder(descriptor);
+        try {
+            JsonFormat.parser().merge(arguments.toString(), builder);
+        } catch (InvalidProtocolBufferException e) {
+            throw new ModelReplyException(where + " is not a " + descriptor.getName()
+                    + ": " + e.getMessage());
+        }
+        Message request = builder.build();
+        ValidationResult result = VALIDATORS
+                .computeIfAbsent(descriptor.getFullName(),
+                        name -> ProtoValidator.forMessageType(descriptor))
+                .validate(request);
+        if (result.valid()) {
+            return;
+        }
+        throw new ModelReplyException(violations(where, result));
+    }
+
+    /**
+     * Parses a candidate with the deliverable types the host knows and checks its
+     * deliverable against the task's contract with the coordinator's own gate, so a
+     * deliverable the coordinator would refuse costs a repair turn here instead of an
+     * attempt there. A result for a task with no known contract, or a missing result for a
+     * task that has one, is refused the same way the reducer refuses it.
+     */
+    private static void validateCandidate(ObjectNode arguments, String where,
+                                          Map<String, DeliverableContract> contracts) {
+        SubmitCandidateRequest.Builder builder = SubmitCandidateRequest.newBuilder();
+        try {
+            JsonFormat.parser().usingTypeRegistry(deliverableTypes(contracts))
+                    .merge(arguments.toString(), builder);
+        } catch (InvalidProtocolBufferException e) {
+            String reason = e.getMessage() == null ? "" : e.getMessage();
+            if (reason.contains("Cannot resolve type")) {
+                throw new ModelReplyException(where + ": result names a type for which no"
+                        + " deliverable contract is known (" + reason + ")");
+            }
+            throw new ModelReplyException(where + " is not a SubmitCandidateRequest: "
+                    + reason);
+        }
+        SubmitCandidateRequest request = builder.build();
+        ValidationResult result = VALIDATORS
+                .computeIfAbsent(request.getDescriptorForType().getFullName(),
+                        name -> ProtoValidator.forMessageType(
+                                request.getDescriptorForType()))
+                .validate(request);
+        if (!result.valid()) {
+            throw new ModelReplyException(violations(where, result));
+        }
+        DeliverableContract contract = contracts.get(request.getTaskId());
+        boolean carried = request.getCandidate().hasResult();
+        if (contract == null) {
+            if (carried) {
+                throw new ModelReplyException(where + ": the candidate carries a"
+                        + " deliverable but no deliverable contract is known for task "
+                        + request.getTaskId());
+            }
+            return;
+        }
+        if (!carried) {
+            throw new ModelReplyException(where + ": the task's deliverable contract requires"
+                    + " a result of type " + contract.getTypeName());
+        }
+        Any deliverable = request.getCandidate().getResult();
+        List<String> problems = DeliverableContracts.check(contract, deliverable);
+        if (!problems.isEmpty()) {
+            throw new ModelReplyException(where + ": " + String.join("; ", problems));
+        }
+    }
+
+    /** The registry a candidate's proto3 JSON needs to read its deliverable. */
+    private static TypeRegistry deliverableTypes(Map<String, DeliverableContract> contracts) {
+        TypeRegistry.Builder registry = TypeRegistry.newBuilder();
+        Set<String> added = new HashSet<>();
+        for (DeliverableContract contract : contracts.values()) {
+            if (!added.add(contract.getTypeName())) {
+                continue;
+            }
+            try {
+                registry.add(DeliverableContracts.compile(contract).descriptor());
+            } catch (IllegalArgumentException unlinkable) {
+                // a contract the coordinator would refuse; the candidate check names it
+            }
+        }
+        return registry.build();
+    }
+
+    private static String violations(String where, ValidationResult result) {
+        StringBuilder out = new StringBuilder(where).append(':');
+        for (ValidationResult.Violation violation : result.violations()) {
+            out.append(' ').append(jsonPath(violation.path())).append(' ')
+                    .append(violation.message()).append(';');
+        }
+        out.setLength(out.length() - 1);
+        return out.toString();
+    }
+
+    /**
+     * Refuses a member no field of the message declares, naming it.
+     *
+     * <p>The parser refuses unknown members too, but names them by the proto type they were
+     * not found in; the model reads the tool name and the member it wrote.
+     */
+    private static void refuseUnknownMembers(JsonNode node, Descriptor descriptor,
+                                             String where) {
+        if (!node.isObject() || descriptor.getFullName().startsWith("google.protobuf.")) {
+            return;
+        }
+        for (Map.Entry<String, JsonNode> member : node.properties()) {
+            FieldDescriptor field = member(descriptor, member.getKey());
+            if (field == null) {
+                throw new ModelReplyException(where + " contains unknown field '"
+                        + member.getKey() + "'");
+            }
+            if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE
+                    || field.isMapField()) {
+                continue;
+            }
+            JsonNode value = member.getValue();
+            if (field.isRepeated() && value.isArray()) {
+                for (JsonNode element : value) {
+                    refuseUnknownMembers(element, field.getMessageType(), where);
+                }
+            } else {
+                refuseUnknownMembers(value, field.getMessageType(), where);
+            }
+        }
+    }
+
+    /** The field a member names, by its JSON spelling first and its declared name second. */
+    private static FieldDescriptor member(Descriptor descriptor, String name) {
+        for (FieldDescriptor field : descriptor.getFields()) {
+            if (field.getJsonName().equals(name)) {
+                return field;
+            }
+        }
+        return descriptor.findFieldByName(name);
+    }
+
+    /** A validator path with each field named as the model wrote it in the arguments. */
+    private static String jsonPath(String path) {
+        StringBuilder out = new StringBuilder();
+        for (String segment : path.split("\\.")) {
+            if (out.length() > 0) {
+                out.append('.');
+            }
+            int bracket = segment.indexOf('[');
+            String name = bracket < 0 ? segment : segment.substring(0, bracket);
+            boolean capitalize = false;
+            for (int i = 0; i < name.length(); i++) {
+                char character = name.charAt(i);
+                if (character == '_') {
+                    capitalize = true;
+                } else if (capitalize) {
+                    out.append(Character.toUpperCase(character));
+                    capitalize = false;
+                } else {
+                    out.append(character);
+                }
+            }
+            if (bracket >= 0) {
+                out.append(segment.substring(bracket));
+            }
+        }
+        return out.toString();
+    }
+
+    /**
+     * The structured-output schema for a role: one variant per allowed command, each
+     * wrapping the request message's own schema.
+     *
+     * <p>Rendered from the request descriptors, so the shape offered to a provider and the
+     * rules applied to what comes back are the same statement. The identity members the
+     * host sets itself are dropped from what the model is asked for.
+     *
+     * <p>Every object is closed and names every member it accepts in {@code required}: a
+     * provider running strict structured output demands that, and a member the message
+     * declares optional is offered as nullable rather than left out, because proto3 JSON
+     * reads a null as the field being absent.
+     */
     static ObjectNode outputSchema(AgentRole role) {
+        return outputSchema(role, Map.of());
+    }
+
+    static ObjectNode outputSchema(AgentRole role, Map<String, DeliverableContract> contracts) {
         ObjectNode schema = MAPPER.createObjectNode();
         schema.put("type", "object");
         ObjectNode properties = schema.putObject("properties");
@@ -187,204 +464,352 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
                 .putObject("items").put("type", "integer");
         ObjectNode commands = properties.putObject("commands");
         commands.put("type", "array").put("minItems", 1).put("maxItems", MAX_COMMANDS);
+        ObjectNode defs = MAPPER.createObjectNode();
         ArrayNode variants = commands.putObject("items").putArray("anyOf");
-        (role == AgentRole.WORKER ? WORKER_TOOLS : COORDINATOR_TOOLS).stream()
-                .sorted()
-                .flatMap(tool -> commandSchemas(role, tool).stream())
-                .forEach(variants::add);
+        for (String tool : tools(role)) {
+            variants.add(commandSchema(role, tool, defs));
+        }
         schema.putArray("required").add("handledEventCursors").add("commands");
+        schema.put("additionalProperties", false);
+        renderDeliverable(defs, contracts);
+        ObjectNode reachable = reachableDefs(variants, defs);
+        if (!reachable.isEmpty()) {
+            schema.set("$defs", reachable);
+        }
+        return schema;
+    }
+
+    /**
+     * {@code CompletionCandidate.result} is an Any, which renders as an open object that a
+     * strict structured-output endpoint refuses. With no contract known the member is left
+     * out; with contracts known it becomes one closed branch per contract type, rendered
+     * from the contract's descriptor with the type URL pinned, plus null for a task that
+     * has no contract.
+     */
+    private static void renderDeliverable(ObjectNode defs,
+                                          Map<String, DeliverableContract> contracts) {
+        JsonNode candidate = defs.get(CANDIDATE_TYPE);
+        if (!(candidate instanceof ObjectNode def)) {
+            return;
+        }
+        ObjectNode properties = (ObjectNode) def.path("properties");
+        ArrayNode required = (ArrayNode) def.path("required");
+        Map<String, DeliverableContract> byType = new LinkedHashMap<>();
+        for (DeliverableContract contract : contracts.values()) {
+            byType.putIfAbsent(contract.getTypeName(), contract);
+        }
+        if (byType.isEmpty()) {
+            properties.remove("result");
+            for (int i = 0; i < required.size(); i++) {
+                if ("result".equals(required.get(i).asText())) {
+                    required.remove(i);
+                    break;
+                }
+            }
+            return;
+        }
+        ObjectNode result = MAPPER.createObjectNode();
+        ArrayNode branches = result.putArray("anyOf");
+        for (DeliverableContract contract : byType.values()) {
+            Descriptor type;
+            try {
+                type = DeliverableContracts.compile(contract).descriptor();
+            } catch (IllegalArgumentException unlinkable) {
+                continue;
+            }
+            ObjectNode rendered = MAPPER.valueToTree(SCHEMAS.generateRooted(type));
+            rendered.remove("$schema");
+            JsonNode nested = rendered.remove("$defs");
+            if (nested != null) {
+                for (Map.Entry<String, JsonNode> entry : nested.properties()) {
+                    if (!defs.has(entry.getKey())) {
+                        harden(entry.getValue());
+                        defs.set(entry.getKey(), entry.getValue());
+                    }
+                }
+            }
+            ObjectNode members = rendered.withObject("properties");
+            ObjectNode typeUrl = members.putObject("@type");
+            typeUrl.put("type", "string");
+            typeUrl.putArray("enum").add(TYPE_URL_PREFIX + contract.getTypeName());
+            rendered.withArray("required").add("@type");
+            harden(rendered);
+            branches.add(rendered);
+        }
+        branches.addObject().put("type", "null");
+        properties.set("result", result);
+    }
+
+    private static ObjectNode commandSchema(AgentRole role, String tool, ObjectNode defs) {
+        ObjectNode variant = MAPPER.createObjectNode();
+        variant.put("type", "object");
+        ObjectNode properties = variant.putObject("properties");
+        properties.putObject("tool").put("type", "string").put("const", tool);
+        properties.set("arguments", ACK.equals(tool)
+                ? ackSchema() : requestSchema(role, tool, defs));
+        variant.putArray("required").add("tool").add("arguments");
+        variant.put("additionalProperties", false);
+        return variant;
+    }
+
+    /** The host's own acknowledgement, which no delegation verb carries. */
+    private static ObjectNode ackSchema() {
+        ObjectNode schema = MAPPER.createObjectNode();
+        schema.put("type", "object");
+        schema.putObject("properties").putObject("reason").put("type", "string")
+                .put("minLength", 1).put("maxLength", 1_024);
+        schema.putArray("required").add("reason");
         schema.put("additionalProperties", false);
         return schema;
     }
 
-    private static List<ObjectNode> commandSchemas(AgentRole role, String tool) {
-        if ("delegation-review".equals(tool)) {
-            return List.of(reviewSchema(ACCEPT), reviewSchema(REVISE));
+    private static ObjectNode requestSchema(AgentRole role, String tool, ObjectNode defs) {
+        ObjectNode rendered = MAPPER.valueToTree(
+                SCHEMAS.generateRooted(REQUESTS.get(tool)));
+        rendered.remove("$schema");
+        JsonNode nested = rendered.remove("$defs");
+        if (nested != null) {
+            for (Map.Entry<String, JsonNode> def : nested.properties()) {
+                if (!defs.has(def.getKey())) {
+                    harden(def.getValue());
+                    defs.set(def.getKey(), def.getValue());
+                }
+            }
         }
-        ObjectNode arguments = switch (tool) {
-            case "host-ack" -> objectSchema()
-                    .set("properties", properties(
-                            field("reason", stringSchema(1, 1_024))));
-            case "delegation-accept" -> objectSchema()
-                    .set("properties", properties(
-                            field("taskId", uuidSchema()),
-                            field("attempt", integerSchema(1, 1_024))));
-            case "delegation-message" -> messageArguments(role);
-            case "delegation-progress" -> objectSchema()
-                    .set("properties", properties(
-                            field("taskId", uuidSchema()),
-                            field("attempt", integerSchema(1, 1_024)),
-                            field("message", stringSchema(1, 4_096))));
-            case "delegation-checkpoint" -> objectSchema()
-                    .set("properties", properties(
-                            field("taskId", uuidSchema()),
-                            field("attempt", integerSchema(1, 1_024)),
-                            field("resumeToken", stringSchema(1, 512)),
-                            field("note", stringSchema(0, 1_024))));
-            case "delegation-candidate" -> objectSchema()
-                    .set("properties", properties(
-                            field("taskId", uuidSchema()),
-                            field("candidate", candidateSchema())));
-            case "delegation-offer" -> objectSchema()
-                    .set("properties", properties(
-                            field("workerId", identitySchema()),
-                            field("taskId", uuidSchema()),
-                            field("leaseSeconds", integerSchema(1, 86_400)),
-                            field("spec", taskSpecSchema())));
-            case "delegation-cancel" -> objectSchema()
-                    .set("properties", properties(
-                            field("taskId", uuidSchema()),
-                            field("reason", stringSchema(1, 2_048))));
-            default -> throw new IllegalArgumentException("unknown agent-host tool: " + tool);
-        };
-        finishObject(arguments);
-        return List.of(commandSchema(tool, arguments));
-    }
-
-    private static ObjectNode messageArguments(AgentRole role) {
-        ObjectNode properties = properties(
-                field("taskId", uuidSchema()),
-                field("kind", enumSchema(
-                        "TASK_MESSAGE_KIND_QUESTION", "TASK_MESSAGE_KIND_ANSWER",
-                        "TASK_MESSAGE_KIND_GUIDANCE", "TASK_MESSAGE_KIND_NOTE")),
-                field("text", stringSchema(1, 8_192)));
-        if (role == AgentRole.COORDINATOR) {
-            properties.set("recipient", identitySchema());
+        Set<String> pinned = pinnedFields(role, tool);
+        JsonNode properties = rendered.path("properties");
+        JsonNode required = rendered.path("required");
+        for (String field : pinned) {
+            if (properties.isObject()) {
+                ((ObjectNode) properties).remove(field);
+            }
+            if (required.isArray()) {
+                for (int i = 0; i < required.size(); i++) {
+                    if (field.equals(required.get(i).asText())) {
+                        ((ArrayNode) required).remove(i);
+                        break;
+                    }
+                }
+            }
         }
-        ObjectNode schema = objectSchema().set("properties", properties);
-        finishObject(schema);
-        return schema;
+        harden(rendered);
+        return rendered;
     }
 
-    private static ObjectNode reviewSchema(String decision) {
-        ObjectNode arguments;
-        if (ACCEPT.equals(decision)) {
-            arguments = objectSchema().set("properties", properties(
-                    field("taskId", uuidSchema()),
-                    field("decision", enumSchema(ACCEPT)),
-                    field("verdict", stringSchema(1, 2_048))));
-        } else {
-            arguments = objectSchema().set("properties", properties(
-                    field("taskId", uuidSchema()),
-                    field("decision", enumSchema(REVISE)),
-                    field("feedback", stringSchema(1, 8_192)),
-                    field("failedChecks", arraySchema(stringSchema(1, 128), 0, 64))));
+    /**
+     * Closes an object schema, names every member in {@code required}, offers the members
+     * the message does not require as nullable, and drops vendor keywords.
+     */
+    private static void harden(JsonNode node) {
+        if (!node.isObject()) {
+            return;
         }
-        finishObject(arguments);
-        return commandSchema("delegation-review", arguments);
-    }
-
-    private static ObjectNode commandSchema(String tool, ObjectNode arguments) {
-        ObjectNode schema = objectSchema();
-        schema.set("properties", properties(
-                field("tool", enumSchema(tool)),
-                field("arguments", arguments)));
-        finishObject(schema);
-        return schema;
-    }
-
-    private static ObjectNode taskSpecSchema() {
-        ObjectNode check = objectSchema().set("properties", properties(
-                field("name", stringSchema(1, 128)),
-                field("description", stringSchema(0, 2_048))));
-        finishObject(check);
-        ObjectNode schema = objectSchema().set("properties", properties(
-                field("objective", stringSchema(1, 16_384)),
-                field("requiredChecks", arraySchema(check, 1, 64))));
-        finishObject(schema);
-        return schema;
-    }
-
-    private static ObjectNode candidateSchema() {
-        ObjectNode evidence = objectSchema().set("properties", properties(
-                field("checkName", stringSchema(1, 128)),
-                field("verdict", enumSchema("CHECK_VERDICT_PASSED")),
-                field("ranAt", stringSchema(1, 64)),
-                field("detail", stringSchema(0, 4_096))));
-        finishObject(evidence);
-        ObjectNode commit = objectSchema().set("properties", properties(
-                field("repository", stringSchema(1, 512)),
-                field("commit", stringSchema(40, 40)),
-                field("subject", stringSchema(0, 256))));
-        finishObject(commit);
-        ObjectNode schema = objectSchema().set("properties", properties(
-                field("attempt", integerSchema(1, 1_024)),
-                field("revision", integerSchema(1, 1_024)),
-                field("summary", stringSchema(1, 4_096)),
-                field("evidence", arraySchema(evidence, 1, 64)),
-                field("commits", arraySchema(commit, 1, 64))));
-        finishObject(schema);
-        return schema;
-    }
-
-    private static ObjectNode objectSchema() {
-        return MAPPER.createObjectNode().put("type", "object")
-                .put("additionalProperties", false);
-    }
-
-    private static ObjectNode properties(Field... fields) {
-        ObjectNode properties = MAPPER.createObjectNode();
-        for (Field field : fields) {
-            properties.set(field.name(), field.schema());
+        ObjectNode object = (ObjectNode) node;
+        // Strict structured-output endpoints accept standard keywords only; the rule text
+        // behind the vendor keywords reaches the model through the prompt instead.
+        List<String> vendor = new ArrayList<>();
+        object.fieldNames().forEachRemaining(name -> {
+            if (name.startsWith("x-")) {
+                vendor.add(name);
+            }
+        });
+        vendor.forEach(object::remove);
+        JsonNode declared = object.get("properties");
+        if (declared instanceof ObjectNode members) {
+            Set<String> required = new LinkedHashSet<>();
+            for (JsonNode entry : object.path("required")) {
+                required.add(entry.asText());
+            }
+            ArrayNode names = MAPPER.createArrayNode();
+            for (Map.Entry<String, JsonNode> member : List.copyOf(members.properties())) {
+                names.add(member.getKey());
+                if (!required.contains(member.getKey())) {
+                    members.set(member.getKey(), nullable(member.getValue()));
+                }
+            }
+            object.set("required", names);
+            object.put("additionalProperties", false);
+            members.properties().forEach(member -> harden(member.getValue()));
         }
-        return properties;
-    }
-
-    private static Field field(String name, ObjectNode schema) {
-        return new Field(name, schema);
-    }
-
-    private static void finishObject(ObjectNode schema) {
-        ArrayNode required = schema.putArray("required");
-        schema.path("properties").fieldNames().forEachRemaining(required::add);
-    }
-
-    private static ObjectNode stringSchema(int minLength, int maxLength) {
-        return MAPPER.createObjectNode().put("type", "string")
-                .put("minLength", minLength).put("maxLength", maxLength);
-    }
-
-    private static ObjectNode uuidSchema() {
-        return stringSchema(36, 36).put("pattern",
-                "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
-                        + "[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$");
-    }
-
-    private static ObjectNode identitySchema() {
-        return stringSchema(1, 128);
-    }
-
-    private static ObjectNode integerSchema(int minimum, int maximum) {
-        return MAPPER.createObjectNode().put("type", "integer")
-                .put("minimum", minimum).put("maximum", maximum);
-    }
-
-    private static ObjectNode enumSchema(String... values) {
-        ObjectNode schema = MAPPER.createObjectNode().put("type", "string");
-        ArrayNode choices = schema.putArray("enum");
-        for (String value : values) {
-            choices.add(value);
+        harden(object.path("items"));
+        harden(object.path("additionalProperties"));
+        for (JsonNode branch : object.path("anyOf")) {
+            harden(branch);
         }
-        return schema;
+        for (JsonNode branch : object.path("allOf")) {
+            harden(branch);
+        }
     }
 
-    private static ObjectNode arraySchema(ObjectNode items, int minimum, int maximum) {
-        return MAPPER.createObjectNode().put("type", "array")
-                .put("minItems", minimum).put("maxItems", maximum).set("items", items);
+    /** The same schema, with a null alternative for a member the message does not require. */
+    private static JsonNode nullable(JsonNode schema) {
+        if (schema.isObject() && schema.get("anyOf") instanceof ArrayNode branches) {
+            branches.addObject().put("type", "null");
+            return schema;
+        }
+        ObjectNode wrapper = MAPPER.createObjectNode();
+        ArrayNode branches = wrapper.putArray("anyOf");
+        branches.add(schema);
+        branches.addObject().put("type", "null");
+        return wrapper;
     }
 
-    private record Field(String name, ObjectNode schema) {
+    /**
+     * The definitions the command variants actually reach. Each rendered request carries
+     * every type it can see, its own included; a schema that states types nothing refers
+     * to is describing messages the model is not being asked for.
+     */
+    private static ObjectNode reachableDefs(JsonNode variants, ObjectNode defs) {
+        ObjectNode kept = MAPPER.createObjectNode();
+        Deque<String> pending = new ArrayDeque<>(references(variants));
+        while (!pending.isEmpty()) {
+            String name = pending.poll();
+            JsonNode def = defs.get(name);
+            if (def == null || kept.has(name)) {
+                continue;
+            }
+            kept.set(name, def);
+            pending.addAll(references(def));
+        }
+        return kept;
+    }
+
+    private static Set<String> references(JsonNode node) {
+        Set<String> found = new LinkedHashSet<>();
+        collectReferences(node, found);
+        return found;
+    }
+
+    private static void collectReferences(JsonNode node, Set<String> found) {
+        if (node.isObject()) {
+            JsonNode reference = node.get("$ref");
+            if (reference != null && reference.isTextual()
+                    && reference.asText().startsWith("#/$defs/")) {
+                found.add(reference.asText().substring("#/$defs/".length()));
+            }
+            node.properties().forEach(member -> collectReferences(member.getValue(), found));
+        } else if (node.isArray()) {
+            for (JsonNode element : node) {
+                collectReferences(element, found);
+            }
+        }
+    }
+
+    /**
+     * The argument contract for a role in prose, rendered from the same request
+     * descriptors the schema and the validator read.
+     *
+     * <p>The prompt states the shape a command takes and the rules a message declares
+     * about itself; both come from the descriptor, so neither can drift from what the
+     * host will accept.
+     */
+    static String commandContract(AgentRole role) {
+        StringBuilder out = new StringBuilder(role == AgentRole.WORKER
+                ? "Worker argument contract, from the delegation request messages: "
+                : "Coordinator argument contract, from the delegation request messages: ");
+        Set<String> rules = new LinkedHashSet<>();
+        boolean first = true;
+        for (String tool : tools(role)) {
+            if (!first) {
+                out.append("; ");
+            }
+            first = false;
+            out.append(tool).append('=');
+            if (ACK.equals(tool)) {
+                out.append("{reason}");
+            } else {
+                out.append(shape(REQUESTS.get(tool), pinnedFields(role, tool),
+                        new HashSet<>(), 0, rules));
+            }
+        }
+        out.append('.');
+        if (!rules.isEmpty()) {
+            out.append(" Rules the messages declare: ")
+                    .append(String.join("; ", rules)).append('.');
+        }
+        return out.append(" Use exactly these field names and no others.").toString();
+    }
+
+    /** One message as its member names, expanding the messages it carries. */
+    private static String shape(Descriptor descriptor, Set<String> omit, Set<String> seen,
+                                int depth, Set<String> rules) {
+        rules.addAll(messageRules(descriptor));
+        if (depth >= CONTRACT_DEPTH || !seen.add(descriptor.getFullName())) {
+            return "{...}";
+        }
+        StringBuilder out = new StringBuilder("{");
+        boolean first = true;
+        for (FieldDescriptor field : descriptor.getFields()) {
+            String name = field.getJsonName();
+            if (depth == 0 && omit.contains(name)) {
+                continue;
+            }
+            if (!first) {
+                out.append(',');
+            }
+            first = false;
+            out.append(name);
+            String nested = "";
+            if (field.getJavaType() == FieldDescriptor.JavaType.ENUM) {
+                nested = choices(field);
+            } else if (field.getJavaType() == FieldDescriptor.JavaType.MESSAGE
+                    && !field.isMapField()
+                    && !field.getMessageType().getFullName().startsWith("google.protobuf.")) {
+                nested = shape(field.getMessageType(), Set.of(), seen, depth + 1, rules);
+            }
+            out.append(field.isRepeated() ? "[" + nested + "]" : nested);
+        }
+        seen.remove(descriptor.getFullName());
+        return out.append('}').toString();
+    }
+
+    /** An enum field's declared values, less the unspecified zero no request may send. */
+    private static String choices(FieldDescriptor field) {
+        List<String> names = new ArrayList<>();
+        field.getEnumType().getValues().stream()
+                .filter(value -> value.getNumber() != 0)
+                .forEach(value -> names.add(value.getName()));
+        return "(" + String.join("|", names) + ")";
+    }
+
+    /** What a message states about itself as a whole, in the words of its own rules. */
+    private static List<String> messageRules(Descriptor descriptor) {
+        List<String> stated = new ArrayList<>();
+        for (ValidationRuleSource source : RULE_SOURCES) {
+            MessageConstraints constraints = source.messageConstraints(descriptor)
+                    .orElse(null);
+            if (constraints == null) {
+                continue;
+            }
+            for (CelConstraint rule : constraints.cel()) {
+                if (!rule.message().isBlank()) {
+                    stated.add(rule.message());
+                }
+            }
+        }
+        return stated;
+    }
+
+    /** The members the host sets itself, which the model is neither asked for nor allowed. */
+    private static Set<String> pinnedFields(AgentRole role, String tool) {
+        if (ACK.equals(tool)) {
+            return Set.of();
+        }
+        if (role == AgentRole.WORKER) {
+            return MESSAGE.equals(tool) ? Set.of("sender", "recipient") : Set.of("workerId");
+        }
+        return MESSAGE.equals(tool) ? Set.of("sender") : Set.of();
     }
 
     private static List<Long> readCursors(JsonNode node) {
         if (node == null || !node.isArray()) {
-            throw new AgentHostException("handledEventCursors must be an array");
+            throw new ModelReplyException("handledEventCursors must be an array");
         }
         List<Long> cursors = new ArrayList<>();
         long previous = -1;
         for (JsonNode entry : node) {
             if (!entry.canConvertToLong() || entry.asLong() <= previous) {
-                throw new AgentHostException(
+                throw new ModelReplyException(
                         "handledEventCursors must be strictly increasing integers");
             }
             previous = entry.asLong();
@@ -395,11 +820,8 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
 
     private static void enforceIdentity(AgentRole role, String identity, String tool,
                                         ObjectNode arguments) {
-        if ("host-ack".equals(tool)) {
-            return;
-        }
         if (role == AgentRole.WORKER) {
-            if ("delegation-message".equals(tool)) {
+            if (MESSAGE.equals(tool)) {
                 requireCompatible(arguments, "sender", identity);
                 requireCompatible(arguments, "recipient", "coordinator");
                 arguments.put("sender", identity);
@@ -408,7 +830,7 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
                 requireCompatible(arguments, "workerId", identity);
                 arguments.put("workerId", identity);
             }
-        } else if ("delegation-message".equals(tool)) {
+        } else if (MESSAGE.equals(tool)) {
             requireCompatible(arguments, "sender", "coordinator");
             arguments.put("sender", "coordinator");
         }
@@ -417,7 +839,7 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
     private static void requireCompatible(ObjectNode arguments, String field, String value) {
         JsonNode present = arguments.get(field);
         if (present != null && (!present.isTextual() || !value.equals(present.asText()))) {
-            throw new AgentHostException("agent cannot override " + field);
+            throw new ModelReplyException("agent cannot override " + field);
         }
     }
 
@@ -425,136 +847,8 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
         if (arguments.size() != 1 || !arguments.path("reason").isTextual()
                 || arguments.path("reason").asText().isBlank()
                 || arguments.path("reason").asText().length() > 1_024) {
-            throw new AgentHostException(
+            throw new ModelReplyException(
                     "host-ack arguments must contain one bounded reason");
-        }
-    }
-
-    /**
-     * Enforces the same closed command schema on provider text that is offered to
-     * structured-output capable providers. ACP providers may return ordinary JSON,
-     * so treating the advertised schema as validation rather than only a prompt hint
-     * keeps malformed commands out of durable pending state.
-     */
-    private static void validateArguments(AgentRole role, String tool,
-                                          ObjectNode arguments, int commandIndex) {
-        ObjectNode candidate = arguments.deepCopy();
-        if (role == AgentRole.WORKER) {
-            if ("delegation-message".equals(tool)) {
-                candidate.remove("sender");
-                candidate.remove("recipient");
-            } else if (!"host-ack".equals(tool)) {
-                candidate.remove("workerId");
-            }
-        } else if ("delegation-message".equals(tool)) {
-            candidate.remove("sender");
-        }
-
-        AgentHostException first = null;
-        for (ObjectNode commandSchema : commandSchemas(role, tool)) {
-            JsonNode argumentSchema = commandSchema.path("properties").path("arguments");
-            try {
-                validateNode(candidate, argumentSchema,
-                        "command " + commandIndex + " arguments");
-                return;
-            } catch (AgentHostException e) {
-                if (first == null) {
-                    first = e;
-                }
-            }
-        }
-        throw first == null
-                ? new AgentHostException("command " + commandIndex
-                        + " has no argument schema")
-                : first;
-    }
-
-    private static void validateNode(JsonNode value, JsonNode schema, String path) {
-        String type = schema.path("type").asText();
-        switch (type) {
-            case "object" -> validateObject(value, schema, path);
-            case "array" -> validateArray(value, schema, path);
-            case "string" -> validateString(value, schema, path);
-            case "integer" -> validateInteger(value, schema, path);
-            default -> throw new AgentHostException(path
-                    + " uses an unsupported internal schema type");
-        }
-    }
-
-    private static void validateObject(JsonNode value, JsonNode schema, String path) {
-        if (!value.isObject()) {
-            throw new AgentHostException(path + " must be an object");
-        }
-        JsonNode properties = schema.path("properties");
-        for (JsonNode required : schema.path("required")) {
-            String name = required.asText();
-            if (!value.has(name)) {
-                throw new AgentHostException(path + "." + name + " is required");
-            }
-        }
-        Iterator<Map.Entry<String, JsonNode>> fields = value.properties().iterator();
-        while (fields.hasNext()) {
-            Map.Entry<String, JsonNode> field = fields.next();
-            JsonNode fieldSchema = properties.get(field.getKey());
-            if (fieldSchema == null) {
-                throw new AgentHostException(path + " contains unknown field '"
-                        + field.getKey() + "'");
-            }
-            validateNode(field.getValue(), fieldSchema, path + "." + field.getKey());
-        }
-    }
-
-    private static void validateArray(JsonNode value, JsonNode schema, String path) {
-        if (!value.isArray()) {
-            throw new AgentHostException(path + " must be an array");
-        }
-        int minimum = schema.path("minItems").asInt(0);
-        int maximum = schema.path("maxItems").asInt(Integer.MAX_VALUE);
-        if (value.size() < minimum || value.size() > maximum) {
-            throw new AgentHostException(path + " must contain " + minimum
-                    + " to " + maximum + " entries");
-        }
-        for (int i = 0; i < value.size(); i++) {
-            validateNode(value.get(i), schema.path("items"), path + "[" + i + "]");
-        }
-    }
-
-    private static void validateString(JsonNode value, JsonNode schema, String path) {
-        if (!value.isTextual()) {
-            throw new AgentHostException(path + " must be a string");
-        }
-        String text = value.asText();
-        int minimum = schema.path("minLength").asInt(0);
-        int maximum = schema.path("maxLength").asInt(Integer.MAX_VALUE);
-        if (text.length() < minimum || text.length() > maximum) {
-            throw new AgentHostException(path + " length must be between " + minimum
-                    + " and " + maximum);
-        }
-        if (schema.has("pattern")
-                && !Pattern.matches(schema.path("pattern").asText(), text)) {
-            throw new AgentHostException(path + " does not match its required form");
-        }
-        if (schema.has("enum")) {
-            boolean matched = false;
-            for (JsonNode choice : schema.path("enum")) {
-                matched |= choice.asText().equals(text);
-            }
-            if (!matched) {
-                throw new AgentHostException(path + " is not an allowed value");
-            }
-        }
-    }
-
-    private static void validateInteger(JsonNode value, JsonNode schema, String path) {
-        if (!value.isIntegralNumber() || !value.canConvertToLong()) {
-            throw new AgentHostException(path + " must be an integer");
-        }
-        long number = value.asLong();
-        long minimum = schema.path("minimum").asLong(Long.MIN_VALUE);
-        long maximum = schema.path("maximum").asLong(Long.MAX_VALUE);
-        if (number < minimum || number > maximum) {
-            throw new AgentHostException(path + " must be between " + minimum
-                    + " and " + maximum);
         }
     }
 }

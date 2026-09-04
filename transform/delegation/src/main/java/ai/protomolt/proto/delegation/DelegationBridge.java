@@ -223,6 +223,15 @@ public final class DelegationBridge implements AutoCloseable {
         return coordinator.offer(workerId, taskId, spec, leaseDuration, resumeFrom);
     }
 
+    /**
+     * The deliverable types the coordinator's tasks declare; see the coordinator.
+     *
+     * @return the registry that resolves a packed deliverable on the JSON path
+     */
+    public com.google.protobuf.util.JsonFormat.TypeRegistry deliverableTypes() {
+        return coordinator.deliverableTypes();
+    }
+
     /** Applies an external review decision; see the coordinator. */
     public void review(String taskId, CandidateReviewer.ReviewDecision decision) {
         coordinator.review(taskId, decision);
