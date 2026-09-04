@@ -6,7 +6,18 @@ description = 'Persistent Codex and Kimi process host for ProtoMolt delegation o
 
 dependencies {
     implementation project(':protomolt-acp')
+    // A command is a delegation request message: the host parses one into the
+    // generated type the coordinator declares for the verb.
+    implementation project(':protomolt-delegation')
+    // The same rules the coordinator applies server-side, applied here before a
+    // command is sent, so a rejected reply quotes the proto's own rule text.
+    implementation project(':protomolt-protobuf-validation')
+    // The structured-output schema is rendered from the request descriptors
+    // rather than hand-written, so prompt and validator cannot disagree.
+    implementation project(':protomolt-http-jsonschema')
     implementation libs.jackson.databind
+    implementation libs.protobuf.java
+    implementation libs.protobuf.java.util
 
     testImplementation project(':protomolt-serve')
 }
