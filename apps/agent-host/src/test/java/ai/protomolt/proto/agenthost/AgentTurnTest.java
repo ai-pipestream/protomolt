@@ -96,6 +96,37 @@ class AgentTurnTest {
                 .hasMessageContaining("not JSON");
     }
 
+    /**
+     * The first live Kimi worker closed its candidate reply with one brace too few, ten
+     * times in a row, so no complete object existed to extract and every repair turn got
+     * the same "not JSON". A reply whose only defect is closers missing at its very end is
+     * completed; a reply that is unbalanced anywhere else is still rejected, and the
+     * rejection names the parse position so the repair prompt says what to fix.
+     */
+    @Test
+    void missingTrailingClosersAreCompletedAndOtherSyntaxErrorsAreLocated() {
+        String complete = """
+                {"handledEventCursors":[13],"commands":[{"tool":"delegation-progress",
+                 "arguments":{"taskId":"11111111-1111-4111-8111-111111111111","attempt":1,
+                 "message":"checks pass"}}]}
+                """.strip();
+        String oneBraceShort = complete.substring(0, complete.length() - 1);
+        AgentTurn turn = AgentTurn.parse(oneBraceShort, AgentRole.WORKER, List.of(13L),
+                "kimi-worker");
+        assertThat(turn.commands().get(0).tool()).isEqualTo("delegation-progress");
+
+        String twoShort = complete.substring(0, complete.length() - 3);
+        assertThat(AgentTurn.parse(twoShort, AgentRole.WORKER, List.of(13L), "kimi-worker")
+                .commands()).hasSize(1);
+
+        String brokenInside = complete.replace("\"attempt\":1,", "\"attempt\":1");
+        assertThatThrownBy(() -> AgentTurn.parse(brokenInside, AgentRole.WORKER,
+                List.of(13L), "kimi-worker"))
+                .isInstanceOf(AgentHostException.class)
+                .hasMessageContaining("not JSON")
+                .hasMessageContaining("column");
+    }
+
     @Test
     void outputSchemaUsesOnlyRoleTools() {
         String schema = AgentTurn.outputSchema(AgentRole.COORDINATOR).toString();

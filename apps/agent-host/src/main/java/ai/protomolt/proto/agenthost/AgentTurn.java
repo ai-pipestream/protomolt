@@ -54,24 +54,78 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
      */
     static JsonNode readResponse(String text) {
         String trimmed = text.strip();
+        JsonProcessingException whole;
         try {
             return STRICT.readTree(trimmed);
-        } catch (JsonProcessingException whole) {
-            int end = trimmed.lastIndexOf('}');
-            int start = trimmed.indexOf('{');
-            while (start >= 0 && start < end) {
-                try {
-                    JsonNode candidate = STRICT.readTree(trimmed.substring(start, end + 1));
-                    if (candidate.isObject()) {
-                        return candidate;
-                    }
-                } catch (JsonProcessingException partial) {
-                    // not a complete object from this brace; try the next one
-                }
-                start = trimmed.indexOf('{', start + 1);
-            }
-            throw new AgentHostException("agent response is not JSON");
+        } catch (JsonProcessingException e) {
+            whole = e;
         }
+        String completed = closeTrailingOpeners(trimmed);
+        if (completed != null) {
+            try {
+                return STRICT.readTree(completed);
+            } catch (JsonProcessingException incomplete) {
+                // the missing closers were not the only defect
+            }
+        }
+        int end = trimmed.lastIndexOf('}');
+        int start = trimmed.indexOf('{');
+        while (start >= 0 && start < end) {
+            try {
+                JsonNode candidate = STRICT.readTree(trimmed.substring(start, end + 1));
+                if (candidate.isObject() && candidate.has("handledEventCursors")) {
+                    return candidate;
+                }
+            } catch (JsonProcessingException partial) {
+                // not a complete object from this brace; try the next one
+            }
+            start = trimmed.indexOf('{', start + 1);
+        }
+        throw new AgentHostException("agent response is not JSON: "
+                + whole.getOriginalMessage() + " at line " + whole.getLocation().getLineNr()
+                + " column " + whole.getLocation().getColumnNr());
+    }
+
+    /**
+     * Returns the text with the closers its unclosed objects and arrays still need appended,
+     * or null when nothing is open at the end or the text ends inside a string. Models
+     * regularly stop one brace short of a well-formed reply; nothing else is repaired.
+     */
+    private static String closeTrailingOpeners(String text) {
+        StringBuilder closers = new StringBuilder();
+        boolean inString = false;
+        boolean escaped = false;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                } else if (c == '\\') {
+                    escaped = true;
+                } else if (c == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            switch (c) {
+                case '"' -> inString = true;
+                case '{' -> closers.append('}');
+                case '[' -> closers.append(']');
+                case '}', ']' -> {
+                    if (closers.isEmpty() || closers.charAt(closers.length() - 1) != c) {
+                        return null;
+                    }
+                    closers.setLength(closers.length() - 1);
+                }
+                default -> {
+                    // other characters do not affect nesting
+                }
+            }
+        }
+        if (inString || closers.isEmpty()) {
+            return null;
+        }
+        return text + closers.reverse();
     }
 
     static AgentTurn parse(String text, AgentRole role, List<Long> expectedCursors,
