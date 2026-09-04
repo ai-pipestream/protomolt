@@ -86,9 +86,13 @@ built-in action exposed by the standalone and full catalogs.
 
 ## Architecture and records
 
-- [PipeStream protobuf mesh](design/pipestream-protobuf-mesh/README.md):
-  contract-driven `Any` routing, service advertisement, recursive processing,
-  LLM software generation, and OpenNLP PII policy across mesh nodes
+- [Enterprise message processing gap analysis](design/enterprise-message-processing-gap-analysis.md):
+  code-backed capability inventory, descriptor-native runtime architecture,
+  vendor-neutral QUIC transport, frontend possibilities, and landing order
+- [Historical protobuf mesh exploration](design/pipestream-protobuf-mesh/README.md):
+  earlier contract, routing, recursive-processing, software-generation, and PII
+  design input; use the enterprise message-processing analysis above for current
+  product vocabulary and landing order
 - [Planned work](design/planned-work.md): open product and hardening work
 - [Work tiers and skill tags](design/work-tags.md): the vocabulary offers and workers use to describe delegated work; the `protomolt-worker` skill under `.claude/skills/` walks a session through both roles
 - [Metric mappings](design/metric-mapping.md): governed aggregate queries on a mapping subject (Cube comparison, option dialect, `query-metrics`)
