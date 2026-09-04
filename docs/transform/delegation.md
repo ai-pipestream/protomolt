@@ -39,7 +39,12 @@ The coordinator offers a bounded `TaskSpec` with:
 
 The worker accepts or rejects the offer. An accepted attempt may send
 heartbeats, monotonic progress, and resumable checkpoints. The coordinator may
-renew or expire the lease. A later attempt can resume from a recorded
+renew or expire the lease. Rejection, heartbeat and lease renewal are frames of
+the gRPC stream; the catalog verbs in [Live MCP surface](#live-mcp-surface)
+do not expose them, so a worker joined over MCP declines an offer by leaving it
+to expire or by asking a question, keeps an attempt alive with progress and
+checkpoints, and gets more time only through a new offer that names its last
+checkpoint. A later attempt can resume from a recorded
 checkpoint.
 
 A worker cannot mark its own task complete. It submits a completion candidate

@@ -173,6 +173,8 @@ Pick a worker whose capabilities cover the task's tags and tier, then `delegatio
   java-gradle, proto-buf`), then rules (`no pushes to main`, `tests first`);
 - `spec.requiredChecks`: slug names with a description of the command that proves each
   one (`gradle-gate: ./gradlew clean build test exits 0 on the branch tip`);
+- `spec.context`: content-addressed inputs the worker starts from (each an
+  artifact reference with `sha256` and `mediaType`), by reference only;
 - `spec.contract`: the typed deliverable, when the task must produce a message rather
   than only a commit. `descriptorSet` is a serialized `FileDescriptorSet` as base64
   bytes, taken from `reflect` (a live service), `compile` (inline `.proto` sources),
