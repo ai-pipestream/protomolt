@@ -263,8 +263,8 @@ public final class InProcessDelegationCoordinator
     /**
      * Sends a non-transitioning task message from the coordinator to one worker.
      * The message is recorded and sequenced like any other frame but never moves
-     * the lifecycle; the task must exist and the worker must be admitted and
-     * connected.
+     * the lifecycle; the task must exist and the worker must be admitted. A
+     * disconnected worker reads it from the event feed when it reconnects.
      *
      * @return the emitted message, with its generated id and timestamp
      */
@@ -276,7 +276,7 @@ public final class InProcessDelegationCoordinator
         Objects.requireNonNull(artifacts, "artifacts");
         synchronized (lock) {
             requireOpen();
-            Session session = requireAdmittedSession(workerId);
+            Session session = requireAdmittedWorker(workerId);
             requireTask(taskId);
             TaskMessage message = TaskMessage.newBuilder()
                     .setMessageId(UUID.randomUUID().toString())
@@ -408,21 +408,25 @@ public final class InProcessDelegationCoordinator
                     .setAttempt(task.attempt)
                     .setReason(reason)
                     .build();
-            emit(requireAdmittedSession(task.workerId), task.taskId, task.attempt,
+            emit(requireAdmittedWorker(task.workerId), task.taskId, task.attempt,
                     DelegateResponse.newBuilder().setCancellation(cancellation));
             task.phase = DelegationReducer.Phase.CANCELLED;
             task.leaseGeneration++;
         }
     }
 
-    /** Expires every live lease whose declared expiry is at or before {@code now}. */
+    /**
+     * Expires every live lease whose declared expiry is at or before {@code now}. The
+     * lease clock covers the worker's obligation only: a submitted candidate waits for
+     * its review without a deadline, so a task in the candidate phase never expires
+     * here, and a revision request re-arms the lease when it hands the task back.
+     */
     public int expireLeases(Instant now) {
         Objects.requireNonNull(now, "now");
         synchronized (lock) {
             int expired = 0;
             for (TaskRuntime task : tasks.values()) {
-                if ((task.phase == DelegationReducer.Phase.LEASED
-                        || task.phase == DelegationReducer.Phase.CANDIDATE)
+                if (task.phase == DelegationReducer.Phase.LEASED
                         && !task.expiry.isAfter(now)) {
                     expire(task, "lease deadline elapsed");
                     expired++;
@@ -648,7 +652,7 @@ public final class InProcessDelegationCoordinator
     }
 
     private void applyReview(TaskRuntime task, ReviewDecision decision) {
-        Session session = requireAdmittedSession(task.workerId);
+        Session session = requireAdmittedWorker(task.workerId);
         switch (decision) {
             case ReviewDecision.Accept(String verdict) -> {
                 CompletionAccepted payload = CompletionAccepted.newBuilder()
@@ -671,6 +675,7 @@ public final class InProcessDelegationCoordinator
                 emit(session, task.taskId, task.attempt,
                         DelegateResponse.newBuilder().setRevisionRequested(payload));
                 task.phase = DelegationReducer.Phase.LEASED;
+                rearmLease(task, session);
             }
             // The candidate stays open for an explicit review action; the
             // lifecycle does not move.
@@ -687,12 +692,36 @@ public final class InProcessDelegationCoordinator
                 .setAttempt(task.attempt)
                 .setExpiresAt(toTimestamp(next))
                 .build();
-        emit(requireAdmittedSession(task.workerId), task.taskId, task.attempt,
+        emit(requireAdmittedWorker(task.workerId), task.taskId, task.attempt,
                 DelegateResponse.newBuilder().setRenewal(renewal), () -> {
                     task.expiry = next;
                     task.leaseGeneration++;
                 });
         scheduleExpiry(task.taskId, task.attempt, task.leaseGeneration, next);
+    }
+
+    /**
+     * Re-arms the lease when a revision request hands the task back to the worker:
+     * the worker gets a full lease duration from now unless the recorded expiry is
+     * already later, and the expiry timer is scheduled either way (a task restored
+     * in the candidate phase has none).
+     */
+    private void rearmLease(TaskRuntime task, Session session) {
+        java.time.Duration lease = java.time.Duration.ofMillis(
+                Durations.toMillis(task.offer.getLeaseDuration()));
+        Instant next = clock.instant().plus(lease);
+        if (next.isAfter(task.expiry)) {
+            LeaseRenewal renewal = LeaseRenewal.newBuilder()
+                    .setAttempt(task.attempt)
+                    .setExpiresAt(toTimestamp(next))
+                    .build();
+            emit(session, task.taskId, task.attempt,
+                    DelegateResponse.newBuilder().setRenewal(renewal), () -> {
+                        task.expiry = next;
+                        task.leaseGeneration++;
+                    });
+        }
+        scheduleExpiry(task.taskId, task.attempt, task.leaseGeneration, task.expiry);
     }
 
     private void scheduleExpiry(String taskId, int attempt, long generation,
@@ -709,8 +738,7 @@ public final class InProcessDelegationCoordinator
                     if (!closed && task != null && task.attempt == attempt
                             && task.leaseGeneration == generation
                             && !task.expiry.isAfter(clock.instant())
-                            && (task.phase == DelegationReducer.Phase.LEASED
-                            || task.phase == DelegationReducer.Phase.CANDIDATE)) {
+                            && task.phase == DelegationReducer.Phase.LEASED) {
                         expire(task, "lease deadline elapsed");
                     }
                 }
@@ -725,7 +753,7 @@ public final class InProcessDelegationCoordinator
                 .setAttempt(task.attempt)
                 .setReason(reason)
                 .build();
-        emit(requireAdmittedSession(task.workerId), task.taskId, task.attempt,
+        emit(requireAdmittedWorker(task.workerId), task.taskId, task.attempt,
                 DelegateResponse.newBuilder().setExpired(expired));
         task.phase = DelegationReducer.Phase.EXPIRED;
         task.leaseGeneration++;
@@ -753,7 +781,11 @@ public final class InProcessDelegationCoordinator
                 .build());
         session.commitCoordinatorSeq(taskId, attempt, seq);
         afterPersist.run();
-        session.responses.onNext(response);
+        if (session.connected) {
+            session.responses.onNext(response);
+        }
+        // A dead stream gets nothing; the recorded frame is on the event feed and the
+        // next stream for this worker continues the coordinator sequence past it.
     }
 
     private void append(TranscriptEntry entry) {
@@ -790,6 +822,10 @@ public final class InProcessDelegationCoordinator
             }
             restoreRuntime(entry);
         }
+        // A restored session must already know its coordinator sequences: a verdict,
+        // cancellation or message recorded before the worker reconnects continues
+        // the scope instead of rewinding it.
+        sessions.values().forEach(this::restoreCoordinatorSequences);
     }
 
     private void restoreRuntime(TranscriptEntry entry) {
@@ -902,8 +938,7 @@ public final class InProcessDelegationCoordinator
     private void resumeRestoredLeases(Session session) {
         for (TaskRuntime task : tasks.values()) {
             if (!task.workerId.equals(session.workerId)
-                    || (task.phase != DelegationReducer.Phase.LEASED
-                    && task.phase != DelegationReducer.Phase.CANDIDATE)) {
+                    || task.phase != DelegationReducer.Phase.LEASED) {
                 continue;
             }
             if (!task.expiry.isAfter(clock.instant())) {
@@ -957,9 +992,24 @@ public final class InProcessDelegationCoordinator
     }
 
     private Session requireAdmittedSession(String workerId) {
-        Session session = sessions.get(workerId);
-        if (session == null || !session.admitted || !session.connected) {
+        Session session = requireAdmittedWorker(workerId);
+        if (!session.connected) {
             throw new IllegalStateException("worker is not admitted and connected: " + workerId);
+        }
+        return session;
+    }
+
+    /**
+     * The session of an admitted worker whether or not its stream is live. Coordinator
+     * frames that settle an attempt (verdicts, cancellations, expiries, messages) are
+     * recorded and sequenced against this session; a worker whose stream is down
+     * reads them from the durable event feed when it reconnects, so a review does
+     * not wait on the worker's connection.
+     */
+    private Session requireAdmittedWorker(String workerId) {
+        Session session = sessions.get(workerId);
+        if (session == null || !session.admitted) {
+            throw new IllegalStateException("worker is not admitted: " + workerId);
         }
         return session;
     }
