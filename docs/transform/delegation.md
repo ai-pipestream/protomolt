@@ -274,3 +274,8 @@ the repository service, so a server restart restores every task, cursor, and
 sequence scope and a re-registering worker resumes where the record left off.
 See [Running everything: protomolt-serve](../surface/grpc-service.md) for the
 flag set.
+
+A Claude Code session joins either role through the `protomolt-worker` skill
+(`.claude/skills/protomolt-worker/SKILL.md`): registration with skill tags from
+[Work tiers and skill tags](../design/work-tags.md), the watch loop, evidence
+shape, review steps, and the end-of-task token note.
