@@ -13,9 +13,9 @@ public enum HttpHeaderRule {
     VALUE_STRICT("string.well_known_regex.header_value", false),
     VALUE_LOOSE("string.well_known_regex.header_value", false);
 
-    // Strict header-name token characters: protovalidate's class [0-9a-zA-Z!#$%&'*+-.^_|~`], where
-    // the "+-." span is a character range and so also admits the comma between '+' and '.'.
-    private static final String NAME_TOKEN_SPECIALS = "!#$%&'*+,-.^_|~`";
+    // Strict header-name token characters: protovalidate's class [0-9a-zA-Z!#$%&'*+.^_|~`-]. The
+    // class once read "+-.", a range that admitted the comma; 63347b8 moved the hyphen to the end.
+    private static final String NAME_TOKEN_SPECIALS = "!#$%&'*+-.^_|~`";
 
     private final String ruleId;
     private final boolean rejectEmpty;
