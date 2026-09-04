@@ -4,6 +4,8 @@ import ai.protomolt.proto.delegation.v1.WorkerCapability;
 import ai.protomolt.proto.delegation.v1.WorkerHello;
 import ai.protomolt.proto.mesh.cluster.v1.CapabilityDescription;
 import ai.protomolt.proto.mesh.cluster.v1.ProcessorAdvertisement;
+import ai.protomolt.proto.mesh.ProcessorContracts;
+import ai.protomolt.proto.mesh.runtime.v1.ProcessorContract;
 import ai.protomolt.proto.mesh.v1.ProcessorKind;
 import ai.protomolt.proto.validate.ProtoValidator;
 import ai.protomolt.proto.validate.ValidationResult;
@@ -32,9 +34,8 @@ import java.util.stream.Collectors;
  *       contract that an empty provider marks a deterministic worker;</li>
  *   <li>{@code capabilities} are the hello's capability names in declaration order,
  *       deduplicated, because an advertisement's capability list is a set;</li>
- *   <li>{@code accepted_schemas} is empty: a {@code WorkerHello} declares no schema set, so
- *       the bridge invents none. A coordinator that knows the worker's schemas registers a
- *       follow-up advertisement under a newer sequence;</li>
+ *   <li>the caller supplies the exact executable contract because a delegation hello does
+ *       not declare input or output schemas;</li>
  *   <li>{@code advertised_at} is the caller's instant and {@code lease_expires_at} is that
  *       instant plus the caller's lease duration; the caller owns the lease terms because the
  *       hello carries none.</li>
@@ -52,6 +53,7 @@ public final class DelegationBridge {
      * Derives a leased processor advertisement from a worker hello.
      *
      * @param hello the worker hello to map
+     * @param contract exact executable processor contract for this worker
      * @param nodeId the mesh node the worker's stream terminates on
      * @param nodeEpoch the fencing epoch of that node incarnation
      * @param leaseEpoch the lease fencing epoch the coordinator assigned
@@ -63,6 +65,7 @@ public final class DelegationBridge {
      *     duration is not positive, or the derived advertisement fails validation
      */
     public static ProcessorAdvertisement toProcessorAdvertisement(WorkerHello hello,
+            ProcessorContract contract,
             String nodeId, long nodeEpoch, long leaseEpoch, long seq, Duration leaseDuration,
             Instant now) {
         require(hello != null, "hello must not be null");
@@ -70,6 +73,9 @@ public final class DelegationBridge {
         require(leaseDuration != null && !leaseDuration.isNegative() && !leaseDuration.isZero(),
                 "leaseDuration must be positive");
         validateHello(hello);
+        contract = ProcessorContracts.canonical(contract);
+        require(contract.getProcessorId().equals(hello.getWorkerId()),
+                "contract.processor_id must equal hello.worker_id");
         ProcessorKind kind = hello.getProvider().isEmpty()
                 ? ProcessorKind.PROCESSOR_KIND_DETERMINISTIC
                 : ProcessorKind.PROCESSOR_KIND_LLM;
@@ -82,6 +88,8 @@ public final class DelegationBridge {
                 .setNodeEpoch(nodeEpoch)
                 .setKind(kind)
                 .addAllCapabilities(capabilities.keySet())
+                .addAcceptedSchemas(contract.getInputSchema())
+                .setContract(contract)
                 .setProvider(hello.getProvider())
                 .setModel(hello.getModel())
                 .setModelVersion(hello.getModelVersion())

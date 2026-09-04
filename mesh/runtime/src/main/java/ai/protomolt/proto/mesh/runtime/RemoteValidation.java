@@ -3,15 +3,23 @@ package ai.protomolt.proto.mesh.runtime;
 import ai.protomolt.proto.descriptors.DescriptorIdentity;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.mesh.MeshValidation;
+import ai.protomolt.proto.mesh.ProcessorContracts;
 import ai.protomolt.proto.mesh.runtime.v1.DeliveryClaim;
 import ai.protomolt.proto.mesh.runtime.v1.ProcessorContract;
+import ai.protomolt.proto.mesh.runtime.v1.ProcessorFailure;
+import ai.protomolt.proto.mesh.runtime.v1.ProcessorOutcomeKind;
+import ai.protomolt.proto.mesh.runtime.v1.ProcessorOutcome;
 import ai.protomolt.proto.mesh.runtime.v1.ProcessorWork;
+import ai.protomolt.proto.mesh.runtime.v1.RetryStrategy;
+import ai.protomolt.proto.mesh.runtime.v1.SettlementEffect;
 import ai.protomolt.proto.mesh.runtime.v1.WorkerHello;
+import ai.protomolt.proto.mesh.runtime.v1.ProcessorLeaseBinding;
 import ai.protomolt.proto.mesh.v1.SchemaReference;
 import ai.protomolt.proto.validate.ProtoValidator;
 import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
 import com.google.protobuf.util.Timestamps;
+import com.google.protobuf.util.Durations;
 
 import java.util.Collection;
 import java.util.HashSet;
@@ -36,6 +44,10 @@ final class RemoteValidation {
 
     static void contract(ProcessorContract contract, DescriptorRegistry descriptors) {
         Objects.requireNonNull(contract, "contract");
+        if (!ProcessorContracts.canonical(contract).equals(contract)) {
+            throw new IllegalArgumentException("processor contract must carry its canonical "
+                    + "output order and contract_fingerprint: " + contract.getProcessorId());
+        }
         annotations(contract);
         if (!PROCESSOR.matcher(contract.getProcessorId()).matches()) {
             throw new IllegalArgumentException(
@@ -100,6 +112,11 @@ final class RemoteValidation {
         Objects.requireNonNull(hello, "hello");
         annotations(hello);
         workerId(hello.getWorkerId());
+        if (hello.getNodeId().isBlank() || hello.getNodeIncarnationEpoch() < 1
+                || hello.getEndpointId().isBlank()) {
+            throw new IllegalArgumentException(
+                    "worker hello requires node_id, node_incarnation_epoch, and endpoint_id");
+        }
         if (hello.getContractsCount() == 0) {
             throw new IllegalArgumentException("worker must advertise at least one contract");
         }
@@ -110,6 +127,21 @@ final class RemoteValidation {
                 throw new IllegalArgumentException("worker repeats processor contract "
                         + contract.getProcessorId());
             }
+        }
+        Set<String> leaseIds = new HashSet<>();
+        for (ProcessorLeaseBinding lease : hello.getProcessorLeasesList()) {
+            if (!leaseIds.add(lease.getProcessorId())) {
+                throw new IllegalArgumentException("worker repeats processor lease "
+                        + lease.getProcessorId());
+            }
+            if (lease.getLeaseEpoch() < 1 || lease.getContractFingerprint().isBlank()) {
+                throw new IllegalArgumentException("worker processor lease requires epoch and "
+                        + "contract_fingerprint: " + lease.getProcessorId());
+            }
+        }
+        if (!leaseIds.equals(ids)) {
+            throw new IllegalArgumentException(
+                    "worker hello must bind exactly one lease to every contract");
         }
     }
 
@@ -137,6 +169,77 @@ final class RemoteValidation {
         }
     }
 
+    static void failure(ProcessorFailure failure) {
+        Objects.requireNonNull(failure, "failure");
+        annotations(failure);
+        uuid(failure.getDeliveryId(), "delivery_id");
+        uuid(failure.getLeaseToken(), "lease_token");
+        uuid(failure.getCompletionId(), "completion_id");
+        if (!failure.hasOutcome()) {
+            throw new IllegalArgumentException("processor failure requires a typed outcome");
+        }
+        outcome(failure.getOutcome());
+    }
+
+    static void outcome(ProcessorOutcome outcome) {
+        Objects.requireNonNull(outcome, "outcome");
+        annotations(outcome);
+        uuid(outcome.getOutcomeId(), "outcome_id");
+        if (outcome.getKind() == ProcessorOutcomeKind.PROCESSOR_OUTCOME_KIND_UNSPECIFIED
+                || outcome.getKind() == ProcessorOutcomeKind.PROCESSOR_OUTCOME_KIND_SUCCESS
+                || outcome.getKind() == ProcessorOutcomeKind.UNRECOGNIZED) {
+            throw new IllegalArgumentException(
+                    "processor failure requires a non-success outcome kind");
+        }
+        if (outcome.getSettlementEffect() == SettlementEffect.SETTLEMENT_EFFECT_UNSPECIFIED
+                || outcome.getSettlementEffect() == SettlementEffect.UNRECOGNIZED) {
+            throw new IllegalArgumentException(
+                    "processor outcome requires a settlement effect");
+        }
+        if (!outcome.hasRetryAdvice()
+                || outcome.getRetryAdvice().getStrategy()
+                == RetryStrategy.RETRY_STRATEGY_UNSPECIFIED
+                || outcome.getRetryAdvice().getStrategy() == RetryStrategy.UNRECOGNIZED) {
+            throw new IllegalArgumentException(
+                    "processor outcome requires explicit retry advice");
+        }
+        var advice = outcome.getRetryAdvice();
+        if (advice.hasDelay() && (!Durations.isValid(advice.getDelay())
+                || Durations.compare(advice.getDelay(),
+                com.google.protobuf.Duration.getDefaultInstance()) < 0)) {
+            throw new IllegalArgumentException("retry delay must not be negative");
+        }
+        if (advice.hasMaximumDelay() && (!Durations.isValid(advice.getMaximumDelay())
+                || Durations.compare(advice.getMaximumDelay(),
+                com.google.protobuf.Duration.getDefaultInstance()) < 0)) {
+            throw new IllegalArgumentException("retry maximum_delay must not be negative");
+        }
+        switch (advice.getStrategy()) {
+            case RETRY_STRATEGY_NONE -> {
+                if (outcome.getKind()
+                        == ProcessorOutcomeKind.PROCESSOR_OUTCOME_KIND_RETRYABLE) {
+                    throw new IllegalArgumentException(
+                            "retryable outcome requires a retry strategy");
+                }
+            }
+            case RETRY_STRATEGY_FIXED_DELAY, RETRY_STRATEGY_EXPONENTIAL_BACKOFF -> {
+                if (!advice.hasDelay()) {
+                    throw new IllegalArgumentException(
+                            "delay-based retry strategy requires delay");
+                }
+            }
+            case RETRY_STRATEGY_RETRY_AFTER -> {
+                if (!advice.hasRetryAfter()) {
+                    throw new IllegalArgumentException(
+                            "retry-after strategy requires retry_after");
+                }
+                instant(advice.getRetryAfter());
+            }
+            case RETRY_STRATEGY_UNSPECIFIED, UNRECOGNIZED -> throw new IllegalArgumentException(
+                    "processor outcome requires explicit retry advice");
+        }
+    }
+
     static void workerId(String workerId) {
         if (!WORKER.matcher(workerId).matches()) {
             throw new IllegalArgumentException("worker_id is not a slug: " + workerId);
@@ -149,14 +252,7 @@ final class RemoteValidation {
     }
 
     static boolean sameContract(ProcessorContract first, ProcessorContract second) {
-        if (!first.getProcessorId().equals(second.getProcessorId())
-                || first.getMaxOutputs() != second.getMaxOutputs()
-                || !RuntimeSchemas.same(first.getInputSchema(), second.getInputSchema())) {
-            return false;
-        }
-        Set<DescriptorIdentity> firstOutputs = identities(first.getOutputSchemasList());
-        Set<DescriptorIdentity> secondOutputs = identities(second.getOutputSchemasList());
-        return firstOutputs.equals(secondOutputs);
+        return ProcessorContracts.exactMatch(first, second);
     }
 
     static java.time.Instant instant(Timestamp timestamp) {
@@ -169,6 +265,14 @@ final class RemoteValidation {
                 .setSeconds(instant.getEpochSecond())
                 .setNanos(instant.getNano())
                 .build();
+    }
+
+    static java.time.Duration duration(com.google.protobuf.Duration duration) {
+        Objects.requireNonNull(duration, "duration");
+        if (!com.google.protobuf.util.Durations.isValid(duration)) {
+            throw new IllegalArgumentException("duration must be a valid protobuf Duration");
+        }
+        return java.time.Duration.ofSeconds(duration.getSeconds(), duration.getNanos());
     }
 
     static void uuid(String value, String field) {

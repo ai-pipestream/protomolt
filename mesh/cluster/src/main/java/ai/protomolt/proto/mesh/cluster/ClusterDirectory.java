@@ -12,6 +12,8 @@ import ai.protomolt.proto.mesh.cluster.v1.NodePresence;
 import ai.protomolt.proto.mesh.cluster.v1.NodeRecord;
 import ai.protomolt.proto.mesh.cluster.v1.PresenceState;
 import ai.protomolt.proto.mesh.cluster.v1.ProcessorAdvertisement;
+import ai.protomolt.proto.mesh.cluster.v1.ProcessorReadinessOverlay;
+import ai.protomolt.proto.mesh.ProcessorContracts;
 import com.google.protobuf.Timestamp;
 
 import java.time.Clock;
@@ -83,6 +85,7 @@ public final class ClusterDirectory {
     private final Map<String, Position> processorPositions = new TreeMap<>();
     /** Keyed by {@code nodeId + "\n" + processorId}; newline cannot appear in a path-safe id. */
     private final Map<String, CapacityAdvertisement> processorCapacity = new TreeMap<>();
+    private final Map<String, ProcessorReadinessOverlay> readiness = new TreeMap<>();
     private final List<ClusterEvent> events = new ArrayList<>();
     private long eventSeq;
 
@@ -165,6 +168,9 @@ public final class ClusterDirectory {
             directory.processorCapacity.put(
                     capacityKey(capacity.getNodeId(), capacity.getProcessorId()), capacity);
         }
+        for (ProcessorReadinessOverlay overlay : state.getReadinessOverlaysList()) {
+            directory.readiness.put(overlay.getProcessorId(), overlay);
+        }
         for (FencingPosition position : checkpoint.getNodePositionsList()) {
             directory.nodePositions.put(position.getId(),
                     new Position(position.getEpoch(), position.getSeq()));
@@ -195,7 +201,8 @@ public final class ClusterDirectory {
      */
     public DirectoryCheckpoint checkpoint() {
         DirectoryCheckpoint.Builder builder = DirectoryCheckpoint.newBuilder()
-                .setState(snapshot());
+                .setState(snapshot())
+                .setDirectoryGeneration(1);
         nodePositions.forEach((id, position) ->
                 builder.addNodePositions(fencingPosition(id, position)));
         processorPositions.forEach((id, position) ->
@@ -270,11 +277,11 @@ public final class ClusterDirectory {
      * Applies a heartbeat presence record for a registered node. The identical record is a
      * no-op; a changed record requires a strictly higher heartbeat sequence.
      *
-     * <p><b>Presence is soft state and emits no event.</b> A heartbeat restates a fact the
-     * node regenerates every few seconds and that expires on its own, so persisting it buys
-     * nothing a restart could not rebuild by waiting. What it costs is the whole durable
-     * write path on the cluster's most frequent call. The registration epoch is what fences
-     * presence, and that stays durable: this method refuses any record whose
+     * <p>A same-state heartbeat is soft state and emits no event. A node regenerates that
+     * liveness fact every few seconds and it expires on its own, so persisting each refresh
+     * would only add a durable write to the cluster's most frequent call. A state transition
+     * does emit an event so watchers observe drain and health changes. The registration epoch
+     * fences both forms: this method refuses any record whose
      * {@code node_epoch} disagrees with the registered advertisement, so a delayed frame
      * from a superseded incarnation cannot extend a node's life whether or not the heartbeat
      * that established the current epoch is still in the log.
@@ -303,6 +310,10 @@ public final class ClusterDirectory {
                 existing.getNodeEpoch(), existing.getHeartbeatSeq(),
                 "presence for node '" + nodeId + "'");
         presence.put(nodeId, record);
+        if (existing.getState() != record.getState()) {
+            emit(ClusterEventType.CLUSTER_EVENT_TYPE_PRESENCE_UPDATED, nodeId, "",
+                    b -> b.setPresence(record));
+        }
         return ApplyOutcome.UPDATED;
     }
 
@@ -342,6 +353,11 @@ public final class ClusterDirectory {
         if (existing.equals(advertisement)) {
             return ApplyOutcome.UNCHANGED;
         }
+        require(advertisement.getLeaseEpoch() > existing.getLeaseEpoch()
+                        || ProcessorContracts.exactMatch(
+                                existing.getContract(), advertisement.getContract()),
+                "processor '" + processorId
+                        + "' may change its exact contract only under a newer lease_epoch");
         requireFresher(advertisement.getLeaseEpoch(), advertisement.getSeq(),
                 existing.getLeaseEpoch(), existing.getSeq(), "processor '" + processorId + "'");
         require(existing.getNodeId().equals(advertisement.getNodeId())
@@ -422,6 +438,30 @@ public final class ClusterDirectory {
         return ApplyOutcome.UPDATED;
     }
 
+    /** Applies an administrator-authored readiness gate under active node and lease fences. */
+    public ApplyOutcome updateReadiness(ProcessorReadinessOverlay overlay) {
+        ClusterValidation.validate(overlay);
+        ProcessorAdvertisement processor = processors.get(overlay.getProcessorId());
+        require(processor != null,
+                "readiness names unregistered processor '" + overlay.getProcessorId() + "'");
+        require(processor.getNodeId().equals(overlay.getNodeId())
+                        && processor.getNodeEpoch() == overlay.getNodeEpoch()
+                        && processor.getLeaseEpoch() == overlay.getProcessorLeaseEpoch(),
+                "readiness carries a stale node or processor lease fence for '"
+                        + overlay.getProcessorId() + "'");
+        ProcessorReadinessOverlay existing = readiness.get(overlay.getProcessorId());
+        if (existing != null && existing.equals(overlay)) {
+            return ApplyOutcome.UNCHANGED;
+        }
+        require(existing == null || overlay.getRevision() > existing.getRevision(),
+                "readiness revision must advance for processor '"
+                        + overlay.getProcessorId() + "'");
+        readiness.put(overlay.getProcessorId(), overlay);
+        emit(ClusterEventType.CLUSTER_EVENT_TYPE_READINESS_UPDATED,
+                overlay.getNodeId(), overlay.getProcessorId(), b -> b.setReadiness(overlay));
+        return existing == null ? ApplyOutcome.REGISTERED : ApplyOutcome.UPDATED;
+    }
+
     /**
      * Removes everything whose liveness has lapsed at the current clock instant: processors
      * whose lease expiry has passed, then nodes whose presence expired or went GONE, cascading
@@ -493,6 +533,8 @@ public final class ClusterDirectory {
                 .filter(p -> instant(p.getLeaseExpiresAt()).isAfter(now))
                 .filter(p -> isServing(p.getNodeId(), now))
                 .filter(p -> p.getNodeEpoch() == nodes.get(p.getNodeId()).getEpoch())
+                .filter(p -> !readiness.containsKey(p.getProcessorId())
+                        || readiness.get(p.getProcessorId()).getReady())
                 .filter(p -> hasCapacity(nodeCapacity.get(p.getNodeId()), payloadBytes))
                 .filter(p -> hasProcessorCapacity(p, processorCapacity.get(
                         capacityKey(p.getNodeId(), p.getProcessorId())), payloadBytes))
@@ -529,6 +571,7 @@ public final class ClusterDirectory {
         });
         processors.values().forEach(builder::addProcessors);
         processorCapacity.values().forEach(builder::addCapacities);
+        readiness.values().forEach(builder::addReadinessOverlays);
         ClusterSnapshot unsigned = builder.build();
         return unsigned.toBuilder()
                 .setFingerprint(ClusterValidation.snapshotFingerprint(unsigned))
@@ -563,6 +606,11 @@ public final class ClusterDirectory {
     /** Returns the capacity snapshot for one processor on one node, when published. */
     public Optional<CapacityAdvertisement> processorCapacity(String nodeId, String processorId) {
         return Optional.ofNullable(processorCapacity.get(capacityKey(nodeId, processorId)));
+    }
+
+    /** Returns the administrator readiness gate for one processor, when present. */
+    public Optional<ProcessorReadinessOverlay> readiness(String processorId) {
+        return Optional.ofNullable(readiness.get(processorId));
     }
 
     /** Returns the event log in emission order. */
@@ -621,6 +669,7 @@ public final class ClusterDirectory {
         copy.processors.putAll(processors);
         copy.processorPositions.putAll(processorPositions);
         copy.processorCapacity.putAll(processorCapacity);
+        copy.readiness.putAll(readiness);
         copy.events.addAll(events);
         copy.eventSeq = eventSeq;
         return copy;
@@ -691,6 +740,7 @@ public final class ClusterDirectory {
             List<ClusterEvent> emitted) {
         processors.remove(processorId);
         processorCapacity.remove(capacityKey(advertisement.getNodeId(), processorId));
+        readiness.remove(processorId);
         ClusterEvent event = emit(ClusterEventType.CLUSTER_EVENT_TYPE_PROCESSOR_EXPIRED,
                 advertisement.getNodeId(), processorId, b -> b.setProcessor(advertisement));
         if (emitted != null) {
@@ -708,6 +758,7 @@ public final class ClusterDirectory {
                     replayProcessorExpiry(event.getProcessor());
             case CLUSTER_EVENT_TYPE_PRESENCE_UPDATED -> replayPresence(event.getPresence());
             case CLUSTER_EVENT_TYPE_CAPACITY_UPDATED -> replayCapacity(event.getCapacity());
+            case CLUSTER_EVENT_TYPE_READINESS_UPDATED -> replayReadiness(event.getReadiness());
             case CLUSTER_EVENT_TYPE_UNSPECIFIED, UNRECOGNIZED ->
                     throw new IllegalArgumentException("unsupported cluster event type at seq "
                             + event.getSeq());
@@ -858,6 +909,23 @@ public final class ClusterDirectory {
                     "capacity for node '" + nodeId + "'");
         }
         target.put(key, snapshot);
+    }
+
+    private void replayReadiness(ProcessorReadinessOverlay overlay) {
+        ProcessorAdvertisement processor = processors.get(overlay.getProcessorId());
+        require(processor != null,
+                "replayed readiness names unregistered processor '"
+                        + overlay.getProcessorId() + "'");
+        require(processor.getNodeId().equals(overlay.getNodeId())
+                        && processor.getNodeEpoch() == overlay.getNodeEpoch()
+                        && processor.getLeaseEpoch() == overlay.getProcessorLeaseEpoch(),
+                "replayed readiness carries a stale fence for processor '"
+                        + overlay.getProcessorId() + "'");
+        ProcessorReadinessOverlay existing = readiness.get(overlay.getProcessorId());
+        require(existing == null || overlay.getRevision() > existing.getRevision(),
+                "replayed readiness revision does not advance for processor '"
+                        + overlay.getProcessorId() + "'");
+        readiness.put(overlay.getProcessorId(), overlay);
     }
 
     private boolean isServing(String nodeId, Instant now) {

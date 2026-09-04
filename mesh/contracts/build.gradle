@@ -6,6 +6,7 @@ description = 'The protobuf mesh contract gate: fail-fast envelope validation, c
 
 dependencies {
     api project(':protomolt-mesh-proto')
+    api project(':protomolt-mesh-runtime-proto')
 
     // The entry point composes the validate.v1 annotation evaluation with the
     // semantic checks the annotations cannot express (digest/length, expiry).

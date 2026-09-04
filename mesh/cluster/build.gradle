@@ -7,10 +7,14 @@ description = 'The mesh cluster directory: cluster advertisement and presence co
 dependencies {
     api libs.protobuf.java
     api libs.protobuf.java.util
+    api libs.grpc.api
+    api libs.grpc.stub
+    api libs.grpc.protobuf
     // The cluster contracts reuse the mesh core SchemaReference and
     // ProcessorKind, and the directory builds on the contract gate's canonical
     // digest and validation conventions.
     api project(':protomolt-mesh-contracts')
+    api project(':protomolt-mesh-runtime-proto')
     // The bridge derives leased processor advertisements from delegation
     // WorkerHello frames.
     api project(':protomolt-delegation')
@@ -29,11 +33,23 @@ dependencies {
     implementation project(':protomolt-http-jsonschema')
 
     testImplementation libs.grpc.inprocess
+    compileOnly libs.javax.annotation.api
 }
 
-// Messages and enums only; no services, so no protoc-gen-grpc-java here.
 protobuf {
     protoc {
         artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}"
+    }
+    plugins {
+        grpc {
+            artifact = "io.grpc:protoc-gen-grpc-java:${libs.versions.grpc.get()}"
+        }
+    }
+    generateProtoTasks {
+        all().configureEach {
+            plugins {
+                grpc {}
+            }
+        }
     }
 }

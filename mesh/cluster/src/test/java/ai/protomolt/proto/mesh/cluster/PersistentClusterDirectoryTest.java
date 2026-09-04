@@ -50,9 +50,12 @@ class PersistentClusterDirectoryTest {
                 .hasMessageContaining("repository unavailable");
         assertThat(directory.node("node-1")).isEmpty();
         assertThat(directory.eventLog()).isEmpty();
+        assertThat(directory.persistenceFailure()).hasValueSatisfying(failure ->
+                assertThat(failure).hasMessageContaining("repository unavailable"));
 
         events.fail = false;
         directory.register(ClusterFixtures.node("node-1"));
+        assertThat(directory.persistenceFailure()).isEmpty();
         assertThat(directory.eventLog()).singleElement()
                 .satisfies(event -> assertThat(event.getSeq()).isEqualTo(1));
     }

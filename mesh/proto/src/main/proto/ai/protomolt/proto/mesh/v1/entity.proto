@@ -291,6 +291,14 @@ message ClaimCheck {
   // When the stored artifact stops being fetchable; empty means the artifact
   // repository's default retention applies.
   google.protobuf.Timestamp expires_at = 4 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+
+  // Namespace under which the payload was stored. This remains stable when a
+  // replay creates a new run scope. Older claim checks may leave it empty and
+  // rely on the resolver's configured namespace mapping.
+  string payload_namespace = 5 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 256,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
 }
 
 // A versioned, immutable processing profile (route, processing, security,

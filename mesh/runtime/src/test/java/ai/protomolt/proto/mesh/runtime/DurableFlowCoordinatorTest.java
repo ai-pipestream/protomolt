@@ -252,6 +252,7 @@ class DurableFlowCoordinatorTest {
         });
         FlowDefinition definition = FlowDefinition.newBuilder()
                 .setName("commit-flow")
+                .addChannelPolicies(ChannelPolicies.localDurable())
                 .setInputSchema(contract.getInputSchema())
                 .addNodes(node("commit_node", "commit-aware",
                         RawInput.getDescriptor(), Result.getDescriptor()))
@@ -370,6 +371,7 @@ class DurableFlowCoordinatorTest {
                         RawInput.parseFrom(message.toByteString())))));
         FlowDefinition definition = FlowDefinition.newBuilder()
                 .setName("durable-flow")
+                .addChannelPolicies(ChannelPolicies.localDurable())
                 .setInputSchema(schema(RawInput.getDescriptor()))
                 .addNodes(node("echo_node", "echo",
                         RawInput.getDescriptor(), Result.getDescriptor()))
@@ -407,6 +409,7 @@ class DurableFlowCoordinatorTest {
                 }));
         FlowDefinition definition = FlowDefinition.newBuilder()
                 .setName("branched-flow")
+                .addChannelPolicies(ChannelPolicies.localDurable())
                 .setInputSchema(schema(RawInput.getDescriptor()))
                 .addNodes(node("split_node", "split",
                         RawInput.getDescriptor(), Token.getDescriptor()))
@@ -453,6 +456,7 @@ class DurableFlowCoordinatorTest {
             String edgeId, String target, Descriptor source) {
         return FlowEdge.newBuilder()
                 .setEdgeId(edgeId)
+                .setChannelPolicyId(ChannelPolicies.LOCAL_DURABLE_ID)
                 .setFlowInput(true)
                 .setTargetNode(target)
                 .setSourceSchema(schema(source))
@@ -463,6 +467,7 @@ class DurableFlowCoordinatorTest {
             String edgeId, String source, String target, Descriptor schema, String when) {
         return FlowEdge.newBuilder()
                 .setEdgeId(edgeId)
+                .setChannelPolicyId(ChannelPolicies.LOCAL_DURABLE_ID)
                 .setSourceNode(source)
                 .setTargetNode(target)
                 .setSourceSchema(schema(schema))

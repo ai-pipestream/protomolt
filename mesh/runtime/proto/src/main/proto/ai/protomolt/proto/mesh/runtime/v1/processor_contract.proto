@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.mesh.runtime.v1;
+
+import "ai/protomolt/proto/mesh/v1/entity.proto";
+import "ai/protomolt/proto/meta/v1/metadata.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.mesh.runtime.v1";
+
+// Execution guarantees that participate in exact processor compatibility.
+message ProcessorExecutionGuarantees {
+  // The processor treats invocation_id as an idempotency key.
+  bool idempotent_invocation = 1 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  // The processor cooperatively observes cancellation before committing effects.
+  bool cooperative_cancellation = 2 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  // The processor emits outputs in a deterministic order for one invocation.
+  bool deterministic_output_order = 3 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  // The processor requires its input edge to have a durable acceptance owner.
+  bool requires_durable_input = 4 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+// One processor implementation's exact binary contract. Fields 1 through 4
+// retain their original package and numbers after extraction from flow.proto.
+message ProcessorContract {
+  string processor_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {path_safe_name: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ai.protomolt.proto.mesh.v1.SchemaReference input_schema = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  repeated ai.protomolt.proto.mesh.v1.SchemaReference output_schemas = 3 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 64},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  uint32 max_outputs = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, uint32: {gte: 1, lte: 100000}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Lowercase SHA-256 over this contract serialized with this field cleared.
+  string contract_fingerprint = 5 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ProcessorExecutionGuarantees guarantees = 6 [
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}

@@ -3,6 +3,8 @@ package ai.protomolt.proto.grpc.service;
 import ai.protomolt.proto.actions.ActionCatalog;
 import ai.protomolt.proto.authz.CallerResolver;
 import ai.protomolt.proto.authz.grpc.ApiTokenServerInterceptor;
+import ai.protomolt.proto.authz.grpc.ScopeServerInterceptor;
+import io.grpc.BindableService;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import io.grpc.protobuf.services.ProtoReflectionServiceV1;
@@ -10,7 +12,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -64,7 +70,19 @@ public final class ProtoMoltGrpcServer implements AutoCloseable {
      */
     public static ProtoMoltGrpcServer start(String host, int port, ActionCatalog catalog,
                                             String apiToken, CallerResolver resolver) {
+        return start(host, port, catalog, apiToken, resolver, List.of());
+    }
+
+    /** Starts ProtoMolt with additional protobuf services guarded by declared scopes. */
+    public static ProtoMoltGrpcServer start(
+            String host,
+            int port,
+            ActionCatalog catalog,
+            String apiToken,
+            CallerResolver resolver,
+            List<ScopedService> additionalServices) {
         Objects.requireNonNull(catalog, "catalog");
+        Objects.requireNonNull(additionalServices, "additionalServices");
         if (resolver != null && apiToken == null) {
             throw new IllegalArgumentException(
                     "an access-policy resolver requires the operator api token");
@@ -77,9 +95,24 @@ public final class ProtoMoltGrpcServer implements AutoCloseable {
                     : io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder.forAddress(
                             new java.net.InetSocketAddress(host, port)))
                     .executor(executor)
-                    .addService(ProtoMoltGrpcService.definition(catalog))
-                    .addService(ProtoReflectionServiceV1.newInstance());
+                    .addService(ProtoMoltGrpcService.definition(catalog));
+            Map<String, String> serviceScopes = new LinkedHashMap<>();
+            for (ScopedService mounted : additionalServices) {
+                String serviceName = mounted.service().bindService()
+                        .getServiceDescriptor().getName();
+                if (serviceScopes.putIfAbsent(serviceName, mounted.scope()) != null) {
+                    throw new IllegalArgumentException(
+                            "additional gRPC service is mounted twice: " + serviceName);
+                }
+                builder.addService(mounted.service());
+            }
+            builder.addService(ProtoReflectionServiceV1.newInstance());
             if (apiToken != null) {
+                builder.intercept(new ScopeServerInterceptor(
+                        serviceScopes, Map.of(), Set.of(
+                        ProtoMoltGrpcService.definition(catalog)
+                                .getServiceDescriptor().getName(),
+                        "grpc.reflection.v1.ServerReflection")));
                 builder.intercept(new ApiTokenServerInterceptor(apiToken, resolver));
             }
             Server server = builder.build().start();
@@ -92,6 +125,16 @@ public final class ProtoMoltGrpcServer implements AutoCloseable {
         } catch (RuntimeException | Error e) {
             executor.shutdownNow();
             throw e;
+        }
+    }
+
+    /** One generated or hand-built gRPC service and its required authorization scope. */
+    public record ScopedService(BindableService service, String scope) {
+        public ScopedService {
+            Objects.requireNonNull(service, "service");
+            if (scope == null || scope.isBlank()) {
+                throw new IllegalArgumentException("additional service scope is required");
+            }
         }
     }
 

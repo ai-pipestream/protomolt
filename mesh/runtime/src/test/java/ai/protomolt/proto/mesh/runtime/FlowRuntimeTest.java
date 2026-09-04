@@ -146,6 +146,7 @@ class FlowRuntimeTest {
                 (context, input) -> List.of(input)));
         FlowDefinition cyclic = FlowDefinition.newBuilder()
                 .setName("cyclic")
+                .addChannelPolicies(ChannelPolicies.localDurable())
                 .setInputSchema(EntityEnvelopes.schemaOf(Token.getDefaultInstance()))
                 .addNodes(node("a", "echo-a", token, token))
                 .addNodes(node("b", "echo-b", token, token))
@@ -208,6 +209,7 @@ class FlowRuntimeTest {
     private FlowDefinition definition() {
         return FlowDefinition.newBuilder()
                 .setName("project-and-branch")
+                .addChannelPolicies(ChannelPolicies.localDurable())
                 .setInputSchema(EntityEnvelopes.schemaOf(RawInput.getDefaultInstance()))
                 .addNodes(node("split_node", "split", NormalizedInput.getDescriptor(),
                         Token.getDescriptor()))
@@ -243,6 +245,7 @@ class FlowRuntimeTest {
             Descriptor projection, String when) {
         FlowEdge.Builder edge = FlowEdge.newBuilder()
                 .setEdgeId(edgeId)
+                .setChannelPolicyId(ChannelPolicies.LOCAL_DURABLE_ID)
                 .setFlowInput(true)
                 .setTargetNode(target)
                 .setSourceSchema(schema(source))
@@ -258,6 +261,7 @@ class FlowRuntimeTest {
             Descriptor source, String when) {
         return FlowEdge.newBuilder()
                 .setEdgeId(edgeId)
+                .setChannelPolicyId(ChannelPolicies.LOCAL_DURABLE_ID)
                 .setSourceNode(sourceNode)
                 .setTargetNode(target)
                 .setSourceSchema(schema(source))

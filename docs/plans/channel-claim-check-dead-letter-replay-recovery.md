@@ -1,6 +1,7 @@
 # Channel, claim-check, dead-letter, and replay recovery
 
-Status: implementation plan. This follows the cluster-backed processor
+Status: implemented and locally verified on `descriptor-flow-runtime`; not yet
+claimed as merged or released. This follows the cluster-backed processor
 directory and builds on the durable flow lifecycle and processor channel.
 
 ## Outcome

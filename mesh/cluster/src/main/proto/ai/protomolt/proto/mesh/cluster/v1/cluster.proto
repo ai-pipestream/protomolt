@@ -4,6 +4,7 @@ package ai.protomolt.proto.mesh.cluster.v1;
 
 import "ai/protomolt/proto/index/hints/v1/indexing_hints.proto";
 import "ai/protomolt/proto/mesh/v1/entity.proto";
+import "ai/protomolt/proto/mesh/runtime/v1/processor_contract.proto";
 import "ai/protomolt/proto/meta/v1/metadata.proto";
 import "ai/protomolt/proto/validate/v1/validate.proto";
 import "google/protobuf/duration.proto";
@@ -430,6 +431,13 @@ message ProcessorAdvertisement {
   ];
   // Maximum concurrently active agent sessions; 0 means no declared limit.
   uint32 max_active_sessions = 17 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  // Exact executable contract advertised under this processor lease. The
+  // nested fingerprint commits to processor id, exact schemas, output bound,
+  // and execution guarantees.
+  ai.protomolt.proto.mesh.runtime.v1.ProcessorContract contract = 18 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
 }
 
 // A point-in-time capacity and limits snapshot for one node, or for one
@@ -496,6 +504,41 @@ message CapacityAdvertisement {
   uint32 active_sessions = 9 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
   // Maximum active provider conversations; 0 means no declared limit.
   uint32 max_active_sessions = 10 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+// Administrator-authored readiness gate. This never replaces the worker's
+// signed advertisement or observed node liveness; it can only remove a leased
+// processor from placement until an administrator marks it ready again.
+message ProcessorReadinessOverlay {
+  string processor_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string node_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  int64 node_epoch = 3 [
+    (ai.protomolt.proto.validate.v1.field).int64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  int64 processor_lease_epoch = 4 [
+    (ai.protomolt.proto.validate.v1.field).int64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  bool ready = 5 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  string reason = 6 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 2048,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  uint64 revision = 7 [
+    (ai.protomolt.proto.validate.v1.field).uint64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Timestamp updated_at = 8 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
 }
 
 // One node's liveness record: the heartbeat that keeps a registration alive.
@@ -659,6 +702,12 @@ message DirectoryCheckpoint {
     (ai.protomolt.proto.validate.v1.field).repeated.max_items = 65536,
     (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
   ];
+  // Monotonic generation of the retained watch history. Each compaction
+  // advances it so a cursor into discarded events is never mistaken as live.
+  uint64 directory_generation = 4 [
+    (ai.protomolt.proto.validate.v1.field).uint64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
 }
 
 // One node's entry in a cluster snapshot: advertisement, presence, and the
@@ -737,6 +786,11 @@ message ClusterSnapshot {
     },
     (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
   ];
+  // Administrator-authored readiness gates, ordered by processor id.
+  repeated ProcessorReadinessOverlay readiness_overlays = 8 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 65536,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
 }
 
 // One typed membership, presence, or capacity change in the directory's
@@ -753,17 +807,17 @@ message ClusterEvent {
       {
         id: "event-has-detail"
         message: "a cluster event must carry one typed detail"
-        expression: "has(this.node) || has(this.processor) || has(this.presence) || has(this.capacity)"
+        expression: "has(this.node) || has(this.processor) || has(this.presence) || has(this.capacity) || has(this.readiness)"
       },
       {
         id: "event-type-matches-detail"
         message: "the event type must match its typed detail"
-        expression: "((this.type == 1 || this.type == 2) && has(this.node)) || ((this.type == 3 || this.type == 4) && has(this.processor)) || (this.type == 5 && has(this.presence)) || (this.type == 6 && has(this.capacity))"
+        expression: "((this.type == 1 || this.type == 2) && has(this.node)) || ((this.type == 3 || this.type == 4) && has(this.processor)) || (this.type == 5 && has(this.presence)) || (this.type == 6 && has(this.capacity)) || (this.type == 7 && has(this.readiness))"
       },
       {
         id: "event-subject-matches-detail"
         message: "event subject ids must match the embedded record"
-        expression: "(has(this.node) && this.node_id == this.node.node_id && size(this.processor_id) == 0) || (has(this.processor) && this.node_id == this.processor.node_id && this.processor_id == this.processor.processor_id) || (has(this.presence) && this.node_id == this.presence.node_id && size(this.processor_id) == 0) || (has(this.capacity) && this.node_id == this.capacity.node_id && this.processor_id == this.capacity.processor_id)"
+        expression: "(has(this.node) && this.node_id == this.node.node_id && size(this.processor_id) == 0) || (has(this.processor) && this.node_id == this.processor.node_id && this.processor_id == this.processor.processor_id) || (has(this.presence) && this.node_id == this.presence.node_id && size(this.processor_id) == 0) || (has(this.capacity) && this.node_id == this.capacity.node_id && this.processor_id == this.capacity.processor_id) || (has(this.readiness) && this.node_id == this.readiness.node_id && this.processor_id == this.readiness.processor_id)"
       }
     ]
   };
@@ -812,6 +866,8 @@ message ClusterEvent {
     NodePresence presence = 12 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
     // The new capacity snapshot.
     CapacityAdvertisement capacity = 13 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // The new administrator readiness overlay.
+    ProcessorReadinessOverlay readiness = 14 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
   }
 }
 
@@ -831,4 +887,6 @@ enum ClusterEventType {
   CLUSTER_EVENT_TYPE_PRESENCE_UPDATED = 5;
   // A capacity snapshot replaced the previous one for its key.
   CLUSTER_EVENT_TYPE_CAPACITY_UPDATED = 6;
+  // An administrator changed a processor readiness gate.
+  CLUSTER_EVENT_TYPE_READINESS_UPDATED = 7;
 }

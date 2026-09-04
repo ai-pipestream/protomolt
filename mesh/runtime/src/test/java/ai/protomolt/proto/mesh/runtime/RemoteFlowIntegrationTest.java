@@ -1,6 +1,17 @@
 package ai.protomolt.proto.mesh.runtime;
 
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
+import ai.protomolt.proto.mesh.ProcessorContracts;
+import ai.protomolt.proto.mesh.cluster.ClusterValidation;
+import ai.protomolt.proto.mesh.cluster.InMemoryClusterEventRepository;
+import ai.protomolt.proto.mesh.cluster.PersistentClusterDirectory;
+import ai.protomolt.proto.mesh.cluster.v1.ClusterDescriptor;
+import ai.protomolt.proto.mesh.cluster.v1.Endpoint;
+import ai.protomolt.proto.mesh.cluster.v1.NodeAdvertisement;
+import ai.protomolt.proto.mesh.cluster.v1.NodePresence;
+import ai.protomolt.proto.mesh.cluster.v1.PresenceState;
+import ai.protomolt.proto.mesh.cluster.v1.ProcessorAdvertisement;
+import ai.protomolt.proto.mesh.cluster.v1.TlsMode;
 import ai.protomolt.proto.mesh.runtime.test.RawInput;
 import ai.protomolt.proto.mesh.runtime.test.Result;
 import ai.protomolt.proto.mesh.runtime.test.RuntimeTestProto;
@@ -11,9 +22,14 @@ import ai.protomolt.proto.mesh.runtime.v1.FlowOutput;
 import ai.protomolt.proto.mesh.runtime.v1.HistoryEventKind;
 import ai.protomolt.proto.mesh.runtime.v1.ProcessorContract;
 import ai.protomolt.proto.mesh.runtime.v1.ProcessorNode;
+import ai.protomolt.proto.mesh.runtime.v1.ProcessorOutcomeKind;
+import ai.protomolt.proto.mesh.runtime.v1.ProcessorWork;
 import ai.protomolt.proto.mesh.v1.CompletionPolicy;
+import ai.protomolt.proto.mesh.v1.ProcessorKind;
 import com.google.protobuf.Duration;
 import com.google.protobuf.Message;
+import com.google.protobuf.util.Durations;
+import com.google.protobuf.util.Timestamps;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.inprocess.InProcessChannelBuilder;
@@ -26,8 +42,12 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -131,6 +151,132 @@ class RemoteFlowIntegrationTest {
         }
     }
 
+    @Test
+    void suspectDirectoryHealthStopsNewClaimsUntilTheSameLeaseIsActiveAgain()
+            throws Exception {
+        try (Fixture fixture = new Fixture(temporary.resolve("suspect.wal"))) {
+            ProcessorContract contract = fixture.remoteContract();
+            fixture.startWorker(contract, uppercaseProcessor(contract));
+            CompiledDirectedFlow flow = fixture.singleRemoteFlow(contract);
+
+            try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                var pending = executor.submit(() ->
+                        fixture.runtime().execute(flow, fixture.input(), RUN_ID));
+                try {
+                    fixture.awaitOneDelivery();
+                    fixture.updatePresence(PresenceState.PRESENCE_STATE_SUSPECT);
+
+                    fixture.worker.request(1);
+                    LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(25));
+
+                    assertThat(pending.isDone()).isFalse();
+                    assertThat(fixture.worker.activeInvocations()).isZero();
+                    assertThat(fixture.channel.deliveries()).singleElement()
+                            .extracting(DurableProcessorChannel.DeliveryView::state)
+                            .isEqualTo(DurableProcessorChannel.DeliveryState.PENDING);
+
+                    fixture.updatePresence(PresenceState.PRESENCE_STATE_ACTIVE);
+                    fixture.coordinator.workAvailable();
+
+                    assertThat(pending.get(5, TimeUnit.SECONDS).outputs())
+                            .singleElement()
+                            .satisfies(output -> assertThat(parseResult(output).getText())
+                                    .isEqualTo("REMOTE"));
+                } finally {
+                    pending.cancel(true);
+                }
+            }
+        }
+    }
+
+    @Test
+    void workerHeartbeatCapacityAndDrainAreReflectedInTheDirectory() throws Exception {
+        try (Fixture fixture = new Fixture(temporary.resolve("control.wal"))) {
+            ProcessorContract contract = fixture.remoteContract();
+            fixture.startWorker(contract, uppercaseProcessor(contract));
+
+            assertThat(fixture.directory.nodeCapacity("node-a")).hasValueSatisfying(capacity -> {
+                assertThat(capacity.getMaxInFlight()).isEqualTo(4);
+                assertThat(capacity.getInFlight()).isZero();
+            });
+            assertThat(fixture.directory.processorCapacity(
+                    "node-a", contract.getProcessorId()))
+                    .hasValueSatisfying(capacity -> {
+                        assertThat(capacity.getMaxInFlight()).isEqualTo(4);
+                        assertThat(capacity.getInFlight()).isZero();
+                    });
+            long heartbeatSequence = fixture.directory.presence("node-a")
+                    .orElseThrow().getHeartbeatSeq();
+
+            fixture.worker.heartbeat();
+
+            assertThat(fixture.directory.presence("node-a")).hasValueSatisfying(presence -> {
+                assertThat(presence.getState()).isEqualTo(
+                        PresenceState.PRESENCE_STATE_ACTIVE);
+                assertThat(presence.getHeartbeatSeq()).isGreaterThan(heartbeatSequence);
+            });
+
+            assertThat(fixture.coordinator.drainWorker(
+                    "worker-a", "maintenance", NOW.plusSeconds(30))).isTrue();
+
+            assertThat(fixture.coordinator.connectedWorkers()).isZero();
+            assertThat(fixture.directory.presence("node-a")).hasValueSatisfying(presence ->
+                    assertThat(presence.getState()).isEqualTo(
+                            PresenceState.PRESENCE_STATE_DRAINING));
+            assertThatThrownBy(() -> fixture.worker.request(1))
+                    .isInstanceOf(IllegalStateException.class);
+        }
+    }
+
+    @Test
+    void cancellationDuringExecutionIsAcknowledgedAndReleasesTheDurableClaim()
+            throws Exception {
+        CountDownLatch entered = new CountDownLatch(1);
+        try (Fixture fixture = new Fixture(temporary.resolve("cancel.wal"))) {
+            ProcessorContract contract = fixture.remoteContract();
+            fixture.startWorker(contract, new MessageProcessor() {
+                @Override
+                public ProcessorContract contract() {
+                    return contract;
+                }
+
+                @Override
+                public List<? extends Message> process(
+                        ProcessorContext context, Message input) {
+                    entered.countDown();
+                    while (true) {
+                        context.cancellation().throwIfRequested();
+                        LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
+                    }
+                }
+            });
+            ProcessorWork work = ProcessorChannelFixtures.work(
+                    UUID.randomUUID().toString(),
+                    ChannelPolicies.localDurable().getPolicy(),
+                    ProcessorContracts.canonical(contract));
+            fixture.channel.enqueue(work);
+            fixture.worker.request(1);
+            fixture.coordinator.workAvailable();
+            assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(fixture.channel.delivery(work.getDeliveryId()).orElseThrow().state())
+                    .isEqualTo(DurableProcessorChannel.DeliveryState.CLAIMED);
+
+            fixture.updatePresence(PresenceState.PRESENCE_STATE_SUSPECT);
+            assertThat(fixture.coordinator.cancelDelivery(
+                    work.getDeliveryId(), "operator cancelled")).isTrue();
+            fixture.awaitNoActiveInvocations();
+
+            assertThat(fixture.worker.streamFailure()).isEmpty();
+            assertThat(fixture.channel.delivery(work.getDeliveryId()).orElseThrow().state())
+                    .isEqualTo(DurableProcessorChannel.DeliveryState.PENDING);
+            assertThat(fixture.channel.records())
+                    .filteredOn(record -> record.hasReleased())
+                    .anySatisfy(record -> assertThat(record.getReleased().getOutcome().getKind())
+                            .isEqualTo(ProcessorOutcomeKind
+                                    .PROCESSOR_OUTCOME_KIND_CANCELLED));
+        }
+    }
+
     private static MessageProcessor uppercaseProcessor(ProcessorContract contract) {
         return new MessageProcessor() {
             @Override
@@ -163,6 +309,7 @@ class RemoteFlowIntegrationTest {
         private final DescriptorRegistry descriptors = DescriptorRegistry.create(false);
         private final Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
         private final FileDurableProcessorChannel channel;
+        private final PersistentClusterDirectory directory;
         private final DemandProcessorCoordinator coordinator;
         private final Server server;
         private final ManagedChannel grpc;
@@ -172,9 +319,35 @@ class RemoteFlowIntegrationTest {
         private Fixture(Path wal) throws Exception {
             descriptors.registerFile(RuntimeTestProto.getDescriptor());
             channel = new FileDurableProcessorChannel(wal, descriptors, clock);
+            flowProcessors = new ProcessorRegistry(descriptors);
+            ClusterDescriptor unsigned = ClusterDescriptor.newBuilder()
+                    .setClusterId("test-cluster")
+                    .setDisplayName("Runtime test cluster")
+                    .setTrustDomain("test")
+                    .addProtocolRevisions(1)
+                    .setCreatedAt(Timestamps.fromMillis(NOW.toEpochMilli()))
+                    .build();
+            ClusterDescriptor cluster = unsigned.toBuilder()
+                    .setFingerprint(ClusterValidation.descriptorFingerprint(unsigned))
+                    .build();
+            directory = new PersistentClusterDirectory(
+                    cluster, clock, new InMemoryClusterEventRepository());
+            var coordinatorReference = new AtomicReference<DemandProcessorCoordinator>();
+            var view = (java.util.function.Supplier<ProcessorDirectoryClient.View>) () ->
+                    ProcessorDirectoryClient.View.from(
+                            directory.snapshot(), directory.generation());
             coordinator = new DemandProcessorCoordinator(
-                    descriptors, channel, RemoteWorkerAdmission.allowAll(),
+                    descriptors, channel,
+                    new DirectoryWorkerAdmission(view, clock, contract ->
+                            flowProcessors.registerOrVerify(new RemoteProcessorInvoker(
+                                    contract, channel,
+                                    () -> coordinatorReference.get().workAvailable(),
+                                    clock, 3))),
+                    new DirectoryProcessorResolver(view, clock),
+                    new PersistentDirectoryWorkerControl(directory, clock),
+                    new WorkerSessionRegistry(), new WorkerCapacityController(16),
                     clock, java.time.Duration.ofSeconds(60));
+            coordinatorReference.set(coordinator);
             String name = InProcessServerBuilder.generateName();
             server = InProcessServerBuilder.forName(name)
                     .directExecutor()
@@ -182,7 +355,6 @@ class RemoteFlowIntegrationTest {
                     .build()
                     .start();
             grpc = InProcessChannelBuilder.forName(name).directExecutor().build();
-            flowProcessors = new ProcessorRegistry(descriptors);
         }
 
         private ProcessorContract remoteContract() {
@@ -198,21 +370,50 @@ class RemoteFlowIntegrationTest {
                 ProcessorContract contract, MessageProcessor processor) throws Exception {
             ProcessorRegistry workerProcessors = new ProcessorRegistry(descriptors);
             workerProcessors.register(processor);
+            ProcessorContract exact = ProcessorContracts.canonical(contract);
+            directory.register(NodeAdvertisement.newBuilder()
+                    .setNodeId("node-a")
+                    .setClusterId("test-cluster")
+                    .addEndpoints(Endpoint.newBuilder()
+                            .setEndpointId("grpc-main")
+                            .setAddress("127.0.0.1:9090")
+                            .setTlsMode(TlsMode.TLS_MODE_SYSTEM)
+                            .setDirect(true))
+                    .setAdvertisedAt(Timestamps.fromMillis(NOW.toEpochMilli()))
+                    .setTtl(Durations.fromSeconds(60))
+                    .setEpoch(1)
+                    .setSeq(1)
+                    .build());
+            directory.registerProcessor(ProcessorAdvertisement.newBuilder()
+                    .setProcessorId(exact.getProcessorId())
+                    .setNodeId("node-a")
+                    .setKind(ProcessorKind.PROCESSOR_KIND_DETERMINISTIC)
+                    .addAcceptedSchemas(exact.getInputSchema())
+                    .setContract(exact)
+                    .setNodeEpoch(1)
+                    .setLeaseEpoch(1)
+                    .setAdvertisedAt(Timestamps.fromMillis(NOW.toEpochMilli()))
+                    .setLeaseExpiresAt(Timestamps.fromMillis(
+                            NOW.plusSeconds(120).toEpochMilli()))
+                    .setSupportsSessionResume(true)
+                    .setMaxDisconnectGrace(Durations.fromSeconds(10))
+                    .setSeq(1)
+                    .build());
             worker = new DemandProcessorWorker(
                     "worker-a", descriptors, workerProcessors,
+                    PayloadResolver.inlineOnly(descriptors),
                     ai.protomolt.proto.mesh.runtime.v1.DemandProcessorServiceGrpc
-                            .newStub(grpc));
+                            .newStub(grpc), RemoteFailurePolicy.retryAll(),
+                    "node-a", 1, "grpc-main", Map.of(exact.getProcessorId(), 1L), "", 4);
             worker.start();
             assertThat(worker.awaitAdmission(java.time.Duration.ofSeconds(2))).isTrue();
             assertThat(coordinator.connectedWorkers()).isEqualTo(1);
-            RemoteProcessorInvoker remote = new RemoteProcessorInvoker(
-                    contract, channel, coordinator::workAvailable, clock, 3);
-            flowProcessors.register(remote);
         }
 
         private CompiledDirectedFlow singleRemoteFlow(ProcessorContract contract) {
             FlowDefinition definition = FlowDefinition.newBuilder()
                     .setName("remote-only")
+                    .addChannelPolicies(ChannelPolicies.localDurable())
                     .setInputSchema(contract.getInputSchema())
                     .addNodes(ProcessorNode.newBuilder()
                             .setNodeId("remote_node")
@@ -221,6 +422,7 @@ class RemoteFlowIntegrationTest {
                             .addAllOutputSchemas(contract.getOutputSchemasList()))
                     .addEdges(FlowEdge.newBuilder()
                             .setEdgeId("to_remote")
+                            .setChannelPolicyId(ChannelPolicies.LOCAL_DURABLE_ID)
                             .setFlowInput(true)
                             .setTargetNode("remote_node")
                             .setSourceSchema(contract.getInputSchema()))
@@ -237,6 +439,7 @@ class RemoteFlowIntegrationTest {
                 ProcessorContract remote, ProcessorContract refusing) {
             FlowDefinition definition = FlowDefinition.newBuilder()
                     .setName("remote-then-refuse")
+                    .addChannelPolicies(ChannelPolicies.localDurable())
                     .setInputSchema(remote.getInputSchema())
                     .addNodes(ProcessorNode.newBuilder()
                             .setNodeId("remote_node")
@@ -250,11 +453,13 @@ class RemoteFlowIntegrationTest {
                             .addAllOutputSchemas(refusing.getOutputSchemasList()))
                     .addEdges(FlowEdge.newBuilder()
                             .setEdgeId("to_remote")
+                            .setChannelPolicyId(ChannelPolicies.LOCAL_DURABLE_ID)
                             .setFlowInput(true)
                             .setTargetNode("remote_node")
                             .setSourceSchema(remote.getInputSchema()))
                     .addEdges(FlowEdge.newBuilder()
                             .setEdgeId("to_refusing")
+                            .setChannelPolicyId(ChannelPolicies.LOCAL_DURABLE_ID)
                             .setSourceNode("remote_node")
                             .setTargetNode("refusing_node")
                             .setSourceSchema(remote.getOutputSchemas(0)))
@@ -278,12 +483,30 @@ class RemoteFlowIntegrationTest {
                     PayloadResolver.inlineOnly(descriptors), clock);
         }
 
+        private void updatePresence(PresenceState state) {
+            NodePresence current = directory.presence("node-a").orElseThrow();
+            directory.heartbeat(current.toBuilder()
+                    .setState(state)
+                    .setHeartbeatSeq(current.getHeartbeatSeq() + 1)
+                    .setLastHeartbeatAt(Timestamps.fromMillis(NOW.toEpochMilli()))
+                    .setExpiresAt(Timestamps.fromMillis(NOW.plusSeconds(60).toEpochMilli()))
+                    .build());
+        }
+
         private void awaitOneDelivery() {
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
             while (channel.deliveries().isEmpty() && System.nanoTime() < deadline) {
                 LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
             }
             assertThat(channel.deliveries()).hasSize(1);
+        }
+
+        private void awaitNoActiveInvocations() {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (worker.activeInvocations() != 0 && System.nanoTime() < deadline) {
+                LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
+            }
+            assertThat(worker.activeInvocations()).isZero();
         }
 
         @Override

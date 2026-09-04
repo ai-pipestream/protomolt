@@ -15,7 +15,7 @@ particular message type.
 On top of that layer sits one integration primitive. `ProtoAction`
 (`surface/actions/src/main/java/ai/protomolt/proto/actions/ProtoAction.java`)
 is a JSON-in, JSON-out verb with a JSON Schema and a required authorization
-scope. A catalog of 72 such verbs is dispatched by eight protocol fronts:
+scope. A catalog of 73 such verbs is dispatched by eight protocol fronts:
 typed gRPC with server reflection, JSON/REST, OpenAPI 3, Swagger UI, MCP over
 stdio and streamable HTTP, ACP over stdio, and a CLI with an interactive
 console. Around that sit document ingest, a claim-check document store, a
@@ -41,7 +41,7 @@ every published artifact), `samples` (runnable examples under `samples/src`),
 and `protomolt-system-tests` at `tests/system` (cross-module end-to-end tests
 plus the generator behind `docs/generated/action-inventory.json`).
 
-Then: the [complete 72-verb action catalog](#the-action-catalog), the
+Then: the [complete 73-verb action catalog](#the-action-catalog), the
 [surface inventory](#surfaces), the
 [nine annotation families](#the-nine-annotation-families),
 [role nodes](#role-nodes), and [adjacent projects](#adjacent-projects).
@@ -196,7 +196,7 @@ the exception otherwise.
 | `protomolt-shapes` | `transform/shapes` | Joins, unions and derived shapes. A synthesized shape is a real linked protobuf type (envelope, projection, or tagged union) emitted as `.proto` source with true import paths, so a join's output contract becomes a governed schema. Also schema merging, struct-to-proto inference, rule checking and mapping suggestion. | `transform/shapes/src/main/java/ai/protomolt/proto/shapes/ShapeSynthesizer.java` | |
 | `protomolt-projection` | `transform/projection` | Self-describing message-to-message projections: per-field provenance (candidate paths, CEL, literals, plus a `default_from` fallback) declared as options on the target, so one target joins differently-shaped sources. Exact descriptor identities cover every source and target; maps, oneofs, enums, well-known types and numeric narrowing are checked before evaluation. | `transform/projection/src/main/java/ai/protomolt/proto/projection/MessageProjection.java` | |
 | `protomolt-pipeline` | `transform/pipeline` | The compiled, streaming-aware form of a workflow: typed edges, an offline checker with a cardinality discipline, and an in-process executor covering every gRPC streaming shape plus structured generation, unnest, collect and bounded fan-out. | `transform/pipeline/src/main/java/ai/protomolt/proto/pipeline/PipelineExecutor.java` | External-completion steps are refused at runtime; no coordinator is wired |
-| `protomolt-workflow` | `transform/workflow` | Checked serial gRPC compositions with gates, deadlines, named registry storage and keyed or zip joins over two live streams, plus run recording, offline replay, drift reporting and the bridge into the receipt layer. Carries 11 of the 72 verbs. | `transform/workflow/src/main/java/ai/protomolt/proto/workflow/WorkflowRunner.java` | |
+| `protomolt-workflow` | `transform/workflow` | Checked serial gRPC compositions with gates, deadlines, named registry storage and keyed or zip joins over two live streams, plus run recording, offline replay, drift reporting and the bridge into the receipt layer. Carries 11 of the 73 verbs. | `transform/workflow/src/main/java/ai/protomolt/proto/workflow/WorkflowRunner.java` | |
 | `protomolt-delegation` | `transform/delegation` | The coordinator and worker bidirectional contract (`AgentDelegationService.Delegate`), an offline lifecycle reducer, an admission policy, a candidate reviewer, encrypted transcript persistence, and the 12 `delegation-*` verbs. | `transform/delegation/src/main/java/ai/protomolt/proto/delegation/DelegationBridge.java` | Mounted in-process by `apps/serve`; no standalone process |
 | `protomolt-screening` | `transform/screening` | Model-driven detection over `meta.v1` sensitivity classes with mask, tag or refuse policy, the model manifest version as evidence, and unresolvable `Any` payloads reported rather than passed. The only module that pulls OpenNLP. | `transform/screening/src/main/java/ai/protomolt/proto/screening/Screener.java` | |
 | `protomolt-receipt` | `transform/receipt` | Canonical signed work records: Ed25519 keys in portable raw encodings, deterministic manifest bytes with a detached issuer signature, artifacts carried by digest, a trust snapshot, and a strict offline verifier. | `transform/receipt/src/main/java/ai/protomolt/proto/receipt/RecordSigner.java` | |
@@ -207,8 +207,9 @@ the exception otherwise.
 |---|---|---|---|---|
 | `protomolt-mesh-proto` | `mesh/proto` | The mesh core contract: `EntityEnvelope`, `EntityHeader`, `SchemaReference`, claim checks, and the `mesh.v1` processing options. | `mesh/proto/src/main/proto/ai/protomolt/proto/mesh/v1/entity.proto` | Proto only. The `mesh.v1` options have no main-source reader |
 | `protomolt-mesh-contracts` | `mesh/contracts` | The contract gate: fail-fast envelope validation, canonical descriptor-set fingerprinting, and the schema-identity resolver. | `mesh/contracts/src/main/java/ai/protomolt/proto/mesh/MeshGate.java` | |
-| `protomolt-mesh-cluster` | `mesh/cluster` | The memory-resident cluster directory: a deterministic reducer emitting a gap-free event log, fenced presence and capacity, replay-validate-then-install persistence through repo-service with an AES-256-GCM encrypted log, and the six `mesh-*` verbs. | `mesh/cluster/src/main/java/ai/protomolt/proto/mesh/cluster/ClusterDirectory.java` | No gRPC service and no port of its own; mounted in-process by `apps/serve` |
-| `protomolt-mesh-runtime` | `mesh/runtime` | Compiles exact-schema directed processor graphs; immutably publishes versions; revision-fences deployment pointers; and persists restart-safe run history, execution frontiers, cancellation, and selected-frontier replay in a fenced protobuf WAL. Local and demand-driven gRPC processors share one invocation and settlement model. | `mesh/runtime/src/main/java/ai/protomolt/proto/mesh/runtime/DurableFlowCoordinator.java` | No standalone process; hosts mount `FlowLifecycleGrpcService` and compose coordinator and worker roles |
+| `protomolt-mesh-cluster` | `mesh/cluster` | The cluster directory reducer and gRPC service: deterministic snapshots, a bounded resumable event watch, fenced presence, processor leases, capacity and readiness overlays, replay-validate-then-install persistence through repo-service with an AES-256-GCM encrypted log, and seven `mesh-*` verbs. | `mesh/cluster/src/main/java/ai/protomolt/proto/mesh/cluster/ClusterDirectoryGrpcService.java` | No port of its own; mounted in-process by `apps/serve` |
+| `protomolt-mesh-runtime-proto` | `mesh/runtime/proto` | Shared protobuf contracts for compiled flows, lifecycle, exact processor contracts, worker control, channel policy and outcomes, payload storage, recovery, and component health. | `mesh/runtime/proto/src/main/proto/ai/protomolt/proto/mesh/runtime/v1/flow.proto` | Contract-only module |
+| `protomolt-mesh-runtime` | `mesh/runtime` | Compiles exact-schema directed processor graphs and persists immutable versions, runs, frontiers, replay, channel ownership, typed retries and dead letters in protobuf. It adds directory-admitted capacity-aware workers, bounded memory and WAL channels, a PostgreSQL transactional outbox, digest-verified claim checks, descendant retention, recovery RPCs and component health. | `mesh/runtime/src/main/java/ai/protomolt/proto/mesh/runtime/DurableFlowCoordinator.java` | No standalone process; `apps/serve` mounts its gRPC services and durable local stores |
 
 ## search/ : index mappings, chunking, embeddings and rerank
 
@@ -340,7 +341,7 @@ so `host/composer` can mount them as a role; see [Role nodes](#role-nodes).
 
 | Gradle module | Directory | What it does | Entry point | Status |
 |---|---|---|---|---|
-| `protomolt-grpc-service` | `surface/grpc/service` | The action catalog as a typed gRPC service: `ProtoMoltService`, 44 RPCs, served descriptor-natively with no generated stubs, with server reflection on. `ProtoMoltCatalog` is the assembled 44-verb catalog `apps/serve` and the CLI use. | `surface/grpc/service/src/main/java/ai/protomolt/proto/grpc/service/ProtoMoltGrpcServer.java`, proto at `surface/grpc/service/src/main/resources/ai/protomolt/proto/grpc/service/v1/protomolt_service.proto` | Typed RPCs cover 44 of the 72 verbs |
+| `protomolt-grpc-service` | `surface/grpc/service` | The action catalog as a typed gRPC service: `ProtoMoltService`, 44 RPCs, served descriptor-natively with no generated stubs, with server reflection on. `ProtoMoltCatalog` is the assembled 44-verb catalog `apps/serve` and the CLI use. | `surface/grpc/service/src/main/java/ai/protomolt/proto/grpc/service/ProtoMoltGrpcServer.java`, proto at `surface/grpc/service/src/main/resources/ai/protomolt/proto/grpc/service/v1/protomolt_service.proto` | Typed RPCs cover 44 of the 73 verbs |
 | `protomolt-mcp` | `surface/mcp` | An MCP server over the action catalog and registry: JSON-RPC 2.0 on stdio, no framework, plus `protomolt://` resources for the workspace, registry, service profiles and delegation. `McpMain` is a standalone launcher registering 34 verbs. | `surface/mcp/src/main/java/ai/protomolt/proto/mcp/McpServer.java` | |
 | `protomolt-acp-agent` | `surface/acp` | The action catalog as an Agent Client Protocol agent, so an ACP-capable IDE (JetBrains AI chat, Zed) runs any verb over stdio. | `surface/acp/src/main/java/ai/protomolt/proto/acp/agent/ProtoMoltAcpAgent.java` | |
 
@@ -425,7 +426,7 @@ their container binds.
 
 | Gradle module | Directory | What it does | Entry point | Status |
 |---|---|---|---|---|
-| `protomolt-serve` | `apps/serve` | The one-process story: demo schemas, the delegation runtime and its 12 verbs, the mesh cluster runtime and its 6 verbs, the caller-resolver chain (access policy, then OIDC, then JDBC), gRPC with reflection and interceptors, the jobs worker and outbox relay, the registry with the catalog on its actions route, the REST gateway with Swagger UI and MCP, and the task console with same-origin proxies. | `apps/serve/src/main/java/ai/protomolt/proto/serve/ProtoMoltServe.java` | Deliberately JVM only; not a native-image target |
+| `protomolt-serve` | `apps/serve` | The one-process story: demo schemas, the delegation runtime and its 12 verbs, the mesh cluster runtime and its 7 verbs, directory, worker, lifecycle, recovery and health gRPC services, durable channel and lifecycle WALs, optional repository-backed claim checks, the caller-resolver chain, jobs worker, registry, REST gateway, Swagger UI, MCP, and task console. | `apps/serve/src/main/java/ai/protomolt/proto/serve/ProtoMoltServe.java` | Deliberately JVM only; not a native-image target |
 | `protomolt-document-platform` | `apps/document-platform` | The document platform in one container, or split across nodes by `PROTOMOLT_ROLES`: repo, intake, the parsing coordinator with the embedded reference parser, the jobs worker, the git-backed registry, the playground, search, metrics and the search console, all wired over the in-process transport. | `apps/document-platform/src/main/java/ai/protomolt/proto/platform/DocumentPlatformMain.java` | |
 | `protomolt-cli` | `apps/cli` | Run any catalog verb from the terminal (JSON in, JSON out), list the verbs, or open an interactive console at the `protomolt>` prompt over the same catalog the servers expose. Also builds as a GraalVM native image. | `apps/cli/src/main/java/ai/protomolt/proto/cli/ProtoMoltCli.java` | |
 | `protomolt-agent-host` | `apps/agent-host` | Persistent Codex and Kimi processes attached to delegation over MCP, with structured command gates, cursor recovery and provider session resume. Three providers: `codex`, `kimi` and `openai`. | `apps/agent-host/src/main/java/ai/protomolt/proto/agenthost/AgentHostMain.java` | A client of protomolt's MCP surface, not a consumer of protomolt inference; its `openai` provider re-implements the chat transport |
@@ -468,7 +469,7 @@ Quarkus and Micronaut integrations instead.
 
 # The action catalog
 
-72 registered verbs across 15 owning modules. Every verb declares a required
+73 registered verbs across 15 owning modules. Every verb declares a required
 scope from the closed 10-scope vocabulary
 (`surface/actions/src/main/java/ai/protomolt/proto/actions/Scopes.java`), and
 the same scope check runs at every front: catalog dispatch, the gRPC
@@ -478,11 +479,11 @@ blank-scoped today, so that branch guards future plugins.
 
 **The Typed column is the important asymmetry.** 44 verbs have a typed
 `ProtoMoltService` RPC and therefore appear on gRPC, JSON/REST, OpenAPI and
-Swagger UI. The other 28 are contributed at wire time by the delegation, mesh,
+Swagger UI. The other 29 are contributed at wire time by the delegation, mesh,
 metric, search, registry and acquire modules; they reach HTTP only through the
 registry's `{prefix}/actions` route, and are otherwise reachable through MCP,
-ACP and the CLI. `docs/surface/actions.md` documents the 44; the 28 are
-documented in their owning subsystem chapters, except the six `mesh-*` verbs,
+ACP and the CLI. `docs/surface/actions.md` documents the 44; the 29 are
+documented in their owning subsystem chapters, except the seven `mesh-*` verbs,
 which appear in no document.
 
 The 44 are pinned by `docs/generated/action-inventory.json`, generated by
@@ -551,20 +552,21 @@ The 44 are pinned by `docs/generated/action-inventory.json`, generated by
 | 58 | `mesh-node-heartbeat` | `WORKER_COORDINATE` | `protomolt-mesh-cluster` | contributed | Extend a node's liveness window with a fenced heartbeat |
 | 59 | `mesh-processor-register` | `WORKER_COORDINATE` | `protomolt-mesh-cluster` | contributed | Register or renew a health-gated processor lease |
 | 60 | `mesh-capacity-update` | `WORKER_COORDINATE` | `protomolt-mesh-cluster` | contributed | Publish a fenced point-in-time capacity snapshot |
-| 61 | `mesh-snapshot` | `WORKER_COORDINATE` | `protomolt-mesh-cluster` | contributed | Return the deterministic directory snapshot and eligibility |
-| 62 | `mesh-sweep` | `WORKER_COORDINATE` | `protomolt-mesh-cluster` | contributed | Expire elapsed leases and presence windows, cascading node loss |
-| 63 | `describe-mapping` | `METRICS_QUERY` | `protomolt-metric-service` | contributed | Describe a metric mapping subject's members and backends |
-| 64 | `query-metrics` | `METRICS_QUERY` | `protomolt-metric-service` | contributed | Run one bounded aggregate query on a mapping subject |
-| 65 | `rebuild-rollup` | `METRICS_REBUILD` | `protomolt-metric-service` | contributed | Rebuild a declared rollup, atomically replacing the lake table |
-| 66 | `search` | `SEARCH_QUERY` | `protomolt-search-service` | contributed | Search a mapping subject: lexical, vector or hybrid lane |
-| 67 | `replay-documents` | `SEARCH_INDEX` | `protomolt-search-service` | contributed | Re-run a stored workflow over every matching repository document |
-| 68 | `registry-remotes` | `SCHEMA_WRITE` | `protomolt-registry-service` | contributed | Manage the git remotes this registry federates from |
-| 69 | `registry-sync` | `SCHEMA_WRITE` | `protomolt-registry-service` | contributed | Fetch a configured remote registry and import its subjects |
-| 70 | `publish-config` | `SCHEMA_WRITE` | `protomolt-registry-service` | contributed | Publish one typed config document to the registry config gate |
-| 71 | `pull-s3` | `SERVICE_INVOKE` | `protomolt-acquire-s3` | contributed | Pull changed S3 objects past a watermark through intake |
-| 72 | `pull-jdbc` | `SERVICE_INVOKE` | `protomolt-acquire-jdbc` | contributed | Run a watermark query and feed rows through intake |
+| 61 | `mesh-readiness-update` | `WORKER_COORDINATE` | `protomolt-mesh-cluster` | contributed | Apply a revision-fenced administrator readiness overlay |
+| 62 | `mesh-snapshot` | `WORKER_COORDINATE` | `protomolt-mesh-cluster` | contributed | Return the deterministic directory snapshot and eligibility |
+| 63 | `mesh-sweep` | `WORKER_COORDINATE` | `protomolt-mesh-cluster` | contributed | Expire elapsed leases and presence windows, cascading node loss |
+| 64 | `describe-mapping` | `METRICS_QUERY` | `protomolt-metric-service` | contributed | Describe a metric mapping subject's members and backends |
+| 65 | `query-metrics` | `METRICS_QUERY` | `protomolt-metric-service` | contributed | Run one bounded aggregate query on a mapping subject |
+| 66 | `rebuild-rollup` | `METRICS_REBUILD` | `protomolt-metric-service` | contributed | Rebuild a declared rollup, atomically replacing the lake table |
+| 67 | `search` | `SEARCH_QUERY` | `protomolt-search-service` | contributed | Search a mapping subject: lexical, vector or hybrid lane |
+| 68 | `replay-documents` | `SEARCH_INDEX` | `protomolt-search-service` | contributed | Re-run a stored workflow over every matching repository document |
+| 69 | `registry-remotes` | `SCHEMA_WRITE` | `protomolt-registry-service` | contributed | Manage the git remotes this registry federates from |
+| 70 | `registry-sync` | `SCHEMA_WRITE` | `protomolt-registry-service` | contributed | Fetch a configured remote registry and import its subjects |
+| 71 | `publish-config` | `SCHEMA_WRITE` | `protomolt-registry-service` | contributed | Publish one typed config document to the registry config gate |
+| 72 | `pull-s3` | `SERVICE_INVOKE` | `protomolt-acquire-s3` | contributed | Pull changed S3 objects past a watermark through intake |
+| 73 | `pull-jdbc` | `SERVICE_INVOKE` | `protomolt-acquire-jdbc` | contributed | Run a watermark query and feed rows through intake |
 
-Scope distribution: `SCHEMA_READ` 21, `WORKER_COORDINATE` 18, `SERVICE_INVOKE`
+Scope distribution: `SCHEMA_READ` 21, `WORKER_COORDINATE` 19, `SERVICE_INVOKE`
 15, `WORKFLOW_RUN` 9, `SCHEMA_WRITE` 3, `METRICS_QUERY` 2, `ARTIFACT_ACCESS` 1,
 `SEARCH_QUERY` 1, `SEARCH_INDEX` 1, `METRICS_REBUILD` 1.
 
@@ -820,13 +822,14 @@ with no skip list. See [building and testing](docs/operations/building.md).
 
 # Runtime disk footprint
 
-Most toolkit modules do not write message data to disk. Two mesh/runtime
-components are deliberately durable when a host constructs them with an
-operator-selected path: `FileFlowLifecycleStore` stores published flow plans,
-deployment pointers, run history, and execution frontiers; and
-`FileDurableProcessorChannel` stores remote processor deliveries. Both use
-framed protobuf WALs with one-writer fencing, per-record CRC32C, and forced
-appends. Neither chooses a default path.
+Most toolkit modules do not write message data to disk. The mesh runtime uses
+operator-selected paths for `FileFlowLifecycleStore` and
+`FileDurableProcessorChannel`; both use framed protobuf WALs with one-writer
+fencing, per-record CRC32C, and forced appends. When repository-backed payloads
+are configured, `RepositoryPayloadStore` also keeps its protobuf ownership
+ledger beside those WALs while payload bytes remain in the repository. The
+transactional channel adapter stores authoritative protobuf bodies and its
+outbox in PostgreSQL. None of these components chooses an undeclared path.
 
 The other runtime writes from `apps/serve` are declared schema storage at
 locations the operator chooses: the registry's git repository (`--registry-git`,
@@ -859,7 +862,7 @@ layout. Start with these workflows:
 
 Known gaps in what is written down, so you do not go looking: there is no
 `docs/parse/`, `docs/intake/`, `docs/inference/` or `docs/host/` chapter, and
-the six `mesh-*` verbs appear in no document. Work that is designed but not
+the seven `mesh-*` verbs appear in no document. Work that is designed but not
 shipped is tracked in [planned work](docs/design/planned-work.md).
 
 # License

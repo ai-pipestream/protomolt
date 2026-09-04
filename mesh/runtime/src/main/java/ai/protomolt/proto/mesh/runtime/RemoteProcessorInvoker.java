@@ -2,6 +2,7 @@ package ai.protomolt.proto.mesh.runtime;
 
 import ai.protomolt.proto.mesh.runtime.v1.ProcessorContract;
 import ai.protomolt.proto.mesh.runtime.v1.ProcessorWork;
+import ai.protomolt.proto.mesh.ProcessorContracts;
 
 import java.time.Clock;
 import java.util.Objects;
@@ -21,7 +22,8 @@ public final class RemoteProcessorInvoker implements ProcessorInvoker {
             Runnable workAvailable,
             Clock clock,
             int maxAttempts) {
-        this.contract = Objects.requireNonNull(contract, "contract");
+        this.contract = ProcessorContracts.canonical(
+                Objects.requireNonNull(contract, "contract"));
         this.channel = Objects.requireNonNull(channel, "channel");
         this.workAvailable = Objects.requireNonNull(workAvailable, "workAvailable");
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -40,6 +42,8 @@ public final class RemoteProcessorInvoker implements ProcessorInvoker {
     public ProcessorInvocationResult invoke(ProcessorInvocation invocation) throws Exception {
         String deliveryId = EntityEnvelopes.stableUuid("delivery\0"
                 + contract.getProcessorId() + '\0' + invocation.context().invocationId());
+        ProcessorContext.WorkRecoveryIdentity recovery =
+                invocation.context().recoveryIdentity();
         ProcessorWork work = ProcessorWork.newBuilder()
                 .setDeliveryId(deliveryId)
                 .setRunId(invocation.context().runId())
@@ -49,7 +53,21 @@ public final class RemoteProcessorInvoker implements ProcessorInvoker {
                 .setContract(contract)
                 .setInput(invocation.input())
                 .setDeadline(RemoteValidation.timestamp(invocation.context().deadline()))
-                .setMaxAttempts(maxAttempts)
+                .setWorkflowName(recovery.workflowName())
+                .setWorkflowVersion(recovery.workflowVersion())
+                .setPlanFingerprint(recovery.planFingerprint())
+                .setDeploymentRevision(recovery.deploymentRevision())
+                .setEdgeId(recovery.edgeId())
+                .setChannelPolicyId(recovery.channelPolicyId())
+                .setSourceHistorySequence(recovery.sourceHistorySequence())
+                .setNamespace(recovery.namespace())
+                .setRetentionPolicyReference(recovery.retentionPolicyReference())
+                .setLegalHoldPolicyReference(recovery.legalHoldPolicyReference())
+                .setPayloadStoreProfile(recovery.payloadStoreProfile())
+                .setChannelPolicy(recovery.channelPolicy())
+                .setDurableSpillPolicy(recovery.durableSpillPolicy())
+                .setMaxAttempts(recovery.channelPolicy().getMaximumAttempts() == 0
+                        ? maxAttempts : recovery.channelPolicy().getMaximumAttempts())
                 .build();
         channel.enqueue(work);
         workAvailable.run();

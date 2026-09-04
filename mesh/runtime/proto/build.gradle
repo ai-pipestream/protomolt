@@ -1,0 +1,36 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'The shared directed mesh runtime, lifecycle, worker-control, and recovery protobuf contracts'
+
+dependencies {
+    api libs.protobuf.java
+    api libs.protobuf.java.util
+    api libs.grpc.api
+    api libs.grpc.stub
+    api libs.grpc.protobuf
+    api project(':protomolt-mesh-proto')
+    api project(':protomolt-protobuf-validation')
+    api project(':protomolt-protobuf-metadata')
+
+    compileOnly libs.javax.annotation.api
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}"
+    }
+    plugins {
+        grpc {
+            artifact = "io.grpc:protoc-gen-grpc-java:${libs.versions.grpc.get()}"
+        }
+    }
+    generateProtoTasks {
+        all().configureEach {
+            plugins {
+                grpc {}
+            }
+        }
+    }
+}

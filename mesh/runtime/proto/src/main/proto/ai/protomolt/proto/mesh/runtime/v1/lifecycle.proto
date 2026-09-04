@@ -3,6 +3,7 @@ syntax = "proto3";
 package ai.protomolt.proto.mesh.runtime.v1;
 
 import "ai/protomolt/proto/mesh/runtime/v1/flow.proto";
+import "ai/protomolt/proto/mesh/runtime/v1/payload_store.proto";
 import "ai/protomolt/proto/mesh/v1/entity.proto";
 import "ai/protomolt/proto/meta/v1/metadata.proto";
 import "ai/protomolt/proto/validate/v1/validate.proto";
@@ -128,6 +129,7 @@ message PendingFlowMessage {
     (ai.protomolt.proto.validate.v1.field).required = true,
     (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
   ];
+  uint64 source_history_sequence = 4 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
 }
 
 message ActiveFlowInvocation {
@@ -166,6 +168,10 @@ message PendingFlowSettlement {
     (ai.protomolt.proto.validate.v1.field).required = true,
     (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
   ];
+  string edge_id = 6 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {identifier: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
 }
 
 message FlowExecutionCheckpoint {
@@ -184,6 +190,23 @@ message FlowExecutionCheckpoint {
   // terminal completion. Persisting this before the first commit closes the
   // cancellation-versus-settlement race across process restart.
   bool settlement_started = 6 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  repeated PayloadLeaseFrontier payload_leases = 7 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 1000000,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message PayloadLeaseFrontier {
+  string payload_sha256 = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}}];
+  string lease_id = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  string owner_id = 3 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 256}}];
+  repeated string descendant_message_ids = 4 [(ai.protomolt.proto.validate.v1.field).repeated.max_items = 1000000];
+  string namespace = 5 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 256}}];
+  string profile = 6 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 128}}];
+  PayloadIdentity identity = 7 [(ai.protomolt.proto.validate.v1.field).required = true];
+  google.protobuf.Timestamp expires_at = 8 [(ai.protomolt.proto.validate.v1.field).required = true];
+  string retention_policy_reference = 9 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  string legal_hold_policy_reference = 10 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
 }
 
 message DurableFlowRun {

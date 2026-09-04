@@ -3,11 +3,19 @@ package ai.protomolt.proto.mesh.runtime;
 import ai.protomolt.proto.descriptors.DescriptorIdentity;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.mesh.runtime.v1.ChannelRecord;
+import ai.protomolt.proto.mesh.runtime.v1.DeadLetterRecord;
+import ai.protomolt.proto.mesh.runtime.v1.DeadLetterReplayStatus;
+import ai.protomolt.proto.mesh.runtime.v1.DeadLetterStatusChanged;
 import ai.protomolt.proto.mesh.runtime.v1.DeliveryClaim;
+import ai.protomolt.proto.mesh.runtime.v1.DeliveryAttemptRecord;
 import ai.protomolt.proto.mesh.runtime.v1.ProcessorCompletion;
 import ai.protomolt.proto.mesh.runtime.v1.ProcessorContract;
 import ai.protomolt.proto.mesh.runtime.v1.ProcessorFailure;
+import ai.protomolt.proto.mesh.runtime.v1.ProcessorOutcome;
+import ai.protomolt.proto.mesh.runtime.v1.ProcessorOutcomeKind;
 import ai.protomolt.proto.mesh.runtime.v1.ProcessorWork;
+import ai.protomolt.proto.mesh.runtime.v1.SettlementEffect;
+import ai.protomolt.proto.mesh.runtime.v1.RetryStrategy;
 import ai.protomolt.proto.mesh.runtime.v1.WorkClaimed;
 import ai.protomolt.proto.mesh.runtime.v1.WorkCompleted;
 import ai.protomolt.proto.mesh.runtime.v1.WorkEnqueued;
@@ -15,16 +23,7 @@ import ai.protomolt.proto.mesh.runtime.v1.WorkFailed;
 import ai.protomolt.proto.mesh.runtime.v1.WorkReleased;
 import ai.protomolt.proto.mesh.runtime.v1.WorkSettled;
 import ai.protomolt.proto.mesh.runtime.v1.TypedPayload;
-import com.google.protobuf.InvalidProtocolBufferException;
-
-import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
-import java.nio.channels.FileLock;
-import java.nio.channels.OverlappingFileLockException;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -33,11 +32,12 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import java.util.zip.CRC32C;
 
 /**
  * File-backed protobuf processor channel.
@@ -47,17 +47,15 @@ import java.util.zip.CRC32C;
  * advances. Recovery truncates only an incomplete final frame left by a torn append; a complete
  * frame with a bad checksum or an invalid transition is refused.</p>
  */
-public final class FileDurableProcessorChannel implements DurableProcessorChannel {
+public class FileDurableProcessorChannel implements DurableProcessorChannel {
 
-    private static final byte[] MAGIC = {'P', 'M', 'C', 'H', '0', '0', '0', '1'};
-    private static final int MAX_RECORD_BYTES = 64 * 1024 * 1024;
-
-    private final Path path;
     private final DescriptorRegistry descriptors;
     private final Clock clock;
-    private final FileChannel file;
-    private final FileLock lock;
+    private final ProcessorChannelJournal journal;
     private final Map<String, WorkState> states = new LinkedHashMap<>();
+    private final Map<String, DeadLetterRecord> deadLetters = new LinkedHashMap<>();
+    private final Map<String, NavigableMap<Long, String>> deadLettersByNamespace =
+            new LinkedHashMap<>();
     private final List<ChannelRecord> log = new ArrayList<>();
     private boolean closed;
 
@@ -67,39 +65,21 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
 
     public FileDurableProcessorChannel(
             Path path, DescriptorRegistry descriptors, Clock clock) {
-        this.path = Objects.requireNonNull(path, "path").toAbsolutePath().normalize();
+        this(new FileProcessorChannelJournal(Objects.requireNonNull(path, "path")),
+                descriptors, clock);
+    }
+
+    FileDurableProcessorChannel(
+            ProcessorChannelJournal journal,
+            DescriptorRegistry descriptors,
+            Clock clock) {
+        this.journal = Objects.requireNonNull(journal, "journal");
         this.descriptors = Objects.requireNonNull(descriptors, "descriptors");
         this.clock = Objects.requireNonNull(clock, "clock");
-        FileChannel opened = null;
-        FileLock acquired = null;
         try {
-            Path parent = this.path.getParent();
-            if (parent != null) {
-                Files.createDirectories(parent);
-            }
-            opened = FileChannel.open(this.path,
-                    StandardOpenOption.CREATE,
-                    StandardOpenOption.READ,
-                    StandardOpenOption.WRITE);
-            try {
-                acquired = opened.tryLock();
-            } catch (OverlappingFileLockException e) {
-                throw new IllegalStateException(
-                        "processor channel is already open: " + this.path, e);
-            }
-            if (acquired == null) {
-                throw new IllegalStateException(
-                        "processor channel is locked by another process: " + this.path);
-            }
-            file = opened;
-            lock = acquired;
             initializeAndReplay();
-        } catch (IOException e) {
-            closeAfterFailedOpen(acquired, opened);
-            throw new IllegalStateException(
-                    "cannot open processor channel " + this.path, e);
         } catch (RuntimeException e) {
-            closeAfterFailedOpen(acquired, opened);
+            journal.close();
             throw e;
         }
     }
@@ -132,10 +112,32 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
             int permits,
             Duration leaseDuration,
             Instant now) {
+        Map<String, Integer> processorPermits = new LinkedHashMap<>();
+        contracts.forEach(contract -> processorPermits.put(
+                contract.getProcessorId(), permits));
+        return claim(workerId, contracts, processorPermits, permits, leaseDuration, now);
+    }
+
+    @Override
+    public synchronized List<DeliveryClaim> claim(
+            String workerId,
+            Collection<ProcessorContract> contracts,
+            Map<String, Integer> processorPermits,
+            int permits,
+            Duration leaseDuration,
+            Instant now) {
         requireOpen();
         RemoteValidation.workerId(workerId);
         Objects.requireNonNull(contracts, "contracts");
+        Objects.requireNonNull(processorPermits, "processorPermits");
         contracts.forEach(contract -> RemoteValidation.contract(contract, descriptors));
+        processorPermits.forEach((processorId, capacity) -> {
+            if (processorId == null || processorId.isBlank()
+                    || capacity == null || capacity < 0 || capacity > 100_000) {
+                throw new IllegalArgumentException(
+                        "processor permits require a processor id and a value from 0 to 100000");
+            }
+        });
         if (permits < 1 || permits > 100_000) {
             throw new IllegalArgumentException("permits must be between 1 and 100000");
         }
@@ -146,17 +148,21 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
         Objects.requireNonNull(now, "now");
         expire(now);
         List<DeliveryClaim> claimed = new ArrayList<>();
+        Map<String, Integer> remaining = new LinkedHashMap<>(processorPermits);
         for (WorkState state : states.values()) {
             if (claimed.size() == permits) {
                 break;
             }
+            String processorId = state.work.getContract().getProcessorId();
             if (state.status != DeliveryState.PENDING
+                    || state.retryNotBefore.isAfter(now)
+                    || remaining.getOrDefault(processorId, 0) <= 0
                     || !RemoteValidation.supports(contracts, state.work.getContract())) {
                 continue;
             }
             if (state.attempt >= state.work.getMaxAttempts()) {
                 appendFailed(state, "attempts-exhausted",
-                        "delivery exhausted max_attempts before another claim", "");
+                        "delivery exhausted max_attempts before another claim", "", now);
                 continue;
             }
             Instant workDeadline = RemoteValidation.instant(state.work.getDeadline());
@@ -172,8 +178,11 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
                     .setLeaseExpiresAt(RemoteValidation.timestamp(leaseExpiry))
                     .build();
             append(ChannelRecord.newBuilder()
-                    .setClaimed(WorkClaimed.newBuilder().setClaim(claim)));
+                    .setClaimed(WorkClaimed.newBuilder()
+                            .setClaim(claim)
+                            .setClaimedAt(RemoteValidation.timestamp(now))));
             claimed.add(claim);
+            remaining.computeIfPresent(processorId, (ignored, available) -> available - 1);
         }
         return List.copyOf(claimed);
     }
@@ -183,31 +192,58 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
             String workerId, ProcessorCompletion completion, Instant now) {
         requireOpen();
         RemoteValidation.annotations(completion);
+        RemoteValidation.uuid(completion.getCompletionId(), "completion_id");
+        WorkState existing = requireState(completion.getDeliveryId());
+        if (existing.lastCompletionId.equals(completion.getCompletionId())) {
+            if (existing.completion != null
+                    && existing.completion.workerId().equals(workerId)
+                    && existing.completion.completion().equals(completion)) {
+                return;
+            }
+            throw new IllegalArgumentException(
+                    "completion-id-conflict: completion_id already names different bytes");
+        }
         WorkState state = requireClaim(workerId, completion.getDeliveryId(),
                 completion.getLeaseToken(), now);
         validateCompletion(state.work.getContract(), completion);
         append(ChannelRecord.newBuilder()
                 .setCompleted(WorkCompleted.newBuilder()
                         .setWorkerId(workerId)
-                        .setCompletion(completion)));
+                        .setCompletion(completion)
+                        .setCompletedAt(RemoteValidation.timestamp(now))));
     }
 
     @Override
     public synchronized void fail(
             String workerId, ProcessorFailure failure, Instant now) {
         requireOpen();
-        RemoteValidation.annotations(failure);
+        RemoteValidation.failure(failure);
+        WorkState existing = requireState(failure.getDeliveryId());
+        if (existing.lastCompletionId.equals(failure.getCompletionId())) {
+            if (existing.lastFailure != null && existing.lastFailure.equals(failure)) {
+                return;
+            }
+            throw new IllegalArgumentException(
+                    "completion-id-conflict: completion_id already names different bytes");
+        }
         WorkState state = requireClaim(workerId, failure.getDeliveryId(),
                 failure.getLeaseToken(), now);
         String code = bounded(failure.getCode(), 128, "remote-processor-failed");
         String message = bounded(failure.getMessage(), 8_192, "remote processor failed");
-        boolean retry = failure.getRetryable()
-                && state.attempt < state.work.getMaxAttempts()
+        boolean release = failure.getOutcome().getSettlementEffect()
+                == SettlementEffect.SETTLEMENT_EFFECT_RELEASE
+                && (failure.getOutcome().getKind()
+                == ProcessorOutcomeKind.PROCESSOR_OUTCOME_KIND_RETRYABLE
+                || failure.getOutcome().getKind()
+                == ProcessorOutcomeKind.PROCESSOR_OUTCOME_KIND_CANCELLED)
+                && state.attempt < attemptsCeiling(state, failure.getOutcome())
                 && RemoteValidation.instant(state.work.getDeadline()).isAfter(now);
-        if (retry) {
-            appendReleased(state, message, failure.getLeaseToken());
+        if (release) {
+            appendReleased(state, message, failure.getLeaseToken(), failure.getOutcome(),
+                    failure.getCompletionId(), retryNotBefore(state, failure.getOutcome(), now));
         } else {
-            appendFailed(state, code, message, failure.getLeaseToken());
+            appendFailed(state, code, message, failure.getLeaseToken(), failure.getOutcome(),
+                    failure.getCompletionId(), now);
         }
     }
 
@@ -287,9 +323,16 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
         if (state.attempt >= state.work.getMaxAttempts()
                 || !RemoteValidation.instant(state.work.getDeadline()).isAfter(now)) {
             appendFailed(state, "downstream-failed",
-                    bounded(reason, 8_192, "downstream processing failed"), leaseToken);
+                    bounded(reason, 8_192, "downstream processing failed"), leaseToken,
+                    now);
         } else {
-            appendReleased(state, bounded(reason, 8_192, "delivery released"), leaseToken);
+            String message = bounded(reason, 8_192, "delivery released");
+            ProcessorOutcome outcome = ProcessorOutcomes.retryable(
+                    "downstream-released", message,
+                    state.work.getContract().getProcessorId(), state.attempt,
+                    state.work.getMaxAttempts());
+            appendReleased(state, message, leaseToken, outcome,
+                    stableCompletionId(state, "release"), retryNotBefore(state, outcome, now));
         }
     }
 
@@ -319,7 +362,7 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
             if (!RemoteValidation.instant(state.work.getDeadline()).isAfter(now)) {
                 appendFailed(state, "work-deadline-exceeded",
                         "delivery deadline elapsed before downstream settlement",
-                        state.lastLeaseToken);
+                        state.lastLeaseToken, now);
                 transitions++;
                 continue;
             }
@@ -328,9 +371,16 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
                 if (state.attempt >= state.work.getMaxAttempts()) {
                     appendFailed(state, "lease-expired",
                             "delivery lease expired and max_attempts is exhausted",
-                            state.lastLeaseToken);
+                            state.lastLeaseToken, now);
                 } else {
-                    appendReleased(state, "delivery lease expired", state.lastLeaseToken);
+                    String message = "delivery lease expired";
+                    ProcessorOutcome outcome = ProcessorOutcomes.retryable(
+                            "lease-expired", message,
+                            state.work.getContract().getProcessorId(), state.attempt,
+                            state.work.getMaxAttempts());
+                    appendReleased(state, message, state.lastLeaseToken, outcome,
+                            stableCompletionId(state, "lease-expired"),
+                            retryNotBefore(state, outcome, now));
                 }
                 transitions++;
             }
@@ -355,19 +405,104 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
     }
 
     @Override
+    public synchronized DeadLetterPage deadLetters(
+            String namespace, long afterSequence, int limit) {
+        requireOpen();
+        if (namespace == null || namespace.isBlank()) {
+            throw new IllegalArgumentException("dead-letter-namespace-required");
+        }
+        if (afterSequence < 0) {
+            throw new IllegalArgumentException("dead-letter cursor must not be negative");
+        }
+        if (limit < 1 || limit > 1_000) {
+            throw new IllegalArgumentException("dead-letter limit must be between 1 and 1000");
+        }
+        NavigableMap<Long, String> index = deadLettersByNamespace.get(namespace);
+        if (index == null) {
+            return new DeadLetterPage(List.of(), afterSequence);
+        }
+        List<DeadLetterPage.Entry> entries = index.tailMap(afterSequence, false)
+                .entrySet().stream()
+                .limit(limit)
+                .map(entry -> new DeadLetterPage.Entry(entry.getKey(),
+                        deadLetters.get(entry.getValue())))
+                .toList();
+        long nextSequence = entries.isEmpty()
+                ? afterSequence : entries.getLast().sequence();
+        return new DeadLetterPage(entries, nextSequence);
+    }
+
+    @Override
+    public synchronized Optional<DeadLetterRecord> deadLetter(String deadLetterId) {
+        return Optional.ofNullable(deadLetters.get(deadLetterId));
+    }
+
+    @Override
+    public synchronized DeadLetterRecord cancelRetry(
+            String deliveryId, String reason, Instant now) {
+        requireOpen();
+        Objects.requireNonNull(now, "now");
+        WorkState state = requireState(deliveryId);
+        if (state.status == DeliveryState.FAILED && state.deadLetter != null) {
+            return state.deadLetter;
+        }
+        if (state.status != DeliveryState.PENDING || state.lastOutcome == null
+                || state.retryNotBefore.equals(Instant.MIN)) {
+            throw new IllegalStateException(
+                    "retry-cancel-refused: delivery has no scheduled retry");
+        }
+        String message = bounded(reason, 8_192, "scheduled retry cancelled");
+        ProcessorOutcome outcome = ProcessorOutcomes.cancelled(
+                message, state.work.getContract().getProcessorId(), state.attempt);
+        String completionId = stableCompletionId(state, "retry-cancelled");
+        appendFailed(state, "retry-cancelled", message, state.lastLeaseToken,
+                outcome, completionId, now);
+        return states.get(deliveryId).deadLetter;
+    }
+
+    @Override
+    public synchronized DeadLetterRecord changeDeadLetterStatus(
+            String deadLetterId,
+            DeadLetterReplayStatus status,
+            String replayRunId,
+            String reason,
+            boolean retentionHold) {
+        requireOpen();
+        RemoteValidation.uuid(deadLetterId, "dead_letter_id");
+        if (status == DeadLetterReplayStatus.DEAD_LETTER_REPLAY_STATUS_UNSPECIFIED
+                || status == DeadLetterReplayStatus.UNRECOGNIZED) {
+            throw new IllegalArgumentException("dead-letter status must be explicit");
+        }
+        DeadLetterRecord current = deadLetters.get(deadLetterId);
+        if (current == null) {
+            throw new IllegalArgumentException("unknown dead_letter_id " + deadLetterId);
+        }
+        DeadLetterRecord next = current.toBuilder()
+                .setReplayStatus(status)
+                .setRetentionHold(retentionHold)
+                .setReplayRunId(replayRunId == null ? "" : replayRunId)
+                .build();
+        if (next.equals(current)) {
+            return current;
+        }
+        append(ChannelRecord.newBuilder()
+                .setDeadLetterStatusChanged(DeadLetterStatusChanged.newBuilder()
+                        .setDeadLetterId(deadLetterId)
+                        .setReplayStatus(status)
+                        .setReplayRunId(replayRunId == null ? "" : replayRunId)
+                        .setReason(bounded(reason, 8_192, "status changed"))
+                        .setRetentionHold(retentionHold)));
+        return deadLetters.get(deadLetterId);
+    }
+
+    @Override
     public synchronized void close() {
         if (closed) {
             return;
         }
         closed = true;
         notifyAll();
-        try {
-            lock.release();
-            file.close();
-        } catch (IOException e) {
-            throw new IllegalStateException(
-                    "failed to close processor channel " + path, e);
-        }
+        journal.close();
     }
 
     private WorkState requireClaim(
@@ -410,22 +545,151 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
         }
     }
 
-    private void appendReleased(WorkState state, String reason, String leaseToken) {
+    private void appendReleased(
+            WorkState state,
+            String reason,
+            String leaseToken,
+            ProcessorOutcome outcome,
+            String completionId,
+            Instant retryNotBefore) {
         append(ChannelRecord.newBuilder()
                 .setReleased(WorkReleased.newBuilder()
                         .setDeliveryId(state.work.getDeliveryId())
                         .setLeaseToken(leaseToken)
-                        .setReason(reason)));
+                        .setReason(reason)
+                        .setOutcome(outcome)
+                        .setCompletionId(completionId)
+                        .setRetryNotBefore(RemoteValidation.timestamp(retryNotBefore))
+                        .setFinishedAt(RemoteValidation.timestamp(clock.instant()))));
     }
 
     private void appendFailed(
-            WorkState state, String code, String message, String leaseToken) {
+            WorkState state, String code, String message, String leaseToken, Instant now) {
+        ProcessorOutcome outcome = ProcessorOutcomes.permanent(code, message,
+                state.work.getContract().getProcessorId(), state.attempt);
+        appendFailed(state, code, message, leaseToken, outcome,
+                stableCompletionId(state, code), now);
+    }
+
+    private void appendFailed(
+            WorkState state,
+            String code,
+            String message,
+            String leaseToken,
+            ProcessorOutcome outcome,
+            String completionId,
+            Instant now) {
+        DeadLetterRecord deadLetter = deadLetter(
+                state, outcome, completionId, now);
         append(ChannelRecord.newBuilder()
                 .setFailed(WorkFailed.newBuilder()
                         .setDeliveryId(state.work.getDeliveryId())
                         .setLeaseToken(leaseToken)
                         .setCode(code)
-                        .setMessage(message)));
+                        .setMessage(message)
+                        .setOutcome(outcome)
+                        .setCompletionId(completionId)
+                        .setDeadLetter(deadLetter)));
+    }
+
+    private DeadLetterRecord deadLetter(
+            WorkState state,
+            ProcessorOutcome outcome,
+            String completionId,
+            Instant now) {
+        ProcessorWork work = state.work;
+        String deadLetterId = EntityEnvelopes.stableUuid(
+                "dead-letter\0" + work.getDeliveryId() + '\0' + completionId);
+        List<DeliveryAttemptRecord> attempts = finishedAttempts(
+                state, outcome.getOutcomeId(), now);
+        Instant firstFailure = attempts.stream()
+                .filter(DeliveryAttemptRecord::hasFinishedAt)
+                .map(DeliveryAttemptRecord::getFinishedAt)
+                .map(RemoteValidation::instant)
+                .min(Instant::compareTo)
+                .orElse(now);
+        DeadLetterRecord.Builder record = DeadLetterRecord.newBuilder()
+                .setDeadLetterId(deadLetterId)
+                .setDeliveryId(work.getDeliveryId())
+                .setRunId(work.getRunId())
+                .setInvocationId(work.getInvocationId())
+                .setWorkflowName(work.getWorkflowName())
+                .setWorkflowVersion(work.getWorkflowVersion())
+                .setPlanFingerprint(work.getPlanFingerprint())
+                .setDeploymentRevision(work.getDeploymentRevision())
+                .setProcessorId(work.getContract().getProcessorId())
+                .setNodeId(work.getNodeId())
+                .setEdgeId(work.getEdgeId())
+                .setInput(work.getInput())
+                .setOutcome(outcome)
+                .addAllAttempts(attempts)
+                .setFirstFailureAt(RemoteValidation.timestamp(firstFailure))
+                .setLastFailureAt(RemoteValidation.timestamp(now))
+                .setChannelPolicyId(work.getChannelPolicyId())
+                .setSourceHistorySequence(work.getSourceHistorySequence())
+                .setReplayStatus(DeadLetterReplayStatus.DEAD_LETTER_REPLAY_STATUS_PENDING)
+                .setNamespace(work.getNamespace().isBlank()
+                        ? work.getInput().getHeader().getScopeId() : work.getNamespace())
+                .setRetentionPolicyReference(work.getRetentionPolicyReference())
+                .setLegalHoldPolicyReference(work.getLegalHoldPolicyReference())
+                .setPayloadStoreProfile(work.getPayloadStoreProfile())
+                .setCompletionId(completionId)
+                .setProcessorContract(work.getContract());
+        return record.build();
+    }
+
+    private static int attemptsCeiling(WorkState state, ProcessorOutcome outcome) {
+        int advised = outcome.getRetryAdvice().getMaximumAttempts();
+        return advised == 0 ? state.work.getMaxAttempts()
+                : Math.min(state.work.getMaxAttempts(), advised);
+    }
+
+    private static Instant retryNotBefore(
+            WorkState state, ProcessorOutcome outcome, Instant now) {
+        var advice = outcome.getRetryAdvice();
+        return switch (advice.getStrategy()) {
+            case RETRY_STRATEGY_FIXED_DELAY -> now.plus(RemoteValidation.duration(advice.getDelay()));
+            case RETRY_STRATEGY_EXPONENTIAL_BACKOFF -> {
+                Duration base = RemoteValidation.duration(advice.getDelay());
+                int shift = Math.min(30, Math.max(0, state.attempt - 1));
+                Duration delay;
+                try {
+                    delay = base.multipliedBy(1L << shift);
+                } catch (ArithmeticException overflow) {
+                    delay = Duration.ofDays(3650);
+                }
+                if (advice.hasMaximumDelay()) {
+                    Duration maximum = RemoteValidation.duration(advice.getMaximumDelay());
+                    if (delay.compareTo(maximum) > 0) {
+                        delay = maximum;
+                    }
+                }
+                yield now.plus(delay);
+            }
+            case RETRY_STRATEGY_RETRY_AFTER -> RemoteValidation.instant(advice.getRetryAfter());
+            case RETRY_STRATEGY_NONE, RETRY_STRATEGY_UNSPECIFIED, UNRECOGNIZED -> now;
+        };
+    }
+
+    private static String stableCompletionId(WorkState state, String transition) {
+        return EntityEnvelopes.stableUuid("channel-completion\0"
+                + state.work.getDeliveryId() + '\0' + state.attempt + '\0' + transition);
+    }
+
+    private static List<DeliveryAttemptRecord> finishedAttempts(
+            WorkState state, String outcomeId, Instant now) {
+        List<DeliveryAttemptRecord> attempts = new ArrayList<>(state.attempts);
+        if (!attempts.isEmpty()) {
+            int last = attempts.size() - 1;
+            DeliveryAttemptRecord current = attempts.get(last);
+            if (!current.hasFinishedAt()) {
+                attempts.set(last, current.toBuilder()
+                        .setFinishedAt(RemoteValidation.timestamp(now))
+                        .setOutcomeId(outcomeId)
+                        .build());
+            }
+        }
+        return attempts;
     }
 
     private void append(ChannelRecord.Builder event) {
@@ -434,28 +698,7 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
                 .setRecordedAt(RemoteValidation.timestamp(clock.instant()))
                 .build();
         validate(record);
-        byte[] bytes = record.toByteArray();
-        if (bytes.length > MAX_RECORD_BYTES) {
-            throw new IllegalArgumentException("channel record exceeds "
-                    + MAX_RECORD_BYTES + " bytes");
-        }
-        CRC32C checksum = new CRC32C();
-        checksum.update(bytes, 0, bytes.length);
-        ByteBuffer frame = ByteBuffer.allocate(Integer.BYTES + bytes.length + Integer.BYTES)
-                .putInt(bytes.length)
-                .put(bytes)
-                .putInt((int) checksum.getValue());
-        frame.flip();
-        try {
-            file.position(file.size());
-            while (frame.hasRemaining()) {
-                file.write(frame);
-            }
-            file.force(true);
-        } catch (IOException e) {
-            throw new IllegalStateException(
-                    "failed to append processor channel record", e);
-        }
+        journal.append(record);
         apply(record);
         log.add(record);
         notifyAll();
@@ -480,6 +723,8 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
             case RELEASED -> validateReleased(record.getReleased());
             case FAILED -> validateFailed(record.getFailed());
             case SETTLED -> validateSettled(record.getSettled());
+            case DEAD_LETTER_STATUS_CHANGED -> validateDeadLetterStatusChanged(
+                    record.getDeadLetterStatusChanged());
             case EVENT_NOT_SET -> throw new IllegalArgumentException(
                     "channel record " + record.getSequence() + " has no event");
         }
@@ -506,6 +751,10 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
             throw new IllegalArgumentException("delivery " + state.work.getDeliveryId()
                     + " claim attempt must be " + (state.attempt + 1));
         }
+        if (!event.hasClaimedAt()) {
+            throw new IllegalArgumentException("work claim requires claimed_at");
+        }
+        RemoteValidation.instant(event.getClaimedAt());
     }
 
     private void validateCompleted(WorkCompleted event) {
@@ -513,6 +762,7 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
         RemoteValidation.workerId(event.getWorkerId());
         RemoteValidation.uuid(completion.getDeliveryId(), "delivery_id");
         RemoteValidation.uuid(completion.getLeaseToken(), "lease_token");
+        RemoteValidation.uuid(completion.getCompletionId(), "completion_id");
         WorkState state = requireState(completion.getDeliveryId());
         if (state.status != DeliveryState.CLAIMED
                 || !state.claim.getWorkerId().equals(event.getWorkerId())) {
@@ -520,6 +770,11 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
                     + completion.getDeliveryId());
         }
         requireToken(state, completion.getLeaseToken());
+        requireNewCompletionId(state, completion.getCompletionId());
+        if (!event.hasCompletedAt()) {
+            throw new IllegalArgumentException("work completion requires completed_at");
+        }
+        RemoteValidation.instant(event.getCompletedAt());
         validateCompletion(state.work.getContract(), completion);
     }
 
@@ -537,6 +792,18 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
             throw new IllegalArgumentException(
                     "release reason must contain between 1 and 8192 characters");
         }
+        if (!event.hasOutcome() || !event.hasRetryNotBefore()) {
+            throw new IllegalArgumentException(
+                    "retry-schedule-missing: release requires outcome and retry_not_before");
+        }
+        RemoteValidation.outcome(event.getOutcome());
+        RemoteValidation.instant(event.getRetryNotBefore());
+        RemoteValidation.uuid(event.getCompletionId(), "completion_id");
+        requireNewCompletionId(state, event.getCompletionId());
+        if (!event.hasFinishedAt()) {
+            throw new IllegalArgumentException("retry schedule requires finished_at");
+        }
+        RemoteValidation.instant(event.getFinishedAt());
     }
 
     private void validateFailed(WorkFailed event) {
@@ -559,6 +826,17 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
             throw new IllegalArgumentException(
                     "failure message must contain between 1 and 8192 characters");
         }
+        if (!event.hasOutcome()) {
+            throw new IllegalArgumentException("failed work requires a typed outcome");
+        }
+        RemoteValidation.outcome(event.getOutcome());
+        RemoteValidation.uuid(event.getCompletionId(), "completion_id");
+        requireNewCompletionId(state, event.getCompletionId());
+        if (!event.hasDeadLetter()) {
+            throw new IllegalArgumentException(
+                    "dead-letter-missing: terminal failure requires recovery record");
+        }
+        validateDeadLetter(event.getDeadLetter(), state, event);
     }
 
     private void validateSettled(WorkSettled event) {
@@ -570,6 +848,53 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
                     + event.getDeliveryId() + " from " + state.status);
         }
         requireToken(state, event.getLeaseToken());
+    }
+
+    private void validateDeadLetterStatusChanged(DeadLetterStatusChanged event) {
+        RemoteValidation.uuid(event.getDeadLetterId(), "dead_letter_id");
+        if (!deadLetters.containsKey(event.getDeadLetterId())) {
+            throw new IllegalArgumentException(
+                    "unknown dead_letter_id " + event.getDeadLetterId());
+        }
+        if (event.getReplayStatus()
+                == DeadLetterReplayStatus.DEAD_LETTER_REPLAY_STATUS_UNSPECIFIED
+                || event.getReplayStatus() == DeadLetterReplayStatus.UNRECOGNIZED) {
+            throw new IllegalArgumentException("dead-letter status must be explicit");
+        }
+        if (!event.getReplayRunId().isBlank()) {
+            RemoteValidation.uuid(event.getReplayRunId(), "replay_run_id");
+        }
+    }
+
+    private static void validateDeadLetter(
+            DeadLetterRecord record, WorkState state, WorkFailed failure) {
+        RemoteValidation.uuid(record.getDeadLetterId(), "dead_letter_id");
+        if (!record.getDeliveryId().equals(state.work.getDeliveryId())
+                || !record.getRunId().equals(state.work.getRunId())
+                || !record.getInvocationId().equals(state.work.getInvocationId())
+                || !record.getInput().equals(state.work.getInput())
+                || !record.getProcessorContract().equals(state.work.getContract())
+                || !record.getPayloadStoreProfile().equals(
+                        state.work.getPayloadStoreProfile())
+                || !record.getOutcome().equals(failure.getOutcome())
+                || !record.getCompletionId().equals(failure.getCompletionId())) {
+            throw new IllegalArgumentException(
+                    "dead-letter-identity-mismatch: terminal record does not match work");
+        }
+        if (record.getNamespace().isBlank()
+                || !record.hasFirstFailureAt() || !record.hasLastFailureAt()
+                || record.getReplayStatus()
+                == DeadLetterReplayStatus.DEAD_LETTER_REPLAY_STATUS_UNSPECIFIED) {
+            throw new IllegalArgumentException(
+                    "dead-letter-invalid: namespace, timestamps, and status are required");
+        }
+    }
+
+    private static void requireNewCompletionId(WorkState state, String completionId) {
+        if (state.lastCompletionId.equals(completionId)) {
+            throw new IllegalArgumentException(
+                    "completion-id-conflict: transition repeats a consumed completion_id");
+        }
     }
 
     private void apply(ChannelRecord record) {
@@ -585,6 +910,8 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
             case RELEASED -> applyReleased(record.getReleased());
             case FAILED -> applyFailed(record.getFailed());
             case SETTLED -> applySettled(record.getSettled());
+            case DEAD_LETTER_STATUS_CHANGED -> applyDeadLetterStatusChanged(
+                    record.getDeadLetterStatusChanged());
             case EVENT_NOT_SET -> throw new IllegalArgumentException(
                     "channel record " + record.getSequence() + " has no event");
         }
@@ -620,6 +947,13 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
         state.completion = null;
         state.failureCode = "";
         state.failureMessage = "";
+        state.retryNotBefore = Instant.MIN;
+        state.attempts.add(DeliveryAttemptRecord.newBuilder()
+                .setAttempt(claim.getAttempt())
+                .setWorkerId(claim.getWorkerId())
+                .setLeaseToken(claim.getLeaseToken())
+                .setClaimedAt(event.getClaimedAt())
+                .build());
     }
 
     private void applyCompleted(WorkCompleted event) {
@@ -634,6 +968,8 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
         validateCompletion(state.work.getContract(), completion);
         state.status = DeliveryState.COMPLETED;
         state.completion = new Completion(event.getWorkerId(), completion);
+        state.lastCompletionId = completion.getCompletionId();
+        state.lastOutcome = ProcessorOutcome.getDefaultInstance();
     }
 
     private void applyReleased(WorkReleased event) {
@@ -647,6 +983,19 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
         state.status = DeliveryState.PENDING;
         state.claim = null;
         state.completion = null;
+        state.lastOutcome = event.getOutcome();
+        state.lastCompletionId = event.getCompletionId();
+        state.retryNotBefore = RemoteValidation.instant(event.getRetryNotBefore());
+        state.lastFailure = ProcessorFailure.newBuilder()
+                .setDeliveryId(event.getDeliveryId())
+                .setLeaseToken(event.getLeaseToken())
+                .setCode(event.getOutcome().getCausesCount() == 0
+                        ? "retry-scheduled" : event.getOutcome().getCauses(0).getCode())
+                .setMessage(event.getReason())
+                .setOutcome(event.getOutcome())
+                .setCompletionId(event.getCompletionId())
+                .build();
+        finishAttempt(state, event.getOutcome().getOutcomeId(), event.getFinishedAt());
     }
 
     private void applyFailed(WorkFailed event) {
@@ -663,6 +1012,25 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
         state.failureCode = event.getCode();
         state.failureMessage = event.getMessage();
         state.completion = null;
+        state.lastOutcome = event.getOutcome();
+        state.lastCompletionId = event.getCompletionId();
+        state.retryNotBefore = Instant.MIN;
+        state.deadLetter = event.getDeadLetter();
+        long sequence = deadLetters.size() + 1L;
+        deadLetters.put(event.getDeadLetter().getDeadLetterId(), event.getDeadLetter());
+        deadLettersByNamespace
+                .computeIfAbsent(event.getDeadLetter().getNamespace(), ignored -> new TreeMap<>())
+                .put(sequence, event.getDeadLetter().getDeadLetterId());
+        state.lastFailure = ProcessorFailure.newBuilder()
+                .setDeliveryId(event.getDeliveryId())
+                .setLeaseToken(event.getLeaseToken())
+                .setCode(event.getCode())
+                .setMessage(event.getMessage())
+                .setOutcome(event.getOutcome())
+                .setCompletionId(event.getCompletionId())
+                .build();
+        state.attempts.clear();
+        state.attempts.addAll(event.getDeadLetter().getAttemptsList());
     }
 
     private void applySettled(WorkSettled event) {
@@ -675,83 +1043,41 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
         state.status = DeliveryState.SETTLED;
     }
 
-    private void initializeAndReplay() throws IOException {
-        if (file.size() == 0) {
-            ByteBuffer header = ByteBuffer.wrap(MAGIC);
-            while (header.hasRemaining()) {
-                file.write(header);
-            }
-            file.force(true);
+    private void applyDeadLetterStatusChanged(DeadLetterStatusChanged event) {
+        DeadLetterRecord current = deadLetters.get(event.getDeadLetterId());
+        DeadLetterRecord next = current.toBuilder()
+                .setReplayStatus(event.getReplayStatus())
+                .setReplayRunId(event.getReplayRunId())
+                .setRetentionHold(event.getRetentionHold())
+                .build();
+        deadLetters.put(event.getDeadLetterId(), next);
+        WorkState state = states.get(current.getDeliveryId());
+        if (state != null) {
+            state.deadLetter = next;
+        }
+    }
+
+    private static void finishAttempt(
+            WorkState state, String outcomeId, com.google.protobuf.Timestamp finishedAt) {
+        if (state.attempts.isEmpty()) {
             return;
         }
-        if (file.size() < MAGIC.length) {
-            throw new IllegalArgumentException("processor channel has an incomplete header: "
-                    + path);
+        int last = state.attempts.size() - 1;
+        DeliveryAttemptRecord current = state.attempts.get(last);
+        if (current.hasFinishedAt()) {
+            return;
         }
-        ByteBuffer header = ByteBuffer.allocate(MAGIC.length);
-        readFully(header, 0);
-        if (!java.util.Arrays.equals(header.array(), MAGIC)) {
-            throw new IllegalArgumentException("processor channel format marker mismatch: "
-                    + path);
-        }
-        long position = MAGIC.length;
-        while (position < file.size()) {
-            long frameStart = position;
-            if (file.size() - position < Integer.BYTES) {
-                truncateTail(frameStart);
-                break;
-            }
-            ByteBuffer lengthBytes = ByteBuffer.allocate(Integer.BYTES);
-            readFully(lengthBytes, position);
-            int length = ByteBuffer.wrap(lengthBytes.array()).getInt();
-            if (length < 1 || length > MAX_RECORD_BYTES) {
-                throw new IllegalArgumentException("invalid processor channel frame length "
-                        + length + " at byte " + position);
-            }
-            position += Integer.BYTES;
-            if (file.size() - position < (long) length + Integer.BYTES) {
-                truncateTail(frameStart);
-                break;
-            }
-            ByteBuffer recordBytes = ByteBuffer.allocate(length);
-            readFully(recordBytes, position);
-            position += length;
-            ByteBuffer checksumBytes = ByteBuffer.allocate(Integer.BYTES);
-            readFully(checksumBytes, position);
-            position += Integer.BYTES;
-            int storedChecksum = ByteBuffer.wrap(checksumBytes.array()).getInt();
-            CRC32C checksum = new CRC32C();
-            checksum.update(recordBytes.array(), 0, length);
-            if ((int) checksum.getValue() != storedChecksum) {
-                throw new IllegalArgumentException("processor channel CRC mismatch at byte "
-                        + frameStart);
-            }
-            ChannelRecord record;
-            try {
-                record = ChannelRecord.parseFrom(recordBytes.array());
-            } catch (InvalidProtocolBufferException e) {
-                throw new IllegalArgumentException(
-                        "invalid processor channel protobuf at byte " + frameStart, e);
-            }
+        state.attempts.set(last, current.toBuilder()
+                .setFinishedAt(finishedAt)
+                .setOutcomeId(outcomeId)
+                .build());
+    }
+
+    private void initializeAndReplay() {
+        for (ChannelRecord record : journal.load()) {
             validate(record);
             apply(record);
             log.add(record);
-        }
-        file.position(file.size());
-    }
-
-    private void truncateTail(long position) throws IOException {
-        file.truncate(position);
-        file.force(true);
-    }
-
-    private void readFully(ByteBuffer destination, long position) throws IOException {
-        while (destination.hasRemaining()) {
-            int read = file.read(destination, position);
-            if (read < 0) {
-                throw new IOException("unexpected EOF in processor channel");
-            }
-            position += read;
         }
     }
 
@@ -790,23 +1116,6 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
         return result;
     }
 
-    private static void closeAfterFailedOpen(FileLock lock, FileChannel file) {
-        try {
-            if (lock != null && lock.isValid()) {
-                lock.release();
-            }
-        } catch (IOException ignored) {
-            // The original open or recovery failure remains the useful refusal.
-        }
-        try {
-            if (file != null && file.isOpen()) {
-                file.close();
-            }
-        } catch (IOException ignored) {
-            // The original open or recovery failure remains the useful refusal.
-        }
-    }
-
     private static final class WorkState {
         private final ProcessorWork work;
         private DeliveryState status = DeliveryState.PENDING;
@@ -816,6 +1125,12 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
         private String lastLeaseToken = "";
         private String failureCode = "";
         private String failureMessage = "";
+        private ProcessorOutcome lastOutcome = ProcessorOutcome.getDefaultInstance();
+        private Instant retryNotBefore = Instant.MIN;
+        private DeadLetterRecord deadLetter;
+        private String lastCompletionId = "";
+        private ProcessorFailure lastFailure;
+        private final List<DeliveryAttemptRecord> attempts = new ArrayList<>();
 
         private WorkState(ProcessorWork work) {
             this.work = work;
@@ -823,7 +1138,7 @@ public final class FileDurableProcessorChannel implements DurableProcessorChanne
 
         private DeliveryView view() {
             return new DeliveryView(work, status, attempt, claim, completion,
-                    failureCode, failureMessage);
+                    failureCode, failureMessage, lastOutcome, retryNotBefore, deadLetter);
         }
     }
 }

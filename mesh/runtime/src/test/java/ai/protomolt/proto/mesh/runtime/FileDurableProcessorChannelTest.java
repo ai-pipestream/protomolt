@@ -8,7 +8,9 @@ import ai.protomolt.proto.mesh.runtime.v1.DeliveryClaim;
 import ai.protomolt.proto.mesh.runtime.v1.CoordinatorFrame;
 import ai.protomolt.proto.mesh.runtime.v1.ProcessorCompletion;
 import ai.protomolt.proto.mesh.runtime.v1.ProcessorContract;
+import ai.protomolt.proto.mesh.ProcessorContracts;
 import ai.protomolt.proto.mesh.runtime.v1.ProcessorFailure;
+import ai.protomolt.proto.mesh.runtime.v1.ProcessorLeaseBinding;
 import ai.protomolt.proto.mesh.runtime.v1.ProcessorWork;
 import ai.protomolt.proto.mesh.runtime.v1.WorkerDemand;
 import ai.protomolt.proto.mesh.runtime.v1.WorkerFrame;
@@ -56,12 +58,12 @@ class FileDurableProcessorChannelTest {
     void setUp() {
         descriptors = DescriptorRegistry.create(false);
         descriptors.registerFile(RuntimeTestProto.getDescriptor());
-        contract = ProcessorContract.newBuilder()
+        contract = ProcessorContracts.canonical(ProcessorContract.newBuilder()
                 .setProcessorId("remote-tokenizer")
                 .setInputSchema(EntityEnvelopes.schemaOf(RawInput.getDefaultInstance()))
                 .addOutputSchemas(EntityEnvelopes.schemaOf(Token.getDefaultInstance()))
                 .setMaxOutputs(2)
-                .build();
+                .build());
         var input = EntityEnvelopes.root(INPUT, SCOPE,
                 RawInput.newBuilder().setText("durable").build(), NOW,
                 NOW.plusSeconds(3600), CompletionPolicy.COMPLETION_POLICY_STRICT);
@@ -75,6 +77,7 @@ class FileDurableProcessorChannelTest {
                 .setInput(input)
                 .setDeadline(RemoteValidation.timestamp(NOW.plusSeconds(600)))
                 .setMaxAttempts(3)
+                .setChannelPolicy(ChannelPolicies.localDurable().getPolicy())
                 .build();
         clock = Clock.fixed(NOW, ZoneOffset.UTC);
     }
@@ -141,7 +144,10 @@ class FileDurableProcessorChannelTest {
                     .setLeaseToken(claim.getLeaseToken())
                     .setCode("model-failed")
                     .setMessage("model refused input")
-                    .setRetryable(true)
+                    .setCompletionId(UUID.randomUUID().toString())
+                    .setOutcome(ProcessorOutcomes.retryable(
+                            "model-failed", "model refused input",
+                            contract.getProcessorId(), 1, 1))
                     .build(), NOW);
 
             assertThat(channel.delivery(DELIVERY).orElseThrow().state())
@@ -149,6 +155,150 @@ class FileDurableProcessorChannelTest {
             assertThatThrownBy(() -> channel.awaitCompletion(DELIVERY, NOW.plusSeconds(1)))
                     .isInstanceOf(RemoteProcessorException.class)
                     .hasMessageContaining("model refused input");
+        }
+    }
+
+    @Test
+    void exactRetryScheduleSurvivesWalRestart() {
+        Path path = temporary.resolve("retry.wal");
+        var outcome = ProcessorOutcomes.retryable(
+                        "later", "retry later", contract.getProcessorId(), 1, 3)
+                .toBuilder()
+                .setRetryAdvice(ProcessorOutcomes.retryable(
+                                "later", "retry later", contract.getProcessorId(), 1, 3)
+                        .getRetryAdvice().toBuilder()
+                        .setDelay(com.google.protobuf.Duration.newBuilder().setSeconds(10)))
+                .build();
+        try (var channel = new FileDurableProcessorChannel(path, descriptors, clock)) {
+            channel.enqueue(work);
+            DeliveryClaim claim = channel.claim("worker-a", List.of(contract), 1,
+                    Duration.ofSeconds(60), NOW).getFirst();
+            channel.fail("worker-a", ProcessorFailure.newBuilder()
+                    .setDeliveryId(DELIVERY)
+                    .setLeaseToken(claim.getLeaseToken())
+                    .setCompletionId(UUID.randomUUID().toString())
+                    .setCode("later")
+                    .setMessage("retry later")
+                    .setOutcome(outcome)
+                    .build(), NOW);
+        }
+
+        try (var recovered = new FileDurableProcessorChannel(path, descriptors, clock)) {
+            var pending = recovered.delivery(DELIVERY).orElseThrow();
+            assertThat(pending.state()).isEqualTo(
+                    DurableProcessorChannel.DeliveryState.PENDING);
+            assertThat(pending.retryNotBefore()).isEqualTo(NOW.plusSeconds(10));
+            assertThat(recovered.claim("worker-b", List.of(contract), 1,
+                    Duration.ofSeconds(60), NOW.plusSeconds(9))).isEmpty();
+            assertThat(recovered.claim("worker-b", List.of(contract), 1,
+                    Duration.ofSeconds(60), NOW.plusSeconds(10)))
+                    .singleElement()
+                    .extracting(DeliveryClaim::getAttempt)
+                    .isEqualTo(2);
+        }
+    }
+
+    @Test
+    void permanentDeadLetterAndAttemptHistorySurviveWalRestart() {
+        Path path = temporary.resolve("dead-letter.wal");
+        String deadLetterId;
+        try (var channel = new FileDurableProcessorChannel(path, descriptors, clock)) {
+            channel.enqueue(work);
+            DeliveryClaim claim = channel.claim("worker-a", List.of(contract), 1,
+                    Duration.ofSeconds(60), NOW).getFirst();
+            channel.fail("worker-a", ProcessorFailure.newBuilder()
+                    .setDeliveryId(DELIVERY)
+                    .setLeaseToken(claim.getLeaseToken())
+                    .setCompletionId(UUID.randomUUID().toString())
+                    .setCode("poison")
+                    .setMessage("permanent poison")
+                    .setOutcome(ProcessorOutcomes.permanent(
+                            "poison", "permanent poison", contract.getProcessorId(), 1))
+                    .build(), NOW);
+            deadLetterId = channel.deadLetters(SCOPE, 0, 10).entries()
+                    .getFirst().record().getDeadLetterId();
+        }
+
+        try (var recovered = new FileDurableProcessorChannel(path, descriptors, clock)) {
+            assertThat(recovered.delivery(DELIVERY).orElseThrow().state())
+                    .isEqualTo(DurableProcessorChannel.DeliveryState.FAILED);
+            assertThat(recovered.deadLetters(SCOPE, 0, 10).entries())
+                    .singleElement().extracting(DurableProcessorChannel.DeadLetterPage.Entry::record)
+                    .satisfies(record -> {
+                assertThat(record.getDeadLetterId()).isEqualTo(deadLetterId);
+                assertThat(record.getAttemptsList()).singleElement().satisfies(attempt -> {
+                    assertThat(attempt.getAttempt()).isEqualTo(1);
+                    assertThat(attempt.hasFinishedAt()).isTrue();
+                    assertThat(attempt.getOutcomeId()).isNotBlank();
+                });
+                assertThat(record.getFirstFailureAt()).isEqualTo(record.getLastFailureAt());
+                    });
+        }
+    }
+
+    @Test
+    void duplicateOutcomeIdsAreIdempotentOnlyForIdenticalBytes() {
+        Path path = temporary.resolve("outcome-id.wal");
+        try (var channel = new FileDurableProcessorChannel(path, descriptors, clock)) {
+            channel.enqueue(work);
+            DeliveryClaim claim = channel.claim("worker-a", List.of(contract), 1,
+                    Duration.ofSeconds(60), NOW).getFirst();
+            String completionId = UUID.randomUUID().toString();
+            ProcessorFailure failure = ProcessorFailure.newBuilder()
+                    .setDeliveryId(DELIVERY)
+                    .setLeaseToken(claim.getLeaseToken())
+                    .setCompletionId(completionId)
+                    .setCode("temporary")
+                    .setMessage("same bytes")
+                    .setOutcome(ProcessorOutcomes.retryable(
+                            "temporary", "same bytes", contract.getProcessorId(), 1, 3))
+                    .build();
+            channel.fail("worker-a", failure, NOW);
+            int records = channel.records().size();
+            channel.fail("worker-a", failure, NOW);
+            assertThat(channel.records()).hasSize(records);
+            assertThatThrownBy(() -> channel.fail("worker-a",
+                    failure.toBuilder().setMessage("different bytes").build(), NOW))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("completion-id-conflict");
+        }
+    }
+
+    @Test
+    void cancellationBeforeSettlementReleasesButAfterSettlementIsFenced() {
+        Path path = temporary.resolve("cancellation.wal");
+        try (var channel = new FileDurableProcessorChannel(path, descriptors, clock)) {
+            channel.enqueue(work);
+            DeliveryClaim first = channel.claim("worker-a", List.of(contract), 1,
+                    Duration.ofSeconds(60), NOW).getFirst();
+            channel.fail("worker-a", ProcessorFailure.newBuilder()
+                    .setDeliveryId(DELIVERY)
+                    .setLeaseToken(first.getLeaseToken())
+                    .setCompletionId(UUID.randomUUID().toString())
+                    .setCode("processor-cancelled")
+                    .setMessage("operator cancelled active invocation")
+                    .setOutcome(ProcessorOutcomes.cancelled(
+                            "operator cancelled active invocation",
+                            contract.getProcessorId(), 1))
+                    .build(), NOW);
+            assertThat(channel.delivery(DELIVERY).orElseThrow().state())
+                    .isEqualTo(DurableProcessorChannel.DeliveryState.PENDING);
+
+            DeliveryClaim replacement = channel.claim("worker-b", List.of(contract), 1,
+                    Duration.ofSeconds(60), NOW).getFirst();
+            channel.complete("worker-b", completion(replacement.getLeaseToken()), NOW);
+            channel.settle(DELIVERY, replacement.getLeaseToken(), NOW);
+            assertThatThrownBy(() -> channel.fail("worker-b", ProcessorFailure.newBuilder()
+                    .setDeliveryId(DELIVERY)
+                    .setLeaseToken(replacement.getLeaseToken())
+                    .setCompletionId(UUID.randomUUID().toString())
+                    .setCode("processor-cancelled")
+                    .setMessage("too late")
+                    .setOutcome(ProcessorOutcomes.cancelled(
+                            "too late", contract.getProcessorId(), 2))
+                    .build(), NOW))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("has no active claim; state=SETTLED");
         }
     }
 
@@ -176,6 +326,7 @@ class FileDurableProcessorChannelTest {
             ProcessorCompletion invalid = ProcessorCompletion.newBuilder()
                     .setDeliveryId(DELIVERY)
                     .setLeaseToken(claim.getLeaseToken())
+                    .setCompletionId(UUID.randomUUID().toString())
                     .addOutputs(RuntimeSchemas.pack(
                             RawInput.newBuilder().setText("wrong schema").build()))
                     .build();
@@ -263,10 +414,21 @@ class FileDurableProcessorChannelTest {
                     });
             requests.onNext(workerFrame(1).setHello(WorkerHello.newBuilder()
                     .setWorkerId("worker-b")
+                    .setNodeId("worker-b")
+                    .setNodeIncarnationEpoch(1)
+                    .setEndpointId("grpc-main")
+                    .addProcessorLeases(ProcessorLeaseBinding.newBuilder()
+                            .setProcessorId(contract.getProcessorId())
+                            .setLeaseEpoch(1)
+                            .setContractFingerprint(contract.getContractFingerprint()))
                     .addContracts(contract)).build());
-            assertThat(responses.poll(1, TimeUnit.SECONDS)).satisfies(
+            CoordinatorFrame admission = responses.poll(1, TimeUnit.SECONDS);
+            assertThat(admission).satisfies(
                     frame -> assertThat(frame.getAdmission().getAdmitted()).isTrue());
-            requests.onNext(workerFrame(2).setDemand(
+            requests.onNext(workerFrame(2)
+                    .setSessionId(admission.getAdmission().getSessionId())
+                    .setNodeIncarnationEpoch(1)
+                    .setDemand(
                     WorkerDemand.newBuilder().setPermits(1)).build());
             assertThat(responses.poll(50, TimeUnit.MILLISECONDS)).isNull();
 
@@ -284,6 +446,7 @@ class FileDurableProcessorChannelTest {
         return ProcessorCompletion.newBuilder()
                 .setDeliveryId(DELIVERY)
                 .setLeaseToken(leaseToken)
+                .setCompletionId(UUID.randomUUID().toString())
                 .addOutputs(RuntimeSchemas.pack(
                         Token.newBuilder().setText("durable-token").build()))
                 .build();

@@ -1,7 +1,8 @@
 # Cluster-backed processor directory and worker control
 
-Status: implementation plan. This is the next runtime increment after the
-durable directed-flow lifecycle on `descriptor-flow-runtime`.
+Status: implemented and locally verified on `descriptor-flow-runtime`; not yet
+claimed as merged or released. This increment follows the durable directed-flow
+lifecycle.
 
 ## Outcome
 

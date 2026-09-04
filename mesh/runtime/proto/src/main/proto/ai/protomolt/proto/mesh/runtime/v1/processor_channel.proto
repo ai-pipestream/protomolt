@@ -1,0 +1,575 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.mesh.runtime.v1;
+
+import "ai/protomolt/proto/mesh/runtime/v1/flow.proto";
+import "ai/protomolt/proto/mesh/runtime/v1/processor_contract.proto";
+import "ai/protomolt/proto/mesh/v1/entity.proto";
+import "ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto";
+import "ai/protomolt/proto/meta/v1/metadata.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.mesh.runtime.v1";
+
+// Workers initiate one long-lived channel and explicitly grant demand. The
+// coordinator never pushes work beyond those permits.
+service DemandProcessorService {
+  rpc Connect(stream WorkerFrame) returns (stream CoordinatorFrame);
+}
+
+message ProcessorWork {
+  string delivery_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string run_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string node_id = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {identifier: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string invocation_id = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  uint64 invocation_ordinal = 5 [
+    (ai.protomolt.proto.validate.v1.field).uint64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ProcessorContract contract = 6 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ai.protomolt.proto.mesh.v1.EntityEnvelope input = 7 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Timestamp deadline = 8 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  uint32 max_attempts = 9 [
+    (ai.protomolt.proto.validate.v1.field).uint32 = {gte: 1, lte: 100},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string workflow_name = 10 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  string workflow_version = 11 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  string plan_fingerprint = 12 [(ai.protomolt.proto.validate.v1.field).string.max_len = 64];
+  uint64 deployment_revision = 13;
+  string edge_id = 14 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  string channel_policy_id = 15 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  uint64 source_history_sequence = 16;
+  string namespace = 17 [(ai.protomolt.proto.validate.v1.field).string.max_len = 256];
+  string retention_policy_reference = 18 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  string legal_hold_policy_reference = 19 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  string payload_store_profile = 20 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  ChannelPolicy channel_policy = 21 [(ai.protomolt.proto.validate.v1.field).required = true];
+  ChannelPolicy durable_spill_policy = 22;
+}
+
+message DeliveryClaim {
+  ProcessorWork work = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string worker_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string lease_token = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  uint32 attempt = 4 [
+    (ai.protomolt.proto.validate.v1.field).uint32.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Timestamp lease_expires_at = 5 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message ProcessorCompletion {
+  string delivery_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string lease_token = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  repeated TypedPayload outputs = 3 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 100000,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string completion_id = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message ProcessorFailure {
+  string delivery_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string lease_token = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string code = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string message = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 8192}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  reserved 5;
+  reserved "retryable";
+  ProcessorOutcome outcome = 6 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string completion_id = 7 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+enum ProcessorOutcomeKind {
+  PROCESSOR_OUTCOME_KIND_UNSPECIFIED = 0;
+  PROCESSOR_OUTCOME_KIND_SUCCESS = 1;
+  PROCESSOR_OUTCOME_KIND_RETRYABLE = 2;
+  PROCESSOR_OUTCOME_KIND_PERMANENT = 3;
+  PROCESSOR_OUTCOME_KIND_SKIPPED = 4;
+  PROCESSOR_OUTCOME_KIND_ABANDONED = 5;
+  PROCESSOR_OUTCOME_KIND_CANCELLED = 6;
+}
+
+enum RetryStrategy {
+  RETRY_STRATEGY_UNSPECIFIED = 0;
+  RETRY_STRATEGY_NONE = 1;
+  RETRY_STRATEGY_FIXED_DELAY = 2;
+  RETRY_STRATEGY_EXPONENTIAL_BACKOFF = 3;
+  RETRY_STRATEGY_RETRY_AFTER = 4;
+}
+
+enum RetryJitterPolicy {
+  RETRY_JITTER_POLICY_UNSPECIFIED = 0;
+  RETRY_JITTER_POLICY_NONE = 1;
+  RETRY_JITTER_POLICY_FULL = 2;
+  RETRY_JITTER_POLICY_EQUAL = 3;
+}
+
+enum SettlementEffect {
+  SETTLEMENT_EFFECT_UNSPECIFIED = 0;
+  SETTLEMENT_EFFECT_SETTLE = 1;
+  SETTLEMENT_EFFECT_RELEASE = 2;
+  SETTLEMENT_EFFECT_DEAD_LETTER = 3;
+  SETTLEMENT_EFFECT_COMPENSATE = 4;
+  SETTLEMENT_EFFECT_NONE = 5;
+}
+
+message OutcomeCause {
+  string code = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 128}}];
+  string message = 2 [(ai.protomolt.proto.validate.v1.field).string.max_len = 8192];
+  string processor_id = 3 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  uint32 attempt = 4 [(ai.protomolt.proto.validate.v1.field).uint32.lte = 100];
+  ai.protomolt.proto.grpc.workflow.v1.ArtifactReference evidence = 5 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+message RetryAdvice {
+  RetryStrategy strategy = 1;
+  google.protobuf.Duration delay = 2 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  google.protobuf.Timestamp retry_after = 3 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  google.protobuf.Duration maximum_delay = 4 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  uint32 maximum_attempts = 5 [(ai.protomolt.proto.validate.v1.field).uint32.lte = 100];
+  RetryJitterPolicy jitter_policy = 6;
+}
+
+message ProcessorOutcome {
+  string outcome_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  ProcessorOutcomeKind kind = 2;
+  repeated OutcomeCause causes = 3 [(ai.protomolt.proto.validate.v1.field).repeated.max_items = 32];
+  RetryAdvice retry_advice = 4 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  SettlementEffect settlement_effect = 5;
+}
+
+message WorkEnqueued {
+  ProcessorWork work = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message WorkClaimed {
+  DeliveryClaim claim = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Timestamp claimed_at = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message WorkCompleted {
+  string worker_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ProcessorCompletion completion = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Timestamp completed_at = 3 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message WorkReleased {
+  string delivery_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string lease_token = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string reason = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 8192}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ProcessorOutcome outcome = 4 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Timestamp retry_not_before = 5 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string completion_id = 6 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Timestamp finished_at = 7 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+enum DeadLetterReplayStatus {
+  DEAD_LETTER_REPLAY_STATUS_UNSPECIFIED = 0;
+  DEAD_LETTER_REPLAY_STATUS_PENDING = 1;
+  DEAD_LETTER_REPLAY_STATUS_REQUESTED = 2;
+  DEAD_LETTER_REPLAY_STATUS_STARTED = 3;
+  DEAD_LETTER_REPLAY_STATUS_COMPLETED = 4;
+  DEAD_LETTER_REPLAY_STATUS_FAILED = 5;
+  DEAD_LETTER_REPLAY_STATUS_ACKNOWLEDGED = 6;
+}
+
+message DeliveryAttemptRecord {
+  uint32 attempt = 1 [(ai.protomolt.proto.validate.v1.field).uint32.gte = 1];
+  string worker_id = 2 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  string lease_token = 3 [(ai.protomolt.proto.validate.v1.field).string.max_len = 64];
+  google.protobuf.Timestamp claimed_at = 4;
+  google.protobuf.Timestamp finished_at = 5;
+  string outcome_id = 6 [(ai.protomolt.proto.validate.v1.field).string.max_len = 64];
+}
+
+// Append-only terminal delivery evidence. It retains the exact protobuf
+// frontier needed to delegate replay to DurableFlowCoordinator.
+message DeadLetterRecord {
+  string dead_letter_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  string delivery_id = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  string run_id = 3 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  string invocation_id = 4 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  string workflow_name = 5 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  string workflow_version = 6 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  string plan_fingerprint = 7 [(ai.protomolt.proto.validate.v1.field).string.max_len = 64];
+  uint64 deployment_revision = 8;
+  string processor_id = 9 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  string node_id = 10 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  string edge_id = 11 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  ai.protomolt.proto.mesh.v1.EntityEnvelope input = 12 [(ai.protomolt.proto.validate.v1.field).required = true];
+  ProcessorOutcome outcome = 13 [(ai.protomolt.proto.validate.v1.field).required = true];
+  repeated DeliveryAttemptRecord attempts = 14 [(ai.protomolt.proto.validate.v1.field).repeated.max_items = 100];
+  google.protobuf.Timestamp first_failure_at = 15 [(ai.protomolt.proto.validate.v1.field).required = true];
+  google.protobuf.Timestamp last_failure_at = 16 [(ai.protomolt.proto.validate.v1.field).required = true];
+  string channel_policy_id = 17 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  uint64 source_history_sequence = 18;
+  DeadLetterReplayStatus replay_status = 19;
+  string replay_run_id = 20 [(ai.protomolt.proto.validate.v1.field).string.max_len = 64];
+  string namespace = 21 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 256}}];
+  string retention_policy_reference = 22 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  string legal_hold_policy_reference = 23 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  bool retention_hold = 24;
+  string completion_id = 25 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  ProcessorContract processor_contract = 26 [(ai.protomolt.proto.validate.v1.field).required = true];
+  string payload_store_profile = 27 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+}
+
+message WorkFailed {
+  string delivery_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string lease_token = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string code = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string message = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 8192}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ProcessorOutcome outcome = 5 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  DeadLetterRecord dead_letter = 6 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string completion_id = 7 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message DeadLetterStatusChanged {
+  string dead_letter_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  DeadLetterReplayStatus replay_status = 2;
+  string replay_run_id = 3 [(ai.protomolt.proto.validate.v1.field).string.max_len = 64];
+  string reason = 4 [(ai.protomolt.proto.validate.v1.field).string.max_len = 8192];
+  bool retention_hold = 5;
+}
+
+message WorkSettled {
+  string delivery_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string lease_token = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// The only durable processor-channel record. Implementations append these
+// protobuf bytes directly; JSON is not a persistence format for this protocol.
+message ChannelRecord {
+  uint64 sequence = 1 [
+    (ai.protomolt.proto.validate.v1.field).uint64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Timestamp recorded_at = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  oneof event {
+    WorkEnqueued enqueued = 10 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    WorkClaimed claimed = 11 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    WorkCompleted completed = 12 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    WorkReleased released = 13 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    WorkFailed failed = 14 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    WorkSettled settled = 15 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    DeadLetterStatusChanged dead_letter_status_changed = 16 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  }
+}
+
+message WorkerHello {
+  string worker_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  repeated ProcessorContract contracts = 2 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 100000},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string node_id = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {path_safe_name: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  int64 node_incarnation_epoch = 4 [
+    (ai.protomolt.proto.validate.v1.field).int64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  repeated ProcessorLeaseBinding processor_leases = 5 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 100000},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string endpoint_id = 6 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {path_safe_name: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Previously admitted session to resume inside the directory-declared grace.
+  string resume_session_id = 7 [
+    (ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message ProcessorLeaseBinding {
+  string processor_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {path_safe_name: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  int64 lease_epoch = 2 [
+    (ai.protomolt.proto.validate.v1.field).int64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string contract_fingerprint = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message WorkerDemand {
+  uint32 permits = 1 [
+    (ai.protomolt.proto.validate.v1.field).uint32 = {gte: 1, lte: 100000},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message WorkerHeartbeat {
+  uint64 heartbeat_sequence = 1 [
+    (ai.protomolt.proto.validate.v1.field).uint64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Timestamp observed_at = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message WorkerCapacity {
+  uint32 max_in_flight = 1 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  uint32 in_flight = 2 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  uint32 local_queue_depth = 3 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  bool draining = 4 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+message WorkerDrainProgress {
+  uint32 active_claims = 1 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  bool drained = 2 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+message WorkerCancellationAcknowledgement {
+  string delivery_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string lease_token = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  bool interrupted = 3 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+message WorkerFrame {
+  string frame_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  uint64 sequence = 2 [
+    (ai.protomolt.proto.validate.v1.field).uint64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string session_id = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  int64 node_incarnation_epoch = 4 [
+    (ai.protomolt.proto.validate.v1.field).int64.gte = 0,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  oneof payload {
+    WorkerHello hello = 10 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    WorkerDemand demand = 11 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    ProcessorCompletion completed = 12 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    ProcessorFailure failed = 13 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    WorkerHeartbeat heartbeat = 14 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    WorkerCapacity capacity = 15 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    WorkerDrainProgress drain_progress = 16 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    WorkerCancellationAcknowledgement cancellation_acknowledgement = 17 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  }
+}
+
+message WorkerAdmission {
+  bool admitted = 1 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  string reason = 2 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 2048,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string session_id = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  uint64 directory_generation = 4 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  int64 directory_event_sequence = 5 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+message ClaimCancellation {
+  string delivery_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string lease_token = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string reason = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 2048}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message WorkerDrainRequest {
+  string reason = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 2048}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Timestamp deadline = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message DirectoryRevisionAcknowledgement {
+  uint64 generation = 1 [(ai.protomolt.proto.validate.v1.field).uint64.gte = 1];
+  int64 event_sequence = 2 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+}
+
+message CoordinatorFrame {
+  uint64 sequence = 1 [
+    (ai.protomolt.proto.validate.v1.field).uint64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string session_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  int64 node_incarnation_epoch = 3 [
+    (ai.protomolt.proto.validate.v1.field).int64.gte = 0,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  oneof payload {
+    WorkerAdmission admission = 10 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    DeliveryClaim claim = 11 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    ClaimCancellation claim_cancellation = 12 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    WorkerDrainRequest drain_request = 13 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    DirectoryRevisionAcknowledgement directory_acknowledgement = 14 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  }
+}

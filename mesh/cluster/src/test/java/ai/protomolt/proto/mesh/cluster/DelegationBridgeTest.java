@@ -5,6 +5,8 @@ import ai.protomolt.proto.delegation.v1.WorkerHello;
 import ai.protomolt.proto.mesh.cluster.ClusterDirectory.ApplyOutcome;
 import ai.protomolt.proto.mesh.cluster.ClusterFixtures.MutableClock;
 import ai.protomolt.proto.mesh.cluster.v1.ProcessorAdvertisement;
+import ai.protomolt.proto.mesh.ProcessorContracts;
+import ai.protomolt.proto.mesh.runtime.v1.ProcessorContract;
 import ai.protomolt.proto.mesh.v1.ProcessorKind;
 import org.junit.jupiter.api.Test;
 
@@ -38,10 +40,19 @@ class DelegationBridgeTest {
                         .setName("proto-edit"));
     }
 
+    private static ProcessorContract contract() {
+        return ProcessorContracts.canonical(ProcessorContract.newBuilder()
+                .setProcessorId("worker-7")
+                .setInputSchema(ClusterFixtures.schema())
+                .addOutputSchemas(ClusterFixtures.schema())
+                .setMaxOutputs(1)
+                .build());
+    }
+
     @Test
     void mapsHelloToLeasedAdvertisement() {
         ProcessorAdvertisement advertisement = DelegationBridge.toProcessorAdvertisement(
-                hello().build(), "node-1", 7, 3, 1, LEASE, NOW);
+                hello().build(), contract(), "node-1", 7, 3, 1, LEASE, NOW);
 
         assertThat(advertisement.getProcessorId()).isEqualTo("worker-7");
         assertThat(advertisement.getNodeId()).isEqualTo("node-1");
@@ -55,8 +66,9 @@ class DelegationBridgeTest {
         assertThat(advertisement.getCapabilityDetailsList())
                 .extracting(ai.protomolt.proto.mesh.cluster.v1.CapabilityDescription::getName)
                 .containsExactly("proto-edit", "java-build");
-        // A hello declares no schemas, so the bridge invents none.
-        assertThat(advertisement.getAcceptedSchemasList()).isEmpty();
+        assertThat(advertisement.getAcceptedSchemasList())
+                .containsExactly(contract().getInputSchema());
+        assertThat(advertisement.getContract()).isEqualTo(contract());
         assertThat(advertisement.getLeaseEpoch()).isEqualTo(3);
         assertThat(advertisement.getSeq()).isEqualTo(1);
         assertThat(advertisement.getAdvertisedAt()).isEqualTo(ClusterFixtures.ts(NOW));
@@ -68,7 +80,8 @@ class DelegationBridgeTest {
     @Test
     void providerlessWorkerMapsToDeterministic() {
         ProcessorAdvertisement advertisement = DelegationBridge.toProcessorAdvertisement(
-                hello().clearProvider().clearModel().build(), "node-1", 1, 1, 1, LEASE, NOW);
+                hello().clearProvider().clearModel().build(), contract(),
+                "node-1", 1, 1, 1, LEASE, NOW);
 
         assertThat(advertisement.getKind()).isEqualTo(ProcessorKind.PROCESSOR_KIND_DETERMINISTIC);
     }
@@ -79,7 +92,7 @@ class DelegationBridgeTest {
                 ClusterFixtures.cluster(), new MutableClock(NOW));
         directory.register(ClusterFixtures.node("node-1"));
         ProcessorAdvertisement advertisement = DelegationBridge.toProcessorAdvertisement(
-                hello().build(), "node-1", 1, 1, 1, LEASE, NOW);
+                hello().build(), contract(), "node-1", 1, 1, 1, LEASE, NOW);
 
         assertThat(directory.registerProcessor(advertisement))
                 .isEqualTo(ApplyOutcome.REGISTERED);
@@ -91,7 +104,8 @@ class DelegationBridgeTest {
     @Test
     void invalidHelloIsRejectedBeforeMapping() {
         assertThatThrownBy(() -> DelegationBridge.toProcessorAdvertisement(
-                hello().setWorkerId("not a valid id").build(), "node-1", 1, 1, 1,
+                hello().setWorkerId("not a valid id").build(), contract(),
+                "node-1", 1, 1, 1,
                 LEASE, NOW))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("hello fails the delegation contract annotations");
@@ -100,11 +114,12 @@ class DelegationBridgeTest {
     @Test
     void nonPositiveLeaseIsRejected() {
         assertThatThrownBy(() -> DelegationBridge.toProcessorAdvertisement(
-                hello().build(), "node-1", 1, 1, 1, Duration.ZERO, NOW))
+                hello().build(), contract(), "node-1", 1, 1, 1, Duration.ZERO, NOW))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("leaseDuration must be positive");
         assertThatThrownBy(() -> DelegationBridge.toProcessorAdvertisement(
-                hello().build(), "node-1", 1, 1, 1, Duration.ofSeconds(-1), NOW))
+                hello().build(), contract(), "node-1", 1, 1, 1,
+                Duration.ofSeconds(-1), NOW))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("leaseDuration must be positive");
     }
@@ -112,7 +127,7 @@ class DelegationBridgeTest {
     @Test
     void leaseEpochAndSeqPassThroughToFencingFields() {
         ProcessorAdvertisement advertisement = DelegationBridge.toProcessorAdvertisement(
-                hello().build(), "node-1", 5, 9, 4, LEASE, NOW);
+                hello().build(), contract(), "node-1", 5, 9, 4, LEASE, NOW);
 
         assertThat(advertisement.getNodeEpoch()).isEqualTo(5);
         assertThat(advertisement.getLeaseEpoch()).isEqualTo(9);

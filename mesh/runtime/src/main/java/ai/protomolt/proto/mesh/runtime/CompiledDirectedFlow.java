@@ -2,6 +2,7 @@ package ai.protomolt.proto.mesh.runtime;
 
 import ai.protomolt.proto.cel.CelEvaluator;
 import ai.protomolt.proto.mesh.runtime.v1.CompiledFlowPlan;
+import ai.protomolt.proto.mesh.runtime.v1.ChannelPolicy;
 import ai.protomolt.proto.mesh.runtime.v1.FlowEdge;
 import ai.protomolt.proto.mesh.runtime.v1.ProcessorNode;
 import ai.protomolt.proto.projection.MessageProjection;
@@ -46,6 +47,23 @@ public final class CompiledDirectedFlow {
         return edgesBySource.getOrDefault(source, List.of());
     }
 
+    EdgeBinding edge(String edgeId) {
+        return edgesBySource.values().stream().flatMap(List::stream)
+                .filter(edge -> edge.definition().getEdgeId().equals(edgeId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "compiled flow has no edge " + edgeId));
+    }
+
+    ChannelPolicy channelPolicy(String policyId) {
+        return plan.getDefinition().getChannelPoliciesList().stream()
+                .filter(named -> named.getPolicyId().equals(policyId))
+                .map(ai.protomolt.proto.mesh.runtime.v1.NamedChannelPolicy::getPolicy)
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "compiled flow has no channel policy " + policyId));
+    }
+
     boolean retains(String nodeId, ai.protomolt.proto.mesh.v1.SchemaReference schema) {
         return outputs.contains(new OutputBinding(nodeId, RuntimeSchemas.identity(schema)));
     }
@@ -63,12 +81,14 @@ public final class CompiledDirectedFlow {
             String source,
             String target,
             CelEvaluator predicate,
-            MessageProjection projection) {
+            MessageProjection projection,
+            ChannelPolicy channelPolicy) {
         EdgeBinding {
             Objects.requireNonNull(definition, "definition");
             Objects.requireNonNull(sourceType, "sourceType");
             Objects.requireNonNull(source, "source");
             Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(channelPolicy, "channelPolicy");
         }
 
         Optional<CelEvaluator> optionalPredicate() {

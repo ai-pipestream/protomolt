@@ -1,24 +1,26 @@
 # Enterprise message processing gap analysis
 
 Status: product planning source, refreshed after implementation inspection on
-2026-09-03. The original comparison is against Forgejo `main`; the durable
-runtime lifecycle is verified on the local `descriptor-flow-runtime` branch in
-commit `9279bf4a` and is not yet presented here as merged or released.
+2026-09-04. The original comparison is against Forgejo `main`; the directory,
+worker-control, channel, claim-check, dead-letter, and recovery behavior below
+is implemented and locally verified on `descriptor-flow-runtime`. It is not
+presented here as merged or released.
 
 This document answers a narrow product question: which useful capabilities in
 the reference integration platform are not yet available as real ProtoMolt
 behavior, and how should ProtoMolt land equivalent or stronger behavior without
 adopting the reference platform's document model or product vocabulary?
 
-The short answer is that ProtoMolt now has the descriptor-native core of a
-message-processing runtime: exact schema identity, conformance-tested
-projection, compiled directed flows, one local/remote processor seam, a
-demand-driven gRPC worker channel, protobuf WALs, downstream settlement,
-immutable flow publication, deployment pointers, restart-safe run ownership,
-persistent protobuf history, cancellation, and selected-frontier replay. The
-largest remaining runtime gaps are a live processor directory and worker
-control plane, restart-safe channel/claim-check/dead-letter behavior, live
-source connectors, and the operator application.
+The short answer is that ProtoMolt now has the descriptor-native core and its
+first recovery-complete delivery stack: exact schema identity,
+conformance-tested projection, compiled directed flows, one local/remote
+processor seam, a watchable and fenced processor directory, capacity-aware
+workers, declared channels, protobuf WAL and transactional outbox storage,
+digest-verified claim checks, typed retry and dead-letter records, restart-safe
+descendant settlement, and one replay executor shared by history and recovery
+RPCs. The largest remaining product gaps are operational source connectors,
+search materialization receipts and deletion, a second transport conformance
+target, and the operator application.
 
 ProtoMolt should preserve its stronger descriptor-native model. An application
 payload is any real protobuf message. A small transport envelope carries
@@ -36,22 +38,29 @@ The reference implementation is the multi-repository checkout under
 The reference repositories were inspected at their local heads, dated between
 2026-08-01 and 2026-08-16. The original ProtoMolt comparison used Forgejo
 `origin/main` at `3410aeef0fb1df227887ff462ebd21f380a0782f`, dated 2026-09-03.
-This refresh also inspected `descriptor-flow-runtime`, rebased on Forgejo and
-GitHub `main` at `b65b7de3`. The branch adds five implementation commits:
+This refresh also inspected `descriptor-flow-runtime`, based on Forgejo and
+GitHub `main` at `b65b7de3`. Its committed foundation is:
 
 - `1ffb7cf1`: canonical descriptor identity and projection conformance;
 - `b0f0a871`: compiled directed protobuf flows and unified history;
 - `556a053b`: demand-driven remote execution, protobuf WAL, and settlement; and
-- `87f5b12d`: the new runtime module's BOM constraint; and
+- `87f5b12d`: the new runtime module's BOM constraint;
 - `9279bf4a`: immutable publication, revision-fenced deployments, durable runs,
   persistent protobuf history and frontiers, cancellation, replay, and the
   lifecycle gRPC service.
 
-The branch passed focused lifecycle, restart, cancellation, replay, WAL, and
-in-process gRPC tests, the full runtime test task, and the full `build` task.
-The generated XML reports contain 6,593 tests with zero failures or errors and
-five skips. Because the branch is local, this document distinguishes
-implemented branch behavior from behavior merged to `main`.
+The current branch increment adds the cluster-backed directory and worker
+control plane plus the declared channel, claim-check, dead-letter, and recovery
+stack described in this document. Current code and tests are the identity of
+that increment; this planning document deliberately does not embed a mutable
+working-tree hash.
+
+The branch has focused coverage for lifecycle, restart, cancellation, replay,
+WAL, PostgreSQL outbox, payload retention, directory watch/resync, worker
+control, and in-process gRPC behavior. The final full-build count belongs in
+the landing evidence rather than this long-lived design file. Because the
+branch is local, this document distinguishes implemented branch behavior from
+behavior merged to `main`.
 
 This is an implementation inventory, not a README parity exercise:
 
@@ -170,19 +179,19 @@ features of their own:
 |---|---|---|
 | Immutable directed flow versions, draft validation, an activation pointer, and in-flight version pinning | **Implemented on branch.** `DurableFlowCoordinator` validates and immutably publishes exact compiled plans, moves deployment pointers under revision fences, and pins every run to its accepted version, plan fingerprint, and deployment revision. | Mount the lifecycle service with the product role after directory-backed processor resolution is available; do not weaken immutable version identity. |
 | Executable branching directed graph | **Implemented on branch for acyclic execution.** `FlowCompiler` resolves exact processor contracts, predicates and projections, rejects cycles and unreachable nodes, and fingerprints the resulting plan. `FlowRuntime` provides bounded branching and fan-out; `DurableFlowCoordinator` owns persisted execution. Aggregation remains open. | Add aggregation semantics after the durable channel and descendant-set model can represent their barriers exactly. |
-| The same processor can run in-process or remotely | **Implemented on branch.** Local and demand-driven gRPC execution share `ProcessorInvoker`, typed payload validation, history, deadline, failure, and settlement seams. | Move placement behind a live processor directory and retain local/remote conformance as the gate for every new outcome and channel feature. |
-| Processors pull work on a long-lived bidirectional stream | **Implemented on branch at the transport core.** Workers initiate one stream, advertise exact contracts, grant bounded demand, and complete under UUID lease fences. Expired or disconnected claims are released. Heartbeats, cancellation, draining, and live capacity changes remain open. | Integrate the stream with the cluster directory and add heartbeat, cancellation, drain, health, and capacity lifecycle. |
-| Competing consumers scale from declared and observed capacity | **Missing.** | Add capacity advertisements and a bounded worker pool. Initial concurrency, ceiling, ramp signals, idle retirement, and live ceiling changes must be explicit and observable. |
-| Per-channel delivery mode selects memory or durable transport | **Partial on branch.** `DurableProcessorChannel` defines one semantic seam and `FileDurableProcessorChannel` supplies a forced, CRC32C-protected protobuf WAL with strict recovery. The flow definition does not yet select memory, broker, or database guarantees. | Add declared channel policy plus bounded-memory and transactional outbox or broker adapters. Configuration selects guarantees, not implementation classes. |
-| Memory pressure can spill to an explicitly allowed durable channel | **Missing.** | Declare spill behavior on the channel. A full in-memory channel may backpressure or use a named durable fallback; a memory-only policy must refuse the spill. Record the transition in message history. |
-| Downstream completion controls upstream acknowledgement | **Implemented on branch with restart-safe settlement frontiers.** Remote completion remains `COMPLETED`; the lifecycle WAL persists completed-but-unsettled descendants, recovery restores their settlement handles, and a durable commit-boundary bit fences cancellation before reverse-order settlement starts. | Generalize the persisted frontier to declared descendant sets and payload leases when channel policy and claim checks land. |
+| The same processor can run in-process or remotely | **Implemented on branch.** Local and demand-driven gRPC execution share `ProcessorInvoker`, typed payload validation, history, deadline, failure, and settlement seams. Product composition admits the remote endpoint only through the live exact-contract directory. | Retain local/remote conformance as the gate for every new outcome and transport. |
+| Processors pull work on a long-lived bidirectional stream | **Implemented on branch.** Workers initiate one fenced stream, advertise exact contracts and leases, heartbeat, publish capacity, grant bounded demand, acknowledge cancellation, drain, and reconnect only within the admitted incarnation and grace. | Package the wire fixtures as a language-neutral conformance kit before adding another worker implementation. |
+| Competing consumers scale from declared and observed capacity | **Implemented on branch.** Effective dispatch is the minimum of worker credit, node capacity, processor capacity, local queue pressure, and coordinator ceiling. Zero capacity and non-active health yield zero claims. | Add measured ramp and idle-retirement policies only when fleet evidence requires them. |
+| Per-channel delivery mode selects memory or durable transport | **Implemented on branch.** Immutable `ChannelPolicy` selects bounded memory, local protobuf WAL, or transactional PostgreSQL state plus outbox. The adapters share one state-machine conformance fixture. | Add another external adapter only behind the same contract and fixtures. |
+| Memory pressure can spill to an explicitly allowed durable channel | **Implemented on branch.** The bounded memory channel backpressures or uses only a compiled named durable spill target; undeclared spill and persistence-sensitive paths are refused. | Keep spill visible in the single run history and measure its crossover cost. |
+| Downstream completion controls upstream acknowledgement | **Implemented on branch with restart-safe settlement frontiers.** Remote completion remains `COMPLETED`; the lifecycle WAL persists completed-but-unsettled descendants and edge-owned payload leases, recovery restores both, and a durable commit-boundary bit fences cancellation before reverse-order settlement starts. | Extend the same explicit terminal-set model when aggregation barriers land. |
 | Deterministic child identities across fan-out and retry | **Implemented on branch.** Run, parent message, processor, and output ordinal derive stable message, invocation, and delivery identities across replay and at-least-once delivery. | Preserve these identities in every future channel, claim-check, dead-letter, and replay adapter. |
-| Typed retryable, permanent, skipped, abandoned, and cancelled outcomes | **Partial.** ProtoMolt has structured action failures and refusals, but no shared message outcome model spanning channels and processors. | Define one outcome vocabulary with retry advice, structured cause chain, processor evidence, and settlement effect. Never infer retryability from free-form text. |
-| Per-processor and global dead-letter channels | **Missing.** | Store the original envelope, payload reference, workflow version, outcome, and replay frontier. Reprocessing must be bounded and auditable. |
-| Replay from a selected processor or downstream frontier | **Implemented on branch for selected routed-message frontiers.** Replay accepts strictly ordered persisted `MESSAGE_ROUTED` sequences, creates a new durable run, and pins the source version, plan fingerprint, and deployment revision even after redeployment. | Extend the same coordinator path to dead-letter records and claim-checked payloads; do not add a second replay executor. |
+| Typed retryable, permanent, skipped, abandoned, and cancelled outcomes | **Implemented on branch.** One protobuf outcome carries structured causes, exact retry advice, attempt ceilings, jitter policy, and settlement effect across workers and channels. The old boolean is reserved. | Extend processors with compensation behavior only when a workflow declares it. Never infer retryability from free-form text. |
+| Per-processor and global dead-letter channels | **Implemented on branch.** Compiled policy selects the dead-letter reference. Append-only records retain the original envelope or claim check, exact run and processor frontier, outcome, attempts, policy, retention state, and replay provenance. | Add operational indexing and authorization for multi-tenant recovery-center use. |
+| Replay from a selected processor or downstream frontier | **Implemented on branch.** Selected history and dead-letter replay both delegate to `DurableFlowCoordinator.replay`, create a new durable run, and pin the source version, descriptors, plan fingerprint, deployment revision, payload, and frontier. Duplicate requests are byte-idempotent; identity drift is a named refusal. | Keep `DurableFlowCoordinator.replay` as the only executor when more recovery entry points are added. |
 | First-hop retry and poison-message isolation | **Missing as an integrated ingress path.** | Treat admission as a processor with its own retry policy and dead-letter channel so malformed ingress cannot loop invisibly. |
-| Memory-only handling for deletion-sensitive work | **Missing as a workflow guarantee.** | Add a channel policy that forbids persistence, snapshots, wire taps, and durable replay. Compilation must reject a path that crosses a durable channel or processor requiring storage. |
-| Typed per-run events and live in-flight diagnostics | **Implemented on branch for the current outcome set.** `FlowHistory` is append-only in the lifecycle WAL, cursor-readable through gRPC, and restored with the execution frontier after restart. Cancellation request, cancellation completion, and replay start use the same event stream. | Add retry, channel transfer, lease, dead-letter, and artifact events to this contract without creating a second history. |
+| Memory-only handling for deletion-sensitive work | **Implemented on branch.** A compiled channel policy can prohibit persistence, and compilation rejects a persistence-requiring processor or durable spill on that path. | Carry the same prohibition into future transports and observability sinks. |
+| Typed per-run events and live in-flight diagnostics | **Implemented on branch.** `FlowHistory` remains the only run history and now includes externalization, hydration, retry, dead-letter, replay, retention, and purge facts alongside lifecycle events. | Project operational views from this history rather than introducing an alternate journal. |
 | Runtime injection of named processing profiles | **Composable.** Instructions, service profiles, mapping, chunking, embeddings, validation, and search mappings exist independently. | Resolve all named artifacts during compilation and stamp exact versions into the run. Do not ask processors to discover mutable configuration during execution. |
 
 ### 2. Schema identity, mapping, and projection
@@ -253,28 +262,28 @@ round trips or coercion guesses:
 
 | Reference behavior | ProtoMolt state | ProtoMolt landing |
 |---|---|---|
-| Renewable processor advertisements | **Partial.** The cluster reducer represents presence and capacity, but no live network service owns the lifecycle. | Mount a processor-directory service. Advertisements expire unless renewed and are fenced by incarnation and lease identity. |
-| Active health checking and healthy-only resolution | **Missing in the general directory.** Search has its own node health behavior. | Separate advertised, reachable, ready, and draining states. Routing may select only compatible ready instances. |
+| Renewable processor advertisements | **Implemented on branch.** A mounted gRPC directory and the action catalog drive the same reducer and commit identity. Node incarnation, processor lease, heartbeat sequence, capacity sequence, readiness revision, expiry, and re-registration are fenced. | Add active endpoint probes as a separate observed-health overlay when the fleet requires them. |
+| Active health checking and healthy-only resolution | **Implemented on branch for reported and observed liveness.** Only `ACTIVE`, unexpired, administratively ready, exact-contract instances with positive node and processor capacity receive claims. `SUSPECT`, `DRAINING`, and `GONE` stop new work immediately. | Add transport reachability probes without mutating signed advertisements. |
 | Advertised descriptors, configuration schemas, and named artifacts | **Composable.** ProtoMolt already owns descriptors, JSON Schema generation, registries, and service profiles. | Attach immutable references to the processor advertisement and expose a watch API for operators and compilers. |
-| Layered operational metadata without changing the advertised descriptor | **Missing as a directory feature.** | Keep signed publisher facts separate from administrator and runtime-health overlays. Expose the resolved view and each provenance layer so operators can distinguish declaration from observation. |
+| Layered operational metadata without changing the advertised descriptor | **Implemented on branch.** Administrator readiness is a separately revisioned overlay; presence and capacity are observed soft state; the publisher's exact advertisement remains intact. | Expose the layers directly in the operator UI rather than flattening their provenance. |
 | Typed capacity and locality | **Partial and newly designed.** Processor placement identifies hardware-pinned, data-pinned, and movable classes, but current advertisements cannot express data locality or materializable capability fully. | Add hardware requirements, data-shard ownership, artifact residency, transferable-state cost, and materialization ability. Keep placement separate from processor business semantics. |
 | Polyglot worker kit with descriptor, unary, and streaming conformance | **Partial on branch.** A language-neutral protobuf/gRPC demand protocol and Java worker now exist with contract, lease, credit, malformed-frame, retry, and local/remote integration tests. There is no packaged polyglot conformance runner yet. | Publish descriptor fixtures, cancellation and lease-loss cases, golden outcomes, and generated client examples. SDKs remain optional conveniences. |
-| Health-linked worker ramp and backpressure | **Partial on branch.** Workers grant explicit demand and the coordinator never exceeds it. Demand is not yet derived from directory health or observed worker capacity. | Feed permits from real available capacity. Health loss stops new leases before connection loss; recovery ramps under an explicit ceiling. |
-| Live directory watches for compilers and consoles | **Missing as a mounted service.** | Provide snapshot plus ordered changes, resume cursors, fencing, and a clear resync response when history is unavailable. |
+| Health-linked worker ramp and backpressure | **Implemented on branch.** Explicit demand is bounded by live directory capacity and local pressure. Directory health loss stops new leases before connection loss while accepted work remains durably owned. | Measure fleet ramp and dispatch latency under load before adding adaptive policy. |
+| Live directory watches for compilers and consoles | **Implemented on branch.** The watch starts with an exact unfiltered snapshot, continues with ordered tail events, resumes from a generation and sequence cursor, names compaction resync, and evicts bounded slow consumers. | Add authorization-aware filtered projections while preserving unfiltered snapshot identity. |
 
 ### 4. Durable channels, claim checks, and retention
 
 | Reference behavior | ProtoMolt state | ProtoMolt landing |
 |---|---|---|
-| Large payloads externalized while channels carry a small pointer | **Partial.** The repository claim-check pattern and S3 facilities exist, but the general pipeline does not use them. | Add a `PayloadStore` SPI with digest-verified put/get/delete, namespace isolation, leases, and retention. The envelope carries the immutable reference. |
-| Durable per-destination staging | **Partial on branch.** The file channel stages exact `ProcessorWork` protobuf records under deterministic delivery IDs, forces every transition, validates sequence and CRC32C on recovery, truncates only a torn final frame, and refuses a second writer. | Generalize the declared guarantees to broker or outbox adapters and retain the one-copy payload rule. |
-| Transactional outbox between state and broker publication | **Partial.** Repository and jobs contain outbox patterns. | Extract and reuse the pattern for workflow version events, run events, claim-check state, and durable channel handoff. |
-| Deferred acknowledgement over a descendant set | **Partial on branch with durable recovery.** Flow execution defers settlement, persists completed-but-unsettled descendants, restores remote settlement handles after restart, and commits in reverse dependency order. It does not yet model a general expected descendant set for aggregators or claim-check retention. | Store the expected terminal set and payload leases, then fold idempotent completion events under the declared completion policy. |
-| Per-namespace storage isolation and bring-your-own storage | **Missing as a general product capability.** | Resolve a storage profile from authorization context. Credentials stay outside workflow definitions and message envelopes. |
-| Partial artifact reads and writes | **Partial.** Archive renditions and field masks provide related primitives. | Model arbitrary named artifacts with content address, media type, schema identity, writers, and read mask. Do not copy the fixed four-part document layout. |
-| Reconciliation for broker/object-store/database splits | **Missing as a shared subsystem.** | Provide report-only scans first, then age-guarded repair. Never delete a possible live orphan solely because one store is unavailable. |
+| Large payloads externalized while channels carry a small pointer | **Implemented on branch.** The general runtime uses a transport-neutral `PayloadStore`, immutable content identity, range reads, namespace-scoped leases, and separate deletion eligibility and purge. Hydration independently verifies type, descriptor fingerprint, length, and SHA-256 before parsing. | Add production object-store profiles behind the same service contract as deployment needs require. |
+| Durable per-destination staging | **Implemented on branch.** Compiled edge policy routes to bounded memory, the forced CRC32C protobuf WAL, or transactional PostgreSQL state and outbox. Deterministic delivery IDs and one-copy claim checks remain transport independent. | Add a broker consumer adapter only through the existing state-machine conformance suite. |
+| Transactional outbox between state and broker publication | **Implemented on branch for processor channels.** One PostgreSQL transaction commits state and protobuf outbox bytes; a bounded lease relay publishes under the stable event UUID idempotency key and settles or releases the row. PostgreSQL advisory locking fences a second writer. | Measure write amplification and recovery lag with the production broker before expanding its use. |
+| Deferred acknowledgement over a descendant set | **Implemented on branch with durable recovery.** Flow execution persists completed-but-unsettled descendants and one lease owner per edge and message, restores them after restart, and releases a shared payload only after the last owner settles. | Generalize the terminal set when aggregators add explicit barriers. |
+| Per-namespace storage isolation and bring-your-own storage | **Partial on branch.** Payload identity and service operations are namespace-scoped and flows name immutable store profiles; product composition currently resolves one repository-backed profile. | Resolve authorized tenant-specific profiles without placing credentials in workflow definitions or envelopes. |
+| Partial artifact reads and writes | **Implemented on branch for payload reads.** `PayloadStore` supports bounded ranges with digest and length metadata over arbitrary protobuf payload bytes. | Add multipart writes only if measurements show full puts are the bottleneck. |
+| Reconciliation for broker/object-store/database splits | **Implemented on branch for channel and payload evidence.** Recovery RPCs report classifications first, return `UNKNOWN` when a store is unavailable, and permit repair only behind an explicit age cutoff. | Add broker and sink evidence adapters before enabling repair in those deployments. |
 | Tombstone followed by asynchronous purge | **Partial.** Individual document and search paths have deletion behavior. | Define deletion as a run-wide event with monotonic version, idempotent sinks, retention holds, and purge evidence. |
-| Retention tied to downstream settlement | **Missing for payloads.** The branch proves the settlement boundary for remote work but does not yet attach claim-check retention to it. | A claim check is eligible only after all required consumers settle and the retention policy expires. |
+| Retention tied to downstream settlement | **Implemented on branch.** Edge-specific owners and descendant frontiers survive restart. Releasing one of multiple owners cannot make the artifact eligible; legal hold and retention remain explicit gates before physical purge. | Integrate sink receipts as additional required owners for materialized outputs. |
 | Indexing receipts and replay queries | **Partial.** ProtoMolt has signed records and search indexing, but no unified delivery/index ledger. | Project indexing outcomes into the same message history and optionally sign terminal run summaries. |
 
 ### 5. Admission, tenancy, and control plane
@@ -570,8 +579,8 @@ graphs with CEL routes, projections, bounded fan-out, deterministic identities,
 local/remote invocation equivalence, retained outputs, downstream settlement,
 and one ordered `FlowHistory` contract.
 
-The compiled executor now has a durable lifecycle described below. Aggregation
-and a product role backed by live processor discovery remain open.
+The compiled executor now has a durable lifecycle and a product role backed by
+live processor discovery. Aggregation remains open.
 
 ### Implemented foundation: demand-driven remote execution
 
@@ -581,9 +590,9 @@ file-backed channel forces CRC32C-protected protobuf WAL records, validates
 recovery, refuses a second writer, redispatches expired work, and keeps worker
 completion separate from downstream settlement.
 
-The worker stream is not yet a processor directory. Heartbeats, health,
-draining, worker-side cancellation, dynamic capacity, placement, claim checks,
-and dead letters remain open.
+The original transport-only stream is now composed with the directory and
+recovery stack below. Its standalone constructors remain useful for focused
+transport tests, but product composition does not use permissive admission.
 
 ### Implemented foundation: durable workflow and run lifecycle
 
@@ -599,55 +608,67 @@ start, resume, get, cursor-based history, cancellation, and selected-frontier
 replay. Tests cover WAL round trip, torn-tail repair, checksum and second-writer
 refusal, restart from an active invocation, persistent cancellation, the
 descendant-settlement cancellation boundary, replay pinned across redeployment,
-history pagination, and named RPC statuses. The service is composable by a
-host; product-role mounting waits for directory-backed processor resolution.
+history pagination, and named RPC statuses. `apps/serve` mounts it beside the
+directory, worker, payload, recovery, and component-health services.
 
 Internal processing and persistence remain protobuf binary. JSON is permitted
 only as an eventual REST or human-interface rendering.
 
-### Increment 5: cluster-backed processor directory and worker control
+### Implemented on branch: cluster-backed processor directory and worker control
 
 Detailed implementation plan:
 [cluster processor directory and worker control](../plans/cluster-processor-directory-and-worker-control.md).
 
-- Mount the current cluster reducer as a fenced, watchable processor-directory
-  service with snapshot, ordered changes, cursors, and named resync refusal.
-- Advertise exact processor contracts plus immutable artifacts, incarnation,
-  health, capacity, locality, hardware requirements, and draining state.
-- Resolve remote placement through that directory and add heartbeat,
-  cancellation, lease renewal, drain, and live capacity changes to the worker
-  stream.
-- Derive worker demand from real available capacity and stop new claims before
-  an unhealthy worker loses its connection.
-- Publish a transport-neutral conformance kit that pins output, outcome,
-  history, cancellation, stale-fence, and settlement equality against local
-  execution.
+- `ClusterDirectoryGrpcService` implements the unary mutations and bounded
+  snapshot-plus-tail watch over the same persistent reducer as the action
+  catalog. Cursors carry generation and sequence; compaction emits a named
+  resync frame and slow watchers are evicted without blocking mutation.
+- One canonical `ProcessorContract` binds directory advertisement, worker
+  hello, lease epoch, and fingerprint. Product admission requires the exact
+  active node, endpoint, processor lease, contract, and readiness overlay.
+- The worker stream carries heartbeat, capacity, drain progress, cancellation,
+  and session fences. Reconnect retains only idempotent claims within the exact
+  admitted grace; stale or replaced incarnations release ownership.
+- Dispatch is bounded by explicit credit, node and processor free capacity,
+  local pressure, and coordinator ceiling. `SUSPECT`, `DRAINING`, expired, or
+  unready instances receive no new claim.
+- Component health separately reports directory persistence, watch freshness,
+  worker readiness, and processor-channel availability.
 
-Exit gate: worker replacement, duplicate identity, health loss, directory
-restart, cursor expiry, capacity reduction, and drain all preserve exact
-placement and delivery semantics without losing or double-committing work.
+Focused tests cover worker replacement and reconnect fences, duplicate
+identity, health loss, persistence outage, replay and compaction, cursor
+resumption, zero and effective capacity, cancellation, and drain. Local and
+directory-admitted remote execution retain byte-identical outputs and
+settlement semantics.
 
-### Increment 6: channel, claim-check, dead-letter, and replay recovery
+### Implemented on branch: channel, claim-check, dead-letter, and replay recovery
 
 Detailed implementation plan:
 [channel, claim-check, dead-letter, and replay recovery](../plans/channel-claim-check-dead-letter-replay-recovery.md).
 
-- Add declared channel guarantees, a bounded-memory adapter, and one
-  transactional outbox or broker adapter beside the existing protobuf WAL.
-- Add a digest-verified, namespace-isolated `PayloadStore` for claim checks and
-  tie retention to descendant settlement.
-- Replace the retryable boolean with the complete typed outcome vocabulary:
-  retryable, permanent, skipped, abandoned, and cancelled, with structured
-  retry advice and settlement effect.
-- Persist expected descendant sets, dead-letter records, retry schedules,
-  idempotent receiver state, and selected replay frontiers.
-- Add report-first reconciliation for channel, payload, history, and sink state
-  before any age-guarded repair.
+- `ChannelPolicy` is fingerprinted into the compiled flow and selects bounded
+  memory, local WAL, or transactional PostgreSQL. Named spill, persistence
+  prohibition, attempts, retry, dead-letter, ordering, concurrency, payload,
+  retention, and completion rules are compile-time contracts.
+- The adapters share protobuf work, outcomes, and state-machine fixtures. WAL
+  restart preserves retry time and dead-letter attempts. PostgreSQL commits
+  state plus outbox atomically and uses a bounded, leased relay with stable
+  broker idempotency keys and one-writer fencing.
+- The payload SPI and gRPC service implement immutable put/get/head, bounded
+  range reads, leases, deletion eligibility, and purge. Repository and memory
+  adapters share digest, length, type, descriptor, namespace, and hold checks.
+- Flow checkpoints persist edge-specific payload owners and descendants.
+  Claim-checked input survives suspension, process restart, and selected
+  replay; multiple edges cannot release a shared artifact early.
+- Retry schedules, typed outcomes, attempt history, terminal dead-letter
+  records, retention status, and replay provenance are durable. Recovery RPCs
+  list/read records, cancel retry, retain/acknowledge, reconcile, and delegate
+  replay to `DurableFlowCoordinator.replay` exactly once.
 
-Exit gate: kill the coordinator, worker, broker connection, and payload store at
-every ownership transition. Accepted work is neither lost nor committed twice;
-payloads are not reclaimed early; poison work is inspectable and replayable
-under the original exact identities.
+Focused restart, corruption, duplicate, lease, cancellation, relay, payload,
+dead-letter, replay, and age-guard tests pin one durable owner, byte-idempotent
+completion, no early payload reclamation, and named refusal when exact source
+identity or evidence is unavailable.
 
 ### Increment 7: QUIC Layer 0 adapter
 
@@ -702,22 +723,22 @@ broker access from the browser.
 
 If only three feature branches are started now, they should be:
 
-1. **Cluster-backed processor directory and worker control.** Connect placement
-   to fenced advertisements, health, capacity, locality, heartbeat, drain, and
-   cancellation while keeping local and remote results identical. Follow the
-   [detailed plan](../plans/cluster-processor-directory-and-worker-control.md).
-2. **Channel, claim-check, dead-letter, and replay recovery.** Add declared
-   channel guarantees, payload retention, complete typed outcomes, poison-work
-   isolation, durable descendant settlement, and crash-tested replay. Follow
-   the [detailed plan](../plans/channel-claim-check-dead-letter-replay-recovery.md).
-3. **QUIC Layer 0 adapter.** Implement the vendor-neutral draft's state machine,
+1. **QUIC Layer 0 adapter.** Implement the vendor-neutral draft's state machine,
    CBOR/CDDL conformance, credit windows, cursor resume, checkpoint blocking,
    heartbeat, graceful shutdown, and security limits over the same processor
    and settlement semantics already proven by gRPC.
+2. **Operational source control and synchronization.** Land one source-run API,
+   close the object-store snapshot/live race durably, and add JDBC snapshot plus
+   acknowledged PostgreSQL CDC. Source checkpoints advance only after durable
+   runtime acceptance.
+3. **Search materialization lifecycle.** Bind `protomolt-search` through an
+   exact provider contract, immutable materialization revisions, indexing
+   receipts, stale-delete fencing, large-k streaming retrieval, and typed
+   rerank corrections.
 
-Operational sources and search materialization follow these three. At that
-point every source, parser, embedding provider, and search sink can run over a
-restart-safe runtime with two interchangeable remote transports.
+The operator application follows these three and projects its recovery center,
+processor directory, run observatory, connector control, and search workbench
+from the durable contracts rather than inventing browser-only state.
 
 ## Acceptance matrix
 
@@ -832,11 +853,13 @@ advantage is that descriptors, mapping, validation, providers, multiple API
 surfaces, and deployment roles already exist. The shortest path is to make
 those components the compiler and endpoints of one executable message runtime.
 
-The local runtime branch now proves the compiler, execution, and durable
-lifecycle foundation. The immediate work is no longer basic descriptor
-projection, a first remote call, or run persistence. It is to connect workers
-to the live cluster directory, complete channel and claim-check recovery, and
-then add QUIC as a second transport over the same proven semantics.
+The local runtime branch now proves the compiler, execution, durable lifecycle,
+cluster-backed worker control, and channel recovery foundation. The immediate
+work is no longer basic descriptor projection, a first remote call, run
+persistence, claim-check plumbing, dead-letter storage, or a second replay
+executor. It is to add QUIC as a conformance target, connect operational sources
+to durable acceptance, and bind search materialization receipts and deletion to
+the same descendant-settlement model.
 
 The architectural decisions are:
 

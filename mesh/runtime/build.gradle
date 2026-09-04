@@ -10,7 +10,10 @@ dependencies {
     api libs.grpc.api
     api libs.grpc.stub
     api libs.grpc.protobuf
+    api project(':protomolt-mesh-runtime-proto')
     api project(':protomolt-mesh-contracts')
+    api project(':protomolt-mesh-cluster')
+    implementation project(':protomolt-repo-proto')
     api project(':protomolt-projection')
     implementation project(':protomolt-mapper-cel')
     implementation project(':protomolt-shapes')
@@ -20,6 +23,10 @@ dependencies {
 
     compileOnly libs.javax.annotation.api
     testImplementation libs.grpc.inprocess
+    testImplementation libs.postgresql
+    testImplementation libs.testcontainers.junit.jupiter
+    testImplementation libs.testcontainers.postgresql
+    protobuf project(':protomolt-mesh-runtime-proto')
 }
 
 protobuf {

@@ -47,6 +47,7 @@ public final class DurableFlowCoordinator {
     private final FlowCompiler compiler;
     private final FlowLifecycleStore store;
     private final PayloadResolver payloads;
+    private final PayloadLifecycle payloadLifecycle;
     private final Clock clock;
     private final Map<String, Thread> activeRuns = new HashMap<>();
 
@@ -55,7 +56,8 @@ public final class DurableFlowCoordinator {
             ProcessorRegistry processors,
             FlowLifecycleStore store) {
         this(descriptors, processors, store,
-                PayloadResolver.inlineOnly(descriptors), Clock.systemUTC());
+                PayloadResolver.inlineOnly(descriptors), PayloadLifecycle.inlineOnly(),
+                Clock.systemUTC());
     }
 
     public DurableFlowCoordinator(
@@ -64,11 +66,36 @@ public final class DurableFlowCoordinator {
             FlowLifecycleStore store,
             PayloadResolver payloads,
             Clock clock) {
+        this(descriptors, processors, store, payloads,
+                PayloadLifecycle.inlineOnly(), clock);
+    }
+
+    public DurableFlowCoordinator(
+            DescriptorRegistry descriptors,
+            ProcessorRegistry processors,
+            FlowLifecycleStore store,
+            PayloadResolver payloads,
+            PayloadLifecycle payloadLifecycle,
+            Clock clock) {
+        this(descriptors, processors, store, payloads, payloadLifecycle,
+                ChannelResourceCatalog.builtIns(), clock);
+    }
+
+    public DurableFlowCoordinator(
+            DescriptorRegistry descriptors,
+            ProcessorRegistry processors,
+            FlowLifecycleStore store,
+            PayloadResolver payloads,
+            PayloadLifecycle payloadLifecycle,
+            ChannelResourceCatalog channelResources,
+            Clock clock) {
         this.descriptors = Objects.requireNonNull(descriptors, "descriptors");
         this.compiler = new FlowCompiler(descriptors,
-                Objects.requireNonNull(processors, "processors"));
+                Objects.requireNonNull(processors, "processors"),
+                Objects.requireNonNull(channelResources, "channelResources"));
         this.store = Objects.requireNonNull(store, "store");
         this.payloads = Objects.requireNonNull(payloads, "payloads");
+        this.payloadLifecycle = Objects.requireNonNull(payloadLifecycle, "payloadLifecycle");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
@@ -283,7 +310,7 @@ public final class DurableFlowCoordinator {
         DurableFlowRun source = requireRun(sourceRunId);
         PublishedFlowVersion published = requirePublished(
                 source.getWorkflowName(), source.getWorkflowVersion());
-        compiler.restore(published.getPlan());
+        CompiledDirectedFlow compiled = compiler.restore(published.getPlan());
         List<HistoryEvent> frontier = resolveFrontier(source, frontierSequences);
         Instant now = clock.instant();
         Instant deadline = deadline(published.getPlan().getDefinition(), now);
@@ -297,20 +324,47 @@ public final class DurableFlowCoordinator {
         history.addEvents(baseEvent(1, now,
                 HistoryEventKind.HISTORY_EVENT_KIND_RUN_STARTED));
         history.addEvents(baseEvent(2, now,
+                HistoryEventKind.HISTORY_EVENT_KIND_REPLAY_REQUESTED));
+        history.addEvents(baseEvent(3, now,
                 HistoryEventKind.HISTORY_EVENT_KIND_REPLAY_STARTED));
         FlowExecutionCheckpoint.Builder checkpoint = FlowExecutionCheckpoint.newBuilder()
                 .setDeadline(timestamp(deadline));
-        long sequence = 2;
+        long sequence = 3;
         for (int index = 0; index < frontier.size(); index++) {
             HistoryEvent original = frontier.get(index);
             EntityEnvelope replayed = EntityEnvelopes.replayRoot(
                     runId, frontierSequences.get(index), original.getMessage(), now, deadline);
+            boolean existingClaimCheck = replayed.hasClaimCheck();
+            CompiledDirectedFlow.EdgeBinding edge = compiled.edge(original.getEdgeId());
+            PayloadExternalizer.Externalized staged = payloadLifecycle.stage(
+                    replayed, edge.channelPolicy(), replayed.getHeader().getScopeId(),
+                    "flow:" + runId + ":" + original.getEdgeId() + ":"
+                            + replayed.getHeader().getEntityId(),
+                    deadline);
+            replayed = staged.envelope();
+            if (staged.lease() != null) {
+                checkpoint.addPayloadLeases(staged.lease());
+                history.addEvents(HistoryEvent.newBuilder()
+                        .setSequence(++sequence)
+                        .setOccurredAt(timestamp(now))
+                        .setKind(existingClaimCheck
+                                ? HistoryEventKind.HISTORY_EVENT_KIND_PAYLOAD_RETAINED
+                                : HistoryEventKind.HISTORY_EVENT_KIND_PAYLOAD_EXTERNALIZED)
+                        .setNodeId(original.getNodeId())
+                        .setProcessorId(original.getProcessorId())
+                        .setEdgeId(original.getEdgeId())
+                        .setMessageId(replayed.getHeader().getEntityId())
+                        .setSchema(replayed.getSchema())
+                        .setMessage(replayed));
+            }
+            long replaySequence = ++sequence;
             checkpoint.addPending(PendingFlowMessage.newBuilder()
                     .setNodeId(original.getNodeId())
                     .setEdgeId(original.getEdgeId())
-                    .setInput(replayed));
+                    .setInput(replayed)
+                    .setSourceHistorySequence(replaySequence));
             history.addEvents(HistoryEvent.newBuilder()
-                    .setSequence(++sequence)
+                    .setSequence(replaySequence)
                     .setOccurredAt(timestamp(now))
                     .setKind(HistoryEventKind.HISTORY_EVENT_KIND_MESSAGE_ROUTED)
                     .setNodeId(original.getNodeId())
@@ -381,7 +435,9 @@ public final class DurableFlowCoordinator {
             CompiledDirectedFlow flow = compiler.restore(published.getPlan());
             StoreRunControl control = new StoreRunControl(current);
             try {
-                new FlowRuntime(descriptors, payloads, clock).resume(
+                new FlowRuntime(descriptors, payloads, clock,
+                        new FlowRunMetadata(current.getWorkflowVersion(),
+                                current.getDeploymentRevision()), payloadLifecycle).resume(
                         flow, current.getInput(), current.getRunId(),
                         current.getHistory(), current.getCheckpoint(), control);
             } catch (FlowCancellationException | FlowExecutionException terminal) {

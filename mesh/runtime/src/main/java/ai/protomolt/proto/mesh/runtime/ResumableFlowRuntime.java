@@ -12,6 +12,7 @@ import ai.protomolt.proto.mesh.runtime.v1.FlowHistory;
 import ai.protomolt.proto.mesh.runtime.v1.HistoryEventKind;
 import ai.protomolt.proto.mesh.runtime.v1.PendingFlowMessage;
 import ai.protomolt.proto.mesh.runtime.v1.PendingFlowSettlement;
+import ai.protomolt.proto.mesh.runtime.v1.PayloadLeaseFrontier;
 import ai.protomolt.proto.mesh.runtime.v1.ProcessorContract;
 import ai.protomolt.proto.mesh.runtime.v1.TypedPayload;
 import ai.protomolt.proto.mesh.v1.EntityEnvelope;
@@ -38,14 +39,20 @@ final class ResumableFlowRuntime {
     private final PayloadResolver payloads;
     private final MeshGate gate;
     private final Clock clock;
+    private final FlowRunMetadata runMetadata;
+    private final PayloadLifecycle payloadLifecycle;
 
     ResumableFlowRuntime(
             DescriptorRegistry descriptors,
             PayloadResolver payloads,
-            Clock clock) {
+            Clock clock,
+            FlowRunMetadata runMetadata,
+            PayloadLifecycle payloadLifecycle) {
         this.descriptors = Objects.requireNonNull(descriptors, "descriptors");
         this.payloads = Objects.requireNonNull(payloads, "payloads");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.runMetadata = Objects.requireNonNull(runMetadata, "runMetadata");
+        this.payloadLifecycle = Objects.requireNonNull(payloadLifecycle, "payloadLifecycle");
         this.gate = new MeshGate(descriptors);
     }
 
@@ -69,11 +76,12 @@ final class ResumableFlowRuntime {
         Deque<Pending> pending = new ArrayDeque<>();
         Deque<PendingSettlement> settlements = new ArrayDeque<>();
         List<EntityEnvelope> outputs = new ArrayList<>();
+        List<PayloadLeaseFrontier> payloadLeases = new ArrayList<>();
         Set<String> messageIds = new HashSet<>();
         long invocationOrdinal = 0;
         boolean settlementStarted = false;
         Active active = null;
-        Instant deadline;
+        Instant deadline = null;
 
         try {
             if (resumed) {
@@ -87,6 +95,8 @@ final class ResumableFlowRuntime {
                 deadline = RemoteValidation.instant(checkpoint.getDeadline());
                 invocationOrdinal = checkpoint.getNextInvocationOrdinal();
                 settlementStarted = checkpoint.getSettlementStarted();
+                payloadLeases.addAll(checkpoint.getPayloadLeasesList());
+                payloadLeases.forEach(payloadLifecycle::restore);
                 checkpoint.getPendingList().forEach(value -> pending.addLast(fromProto(value)));
                 if (checkpoint.hasActive()) {
                     ActiveFlowInvocation value = checkpoint.getActive();
@@ -114,17 +124,17 @@ final class ResumableFlowRuntime {
                 history.event(HistoryEventKind.HISTORY_EVENT_KIND_MESSAGE_ACCEPTED,
                         "", "", "", "", "", input);
                 route(flow, CompiledDirectedFlow.INPUT, input, runId, deadline,
-                        pending, messageIds, history);
+                        pending, messageIds, payloadLeases, history);
                 checkpoint(control, history, pending, null, settlements,
-                        invocationOrdinal, deadline, false);
+                        payloadLeases, invocationOrdinal, deadline, false);
             }
 
             checkCancellation(control, history, pending, active, settlements,
-                    invocationOrdinal, deadline);
+                    payloadLeases, invocationOrdinal, deadline);
             while (active != null || !pending.isEmpty()) {
                 requireBeforeDeadline(deadline);
                 checkCancellation(control, history, pending, active, settlements,
-                        invocationOrdinal, deadline);
+                        payloadLeases, invocationOrdinal, deadline);
                 if (active == null) {
                     Pending next = pending.removeFirst();
                     invocationOrdinal++;
@@ -137,7 +147,7 @@ final class ResumableFlowRuntime {
                             next.nodeId(), node.definition().getProcessorId(),
                             next.edgeId(), invocationId, "", next.input());
                     checkpoint(control, history, pending, active, settlements,
-                            invocationOrdinal, deadline, false);
+                            payloadLeases, invocationOrdinal, deadline, false);
                 }
 
                 Pending next = active.pending();
@@ -146,18 +156,44 @@ final class ResumableFlowRuntime {
                 requireSchema("node " + next.nodeId() + " input",
                         node.definition().getInputSchema(), next.input().getSchema());
                 DynamicMessage inputMessage = resolvePayload(next.input());
+                if (next.input().hasClaimCheck()) {
+                    history.event(HistoryEventKind.HISTORY_EVENT_KIND_PAYLOAD_HYDRATED,
+                            next.nodeId(), node.definition().getProcessorId(),
+                            next.edgeId(), active.invocationId(), "", next.input());
+                    checkpoint(control, history, pending, active, settlements,
+                            payloadLeases, invocationOrdinal, deadline, false);
+                }
+                EdgeBinding incoming = flow.edge(next.edgeId());
                 ProcessorContext context = new ProcessorContext(
                         runId, next.nodeId(), active.invocationId(),
-                        active.invocationOrdinal(), deadline);
+                        active.invocationOrdinal(), deadline, ProcessorCancellation.none(),
+                        new ProcessorContext.WorkRecoveryIdentity(
+                                flow.plan().getDefinition().getName(),
+                                runMetadata.workflowVersion(),
+                                flow.plan().getPlanFingerprint(),
+                                runMetadata.deploymentRevision(),
+                                next.edgeId(), incoming.definition().getChannelPolicyId(),
+                                next.sourceHistorySequence(),
+                                next.input().getHeader().getScopeId(),
+                                incoming.channelPolicy().getRetentionPolicyReference(),
+                                incoming.channelPolicy().getLegalHoldPolicyReference(),
+                                incoming.channelPolicy().getPayloadStoreProfile(),
+                                incoming.channelPolicy(),
+                                incoming.channelPolicy().getDurableSpillPolicyId().isBlank()
+                                        ? ai.protomolt.proto.mesh.runtime.v1.ChannelPolicy
+                                                .getDefaultInstance()
+                                        : flow.channelPolicy(incoming.channelPolicy()
+                                                .getDurableSpillPolicyId())));
                 ProcessorInvocationResult result = node.invoker().invoke(
                         new ProcessorInvocation(context, next.input(), inputMessage));
                 PendingSettlement settlement = new PendingSettlement(
                         next.nodeId(), node.definition().getProcessorId(),
-                        active.invocationId(), next.input(), result.settlement());
+                        next.edgeId(), active.invocationId(), next.input(),
+                        result.settlement());
                 settlements.addLast(settlement);
                 validateResult(node.invoker().contract(), result);
                 checkCancellation(control, history, pending, active, settlements,
-                        invocationOrdinal, deadline);
+                        payloadLeases, invocationOrdinal, deadline);
                 history.event(HistoryEventKind.HISTORY_EVENT_KIND_PROCESSOR_COMPLETED,
                         next.nodeId(), node.definition().getProcessorId(),
                         next.edgeId(), active.invocationId(),
@@ -182,21 +218,21 @@ final class ResumableFlowRuntime {
                                 active.invocationId(), result.settlement().deliveryId(), produced);
                     }
                     route(flow, next.nodeId(), produced, runId, deadline,
-                            pending, messageIds, history);
+                            pending, messageIds, payloadLeases, history);
                 }
                 active = null;
                 checkpoint(control, history, pending, null, settlements,
-                        invocationOrdinal, deadline, false);
+                        payloadLeases, invocationOrdinal, deadline, false);
             }
 
             // Cancellation is accepted before settlement begins. Once the first
             // descendant commit starts, completion runs to the terminal record.
             checkCancellation(control, history, pending, null, settlements,
-                    invocationOrdinal, deadline);
+                    payloadLeases, invocationOrdinal, deadline);
             if (!settlements.isEmpty()
                     && !settlementStarted) {
                 checkpoint(control, history, pending, null, settlements,
-                        invocationOrdinal, deadline, true);
+                        payloadLeases, invocationOrdinal, deadline, true);
                 settlementStarted = true;
             }
             while (!settlements.isEmpty()) {
@@ -204,11 +240,17 @@ final class ResumableFlowRuntime {
                 settlement.settlement().settle();
                 settlements.removeLast();
                 history.event(HistoryEventKind.HISTORY_EVENT_KIND_DOWNSTREAM_SETTLED,
-                        settlement.nodeId(), settlement.processorId(), "",
+                        settlement.nodeId(), settlement.processorId(), settlement.edgeId(),
                         settlement.invocationId(), settlement.settlement().deliveryId(),
                         settlement.input());
+                settlePayloadDescendant(payloadLeases, settlement, runId, history);
                 checkpoint(control, history, pending, null, settlements,
-                        invocationOrdinal, deadline, true);
+                        payloadLeases, invocationOrdinal, deadline, true);
+            }
+            if (!payloadLeases.isEmpty()) {
+                throw new IllegalStateException(
+                        "payload-descendant-unsettled: completed work still owns "
+                                + payloadLeases.size() + " payload leases");
             }
             history.event(HistoryEventKind.HISTORY_EVENT_KIND_RUN_COMPLETED,
                     "", "", "", "", "", null);
@@ -226,13 +268,14 @@ final class ResumableFlowRuntime {
             if (cancellation.requested()) {
                 history.reset(cancellation.durableHistory());
                 cancel(settlements, cancellation.reason());
+                releasePayloadLeases(payloadLeases, history);
                 FlowHistory cancelled = history.cancel(cancellation.reason());
                 control.checkpoint(cancelled, FlowExecutionCheckpoint.getDefaultInstance());
                 throw new FlowCancellationException(cancellation.reason(), cancelled);
             }
             release(settlements, failure);
             FlowHistory failed = history.fail(failure);
-            control.checkpoint(failed, FlowExecutionCheckpoint.getDefaultInstance());
+            control.checkpoint(failed, terminalPayloadCheckpoint(payloadLeases, deadline));
             if (failure instanceof Error error) {
                 throw error;
             }
@@ -250,6 +293,7 @@ final class ResumableFlowRuntime {
             Instant deadline,
             Deque<Pending> pending,
             Set<String> messageIds,
+            List<PayloadLeaseFrontier> payloadLeases,
             HistoryRecorder history) {
         DynamicMessage sourceMessage = null;
         for (EdgeBinding edge : flow.edgesFrom(source)) {
@@ -290,12 +334,27 @@ final class ResumableFlowRuntime {
                 account(delivered, messageIds, flow);
             }
             requireBeforeDeadline(deadline);
-            pending.addLast(new Pending(
-                    edge.target(), edge.definition().getEdgeId(), delivered));
-            history.event(HistoryEventKind.HISTORY_EVENT_KIND_MESSAGE_ROUTED,
+            PayloadExternalizer.Externalized staged = payloadLifecycle.stage(
+                    delivered, edge.channelPolicy(),
+                    delivered.getHeader().getScopeId(),
+                    "flow:" + runId + ":" + edge.definition().getEdgeId() + ":"
+                            + delivered.getHeader().getEntityId(),
+                    deadline);
+            delivered = staged.envelope();
+            if (staged.lease() != null) {
+                payloadLeases.add(staged.lease());
+                history.event(HistoryEventKind.HISTORY_EVENT_KIND_PAYLOAD_EXTERNALIZED,
+                        edge.target(), flow.nodes().get(edge.target())
+                                .definition().getProcessorId(),
+                        edge.definition().getEdgeId(), "", "", delivered);
+            }
+            long sourceSequence = history.event(
+                    HistoryEventKind.HISTORY_EVENT_KIND_MESSAGE_ROUTED,
                     edge.target(), flow.nodes().get(edge.target())
                             .definition().getProcessorId(),
                     edge.definition().getEdgeId(), "", "", delivered);
+            pending.addLast(new Pending(
+                    edge.target(), edge.definition().getEdgeId(), delivered, sourceSequence));
         }
     }
 
@@ -305,6 +364,7 @@ final class ResumableFlowRuntime {
             Deque<Pending> pending,
             Active active,
             Deque<PendingSettlement> settlements,
+            List<PayloadLeaseFrontier> payloadLeases,
             long invocationOrdinal,
             Instant deadline) {
         FlowRunControl.Cancellation cancellation = control.cancellation();
@@ -313,6 +373,7 @@ final class ResumableFlowRuntime {
         }
         history.reset(cancellation.durableHistory());
         cancel(settlements, cancellation.reason());
+        releasePayloadLeases(payloadLeases, history);
         FlowHistory cancelled = history.cancel(cancellation.reason());
         control.checkpoint(cancelled, FlowExecutionCheckpoint.getDefaultInstance());
         throw new FlowCancellationException(cancellation.reason(), cancelled);
@@ -324,6 +385,7 @@ final class ResumableFlowRuntime {
             Deque<Pending> pending,
             Active active,
             Deque<PendingSettlement> settlements,
+            List<PayloadLeaseFrontier> payloadLeases,
             long invocationOrdinal,
             Instant deadline,
             boolean settlementStarted) {
@@ -341,7 +403,66 @@ final class ResumableFlowRuntime {
         }
         settlements.stream().map(ResumableFlowRuntime::toProto)
                 .forEach(checkpoint::addSettlements);
+        checkpoint.addAllPayloadLeases(payloadLeases);
         control.checkpoint(history.current(), checkpoint.build());
+    }
+
+    private void settlePayloadDescendant(
+            List<PayloadLeaseFrontier> payloadLeases,
+            PendingSettlement settlement,
+            String runId,
+            HistoryRecorder history) {
+        String messageId = settlement.input().getHeader().getEntityId();
+        String ownerId = "flow:" + runId + ":" + settlement.edgeId() + ":" + messageId;
+        boolean matched = false;
+        for (int index = payloadLeases.size() - 1; index >= 0; index--) {
+            PayloadLeaseFrontier current = payloadLeases.get(index);
+            if (!current.getOwnerId().equals(ownerId)
+                    || !current.getDescendantMessageIdsList().contains(messageId)) {
+                continue;
+            }
+            matched = true;
+            PayloadLeaseFrontier.Builder remaining = current.toBuilder()
+                    .clearDescendantMessageIds();
+            current.getDescendantMessageIdsList().stream()
+                    .filter(descendant -> !descendant.equals(messageId))
+                    .forEach(remaining::addDescendantMessageIds);
+            if (remaining.getDescendantMessageIdsCount() == 0) {
+                payloadLifecycle.settle(current);
+                payloadLeases.remove(index);
+                history.event(HistoryEventKind.HISTORY_EVENT_KIND_PAYLOAD_RETAINED,
+                        settlement.nodeId(), settlement.processorId(), settlement.edgeId(),
+                        settlement.invocationId(), settlement.settlement().deliveryId(),
+                        settlement.input());
+            } else {
+                payloadLeases.set(index, remaining.build());
+            }
+        }
+        if (settlement.input().hasClaimCheck() && !matched) {
+            throw new IllegalStateException(
+                    "payload-descendant-lease-missing: no exact lease for edge "
+                            + settlement.edgeId() + " and message " + messageId);
+        }
+    }
+
+    private void releasePayloadLeases(
+            List<PayloadLeaseFrontier> payloadLeases, HistoryRecorder history) {
+        while (!payloadLeases.isEmpty()) {
+            PayloadLeaseFrontier lease = payloadLeases.removeLast();
+            payloadLifecycle.settle(lease);
+            history.event(HistoryEventKind.HISTORY_EVENT_KIND_PAYLOAD_RETAINED,
+                    "", "", "", "", "", null);
+        }
+    }
+
+    private static FlowExecutionCheckpoint terminalPayloadCheckpoint(
+            List<PayloadLeaseFrontier> payloadLeases, Instant deadline) {
+        FlowExecutionCheckpoint.Builder checkpoint = FlowExecutionCheckpoint.newBuilder()
+                .addAllPayloadLeases(payloadLeases);
+        if (deadline != null) {
+            checkpoint.setDeadline(RemoteValidation.timestamp(deadline));
+        }
+        return checkpoint.build();
     }
 
     private static PendingFlowMessage toProto(Pending pending) {
@@ -349,11 +470,13 @@ final class ResumableFlowRuntime {
                 .setNodeId(pending.nodeId())
                 .setEdgeId(pending.edgeId())
                 .setInput(pending.input())
+                .setSourceHistorySequence(pending.sourceHistorySequence())
                 .build();
     }
 
     private static Pending fromProto(PendingFlowMessage pending) {
-        return new Pending(pending.getNodeId(), pending.getEdgeId(), pending.getInput());
+        return new Pending(pending.getNodeId(), pending.getEdgeId(), pending.getInput(),
+                pending.getSourceHistorySequence());
     }
 
     private static PendingFlowSettlement toProto(PendingSettlement settlement) {
@@ -363,6 +486,7 @@ final class ResumableFlowRuntime {
                 .setInvocationId(settlement.invocationId())
                 .setDeliveryId(settlement.settlement().deliveryId())
                 .setInput(settlement.input())
+                .setEdgeId(settlement.edgeId())
                 .build();
     }
 
@@ -376,11 +500,12 @@ final class ResumableFlowRuntime {
                 throw new IllegalArgumentException("settlement processor drift at node "
                         + stored.getNodeId());
             }
+            flow.edge(stored.getEdgeId());
             InvocationSettlement settlement = node.invoker()
                     .recoverSettlement(stored.getDeliveryId());
             settlements.addLast(new PendingSettlement(
-                    stored.getNodeId(), stored.getProcessorId(), stored.getInvocationId(),
-                    stored.getInput(), settlement));
+                    stored.getNodeId(), stored.getProcessorId(), stored.getEdgeId(),
+                    stored.getInvocationId(), stored.getInput(), settlement));
         }
     }
 
@@ -526,7 +651,11 @@ final class ResumableFlowRuntime {
         }
     }
 
-    private record Pending(String nodeId, String edgeId, EntityEnvelope input) {
+    private record Pending(
+            String nodeId,
+            String edgeId,
+            EntityEnvelope input,
+            long sourceHistorySequence) {
     }
 
     private record Active(Pending pending, long invocationOrdinal, String invocationId) {
@@ -535,6 +664,7 @@ final class ResumableFlowRuntime {
     private record PendingSettlement(
             String nodeId,
             String processorId,
+            String edgeId,
             String invocationId,
             EntityEnvelope input,
             InvocationSettlement settlement) {

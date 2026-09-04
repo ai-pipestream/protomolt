@@ -161,6 +161,7 @@ class FlowLifecycleGrpcServiceTest {
             });
             definition = FlowDefinition.newBuilder()
                     .setName("grpc-flow")
+                    .addChannelPolicies(ChannelPolicies.localDurable())
                     .setInputSchema(contract.getInputSchema())
                     .addNodes(ProcessorNode.newBuilder()
                             .setNodeId("echo_node")
@@ -169,6 +170,7 @@ class FlowLifecycleGrpcServiceTest {
                             .addOutputSchemas(contract.getOutputSchemas(0)))
                     .addEdges(FlowEdge.newBuilder()
                             .setEdgeId("to_echo")
+                            .setChannelPolicyId(ChannelPolicies.LOCAL_DURABLE_ID)
                             .setFlowInput(true)
                             .setTargetNode("echo_node")
                             .setSourceSchema(contract.getInputSchema()))

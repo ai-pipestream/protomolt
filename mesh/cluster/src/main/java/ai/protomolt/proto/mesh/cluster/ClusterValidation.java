@@ -2,6 +2,7 @@ package ai.protomolt.proto.mesh.cluster;
 
 import ai.protomolt.proto.mesh.MeshDigest;
 import ai.protomolt.proto.mesh.MeshValidation;
+import ai.protomolt.proto.mesh.ProcessorContracts;
 import ai.protomolt.proto.mesh.cluster.v1.CapacityAdvertisement;
 import ai.protomolt.proto.mesh.cluster.v1.CapabilityDescription;
 import ai.protomolt.proto.mesh.cluster.v1.ClusterDescriptor;
@@ -12,6 +13,7 @@ import ai.protomolt.proto.mesh.cluster.v1.NodeAdvertisement;
 import ai.protomolt.proto.mesh.cluster.v1.NodePresence;
 import ai.protomolt.proto.mesh.cluster.v1.NodeRecord;
 import ai.protomolt.proto.mesh.cluster.v1.ProcessorAdvertisement;
+import ai.protomolt.proto.mesh.cluster.v1.ProcessorReadinessOverlay;
 import ai.protomolt.proto.validate.ProtoValidator;
 import ai.protomolt.proto.validate.ValidationResult;
 import com.google.protobuf.Timestamp;
@@ -87,6 +89,14 @@ public final class ClusterValidation {
                     "advertisement.max_disconnect_grace");
         }
         advertisement.getAcceptedSchemasList().forEach(MeshValidation::validate);
+        require(advertisement.hasContract(), "advertisement.contract is required");
+        var contract = ProcessorContracts.canonical(advertisement.getContract());
+        require(contract.equals(advertisement.getContract()),
+                "advertisement.contract must be canonical and carry its exact fingerprint");
+        require(contract.getProcessorId().equals(advertisement.getProcessorId()),
+                "advertisement.contract.processor_id does not match advertisement.processor_id");
+        require(advertisement.getAcceptedSchemasList().contains(contract.getInputSchema()),
+                "advertisement.accepted_schemas must contain contract.input_schema");
         requireUnique(advertisement.getCapabilityDetailsList(), CapabilityDescription::getName,
                 "advertisement.capability_details.name");
         for (CapabilityDescription detail : advertisement.getCapabilityDetailsList()) {
@@ -107,6 +117,13 @@ public final class ClusterValidation {
         require(snapshot != null, "snapshot must not be null");
         validateTimestamp(snapshot.getObservedAt(), "snapshot.observed_at");
         validateAnnotations(snapshot);
+    }
+
+    /** Validates one administrator readiness overlay. */
+    public static void validate(ProcessorReadinessOverlay readiness) {
+        require(readiness != null, "readiness must not be null");
+        validateTimestamp(readiness.getUpdatedAt(), "readiness.updated_at");
+        validateAnnotations(readiness);
     }
 
     /**
@@ -137,6 +154,7 @@ public final class ClusterValidation {
             case PROCESSOR -> validate(event.getProcessor());
             case PRESENCE -> validate(event.getPresence());
             case CAPACITY -> validate(event.getCapacity());
+            case READINESS -> validate(event.getReadiness());
             case DETAIL_NOT_SET -> {
                 // The message CEL below returns the field-precise contract violation.
             }
@@ -258,6 +276,21 @@ public final class ClusterValidation {
             require(previousCapacityKey == null || previousCapacityKey.compareTo(key) < 0,
                     "snapshot.capacities must be strictly ordered by node_id and processor_id");
             previousCapacityKey = key;
+        }
+        String previousReadiness = null;
+        for (ProcessorReadinessOverlay readiness : snapshot.getReadinessOverlaysList()) {
+            validate(readiness);
+            ProcessorAdvertisement processor = processors.get(readiness.getProcessorId());
+            require(processor != null
+                            && processor.getNodeId().equals(readiness.getNodeId())
+                            && processor.getNodeEpoch() == readiness.getNodeEpoch()
+                            && processor.getLeaseEpoch() == readiness.getProcessorLeaseEpoch(),
+                    "snapshot readiness does not match processor '"
+                            + readiness.getProcessorId() + "'");
+            require(previousReadiness == null
+                            || previousReadiness.compareTo(readiness.getProcessorId()) < 0,
+                    "snapshot.readiness_overlays must be strictly ordered by processor_id");
+            previousReadiness = readiness.getProcessorId();
         }
         validateAnnotations(snapshot);
         String actual = snapshotFingerprint(snapshot);

@@ -3,6 +3,7 @@ package ai.protomolt.proto.serve;
 import ai.protomolt.proto.actions.ActionCatalog;
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.actions.Caller;
+import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.authz.AccessPolicies;
 import ai.protomolt.proto.authz.AccessPolicyCallers;
 import ai.protomolt.proto.authz.CallerResolver;
@@ -323,6 +324,12 @@ public final class ProtoMoltServe implements AutoCloseable {
             String meshClusterName = System.getenv("PROTOMOLT_MESH_CLUSTER_NAME");
             String meshTrustDomain = System.getenv("PROTOMOLT_MESH_TRUST_DOMAIN");
             String meshCreatedAt = System.getenv("PROTOMOLT_MESH_CREATED_AT");
+            String meshStateDirectory = System.getenv("PROTOMOLT_MESH_STATE_DIRECTORY");
+            long meshSweepSeconds = envLong("PROTOMOLT_MESH_SWEEP_SECONDS", 30L);
+            long meshWorkerLeaseSeconds = envLong(
+                    "PROTOMOLT_MESH_WORKER_LEASE_SECONDS", 30L);
+            int meshMaxAttempts = envInt("PROTOMOLT_MESH_MAX_ATTEMPTS", 3);
+            int meshMaxDemand = envInt("PROTOMOLT_MESH_MAX_DEMAND", 10_000);
             if (inferenceModelsEnv != null && !inferenceModelsEnv.isBlank()) {
                 for (String spec : inferenceModelsEnv.split(";")) {
                     if (!spec.isBlank()) {
@@ -366,6 +373,16 @@ public final class ProtoMoltServe implements AutoCloseable {
                     case "--mesh-cluster-name" -> meshClusterName = requireValue(args, ++i);
                     case "--mesh-trust-domain" -> meshTrustDomain = requireValue(args, ++i);
                     case "--mesh-created-at" -> meshCreatedAt = requireValue(args, ++i);
+                    case "--mesh-state-directory" ->
+                            meshStateDirectory = requireValue(args, ++i);
+                    case "--mesh-sweep-seconds" -> meshSweepSeconds = parseLong(
+                            requireValue(args, ++i), "--mesh-sweep-seconds");
+                    case "--mesh-worker-lease-seconds" -> meshWorkerLeaseSeconds = parseLong(
+                            requireValue(args, ++i), "--mesh-worker-lease-seconds");
+                    case "--mesh-max-attempts" -> meshMaxAttempts = parseInt(
+                            requireValue(args, ++i), "--mesh-max-attempts");
+                    case "--mesh-max-demand" -> meshMaxDemand = parseInt(
+                            requireValue(args, ++i), "--mesh-max-demand");
                     case "--service-workspace" ->
                             serviceWorkspace = Path.of(requireValue(args, ++i));
                     case "--workflow-workspace" ->
@@ -413,7 +430,11 @@ public final class ProtoMoltServe implements AutoCloseable {
                                 + "[--delegation-transcript-object <key>] "
                                 + "[--delegation-state-key-ref <ref>]] "
                                 + "[--mesh-cluster-id <id> --mesh-created-at <ISO-8601> "
-                                + "[--mesh-cluster-name <name>] [--mesh-trust-domain <domain>]] "
+                                + "--mesh-state-directory <path> "
+                                + "[--mesh-cluster-name <name>] [--mesh-trust-domain <domain>] "
+                                + "[--mesh-sweep-seconds <n>] "
+                                + "[--mesh-worker-lease-seconds <n>] "
+                                + "[--mesh-max-attempts <n>] [--mesh-max-demand <n>]] "
                                 + "(task console login: PROTOMOLT_TASK_CONSOLE_TOKEN; "
                                 + "session duration: PROTOMOLT_TASK_CONSOLE_SESSION_SECONDS)");
                         System.exit(0);
@@ -491,19 +512,28 @@ public final class ProtoMoltServe implements AutoCloseable {
                             "--mesh-cluster-id requires --mesh-created-at so the durable "
                                     + "cluster fingerprint stays stable across restarts");
                 }
+                if (meshStateDirectory == null || meshStateDirectory.isBlank()) {
+                    throw new IllegalArgumentException(
+                            "--mesh-cluster-id requires --mesh-state-directory so flow, "
+                                    + "channel, and recovery state survive restart");
+                }
                 try {
                     meshCluster = new MeshClusterOptions(meshClusterId,
                             meshClusterName == null || meshClusterName.isBlank()
                                     ? meshClusterId : meshClusterName,
                             meshTrustDomain == null ? "" : meshTrustDomain,
-                            Instant.parse(meshCreatedAt));
+                            Instant.parse(meshCreatedAt), Path.of(meshStateDirectory),
+                            Duration.ofSeconds(meshSweepSeconds),
+                            Duration.ofSeconds(meshWorkerLeaseSeconds),
+                            meshMaxAttempts, meshMaxDemand);
                 } catch (java.time.format.DateTimeParseException e) {
                     throw new IllegalArgumentException(
                             "mesh created-at must be an ISO-8601 instant", e);
                 }
             } else if ((meshClusterName != null && !meshClusterName.isBlank())
                     || (meshTrustDomain != null && !meshTrustDomain.isBlank())
-                    || (meshCreatedAt != null && !meshCreatedAt.isBlank())) {
+                    || (meshCreatedAt != null && !meshCreatedAt.isBlank())
+                    || (meshStateDirectory != null && !meshStateDirectory.isBlank())) {
                 throw new IllegalArgumentException(
                         "mesh cluster name, trust domain, and created-at require a mesh cluster id");
             }
@@ -831,8 +861,16 @@ public final class ProtoMoltServe implements AutoCloseable {
     }
 
     /** Stable identity of the mesh directory hosted by this serve process. */
-    public record MeshClusterOptions(String clusterId, String displayName, String trustDomain,
-                                     Instant createdAt) {
+    public record MeshClusterOptions(
+            String clusterId,
+            String displayName,
+            String trustDomain,
+            Instant createdAt,
+            Path stateDirectory,
+            Duration sweepInterval,
+            Duration workerLeaseDuration,
+            int maxAttempts,
+            int maxDemand) {
 
         public MeshClusterOptions {
             if (clusterId == null || !clusterId.matches(
@@ -847,6 +885,22 @@ public final class ProtoMoltServe implements AutoCloseable {
                 throw new IllegalArgumentException("mesh trust domain is invalid");
             }
             Objects.requireNonNull(createdAt, "createdAt");
+            stateDirectory = Objects.requireNonNull(stateDirectory, "stateDirectory")
+                    .toAbsolutePath().normalize();
+            if (sweepInterval == null || sweepInterval.isNegative()
+                    || sweepInterval.isZero()) {
+                throw new IllegalArgumentException("mesh sweep interval must be positive");
+            }
+            if (workerLeaseDuration == null || workerLeaseDuration.isNegative()
+                    || workerLeaseDuration.isZero()) {
+                throw new IllegalArgumentException("mesh worker lease duration must be positive");
+            }
+            if (maxAttempts < 1 || maxAttempts > 100) {
+                throw new IllegalArgumentException("mesh max attempts must be between 1 and 100");
+            }
+            if (maxDemand < 1 || maxDemand > 100_000) {
+                throw new IllegalArgumentException("mesh max demand must be between 1 and 100000");
+            }
         }
     }
 
@@ -1037,7 +1091,8 @@ public final class ProtoMoltServe implements AutoCloseable {
             delegation = DelegationRuntime.open(options.delegation());
             DelegationBridge bridge = delegation.bridge();
             DelegationActions.register(catalog, bridge);
-            meshCluster = MeshClusterRuntime.open(options.meshCluster(), options.delegation());
+            meshCluster = MeshClusterRuntime.open(
+                    options.meshCluster(), options.delegation(), context.registry());
             if (meshCluster != null) {
                 ClusterActions.register(catalog, meshCluster.directory());
             }
@@ -1071,7 +1126,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                             : CallerResolver.chain(resolvers);
 
             grpc = ProtoMoltGrpcServer.start(options.host(), options.grpcPort(), catalog,
-                    options.apiToken(), callers);
+                    options.apiToken(), callers, grpcServices(meshCluster));
             if (options.demo() && store != null) {
                 // The demo workflow composes this server's own verbs, so it needs the bound
                 // gRPC port - seeded here rather than with the schemas.
@@ -1258,6 +1313,30 @@ public final class ProtoMoltServe implements AutoCloseable {
                     .findServiceByName("ClusterDirectoryService"));
         }
         return services;
+    }
+
+    private static java.util.List<ProtoMoltGrpcServer.ScopedService> grpcServices(
+            MeshClusterRuntime meshCluster) {
+        if (meshCluster == null) {
+            return java.util.List.of();
+        }
+        java.util.List<ProtoMoltGrpcServer.ScopedService> services =
+                new java.util.ArrayList<>();
+        for (io.grpc.BindableService service : meshCluster.grpcServices()) {
+            String name = service.bindService().getServiceDescriptor().getName();
+            String scope;
+            if (name.endsWith(".ClusterDirectoryService")
+                    || name.endsWith(".DemandProcessorService")
+                    || name.endsWith(".MeshRuntimeHealthService")) {
+                scope = Scopes.WORKER_COORDINATE;
+            } else if (name.endsWith(".PayloadStoreService")) {
+                scope = Scopes.ARTIFACT_ACCESS;
+            } else {
+                scope = Scopes.WORKFLOW_RUN;
+            }
+            services.add(new ProtoMoltGrpcServer.ScopedService(service, scope));
+        }
+        return java.util.List.copyOf(services);
     }
 
     private static Function<Map<String, String>, Caller> restCallers(

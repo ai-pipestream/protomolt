@@ -15,6 +15,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Instant;
+import java.time.Duration;
+import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -35,14 +37,21 @@ class McpHttpTest {
     private static ProtoMoltServe serve;
     private static HttpClient http;
     private static String endpoint;
+    private static Path meshState;
 
     @BeforeAll
     static void start() {
+        try {
+            meshState = java.nio.file.Files.createTempDirectory("protomolt-mcp-mesh-");
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
         serve = ProtoMoltServe.start(new ProtoMoltServe.Options(
                 "127.0.0.1", 0, 0, null, 0, null, false, null,
                 null, java.util.List.of(), null, null, null, null, null,
                 new ProtoMoltServe.MeshClusterOptions("protomolt", "Test mesh", "test",
-                        Instant.parse("2026-08-14T00:00:00Z"))));
+                        Instant.parse("2026-08-14T00:00:00Z"), meshState,
+                        Duration.ofSeconds(30), Duration.ofSeconds(30), 3, 100)));
         http = HttpClient.newHttpClient();
         endpoint = "http://127.0.0.1:" + serve.httpPort() + "/mcp";
     }
@@ -107,7 +116,7 @@ class McpHttpTest {
         assertThat(result.path("capabilities").has("tools")).isTrue();
         assertThat(result.path("capabilities").has("resources")).isTrue();
         assertThat(result.path("_meta").path("ai.protomolt/toolCount").asInt())
-                .isEqualTo(62);
+                .isEqualTo(63);
         assertThat(result.path("_meta").path("ai.protomolt/workspace").asText())
                 .isEqualTo("protomolt://workspace");
         assertThat(result.path("instructions").asText())
@@ -139,7 +148,7 @@ class McpHttpTest {
         assertThat(response.statusCode()).isEqualTo(200);
         JsonNode result = MAPPER.readTree(response.body()).path("result");
         JsonNode tools = result.path("tools");
-        assertThat(tools.size()).isEqualTo(62);
+        assertThat(tools.size()).isEqualTo(63);
         assertThat(result.path("_meta").path("ai.protomolt/toolCount").asInt())
                 .isEqualTo(tools.size());
         assertThat(tools.findValuesAsText("name")).contains("reflect", "grpc-invoke",
@@ -151,7 +160,8 @@ class McpHttpTest {
                 "delegation-worker-register", "delegation-offer", "delegation-watch",
                 "delegation-message", "delegation-review", "delegation-transcript",
                 "mesh-node-register", "mesh-node-heartbeat", "mesh-processor-register",
-                "mesh-capacity-update", "mesh-snapshot", "mesh-sweep");
+                "mesh-capacity-update", "mesh-readiness-update", "mesh-snapshot",
+                "mesh-sweep");
     }
 
     @Test
@@ -174,7 +184,7 @@ class McpHttpTest {
         String text = MAPPER.readTree(read.body()).path("result").path("contents")
                 .get(0).path("text").asText();
         JsonNode workspace = MAPPER.readTree(text);
-        assertThat(workspace.path("toolCatalog").path("count").asInt()).isEqualTo(62);
+        assertThat(workspace.path("toolCatalog").path("count").asInt()).isEqualTo(63);
         assertThat(workspace.path("toolCatalog").path("names"))
                 .anySatisfy(name -> assertThat(name.asText()).isEqualTo("service-register"));
 

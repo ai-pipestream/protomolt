@@ -210,7 +210,8 @@ class ProtoMoltServeTest {
                 "--mesh-cluster-id", "protomolt",
                 "--mesh-cluster-name", "ProtoMolt private mesh",
                 "--mesh-trust-domain", "taild24b1c.ts.net",
-                "--mesh-created-at", "2026-08-14T00:00:00Z"});
+                "--mesh-created-at", "2026-08-14T00:00:00Z",
+                "--mesh-state-directory", "build/test-mesh-state"});
 
         assertThat(options.meshCluster().clusterId()).isEqualTo("protomolt");
         assertThat(options.meshCluster().displayName()).isEqualTo("ProtoMolt private mesh");

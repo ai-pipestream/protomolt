@@ -39,8 +39,8 @@ class ClusterActionsTest {
     @Test
     void registersAllBoundedMeshActions() {
         assertThat(catalog.names()).contains("mesh-node-register", "mesh-node-heartbeat",
-                "mesh-processor-register", "mesh-capacity-update", "mesh-snapshot",
-                "mesh-sweep");
+                "mesh-processor-register", "mesh-capacity-update",
+                "mesh-readiness-update", "mesh-snapshot", "mesh-sweep");
         // Each mesh verb's schema is derived from the request descriptor it accepts. The
         // generator emits a reference plus a definitions block so a message reaching the same
         // nested type twice describes it once, which puts the described object behind the
@@ -86,6 +86,44 @@ class ClusterActionsTest {
                 .isEqualTo("nano1-tei");
         assertThat(snapshot.path("capacities").get(0).path("maxInFlight").asInt())
                 .isEqualTo(16);
+    }
+
+    @Test
+    void actionAndGrpcPathsReturnTheSameCommitIdentity() throws Exception {
+        PersistentClusterDirectory grpcDirectory = new PersistentClusterDirectory(
+                ClusterFixtures.cluster(), clock, new InMemoryClusterEventRepository());
+        var grpcService = new ClusterDirectoryGrpcService(grpcDirectory);
+        var response = new java.util.concurrent.atomic.AtomicReference<
+                ai.protomolt.proto.mesh.cluster.v1.RegisterNodeResponse>();
+        grpcService.registerNode(ai.protomolt.proto.mesh.cluster.v1.RegisterNodeRequest
+                        .newBuilder().setAdvertisement(ClusterFixtures.node("nano1")).build(),
+                new io.grpc.stub.StreamObserver<>() {
+                    @Override
+                    public void onNext(
+                            ai.protomolt.proto.mesh.cluster.v1.RegisterNodeResponse value) {
+                        response.set(value);
+                    }
+
+                    @Override
+                    public void onError(Throwable throwable) {
+                        throw new AssertionError(throwable);
+                    }
+
+                    @Override
+                    public void onCompleted() {
+                    }
+                });
+
+        JsonNode actionCommit = execute("mesh-node-register", "advertisement",
+                ClusterFixtures.node("nano1")).path("commit");
+        var grpcCommit = response.get().getCommit();
+        assertThat(actionCommit.path("outcome").asText())
+                .isEqualTo(grpcCommit.getOutcome().name());
+        assertThat(actionCommit.path("snapshotSeq").asLong())
+                .isEqualTo(grpcCommit.getSnapshotSeq());
+        assertThat(actionCommit.path("snapshotFingerprint").asText())
+                .isEqualTo(grpcCommit.getSnapshotFingerprint());
+        assertThat(directory.snapshot()).isEqualTo(grpcDirectory.snapshot());
     }
 
     @Test

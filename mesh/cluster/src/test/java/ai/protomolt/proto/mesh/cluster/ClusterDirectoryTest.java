@@ -618,16 +618,15 @@ class ClusterDirectoryTest {
         ClusterDirectory restored = ClusterDirectory.replay(
                 ClusterFixtures.cluster(), directory.events(), clock);
 
-        // Durable state comes back exactly. Presence does not, and must not: the heartbeat
-        // that made this node SUSPECT was never written, so replay arms presence from the
-        // registration instead. A node whose state matters restates it within one TTL, and
-        // one that does not is swept, which is the behaviour a restart already relied on.
+        // Capacity and the eligibility-changing presence transition come back exactly.
+        // Pure ACTIVE lease refreshes remain soft state, but SUSPECT/DRAINING/GONE must be
+        // durable so a restart or watch consumer cannot dispatch work through them.
         assertThat(restored.nodeCapacity("node-1")).isPresent();
         assertThat(restored.processorCapacity("node-1", "proc-1")).isPresent();
         assertThat(directory.presence("node-1").orElseThrow().getState())
                 .isEqualTo(PresenceState.PRESENCE_STATE_SUSPECT);
         assertThat(restored.presence("node-1").orElseThrow().getState())
-                .isEqualTo(PresenceState.PRESENCE_STATE_ACTIVE);
+                .isEqualTo(PresenceState.PRESENCE_STATE_SUSPECT);
     }
 
     private ClusterSnapshot populatedSnapshot() {

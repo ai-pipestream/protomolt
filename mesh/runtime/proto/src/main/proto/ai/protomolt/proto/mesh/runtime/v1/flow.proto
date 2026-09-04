@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package ai.protomolt.proto.mesh.runtime.v1;
 
+import "ai/protomolt/proto/mesh/runtime/v1/processor_contract.proto";
 import "ai/protomolt/proto/mesh/v1/entity.proto";
 import "ai/protomolt/proto/meta/v1/metadata.proto";
 import "ai/protomolt/proto/validate/v1/validate.proto";
@@ -11,6 +12,68 @@ import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
 option java_package = "ai.protomolt.proto.mesh.runtime.v1";
+
+enum ChannelDeliveryMode {
+  CHANNEL_DELIVERY_MODE_UNSPECIFIED = 0;
+  CHANNEL_DELIVERY_MODE_BOUNDED_MEMORY = 1;
+  CHANNEL_DELIVERY_MODE_LOCAL_DURABLE_WAL = 2;
+  CHANNEL_DELIVERY_MODE_TRANSACTIONAL_EXTERNAL = 3;
+}
+
+enum ChannelOverflowAction {
+  CHANNEL_OVERFLOW_ACTION_UNSPECIFIED = 0;
+  CHANNEL_OVERFLOW_ACTION_BACKPRESSURE = 1;
+  CHANNEL_OVERFLOW_ACTION_DURABLE_SPILL = 2;
+  CHANNEL_OVERFLOW_ACTION_REFUSE = 3;
+}
+
+enum ChannelOrderingGuarantee {
+  CHANNEL_ORDERING_GUARANTEE_UNSPECIFIED = 0;
+  CHANNEL_ORDERING_GUARANTEE_NONE = 1;
+  CHANNEL_ORDERING_GUARANTEE_PER_KEY = 2;
+  CHANNEL_ORDERING_GUARANTEE_TOTAL = 3;
+}
+
+enum ChannelAcknowledgementPoint {
+  CHANNEL_ACKNOWLEDGEMENT_POINT_UNSPECIFIED = 0;
+  CHANNEL_ACKNOWLEDGEMENT_POINT_DURABLE_ACCEPTANCE = 1;
+  CHANNEL_ACKNOWLEDGEMENT_POINT_PROCESSOR_COMPLETION = 2;
+  CHANNEL_ACKNOWLEDGEMENT_POINT_DESCENDANT_SETTLEMENT = 3;
+}
+
+// Immutable delivery and storage behavior selected by a named workflow profile.
+message ChannelPolicy {
+  ChannelDeliveryMode delivery_mode = 1;
+  ChannelOverflowAction overflow_action = 2;
+  string durable_spill_policy_id = 3 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  uint32 max_items = 4 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  uint64 max_bytes = 5 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  uint64 inline_byte_limit = 6 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  string payload_store_profile = 7 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  uint32 maximum_attempts = 8 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  string retry_policy_reference = 9 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  string dead_letter_channel_reference = 10 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  ChannelOrderingGuarantee ordering_guarantee = 11;
+  string ordering_key = 12 [(ai.protomolt.proto.validate.v1.field).string.max_len = 1024];
+  uint32 concurrency_bound = 13 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  bool persistence_prohibited = 14 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  string retention_policy_reference = 15 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  string legal_hold_policy_reference = 16 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  ChannelAcknowledgementPoint acknowledgement_point = 17;
+  ai.protomolt.proto.mesh.v1.CompletionPolicy required_completion_policy = 18;
+  string transactional_channel_profile = 19 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+}
+
+message NamedChannelPolicy {
+  string policy_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ChannelPolicy policy = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
 
 // An authored directed flow. Compilation resolves every schema and processor,
 // type-checks every predicate and projection, proves the graph is acyclic, and
@@ -50,6 +113,10 @@ message FlowDefinition {
     (ai.protomolt.proto.validate.v1.field) = {required: true, duration: {gte: {nanos: 1}}},
     (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
   ];
+  repeated NamedChannelPolicy channel_policies = 8 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 256,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
 }
 
 // One invocation site. The schemas are repeated in the definition so a plan
@@ -69,26 +136,6 @@ message ProcessorNode {
   ];
   repeated ai.protomolt.proto.mesh.v1.SchemaReference output_schemas = 4 [
     (ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 64},
-    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
-  ];
-}
-
-// One processor implementation's exact binary contract.
-message ProcessorContract {
-  string processor_id = 1 [
-    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {path_safe_name: true, max_len: 128}},
-    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
-  ];
-  ai.protomolt.proto.mesh.v1.SchemaReference input_schema = 2 [
-    (ai.protomolt.proto.validate.v1.field).required = true,
-    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
-  ];
-  repeated ai.protomolt.proto.mesh.v1.SchemaReference output_schemas = 3 [
-    (ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 64},
-    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
-  ];
-  uint32 max_outputs = 4 [
-    (ai.protomolt.proto.validate.v1.field) = {required: true, uint32: {gte: 1, lte: 100000}},
     (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
   ];
 }
@@ -115,6 +162,10 @@ message FlowEdge {
   ai.protomolt.proto.mesh.v1.SchemaReference project_to = 6 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
   string when = 7 [
     (ai.protomolt.proto.validate.v1.field).string.max_len = 16384,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string channel_policy_id = 8 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
     (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
   ];
 }
@@ -184,6 +235,16 @@ enum HistoryEventKind {
   HISTORY_EVENT_KIND_CANCELLATION_REQUESTED = 11;
   HISTORY_EVENT_KIND_RUN_CANCELLED = 12;
   HISTORY_EVENT_KIND_REPLAY_STARTED = 13;
+  HISTORY_EVENT_KIND_MESSAGE_STAGED = 14;
+  HISTORY_EVENT_KIND_MESSAGE_SPILLED = 15;
+  HISTORY_EVENT_KIND_PAYLOAD_EXTERNALIZED = 16;
+  HISTORY_EVENT_KIND_PAYLOAD_HYDRATED = 17;
+  HISTORY_EVENT_KIND_RETRY_SCHEDULED = 18;
+  HISTORY_EVENT_KIND_RETRY_STARTED = 19;
+  HISTORY_EVENT_KIND_DEAD_LETTERED = 20;
+  HISTORY_EVENT_KIND_REPLAY_REQUESTED = 21;
+  HISTORY_EVENT_KIND_PAYLOAD_RETAINED = 22;
+  HISTORY_EVENT_KIND_PAYLOAD_PURGED = 23;
 }
 
 message FlowFailure {

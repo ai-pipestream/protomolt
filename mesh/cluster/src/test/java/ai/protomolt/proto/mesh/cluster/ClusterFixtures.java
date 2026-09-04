@@ -10,6 +10,8 @@ import ai.protomolt.proto.mesh.cluster.v1.ProcessorAdvertisement;
 import ai.protomolt.proto.mesh.cluster.v1.TlsMode;
 import ai.protomolt.proto.mesh.v1.ProcessorKind;
 import ai.protomolt.proto.mesh.v1.SchemaReference;
+import ai.protomolt.proto.mesh.ProcessorContracts;
+import ai.protomolt.proto.mesh.runtime.v1.ProcessorContract;
 import com.google.protobuf.Duration;
 import com.google.protobuf.Timestamp;
 
@@ -89,12 +91,19 @@ final class ClusterFixtures {
     }
 
     static ProcessorAdvertisement.Builder processorBuilder(String processorId, String nodeId) {
+        ProcessorContract contract = ProcessorContracts.canonical(ProcessorContract.newBuilder()
+                .setProcessorId(processorId)
+                .setInputSchema(schema())
+                .addOutputSchemas(schema())
+                .setMaxOutputs(1)
+                .build());
         return ProcessorAdvertisement.newBuilder()
                 .setProcessorId(processorId)
                 .setNodeId(nodeId)
                 .setKind(ProcessorKind.PROCESSOR_KIND_LLM)
                 .addCapabilities("llm-generate")
                 .addAcceptedSchemas(schema())
+                .setContract(contract)
                 .setNodeEpoch(1)
                 .setLeaseEpoch(1)
                 .setAdvertisedAt(ts(T0))

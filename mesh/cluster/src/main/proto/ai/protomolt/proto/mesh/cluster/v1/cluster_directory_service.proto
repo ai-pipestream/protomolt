@@ -102,6 +102,16 @@ message UpdateCapacityResponse {
   DirectoryCommit commit = 1;
 }
 
+message UpdateReadinessRequest {
+  ProcessorReadinessOverlay readiness = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true}
+  ];
+}
+
+message UpdateReadinessResponse {
+  DirectoryCommit commit = 1;
+}
+
 // Reads the directory. Takes no arguments: the snapshot is the whole
 // directory, and filtering it would give callers a partial view they could
 // not compare against another caller's.
@@ -127,6 +137,60 @@ message SweepResponse {
   int64 snapshot_seq = 2;
 }
 
+// The resumable position in the unfiltered directory event stream.
+message DirectoryCursor {
+  uint64 generation = 1 [(ai.protomolt.proto.validate.v1.field).uint64.gte = 1];
+  int64 event_sequence = 2 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+}
+
+message DirectoryFilter {
+  repeated string processor_ids = 1 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 256
+  ];
+  string input_type_name = 2 [(ai.protomolt.proto.validate.v1.field).string.max_len = 512];
+  string input_descriptor_fingerprint = 3 [
+    (ai.protomolt.proto.validate.v1.field).string.sha256_hex = true
+  ];
+  string capability = 4 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  repeated string node_ids = 5 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 256
+  ];
+}
+
+message WatchDirectoryRequest {
+  DirectoryCursor after = 1;
+  DirectoryFilter filter = 2;
+}
+
+// A filtered view that still names the exact unfiltered snapshot it came
+// from. Filtered records are not mislabeled with the canonical snapshot hash.
+message DirectorySnapshotView {
+  DirectoryCursor cursor = 1;
+  string unfiltered_snapshot_fingerprint = 2;
+  int64 unfiltered_snapshot_sequence = 3;
+  repeated NodeRecord nodes = 4;
+  repeated ProcessorAdvertisement processors = 5;
+  repeated CapacityAdvertisement capacities = 6;
+  repeated ProcessorReadinessOverlay readiness_overlays = 7;
+}
+
+message DirectoryEventFrame {
+  DirectoryCursor cursor = 1;
+  ClusterEvent event = 2;
+}
+
+message DirectoryResyncRequired {
+  DirectoryCursor oldest_available = 1;
+}
+
+message DirectoryFrame {
+  oneof payload {
+    DirectorySnapshotView snapshot = 1;
+    DirectoryEventFrame event = 2;
+    DirectoryResyncRequired resync_required = 3;
+  }
+}
+
 // Membership and liveness for the mesh: who is here, what they can run, and
 // what has gone away.
 service ClusterDirectoryService {
@@ -142,9 +206,15 @@ service ClusterDirectoryService {
   // Publishes a capacity reading for a node or a processor.
   rpc UpdateCapacity(UpdateCapacityRequest) returns (UpdateCapacityResponse);
 
+  // Applies an administrator-authored readiness gate under node and lease fences.
+  rpc UpdateReadiness(UpdateReadinessRequest) returns (UpdateReadinessResponse);
+
   // Reads the whole directory as one deterministic snapshot.
   rpc GetSnapshot(GetSnapshotRequest) returns (GetSnapshotResponse);
 
   // Expires elapsed processor leases and node presence windows.
   rpc Sweep(SweepRequest) returns (SweepResponse);
+
+  // Returns one exact snapshot followed by the ordered unfiltered event tail.
+  rpc WatchDirectory(WatchDirectoryRequest) returns (stream DirectoryFrame);
 }

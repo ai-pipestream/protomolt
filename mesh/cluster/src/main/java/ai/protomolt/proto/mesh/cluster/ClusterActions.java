@@ -24,9 +24,11 @@ import ai.protomolt.proto.mesh.cluster.v1.RegisterProcessorRequest;
 import ai.protomolt.proto.mesh.cluster.v1.RegisterProcessorResponse;
 import ai.protomolt.proto.mesh.cluster.v1.SweepRequest;
 import ai.protomolt.proto.mesh.cluster.v1.SweepResponse;
-import ai.protomolt.proto.mesh.cluster.v1.SweepResponse;
 import ai.protomolt.proto.mesh.cluster.v1.UpdateCapacityRequest;
 import ai.protomolt.proto.mesh.cluster.v1.UpdateCapacityResponse;
+import ai.protomolt.proto.mesh.cluster.v1.UpdateReadinessRequest;
+import ai.protomolt.proto.mesh.cluster.v1.UpdateReadinessResponse;
+import ai.protomolt.proto.mesh.cluster.v1.ProcessorReadinessOverlay;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
@@ -56,6 +58,7 @@ public final class ClusterActions {
                 .register(new Heartbeat(directory))
                 .register(new RegisterProcessor(directory))
                 .register(new UpdateCapacity(directory))
+                .register(new UpdateReadiness(directory))
                 .register(new Snapshot(directory))
                 .register(new Sweep(directory));
     }
@@ -235,6 +238,42 @@ public final class ClusterActions {
             try {
                 return UpdateCapacityResponse.newBuilder()
                         .setCommit(commit(directory.updateCapacity(capacity), directory)).build();
+            } catch (RuntimeException e) {
+                throw rejected(e);
+            }
+        }
+    }
+
+    private static final class UpdateReadiness extends ClusterAction {
+        UpdateReadiness(PersistentClusterDirectory directory) {
+            super(directory);
+        }
+
+        @Override public String name() { return "mesh-readiness-update"; }
+
+        @Override public String requiredScope() { return Scopes.WORKER_COORDINATE; }
+
+        @Override public String description() {
+            return "Applies an administrator readiness overlay under node and lease fences.";
+        }
+
+        @Override public Descriptor requestType() {
+            return UpdateReadinessRequest.getDescriptor();
+        }
+
+        @Override public Descriptor responseType() {
+            return UpdateReadinessResponse.getDescriptor();
+        }
+
+        @Override public Message execute(Message input, ActionContext context)
+                throws ActionException {
+            ProcessorReadinessOverlay readiness = CatalogContract.as(
+                    input, UpdateReadinessRequest.getDefaultInstance(), name())
+                    .getReadiness();
+            try {
+                return UpdateReadinessResponse.newBuilder()
+                        .setCommit(commit(directory.updateReadiness(readiness), directory))
+                        .build();
             } catch (RuntimeException e) {
                 throw rejected(e);
             }

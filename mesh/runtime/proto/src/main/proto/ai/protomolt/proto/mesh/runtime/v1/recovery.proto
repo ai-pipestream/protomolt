@@ -1,0 +1,84 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.mesh.runtime.v1;
+
+import "ai/protomolt/proto/mesh/runtime/v1/processor_channel.proto";
+import "ai/protomolt/proto/mesh/v1/entity.proto";
+import "ai/protomolt/proto/meta/v1/metadata.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.mesh.runtime.v1";
+
+message ListDeadLettersRequest {
+  string namespace = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 256}}];
+  uint64 after_sequence = 2;
+  uint32 limit = 3 [(ai.protomolt.proto.validate.v1.field).uint32.lte = 1000];
+}
+
+message DeadLetterEntry {
+  uint64 sequence = 1;
+  DeadLetterRecord record = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+message ListDeadLettersResponse {
+  repeated DeadLetterEntry entries = 1 [(ai.protomolt.proto.validate.v1.field).repeated.max_items = 1000];
+  uint64 next_sequence = 2;
+}
+
+message GetDeadLetterRequest {
+  string dead_letter_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+}
+
+message ReplayDeadLetterRequest {
+  string dead_letter_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  string replay_run_id = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+}
+
+message CancelScheduledRetryRequest {
+  string delivery_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  string reason = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 8192}}];
+}
+
+message ChangeDeadLetterStatusRequest {
+  string dead_letter_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  string reason = 2 [(ai.protomolt.proto.validate.v1.field).string.max_len = 8192];
+  bool retain = 3;
+}
+
+enum ReconciliationClassification {
+  RECONCILIATION_CLASSIFICATION_UNSPECIFIED = 0;
+  RECONCILIATION_CLASSIFICATION_CONSISTENT = 1;
+  RECONCILIATION_CLASSIFICATION_MISSING = 2;
+  RECONCILIATION_CLASSIFICATION_ORPHAN = 3;
+  RECONCILIATION_CLASSIFICATION_UNKNOWN = 4;
+}
+
+message ReconcileRecoveryRequest {
+  string namespace = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 256}}];
+  bool repair = 2;
+  google.protobuf.Timestamp not_before = 3;
+  uint32 limit = 4 [(ai.protomolt.proto.validate.v1.field).uint32.lte = 10000];
+}
+
+message ReconciliationFinding {
+  string stable_id = 1 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  ReconciliationClassification classification = 2;
+  string evidence = 3 [(ai.protomolt.proto.validate.v1.field).string.max_len = 8192];
+  bool repaired = 4;
+}
+
+message ReconcileRecoveryResponse {
+  repeated ReconciliationFinding findings = 1 [(ai.protomolt.proto.validate.v1.field).repeated.max_items = 10000];
+}
+
+service RecoveryService {
+  rpc ListDeadLetters(ListDeadLettersRequest) returns (ListDeadLettersResponse);
+  rpc GetDeadLetter(GetDeadLetterRequest) returns (DeadLetterRecord);
+  rpc ReplayDeadLetter(ReplayDeadLetterRequest) returns (DeadLetterRecord);
+  rpc CancelScheduledRetry(CancelScheduledRetryRequest) returns (DeadLetterRecord);
+  rpc AcknowledgeDeadLetter(ChangeDeadLetterStatusRequest) returns (DeadLetterRecord);
+  rpc RetainDeadLetter(ChangeDeadLetterStatusRequest) returns (DeadLetterRecord);
+  rpc ReconcileRecovery(ReconcileRecoveryRequest) returns (ReconcileRecoveryResponse);
+}

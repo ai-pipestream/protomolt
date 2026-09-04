@@ -36,7 +36,7 @@ final class HistoryRecorder {
         this.sequence = persisted.getEventsCount();
     }
 
-    void event(
+    long event(
             HistoryEventKind kind,
             String nodeId,
             String processorId,
@@ -60,6 +60,7 @@ final class HistoryRecorder {
                     .setMessage(message);
         }
         history.addEvents(event);
+        return sequence;
     }
 
     FlowHistory complete(java.util.List<EntityEnvelope> outputs) {

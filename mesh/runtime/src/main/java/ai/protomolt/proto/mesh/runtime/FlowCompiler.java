@@ -9,6 +9,11 @@ import ai.protomolt.proto.mesh.runtime.CompiledDirectedFlow.EdgeBinding;
 import ai.protomolt.proto.mesh.runtime.CompiledDirectedFlow.NodeBinding;
 import ai.protomolt.proto.mesh.runtime.CompiledDirectedFlow.OutputBinding;
 import ai.protomolt.proto.mesh.runtime.v1.CompiledFlowPlan;
+import ai.protomolt.proto.mesh.runtime.v1.ChannelAcknowledgementPoint;
+import ai.protomolt.proto.mesh.runtime.v1.ChannelDeliveryMode;
+import ai.protomolt.proto.mesh.runtime.v1.ChannelOrderingGuarantee;
+import ai.protomolt.proto.mesh.runtime.v1.ChannelOverflowAction;
+import ai.protomolt.proto.mesh.runtime.v1.ChannelPolicy;
 import ai.protomolt.proto.mesh.runtime.v1.FlowDefinition;
 import ai.protomolt.proto.mesh.runtime.v1.FlowEdge;
 import ai.protomolt.proto.mesh.runtime.v1.FlowOutput;
@@ -47,10 +52,19 @@ public final class FlowCompiler {
 
     private final DescriptorRegistry descriptors;
     private final ProcessorRegistry processors;
+    private final ChannelResourceCatalog channelResources;
 
     public FlowCompiler(DescriptorRegistry descriptors, ProcessorRegistry processors) {
+        this(descriptors, processors, ChannelResourceCatalog.builtIns());
+    }
+
+    public FlowCompiler(
+            DescriptorRegistry descriptors,
+            ProcessorRegistry processors,
+            ChannelResourceCatalog channelResources) {
         this.descriptors = Objects.requireNonNull(descriptors, "descriptors");
         this.processors = Objects.requireNonNull(processors, "processors");
+        this.channelResources = Objects.requireNonNull(channelResources, "channelResources");
     }
 
     /** Compiles and fingerprints an authored definition. */
@@ -71,7 +85,9 @@ public final class FlowCompiler {
         Descriptor inputType = RuntimeSchemas.resolve(descriptors, definition.getInputSchema());
 
         Map<String, NodeBinding> nodes = compileNodes(definition);
-        Map<String, List<EdgeBinding>> edges = compileEdges(definition, inputType, nodes);
+        Map<String, ChannelPolicy> policies = compileChannelPolicies(definition, nodes);
+        Map<String, List<EdgeBinding>> edges = compileEdges(
+                definition, inputType, nodes, policies);
         Set<OutputBinding> outputs = compileOutputs(definition, nodes);
         proveAcyclicAndReachable(nodes.keySet(), edges);
         proveSchemaCoverage(definition, nodes, edges, outputs);
@@ -136,7 +152,8 @@ public final class FlowCompiler {
     private Map<String, List<EdgeBinding>> compileEdges(
             FlowDefinition definition,
             Descriptor inputType,
-            Map<String, NodeBinding> nodes) {
+            Map<String, NodeBinding> nodes,
+            Map<String, ChannelPolicy> policies) {
         if (definition.getEdgesCount() == 0) {
             throw new IllegalArgumentException("flow requires at least one edge");
         }
@@ -150,6 +167,12 @@ public final class FlowCompiler {
             if (!edge.hasSourceSchema()) {
                 throw new IllegalArgumentException("edge " + edge.getEdgeId()
                         + " requires source_schema");
+            }
+            ChannelPolicy channelPolicy = policies.get(edge.getChannelPolicyId());
+            if (channelPolicy == null) {
+                throw new IllegalArgumentException(
+                        "channel-policy-unknown: edge " + edge.getEdgeId()
+                                + " names unavailable policy " + edge.getChannelPolicyId());
             }
             Descriptor sourceType = RuntimeSchemas.resolve(descriptors, edge.getSourceSchema());
             String source = switch (edge.getSourceCase()) {
@@ -194,9 +217,135 @@ public final class FlowCompiler {
             CelEvaluator predicate = compilePredicate(edge, sourceType);
             edges.computeIfAbsent(source, ignored -> new ArrayList<>())
                     .add(new EdgeBinding(edge, sourceType, source, edge.getTargetNode(),
-                            predicate, projection));
+                            predicate, projection, channelPolicy));
         }
         return edges;
+    }
+
+    private Map<String, ChannelPolicy> compileChannelPolicies(
+            FlowDefinition definition, Map<String, NodeBinding> nodes) {
+        Map<String, ChannelPolicy> policies = new LinkedHashMap<>();
+        definition.getChannelPoliciesList().forEach(named -> {
+            if (policies.putIfAbsent(named.getPolicyId(), named.getPolicy()) != null) {
+                throw new IllegalArgumentException(
+                        "channel-policy-duplicate: " + named.getPolicyId());
+            }
+            validatePolicy(named.getPolicyId(), named.getPolicy());
+        });
+        if (policies.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "channel-policy-missing: a flow must declare at least one channel policy");
+        }
+        for (var edge : definition.getEdgesList()) {
+            ChannelPolicy policy = policies.get(edge.getChannelPolicyId());
+            if (policy == null) {
+                continue;
+            }
+            NodeBinding target = nodes.get(edge.getTargetNode());
+            if (target != null
+                    && target.invoker().contract().getGuarantees().getRequiresDurableInput()
+                    && policy.getDeliveryMode()
+                    == ChannelDeliveryMode.CHANNEL_DELIVERY_MODE_BOUNDED_MEMORY) {
+                throw new IllegalArgumentException(
+                        "channel-policy-durability-required: edge " + edge.getEdgeId()
+                                + " targets processor " + target.invoker().contract()
+                                .getProcessorId());
+            }
+        }
+        for (Map.Entry<String, ChannelPolicy> entry : policies.entrySet()) {
+            ChannelPolicy policy = entry.getValue();
+            if (policy.getOverflowAction()
+                    == ChannelOverflowAction.CHANNEL_OVERFLOW_ACTION_DURABLE_SPILL) {
+                ChannelPolicy spill = policies.get(policy.getDurableSpillPolicyId());
+                if (spill == null || spill.getDeliveryMode()
+                        == ChannelDeliveryMode.CHANNEL_DELIVERY_MODE_BOUNDED_MEMORY) {
+                    throw new IllegalArgumentException(
+                            "channel-policy-spill-unavailable: " + entry.getKey());
+                }
+            }
+        }
+        return Map.copyOf(policies);
+    }
+
+    private void validatePolicy(String id, ChannelPolicy policy) {
+        if (policy.getDeliveryMode()
+                == ChannelDeliveryMode.CHANNEL_DELIVERY_MODE_UNSPECIFIED) {
+            refuse(id, "delivery-mode-required");
+        }
+        if (policy.getOverflowAction()
+                == ChannelOverflowAction.CHANNEL_OVERFLOW_ACTION_UNSPECIFIED) {
+            refuse(id, "overflow-action-required");
+        }
+        if (policy.getMaxItems() < 1 || policy.getMaxItems() > 1_000_000
+                || policy.getMaxBytes() < 1) {
+            refuse(id, "unbounded-capacity");
+        }
+        if (policy.getInlineByteLimit() < 0) {
+            refuse(id, "inline-byte-limit-overflow");
+        }
+        if (policy.getMaximumAttempts() < 1 || policy.getMaximumAttempts() > 100) {
+            refuse(id, "attempt-bound-required");
+        }
+        if (!channelResources.retryPolicies().contains(
+                policy.getRetryPolicyReference())) {
+            refuse(id, "retry-policy-unavailable");
+        }
+        if (!channelResources.deadLetterChannels().contains(
+                policy.getDeadLetterChannelReference())) {
+            refuse(id, "dead-letter-channel-unavailable");
+        }
+        if (!policy.getPayloadStoreProfile().isBlank()
+                && !channelResources.payloadStores().contains(
+                policy.getPayloadStoreProfile())) {
+            refuse(id, "payload-store-unavailable");
+        }
+        if (policy.getDeliveryMode()
+                == ChannelDeliveryMode.CHANNEL_DELIVERY_MODE_TRANSACTIONAL_EXTERNAL
+                && !channelResources.transactionalChannels().contains(
+                policy.getTransactionalChannelProfile())) {
+            refuse(id, "transactional-channel-unavailable");
+        }
+        if (policy.getPersistenceProhibited()
+                && policy.getDeliveryMode()
+                != ChannelDeliveryMode.CHANNEL_DELIVERY_MODE_BOUNDED_MEMORY) {
+            refuse(id, "persistence-prohibition-conflict");
+        }
+        if (policy.getOrderingGuarantee()
+                == ChannelOrderingGuarantee.CHANNEL_ORDERING_GUARANTEE_UNSPECIFIED
+                || policy.getConcurrencyBound() <= 0
+                || policy.getConcurrencyBound() > 1_000_000) {
+            refuse(id, "ordering-or-concurrency-unspecified");
+        }
+        if (policy.getOrderingGuarantee()
+                == ChannelOrderingGuarantee.CHANNEL_ORDERING_GUARANTEE_TOTAL
+                && policy.getConcurrencyBound() != 1) {
+            refuse(id, "total-order-requires-single-concurrency");
+        }
+        if (policy.getOrderingGuarantee()
+                == ChannelOrderingGuarantee.CHANNEL_ORDERING_GUARANTEE_PER_KEY
+                && policy.getOrderingKey().isBlank()) {
+            refuse(id, "per-key-order-requires-key");
+        }
+        if (policy.getAcknowledgementPoint()
+                == ChannelAcknowledgementPoint.CHANNEL_ACKNOWLEDGEMENT_POINT_UNSPECIFIED
+                || policy.getRequiredCompletionPolicyValue() == 0) {
+            refuse(id, "acknowledgement-or-completion-unspecified");
+        }
+        if (!policy.getRetentionPolicyReference().isBlank()
+                && !channelResources.retentionPolicies().contains(
+                policy.getRetentionPolicyReference())) {
+            refuse(id, "retention-policy-unavailable");
+        }
+        if (!policy.getLegalHoldPolicyReference().isBlank()
+                && !channelResources.legalHoldPolicies().contains(
+                policy.getLegalHoldPolicyReference())) {
+            refuse(id, "legal-hold-policy-unavailable");
+        }
+    }
+
+    private static void refuse(String id, String reason) {
+        throw new IllegalArgumentException(
+                "channel-policy-" + reason + ": " + id);
     }
 
     private MessageProjection compileProjection(FlowEdge edge, Descriptor sourceType) {

@@ -1,0 +1,131 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.mesh.runtime.v1;
+
+import "ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto";
+import "ai/protomolt/proto/meta/v1/metadata.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.mesh.runtime.v1";
+
+message PayloadIdentity {
+  string namespace = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 256}}];
+  string profile = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 128}}];
+  ai.protomolt.proto.grpc.workflow.v1.ArtifactReference artifact = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  string payload_type_name = 4 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 512}}];
+  string descriptor_fingerprint = 5 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}}];
+}
+
+message PayloadMetadata {
+  PayloadIdentity identity = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  google.protobuf.Timestamp created_at = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  bool eligible_for_deletion = 3;
+  google.protobuf.Timestamp eligible_at = 4;
+  bool retention_hold = 5;
+  uint32 active_leases = 6;
+  bool purged = 7;
+}
+
+message PutPayloadHeader {
+  string namespace = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 256}}];
+  string profile = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 128}}];
+  string payload_type_name = 3 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 512}}];
+  string descriptor_fingerprint = 4 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}}];
+  uint64 expected_size_bytes = 5;
+  string expected_sha256 = 6 [(ai.protomolt.proto.validate.v1.field).string.max_len = 64];
+}
+
+message PutPayloadRequest {
+  oneof frame {
+    PutPayloadHeader header = 1;
+    bytes data = 2 [(ai.protomolt.proto.validate.v1.field).bytes.max_len = 1048576];
+  }
+}
+
+message PutPayloadResponse {
+  PayloadMetadata metadata = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+message GetPayloadRequest {
+  PayloadIdentity identity = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  uint64 offset = 2;
+  uint64 length = 3;
+}
+
+message PayloadChunk {
+  PayloadMetadata metadata = 1;
+  bytes data = 2 [(ai.protomolt.proto.validate.v1.field).bytes.max_len = 1048576];
+  uint64 offset = 3;
+}
+
+message PayloadLeaseRequest {
+  PayloadIdentity identity = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  string owner_id = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 256}}];
+  string lease_id = 3 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  google.protobuf.Timestamp expires_at = 4 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+message PayloadLeaseResponse {
+  PayloadMetadata metadata = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+message HeadPayloadRequest {
+  PayloadIdentity identity = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+message MarkPayloadEligibleRequest {
+  PayloadIdentity identity = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  google.protobuf.Timestamp not_before = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  string retention_policy_reference = 3 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  string legal_hold_policy_reference = 4 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+}
+
+message PurgePayloadRequest {
+  PayloadIdentity identity = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  string reason = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 8192}}];
+}
+
+message PurgePayloadResponse {
+  PayloadMetadata metadata = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  bool purged = 2;
+}
+
+enum PayloadLedgerEventKind {
+  PAYLOAD_LEDGER_EVENT_KIND_UNSPECIFIED = 0;
+  PAYLOAD_LEDGER_EVENT_KIND_STORED = 1;
+  PAYLOAD_LEDGER_EVENT_KIND_LEASE_ACQUIRED = 2;
+  PAYLOAD_LEDGER_EVENT_KIND_LEASE_RELEASED = 3;
+  PAYLOAD_LEDGER_EVENT_KIND_ELIGIBLE = 4;
+  PAYLOAD_LEDGER_EVENT_KIND_HOLD_CHANGED = 5;
+  PAYLOAD_LEDGER_EVENT_KIND_PURGED = 6;
+}
+
+message PayloadLeaseLedgerEntry {
+  string lease_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  string owner_id = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 256}}];
+  google.protobuf.Timestamp expires_at = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// Exact current-state snapshot after one append-only payload ownership transition.
+message PayloadLedgerRecord {
+  uint64 sequence = 1 [(ai.protomolt.proto.validate.v1.field).uint64.gte = 1];
+  google.protobuf.Timestamp recorded_at = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  PayloadLedgerEventKind event_kind = 3;
+  PayloadMetadata metadata = 4 [(ai.protomolt.proto.validate.v1.field).required = true];
+  repeated PayloadLeaseLedgerEntry leases = 5 [(ai.protomolt.proto.validate.v1.field).repeated.max_items = 1000000];
+  string reason = 6 [(ai.protomolt.proto.validate.v1.field).string.max_len = 8192];
+  string retention_policy_reference = 7 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+  string legal_hold_policy_reference = 8 [(ai.protomolt.proto.validate.v1.field).string.max_len = 128];
+}
+
+service PayloadStoreService {
+  rpc PutPayload(stream PutPayloadRequest) returns (PutPayloadResponse);
+  rpc GetPayload(GetPayloadRequest) returns (stream PayloadChunk);
+  rpc AcquireLease(PayloadLeaseRequest) returns (PayloadLeaseResponse);
+  rpc ReleaseLease(PayloadLeaseRequest) returns (PayloadLeaseResponse);
+  rpc HeadPayload(HeadPayloadRequest) returns (PayloadMetadata);
+  rpc MarkEligibleForDeletion(MarkPayloadEligibleRequest) returns (PayloadMetadata);
+  rpc PurgePayload(PurgePayloadRequest) returns (PurgePayloadResponse);
+}

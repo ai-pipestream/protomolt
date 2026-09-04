@@ -461,6 +461,10 @@ public final class FileFlowLifecycleStore implements FlowLifecycleStore {
             if (!settlement.getDeliveryId().isBlank()) {
                 RemoteValidation.uuid(settlement.getDeliveryId(), "settlement delivery_id");
             }
+            if (!edges.contains(settlement.getEdgeId())) {
+                throw new IllegalArgumentException("settlement names unknown edge "
+                        + settlement.getEdgeId());
+            }
             MeshValidation.validateStructure(settlement.getInput());
         }
         if (checkpoint.getSettlementStarted()

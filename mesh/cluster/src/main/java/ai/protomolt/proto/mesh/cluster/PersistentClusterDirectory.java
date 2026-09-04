@@ -8,9 +8,13 @@ import ai.protomolt.proto.mesh.cluster.v1.DirectoryCheckpoint;
 import ai.protomolt.proto.mesh.cluster.v1.NodeAdvertisement;
 import ai.protomolt.proto.mesh.cluster.v1.NodePresence;
 import ai.protomolt.proto.mesh.cluster.v1.ProcessorAdvertisement;
+import ai.protomolt.proto.mesh.cluster.v1.ProcessorReadinessOverlay;
 
 import java.time.Clock;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
@@ -64,6 +68,9 @@ public final class PersistentClusterDirectory {
      * complete history. Written only under {@link #writeLock}, alongside {@link #current}.
      */
     private volatile DirectoryCheckpoint checkpoint;
+    private volatile long generation;
+    private volatile RuntimeException persistenceFailure;
+    private final Set<DirectoryWatchListener> watchers = new LinkedHashSet<>();
 
     /**
      * The installed directory. Written only under {@link #writeLock}, and only with a
@@ -102,6 +109,8 @@ public final class PersistentClusterDirectory {
         // rebuild the next candidate from the tail alone and quietly discard every node the
         // fold accounts for.
         this.checkpoint = stored.compacted() ? stored.checkpoint() : null;
+        this.generation = stored.compacted()
+                ? Math.max(1, stored.checkpoint().getDirectoryGeneration()) : 1;
         this.current = restore(stored);
     }
 
@@ -117,13 +126,11 @@ public final class PersistentClusterDirectory {
     }
 
     /**
-     * Applies a node heartbeat to memory alone. Presence is soft state: it expires on its
-     * own and the node restates it every few seconds, so it never reaches the repository and
-     * a heartbeat costs no durable write. See {@link ClusterDirectory#heartbeat} for why the
-     * registered epoch, which stays durable, is what fences it.
+     * Applies one heartbeat. A same-state liveness refresh remains memory-only; a state
+     * transition emits and persists the directory event consumed by watchers.
      */
     public ClusterDirectory.ApplyOutcome heartbeat(NodePresence presence) {
-        return soften(candidate -> candidate.heartbeat(presence));
+        return mutate(candidate -> candidate.heartbeat(presence));
     }
 
     /** Registers or refreshes a processor after the resulting event log is durable. */
@@ -134,6 +141,12 @@ public final class PersistentClusterDirectory {
     /** Applies capacity after the resulting event log is durable. */
     public ClusterDirectory.ApplyOutcome updateCapacity(CapacityAdvertisement capacity) {
         return mutate(candidate -> candidate.updateCapacity(capacity));
+    }
+
+    /** Applies an administrator readiness gate after it is durable. */
+    public ClusterDirectory.ApplyOutcome updateReadiness(
+            ProcessorReadinessOverlay readiness) {
+        return mutate(candidate -> candidate.updateReadiness(readiness));
     }
 
     /** Sweeps expired identities after every emitted expiry event is durable. */
@@ -199,6 +212,33 @@ public final class PersistentClusterDirectory {
         return Optional.ofNullable(checkpoint);
     }
 
+    /** Captures one exact watch baseline and registers for all later durable changes atomically. */
+    public WatchRegistration watch(DirectoryWatchListener listener) {
+        Objects.requireNonNull(listener, "listener");
+        synchronized (writeLock) {
+            watchers.add(listener);
+            long firstSequence = checkpoint == null
+                    ? 1 : checkpoint.getState().getSnapshotSeq() + 1;
+            WatchState state = new WatchState(generation, firstSequence,
+                    current.snapshot(), current.events());
+            return new WatchRegistration(state, () -> {
+                synchronized (writeLock) {
+                    watchers.remove(listener);
+                }
+            });
+        }
+    }
+
+    /** Current durable watch generation. */
+    public long generation() {
+        return generation;
+    }
+
+    /** Last durable repository failure, cleared by the next successful mutation write. */
+    public Optional<RuntimeException> persistenceFailure() {
+        return Optional.ofNullable(persistenceFailure);
+    }
+
     /**
      * Applies a change that produces no durable event, installing it without touching the
      * repository. The candidate is copied rather than replayed: there is nothing to persist,
@@ -238,10 +278,10 @@ public final class PersistentClusterDirectory {
         synchronized (writeLock) {
             ClusterDirectory candidate = restore(new ClusterEventRepository.StoredDirectory(
                     checkpoint, current.events()));
-            // The rebuild knows only the presence that registration armed and the last fold
-            // captured, because heartbeats emit nothing. Carrying the live records over is
-            // what stops an unrelated mutation from rolling liveness back and sweeping nodes
-            // that are heartbeating normally.
+            // The rebuild knows only the presence that registration armed, a state-transition
+            // event persisted, or the last fold captured. Carrying the live records over is
+            // what stops an unrelated mutation from rolling a same-state heartbeat refresh
+            // back and sweeping nodes that are renewing normally.
             candidate.adoptSoftState(current);
             int priorSize = candidate.events().size();
             T result = operation.apply(candidate);
@@ -259,19 +299,84 @@ public final class PersistentClusterDirectory {
                 // the candidate. The two hold the same state, but only the restored one has
                 // the retained log the checkpoint was written with, so the next mutation
                 // cannot replay events the checkpoint already accounts for.
-                DirectoryCheckpoint folded = candidate.checkpoint();
+                List<ClusterEvent> appended = List.copyOf(candidate.events()
+                        .subList(priorSize, candidate.events().size()));
+                long oldGeneration = generation;
+                DirectoryCheckpoint folded = candidate.checkpoint().toBuilder()
+                        .setDirectoryGeneration(generation + 1)
+                        .build();
                 ClusterDirectory compacted =
                         ClusterDirectory.restore(cluster, folded, List.of(), clock);
-                events.save(cluster,
-                        new ClusterEventRepository.StoredDirectory(folded, List.of()));
+                save(new ClusterEventRepository.StoredDirectory(folded, List.of()));
                 checkpoint = folded;
+                generation++;
                 current = compacted;
+                notifyWatchers(new DirectoryChange(oldGeneration, appended, false,
+                        folded.getState().getSnapshotSeq()));
+                notifyWatchers(new DirectoryChange(generation, List.of(), true,
+                        folded.getState().getSnapshotSeq()));
             } else {
-                events.save(cluster, new ClusterEventRepository.StoredDirectory(
+                List<ClusterEvent> appended = List.copyOf(candidate.events()
+                        .subList(priorSize, candidate.events().size()));
+                save(new ClusterEventRepository.StoredDirectory(
                         checkpoint, candidate.events()));
                 current = candidate;
+                notifyWatchers(new DirectoryChange(generation, appended, false,
+                        checkpoint == null ? 0 : checkpoint.getState().getSnapshotSeq()));
             }
             return result;
+        }
+    }
+
+    private void save(ClusterEventRepository.StoredDirectory stored) {
+        try {
+            events.save(cluster, stored);
+            persistenceFailure = null;
+        } catch (RuntimeException failure) {
+            persistenceFailure = failure;
+            throw failure;
+        }
+    }
+
+    private void notifyWatchers(DirectoryChange change) {
+        for (DirectoryWatchListener watcher : List.copyOf(watchers)) {
+            watcher.onChange(change);
+        }
+    }
+
+    /** Non-blocking listener invoked on the serialized mutation path. */
+    @FunctionalInterface
+    public interface DirectoryWatchListener {
+        void onChange(DirectoryChange change);
+    }
+
+    /** One installed durable change, or a compaction fence requiring a new snapshot. */
+    public record DirectoryChange(
+            long generation,
+            List<ClusterEvent> events,
+            boolean resyncRequired,
+            long compactedThroughSequence) {
+        public DirectoryChange {
+            events = List.copyOf(events);
+        }
+    }
+
+    /** Atomic state captured when a watcher is attached. */
+    public record WatchState(
+            long generation,
+            long firstRetainedSequence,
+            ClusterSnapshot snapshot,
+            List<ClusterEvent> events) {
+        public WatchState {
+            events = List.copyOf(events);
+        }
+    }
+
+    /** A watch baseline and the handle that detaches its listener. */
+    public record WatchRegistration(WatchState state, Runnable detach) implements AutoCloseable {
+        @Override
+        public void close() {
+            detach.run();
         }
     }
 }

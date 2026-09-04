@@ -25,7 +25,34 @@ public final class FlowRuntime {
         runtime = new ResumableFlowRuntime(
                 Objects.requireNonNull(descriptors, "descriptors"),
                 Objects.requireNonNull(payloads, "payloads"),
-                Objects.requireNonNull(clock, "clock"));
+                Objects.requireNonNull(clock, "clock"), FlowRunMetadata.transientRun(),
+                PayloadLifecycle.inlineOnly());
+    }
+
+    public FlowRuntime(
+            DescriptorRegistry descriptors,
+            PayloadResolver payloads,
+            PayloadLifecycle payloadLifecycle,
+            Clock clock) {
+        runtime = new ResumableFlowRuntime(
+                Objects.requireNonNull(descriptors, "descriptors"),
+                Objects.requireNonNull(payloads, "payloads"),
+                Objects.requireNonNull(clock, "clock"), FlowRunMetadata.transientRun(),
+                Objects.requireNonNull(payloadLifecycle, "payloadLifecycle"));
+    }
+
+    FlowRuntime(
+            DescriptorRegistry descriptors,
+            PayloadResolver payloads,
+            Clock clock,
+            FlowRunMetadata runMetadata,
+            PayloadLifecycle payloadLifecycle) {
+        runtime = new ResumableFlowRuntime(
+                Objects.requireNonNull(descriptors, "descriptors"),
+                Objects.requireNonNull(payloads, "payloads"),
+                Objects.requireNonNull(clock, "clock"),
+                Objects.requireNonNull(runMetadata, "runMetadata"),
+                Objects.requireNonNull(payloadLifecycle, "payloadLifecycle"));
     }
 
     /** Executes under a generated run id. */

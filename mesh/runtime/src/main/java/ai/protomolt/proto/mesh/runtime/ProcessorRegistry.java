@@ -2,6 +2,7 @@ package ai.protomolt.proto.mesh.runtime;
 
 import ai.protomolt.proto.descriptors.DescriptorIdentity;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
+import ai.protomolt.proto.mesh.ProcessorContracts;
 import ai.protomolt.proto.mesh.runtime.v1.ProcessorContract;
 import ai.protomolt.proto.mesh.runtime.v1.TypedPayload;
 import ai.protomolt.proto.mesh.v1.SchemaReference;
@@ -40,6 +41,21 @@ public final class ProcessorRegistry {
         registerValidated(new CheckedInvoker(invoker, contract));
     }
 
+    /** Registers a remote endpoint once and accepts byte-identical reconnects. */
+    public synchronized void registerOrVerify(ProcessorInvoker invoker) {
+        Objects.requireNonNull(invoker, "invoker");
+        ProcessorContract contract = validateContract(invoker.contract());
+        ProcessorInvoker existing = processors.get(contract.getProcessorId());
+        if (existing == null) {
+            processors.put(contract.getProcessorId(), new CheckedInvoker(invoker, contract));
+            return;
+        }
+        if (!ProcessorContracts.exactMatch(existing.contract(), contract)) {
+            throw new IllegalArgumentException("processor id is already registered with a "
+                    + "different exact contract: " + contract.getProcessorId());
+        }
+    }
+
     public synchronized Optional<ProcessorInvoker> find(String processorId) {
         return Optional.ofNullable(processors.get(processorId));
     }
@@ -58,7 +74,8 @@ public final class ProcessorRegistry {
     }
 
     private ProcessorContract validateContract(ProcessorContract contract) {
-        Objects.requireNonNull(contract, "processor contract");
+        contract = ProcessorContracts.canonical(
+                Objects.requireNonNull(contract, "processor contract"));
         if (contract.getProcessorId().isBlank()) {
             throw new IllegalArgumentException("processor contract requires processor_id");
         }

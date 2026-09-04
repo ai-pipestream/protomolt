@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.mesh.runtime.v1;
+
+import "ai/protomolt/proto/meta/v1/metadata.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.mesh.runtime.v1";
+
+enum RuntimeComponentHealthState {
+  RUNTIME_COMPONENT_HEALTH_STATE_UNSPECIFIED = 0;
+  RUNTIME_COMPONENT_HEALTH_STATE_SERVING = 1;
+  RUNTIME_COMPONENT_HEALTH_STATE_DEGRADED = 2;
+  RUNTIME_COMPONENT_HEALTH_STATE_UNAVAILABLE = 3;
+}
+
+message RuntimeComponentHealth {
+  string component = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  RuntimeComponentHealthState state = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, enum: {defined_only: true, not_in: [0]}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string detail = 3 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 2048,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message GetMeshRuntimeHealthRequest {}
+
+message GetMeshRuntimeHealthResponse {
+  repeated RuntimeComponentHealth components = 1 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {min_items: 4, max_items: 4},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Timestamp observed_at = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+service MeshRuntimeHealthService {
+  rpc GetMeshRuntimeHealth(GetMeshRuntimeHealthRequest) returns (GetMeshRuntimeHealthResponse);
+}
