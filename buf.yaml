@@ -138,18 +138,6 @@ lint:
 breaking:
   use:
     - FILE
-  except:
-    # Temporary, for the move of every proto package from ai.pipestream to
-    # ai.protomolt. Against the previous main, buf sees each file deleted at
-    # its old path, each extension renamed with its package and typed by the
-    # renamed option message, and a new java_package on the two test protos
-    # whose path did not change. The break is deliberate and data written
-    # under the old names is recreated. Drop this block in the next pull
-    # request that touches this file, per the convention recorded below.
-    - FILE_NO_DELETE
-    - FIELD_SAME_NAME
-    - FIELD_SAME_TYPE
-    - FILE_SAME_JAVA_PACKAGE
   # For a deliberate pre-GA wire break, carry a temporary rule-level
   # `except` block here in the SAME PR (buf reads breaking config from the
   # input side) and drop it in the next PR. Path-based breaking.ignore

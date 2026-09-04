@@ -23,8 +23,11 @@ A model that narrates around its answer is not invalid output. The ACP
 provider joins every message chunk of a turn, so a Kimi reply arrives as the
 notes it wrote between tool calls followed by the command batch, sometimes in a
 Markdown fence; the host takes the last complete JSON object in the reply as
-the turn and ignores the text around it. A reply with no complete object is
-still rejected.
+the turn and ignores the text around it. A reply that stops one or more closing
+braces or brackets short of a well-formed object is completed before parsing;
+that is the only repair applied. A reply with no complete object is still
+rejected, and the rejection names the line and column where parsing failed so
+the repair prompt tells the model what to fix.
 
 ## Build
 
