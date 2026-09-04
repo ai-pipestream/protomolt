@@ -1,6 +1,10 @@
 package ai.protomolt.proto.agenthost;
 
 import ai.protomolt.proto.delegation.v1.AcceptTaskRequest;
+import ai.protomolt.proto.delegation.v1.DeliverableContract;
+import com.google.protobuf.util.JsonFormat.TypeRegistry;
+import com.google.protobuf.Any;
+import ai.protomolt.proto.delegation.DeliverableContracts;
 import ai.protomolt.proto.delegation.v1.CancelTaskRequest;
 import ai.protomolt.proto.delegation.v1.OfferTaskRequest;
 import ai.protomolt.proto.delegation.v1.RecordCheckpointRequest;
@@ -33,6 +37,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -59,6 +64,10 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
     private static final String ACK = "host-ack";
     /** The command whose sender and recipient the host pins on both sides. */
     private static final String MESSAGE = "delegation-message";
+    private static final String CANDIDATE = "delegation-candidate";
+    private static final String TYPE_URL_PREFIX = "type.googleapis.com/";
+    private static final String CANDIDATE_TYPE =
+            "ai.protomolt.proto.delegation.v1.CompletionCandidate";
     /** How deep the prose contract expands nested request messages. */
     private static final int CONTRACT_DEPTH = 3;
 
@@ -185,6 +194,11 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
 
     static AgentTurn parse(String text, AgentRole role, List<Long> expectedCursors,
                            String identity) {
+        return parse(text, role, expectedCursors, identity, Map.of());
+    }
+
+    static AgentTurn parse(String text, AgentRole role, List<Long> expectedCursors,
+                           String identity, Map<String, DeliverableContract> contracts) {
         if (text == null || text.length() > MAX_RESPONSE_CHARS) {
             throw new AgentHostException("agent response exceeds the 256 KiB limit");
         }
@@ -228,7 +242,7 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
                 validateAck(arguments);
             } else {
                 enforceIdentity(role, identity, tool, arguments);
-                validateRequest(tool, arguments, i);
+                validateRequest(tool, arguments, i, contracts);
             }
             commands.add(new Command(tool, arguments));
         }
@@ -249,10 +263,15 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
      * call arrives. Running them here costs one parse and turns a mid-batch tool failure
      * into a repair turn that quotes the rule the model broke.
      */
-    private static void validateRequest(String tool, ObjectNode arguments, int index) {
+    private static void validateRequest(String tool, ObjectNode arguments, int index,
+                                        Map<String, DeliverableContract> contracts) {
         Descriptor descriptor = REQUESTS.get(tool);
         String where = "command " + index + " " + tool;
         refuseUnknownMembers(arguments, descriptor, where);
+        if (CANDIDATE.equals(tool)) {
+            validateCandidate(arguments, where, contracts);
+            return;
+        }
         DynamicMessage.Builder builder = DynamicMessage.newBuilder(descriptor);
         try {
             JsonFormat.parser().merge(arguments.toString(), builder);
@@ -268,13 +287,86 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
         if (result.valid()) {
             return;
         }
+        throw new AgentHostException(violations(where, result));
+    }
+
+    /**
+     * Parses a candidate with the deliverable types the host knows and checks its
+     * deliverable against the task's contract with the coordinator's own gate, so a
+     * deliverable the coordinator would refuse costs a repair turn here instead of an
+     * attempt there. A result for a task with no known contract, or a missing result for a
+     * task that has one, is refused the same way the reducer refuses it.
+     */
+    private static void validateCandidate(ObjectNode arguments, String where,
+                                          Map<String, DeliverableContract> contracts) {
+        SubmitCandidateRequest.Builder builder = SubmitCandidateRequest.newBuilder();
+        try {
+            JsonFormat.parser().usingTypeRegistry(deliverableTypes(contracts))
+                    .merge(arguments.toString(), builder);
+        } catch (InvalidProtocolBufferException e) {
+            String reason = e.getMessage() == null ? "" : e.getMessage();
+            if (reason.contains("Cannot resolve type")) {
+                throw new AgentHostException(where + ": result names a type for which no"
+                        + " deliverable contract is known (" + reason + ")");
+            }
+            throw new AgentHostException(where + " is not a SubmitCandidateRequest: "
+                    + reason);
+        }
+        SubmitCandidateRequest request = builder.build();
+        ValidationResult result = VALIDATORS
+                .computeIfAbsent(request.getDescriptorForType().getFullName(),
+                        name -> ProtoValidator.forMessageType(
+                                request.getDescriptorForType()))
+                .validate(request);
+        if (!result.valid()) {
+            throw new AgentHostException(violations(where, result));
+        }
+        DeliverableContract contract = contracts.get(request.getTaskId());
+        boolean carried = request.getCandidate().hasResult();
+        if (contract == null) {
+            if (carried) {
+                throw new AgentHostException(where + ": the candidate carries a"
+                        + " deliverable but no deliverable contract is known for task "
+                        + request.getTaskId());
+            }
+            return;
+        }
+        if (!carried) {
+            throw new AgentHostException(where + ": the task's deliverable contract requires"
+                    + " a result of type " + contract.getTypeName());
+        }
+        Any deliverable = request.getCandidate().getResult();
+        List<String> problems = DeliverableContracts.check(contract, deliverable);
+        if (!problems.isEmpty()) {
+            throw new AgentHostException(where + ": " + String.join("; ", problems));
+        }
+    }
+
+    /** The registry a candidate's proto3 JSON needs to read its deliverable. */
+    private static TypeRegistry deliverableTypes(Map<String, DeliverableContract> contracts) {
+        TypeRegistry.Builder registry = TypeRegistry.newBuilder();
+        Set<String> added = new HashSet<>();
+        for (DeliverableContract contract : contracts.values()) {
+            if (!added.add(contract.getTypeName())) {
+                continue;
+            }
+            try {
+                registry.add(DeliverableContracts.compile(contract).descriptor());
+            } catch (IllegalArgumentException unlinkable) {
+                // a contract the coordinator would refuse; the candidate check names it
+            }
+        }
+        return registry.build();
+    }
+
+    private static String violations(String where, ValidationResult result) {
         StringBuilder out = new StringBuilder(where).append(':');
         for (ValidationResult.Violation violation : result.violations()) {
             out.append(' ').append(jsonPath(violation.path())).append(' ')
                     .append(violation.message()).append(';');
         }
         out.setLength(out.length() - 1);
-        throw new AgentHostException(out.toString());
+        return out.toString();
     }
 
     /**
@@ -361,6 +453,10 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
      * reads a null as the field being absent.
      */
     static ObjectNode outputSchema(AgentRole role) {
+        return outputSchema(role, Map.of());
+    }
+
+    static ObjectNode outputSchema(AgentRole role, Map<String, DeliverableContract> contracts) {
         ObjectNode schema = MAPPER.createObjectNode();
         schema.put("type", "object");
         ObjectNode properties = schema.putObject("properties");
@@ -375,11 +471,73 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
         }
         schema.putArray("required").add("handledEventCursors").add("commands");
         schema.put("additionalProperties", false);
+        renderDeliverable(defs, contracts);
         ObjectNode reachable = reachableDefs(variants, defs);
         if (!reachable.isEmpty()) {
             schema.set("$defs", reachable);
         }
         return schema;
+    }
+
+    /**
+     * {@code CompletionCandidate.result} is an Any, which renders as an open object that a
+     * strict structured-output endpoint refuses. With no contract known the member is left
+     * out; with contracts known it becomes one closed branch per contract type, rendered
+     * from the contract's descriptor with the type URL pinned, plus null for a task that
+     * has no contract.
+     */
+    private static void renderDeliverable(ObjectNode defs,
+                                          Map<String, DeliverableContract> contracts) {
+        JsonNode candidate = defs.get(CANDIDATE_TYPE);
+        if (!(candidate instanceof ObjectNode def)) {
+            return;
+        }
+        ObjectNode properties = (ObjectNode) def.path("properties");
+        ArrayNode required = (ArrayNode) def.path("required");
+        Map<String, DeliverableContract> byType = new LinkedHashMap<>();
+        for (DeliverableContract contract : contracts.values()) {
+            byType.putIfAbsent(contract.getTypeName(), contract);
+        }
+        if (byType.isEmpty()) {
+            properties.remove("result");
+            for (int i = 0; i < required.size(); i++) {
+                if ("result".equals(required.get(i).asText())) {
+                    required.remove(i);
+                    break;
+                }
+            }
+            return;
+        }
+        ObjectNode result = MAPPER.createObjectNode();
+        ArrayNode branches = result.putArray("anyOf");
+        for (DeliverableContract contract : byType.values()) {
+            Descriptor type;
+            try {
+                type = DeliverableContracts.compile(contract).descriptor();
+            } catch (IllegalArgumentException unlinkable) {
+                continue;
+            }
+            ObjectNode rendered = MAPPER.valueToTree(SCHEMAS.generateRooted(type));
+            rendered.remove("$schema");
+            JsonNode nested = rendered.remove("$defs");
+            if (nested != null) {
+                for (Map.Entry<String, JsonNode> entry : nested.properties()) {
+                    if (!defs.has(entry.getKey())) {
+                        harden(entry.getValue());
+                        defs.set(entry.getKey(), entry.getValue());
+                    }
+                }
+            }
+            ObjectNode members = rendered.withObject("properties");
+            ObjectNode typeUrl = members.putObject("@type");
+            typeUrl.put("type", "string");
+            typeUrl.putArray("enum").add(TYPE_URL_PREFIX + contract.getTypeName());
+            rendered.withArray("required").add("@type");
+            harden(rendered);
+            branches.add(rendered);
+        }
+        branches.addObject().put("type", "null");
+        properties.set("result", result);
     }
 
     private static ObjectNode commandSchema(AgentRole role, String tool, ObjectNode defs) {
