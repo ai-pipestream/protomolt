@@ -127,6 +127,34 @@ class AgentTurnTest {
                 .hasMessageContaining("column");
     }
 
+    /**
+     * The schema goes to strict structured-output endpoints, which accept standard keywords
+     * only; the rule text behind the vendor keywords is in the prompt already.
+     */
+    @Test
+    void renderedSchemasCarryNoVendorKeywords() {
+        for (AgentRole role : AgentRole.values()) {
+            List<String> vendor = new ArrayList<>();
+            collectVendorKeywords(AgentTurn.outputSchema(role), "$", vendor);
+            assertThat(vendor).as("%s schema vendor keywords", role).isEmpty();
+        }
+    }
+
+    private static void collectVendorKeywords(JsonNode node, String path, List<String> out) {
+        if (node.isObject()) {
+            node.properties().forEach(member -> {
+                if (member.getKey().startsWith("x-")) {
+                    out.add(path + "." + member.getKey());
+                }
+                collectVendorKeywords(member.getValue(), path + "." + member.getKey(), out);
+            });
+        } else if (node.isArray()) {
+            for (int i = 0; i < node.size(); i++) {
+                collectVendorKeywords(node.get(i), path + "[" + i + "]", out);
+            }
+        }
+    }
+
     @Test
     void outputSchemaUsesOnlyRoleTools() {
         String schema = AgentTurn.outputSchema(AgentRole.COORDINATOR).toString();

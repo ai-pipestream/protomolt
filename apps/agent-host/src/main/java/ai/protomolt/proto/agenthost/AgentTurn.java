@@ -439,14 +439,23 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
     }
 
     /**
-     * Closes an object schema, names every member in {@code required}, and offers the
-     * members the message does not require as nullable.
+     * Closes an object schema, names every member in {@code required}, offers the members
+     * the message does not require as nullable, and drops vendor keywords.
      */
     private static void harden(JsonNode node) {
         if (!node.isObject()) {
             return;
         }
         ObjectNode object = (ObjectNode) node;
+        // Strict structured-output endpoints accept standard keywords only; the rule text
+        // behind the vendor keywords reaches the model through the prompt instead.
+        List<String> vendor = new ArrayList<>();
+        object.fieldNames().forEachRemaining(name -> {
+            if (name.startsWith("x-")) {
+                vendor.add(name);
+            }
+        });
+        vendor.forEach(object::remove);
         JsonNode declared = object.get("properties");
         if (declared instanceof ObjectNode members) {
             Set<String> required = new LinkedHashSet<>();
