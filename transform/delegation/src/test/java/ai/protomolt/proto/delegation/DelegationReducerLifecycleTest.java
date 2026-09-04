@@ -156,6 +156,23 @@ class DelegationReducerLifecycleTest {
     }
 
     @Test
+    void settlementNotesMayFollowAcceptanceOnBothLanes() {
+        Transcript transcript = new DelegationFixtures.TranscriptBuilder()
+                .hello(WORKER).admit(WORKER)
+                .offer(TASK, WORKER, 1, spec("compile"))
+                .accept(TASK, WORKER, 1)
+                .candidate(TASK, WORKER, 1, spec("compile"))
+                .accepted(TASK, WORKER, 1, "proven")
+                .workerMessage(TASK, WORKER, "tokens-spent: 900 provider: sol model: sol-large")
+                .coordinatorMessage(TASK, WORKER, "settled")
+                .build();
+        DelegationReducer.Result result = reducer.reduce(transcript);
+        assertThat(result.findings()).isEmpty();
+        assertThat(result.tasks().get(TASK).phase())
+                .isEqualTo(DelegationReducer.Phase.ACCEPTED);
+    }
+
+    @Test
     void terminalImmutabilityRejectsFramesAfterAcceptance() {
         DelegationFixtures.TranscriptBuilder builder =
                 new DelegationFixtures.TranscriptBuilder()

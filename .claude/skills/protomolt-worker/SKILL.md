@@ -77,6 +77,9 @@ explain the frames you will send and receive.
 
 Re-registering with the same worker id after a disconnect or a server restart resumes
 the recorded stream; `delegation-watch` from the saved cursor replays nothing twice.
+Check `delegation-worker-list` first and re-register only when your id shows
+`connected: false`: a repeat registration while the stream is live fails with
+"worker is already registered".
 
 ### Accept or ask
 
