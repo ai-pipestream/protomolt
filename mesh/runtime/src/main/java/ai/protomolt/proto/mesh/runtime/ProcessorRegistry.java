@@ -157,6 +157,11 @@ public final class ProcessorRegistry {
             }
             return result;
         }
+
+        @Override
+        public InvocationSettlement recoverSettlement(String deliveryId) {
+            return delegate.recoverSettlement(deliveryId);
+        }
     }
 
     private static void requireInput(ProcessorContract contract, Message input) {

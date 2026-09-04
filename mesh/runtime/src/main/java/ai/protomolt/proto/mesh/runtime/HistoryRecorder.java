@@ -28,6 +28,14 @@ final class HistoryRecorder {
                 .setState(RunState.RUN_STATE_RUNNING);
     }
 
+    HistoryRecorder(Clock clock, FlowHistory persisted) {
+        this.clock = Objects.requireNonNull(clock, "clock");
+        this.history = Objects.requireNonNull(persisted, "persisted").toBuilder()
+                .setState(RunState.RUN_STATE_RUNNING)
+                .clearFailure();
+        this.sequence = persisted.getEventsCount();
+    }
+
     void event(
             HistoryEventKind kind,
             String nodeId,
@@ -60,12 +68,35 @@ final class HistoryRecorder {
         return history.build();
     }
 
+    FlowHistory current() {
+        return history.build();
+    }
+
+    void reset(FlowHistory durable) {
+        Objects.requireNonNull(durable, "durable");
+        history.clear().mergeFrom(durable).setState(RunState.RUN_STATE_RUNNING)
+                .clearFailure();
+        sequence = durable.getEventsCount();
+    }
+
+    FlowHistory cancel(String reason) {
+        String message = bounded(reason, "run cancellation requested");
+        FlowFailure detail = FlowFailure.newBuilder()
+                .setCode("run-cancelled")
+                .setMessage(message)
+                .build();
+        history.addEvents(HistoryEvent.newBuilder()
+                        .setSequence(++sequence)
+                        .setOccurredAt(timestamp(clock.instant()))
+                        .setKind(HistoryEventKind.HISTORY_EVENT_KIND_RUN_CANCELLED)
+                        .setFailure(detail))
+                .setState(RunState.RUN_STATE_CANCELLED)
+                .setFailure(detail);
+        return history.build();
+    }
+
     FlowHistory fail(Throwable failure) {
-        String message = failure.getMessage() == null
-                ? failure.getClass().getSimpleName() : failure.getMessage();
-        if (message.length() > 8_192) {
-            message = message.substring(0, 8_192);
-        }
+        String message = bounded(failure.getMessage(), failure.getClass().getSimpleName());
         FlowFailure detail = FlowFailure.newBuilder()
                 .setCode("flow-execution-failed")
                 .setMessage(message)
@@ -78,6 +109,11 @@ final class HistoryRecorder {
                 .setState(RunState.RUN_STATE_FAILED)
                 .setFailure(detail);
         return history.build();
+    }
+
+    private static String bounded(String value, String fallback) {
+        String result = value == null || value.isBlank() ? fallback : value;
+        return result.length() <= 8_192 ? result : result.substring(0, 8_192);
     }
 
     private static Timestamp timestamp(Instant instant) {

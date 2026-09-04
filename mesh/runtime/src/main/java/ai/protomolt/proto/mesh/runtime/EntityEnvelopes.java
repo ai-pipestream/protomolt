@@ -109,6 +109,53 @@ public final class EntityEnvelopes {
         return result;
     }
 
+    /** Re-admits exact payload bytes as a new replay root with a fresh deadline. */
+    static EntityEnvelope replayRoot(
+            String runId,
+            long frontierSequence,
+            EntityEnvelope source,
+            Instant createdAt,
+            Instant deadline) {
+        Objects.requireNonNull(source, "source");
+        EntityHeader original = source.getHeader();
+        EntityHeader.Builder header = EntityHeader.newBuilder()
+                .setEntityId(stableUuid("replay\0" + runId + '\0' + frontierSequence
+                        + '\0' + original.getEntityId()))
+                .setScopeId(stableUuid("replay-scope\0" + runId))
+                .setScopeDepth(0)
+                .setDataLayer(original.getDataLayer())
+                .setContentType(original.getContentType())
+                .setPayloadLength(original.getPayloadLength())
+                .setPayloadDigest(original.getPayloadDigest())
+                .setCreatedAt(timestamp(createdAt))
+                .setDeadline(timestamp(deadline))
+                .setCompletionPolicy(original.getCompletionPolicy())
+                .setSecurityPostureDigest(original.getSecurityPostureDigest())
+                .setTraceId(original.getTraceId())
+                .setEvidenceCorrelationId(original.getEvidenceCorrelationId());
+        if (original.hasRouteProfile()) {
+            header.setRouteProfile(original.getRouteProfile());
+        }
+        if (original.hasProcessingProfile()) {
+            header.setProcessingProfile(original.getProcessingProfile());
+        }
+        if (original.hasSecurityPolicy()) {
+            header.setSecurityPolicy(original.getSecurityPolicy());
+        }
+        EntityEnvelope.Builder replay = EntityEnvelope.newBuilder()
+                .setHeader(header)
+                .setSchema(source.getSchema());
+        if (source.hasPayload()) {
+            replay.setPayload(source.getPayload());
+        }
+        if (source.hasClaimCheck()) {
+            replay.setClaimCheck(source.getClaimCheck());
+        }
+        EntityEnvelope result = replay.build();
+        MeshValidation.validateStructure(result);
+        return result;
+    }
+
     /** Exact schema reference for a message descriptor. */
     public static SchemaReference schemaOf(Message message) {
         DescriptorIdentity identity = DescriptorIdentity.of(message.getDescriptorForType());

@@ -208,7 +208,7 @@ the exception otherwise.
 | `protomolt-mesh-proto` | `mesh/proto` | The mesh core contract: `EntityEnvelope`, `EntityHeader`, `SchemaReference`, claim checks, and the `mesh.v1` processing options. | `mesh/proto/src/main/proto/ai/protomolt/proto/mesh/v1/entity.proto` | Proto only. The `mesh.v1` options have no main-source reader |
 | `protomolt-mesh-contracts` | `mesh/contracts` | The contract gate: fail-fast envelope validation, canonical descriptor-set fingerprinting, and the schema-identity resolver. | `mesh/contracts/src/main/java/ai/protomolt/proto/mesh/MeshGate.java` | |
 | `protomolt-mesh-cluster` | `mesh/cluster` | The memory-resident cluster directory: a deterministic reducer emitting a gap-free event log, fenced presence and capacity, replay-validate-then-install persistence through repo-service with an AES-256-GCM encrypted log, and the six `mesh-*` verbs. | `mesh/cluster/src/main/java/ai/protomolt/proto/mesh/cluster/ClusterDirectory.java` | No gRPC service and no port of its own; mounted in-process by `apps/serve` |
-| `protomolt-mesh-runtime` | `mesh/runtime` | Compiles exact-schema directed processor graphs and runs them in process with one protobuf history. Remote processors pull through a demand-driven bidirectional gRPC channel backed by a fenced, CRC-protected protobuf WAL; completion is committed only after downstream success. | `mesh/runtime/src/main/java/ai/protomolt/proto/mesh/runtime/FlowRuntime.java` | No standalone process; hosts compose the coordinator and worker roles |
+| `protomolt-mesh-runtime` | `mesh/runtime` | Compiles exact-schema directed processor graphs; immutably publishes versions; revision-fences deployment pointers; and persists restart-safe run history, execution frontiers, cancellation, and selected-frontier replay in a fenced protobuf WAL. Local and demand-driven gRPC processors share one invocation and settlement model. | `mesh/runtime/src/main/java/ai/protomolt/proto/mesh/runtime/DurableFlowCoordinator.java` | No standalone process; hosts mount `FlowLifecycleGrpcService` and compose coordinator and worker roles |
 
 ## search/ : index mappings, chunking, embeddings and rerank
 
@@ -820,14 +820,20 @@ with no skip list. See [building and testing](docs/operations/building.md).
 
 # Runtime disk footprint
 
-ProtoMolt never writes message data to disk from the toolkit modules. The only
-runtime writes from `apps/serve` are declared schema storage at locations the
-operator chooses: the registry's git repository (`--registry-git`, or a
-temporary directory in `--demo` mode) and `gather-git`'s persistent clone cache
-(`--gather-cache` / `PROTOMOLT_GATHER_CACHE`, defaulting to
+Most toolkit modules do not write message data to disk. Two mesh/runtime
+components are deliberately durable when a host constructs them with an
+operator-selected path: `FileFlowLifecycleStore` stores published flow plans,
+deployment pointers, run history, and execution frontiers; and
+`FileDurableProcessorChannel` stores remote processor deliveries. Both use
+framed protobuf WALs with one-writer fencing, per-record CRC32C, and forced
+appends. Neither chooses a default path.
+
+The other runtime writes from `apps/serve` are declared schema storage at
+locations the operator chooses: the registry's git repository (`--registry-git`,
+or a temporary directory in `--demo` mode) and `gather-git`'s persistent clone
+cache (`--gather-cache` / `PROTOMOLT_GATHER_CACHE`, defaulting to
 `~/.cache/protomolt/gather/git`). Cache placement is server configuration, never
-request input. Everything else, including compilation of `.proto` text to
-descriptors, runs entirely in memory.
+request input. Compilation of `.proto` text to descriptors runs in memory.
 
 The document platform is different by design: `repo/service` writes document
 parts and blobs to object storage and rows to Postgres, `search/service` writes

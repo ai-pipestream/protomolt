@@ -66,25 +66,27 @@ public final class RemoteProcessorInvoker implements ProcessorInvoker {
             throw e;
         }
         String leaseToken = completion.completion().getLeaseToken();
-        InvocationSettlement settlement = new InvocationSettlement() {
-            @Override
-            public String deliveryId() {
-                return deliveryId;
-            }
-
-            @Override
-            public void settle() {
-                channel.settle(deliveryId, leaseToken, clock.instant());
-            }
-
-            @Override
-            public void release(String reason) {
-                channel.release(deliveryId, leaseToken, reason, clock.instant());
-                workAvailable.run();
-            }
-        };
+        InvocationSettlement settlement = settlement(deliveryId, leaseToken);
         return new ProcessorInvocationResult(
                 completion.completion().getOutputsList(), settlement);
+    }
+
+    @Override
+    public InvocationSettlement recoverSettlement(String deliveryId) {
+        DurableProcessorChannel.DeliveryView view = channel.delivery(deliveryId)
+                .orElseThrow(() -> new IllegalStateException(
+                        "durable delivery is unavailable during recovery: " + deliveryId));
+        if (view.state() != DurableProcessorChannel.DeliveryState.COMPLETED
+                && view.state() != DurableProcessorChannel.DeliveryState.SETTLED) {
+            throw new IllegalStateException("durable delivery " + deliveryId
+                    + " cannot recover settlement from state " + view.state());
+        }
+        if (view.completion() == null) {
+            throw new IllegalStateException("durable delivery " + deliveryId
+                    + " has no completion to settle");
+        }
+        return settlement(deliveryId,
+                view.completion().completion().getLeaseToken());
     }
 
     private void abandon(String deliveryId, String reason) {
@@ -98,5 +100,31 @@ public final class RemoteProcessorInvoker implements ProcessorInvoker {
                 workAvailable.run();
             }
         });
+    }
+
+    private InvocationSettlement settlement(String deliveryId, String leaseToken) {
+        return new InvocationSettlement() {
+            @Override
+            public String deliveryId() {
+                return deliveryId;
+            }
+
+            @Override
+            public void settle() {
+                channel.settle(deliveryId, leaseToken, clock.instant());
+            }
+
+            @Override
+            public void release(String reason) {
+                DurableProcessorChannel.DeliveryView view = channel.delivery(deliveryId)
+                        .orElseThrow(() -> new IllegalStateException(
+                                "durable delivery disappeared: " + deliveryId));
+                if (view.state() == DurableProcessorChannel.DeliveryState.SETTLED) {
+                    return;
+                }
+                channel.release(deliveryId, leaseToken, reason, clock.instant());
+                workAvailable.run();
+            }
+        };
     }
 }

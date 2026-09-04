@@ -56,6 +56,52 @@ runtime retains each invocation's settlement handle and commits it in reverse
 dependency order only after the directed run succeeds. The demand-driven remote
 transport uses that same seam; local processors use a no-op settlement.
 
+## Durable lifecycle
+
+`DurableFlowCoordinator` adds the product lifecycle without changing the flow
+compiler or processor contract. A successful validation produces a compiled
+plan and deterministic fingerprints. `publish` writes that exact plan under an
+immutable workflow name and version. `deploy` moves the workflow's live pointer
+under an expected-revision fence. A run resolves the pointer once and persists
+its workflow version, plan fingerprint, and deployment revision before invoking
+any processor. A later deployment cannot change in-flight or replayed work.
+
+`FileFlowLifecycleStore` keeps publication, deployment, run creation, history
+deltas, and execution-frontier transitions in one `PMFL0001` framed protobuf
+WAL. Every append is forced before reducer state changes. Startup replays and
+validates the complete state machine. It truncates only an incomplete final
+frame and refuses a wrong header, invalid frame length, checksum mismatch,
+invalid protobuf, sequence gap, stale revision, impossible state transition,
+descriptor drift, or second writer. History transitions contain only newly
+appended events, so the WAL does not repeatedly copy the full run history.
+
+The persisted checkpoint contains the pending-message queue, the active
+invocation, completed-but-unsettled descendants, the next invocation ordinal,
+and the effective deadline. Processor start is checkpointed before invocation.
+After a process restart, `resume` or `resumeIncomplete` reconstructs that exact
+frontier. The stable invocation and delivery ids make a remote retry idempotent;
+an unresolved local invocation remains at-least-once and therefore receives the
+same invocation id on retry.
+
+Cancellation is a durable transition, not a socket event. `cancel` first writes
+`CANCELLATION_REQUESTED`, then interrupts an active local executor. The executor
+releases unsettled descendants and records `RUN_CANCELLED` before returning the
+terminal run. Cancellation is accepted until descendant settlement begins;
+after that boundary the coordinator finishes the reverse-order commit.
+
+Frontier replay creates a new run from one or more strictly ordered
+`MESSAGE_ROUTED` history sequences. It copies the exact routed protobuf
+envelopes into a new stable run identity while pinning the source run's workflow
+version, plan fingerprint, and deployment revision. Missing events, non-routed
+events, out-of-order sequences, and unavailable exact plans are refusals.
+
+`FlowLifecycleGrpcService` exposes validation, publication, deployment, start,
+resume, get, cursor-based history, cancellation, and replay through protobuf
+RPCs. Revision conflicts return `ABORTED`, missing durable identities return
+`NOT_FOUND`, malformed requests return `INVALID_ARGUMENT`, and storage failures
+return `INTERNAL`. Hosts select the WAL path and mount the service; the runtime
+module does not invent a storage location or a second representation.
+
 ## Demand-driven remote processors
 
 `DemandProcessorService.Connect` is one worker-initiated bidirectional stream.

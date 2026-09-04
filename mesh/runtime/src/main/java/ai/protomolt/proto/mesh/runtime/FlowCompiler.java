@@ -418,7 +418,7 @@ public final class FlowCompiler {
         }
     }
 
-    private static byte[] deterministicBytes(MessageLite message) {
+    static byte[] deterministicBytes(MessageLite message) {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream(message.getSerializedSize());
         CodedOutputStream output = CodedOutputStream.newInstance(bytes);
         output.useDeterministicSerialization();

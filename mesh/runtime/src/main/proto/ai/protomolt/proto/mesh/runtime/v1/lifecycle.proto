@@ -1,0 +1,430 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.mesh.runtime.v1;
+
+import "ai/protomolt/proto/mesh/runtime/v1/flow.proto";
+import "ai/protomolt/proto/mesh/v1/entity.proto";
+import "ai/protomolt/proto/meta/v1/metadata.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.mesh.runtime.v1";
+
+// Durable lifecycle for exact compiled directed flows. Stored and executed
+// values are protobuf binary. JSON may exist at an external REST or human
+// boundary but never participates in identity, processing, history, or recovery.
+service FlowLifecycleService {
+  rpc ValidateFlow(ValidateFlowRequest) returns (FlowValidationReport);
+  rpc PublishFlow(PublishFlowRequest) returns (PublishFlowResponse);
+  rpc GetPublishedFlow(GetPublishedFlowRequest) returns (PublishedFlowVersion);
+  rpc SetDeployment(SetDeploymentRequest) returns (DeploymentPointer);
+  rpc GetDeployment(GetDeploymentRequest) returns (DeploymentPointer);
+  rpc StartRun(StartRunRequest) returns (DurableFlowRun);
+  rpc ResumeRun(ResumeRunRequest) returns (DurableFlowRun);
+  rpc GetRun(GetRunRequest) returns (DurableFlowRun);
+  rpc ReadRunHistory(ReadRunHistoryRequest) returns (ReadRunHistoryResponse);
+  rpc CancelRun(CancelRunRequest) returns (DurableFlowRun);
+  rpc ReplayRun(ReplayRunRequest) returns (DurableFlowRun);
+}
+
+message FlowValidationFinding {
+  string code = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string path = 2 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 1024,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string message = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 8192}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message FlowValidationReport {
+  string workflow_name = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string version = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string definition_fingerprint = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  bool valid = 4 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  repeated FlowValidationFinding findings = 5 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 256,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  CompiledFlowPlan plan = 6 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+message PublishedFlowVersion {
+  string workflow_name = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string version = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  CompiledFlowPlan plan = 3 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Timestamp published_at = 4 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message DeploymentPointer {
+  string workflow_name = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string version = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string plan_fingerprint = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  uint64 revision = 4 [
+    (ai.protomolt.proto.validate.v1.field).uint64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Timestamp updated_at = 5 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+enum DurableRunState {
+  DURABLE_RUN_STATE_UNSPECIFIED = 0;
+  DURABLE_RUN_STATE_RUNNING = 1;
+  DURABLE_RUN_STATE_CANCELLATION_REQUESTED = 2;
+  DURABLE_RUN_STATE_CANCELLED = 3;
+  DURABLE_RUN_STATE_COMPLETED = 4;
+  DURABLE_RUN_STATE_FAILED = 5;
+}
+
+message PendingFlowMessage {
+  string node_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {identifier: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string edge_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {identifier: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ai.protomolt.proto.mesh.v1.EntityEnvelope input = 3 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message ActiveFlowInvocation {
+  PendingFlowMessage pending = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  uint64 invocation_ordinal = 2 [
+    (ai.protomolt.proto.validate.v1.field).uint64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string invocation_id = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message PendingFlowSettlement {
+  string node_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {identifier: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string processor_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {path_safe_name: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string invocation_id = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string delivery_id = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ai.protomolt.proto.mesh.v1.EntityEnvelope input = 5 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message FlowExecutionCheckpoint {
+  repeated PendingFlowMessage pending = 1 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 1000000,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ActiveFlowInvocation active = 2 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  repeated PendingFlowSettlement settlements = 3 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 1000000,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  uint64 next_invocation_ordinal = 4 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  google.protobuf.Timestamp deadline = 5 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  // Once true, cancellation is refused and reverse-order settlement runs to a
+  // terminal completion. Persisting this before the first commit closes the
+  // cancellation-versus-settlement race across process restart.
+  bool settlement_started = 6 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+message DurableFlowRun {
+  string run_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string workflow_name = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string workflow_version = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string plan_fingerprint = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  uint64 deployment_revision = 5 [
+    (ai.protomolt.proto.validate.v1.field).uint64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ai.protomolt.proto.mesh.v1.EntityEnvelope input = 6 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  DurableRunState state = 7 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, enum: {defined_only: true, not_in: [0]}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  uint64 storage_revision = 8 [
+    (ai.protomolt.proto.validate.v1.field).uint64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Timestamp created_at = 9 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Timestamp updated_at = 10 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  FlowHistory history = 11 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  FlowExecutionCheckpoint checkpoint = 12 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  string cancellation_reason = 13 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 8192,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string replay_of_run_id = 14 [
+    (ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  repeated uint64 replay_frontier_sequences = 15 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 1024,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// One append-only run transition. It carries only new history events and the
+// execution frontier, so persistent history does not grow quadratically.
+message RunTransition {
+  string run_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  uint64 expected_storage_revision = 2 [
+    (ai.protomolt.proto.validate.v1.field).uint64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  DurableRunState state = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, enum: {defined_only: true, not_in: [0]}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  repeated HistoryEvent events = 4 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 1000000,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  FlowExecutionCheckpoint checkpoint = 5 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  string cancellation_reason = 6 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 8192,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Timestamp updated_at = 7 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message LifecycleRecord {
+  uint64 sequence = 1 [
+    (ai.protomolt.proto.validate.v1.field).uint64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Timestamp recorded_at = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  oneof event {
+    PublishedFlowVersion flow_published = 10 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    DeploymentPointer deployment_changed = 11 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    DurableFlowRun run_created = 12 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    RunTransition run_transitioned = 13 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  }
+}
+
+message ValidateFlowRequest {
+  string version = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  FlowDefinition definition = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message PublishFlowRequest {
+  string version = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  FlowDefinition definition = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message PublishFlowResponse {
+  FlowValidationReport validation = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  PublishedFlowVersion published = 2 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+message GetPublishedFlowRequest {
+  string workflow_name = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string version = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message SetDeploymentRequest {
+  string workflow_name = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string version = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  optional uint64 expected_revision = 3 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+message GetDeploymentRequest {
+  string workflow_name = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message StartRunRequest {
+  string workflow_name = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string run_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ai.protomolt.proto.mesh.v1.EntityEnvelope input = 3 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message ResumeRunRequest {
+  string run_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message GetRunRequest {
+  string run_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message ReadRunHistoryRequest {
+  string run_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  uint64 after_sequence = 2 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  uint32 limit = 3 [
+    (ai.protomolt.proto.validate.v1.field).uint32.lte = 10000,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message ReadRunHistoryResponse {
+  repeated HistoryEvent events = 1 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 10000,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  uint64 next_sequence = 2 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  bool terminal = 3 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+message CancelRunRequest {
+  string run_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string reason = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 8192}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message ReplayRunRequest {
+  string source_run_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string run_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  repeated uint64 frontier_sequences = 3 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 1024},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
