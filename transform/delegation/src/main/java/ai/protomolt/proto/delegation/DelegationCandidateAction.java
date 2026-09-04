@@ -26,7 +26,12 @@ final class DelegationCandidateAction extends DelegationAction {
         return "Submits a completion candidate for review: the CompletionCandidate as proto3 "
                 + "JSON with the attempt, the expected revision, a summary, passing evidence "
                 + "for every required check of the offer's spec, and at least one commit or "
-                + "artifact reference. The coordinator answers with acceptance or a revision "
+                + "artifact reference. When the offer's spec declared a deliverable "
+                + "contract, the candidate must also carry result as {\"@type\": "
+                + "\"type.googleapis.com/<typeName>\", ...} matching the contract's "
+                + "rendered jsonSchema; the coordinator checks it against the contract's "
+                + "declared rules and refuses the candidate before review if it does not "
+                + "hold. The coordinator answers with acceptance or a revision "
                 + "request on the event feed; a worker can never mark its own task done.";
     }
 
