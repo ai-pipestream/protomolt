@@ -44,7 +44,8 @@ import java.util.Set;
  *     LEASED  --completion candidate(revision r)--&gt; CANDIDATE
  *     CANDIDATE --revision requested(r)--&gt; LEASED (next candidate must be r+1)
  *     CANDIDATE --expired / cancel--&gt; attempt terminal
- *     CANDIDATE --accepted(r)--&gt; ACCEPTED (task terminal: nothing may follow)
+ *     CANDIDATE --accepted(r)--&gt; ACCEPTED (task terminal: only task messages
+ *                                        may follow, for settlement notes)
  *   Any attempt-terminal phase --offer(attempt n+1)--&gt; OFFERED (re-offer or
  *   reassignment; resume_from must name a checkpoint the task actually recorded)
  * </pre>
@@ -280,7 +281,9 @@ public final class DelegationReducer {
                                          TaskTrack task, List<Finding> findings) {
         String taskId = frame.getTaskId();
         String frameId = frame.getFrameId();
-        if (task.phase == Phase.ACCEPTED) {
+        // Task messages never move the lifecycle, so they stay legal after the
+        // task is settled: the end-of-task token note is sent after acceptance.
+        if (task.phase == Phase.ACCEPTED && !frame.hasTaskMessage()) {
             findings.add(new Finding(taskId, frameId, "terminal",
                     "the task is accepted; no worker frame may follow"));
             return;
@@ -590,7 +593,7 @@ public final class DelegationReducer {
                             "frame names a task that was never offered"));
                     return;
                 }
-                if (task.phase == Phase.ACCEPTED) {
+                if (task.phase == Phase.ACCEPTED && !frame.hasTaskMessage()) {
                     findings.add(new Finding(taskId, frameId, "terminal",
                             "the task is accepted; no coordinator frame may follow"));
                     return;

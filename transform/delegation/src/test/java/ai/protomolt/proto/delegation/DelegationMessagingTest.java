@@ -99,10 +99,20 @@ class DelegationMessagingTest {
                 .anyMatch(entry -> entry.getWorkerFrame().hasTaskMessage()));
         assertTrue(coordinator.state().clean(), coordinator.state().findings().toString());
 
-        // After acceptance the task is terminal: no message may follow on either lane.
-        assertThrows(IllegalArgumentException.class,
-                () -> coordinator.sendMessage("messaging-kimi", taskId,
-                        TaskMessageKind.TASK_MESSAGE_KIND_NOTE, "late note", "", List.of()));
+        // After acceptance the task is terminal for the lifecycle, but settlement
+        // notes still flow on both lanes: the token note is sent after the verdict.
+        TaskMessage settlement = worker.sendMessage(taskId,
+                TaskMessageKind.TASK_MESSAGE_KIND_NOTE,
+                "tokens-spent: 1200 provider: scripted model: deterministic period-resets: unknown",
+                "", List.of());
+        TaskMessage receipt = coordinator.sendMessage("messaging-kimi", taskId,
+                TaskMessageKind.TASK_MESSAGE_KIND_NOTE, "settled", settlement.getMessageId(),
+                List.of());
+        assertEquals(settlement.getMessageId(), receipt.getReplyTo());
+        assertEquals(DelegationReducer.Phase.ACCEPTED,
+                coordinator.state().tasks().get(taskId).phase());
+        assertTrue(coordinator.state().clean(), coordinator.state().findings().toString());
+        assertTrue(coordinator.workers().getFirst().connected());
     }
 
     @Test

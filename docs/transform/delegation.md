@@ -59,7 +59,9 @@ reference, plus the typed deliverable when the spec named one. The coordinator e
 revision with structured feedback.
 
 Blocked, failed, cancelled, rejected, expired, and accepted attempts are
-terminal. Reassignment uses a new attempt and lease. Coordinator cancellation
+terminal. Task messages are the one exception after acceptance: the worker's
+end-of-task token note and the coordinator's reply still flow, because they
+settle the books without moving the lifecycle. Reassignment uses a new attempt and lease. Coordinator cancellation
 wins a race with a later completion candidate.
 
 ## Deliverable contract
@@ -325,8 +327,9 @@ timestamp. It is recorded in the transcript and sequenced like any other
 frame, but it never moves the lifecycle: it is not progress, not a
 checkpoint, and not a review path. The reducer still checks it: the named
 sender must be the stream's worker on the worker lane, and a coordinator
-message must address the stream's worker. A message after acceptance is a
-finding like any other post-terminal frame.
+message must address the stream's worker. Messages are also the only frames
+allowed after acceptance, so a task can close its token accounting after the
+verdict; any other post-terminal frame is a finding.
 
 Messages obey the same durability rule as lifecycle frames: a message is
 durable before it becomes visible to watchers and cursors, a failed
