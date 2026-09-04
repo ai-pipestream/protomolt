@@ -157,17 +157,34 @@ session model.
 |---|---|
 | `delegation-worker-register` | Register this agent as a worker: hello, admission decision |
 | `delegation-worker-list` | Discover registered workers and their capabilities |
-| `delegation-offer` | Offer a bounded task and lease to an admitted worker |
+| `delegation-offer` | Offer a bounded task and lease to an admitted worker, optionally with a deliverable contract |
 | `delegation-accept` | Take the open offer for a task's current attempt |
 | `delegation-progress` | Report one monotonic progress note on the lease |
 | `delegation-checkpoint` | Record one resumable checkpoint with a resume token |
-| `delegation-candidate` | Submit an evidence-carrying completion candidate for review |
+| `delegation-candidate` | Submit an evidence-carrying completion candidate, plus the typed `result` when the offer named a deliverable contract |
 | `delegation-review` | Accept the open candidate or request a revision with feedback |
 | `delegation-cancel` | Cancel the task's open attempt; terminal on emission |
 | `delegation-message` | Send a non-transitioning question, answer, guidance, or note |
 | `delegation-watch` | Long-poll the event feed from a cursor; returns a bounded batch and the resumption cursor |
 | `delegation-transcript` | Read the recorded transcript from a cursor, bounded per call |
 
+An offer's `spec.contract` names the message the task must produce:
+`descriptorSet` (a serialized `FileDescriptorSet` as base64 bytes) plus
+`typeName`. The emitted offer carries `spec.contract.jsonSchema`, rendered from
+that descriptor set, so a worker learns the deliverable's shape without protoc.
+`delegation-candidate` then wants `candidate.result` as the proto3 JSON form of
+a packed `google.protobuf.Any`:
+
+```json
+{"@type": "type.googleapis.com/<typeName>", "field": "value"}
+```
+
+The `@type` member is the only accepted spelling; the delegation verbs resolve
+it against a type registry built from the contracts of the coordinator's live
+tasks, because the deliverable type is not one the server was compiled with.
+The coordinator checks the unpacked message against the rules the contract's
+own descriptor set declares and refuses the candidate before review when it
+does not hold. See [Agent delegation](../transform/delegation.md#deliverable-contract).
 
 Wherever a tool takes a schema it accepts exactly one of `{"type": "fully.qualified.Name"}`
 (resolved from the registry), `{"sources": {...}}` (inline `.proto`, compiled
