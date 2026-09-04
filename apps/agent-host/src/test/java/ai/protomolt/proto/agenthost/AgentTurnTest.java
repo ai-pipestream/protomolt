@@ -127,6 +127,34 @@ class AgentTurnTest {
                 .hasMessageContaining("column");
     }
 
+    /**
+     * The schema goes to strict structured-output endpoints, which accept standard keywords
+     * only; the rule text behind the vendor keywords is in the prompt already.
+     */
+    @Test
+    void renderedSchemasCarryNoVendorKeywords() {
+        for (AgentRole role : AgentRole.values()) {
+            List<String> vendor = new ArrayList<>();
+            collectVendorKeywords(AgentTurn.outputSchema(role), "$", vendor);
+            assertThat(vendor).as("%s schema vendor keywords", role).isEmpty();
+        }
+    }
+
+    private static void collectVendorKeywords(JsonNode node, String path, List<String> out) {
+        if (node.isObject()) {
+            node.properties().forEach(member -> {
+                if (member.getKey().startsWith("x-")) {
+                    out.add(path + "." + member.getKey());
+                }
+                collectVendorKeywords(member.getValue(), path + "." + member.getKey(), out);
+            });
+        } else if (node.isArray()) {
+            for (int i = 0; i < node.size(); i++) {
+                collectVendorKeywords(node.get(i), path + "[" + i + "]", out);
+            }
+        }
+    }
+
     @Test
     void outputSchemaUsesOnlyRoleTools() {
         String schema = AgentTurn.outputSchema(AgentRole.COORDINATOR).toString();
@@ -154,7 +182,8 @@ class AgentTurnTest {
                   }}]}
                 """, AgentRole.WORKER, List.of(4L), "kimi-worker"))
                 .isInstanceOf(AgentHostException.class)
-                .hasMessageContaining("attempt is required");
+                .hasMessageContaining("command 0 delegation-progress:")
+                .hasMessageContaining("attempt field is required");
 
         assertThatThrownBy(() -> AgentTurn.parse("""
                 {"handledEventCursors":[4],"commands":[{
@@ -180,6 +209,85 @@ class AgentTurnTest {
                 """, AgentRole.WORKER, List.of(4L), "kimi-worker");
         assertThat(valid.commands().getFirst().arguments().path("workerId").asText())
                 .isEqualTo("kimi-worker");
+    }
+
+    /**
+     * The bounds a command is held to are the request message's own. A task id that is not
+     * a uuid is refused in the words of the rule the proto states, not in the words of a
+     * schema kept alongside it.
+     */
+    @Test
+    void aTaskIdThatIsNotAUuidIsRefusedInTheProtoRulesWords() {
+        assertThatThrownBy(() -> AgentTurn.parse("""
+                {"handledEventCursors":[4],"commands":[{
+                  "tool":"delegation-accept",
+                  "arguments":{"taskId":"task-1","attempt":1}}]}
+                """, AgentRole.WORKER, List.of(4L), "kimi-worker"))
+                .isInstanceOf(AgentHostException.class)
+                .hasMessageContaining("command 0 delegation-accept:")
+                .hasMessageContaining("taskId value must be a valid UUID");
+    }
+
+    /**
+     * A candidate that references neither a commit nor an artifact breaks a rule the
+     * candidate message states about itself as a whole, which only running the message's
+     * own CEL can catch.
+     */
+    @Test
+    void aCandidateWithNoCommitOrArtifactIsRefusedByTheMessageRule() {
+        assertThatThrownBy(() -> AgentTurn.parse("""
+                {"handledEventCursors":[4],"commands":[{
+                  "tool":"delegation-candidate",
+                  "arguments":{
+                    "taskId":"11111111-1111-4111-8111-111111111111",
+                    "candidate":{
+                      "attempt":1,"revision":1,"summary":"done",
+                      "evidence":[{"checkName":"unit-tests",
+                        "verdict":"CHECK_VERDICT_PASSED",
+                        "ranAt":"2026-09-01T00:00:00Z","detail":"the suite passed"}]
+                    }}}]}
+                """, AgentRole.WORKER, List.of(4L), "kimi-worker"))
+                .isInstanceOf(AgentHostException.class)
+                .hasMessageContaining("a completion candidate must reference at least one "
+                        + "commit or artifact");
+    }
+
+    /**
+     * A member no field of the request message declares is refused wherever it sits, and
+     * the refusal names the command that carried it so the repair turn knows which one.
+     */
+    @Test
+    void aMemberNoRequestMessageDeclaresIsRefused() {
+        assertThatThrownBy(() -> AgentTurn.parse("""
+                {"handledEventCursors":[4],"commands":[{
+                  "tool":"delegation-candidate",
+                  "arguments":{
+                    "taskId":"11111111-1111-4111-8111-111111111111",
+                    "candidate":{
+                      "attempt":1,"revision":1,"summary":"done","confidence":"high",
+                      "evidence":[{"checkName":"unit-tests",
+                        "verdict":"CHECK_VERDICT_PASSED",
+                        "ranAt":"2026-09-01T00:00:00Z"}],
+                      "commits":[{"repository":"example/repo",
+                        "commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "subject":"the change"}]
+                    }}}]}
+                """, AgentRole.WORKER, List.of(4L), "kimi-worker"))
+                .isInstanceOf(AgentHostException.class)
+                .hasMessageContaining(
+                        "command 0 delegation-candidate contains unknown field 'confidence'");
+    }
+
+    /**
+     * The evidence structure the model is offered is the one the proto declares, down to
+     * the members no hand-written mirror carried: check evidence references its own
+     * artifacts.
+     */
+    @Test
+    void theRenderedSchemaCarriesTheDescriptorsEvidenceStructure() {
+        String schema = AgentTurn.outputSchema(AgentRole.WORKER).toString();
+        assertThat(schema).contains("CheckEvidence").contains("checkName")
+                .contains("artifacts").contains("sha256");
     }
 
     private static void assertStrictObjects(JsonNode node, String path,

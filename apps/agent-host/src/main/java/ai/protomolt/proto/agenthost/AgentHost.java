@@ -398,11 +398,7 @@ final class AgentHost implements AutoCloseable {
     }
 
     private String promptText(ObjectNode packet, List<Long> expectedCursors, String error) {
-        String allowed = config.role() == AgentRole.WORKER
-                ? "host-ack, delegation-accept, delegation-message, delegation-progress, "
-                + "delegation-checkpoint, delegation-candidate"
-                : "host-ack, delegation-offer, delegation-message, delegation-review, "
-                + "delegation-cancel";
+        String allowed = String.join(", ", AgentTurn.tools(config.role()));
         StringBuilder prompt = new StringBuilder();
         prompt.append("You are the ")
                 .append(config.role().name().toLowerCase(java.util.Locale.ROOT))
@@ -423,33 +419,26 @@ final class AgentHost implements AutoCloseable {
         return prompt.toString();
     }
 
+    /**
+     * What a command may contain, in the words of the delegation request messages.
+     *
+     * <p>The shape and the message rules are rendered from the same descriptors the turn
+     * is validated against, so the prompt cannot describe a command the host would refuse.
+     * What follows them is the host's own policy: which event obliges which verb, which is
+     * a property of the loop rather than of any request message.
+     */
     private String commandContract() {
+        String contract = AgentTurn.commandContract(config.role());
         return config.role() == AgentRole.WORKER
-                ? "Worker argument contract: host-ack={reason}; "
-                + "delegation-accept={taskId,attempt}; "
-                + "delegation-message={taskId,kind,text}; "
-                + "delegation-progress={taskId,attempt,message}; "
-                + "delegation-checkpoint={taskId,attempt,resumeToken,note}; "
-                + "delegation-candidate={taskId,candidate}, where candidate has "
-                + "attempt,revision,summary,evidence:[{checkName,verdict,ranAt,detail}],"
-                + "commits:[{repository,commit,subject}]. verdict must be "
-                + "CHECK_VERDICT_PASSED and commit must be a full 40-character SHA. "
-                + "An offer requires delegation-accept. A question requires "
+                ? contract + " An offer requires delegation-accept. A question requires "
                 + "delegation-message. Guidance and revision requests require a task "
-                + "action and cannot use host-ack alone. Use exactly these field names "
-                + "and no others."
-                : "Coordinator argument contract: host-ack={reason}; "
-                + "delegation-offer={workerId,taskId,leaseSeconds,spec}; "
-                + "delegation-message={taskId,recipient,kind,text}; "
-                + "delegation-review accept={taskId,decision,verdict}; "
-                + "delegation-review revise={taskId,decision,feedback,failedChecks}; "
-                + "delegation-cancel={taskId,reason}. A completion candidate requires "
-                + "delegation-review. A question requires delegation-message. A worker "
-                + "accept, progress, or checkpoint requires guidance (a delegation-message "
-                + "of kind TASK_MESSAGE_KIND_GUIDANCE) or delegation-cancel; "
-                + "delegation-review also answers them when the same batch carries the "
-                + "task's completion candidate. Use "
-                + "exactly these field names and no others.";
+                + "action and cannot use host-ack alone."
+                : contract + " A completion candidate requires delegation-review. A "
+                + "question requires delegation-message. A worker accept, progress, or "
+                + "checkpoint requires guidance (a delegation-message of kind "
+                + "TASK_MESSAGE_KIND_GUIDANCE) or delegation-cancel; delegation-review "
+                + "also answers them when the same batch carries the task's completion "
+                + "candidate.";
     }
 
     /** The worker command that takes on a task. */

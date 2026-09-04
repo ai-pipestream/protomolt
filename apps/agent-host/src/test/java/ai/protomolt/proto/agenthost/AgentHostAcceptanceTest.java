@@ -78,6 +78,11 @@ class AgentHostAcceptanceTest {
         }
     }
 
+    /**
+     * The prompt states the shape and the rules the delegation request messages
+     * declare, rendered from their descriptors, so the worker is told the same
+     * contract the host validates its reply against.
+     */
     @Test
     void acpPromptCarriesExactWorkerArgumentContract() throws Exception {
         Path workspace = Files.createDirectory(temporary.resolve("prompt-workspace"));
@@ -101,8 +106,12 @@ class AgentHostAcceptanceTest {
             assertThat(worker.pollOnce()).isTrue();
             assertThat(provider.prompt)
                     .contains("delegation-progress={taskId,attempt,message}")
-                    .contains("delegation-checkpoint={taskId,attempt,resumeToken,note}")
-                    .contains("evidence:[{checkName,verdict,ranAt,detail}]")
+                    .contains("delegation-checkpoint={taskId,attempt,resumeToken,note,"
+                            + "state{sha256,mediaType,sizeBytes,redacted}}")
+                    .contains("evidence[{checkName,verdict(CHECK_VERDICT_PASSED"
+                            + "|CHECK_VERDICT_FAILED),ranAt,detail,artifacts[{...}]}]")
+                    .contains("a completion candidate must reference at least one commit "
+                            + "or artifact")
                     .contains("Use exactly these field names and no others");
         }
     }
