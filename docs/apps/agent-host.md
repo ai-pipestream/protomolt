@@ -19,6 +19,13 @@ checks all of the following before calling a tool:
 model output gets one repair turn. A second invalid response leaves the cursor
 unchanged so the event batch remains available after restart.
 
+A model that narrates around its answer is not invalid output. The ACP
+provider joins every message chunk of a turn, so a Kimi reply arrives as the
+notes it wrote between tool calls followed by the command batch, sometimes in a
+Markdown fence; the host takes the last complete JSON object in the reply as
+the turn and ignores the text around it. A reply with no complete object is
+still rejected.
+
 ## Build
 
 ```shell

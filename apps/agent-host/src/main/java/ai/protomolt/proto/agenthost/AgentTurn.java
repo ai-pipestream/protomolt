@@ -1,8 +1,10 @@
 package ai.protomolt.proto.agenthost;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectReader;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
@@ -31,9 +33,44 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
             "host-ack", "delegation-offer", "delegation-message",
             "delegation-review", "delegation-cancel");
 
+    /** Rejects text after the JSON value, so a candidate object is the whole candidate. */
+    private static final ObjectReader STRICT = MAPPER.reader()
+            .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+
     record Command(String tool, ObjectNode arguments) {
         Command {
             arguments = arguments.deepCopy();
+        }
+    }
+
+    /**
+     * Reads the JSON value in a provider reply. Providers that join every message chunk of
+     * a turn (the ACP provider) hand over the model's narration between tool calls as well
+     * as its final answer, and some models wrap the answer in a Markdown fence. The reply
+     * is taken as a whole when it parses; otherwise the turn is the last complete JSON
+     * object in it: the earliest opening brace from which the text up to the final closing
+     * brace parses with no trailing tokens. An earlier, abandoned object followed by more
+     * text therefore never wins over the answer that ends the reply.
+     */
+    static JsonNode readResponse(String text) {
+        String trimmed = text.strip();
+        try {
+            return STRICT.readTree(trimmed);
+        } catch (JsonProcessingException whole) {
+            int end = trimmed.lastIndexOf('}');
+            int start = trimmed.indexOf('{');
+            while (start >= 0 && start < end) {
+                try {
+                    JsonNode candidate = STRICT.readTree(trimmed.substring(start, end + 1));
+                    if (candidate.isObject()) {
+                        return candidate;
+                    }
+                } catch (JsonProcessingException partial) {
+                    // not a complete object from this brace; try the next one
+                }
+                start = trimmed.indexOf('{', start + 1);
+            }
+            throw new AgentHostException("agent response is not JSON");
         }
     }
 
@@ -42,12 +79,7 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
         if (text == null || text.length() > MAX_RESPONSE_CHARS) {
             throw new AgentHostException("agent response exceeds the 256 KiB limit");
         }
-        JsonNode parsed;
-        try {
-            parsed = MAPPER.readTree(text);
-        } catch (JsonProcessingException e) {
-            throw new AgentHostException("agent response is not JSON");
-        }
+        JsonNode parsed = readResponse(text);
         if (!parsed.isObject()) {
             throw new AgentHostException("agent response must be one JSON object");
         }

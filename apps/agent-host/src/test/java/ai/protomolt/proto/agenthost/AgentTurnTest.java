@@ -63,6 +63,39 @@ class AgentTurnTest {
                 .hasMessageContaining("cannot override sender");
     }
 
+    /**
+     * Kimi narrates between its tool calls and the ACP provider joins every message
+     * chunk of the turn, so the text reaching the parser is prose, then the JSON object,
+     * sometimes inside a Markdown fence. The turn is the last complete JSON object in the
+     * reply; the narration around it is not a reason to reject the turn.
+     */
+    @Test
+    void narrationAroundTheJsonObjectIsIgnored() {
+        String object = """
+                {"handledEventCursors":[11],"commands":[{"tool":"delegation-accept",
+                 "arguments":{"taskId":"11111111-1111-4111-8111-111111111111","attempt":1}}]}
+                """.strip();
+        String narrated = "I'll remove the block from buf.yaml now.\n"
+                + "Running buf breaking {against origin/main} and buf lint... both clean.\n"
+                + "Committed b185c599.\n\n```json\n" + object + "\n```\n"
+                + "Let me know if you want anything else.";
+        AgentTurn turn = AgentTurn.parse(narrated, AgentRole.WORKER, List.of(11L),
+                "kimi-worker");
+        assertThat(turn.handledEventCursors()).containsExactly(11L);
+        assertThat(turn.commands()).hasSize(1);
+        assertThat(turn.commands().get(0).tool()).isEqualTo("delegation-accept");
+
+        String twoObjects = "First I considered {\"handledEventCursors\":[11],\"commands\":[]}"
+                + " but the real answer is:\n" + object;
+        assertThat(AgentTurn.parse(twoObjects, AgentRole.WORKER, List.of(11L), "kimi-worker")
+                .commands()).hasSize(1);
+
+        assertThatThrownBy(() -> AgentTurn.parse("Done. The block is gone and buf is clean.",
+                AgentRole.WORKER, List.of(11L), "kimi-worker"))
+                .isInstanceOf(AgentHostException.class)
+                .hasMessageContaining("not JSON");
+    }
+
     @Test
     void outputSchemaUsesOnlyRoleTools() {
         String schema = AgentTurn.outputSchema(AgentRole.COORDINATOR).toString();
