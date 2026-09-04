@@ -86,7 +86,9 @@ something you can reach. If not, send `delegation-message` with
 `kind: TASK_MESSAGE_KIND_QUESTION`, `sender: <workerId>`, `recipient: coordinator`, and
 wait for the ANSWER before accepting. The lease clock runs from the offer, not from acceptance: `expiresAt` in
 the offer is the deadline for the attempt, so accept promptly and plan the
-work inside what remains. Tell the user what you accepted.
+work inside what remains. The deadline applies until you submit a completion candidate:
+time under review is not charged, and a revision request restarts the lease. Tell the
+user what you accepted.
 
 ### Work, report, checkpoint
 

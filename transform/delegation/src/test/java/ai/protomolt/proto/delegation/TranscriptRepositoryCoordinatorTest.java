@@ -2,6 +2,8 @@ package ai.protomolt.proto.delegation;
 
 import ai.protomolt.proto.delegation.v1.DelegateRequest;
 import ai.protomolt.proto.delegation.v1.DelegateResponse;
+import ai.protomolt.proto.delegation.v1.TaskMessage;
+import ai.protomolt.proto.delegation.v1.TaskMessageKind;
 import ai.protomolt.proto.delegation.v1.TaskSpec;
 import ai.protomolt.proto.delegation.v1.Transcript;
 import ai.protomolt.proto.delegation.v1.WorkerCapability;
@@ -83,6 +85,103 @@ class TranscriptRepositoryCoordinatorTest {
     }
 
     @Test
+    void aCandidateAwaitingReviewDoesNotExpireWithItsLease() {
+        InMemoryTranscriptRepository repository = new InMemoryTranscriptRepository();
+        repository.save(candidateAwaitingReview());
+        CapturingResponses responses = new CapturingResponses();
+
+        try (InProcessDelegationCoordinator restored = new InProcessDelegationCoordinator(
+                AdmissionPolicy.allowAll(), CandidateReviewer.manual(), CLOCK, repository)) {
+            // The lease elapsed long before the restart, but the candidate is the
+            // reviewer's to settle: neither the sweep nor the reconnect expires it.
+            assertThat(restored.expireLeases(NOW)).isZero();
+            restored.delegate(responses).onNext(helloFrame(2, "restart-hello"));
+            assertThat(responses.error).isNull();
+            assertThat(responses.values).hasSize(1);
+            assertThat(responses.values.get(0).hasAdmission()).isTrue();
+            assertThat(restored.state().tasks().get(TASK).phase())
+                    .isEqualTo(DelegationReducer.Phase.CANDIDATE);
+
+            restored.review(TASK, CandidateReviewer.ReviewDecision.accept(
+                    "verified after the restart"));
+            assertThat(responses.values).hasSize(2);
+            assertThat(responses.values.get(1).hasAccepted()).isTrue();
+            assertThat(responses.values.get(1).getSeq()).isEqualTo(2);
+            assertThat(restored.state().tasks().get(TASK).phase())
+                    .isEqualTo(DelegationReducer.Phase.ACCEPTED);
+            assertThat(restored.state().clean()).isTrue();
+        }
+    }
+
+    @Test
+    void aVerdictForADisconnectedWorkerLandsOnTheTranscript() {
+        InMemoryTranscriptRepository repository = new InMemoryTranscriptRepository();
+        repository.save(candidateAwaitingReview());
+
+        try (InProcessDelegationCoordinator restored = new InProcessDelegationCoordinator(
+                AdmissionPolicy.allowAll(), CandidateReviewer.manual(), CLOCK, repository)) {
+            assertThat(restored.workers().getFirst().connected()).isFalse();
+
+            TaskMessage note = restored.sendMessage(WORKER, TASK,
+                    TaskMessageKind.TASK_MESSAGE_KIND_NOTE, "reviewing the candidate now",
+                    "", List.of());
+            restored.review(TASK, CandidateReviewer.ReviewDecision.accept(
+                    "verified while the worker was away"));
+
+            List<InProcessDelegationCoordinator.Event> events = restored.eventsAfter(TASK, 0);
+            assertThat(events).hasSize(5);
+            assertThat(events.get(3).entry().getCoordinatorFrame().getTaskMessage())
+                    .isEqualTo(note);
+            DelegateResponse accepted = events.get(4).entry().getCoordinatorFrame();
+            assertThat(accepted.hasAccepted()).isTrue();
+            assertThat(accepted.getSeq()).isEqualTo(2);
+            assertThat(restored.state().tasks().get(TASK).phase())
+                    .isEqualTo(DelegationReducer.Phase.ACCEPTED);
+            assertThat(repository.load()).contains(restored.transcript());
+
+            // The worker's replacement stream continues the scopes past the recorded
+            // verdict; it reads the verdict itself from the event feed.
+            CapturingResponses responses = new CapturingResponses();
+            restored.delegate(responses).onNext(helloFrame(2, "late-hello"));
+            assertThat(responses.error).isNull();
+            assertThat(responses.values).hasSize(1);
+            assertThat(responses.values.get(0).hasAdmission()).isTrue();
+            assertThat(restored.workers().getFirst().connected()).isTrue();
+            assertThat(restored.state().clean()).isTrue();
+        }
+    }
+
+    @Test
+    void aRevisionRequestReArmsTheLease() {
+        InMemoryTranscriptRepository repository = new InMemoryTranscriptRepository();
+        repository.save(candidateAwaitingReview());
+
+        try (InProcessDelegationCoordinator restored = new InProcessDelegationCoordinator(
+                AdmissionPolicy.allowAll(), CandidateReviewer.manual(), CLOCK, repository)) {
+            restored.review(TASK, CandidateReviewer.ReviewDecision.revise(
+                    "the build check did not run", List.of("build")));
+
+            List<InProcessDelegationCoordinator.Event> events = restored.eventsAfter(TASK, 0);
+            assertThat(events).hasSize(5);
+            assertThat(events.get(3).entry().getCoordinatorFrame().hasRevisionRequested())
+                    .isTrue();
+            DelegateResponse renewal = events.get(4).entry().getCoordinatorFrame();
+            assertThat(renewal.hasRenewal()).isTrue();
+            assertThat(renewal.getRenewal().getExpiresAt().getSeconds())
+                    .isEqualTo(NOW.plusSeconds(300).getEpochSecond());
+            assertThat(restored.state().tasks().get(TASK).phase())
+                    .isEqualTo(DelegationReducer.Phase.LEASED);
+            assertThat(restored.state().clean()).isTrue();
+
+            // The worker has the whole lease again from the moment of the request.
+            assertThat(restored.expireLeases(NOW.plusSeconds(299))).isZero();
+            assertThat(restored.expireLeases(NOW.plusSeconds(300))).isEqualTo(1);
+            assertThat(restored.state().tasks().get(TASK).phase())
+                    .isEqualTo(DelegationReducer.Phase.EXPIRED);
+        }
+    }
+
+    @Test
     void persistenceFailureDoesNotEmitOfferMutateTaskOrConsumeSequence() {
         FailingRepository repository = new FailingRepository();
         CapturingResponses responses = new CapturingResponses();
@@ -142,6 +241,18 @@ class TranscriptRepositoryCoordinatorTest {
                 repositoryContaining(invalid)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("stored transcript is invalid");
+    }
+
+    /** A worker whose 300-second lease elapsed in 2023 with its candidate still unreviewed. */
+    private static Transcript candidateAwaitingReview() {
+        TaskSpec taskSpec = spec("build");
+        return new DelegationFixtures.TranscriptBuilder()
+                .hello(WORKER)
+                .admit(WORKER)
+                .offer(TASK, WORKER, 1, taskSpec)
+                .accept(TASK, WORKER, 1)
+                .candidate(TASK, WORKER, 1, taskSpec)
+                .build();
     }
 
     private static TranscriptRepository repositoryContaining(Transcript transcript) {

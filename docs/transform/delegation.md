@@ -47,6 +47,12 @@ checkpoints, and gets more time only through a new offer that names its last
 checkpoint. A later attempt can resume from a recorded
 checkpoint.
 
+The lease covers the worker's obligation and ends with its completion
+candidate: a submitted candidate waits for review without a deadline, however
+long the reviewer takes and whether or not the coordinator restarts meanwhile.
+A revision request hands the task back with a renewal, so the worker has a
+full lease duration from that moment, or its recorded expiry if that is later.
+
 A worker cannot mark its own task complete. It submits a completion candidate
 with evidence for every required check and at least one commit or artifact
 reference, plus the typed deliverable when the spec named one. The coordinator either accepts that revision or requests another
@@ -214,7 +220,8 @@ encrypted envelope and is restored with the rest of the task.
 Every accepted frame is durable before it enters the event feed or reaches a
 worker. A failed write does not consume a coordinator sequence, mutate task
 state, or expose a memory-only event. On restart, elapsed active leases expire
-when their worker reconnects; unexpired leases resume their expiry timer.
+when their worker reconnects; unexpired leases resume their expiry timer; a
+candidate awaiting review is not affected by either.
 
 The adapter writes a complete snapshot and limits plaintext to 8 MiB because
 the repository blob RPC is unary. Assign one logical coordinator as the sole
@@ -245,8 +252,13 @@ original sequence. A second registration while the current stream is still
 live fails fast, because two live senders would race the scopes.
 
 Restored workers remain visible in the worker directory as admitted and
-disconnected. Agent hosts use that state to re-register before retrying a
-durable pending command. If the coordinator rejects a worker frame, the MCP
+disconnected. Only a new offer needs a live stream. The coordinator frames that
+settle an attempt (verdicts, revision requests, cancellations, expiries, and
+messages) are recorded and sequenced against the admitted worker whether or
+not its stream is up, so a review does not wait on the worker's
+connection; a worker that re-registers reads them from the event feed after
+its saved cursor. Agent hosts use the directory state to re-register before
+retrying a durable pending command. If the coordinator rejects a worker frame, the MCP
 call fails, the directory changes to disconnected, and the rejected frame
 does not advance the transcript or the host's pending-command position.
 
