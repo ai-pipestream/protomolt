@@ -224,12 +224,12 @@ message SchemaReference {
     sensitivity: "internal"
   };
 
-  // Fully qualified protobuf message name (for example
-  // "ai.protomolt.proto.mesh.test.v1.TestDocument").
+  // Protobuf message full name (for example
+  // "ai.protomolt.proto.mesh.test.v1.TestDocument" or "PackageLess").
   string type_name = 1 [
     (ai.protomolt.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$"}
+      string: {pattern: "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"}
     },
     (ai.protomolt.proto.meta.v1.field).sensitivity = "internal",
     (ai.protomolt.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_KEYWORD}
@@ -271,11 +271,11 @@ message ClaimCheck {
     (ai.protomolt.proto.validate.v1.field).required = true,
     (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
   ];
-  // The fully qualified protobuf type the stored bytes deserialize to.
+  // The protobuf message full name the stored bytes deserialize to.
   string payload_type_name = 2 [
     (ai.protomolt.proto.validate.v1.field) = {
       required: true
-      string: {pattern: "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$"}
+      string: {pattern: "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"}
     },
     (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
   ];

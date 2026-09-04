@@ -7,6 +7,9 @@ description = 'The compiled directed mesh runtime, demand-driven processor trans
 dependencies {
     api libs.protobuf.java
     api libs.protobuf.java.util
+    api libs.grpc.api
+    api libs.grpc.stub
+    api libs.grpc.protobuf
     api project(':protomolt-mesh-contracts')
     api project(':protomolt-projection')
     implementation project(':protomolt-mapper-cel')
@@ -22,5 +25,17 @@ dependencies {
 protobuf {
     protoc {
         artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}"
+    }
+    plugins {
+        grpc {
+            artifact = "io.grpc:protoc-gen-grpc-java:${libs.versions.grpc.get()}"
+        }
+    }
+    generateProtoTasks {
+        all().configureEach {
+            plugins {
+                grpc {}
+            }
+        }
     }
 }

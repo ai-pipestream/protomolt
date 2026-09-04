@@ -136,7 +136,7 @@ public final class MeshValidation {
     }
 
     /**
-     * Validates a schema reference: fully qualified type name plus a well-formed canonical
+     * Validates a schema reference: protobuf message full name plus a well-formed canonical
      * fingerprint (and, when present, a resolvable registry URI).
      *
      * @param schema the schema reference to validate
@@ -156,7 +156,8 @@ public final class MeshValidation {
         require(slash >= 0,
                 "payload.type_url must contain a slash: '" + typeUrl + "'");
         require(slash < typeUrl.length() - 1,
-                "payload.type_url must end with the fully qualified type name: '" + typeUrl + "'");
+                "payload.type_url must end with the protobuf message full name: '"
+                        + typeUrl + "'");
         return typeUrl.substring(slash + 1);
     }
 

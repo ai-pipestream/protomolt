@@ -1,6 +1,7 @@
 package ai.protomolt.proto.mesh;
 
 import ai.protomolt.proto.mesh.v1.EntityEnvelope;
+import ai.protomolt.proto.mesh.v1.SchemaReference;
 import ai.protomolt.proto.validate.ProtoValidator;
 import ai.protomolt.proto.validate.ValidationResult;
 import com.google.protobuf.Any;
@@ -107,6 +108,19 @@ class MeshContractValidationTest {
         assertThat(result.valid()).isFalse();
         assertThat(result.violations())
                 .anySatisfy(v -> assertThat(v.path()).contains("type_name"));
+    }
+
+    @Test
+    void aPackageLessMessageFullNameIsValid() {
+        SchemaReference schema = SchemaReference.newBuilder()
+                .setTypeName("PackageLess")
+                .setDescriptorFingerprint("a".repeat(64))
+                .build();
+
+        ValidationResult result = ProtoValidator
+                .forMessageType(SchemaReference.getDescriptor())
+                .validate(schema);
+        assertThat(result.valid()).as("violations: %s", result.violations()).isTrue();
     }
 
     @Test

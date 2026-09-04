@@ -132,7 +132,7 @@ class MeshValidationTest {
                 .build();
         assertThatThrownBy(() -> MeshValidation.validate(entity, BEFORE_DEADLINE))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("must end with the fully qualified type name");
+                .hasMessageContaining("must end with the protobuf message full name");
     }
 
     @Test

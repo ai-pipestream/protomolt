@@ -55,3 +55,34 @@ Processor completion and downstream settlement are deliberately distinct. The
 runtime retains each invocation's settlement handle and commits it in reverse
 dependency order only after the directed run succeeds. The demand-driven remote
 transport uses that same seam; local processors use a no-op settlement.
+
+## Demand-driven remote processors
+
+`DemandProcessorService.Connect` is one worker-initiated bidirectional stream.
+The first worker frame advertises the worker id and its exact processor
+contracts. Later `WorkerDemand` frames grant bounded permits. The coordinator
+does not send a claim without an unused permit, and it matches the complete
+contract, including descriptor identities and output limits, before assigning
+work. A worker runs the same `ProcessorInvoker` contract used in process, so
+moving a processor does not create another execution model.
+
+All remote work shares one `DurableProcessorChannel`. Its file implementation
+stores only `ChannelRecord` protobuf bytes in a `PMCH0001` WAL. Every record has
+a monotonic sequence and CRC32C, and every append is forced before the reducer
+state advances. Startup replays and validates every transition. It truncates an
+incomplete final frame from a torn append, but refuses checksum corruption,
+sequence gaps, impossible transitions, descriptor drift, and a second writer.
+
+A delivery is `PENDING`, `CLAIMED`, `COMPLETED`, `FAILED`, or `SETTLED`.
+Claims carry a UUID lease fence and an attempt number. Completion under an old
+fence is refused. Coordinator maintenance expires abandoned leases and
+redispatches only to waiting demand, while the work deadline and `max_attempts`
+remain hard bounds. Enqueue is idempotent by deterministic delivery id and
+refuses different work under the same id.
+
+`COMPLETED` is intentionally not final. The remote invoker returns the worker's
+protobuf outputs together with a settlement handle. A successful flow settles
+those handles in reverse dependency order. A downstream failure instead
+releases completed remote work for a fenced retry, and both outcomes appear in
+the same `FlowHistory` as local processing. There is no sidecar history and no
+JSON persistence or worker encoding in this path.

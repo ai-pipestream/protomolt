@@ -1,0 +1,260 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.mesh.runtime.v1;
+
+import "ai/protomolt/proto/mesh/runtime/v1/flow.proto";
+import "ai/protomolt/proto/mesh/v1/entity.proto";
+import "ai/protomolt/proto/meta/v1/metadata.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.mesh.runtime.v1";
+
+// Workers initiate one long-lived channel and explicitly grant demand. The
+// coordinator never pushes work beyond those permits.
+service DemandProcessorService {
+  rpc Connect(stream WorkerFrame) returns (stream CoordinatorFrame);
+}
+
+message ProcessorWork {
+  string delivery_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string run_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string node_id = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {identifier: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string invocation_id = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  uint64 invocation_ordinal = 5 [
+    (ai.protomolt.proto.validate.v1.field).uint64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ProcessorContract contract = 6 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ai.protomolt.proto.mesh.v1.EntityEnvelope input = 7 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Timestamp deadline = 8 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  uint32 max_attempts = 9 [
+    (ai.protomolt.proto.validate.v1.field).uint32 = {gte: 1, lte: 100},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message DeliveryClaim {
+  ProcessorWork work = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string worker_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string lease_token = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  uint32 attempt = 4 [
+    (ai.protomolt.proto.validate.v1.field).uint32.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Timestamp lease_expires_at = 5 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message ProcessorCompletion {
+  string delivery_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string lease_token = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  repeated TypedPayload outputs = 3 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 100000,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message ProcessorFailure {
+  string delivery_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string lease_token = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string code = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string message = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 8192}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  bool retryable = 5 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+message WorkEnqueued {
+  ProcessorWork work = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message WorkClaimed {
+  DeliveryClaim claim = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message WorkCompleted {
+  string worker_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ProcessorCompletion completion = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message WorkReleased {
+  string delivery_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string lease_token = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string reason = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 8192}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message WorkFailed {
+  string delivery_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string lease_token = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string code = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string message = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 8192}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message WorkSettled {
+  string delivery_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string lease_token = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// The only durable processor-channel record. Implementations append these
+// protobuf bytes directly; JSON is not a persistence format for this protocol.
+message ChannelRecord {
+  uint64 sequence = 1 [
+    (ai.protomolt.proto.validate.v1.field).uint64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Timestamp recorded_at = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  oneof event {
+    WorkEnqueued enqueued = 10 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    WorkClaimed claimed = 11 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    WorkCompleted completed = 12 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    WorkReleased released = 13 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    WorkFailed failed = 14 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    WorkSettled settled = 15 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  }
+}
+
+message WorkerHello {
+  string worker_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  repeated ProcessorContract contracts = 2 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 100000},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message WorkerDemand {
+  uint32 permits = 1 [
+    (ai.protomolt.proto.validate.v1.field).uint32 = {gte: 1, lte: 100000},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message WorkerFrame {
+  string frame_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  uint64 sequence = 2 [
+    (ai.protomolt.proto.validate.v1.field).uint64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  oneof payload {
+    WorkerHello hello = 10 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    WorkerDemand demand = 11 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    ProcessorCompletion completed = 12 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    ProcessorFailure failed = 13 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  }
+}
+
+message WorkerAdmission {
+  bool admitted = 1 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  string reason = 2 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 2048,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+message CoordinatorFrame {
+  uint64 sequence = 1 [
+    (ai.protomolt.proto.validate.v1.field).uint64.gte = 1,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  oneof payload {
+    WorkerAdmission admission = 10 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    DeliveryClaim claim = 11 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  }
+}
