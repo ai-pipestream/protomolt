@@ -8,8 +8,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * {@link Hostnames} implements RFC 1034 label syntax with the RFC 1123 relaxation (labels may
- * start with a digit), a 253-character overall cap (measured on the input, including any trailing
- * dot), an optional single trailing dot, and the rule that the rightmost label must not be
+ * start with a digit), a 253-character overall cap (measured after the optional trailing
+ * dot is removed), an optional single trailing dot, and the rule that the rightmost label must not be
  * entirely numeric.
  */
 class HostnamesTest {
@@ -109,14 +109,15 @@ class HostnamesTest {
     }
 
     @Test
-    void totalLengthCountsTheTrailingDot() {
-        // The 253-char cap is applied to the input as given, so a 253-char name plus a trailing
-        // dot (254 total) is rejected, while a 252-char name with its dot (253 total) passes.
+    void totalLengthExcludesTheTrailingDot() {
+        // The 253-char cap applies to the name without its optional trailing dot (protovalidate
+        // 63347b8), so a 253-char name root-qualified with a dot, 254 characters of input, passes.
         String name252 = "a.".repeat(125) + "ab";  // 252 chars
         assertThat(Hostnames.isHostname(name252 + ".")).isTrue();
 
         String name253 = "a.".repeat(126) + "a";   // 253 chars
-        assertThat(Hostnames.isHostname(name253 + ".")).isFalse();
+        assertThat(Hostnames.isHostname(name253 + ".")).isTrue();
+        assertThat(Hostnames.isHostname(name253 + "a")).isFalse();  // 254 chars, no dot
     }
 
     @Test

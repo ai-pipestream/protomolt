@@ -99,7 +99,11 @@ jobs:
           go-version: stable
 
       - name: Install protovalidate-conformance
-        run: go install github.com/bufbuild/protovalidate/tools/protovalidate-conformance@v1.2.2
+        # Pinned to the upstream commit the executor is verified against: 15 commits past
+        # v1.2.2, adding the header-name comma refusal, the empty-bytes prefix/suffix/contains
+        # cases and the 253-character hostname with a trailing dot. Move the pin when a tag
+        # covers it.
+        run: go install github.com/bufbuild/protovalidate/tools/protovalidate-conformance@63347b8
 
       - name: Build the conformance executor
         run: ./gradlew :protomolt-protobuf-validation-conformance:installDist --console=plain
