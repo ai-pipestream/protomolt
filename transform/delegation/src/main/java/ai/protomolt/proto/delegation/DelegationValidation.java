@@ -13,6 +13,7 @@ import ai.protomolt.proto.delegation.v1.CompletionAccepted;
 import ai.protomolt.proto.delegation.v1.CompletionCandidate;
 import ai.protomolt.proto.delegation.v1.DelegateRequest;
 import ai.protomolt.proto.delegation.v1.DelegateResponse;
+import ai.protomolt.proto.delegation.v1.DeliverableContract;
 import ai.protomolt.proto.delegation.v1.FailureReport;
 import ai.protomolt.proto.delegation.v1.Lane;
 import ai.protomolt.proto.delegation.v1.ProgressEvent;
@@ -59,6 +60,12 @@ public final class DelegationValidation {
     private static final int MAX_NEEDS = 32;
     private static final int MAX_ATTEMPT = 1_024;
     private static final int MAX_NAME_LENGTH = 128;
+    private static final int MAX_DESCRIPTOR_SET_BYTES = 4 * 1024 * 1024;
+    private static final int MAX_JSON_SCHEMA_LENGTH = 262_144;
+
+    /** A full proto message name: dot-separated identifiers, nested types included. */
+    private static final java.util.regex.Pattern PROTO_NAME = java.util.regex.Pattern
+            .compile("[A-Za-z_][A-Za-z0-9_]*([.][A-Za-z_][A-Za-z0-9_]*)*");
 
     private DelegationValidation() {
     }
@@ -282,6 +289,32 @@ public final class DelegationValidation {
             WorkflowValidation.validatePositiveDuration(spec.getDeadline(),
                     "spec.deadline");
         }
+        if (spec.hasContract()) {
+            validate(spec.getContract());
+        }
+    }
+
+    /**
+     * Validates a deliverable contract: the descriptor set is present and bounded, the type
+     * name is a full proto name, and the rendered schema is bounded. Whether the set links
+     * and declares that type is {@link DeliverableContracts}' job; this only guarantees the
+     * contract is well-formed enough to carry.
+     */
+    public static void validate(DeliverableContract contract) {
+        require(contract != null, "contract must not be null");
+        require(!contract.getDescriptorSet().isEmpty(),
+                "contract.descriptor_set must not be empty");
+        require(contract.getDescriptorSet().size() <= MAX_DESCRIPTOR_SET_BYTES,
+                "contract.descriptor_set exceeds the maximum of "
+                        + MAX_DESCRIPTOR_SET_BYTES + " bytes");
+        require(!contract.getTypeName().isBlank(),
+                "contract.type_name must name the deliverable message");
+        bounded(contract.getTypeName(), 512, "contract.type_name");
+        require(PROTO_NAME.matcher(contract.getTypeName()).matches(),
+                "contract.type_name must be a full proto message name: "
+                        + contract.getTypeName());
+        bounded(contract.getJsonSchema(), MAX_JSON_SCHEMA_LENGTH,
+                "contract.json_schema");
     }
 
     /** Validates a checkpoint resume pointer. */
@@ -410,6 +443,11 @@ public final class DelegationValidation {
         require(candidate.getArtifactsCount() <= MAX_REFERENCES,
                 "completion.artifacts exceeds the maximum of " + MAX_REFERENCES);
         candidate.getArtifactsList().forEach(WorkflowValidation::validate);
+        if (candidate.hasResult()) {
+            require(candidate.getResult().getTypeUrl().contains("/"),
+                    "completion.result.type_url must be a type URL: "
+                            + candidate.getResult().getTypeUrl());
+        }
     }
 
     /**
