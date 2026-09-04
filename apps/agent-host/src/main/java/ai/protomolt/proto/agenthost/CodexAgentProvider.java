@@ -2,6 +2,7 @@ package ai.protomolt.proto.agenthost;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -158,10 +159,14 @@ final class CodexAgentProvider implements AgentProvider {
     }
 
     private void writeSchema(AgentRole role) {
+        outputSchema(AgentTurn.outputSchema(role));
+    }
+
+    @Override
+    public synchronized void outputSchema(ObjectNode outputSchema) {
         try {
             Files.createDirectories(outputDirectory);
-            MAPPER.writerWithDefaultPrettyPrinter().writeValue(
-                    schema.toFile(), AgentTurn.outputSchema(role));
+            MAPPER.writerWithDefaultPrettyPrinter().writeValue(schema.toFile(), outputSchema);
         } catch (IOException e) {
             throw new AgentHostException("could not write Codex output schema", e);
         }

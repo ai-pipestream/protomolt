@@ -1,5 +1,11 @@
 package ai.protomolt.proto.agenthost;
 
+import ai.protomolt.proto.delegation.v1.DeliverableContract;
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.util.JsonFormat;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -58,6 +64,8 @@ final class AgentHost implements AutoCloseable {
     private final McpHttpClient mcp;
     private final AgentProvider provider;
     private final AgentHostStateStore states;
+    /** The deliverable contracts of the tasks this host was offered, by task id. */
+    private final Map<String, DeliverableContract> contracts = new LinkedHashMap<>();
     private final AtomicBoolean closed = new AtomicBoolean();
 
     private AgentHostState state;
@@ -69,6 +77,16 @@ final class AgentHost implements AutoCloseable {
         this.provider = provider;
         this.states = states;
         this.state = state;
+        state.contracts().forEach((taskId, json) -> {
+            DeliverableContract.Builder contract = DeliverableContract.newBuilder();
+            try {
+                JsonFormat.parser().merge(json, contract);
+                contracts.put(taskId, contract.build());
+            } catch (InvalidProtocolBufferException unreadable) {
+                // a contract the state file cannot describe is not one this host can use
+            }
+        });
+        provider.outputSchema(AgentTurn.outputSchema(config.role(), contracts));
         syncProviderSession();
     }
 
@@ -192,11 +210,12 @@ final class AgentHost implements AutoCloseable {
             states.save(state);
             return true;
         }
+        noteContracts(relevant);
         ObjectNode packet = MAPPER.createObjectNode();
         packet.put("kind", "delegation-events");
         packet.put("role", config.role().name().toLowerCase(java.util.Locale.ROOT));
         packet.put("identity", config.identity());
-        packet.set("events", relevant);
+        packet.set("events", presented(relevant));
         AgentTurn turn = prompt(packet, relevantCursors);
         state = state.withPending(new AgentHostState.PendingTurn(
                 targetCursor, relevantCursors, turn.commands(), 0, false));
@@ -276,6 +295,11 @@ final class AgentHost implements AutoCloseable {
         return state;
     }
 
+    /** The deliverable contracts this host knows, by task id. */
+    Map<String, DeliverableContract> contracts() {
+        return Collections.unmodifiableMap(new LinkedHashMap<>(contracts));
+    }
+
     private AgentTurn prompt(ObjectNode packet, List<Long> expectedCursors) {
         String prompt = promptText(packet, expectedCursors, null);
         AgentHostException firstFailure;
@@ -296,7 +320,7 @@ final class AgentHost implements AutoCloseable {
     private AgentTurn parseTurn(String response, ObjectNode packet,
                                 List<Long> expectedCursors) {
         AgentTurn turn = AgentTurn.parse(response, config.role(), expectedCursors,
-                config.identity());
+                config.identity(), contracts);
         validateRequiredActions(packet, turn);
         return turn;
     }
@@ -397,6 +421,102 @@ final class AgentHost implements AutoCloseable {
         }
     }
 
+    /**
+     * Records the deliverable contract of each offer in the batch and forgets the contract
+     * of each task the batch closes, persisting the change and handing providers with
+     * enforced structured output the schema that now applies.
+     */
+    private void noteContracts(ArrayNode events) {
+        if (config.role() != AgentRole.WORKER) {
+            return;
+        }
+        boolean changed = false;
+        for (JsonNode event : events) {
+            JsonNode frame = event.path("entry").path("coordinatorFrame");
+            String taskId = event.path("taskId").asText();
+            JsonNode contract = frame.path("offer").path("spec").path("contract");
+            if (contract.isObject()) {
+                DeliverableContract.Builder builder = DeliverableContract.newBuilder();
+                try {
+                    JsonFormat.parser().merge(contract.toString(), builder);
+                    contracts.put(taskId, builder.build());
+                    changed = true;
+                } catch (InvalidProtocolBufferException unreadable) {
+                    System.err.println("agent-host: the offer for task " + taskId
+                            + " names a deliverable contract this host cannot read: "
+                            + unreadable.getMessage());
+                }
+            } else if (frame.has("offer") && contracts.remove(taskId) != null) {
+                changed = true;
+            }
+            if ((frame.has("accepted") || frame.has("cancellation") || frame.has("expired"))
+                    && contracts.remove(taskId) != null) {
+                changed = true;
+            }
+        }
+        if (!changed) {
+            return;
+        }
+        Map<String, String> serialized = new LinkedHashMap<>();
+        contracts.forEach((taskId, contract) -> {
+            try {
+                serialized.put(taskId, JsonFormat.printer().omittingInsignificantWhitespace()
+                        .print(contract));
+            } catch (InvalidProtocolBufferException e) {
+                throw new AgentHostException("could not record the contract of task "
+                        + taskId, e);
+            }
+        });
+        state = state.withContracts(serialized);
+        states.save(state);
+        provider.outputSchema(AgentTurn.outputSchema(config.role(), contracts));
+    }
+
+    /**
+     * The batch as the model reads it: an offer's contract shows its type name and its
+     * rendered schema as an object, and the descriptor bytes the host resolves itself are
+     * replaced by a note, since base64 is noise to a model and the bytes are large.
+     */
+    private static ArrayNode presented(ArrayNode events) {
+        ArrayNode shown = events.deepCopy();
+        for (JsonNode event : shown) {
+            JsonNode contract = event.path("entry").path("coordinatorFrame").path("offer")
+                    .path("spec").path("contract");
+            if (!(contract instanceof ObjectNode visible)) {
+                continue;
+            }
+            JsonNode bytes = visible.remove("descriptorSet");
+            if (bytes != null) {
+                visible.put("descriptorSetNote", "the host holds the descriptor set ("
+                        + bytes.asText().length() + " base64 characters) and reads the"
+                        + " result with it");
+            }
+            JsonNode schema = visible.remove("jsonSchema");
+            if (schema != null && schema.isTextual()) {
+                try {
+                    visible.set("schema", MAPPER.readTree(schema.asText()));
+                } catch (java.io.IOException notJson) {
+                    visible.put("schema", schema.asText());
+                }
+            }
+        }
+        return shown;
+    }
+
+    /** One sentence per known contract, so the model knows which type each task returns. */
+    private String contractLines() {
+        if (contracts.isEmpty()) {
+            return "";
+        }
+        StringBuilder lines = new StringBuilder();
+        contracts.forEach((taskId, contract) -> lines.append(" Task ").append(taskId)
+                .append(" requires delegation-candidate with candidate.result of type ")
+                .append(contract.getTypeName())
+                .append(" (\"@type\": \"type.googleapis.com/").append(contract.getTypeName())
+                .append("\" plus the fields of the schema in its offer)."));
+        return lines.toString();
+    }
+
     private String promptText(ObjectNode packet, List<Long> expectedCursors, String error) {
         String allowed = String.join(", ", AgentTurn.tools(config.role()));
         StringBuilder prompt = new StringBuilder();
@@ -410,7 +530,7 @@ final class AgentHost implements AutoCloseable {
                         + "with a short reason when an event needs no protocol action. Do not "
                         + "claim completion without the required passing evidence and a commit "
                         + "or artifact. Do not add Markdown fences or prose outside the JSON. ")
-                .append(commandContract());
+                .append(commandContract()).append(contractLines());
         if (error != null) {
             prompt.append(" Your previous response was rejected: ").append(error)
                     .append(". Correct the response for the same packet.");

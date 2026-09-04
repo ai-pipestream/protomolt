@@ -42,6 +42,21 @@ the schema, and the check on the reply without a second edit here.
 Invalid model output gets one repair turn. A second invalid response leaves the
 cursor unchanged so the event batch remains available after restart.
 
+## Deliverable contracts
+
+An offer whose spec names a deliverable contract (see
+[Agent delegation](../transform/delegation.md#deliverable-contract)) reaches the model
+with the contract's type name and its rendered JSON Schema in place of the descriptor
+bytes, and the prompt names the type each open task's candidate must return. The host
+keeps every contract it was offered in its state file, keyed by task, so a restart still
+knows how to read a deliverable. A candidate's `result` is parsed with the contract's
+type and checked with the coordinator's own gate before the command is sent: a missing
+result, a result for a task without a contract, a wrong type, or a rule violation is
+a repair turn here, worded as the coordinator would word it, and never costs an attempt.
+Providers with enforced structured output receive the schema again whenever the known
+contracts change; with no contract known the schema leaves the deliverable out, since an
+open object is not expressible to a strict endpoint.
+
 A model that narrates around its answer is not invalid output. The ACP
 provider joins every message chunk of a turn, so a Kimi reply arrives as the
 notes it wrote between tool calls followed by the command batch, sometimes in a

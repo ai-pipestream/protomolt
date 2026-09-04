@@ -44,13 +44,8 @@ final class OpenAiAgentProvider implements AgentProvider {
         this.chatCompletions = chatCompletions(validateEndpoint(endpoint));
         this.model = validateModel(model);
         Objects.requireNonNull(role, "agent role");
-        ObjectNode jsonSchema = MAPPER.createObjectNode();
-        jsonSchema.put("name", "protomolt_agent_turn");
-        jsonSchema.put("strict", true);
-        jsonSchema.set("schema", AgentTurn.outputSchema(role));
         this.responseFormat = MAPPER.createObjectNode();
-        responseFormat.put("type", "json_schema");
-        responseFormat.set("json_schema", jsonSchema);
+        outputSchema(AgentTurn.outputSchema(role));
         this.timeout = Objects.requireNonNull(timeout, "turn timeout");
         this.sessionId = savedSessionId == null || savedSessionId.isBlank()
                 ? "openai-" + UUID.randomUUID() : savedSessionId;
@@ -71,6 +66,17 @@ final class OpenAiAgentProvider implements AgentProvider {
     @Override
     public synchronized String sessionId() {
         return sessionId;
+    }
+
+    @Override
+    public synchronized void outputSchema(ObjectNode schema) {
+        ObjectNode jsonSchema = MAPPER.createObjectNode();
+        jsonSchema.put("name", "protomolt_agent_turn");
+        jsonSchema.put("strict", true);
+        jsonSchema.set("schema", schema.deepCopy());
+        responseFormat.removeAll();
+        responseFormat.put("type", "json_schema");
+        responseFormat.set("json_schema", jsonSchema);
     }
 
     @Override

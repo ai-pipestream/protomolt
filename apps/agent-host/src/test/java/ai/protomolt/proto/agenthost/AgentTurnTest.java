@@ -1,11 +1,13 @@
 package ai.protomolt.proto.agenthost;
 
+import ai.protomolt.proto.delegation.v1.DeliverableContract;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.ArrayList;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -153,6 +155,88 @@ class AgentTurnTest {
                 collectVendorKeywords(node.get(i), path + "[" + i + "]", out);
             }
         }
+    }
+
+    private static final String CANDIDATE_DEF =
+            "ai.protomolt.proto.delegation.v1.CompletionCandidate";
+
+    /**
+     * {@code CompletionCandidate.result} is an Any, which renders as an open object; a
+     * strict structured-output endpoint refuses open objects. With no contract known the
+     * schema leaves the deliverable out; with contracts known it offers each contract's
+     * rendered type, closed, with the type URL pinned.
+     */
+    @Test
+    void theDeliverableIsRenderedFromTheContractsTheHostKnows() {
+        JsonNode bare = AgentTurn.outputSchema(AgentRole.WORKER);
+        assertThat(bare.path("$defs").path(CANDIDATE_DEF).path("properties").has("result"))
+                .as("result without a contract").isFalse();
+
+        JsonNode withContract = AgentTurn.outputSchema(AgentRole.WORKER,
+                Map.of("11111111-1111-4111-8111-111111111111", DeliverableFixture.contract()));
+        JsonNode result = withContract.path("$defs").path(CANDIDATE_DEF)
+                .path("properties").path("result");
+        assertThat(result.isMissingNode()).as("result with a contract").isFalse();
+        String rendered = result.toString();
+        assertThat(rendered).contains(DeliverableFixture.TYPE_URL).contains("headline");
+        List<String> findings = new ArrayList<>();
+        assertStrictObjects(withContract, "$", findings);
+        assertThat(findings).as("schema with a contract").isEmpty();
+        List<String> vendor = new ArrayList<>();
+        collectVendorKeywords(withContract, "$", vendor);
+        assertThat(vendor).isEmpty();
+    }
+
+    /**
+     * A candidate's deliverable is parsed with the contract's type and checked against the
+     * contract's rules before the command is sent, so a bad deliverable costs a repair turn
+     * and not a coordinator attempt. The same sentences the coordinator would produce are
+     * what the model reads back.
+     */
+    @Test
+    void aDeliverableIsCheckedAgainstTheTasksContractBeforeSubmission() {
+        String task = "11111111-1111-4111-8111-111111111111";
+        Map<String, DeliverableContract> contracts = Map.of(task, DeliverableFixture.contract());
+        String valid = candidate(task, "{\"@type\":\"" + DeliverableFixture.TYPE_URL
+                + "\",\"headline\":\"eight chars or more\",\"findings\":2}");
+        assertThat(AgentTurn.parse(valid, AgentRole.WORKER, List.of(13L), "kimi-worker",
+                contracts).commands()).hasSize(1);
+
+        String shortHeadline = candidate(task, "{\"@type\":\"" + DeliverableFixture.TYPE_URL
+                + "\",\"headline\":\"short\",\"findings\":2}");
+        assertThatThrownBy(() -> AgentTurn.parse(shortHeadline, AgentRole.WORKER,
+                List.of(13L), "kimi-worker", contracts))
+                .isInstanceOf(AgentHostException.class)
+                .hasMessageContaining("string.min_len");
+
+        String noFindings = candidate(task, "{\"@type\":\"" + DeliverableFixture.TYPE_URL
+                + "\",\"headline\":\"eight chars or more\",\"findings\":0}");
+        assertThatThrownBy(() -> AgentTurn.parse(noFindings, AgentRole.WORKER,
+                List.of(13L), "kimi-worker", contracts))
+                .isInstanceOf(AgentHostException.class)
+                .hasMessageContaining(DeliverableFixture.CEL_MESSAGE);
+
+        String missing = candidate(task, null);
+        assertThatThrownBy(() -> AgentTurn.parse(missing, AgentRole.WORKER,
+                List.of(13L), "kimi-worker", contracts))
+                .isInstanceOf(AgentHostException.class)
+                .hasMessageContaining(DeliverableFixture.TYPE_NAME);
+
+        assertThatThrownBy(() -> AgentTurn.parse(valid, AgentRole.WORKER,
+                List.of(13L), "kimi-worker", Map.of()))
+                .isInstanceOf(AgentHostException.class)
+                .hasMessageContaining("no deliverable contract");
+    }
+
+    private static String candidate(String task, String result) {
+        return "{\"handledEventCursors\":[13],\"commands\":[{\"tool\":\"delegation-candidate\","
+                + "\"arguments\":{\"taskId\":\"" + task + "\",\"candidate\":{\"attempt\":1,"
+                + "\"revision\":1,\"summary\":\"report ready\","
+                + "\"evidence\":[{\"checkName\":\"report-written\","
+                + "\"verdict\":\"CHECK_VERDICT_PASSED\",\"ranAt\":\"2026-09-04T08:00:00Z\"}],"
+                + "\"commits\":[{\"repository\":\"git.rokkon.com/x/y\","
+                + "\"commit\":\"b185c5996b3868377b92682a65661e3f66769316\"}]"
+                + (result == null ? "" : ",\"result\":" + result) + "}}}]}";
     }
 
     @Test
