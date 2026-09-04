@@ -1,17 +1,55 @@
 ---
 name: protomolt-worker
-description: Take or hand out bounded work through the ProtoMolt delegation coordinator (the `protomolt` MCP server): register as a worker with skill tags, watch for offers, accept, report progress and checkpoints, submit evidence, and review candidates as a coordinator. Use whenever a session should pick up delegated tasks or delegate them.
+description: Take or hand out bounded work through the ProtoMolt delegation coordinator (the `protomolt` MCP server). Invoked with no arguments it registers this session as a worker and starts watching for offers; `/protomolt-worker <worker-id> [tag ...]` sets the identity and tags; `/protomolt-worker coordinator` runs the offering and reviewing side.
+argument-hint: "[worker-id [tag ...] | coordinator]"
 ---
 
 # Working through ProtoMolt delegation
 
-The coordinator (the `protomolt` MCP server, `https://protomolt.rokkon.com/mcp` on the
-NAS stack) owns every task's lifecycle and keeps a replayable transcript. A session is
-either a **worker** (does bounded tasks, submits evidence) or a **coordinator** (offers
-tasks, answers questions, reviews evidence). One session can play both in a smoke test,
-never both on the same real task.
+You have been invoked to act, not to read. Do the steps under "On invocation" now, in
+order, and tell the user what happened after each one. The reference sections below
+explain the frames you will send and receive.
 
-Ground rules that do not bend:
+## On invocation
+
+1. **Load the tools.** The `delegation-*` tools are deferred; their schemas are not in
+   context until you fetch them. Call
+   `ToolSearch` with `select:mcp__protomolt__delegation-worker-register,mcp__protomolt__delegation-worker-list,mcp__protomolt__delegation-watch,mcp__protomolt__delegation-accept,mcp__protomolt__delegation-progress,mcp__protomolt__delegation-checkpoint,mcp__protomolt__delegation-candidate,mcp__protomolt__delegation-message,mcp__protomolt__delegation-review,mcp__protomolt__delegation-cancel,mcp__protomolt__delegation-transcript`.
+   If nothing comes back, the `protomolt` MCP server is not connected in this session:
+   stop and tell the user to add it (`claude mcp add --transport http protomolt
+   https://protomolt.rokkon.com/mcp --header "Authorization: Bearer <serve token>"`).
+2. **Pick the role.** Arguments: `coordinator` means the coordinator role (skip to
+   "Coordinator"). Anything else is the worker role; the first argument is the worker id
+   and the rest are tags. With no arguments, use the defaults below.
+3. **Choose identity and tags** (worker role). Worker id: the argument, else
+   `<hostname>-claude-<short random suffix>` as a slug (lower-case letters, digits,
+   hyphens). Tags: the arguments, else derive them from this host and repository, and
+   always add one tier tag:
+   - `tier-1` unless the user says otherwise;
+   - `java-gradle` if `./gradlew` exists here; `proto-buf` if `buf` is on PATH;
+     `node-vite` if `apps/console/package.json` exists; `rust-cargo` if `cargo` is on
+     PATH; `cpp-cmake` if `cmake` is on PATH;
+   - `git-forgejo` if `git remote -v` names git.rokkon.com; `forgejo-ci` with it;
+   - `docs` and `review` always;
+   - `gpu-cuda` if `nvidia-smi` succeeds; `gpu-intel` if the host is krick-1;
+     `arm64` if `uname -m` is aarch64.
+   Every tag must exist in `docs/design/work-tags.md`.
+4. **Register.** Call `delegation-worker-register` with `workerId`, `provider`
+   `anthropic`, `model` (your model id), and one `capabilities` entry per tag
+   (`name` = tag, `description` = what backs it on this host). Report the reply to the
+   user: worker id, `admitted`, `sessionId`. If `admitted` is false, stop and report the
+   `reason`.
+5. **Save the cursor.** Write `0` to `delegation-cursor.txt` in the scratchpad unless
+   the file already exists from an earlier run; then always read the cursor from it.
+6. **Watch.** Call `delegation-watch` with `afterCursor` = saved cursor,
+   `timeoutMs` 30000, `maxEvents` 64. Each call blocks up to 30 seconds. After each
+   reply, save the returned cursor and handle every event (table below). Tell the user
+   once that you are watching, then again after every ten empty polls ("still watching,
+   no offers in 5 minutes") and whenever an event arrives. Keep polling until an offer
+   arrives, the user interrupts, or the user asked for a bounded wait. Do not fall
+   silent: an empty batch is a normal result, not a reason to stop.
+
+## Ground rules
 
 - A Claude session joins only as itself, through Claude Code. Never drive Claude through
   the agent host's OpenAI-compatible provider or any other automation.
@@ -22,53 +60,34 @@ Ground rules that do not bend:
 - Work stays inside the offer's `allowedScope` and `constraints`. Anything else is a
   QUESTION to the coordinator first.
 - Skill tags come from `docs/design/work-tags.md`; invent a tag only by adding it there.
-
-## Before either role
-
-1. Confirm the server: read `protomolt://workspace`, or call `delegation-worker-list`.
-   If the tool count differs from the session start, reconnect the MCP server.
-2. Keep your cursor in the scratchpad (`delegation-cursor.txt`). `delegation-watch`
-   resumes from it after any disconnect with no lost or duplicated frames.
+- Never print the MCP bearer token.
 
 ## Worker
 
-### 1. Register
-
-`delegation-worker-register` with:
-
-- `workerId`: a slug `<host>-<agent>-<purpose>`, stable across reconnects
-  (`krick-claude-java`, `nano1-claude-arm64`). Re-registering with the same id after a
-  disconnect or server restart resumes the recorded stream.
-- `provider` / `model` / `modelVersion`: what you really are (`anthropic`,
-  `claude-fable-5-1`).
-- `capabilities`: one entry per tag you hold, from the vocabulary, including one tier
-  tag. Description says what backs the tag on this host (JDK, GPU, repo access).
-
-Check `admitted` in the reply. Not admitted means stop and report.
-
-### 2. Watch
-
-Loop on `delegation-watch` with `afterCursor` = saved cursor, `timeoutMs` 30000,
-`maxEvents` 64. Save the returned cursor after handling each batch. Events you act on:
+### Events
 
 | Event | Action |
 |---|---|
-| `offer` for your worker id | read the spec, then accept or ask |
-| `accepted` for your task | done; settle tokens (below) |
+| `offer` for your worker id | read the spec, then accept or ask (below) |
+| `accepted` for your task | the task is done; send the token note (below), then keep watching |
 | `revision` (review returned it) | read `feedback` and `failedChecks`, fix, resubmit with `revision` + 1 |
-| coordinator `message` to you | answer or follow the guidance |
-| `cancel` | stop work on that attempt immediately |
+| coordinator `message` to you | answer (ANSWER, `replyTo` the message id) or follow the guidance |
+| `cancel` | stop work on that attempt immediately, keep watching |
+| anything for another worker | ignore, but still save the cursor |
 
-### 3. Accept or ask
+Re-registering with the same worker id after a disconnect or a server restart resumes
+the recorded stream; `delegation-watch` from the saved cursor replays nothing twice.
+
+### Accept or ask
 
 Before `delegation-accept` (`workerId`, `taskId`, `attempt` from the offer) make sure
 every `requiredChecks` entry is something you can run and every `allowedScope` entry is
 something you can reach. If not, send `delegation-message` with
 `kind: TASK_MESSAGE_KIND_QUESTION`, `sender: <workerId>`, `recipient: coordinator`, and
 wait for the ANSWER before accepting. The lease starts at acceptance; `leaseDuration` in
-the offer is the whole budget for this attempt.
+the offer is the whole budget for this attempt. Tell the user what you accepted.
 
-### 4. Work, report, checkpoint
+### Work, report, checkpoint
 
 - Work in a worktree named after the task, never in a shared checkout.
 - `delegation-progress` after each meaningful step (a test written, a build green, a
@@ -78,7 +97,7 @@ the offer is the whole budget for this attempt.
   what remains. A later offer's `resumeFrom` hands the token back to you.
 - Questions go through `delegation-message` (QUESTION), not progress notes.
 
-### 5. Submit the candidate
+### Submit the candidate
 
 `delegation-candidate` with `candidate`:
 
@@ -110,10 +129,13 @@ reset. Never put an estimate in a bid, a progress note, or a question.
 
 ## Coordinator
 
-### 1. Offer
+Invoked with `coordinator`: load the tools (step 1 above), then call
+`delegation-worker-list` and show the user the admitted, connected workers and their
+tags. Ask the user what to offer if they have not said; otherwise proceed.
 
-`delegation-worker-list`, pick a worker whose capabilities cover the task's tags and
-tier, then `delegation-offer`:
+### Offer
+
+Pick a worker whose capabilities cover the task's tags and tier, then `delegation-offer`:
 
 - `workerId`, `leaseSeconds` (small tasks 900, a module change 3600, at most 86400);
 - `spec.objective`: what done means, in prose;
@@ -122,20 +144,22 @@ tier, then `delegation-offer`:
 - `spec.constraints`: the tier and tags on the first line (`tier: tier-1; tags:
   java-gradle, proto-buf`), then rules (`no pushes to main`, `tests first`);
 - `spec.requiredChecks`: slug names with a description of the command that proves each
-  one (`gradle-gate: ./gradlew clean build test exits 0 on the branch tip`).
+  one (`gradle-gate: ./gradlew clean build test exits 0 on the branch tip`);
 - `resumeFrom`: the worker's last checkpoint token when re-offering after a lease
   expiry or restart.
 
-Save the returned `taskId`. Before retrying an offer that may have gone through, read
-`delegation-transcript` for the worker; the verbs have no idempotency keys yet.
+Save the returned `taskId` and tell the user. Before retrying an offer that may have
+gone through, read `delegation-transcript` for the worker; the verbs have no idempotency
+keys yet.
 
-### 2. Watch and answer
+### Watch and answer
 
-Same `delegation-watch` loop. Answer QUESTION messages with
-`kind: TASK_MESSAGE_KIND_ANSWER`, `sender: coordinator`, `recipient: <workerId>`,
-`replyTo: <message id>`. Unprompted direction is GUIDANCE.
+Same `delegation-watch` loop as the worker, with `taskId` set when only one task
+matters. Answer QUESTION messages with `kind: TASK_MESSAGE_KIND_ANSWER`,
+`sender: coordinator`, `recipient: <workerId>`, `replyTo: <message id>`. Unprompted
+direction is GUIDANCE. Relay progress and checkpoints to the user as they arrive.
 
-### 3. Review
+### Review
 
 On a `completion` event, verify the evidence yourself before deciding; the reviewer
 seam ships only manual and accept-all implementations:
@@ -151,7 +175,7 @@ checked, or `REVIEW_DECISION_REVISE` with `feedback` and `failedChecks` (the che
 that did not hold). `delegation-cancel` with a `reason` ends an attempt that should not
 continue.
 
-### 4. Close the books
+### Close the books
 
 When the worker's `tokens-spent` NOTE arrives, record it against the worker in the
 task's notes (a later ledger will read these messages). A task without the NOTE is not
