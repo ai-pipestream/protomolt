@@ -15,6 +15,27 @@ public interface AgentProvider extends AutoCloseable {
     String prompt(String prompt);
 
     /**
+     * Token counters for the provider session so far: prompt and output tokens as the
+     * provider reports them, summed over every turn of this host's session. Empty when the
+     * provider exposes no usage. The marketplace settles tokens at the end of a task from
+     * these numbers; they are never an estimate.
+     */
+    default java.util.Optional<Usage> usage() {
+        return java.util.Optional.empty();
+    }
+
+    /** Cumulative prompt and output tokens of one provider session. */
+    record Usage(long promptTokens, long outputTokens) {
+        public Usage plus(long prompt, long output) {
+            return new Usage(promptTokens + prompt, outputTokens + output);
+        }
+
+        public long total() {
+            return promptTokens + outputTokens;
+        }
+    }
+
+    /**
      * Receives the output schema the host expects the next replies to follow. Providers
      * with enforced structured output install it; a provider that can only be asked in the
      * prompt ignores it. Called before the first prompt and whenever the deliverable
