@@ -1,0 +1,26 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'The compiled directed mesh runtime, demand-driven processor transport, durable channel, and settlement protocol'
+
+dependencies {
+    api libs.protobuf.java
+    api libs.protobuf.java.util
+    api project(':protomolt-mesh-contracts')
+    api project(':protomolt-projection')
+    implementation project(':protomolt-mapper-cel')
+    implementation project(':protomolt-shapes')
+    implementation project(':protomolt-descriptors')
+    api project(':protomolt-protobuf-validation')
+    api project(':protomolt-protobuf-metadata')
+
+    compileOnly libs.javax.annotation.api
+    testImplementation libs.grpc.inprocess
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}"
+    }
+}

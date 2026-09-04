@@ -32,6 +32,7 @@ The guides below follow the repository's module layout.
 - [Workflow manager](transform/workflow-manager.md): checked serial compositions of gRPC calls
 - [Workflows and run evidence](transform/workflows.md): record, replay, promotion, and structured steps
 - [Pipelines](transform/pipeline.md): checked execution across all gRPC streaming shapes
+- [Directed flows](transform/directed-flows.md): compiled protobuf message graphs and unified run history
 - [Agent delegation](transform/delegation.md): coordinator and worker streaming contract
 
 ## Search and sinks

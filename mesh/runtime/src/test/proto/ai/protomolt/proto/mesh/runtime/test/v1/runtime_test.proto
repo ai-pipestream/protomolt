@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.mesh.runtime.test.v1;
+
+import "ai/protomolt/proto/projection/v1/projection.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.mesh.runtime.test";
+option java_outer_classname = "RuntimeTestProto";
+
+message RawInput {
+  string text = 1;
+}
+
+message NormalizedInput {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.mesh.runtime.test.v1.RawInput"
+  };
+
+  string text = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "text"}
+  }];
+}
+
+message Token {
+  string text = 1;
+  bool route_right = 2;
+}
+
+message Result {
+  string branch = 1;
+  string text = 2;
+}

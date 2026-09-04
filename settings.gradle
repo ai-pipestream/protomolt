@@ -159,6 +159,9 @@ project(':protomolt-mesh-contracts').projectDir = file('mesh/contracts')
 include 'protomolt-mesh-cluster'
 project(':protomolt-mesh-cluster').projectDir = file('mesh/cluster')
 
+include 'protomolt-mesh-runtime'
+project(':protomolt-mesh-runtime').projectDir = file('mesh/runtime')
+
 // search/ — index mappers plus the embedding and rerank model SPIs.
 
 include 'protomolt-search-index-spi'

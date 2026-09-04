@@ -1,0 +1,214 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.mesh.runtime.v1;
+
+import "ai/protomolt/proto/mesh/v1/entity.proto";
+import "ai/protomolt/proto/meta/v1/metadata.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/any.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.mesh.runtime.v1";
+
+// An authored directed flow. Compilation resolves every schema and processor,
+// type-checks every predicate and projection, proves the graph is acyclic, and
+// fingerprints the exact protobuf definition before execution.
+message FlowDefinition {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "An authored directed protobuf message flow."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  string name = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ai.protomolt.proto.mesh.v1.SchemaReference input_schema = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  repeated ProcessorNode nodes = 3 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 256},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  repeated FlowEdge edges = 4 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 2048},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  repeated FlowOutput outputs = 5 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 256},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  uint32 max_messages = 6 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, uint32: {gte: 1, lte: 1000000}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Duration deadline = 7 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, duration: {gte: {nanos: 1}}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// One invocation site. The schemas are repeated in the definition so a plan
+// cannot silently inherit a changed processor registration.
+message ProcessorNode {
+  string node_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {identifier: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string processor_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {path_safe_name: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ai.protomolt.proto.mesh.v1.SchemaReference input_schema = 3 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  repeated ai.protomolt.proto.mesh.v1.SchemaReference output_schemas = 4 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 64},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// One processor implementation's exact binary contract.
+message ProcessorContract {
+  string processor_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {path_safe_name: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ai.protomolt.proto.mesh.v1.SchemaReference input_schema = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  repeated ai.protomolt.proto.mesh.v1.SchemaReference output_schemas = 3 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 64},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  uint32 max_outputs = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, uint32: {gte: 1, lte: 100000}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// One typed edge. source_schema selects one output variant from its source;
+// project_to, when present, is a descriptor-option MessageProjection target.
+message FlowEdge {
+  string edge_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {identifier: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  oneof source {
+    bool flow_input = 2 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    string source_node = 3 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  }
+  string target_node = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {identifier: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ai.protomolt.proto.mesh.v1.SchemaReference source_schema = 5 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ai.protomolt.proto.mesh.v1.SchemaReference project_to = 6 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  string when = 7 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 16384,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// A terminal message variant retained as a run result.
+message FlowOutput {
+  string node_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {identifier: true, max_len: 128}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  ai.protomolt.proto.mesh.v1.SchemaReference schema = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// Persistable output of compilation. The fingerprint commits to the authored
+// definition and the exact contracts selected for its nodes.
+message CompiledFlowPlan {
+  FlowDefinition definition = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  repeated ProcessorContract processor_contracts = 2 [
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  string plan_fingerprint = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+// Exact output bytes from one processor invocation. The runtime verifies the
+// schema fingerprint before parsing the Any.
+message TypedPayload {
+  ai.protomolt.proto.mesh.v1.SchemaReference schema = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  google.protobuf.Any payload = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+}
+
+enum RunState {
+  RUN_STATE_UNSPECIFIED = 0;
+  RUN_STATE_RUNNING = 1;
+  RUN_STATE_COMPLETED = 2;
+  RUN_STATE_FAILED = 3;
+}
+
+enum HistoryEventKind {
+  HISTORY_EVENT_KIND_UNSPECIFIED = 0;
+  HISTORY_EVENT_KIND_RUN_STARTED = 1;
+  HISTORY_EVENT_KIND_MESSAGE_ACCEPTED = 2;
+  HISTORY_EVENT_KIND_MESSAGE_ROUTED = 3;
+  HISTORY_EVENT_KIND_PROCESSOR_STARTED = 4;
+  HISTORY_EVENT_KIND_MESSAGE_PRODUCED = 5;
+  HISTORY_EVENT_KIND_PROCESSOR_COMPLETED = 6;
+  HISTORY_EVENT_KIND_OUTPUT_RETAINED = 7;
+  HISTORY_EVENT_KIND_DOWNSTREAM_SETTLED = 8;
+  HISTORY_EVENT_KIND_RUN_COMPLETED = 9;
+  HISTORY_EVENT_KIND_RUN_FAILED = 10;
+}
+
+message FlowFailure {
+  string code = 1 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  string message = 2 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+// One ordered event in the unified local/remote message history.
+message HistoryEvent {
+  uint64 sequence = 1 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  google.protobuf.Timestamp occurred_at = 2 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  HistoryEventKind kind = 3 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  string node_id = 4 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  string processor_id = 5 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  string edge_id = 6 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  string invocation_id = 7 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  string delivery_id = 8 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  string message_id = 9 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  string parent_message_id = 10 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  ai.protomolt.proto.mesh.v1.SchemaReference schema = 11 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  ai.protomolt.proto.mesh.v1.EntityEnvelope message = 12 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  FlowFailure failure = 13 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
+
+message FlowHistory {
+  string run_id = 1 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  string flow_name = 2 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  string plan_fingerprint = 3 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  RunState state = 4 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  repeated HistoryEvent events = 5 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  repeated ai.protomolt.proto.mesh.v1.EntityEnvelope outputs = 6 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  FlowFailure failure = 7 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+}
