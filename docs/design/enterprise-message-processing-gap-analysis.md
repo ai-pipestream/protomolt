@@ -1,9 +1,9 @@
 # Enterprise message processing gap analysis
 
 Status: product planning source, refreshed after implementation inspection on
-2026-09-03. The original comparison is against Forgejo `main`; the runtime
-update is verified on the local `descriptor-flow-runtime` branch at
-`87f5b12d` and is not yet presented here as merged or released.
+2026-09-03. The original comparison is against Forgejo `main`; the durable
+runtime lifecycle is verified on the local `descriptor-flow-runtime` branch in
+commit `9279bf4a` and is not yet presented here as merged or released.
 
 This document answers a narrow product question: which useful capabilities in
 the reference integration platform are not yet available as real ProtoMolt
@@ -13,11 +13,12 @@ adopting the reference platform's document model or product vocabulary?
 The short answer is that ProtoMolt now has the descriptor-native core of a
 message-processing runtime: exact schema identity, conformance-tested
 projection, compiled directed flows, one local/remote processor seam, a
-demand-driven gRPC worker channel, a protobuf WAL, downstream settlement, and
-one protobuf message history. The largest remaining runtime gaps are durable
-workflow and run lifecycle, a live processor directory and worker control
-plane, restart-safe claim-check/dead-letter/replay behavior, live source
-connectors, and the operator application.
+demand-driven gRPC worker channel, protobuf WALs, downstream settlement,
+immutable flow publication, deployment pointers, restart-safe run ownership,
+persistent protobuf history, cancellation, and selected-frontier replay. The
+largest remaining runtime gaps are a live processor directory and worker
+control plane, restart-safe channel/claim-check/dead-letter behavior, live
+source connectors, and the operator application.
 
 ProtoMolt should preserve its stronger descriptor-native model. An application
 payload is any real protobuf message. A small transport envelope carries
@@ -35,17 +36,21 @@ The reference implementation is the multi-repository checkout under
 The reference repositories were inspected at their local heads, dated between
 2026-08-01 and 2026-08-16. The original ProtoMolt comparison used Forgejo
 `origin/main` at `3410aeef0fb1df227887ff462ebd21f380a0782f`, dated 2026-09-03.
-This refresh also inspected `descriptor-flow-runtime` at `87f5b12d`, rebased on
-Forgejo and GitHub `main` at `b65b7de3`. The branch adds four commits:
+This refresh also inspected `descriptor-flow-runtime`, rebased on Forgejo and
+GitHub `main` at `b65b7de3`. The branch adds five implementation commits:
 
 - `1ffb7cf1`: canonical descriptor identity and projection conformance;
 - `b0f0a871`: compiled directed protobuf flows and unified history;
 - `556a053b`: demand-driven remote execution, protobuf WAL, and settlement; and
-- `87f5b12d`: the new runtime module's BOM constraint.
+- `87f5b12d`: the new runtime module's BOM constraint; and
+- `9279bf4a`: immutable publication, revision-fenced deployments, durable runs,
+  persistent protobuf history and frontiers, cancellation, replay, and the
+  lifecycle gRPC service.
 
-The branch passed focused runtime tests, the full `test` task, and the full
-`build` task. The generated reports contain 6,585 tests with zero failures or
-errors and five skips. Because the branch is local, this document distinguishes
+The branch passed focused lifecycle, restart, cancellation, replay, WAL, and
+in-process gRPC tests, the full runtime test task, and the full `build` task.
+The generated XML reports contain 6,593 tests with zero failures or errors and
+five skips. Because the branch is local, this document distinguishes
 implemented branch behavior from behavior merged to `main`.
 
 This is an implementation inventory, not a README parity exercise:
@@ -163,21 +168,21 @@ features of their own:
 
 | Reference behavior | ProtoMolt state | ProtoMolt landing |
 |---|---|---|
-| Immutable directed flow versions, draft validation, an activation pointer, and in-flight version pinning | **Missing.** Workflow records exist, but there is no durable directed-flow repository and deployment lifecycle. | Add a descriptor-versioned `WorkflowDefinition`, draft validation report, immutable published version, and atomic deployment pointer. Stamp every accepted message with the version it must finish on. |
-| Executable branching directed graph | **Implemented on branch for acyclic execution.** `FlowCompiler` resolves exact processor contracts, predicates and projections, rejects cycles and unreachable nodes, and fingerprints the resulting plan. `FlowRuntime` provides bounded branching and fan-out. Durable workflow publication, aggregators, and mounted product surfaces remain open. | Add durable workflow lifecycle, aggregation semantics, persistent run ownership, and the supported API surfaces without weakening the compiled plan. |
+| Immutable directed flow versions, draft validation, an activation pointer, and in-flight version pinning | **Implemented on branch.** `DurableFlowCoordinator` validates and immutably publishes exact compiled plans, moves deployment pointers under revision fences, and pins every run to its accepted version, plan fingerprint, and deployment revision. | Mount the lifecycle service with the product role after directory-backed processor resolution is available; do not weaken immutable version identity. |
+| Executable branching directed graph | **Implemented on branch for acyclic execution.** `FlowCompiler` resolves exact processor contracts, predicates and projections, rejects cycles and unreachable nodes, and fingerprints the resulting plan. `FlowRuntime` provides bounded branching and fan-out; `DurableFlowCoordinator` owns persisted execution. Aggregation remains open. | Add aggregation semantics after the durable channel and descendant-set model can represent their barriers exactly. |
 | The same processor can run in-process or remotely | **Implemented on branch.** Local and demand-driven gRPC execution share `ProcessorInvoker`, typed payload validation, history, deadline, failure, and settlement seams. | Move placement behind a live processor directory and retain local/remote conformance as the gate for every new outcome and channel feature. |
 | Processors pull work on a long-lived bidirectional stream | **Implemented on branch at the transport core.** Workers initiate one stream, advertise exact contracts, grant bounded demand, and complete under UUID lease fences. Expired or disconnected claims are released. Heartbeats, cancellation, draining, and live capacity changes remain open. | Integrate the stream with the cluster directory and add heartbeat, cancellation, drain, health, and capacity lifecycle. |
 | Competing consumers scale from declared and observed capacity | **Missing.** | Add capacity advertisements and a bounded worker pool. Initial concurrency, ceiling, ramp signals, idle retirement, and live ceiling changes must be explicit and observable. |
 | Per-channel delivery mode selects memory or durable transport | **Partial on branch.** `DurableProcessorChannel` defines one semantic seam and `FileDurableProcessorChannel` supplies a forced, CRC32C-protected protobuf WAL with strict recovery. The flow definition does not yet select memory, broker, or database guarantees. | Add declared channel policy plus bounded-memory and transactional outbox or broker adapters. Configuration selects guarantees, not implementation classes. |
 | Memory pressure can spill to an explicitly allowed durable channel | **Missing.** | Declare spill behavior on the channel. A full in-memory channel may backpressure or use a named durable fallback; a memory-only policy must refuse the spill. Record the transition in message history. |
-| Downstream completion controls upstream acknowledgement | **Implemented on branch within one run.** Remote completion remains `COMPLETED`; `FlowRuntime` settles in reverse dependency order only after downstream success and releases completed work after downstream failure. Restart-safe descendant-set settlement is still missing. | Persist the settlement frontier and expected descendants so the same rule survives coordinator restart and frontier replay. |
+| Downstream completion controls upstream acknowledgement | **Implemented on branch with restart-safe settlement frontiers.** Remote completion remains `COMPLETED`; the lifecycle WAL persists completed-but-unsettled descendants, recovery restores their settlement handles, and a durable commit-boundary bit fences cancellation before reverse-order settlement starts. | Generalize the persisted frontier to declared descendant sets and payload leases when channel policy and claim checks land. |
 | Deterministic child identities across fan-out and retry | **Implemented on branch.** Run, parent message, processor, and output ordinal derive stable message, invocation, and delivery identities across replay and at-least-once delivery. | Preserve these identities in every future channel, claim-check, dead-letter, and replay adapter. |
 | Typed retryable, permanent, skipped, abandoned, and cancelled outcomes | **Partial.** ProtoMolt has structured action failures and refusals, but no shared message outcome model spanning channels and processors. | Define one outcome vocabulary with retry advice, structured cause chain, processor evidence, and settlement effect. Never infer retryability from free-form text. |
 | Per-processor and global dead-letter channels | **Missing.** | Store the original envelope, payload reference, workflow version, outcome, and replay frontier. Reprocessing must be bounded and auditable. |
-| Replay from a selected processor or downstream frontier | **Partial.** Stable identities and exact compiled-plan restoration now exist on the branch, but there is no durable run store or selected-frontier replay. | Compile a replay plan against the original version and persisted frontier. Refuse replay if required schemas, artifacts, or processors cannot be resolved exactly. |
+| Replay from a selected processor or downstream frontier | **Implemented on branch for selected routed-message frontiers.** Replay accepts strictly ordered persisted `MESSAGE_ROUTED` sequences, creates a new durable run, and pins the source version, plan fingerprint, and deployment revision even after redeployment. | Extend the same coordinator path to dead-letter records and claim-checked payloads; do not add a second replay executor. |
 | First-hop retry and poison-message isolation | **Missing as an integrated ingress path.** | Treat admission as a processor with its own retry policy and dead-letter channel so malformed ingress cannot loop invisibly. |
 | Memory-only handling for deletion-sensitive work | **Missing as a workflow guarantee.** | Add a channel policy that forbids persistence, snapshots, wire taps, and durable replay. Compilation must reject a path that crosses a durable channel or processor requiring storage. |
-| Typed per-run events and live in-flight diagnostics | **Partial on branch.** `FlowHistory` is one ordered protobuf event model for local and remote acceptance, routing, production, invocation, settlement, completion, and failure. It is returned with success or failure, but is not durably appended or resumable. | Persist the same contract, expose cursor-based reads, and add retry, channel transfer, lease, dead-letter, and artifact events without creating a second history. |
+| Typed per-run events and live in-flight diagnostics | **Implemented on branch for the current outcome set.** `FlowHistory` is append-only in the lifecycle WAL, cursor-readable through gRPC, and restored with the execution frontier after restart. Cancellation request, cancellation completion, and replay start use the same event stream. | Add retry, channel transfer, lease, dead-letter, and artifact events to this contract without creating a second history. |
 | Runtime injection of named processing profiles | **Composable.** Instructions, service profiles, mapping, chunking, embeddings, validation, and search mappings exist independently. | Resolve all named artifacts during compilation and stamp exact versions into the run. Do not ask processors to discover mutable configuration during execution. |
 
 ### 2. Schema identity, mapping, and projection
@@ -198,7 +203,7 @@ type system rather than a set of adjacent utilities.
 | Support oneof-to-oneof and oneof-to-field mapping | **Implemented on branch.** Mutually exclusive assignment is compiled and ambiguous multi-arm writes are refused. | Keep the refusal stable and include it in public compiler diagnostics. |
 | Support recursive messages and cyclic descriptor graphs safely | **Implemented on branch for descriptor identity and projection tests.** Descriptor closure traversal is cycle-safe and recursive values are bounded by the runtime's message limits. | Add explicit configurable depth and byte-budget refusals before accepting untrusted multi-tenant inputs. |
 | Derive read and write masks from mappings | **Available for projections.** | Carry the masks into fetch, claim-check hydration, and partial update planning. Refuse pruning when CEL makes the source mask incomplete. |
-| Schema change invalidates incompatible compiled plans | **Implemented on branch at plan restore.** A persisted `CompiledFlowPlan` is accepted only when its definition fingerprint, exact descriptors, and processor contracts still match. Durable deployment versioning remains open. | Bind each deployment pointer to that compiled plan and require a new workflow version after drift. |
+| Schema change invalidates incompatible compiled plans | **Implemented on branch through publication and restore.** Immutable publications and deployment pointers bind the plan fingerprint; a run restores only when its definition, exact descriptors, and processor contracts still match. | Preserve the refusal when directory-backed processors and external channels land. |
 | Resource-safe dynamic execution | **Partial.** Individual components have limits. | Put message bytes, recursion, collection cardinality, CEL cost, fan-out, and generated-output limits in the compilation and runtime contract. |
 
 #### Canonical message model
@@ -264,7 +269,7 @@ round trips or coercion guesses:
 | Large payloads externalized while channels carry a small pointer | **Partial.** The repository claim-check pattern and S3 facilities exist, but the general pipeline does not use them. | Add a `PayloadStore` SPI with digest-verified put/get/delete, namespace isolation, leases, and retention. The envelope carries the immutable reference. |
 | Durable per-destination staging | **Partial on branch.** The file channel stages exact `ProcessorWork` protobuf records under deterministic delivery IDs, forces every transition, validates sequence and CRC32C on recovery, truncates only a torn final frame, and refuses a second writer. | Generalize the declared guarantees to broker or outbox adapters and retain the one-copy payload rule. |
 | Transactional outbox between state and broker publication | **Partial.** Repository and jobs contain outbox patterns. | Extract and reuse the pattern for workflow version events, run events, claim-check state, and durable channel handoff. |
-| Deferred acknowledgement over a descendant set | **Partial on branch.** In-process flow execution defers settlement and commits remote work in reverse dependency order after downstream success. The descendant frontier is not yet durable across coordinator restart. | Store the expected terminal set and fold idempotent completion events under the declared completion policy. |
+| Deferred acknowledgement over a descendant set | **Partial on branch with durable recovery.** Flow execution defers settlement, persists completed-but-unsettled descendants, restores remote settlement handles after restart, and commits in reverse dependency order. It does not yet model a general expected descendant set for aggregators or claim-check retention. | Store the expected terminal set and payload leases, then fold idempotent completion events under the declared completion policy. |
 | Per-namespace storage isolation and bring-your-own storage | **Missing as a general product capability.** | Resolve a storage profile from authorization context. Credentials stay outside workflow definitions and message envelopes. |
 | Partial artifact reads and writes | **Partial.** Archive renditions and field masks provide related primitives. | Model arbitrary named artifacts with content address, media type, schema identity, writers, and read mask. Do not copy the fixed four-part document layout. |
 | Reconciliation for broker/object-store/database splits | **Missing as a shared subsystem.** | Provide report-only scans first, then age-guarded repair. Never delete a possible live orphan solely because one store is unavailable. |
@@ -565,9 +570,8 @@ graphs with CEL routes, projections, bounded fan-out, deterministic identities,
 local/remote invocation equivalence, retained outputs, downstream settlement,
 and one ordered `FlowHistory` contract.
 
-This is not yet a durable workflow product. Immutable publication, deployment
-selection, restart-safe run ownership, persistent history, aggregation,
-frontier replay, and mounted API surfaces remain open.
+The compiled executor now has a durable lifecycle described below. Aggregation
+and a product role backed by live processor discovery remain open.
 
 ### Implemented foundation: demand-driven remote execution
 
@@ -578,28 +582,33 @@ recovery, refuses a second writer, redispatches expired work, and keeps worker
 completion separate from downstream settlement.
 
 The worker stream is not yet a processor directory. Heartbeats, health,
-draining, cancellation, dynamic capacity, placement, durable run recovery,
-claim checks, dead letters, and selected-frontier replay remain open.
+draining, worker-side cancellation, dynamic capacity, placement, claim checks,
+and dead letters remain open.
 
-### Increment 4: durable workflow and run lifecycle
+### Implemented foundation: durable workflow and run lifecycle
 
-- Store authored definitions, validation reports, immutable compiled plans, and
-  atomic deployment pointers under exact descriptor and processor identities.
-- Create a durable run before admission is acknowledged and pin it to one plan
-  fingerprint for its entire lifetime.
-- Append the existing protobuf `FlowHistory` contract and settlement frontier;
-  expose cursor-based reads without inventing a second event model.
-- Resume after coordinator restart, cancel durably, and replay from a selected
-  frontier only when every original identity still resolves.
-- Mount compile, publish, deploy, execute, watch, cancel, and replay through the
-  existing product surfaces. JSON remains only a REST or human-interface
-  representation, never the stored or executed message form.
+`DurableFlowCoordinator` validates and publishes immutable compiled versions,
+moves deployment pointers under expected-revision fences, creates a run before
+processor execution, and pins that run to one version and plan. One `PMFL0001`
+framed protobuf WAL stores lifecycle records, history deltas, pending messages,
+the active invocation, completed-but-unsettled descendants, the settlement
+commit boundary, cancellation, and replay provenance.
 
-Exit gate: crash at every run-admission, event-append, processor-completion, and
-settlement boundary. An acknowledged run resumes on the same plan, does not
-commit an effect twice, and reports a complete ordered history.
+The same protobuf gRPC service exposes validation, publication, deployment,
+start, resume, get, cursor-based history, cancellation, and selected-frontier
+replay. Tests cover WAL round trip, torn-tail repair, checksum and second-writer
+refusal, restart from an active invocation, persistent cancellation, the
+descendant-settlement cancellation boundary, replay pinned across redeployment,
+history pagination, and named RPC statuses. The service is composable by a
+host; product-role mounting waits for directory-backed processor resolution.
+
+Internal processing and persistence remain protobuf binary. JSON is permitted
+only as an eventual REST or human-interface rendering.
 
 ### Increment 5: cluster-backed processor directory and worker control
+
+Detailed implementation plan:
+[cluster processor directory and worker control](../plans/cluster-processor-directory-and-worker-control.md).
 
 - Mount the current cluster reducer as a fenced, watchable processor-directory
   service with snapshot, ordered changes, cursors, and named resync refusal.
@@ -619,6 +628,9 @@ restart, cursor expiry, capacity reduction, and drain all preserve exact
 placement and delivery semantics without losing or double-committing work.
 
 ### Increment 6: channel, claim-check, dead-letter, and replay recovery
+
+Detailed implementation plan:
+[channel, claim-check, dead-letter, and replay recovery](../plans/channel-claim-check-dead-letter-replay-recovery.md).
 
 - Add declared channel guarantees, a bounded-memory adapter, and one
   transactional outbox or broker adapter beside the existing protobuf WAL.
@@ -690,19 +702,22 @@ broker access from the browser.
 
 If only three feature branches are started now, they should be:
 
-1. **Durable workflow and run lifecycle.** Turn the verified compiler and
-   runtime into immutable deployed workflows, restart-safe runs, persistent
-   protobuf history, cursor reads, cancellation, and exact frontier replay.
-2. **Cluster-backed processor directory and worker control.** Connect placement
+1. **Cluster-backed processor directory and worker control.** Connect placement
    to fenced advertisements, health, capacity, locality, heartbeat, drain, and
-   cancellation while keeping local and remote results identical.
-3. **Channel, claim-check, dead-letter, and replay recovery.** Add declared
+   cancellation while keeping local and remote results identical. Follow the
+   [detailed plan](../plans/cluster-processor-directory-and-worker-control.md).
+2. **Channel, claim-check, dead-letter, and replay recovery.** Add declared
    channel guarantees, payload retention, complete typed outcomes, poison-work
-   isolation, durable descendant settlement, and crash-tested replay.
+   isolation, durable descendant settlement, and crash-tested replay. Follow
+   the [detailed plan](../plans/channel-claim-check-dead-letter-replay-recovery.md).
+3. **QUIC Layer 0 adapter.** Implement the vendor-neutral draft's state machine,
+   CBOR/CDDL conformance, credit windows, cursor resume, checkpoint blocking,
+   heartbeat, graceful shutdown, and security limits over the same processor
+   and settlement semantics already proven by gRPC.
 
-QUIC Layer 0 follows these three. At that point it is genuinely another adapter
-over a restart-safe runtime rather than a second place to invent ownership,
-recovery, or settlement rules.
+Operational sources and search materialization follow these three. At that
+point every source, parser, embedding provider, and search sink can run over a
+restart-safe runtime with two interchangeable remote transports.
 
 ## Acceptance matrix
 
@@ -817,11 +832,11 @@ advantage is that descriptors, mapping, validation, providers, multiple API
 surfaces, and deployment roles already exist. The shortest path is to make
 those components the compiler and endpoints of one executable message runtime.
 
-The local runtime branch now proves that compiler and execution foundation.
-The immediate work is no longer basic descriptor projection or a first remote
-call. It is to make workflows and runs durable, connect workers to the live
-cluster directory, and complete claim-check, dead-letter, and replay recovery.
-Only then should QUIC add a second transport over the same proven semantics.
+The local runtime branch now proves the compiler, execution, and durable
+lifecycle foundation. The immediate work is no longer basic descriptor
+projection, a first remote call, or run persistence. It is to connect workers
+to the live cluster directory, complete channel and claim-check recovery, and
+then add QUIC as a second transport over the same proven semantics.
 
 The architectural decisions are:
 

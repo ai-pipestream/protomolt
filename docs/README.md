@@ -89,6 +89,12 @@ built-in action exposed by the standalone and full catalogs.
 - [Enterprise message processing gap analysis](design/enterprise-message-processing-gap-analysis.md):
   code-backed capability inventory, descriptor-native runtime architecture,
   vendor-neutral QUIC transport, frontend possibilities, and landing order
+- [Cluster processor directory and worker control plan](plans/cluster-processor-directory-and-worker-control.md):
+  fenced discovery, resumable watches, exact worker admission, capacity, drain,
+  cancellation, and reconnect semantics
+- [Channel, claim-check, dead-letter, and replay recovery plan](plans/channel-claim-check-dead-letter-replay-recovery.md):
+  declared guarantees, typed outcomes, payload retention, poison-work handling,
+  transactional delivery, and crash-tested recovery
 - [Historical protobuf mesh exploration](design/pipestream-protobuf-mesh/README.md):
   earlier contract, routing, recursive-processing, software-generation, and PII
   design input; use the enterprise message-processing analysis above for current
