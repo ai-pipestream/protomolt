@@ -130,6 +130,21 @@ class AcpAgentProviderTest {
                 .cause().hasMessageContaining("session/load failed");
     }
 
+    @Test
+    void cursorAuthenticatesAndAnswersItsExtensionRequestsUnattended() throws Exception {
+        Path workspace = Files.createDirectory(temporary.resolve("cursor-workspace"));
+        List<String> command = fakeAgent(FakeCursorAcpMain.class);
+        try (AcpAgentProvider provider = new AcpAgentProvider("cursor", workspace, "", command,
+                Duration.ofSeconds(30), AcpClient.PermissionPolicy.ALLOW_SINGLE)) {
+            assertThat(provider.name()).isEqualTo("cursor");
+            assertThat(provider.sessionId()).isNotBlank();
+            assertThat(provider.prompt("event packet"))
+                    .isEqualTo("{\"handledEventCursors\":[],\"commands\":[{\"tool\":"
+                            + "\"host-ack\",\"arguments\":{\"reason\":"
+                            + "\"question skipped, plan accepted, write allowed\"}}]}");
+        }
+    }
+
     private static List<String> fakeAgent(Class<?> main, String... args) {
         String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
         List<String> command = new java.util.ArrayList<>(List.of(java, "-cp",
@@ -260,6 +275,168 @@ class AcpAgentProviderTest {
             ObjectNode content = update.putObject("content");
             content.put("type", "text");
             content.put("text", text);
+            return notification;
+        }
+
+        private static void write(ObjectNode message) throws Exception {
+            System.out.write(MAPPER.writeValueAsBytes(message));
+            System.out.write('\n');
+            System.out.flush();
+        }
+    }
+
+    /**
+     * A stand-in for {@code agent acp}: advertises the {@code cursor_login} authentication
+     * method and refuses a session until it ran; during the prompt it raises the two
+     * blocking Cursor extension requests and a hyphen-spelled permission request, and only
+     * answers with the command batch once each was answered the way an unattended host
+     * must answer it.
+     */
+    public static final class FakeCursorAcpMain {
+
+        private static final ObjectMapper MAPPER = new ObjectMapper();
+        private static final BufferedReader IN = new BufferedReader(
+                new InputStreamReader(System.in, StandardCharsets.UTF_8));
+
+        public static void main(String[] args) throws Exception {
+            boolean authenticated = false;
+            String line;
+            while ((line = IN.readLine()) != null) {
+                if (line.isBlank()) {
+                    continue;
+                }
+                ObjectNode message = (ObjectNode) MAPPER.readTree(line);
+                String method = message.path("method").asText();
+                JsonNode id = message.get("id");
+                JsonNode params = message.get("params");
+                switch (method) {
+                    case "initialize" -> {
+                        ObjectNode result = MAPPER.createObjectNode();
+                        result.put("protocolVersion", 1);
+                        result.putObject("agentCapabilities").put("loadSession", false);
+                        result.putArray("authMethods").addObject().put("id", "cursor_login")
+                                .put("name", "Cursor login");
+                        write(reply(id, result));
+                    }
+                    case "authenticate" -> {
+                        if (!"cursor_login".equals(params.path("methodId").asText())) {
+                            write(error(id, -32602, "unknown auth method"));
+                        } else {
+                            authenticated = true;
+                            write(reply(id, MAPPER.createObjectNode()));
+                        }
+                    }
+                    case "session/new" -> {
+                        if (!authenticated) {
+                            write(error(id, -32000, "authentication required"));
+                        } else {
+                            write(reply(id, MAPPER.createObjectNode()
+                                    .put("sessionId", "cursor-session-1")));
+                        }
+                    }
+                    case "session/prompt" -> {
+                        String sessionId = params.path("sessionId").asText();
+                        String question = ask("q-1", "cursor/ask_question", question())
+                                .path("outcome").path("outcome").asText();
+                        String plan = ask("p-1", "cursor/create_plan", plan())
+                                .path("outcome").path("outcome").asText();
+                        String write = ask("w-1", "session/request_permission",
+                                permission(sessionId)).path("outcome").path("outcome").asText();
+                        String reason = ("skipped".equals(question) ? "question skipped"
+                                : "question " + question) + ", "
+                                + ("accepted".equals(plan) ? "plan accepted" : "plan " + plan)
+                                + ", " + ("selected".equals(write) ? "write allowed"
+                                : "write " + write);
+                        write(chunk(sessionId, "{\"handledEventCursors\":[],\"commands\":[{"
+                                + "\"tool\":\"host-ack\",\"arguments\":{\"reason\":\""
+                                + reason + "\"}}]}"));
+                        write(reply(id, MAPPER.createObjectNode().put("stopReason", "end_turn")));
+                    }
+                    default -> write(error(id, -32601, "unknown method: " + method));
+                }
+            }
+        }
+
+        /** Sends one agent-to-client request and reads lines until its response arrives. */
+        private static JsonNode ask(String id, String method, ObjectNode params)
+                throws Exception {
+            ObjectNode request = MAPPER.createObjectNode();
+            request.put("jsonrpc", "2.0");
+            request.put("id", id);
+            request.put("method", method);
+            request.set("params", params);
+            write(request);
+            String line;
+            while ((line = IN.readLine()) != null) {
+                if (line.isBlank()) {
+                    continue;
+                }
+                JsonNode message = MAPPER.readTree(line);
+                if (id.equals(message.path("id").asText()) && message.has("result")) {
+                    return message.get("result");
+                }
+                if (id.equals(message.path("id").asText()) && message.has("error")) {
+                    return MAPPER.createObjectNode().putObject("outcome")
+                            .put("outcome", "error:" + message.path("error").path("message")
+                                    .asText());
+                }
+            }
+            throw new IllegalStateException("client closed before answering " + id);
+        }
+
+        private static ObjectNode question() {
+            ObjectNode params = MAPPER.createObjectNode();
+            params.put("toolCallId", "call-q");
+            ObjectNode question = params.putArray("questions").addObject();
+            question.put("id", "mode");
+            question.put("prompt", "Which mode?");
+            question.putArray("options").addObject().put("id", "a").put("label", "A");
+            return params;
+        }
+
+        private static ObjectNode plan() {
+            ObjectNode params = MAPPER.createObjectNode();
+            params.put("toolCallId", "call-p");
+            params.put("plan", "1. do the work");
+            params.putArray("todos");
+            return params;
+        }
+
+        private static ObjectNode permission(String sessionId) {
+            ObjectNode params = MAPPER.createObjectNode();
+            params.put("sessionId", sessionId);
+            ObjectNode option = params.putArray("options").addObject();
+            option.put("optionId", "allow");
+            option.put("kind", "allow-once");
+            option.put("name", "Allow");
+            return params;
+        }
+
+        private static ObjectNode reply(JsonNode id, JsonNode result) {
+            ObjectNode response = MAPPER.createObjectNode();
+            response.put("jsonrpc", "2.0");
+            response.set("id", id);
+            response.set("result", result);
+            return response;
+        }
+
+        private static ObjectNode error(JsonNode id, int code, String message) {
+            ObjectNode response = MAPPER.createObjectNode();
+            response.put("jsonrpc", "2.0");
+            response.set("id", id);
+            response.putObject("error").put("code", code).put("message", message);
+            return response;
+        }
+
+        private static ObjectNode chunk(String sessionId, String text) {
+            ObjectNode notification = MAPPER.createObjectNode();
+            notification.put("jsonrpc", "2.0");
+            notification.put("method", "session/update");
+            ObjectNode params = notification.putObject("params");
+            params.put("sessionId", sessionId);
+            ObjectNode update = params.putObject("update");
+            update.put("sessionUpdate", "agent_message_chunk");
+            update.putObject("content").put("type", "text").put("text", text);
             return notification;
         }
 

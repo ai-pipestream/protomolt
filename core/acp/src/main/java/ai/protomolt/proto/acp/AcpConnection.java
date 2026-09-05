@@ -26,7 +26,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * Newline-delimited JSON-RPC 2.0 over a pair of byte streams, the framing ACP uses on stdio:
+ * Newline-delimited JSON-RPC 2.0 over a pair of byte streams, the framing ACP and MSP use on stdio:
  * one JSON object per line, UTF-8, no Content-Length headers. One virtual thread runs the read
  * loop; every write passes through a single lock so a notification emitted by a request handler
  * can never interleave with another message on the wire. Incoming requests are each dispatched
@@ -34,22 +34,22 @@ import java.util.logging.Logger;
  * that reads the next message; notifications run inline on that loop so wire order is delivery
  * order. Responses are correlated to requests by id with a {@link CompletableFuture}.
  */
-final class AcpConnection implements AutoCloseable {
+public final class AcpConnection implements AutoCloseable {
 
-    static final int PARSE_ERROR = -32700;
-    static final int METHOD_NOT_FOUND = -32601;
-    static final int INTERNAL_ERROR = -32603;
+    public static final int PARSE_ERROR = -32700;
+    public static final int METHOD_NOT_FOUND = -32601;
+    public static final int INTERNAL_ERROR = -32603;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final Logger LOG = Logger.getLogger(AcpConnection.class.getName());
 
     /** Handles an incoming request; the return value becomes the response's {@code result}. */
-    interface RequestHandler {
+    public interface RequestHandler {
         JsonNode handle(String method, JsonNode params) throws Exception;
     }
 
     /** Handles an incoming notification; failures are logged, never answered. */
-    interface NotificationHandler {
+    public interface NotificationHandler {
         void handle(String method, JsonNode params);
     }
 
@@ -74,26 +74,26 @@ final class AcpConnection implements AutoCloseable {
         this.out = out;
     }
 
-    static AcpConnection over(InputStream in, OutputStream out) {
+    public static AcpConnection over(InputStream in, OutputStream out) {
         return new AcpConnection(in, out);
     }
 
     /** Starts the read loop on a virtual thread. */
-    AcpConnection start() {
+    public AcpConnection start() {
         Thread.ofVirtual().name("acp-reader").start(this::readLoop);
         return this;
     }
 
-    void onRequest(RequestHandler handler) {
+    public void onRequest(RequestHandler handler) {
         this.requestHandler = handler;
     }
 
-    void onNotification(NotificationHandler handler) {
+    public void onNotification(NotificationHandler handler) {
         this.notificationHandler = handler;
     }
 
     /** Sends a request and returns a future completed by its response's {@code result}. */
-    CompletableFuture<JsonNode> request(String method, JsonNode params) {
+    public CompletableFuture<JsonNode> request(String method, JsonNode params) {
         String id = "req-" + ids.incrementAndGet();
         ObjectNode message = MAPPER.createObjectNode();
         message.put("jsonrpc", "2.0");
@@ -109,7 +109,7 @@ final class AcpConnection implements AutoCloseable {
     }
 
     /** Sends a notification; fire-and-forget, no response is expected or read. */
-    void notify(String method, JsonNode params) {
+    public void notify(String method, JsonNode params) {
         ObjectNode message = MAPPER.createObjectNode();
         message.put("jsonrpc", "2.0");
         message.put("method", method);
@@ -120,7 +120,7 @@ final class AcpConnection implements AutoCloseable {
     }
 
     /** Blocks until the peer closes the stream. */
-    void awaitEnd() throws InterruptedException {
+    public void awaitEnd() throws InterruptedException {
         eof.await();
     }
 

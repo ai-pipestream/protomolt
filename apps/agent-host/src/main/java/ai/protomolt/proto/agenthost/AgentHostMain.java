@@ -10,7 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-/** Command line entry point for one persistent Codex or Kimi delegation participant. */
+/** Command line entry point for one persistent model process attached to delegation. */
 public final class AgentHostMain {
 
     public static void main(String[] args) {
@@ -83,9 +83,35 @@ public final class AgentHostMain {
             case "openai" -> new OpenAiAgentProvider(options.providerEndpoint(),
                     options.model(), options.role(), state.providerSessionId(),
                     options.turnTimeout());
+            case "cursor" -> new AcpAgentProvider("cursor", options.workspace(),
+                    state.providerSessionId(), List.of("agent", "acp"), options.turnTimeout(),
+                    options.permissionPolicy());
+            case "antigravity" -> new AntigravityAgentProvider(options.workspace(),
+                    options.state(), state.providerSessionId(), options.role(),
+                    List.of("agy"), options.model(), options.turnTimeout());
+            case "muse" -> new MuseAgentProvider(options.workspace(),
+                    state.providerSessionId(), museCommand(options), options.model(),
+                    options.turnTimeout());
             default -> throw new IllegalArgumentException(
-                    "provider must be 'kimi', 'codex', or 'openai'");
+                    "provider must be one of " + PROVIDERS);
         };
+    }
+
+    /** The provider names {@code --provider} accepts. */
+    static final List<String> PROVIDERS = List.of("kimi", "codex", "openai", "cursor",
+            "antigravity", "muse");
+
+    /**
+     * The {@code muse serve} launch. Project skills and rules load only in a trusted
+     * workspace, which the worker's checkout is; the sandbox stays on unless the operator
+     * turns it off, since Muse's sandbox has no network and no writable home.
+     */
+    static List<String> museCommand(Options options) {
+        List<String> command = new ArrayList<>(List.of("muse", "serve", "--trust-workspace"));
+        if (!options.museSandbox()) {
+            command.add("--disable-sandbox");
+        }
+        return List.copyOf(command);
     }
 
     record Options(URI endpoint, AgentRole role, String identity, String provider,
@@ -93,7 +119,7 @@ public final class AgentHostMain {
                    Path bootstrap, Duration pollTimeout, Duration turnTimeout,
                    int maxEvents, AcpClient.PermissionPolicy permissionPolicy,
                    URI providerEndpoint, boolean once, boolean resetOnTranscriptLoss,
-                   int maxBatchFailures) {
+                   int maxBatchFailures, boolean museSandbox) {
 
         static Options parse(String[] args) {
             String endpoint = environment("PROTOMOLT_AGENT_MCP_ENDPOINT");
@@ -114,6 +140,7 @@ public final class AgentHostMain {
                     AcpClient.PermissionPolicy.ALLOW_SINGLE;
             boolean once = false;
             boolean resetOnTranscriptLoss = false;
+            boolean museSandbox = true;
             for (int i = 0; i < args.length; i++) {
                 switch (args[i]) {
                     case "--endpoint" -> endpoint = value(args, ++i);
@@ -138,6 +165,7 @@ public final class AgentHostMain {
                             value(args, ++i));
                     case "--once" -> once = true;
                     case "--reset-on-transcript-loss" -> resetOnTranscriptLoss = true;
+                    case "--muse-sandbox" -> museSandbox = museSandbox(value(args, ++i));
                     default -> throw new IllegalArgumentException(
                             "unknown option: " + args[i]);
                 }
@@ -155,6 +183,9 @@ public final class AgentHostMain {
             }
             AgentRole parsedRole = AgentRole.parse(role);
             String normalizedProvider = provider.toLowerCase(Locale.ROOT);
+            if (!PROVIDERS.contains(normalizedProvider)) {
+                throw new IllegalArgumentException("provider must be one of " + PROVIDERS);
+            }
             Path workspacePath = Path.of(workspace).toAbsolutePath().normalize();
             if (!Files.isDirectory(workspacePath)) {
                 throw new IllegalArgumentException("workspace must be an existing directory");
@@ -194,17 +225,19 @@ public final class AgentHostMain {
                     Path.of(state).toAbsolutePath().normalize(), tokenEnvironment,
                     bootstrapPath, Duration.ofSeconds(pollSeconds),
                     Duration.ofMinutes(turnMinutes), maxEvents, permissionPolicy,
-                    providerEndpointUri, once, resetOnTranscriptLoss, maxBatchFailures);
+                    providerEndpointUri, once, resetOnTranscriptLoss, maxBatchFailures,
+                    museSandbox);
         }
 
         static String usage() {
             return "Usage: protomolt-agent-host --endpoint <https://host/mcp> "
                     + "--role <worker|coordinator> --identity <id> "
-                    + "--provider <kimi|codex|openai> --workspace <dir> --state <file> "
+                    + "--provider <kimi|codex|openai|cursor|antigravity|muse> "
+                    + "--workspace <dir> --state <file> "
                     + "[--model <name>] [--provider-endpoint <http://host:port/v1>] "
                     + "[--token-env <ENV_NAME>] "
                     + "[--bootstrap <objective-file>] [--acp-permissions "
-                    + "<allow-single|reject>] [--reset-on-transcript-loss] "
+                    + "<allow-single|reject>] [--muse-sandbox <on|off>] [--reset-on-transcript-loss] "
                     + "[--max-batch-failures <count>]";
         }
 
@@ -233,6 +266,15 @@ public final class AgentHostMain {
                 throw new IllegalArgumentException(option + " is too large");
             }
             return (int) parsed;
+        }
+
+        private static boolean museSandbox(String value) {
+            return switch (value) {
+                case "on" -> true;
+                case "off" -> false;
+                default -> throw new IllegalArgumentException(
+                        "--muse-sandbox must be 'on' or 'off'");
+            };
         }
 
         private static AcpClient.PermissionPolicy permissionPolicy(String value) {

@@ -1,8 +1,8 @@
 # Agent host
 
-`protomolt-agent-host` keeps a Codex process, a Kimi process, or a local
-OpenAI-compatible model attached to the delegation tools on a ProtoMolt
-server. The server remains the coordinator and transcript authority. The host
+`protomolt-agent-host` keeps a coding agent (Codex, Kimi, Cursor, Antigravity,
+Muse Code) or a local OpenAI-compatible model attached to the delegation tools
+on a ProtoMolt server. The server remains the coordinator and transcript authority. The host
 owns the model process, local workspace, MCP cursor, and provider session.
 
 The host long-polls `/mcp` over a pooled HTTP/2 client. A model receives only
@@ -195,6 +195,96 @@ copied into error messages.
 [deploy/krick-1/](../../deploy/krick-1/README.md) runs a Muse Glimmer sidecar
 and one worker per provider on the krick-1 workstation.
 
+## Cursor worker
+
+`--provider cursor` runs one long-lived `agent acp` child process, the ACP
+server the Cursor CLI ships, and drives it the way the Kimi provider drives
+`kimi acp`. Cursor advertises the `cursor_login` authentication method, which
+the provider runs after the handshake; the credential itself is the CLI's
+existing login or `CURSOR_API_KEY` in the host's environment. Cursor also
+raises two blocking extension requests during a turn, and an unattended host
+answers both without a person: a multiple-choice question is skipped with a
+reason that sends the agent to the coordinator through `delegation-message`,
+and a plan is accepted. The ACP session id is saved and reloaded across host
+restarts.
+
+```shell
+apps/agent-host/build/install/protomolt-agent-host/bin/protomolt-agent-host \
+  --endpoint https://protomolt.rokkon.com/mcp \
+  --role worker \
+  --identity cursor-worker \
+  --provider cursor \
+  --workspace /work/worktrees/protomolt/cursor \
+  --state /var/lib/protomolt/agents/cursor-worker.json \
+  --token-env PROTOMOLT_MCP_TOKEN
+```
+
+Two things to know before relying on it. A Cursor team administrator can
+disable headless use for the whole organisation, which stops `agent acp` as
+well; check that setting first. And the model is chosen in the CLI's own
+configuration, not through `--model`, because ACP has no model parameter.
+
+## Antigravity worker
+
+`--provider antigravity` runs one `agy` process per turn over the CLI's
+stream-json pipe: the packet goes in as one `user` line on stdin, the answer
+is the terminal `result` event, and `--json-schema` makes the CLI enforce the
+host's closed command schema on that answer, which no other provider gets
+from its vendor. The conversation id from the first turn is saved and passed
+as `--conversation` on every later one, so the model keeps its context across
+turns and host restarts. `--model` selects the Antigravity model.
+
+```shell
+apps/agent-host/build/install/protomolt-agent-host/bin/protomolt-agent-host \
+  --endpoint https://protomolt.rokkon.com/mcp \
+  --role worker \
+  --identity agy-worker \
+  --provider antigravity \
+  --model gemini-3.7-flash-high \
+  --workspace /work/worktrees/protomolt/agy \
+  --state /var/lib/protomolt/agents/agy-worker.json \
+  --token-env PROTOMOLT_MCP_TOKEN
+```
+
+Use Antigravity CLI 1.1.24 or later: earlier builds hang on exit when both
+stdout and stderr are pipes, which is what a child process launched from the
+host always has. Every turn is a separate process, so the usage numbers on
+each result are per turn and the provider sums them for the session.
+
+## Muse Code worker
+
+`--provider muse` runs one long-lived `muse serve` session host and speaks
+MSP, Muse's JSON-RPC session protocol, over its stdio. The host starts one
+session in the workspace with the `allowAll` approval mode, so no tool call
+waits for a person, and resumes that session across host restarts; when the
+serve process no longer has it, a fresh session is started and the new id is
+saved. `--model` selects the Muse model. The turn's token usage comes from
+the host's own accounting and is summed for the session.
+
+```shell
+apps/agent-host/build/install/protomolt-agent-host/bin/protomolt-agent-host \
+  --endpoint https://protomolt.rokkon.com/mcp \
+  --role worker \
+  --identity muse-worker \
+  --provider muse \
+  --model muse-spark-1.3 \
+  --muse-sandbox off \
+  --workspace /work/worktrees/protomolt/muse \
+  --state /var/lib/protomolt/agents/muse-worker.json \
+  --token-env PROTOMOLT_MCP_TOKEN
+```
+
+Sandbox posture is fixed when `muse serve` starts and is the operator's
+choice. Muse's default sandbox has no network and no writable home, so a
+worker that must run Gradle or fetch from a git remote needs
+`--muse-sandbox off`; leave it on for a review-only worker. The host always
+passes `--trust-workspace`, which is what lets the checkout's own skills and
+rules load. Exit code 5 from `muse serve` means the installed build has no
+SDK surface and will not serve; the host reports that once and exits rather
+than retrying. Remote MCP servers over HTTP are documented for Muse but were
+not wired in the 1.0.3 build; the worker skill reaches the coordinator through
+the host, not through Muse's own MCP configuration.
+
 ## Recovery
 
 The state file is replaced atomically and uses owner read/write permissions on
@@ -202,7 +292,8 @@ POSIX filesystems. It contains:
 
 - the role, identity, provider, and normalized workspace;
 - the last committed delegation cursor;
-- the Kimi ACP session id or Codex thread id;
+- the provider session: a Kimi or Cursor ACP session id, a Codex thread id, an
+  Antigravity conversation id, or a Muse session id;
 - whether the bootstrap turn completed; and
 - a parsed command batch and next command position when execution is pending.
 

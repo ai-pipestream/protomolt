@@ -20,8 +20,9 @@ import java.util.function.Consumer;
  * {@link #onSessionUpdate}. Everything runs on virtual threads, so blocking here parks rather
  * than pins.
  *
- * <p>The client answers no agent-to-client methods (this agent declares no capabilities that
- * would use them); any such request gets a JSON-RPC method-not-found error.</p>
+ * <p>The client answers {@code session/request_permission} through its permission policy and
+ * agent extension requests through an optional {@link ExtensionHandler}; any other
+ * agent-to-client request gets a JSON-RPC method-not-found error.</p>
  */
 public final class AcpClient implements AutoCloseable {
 
@@ -33,12 +34,23 @@ public final class AcpClient implements AutoCloseable {
         ALLOW_SINGLE
     }
 
+    /**
+     * Answers an agent extension request (a method outside the ACP core, such as Cursor's
+     * {@code cursor/ask_question}); {@code null} means the method is not handled and the
+     * agent gets method-not-found.
+     */
+    @FunctionalInterface
+    public interface ExtensionHandler {
+        JsonNode handle(String method, JsonNode params);
+    }
+
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final Duration DEFAULT_TIMEOUT = Duration.ofMinutes(3);
 
     private final AcpConnection connection;
     private final Process process;
     private volatile Duration requestTimeout = DEFAULT_TIMEOUT;
+    private volatile ExtensionHandler extensions = (method, params) -> null;
 
     private AcpClient(AcpConnection connection, Process process) {
         this.connection = connection;
@@ -94,13 +106,54 @@ public final class AcpClient implements AutoCloseable {
             throw new IllegalArgumentException("permission policy is required");
         }
         connection.onRequest((method, params) -> {
-            if (!"session/request_permission".equals(method)) {
+            if ("session/request_permission".equals(method)) {
+                return permissionResponse(params, policy);
+            }
+            JsonNode answered = extensions.handle(method, params);
+            if (answered == null) {
                 throw new AcpError(AcpConnection.METHOD_NOT_FOUND,
                         "unknown method: " + method);
             }
-            return permissionResponse(params, policy);
+            return answered;
         });
         return this;
+    }
+
+    /**
+     * Answers agent extension requests the core protocol does not define. The handler is
+     * consulted for every agent-to-client request except {@code session/request_permission};
+     * a {@code null} answer leaves the method unhandled.
+     */
+    public AcpClient withExtensionHandler(ExtensionHandler handler) {
+        if (handler == null) {
+            throw new IllegalArgumentException("extension handler is required");
+        }
+        this.extensions = handler;
+        return this;
+    }
+
+    /**
+     * Runs one of the authentication methods the agent advertised in its initialize result
+     * (Cursor advertises {@code cursor_login}, satisfied by a pre-existing CLI login or an
+     * API key in the agent's environment).
+     */
+    public JsonNode authenticate(String methodId) {
+        if (methodId == null || methodId.isBlank()) {
+            throw new IllegalArgumentException("authentication method id is required");
+        }
+        ObjectNode params = MAPPER.createObjectNode();
+        params.put("methodId", methodId);
+        return call("authenticate", params);
+    }
+
+    /** Whether the initialize result advertises the named authentication method. */
+    public static boolean advertisesAuthMethod(JsonNode initialized, String methodId) {
+        for (JsonNode method : initialized.path("authMethods")) {
+            if (methodId.equals(method.path("id").asText())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Negotiates protocol version 1 and returns the agent's initialize result. */
@@ -169,10 +222,12 @@ public final class AcpClient implements AutoCloseable {
         if (choices != null && choices.isArray()) {
             choices.forEach(options::add);
         }
+        // Option kinds are spelled with underscores by the protocol; Cursor's documentation
+        // spells them with hyphens, so both forms match.
         java.util.List<JsonNode> matching = options.stream()
                 .filter(option -> policy == PermissionPolicy.ALLOW_SINGLE
-                        ? "allow_once".equals(option.path("kind").asText())
-                        : "reject_once".equals(option.path("kind").asText()))
+                        ? "allow_once".equals(kind(option))
+                        : "reject_once".equals(kind(option)))
                 .toList();
         ObjectNode response = MAPPER.createObjectNode();
         ObjectNode outcome = response.putObject("outcome");
@@ -185,6 +240,10 @@ public final class AcpClient implements AutoCloseable {
             outcome.put("outcome", "cancelled");
         }
         return response;
+    }
+
+    private static String kind(JsonNode option) {
+        return option.path("kind").asText().replace('-', '_');
     }
 
     @Override
