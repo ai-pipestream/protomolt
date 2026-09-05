@@ -22,6 +22,7 @@ import com.google.protobuf.Descriptors.FieldDescriptor;
 import java.math.BigInteger;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -57,19 +58,31 @@ public final class ProtoJsonSchemaGenerator {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final List<ValidationRuleSource> sources;
+    private final boolean typeUniformEnums;
 
-    private ProtoJsonSchemaGenerator(List<ValidationRuleSource> sources) {
+    private ProtoJsonSchemaGenerator(List<ValidationRuleSource> sources, boolean typeUniformEnums) {
         this.sources = List.copyOf(Objects.requireNonNull(sources, "sources"));
+        this.typeUniformEnums = typeUniformEnums;
     }
 
     /** Uses the default rule-source chain ({@link ValidationRuleSources#defaults()}). */
     public static ProtoJsonSchemaGenerator create() {
-        return new ProtoJsonSchemaGenerator(ValidationRuleSources.defaults());
+        return new ProtoJsonSchemaGenerator(ValidationRuleSources.defaults(), false);
     }
 
     /** As {@link #create()} but with an explicit rule-source chain. */
     public static ProtoJsonSchemaGenerator create(List<ValidationRuleSource> sources) {
-        return new ProtoJsonSchemaGenerator(sources);
+        return new ProtoJsonSchemaGenerator(sources, false);
+    }
+
+    /**
+     * As {@link #create()} but enum and 64-bit integer membership constraints render as
+     * type-uniform branches (one string-typed, one number-typed) instead of a single
+     * mixed-type enum array. The accepted value sets are identical; the split exists for
+     * tool-schema validators that reject mixed-type enums.
+     */
+    public static ProtoJsonSchemaGenerator createTypeUniform() {
+        return new ProtoJsonSchemaGenerator(ValidationRuleSources.defaults(), true);
     }
 
     /** Generates the schema as an ordered JSON-shaped map (maps, lists, scalars). */
@@ -346,9 +359,9 @@ public final class ProtoJsonSchemaGenerator {
                         .orElseGet(LinkedHashMap::new);
                 // 64-bit integers are printed as JSON strings by JsonFormat, so their
                 // constraints must cover both accepted spellings; 32-bit stay numeric.
-                case INT -> c.integral().map(n -> integralOverlay(n, false))
+                case INT -> c.integral().map(n -> integralOverlay(n, false, typeUniformEnums))
                         .orElseGet(LinkedHashMap::new);
-                case LONG -> c.integral().map(n -> integralOverlay(n, true))
+                case LONG -> c.integral().map(n -> integralOverlay(n, true, typeUniformEnums))
                         .orElseGet(LinkedHashMap::new);
                 case FLOAT, DOUBLE -> c.floating().map(Generation::floatingOverlay)
                         .orElseGet(LinkedHashMap::new);
@@ -447,10 +460,12 @@ public final class ProtoJsonSchemaGenerator {
          * JsonFormat prints the value as a JSON string and accepts both the numeric and the
          * string spelling, so every constraint must match both forms: const/in/not_in list the
          * two spellings side by side (the way {@code nameAndNumber} handles enums), and range
-         * bounds become an {@code anyOf} of numeric keywords and a decimal-range pattern.
+         * bounds become an {@code anyOf} of numeric keywords and a decimal-range pattern. When
+         * {@code typeUniformEnums} is set, the two spellings render as separate type-uniform
+         * branches instead of one mixed-type enum array.
          */
         private static Map<String, Object> integralOverlay(
-                IntegralConstraints n, boolean bothSpellings) {
+                IntegralConstraints n, boolean bothSpellings, boolean typeUniformEnums) {
             if (!bothSpellings) {
                 Map<String, Object> o = new LinkedHashMap<>();
                 n.constant().ifPresent(v -> o.put("const", integral(n, v)));
@@ -469,16 +484,38 @@ public final class ProtoJsonSchemaGenerator {
             }
 
             Map<String, Object> o = new LinkedHashMap<>();
-            n.constant().ifPresent(v -> o.put("enum", spellings(n, v)));
-            if (!n.in().isEmpty()) {
-                List<Object> allowed = new ArrayList<>();
-                n.in().forEach(v -> allowed.addAll(spellings(n, v)));
-                merge(o, schemaOf("enum", allowed));
-            }
-            if (!n.notIn().isEmpty()) {
-                List<Object> forbidden = new ArrayList<>();
-                n.notIn().forEach(v -> forbidden.addAll(spellings(n, v)));
-                o.put("not", schemaOf("enum", forbidden));
+            if (typeUniformEnums) {
+                // Both spellings stay accepted, but each enum array is single-type:
+                // strict tool-schema validators reject mixed-type enums outright.
+                n.constant().ifPresent(v -> merge(o, schemaOf("anyOf", List.of(
+                        schemaOf("enum", List.of(integral(n, v))),
+                        schemaOf("enum", List.of(decimal(n, v)))))));
+                if (!n.in().isEmpty()) {
+                    merge(o, schemaOf("anyOf", List.of(
+                            schemaOf("type", "integer", "enum",
+                                    n.in().stream().map(v -> integral(n, v)).toList()),
+                            schemaOf("type", "string", "enum",
+                                    n.in().stream().map(v -> decimal(n, v)).toList()))));
+                }
+                if (!n.notIn().isEmpty()) {
+                    merge(o, schemaOf("allOf", List.of(
+                            schemaOf("not", schemaOf("enum",
+                                    n.notIn().stream().map(v -> integral(n, v)).toList())),
+                            schemaOf("not", schemaOf("enum",
+                                    n.notIn().stream().map(v -> decimal(n, v)).toList())))));
+                }
+            } else {
+                n.constant().ifPresent(v -> o.put("enum", spellings(n, v)));
+                if (!n.in().isEmpty()) {
+                    List<Object> allowed = new ArrayList<>();
+                    n.in().forEach(v -> allowed.addAll(spellings(n, v)));
+                    merge(o, schemaOf("enum", allowed));
+                }
+                if (!n.notIn().isEmpty()) {
+                    List<Object> forbidden = new ArrayList<>();
+                    n.notIn().forEach(v -> forbidden.addAll(spellings(n, v)));
+                    o.put("not", schemaOf("enum", forbidden));
+                }
             }
 
             BigInteger lo = null;
@@ -563,6 +600,30 @@ public final class ProtoJsonSchemaGenerator {
 
         private Map<String, Object> enumOverlay(EnumDescriptor type, EnumConstraints e) {
             Map<String, Object> o = new LinkedHashMap<>();
+            if (typeUniformEnums) {
+                // Type-uniform branches: strict tool-schema validators reject a single
+                // enum array that mixes names and numbers.
+                e.constant().ifPresent(v -> merge(o, enumSpellings(type, List.of(v), false)));
+                if (e.definedOnly()) {
+                    List<String> names = type.getValues().stream()
+                            .map(EnumValueDescriptor::getName)
+                            .toList();
+                    List<Object> numbers = type.getValues().stream()
+                            .map(v -> (Object) (long) v.getNumber())
+                            .toList();
+                    // ANDs with the open base via allOf on merge collision.
+                    o.put("anyOf", List.of(
+                            schemaOf("type", "string", "enum", names),
+                            schemaOf("type", "integer", "enum", numbers)));
+                }
+                if (!e.in().isEmpty()) {
+                    merge(o, enumSpellings(type, e.in(), false));
+                }
+                if (!e.notIn().isEmpty()) {
+                    merge(o, enumSpellings(type, e.notIn(), true));
+                }
+                return o;
+            }
             e.constant().ifPresent(v -> o.put("enum", nameAndNumber(type, v)));
             if (e.definedOnly()) {
                 List<String> names = type.getValues().stream()
@@ -587,6 +648,35 @@ public final class ProtoJsonSchemaGenerator {
                 o.put("not", schemaOf("enum", forbidden));
             }
             return o;
+        }
+
+        /**
+         * The membership constraint over {@code values} as type-uniform branches: one
+         * string-typed branch of the declared names, one integer-typed branch of the
+         * numbers, combined with {@code anyOf} (or, when {@code negated}, one
+         * {@code not}-wrapped branch per spelling combined with {@code allOf}). A value
+         * with no declared name appears only in the numeric branch.
+         */
+        private static Map<String, Object> enumSpellings(
+                EnumDescriptor type, Collection<Integer> values, boolean negated) {
+            List<Object> names = new ArrayList<>();
+            for (int value : values) {
+                EnumValueDescriptor declared = type.findValueByNumber(value);
+                if (declared != null) {
+                    names.add(declared.getName());
+                }
+            }
+            List<Object> numbers = values.stream().map(v -> (Object) (long) v).toList();
+            List<Object> branches = new ArrayList<>();
+            if (!names.isEmpty()) {
+                branches.add(negated
+                        ? schemaOf("not", schemaOf("enum", names))
+                        : schemaOf("type", "string", "enum", names));
+            }
+            branches.add(negated
+                    ? schemaOf("not", schemaOf("enum", numbers))
+                    : schemaOf("type", "integer", "enum", numbers));
+            return schemaOf(negated ? "allOf" : "anyOf", branches);
         }
 
         /** Both accepted JSON spellings of an enum number: declared name and number. */
