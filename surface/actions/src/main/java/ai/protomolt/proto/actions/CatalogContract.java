@@ -67,7 +67,20 @@ public final class CatalogContract {
 
     /** The input schema derived from a request message. */
     public static ObjectNode schemaFor(Descriptor request) {
-        return MAPPER.valueToTree(ProtoJsonSchemaGenerator.create().generateRooted(request));
+        return MAPPER.valueToTree(generator().generateRooted(request));
+    }
+
+    /**
+     * The schema generator for verb contracts. Setting the system property
+     * {@code protomolt.typeUniformSchemas} (for example through
+     * {@code JAVA_TOOL_OPTIONS=-Dprotomolt.typeUniformSchemas=true}) opts the published
+     * schemas into type-uniform enum branches, for tool-schema validators that reject
+     * mixed-type enum arrays; the accepted value sets are identical either way.
+     */
+    private static ProtoJsonSchemaGenerator generator() {
+        return Boolean.getBoolean("protomolt.typeUniformSchemas")
+                ? ProtoJsonSchemaGenerator.createTypeUniform()
+                : ProtoJsonSchemaGenerator.create();
     }
 
     /**
