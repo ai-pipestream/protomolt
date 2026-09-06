@@ -160,6 +160,61 @@ class ProtoJsonSchemaGeneratorTest {
                 assertThat(values).containsExactly(0L));
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void typeUniformEnumConstSurvivesDefinedOnly() throws Exception {
+        // const and defined_only both render as anyOf branches; neither may
+        // overwrite the other. The branches nest under allOf conjuncts (and
+        // allOf wraps on merge collision), so search recursively.
+        Map<String, Object> pinnedTier = propertyOf(typeUniformSchema, "pinnedTier");
+        List<List<Object>> enums = new ArrayList<>();
+        collectEnums(pinnedTier, enums);
+        assertThat(enums).anySatisfy(values ->
+                assertThat(values).containsExactly("TIER_PRO"));
+        assertThat(enums).anySatisfy(values ->
+                assertThat(values).containsExactly(2L));
+        assertThat(enums).anySatisfy(values ->
+                assertThat(values).containsExactly(
+                        "TIER_UNSPECIFIED", "TIER_BASIC", "TIER_PRO"));
+        assertThat(enums).anySatisfy(values ->
+                assertThat(values).containsExactly(0L, 1L, 2L));
+
+        // The same corpus through both generators must accept and reject
+        // identically: only the constant's two spellings pass.
+        List<String> corpus = List.of(
+                "{\"username\":\"user_1\",\"pinnedTier\":\"TIER_PRO\"}",
+                "{\"username\":\"user_1\",\"pinnedTier\":2}",
+                "{\"username\":\"user_1\",\"pinnedTier\":\"TIER_BASIC\"}",
+                "{\"username\":\"user_1\",\"pinnedTier\":1}",
+                "{\"username\":\"user_1\",\"pinnedTier\":\"TIER_UNSPECIFIED\"}",
+                "{\"username\":\"user_1\",\"pinnedTier\":7}");
+        for (String document : corpus) {
+            assertThat(validate(document, ProtoJsonSchemaGenerator.createTypeUniform())
+                    .isEmpty())
+                    .as("uniform vs default verdict for %s", document)
+                    .isEqualTo(validate(document, ProtoJsonSchemaGenerator.create()).isEmpty());
+        }
+        assertThat(validate(corpus.get(0), ProtoJsonSchemaGenerator.createTypeUniform()))
+                .isEmpty();
+        assertThat(validate(corpus.get(2), ProtoJsonSchemaGenerator.createTypeUniform()))
+                .isNotEmpty();
+    }
+
+    /** Collects every {@code enum} array under {@code node}. */
+    @SuppressWarnings("unchecked")
+    private static void collectEnums(Object node, List<List<Object>> out) {
+        if (node instanceof Map) {
+            Map<String, Object> map = (Map<String, Object>) node;
+            Object values = map.get("enum");
+            if (values instanceof List) {
+                out.add((List<Object>) values);
+            }
+            map.values().forEach(v -> collectEnums(v, out));
+        } else if (node instanceof List) {
+            ((List<Object>) node).forEach(v -> collectEnums(v, out));
+        }
+    }
+
     /** Collects the enum array of every {@code not} conjunct under {@code node}. */
     @SuppressWarnings("unchecked")
     private static void collectNotEnums(Object node, List<List<Object>> out) {

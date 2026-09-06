@@ -110,10 +110,16 @@ message Account {
   int64 offset_ms = 17 [(ai.protomolt.proto.validate.v1.field) = {
     int64: { gte: -500, lte: 500 }
   }];
-  // Verified tier; defined_only plus not_in on the zero value. This is the
-  // rule shape whose schema rendering once mixed names and numbers in a
-  // single enum array, which strict tool-schema validators reject.
+  // Verified tier; defined_only plus not_in on the zero value. The not_in
+  // conjunct is the rule shape whose schema rendering once mixed names and
+  // numbers in a single enum array, which strict tool-schema validators
+  // reject.
   Tier verified_tier = 18 [(ai.protomolt.proto.validate.v1.field) = {
     enum: { defined_only: true, not_in: 0 }
+  }];
+  // Pinned tier; const plus defined_only. Both constraints render as anyOf
+  // branches, so this field catches a constraint lost to a keyword overwrite.
+  Tier pinned_tier = 19 [(ai.protomolt.proto.validate.v1.field) = {
+    enum: { const: 2, defined_only: true }
   }];
 }

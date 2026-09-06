@@ -612,9 +612,9 @@ public final class ProtoJsonSchemaGenerator {
                             .map(v -> (Object) (long) v.getNumber())
                             .toList();
                     // ANDs with the open base via allOf on merge collision.
-                    o.put("anyOf", List.of(
+                    merge(o, schemaOf("anyOf", List.of(
                             schemaOf("type", "string", "enum", names),
-                            schemaOf("type", "integer", "enum", numbers)));
+                            schemaOf("type", "integer", "enum", numbers))));
                 }
                 if (!e.in().isEmpty()) {
                     merge(o, enumSpellings(type, e.in(), false));
