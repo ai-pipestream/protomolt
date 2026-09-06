@@ -484,10 +484,11 @@ message WatchEventsRequest {
       string: {uuid: true}
     }
   ];
-  // How long to wait for the first event. Omitted means 1000. Explicit
-  // presence, because 0 is a legal request (poll and return immediately)
-  // and would otherwise be indistinguishable from omission. The upper
-  // bound keeps one call inside a normal request deadline.
+  // How long to wait for the first event, in milliseconds, maximum 30000.
+  // Omitted means 1000. Explicit presence, because 0 is a legal request
+  // (poll and return immediately) and would otherwise be indistinguishable
+  // from omission. The upper bound keeps one call inside a normal request
+  // deadline; longer waits belong in a client-side watch loop.
   optional int32 timeout_ms = 3 [
     (ai.protomolt.proto.validate.v1.field).int32 = {gte: 0, lte: 30000}
   ];

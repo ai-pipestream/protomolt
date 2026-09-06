@@ -37,11 +37,15 @@ final class DelegationWatchAction extends DelegationAction {
 
     @Override
     public String description() {
-        return "Long-polls the delegation event feed: blocks up to timeoutMs until an event "
-                + "appears after 'afterCursor', then returns a bounded batch with the "
-                + "resumption cursor. Every frame (offers, progress, checkpoints, messages, "
-                + "review verdicts) is one cursor-addressable event; reconnecting sessions "
-                + "resume from their last cursor with no lost or duplicated frames.";
+        return "Long-polls the delegation event feed: blocks up to timeoutMs (maximum "
+                + "30000; longer waits belong in a client-side loop) until an event "
+                + "appears after 'afterCursor', then returns a bounded batch (maxEvents "
+                + "at most 256) with the resumption cursor. Every frame (offers, "
+                + "progress, checkpoints, messages, review verdicts) is one "
+                + "cursor-addressable event; reconnecting sessions resume from their "
+                + "last cursor with no lost or duplicated frames. Omit taskId when "
+                + "idle-watching for offers; a task filter hides every other task's "
+                + "frames, including new offers.";
     }
 
     @Override
