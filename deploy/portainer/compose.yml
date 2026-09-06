@@ -60,6 +60,10 @@ services:
       PROTOMOLT_TASK_CONSOLE_TOKEN: ${PROTOMOLT_TASK_CONSOLE_TOKEN:?set PROTOMOLT_TASK_CONSOLE_TOKEN in Portainer}
       PROTOMOLT_TASK_CONSOLE_SESSION_SECONDS: ${PROTOMOLT_TASK_CONSOLE_SESSION_SECONDS:-43200}
       PROTOMOLT_TRANSCRIPT_KEY: ${PROTOMOLT_TRANSCRIPT_KEY:?set PROTOMOLT_TRANSCRIPT_KEY in Portainer}
+      # Opt-in type-uniform enum rendering: strict MCP tool-schema validators
+      # (Kimi) reject a single enum array mixing names and numbers. The flag
+      # renders every enum array single-type; accepted values are unchanged.
+      JAVA_TOOL_OPTIONS: ${PROTOMOLT_JAVA_TOOL_OPTIONS:--Dprotomolt.typeUniformSchemas=true}
     depends_on:
       serve-init:
         condition: service_completed_successfully
