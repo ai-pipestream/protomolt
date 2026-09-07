@@ -185,8 +185,12 @@ public final class McpServer {
         return handle(message, caller, false);
     }
 
-    /** Dispatches one JSON-RPC message as {@code caller}, optionally targeting the Moonshot tool dialect. */
-    public Optional<ObjectNode> handle(JsonNode message, Caller caller, boolean moonshotDialect) {
+    /**
+     * Dispatches one JSON-RPC message as {@code caller}. When {@code moonshotDialect} is set,
+     * tool schemas in {@code initialize} and {@code tools/list} are rendered in the
+     * Moonshot-sanitized form.
+     */
+    private Optional<ObjectNode> handle(JsonNode message, Caller caller, boolean moonshotDialect) {
         if (!message.isObject()) {
             return Optional.of(JsonRpc.error(mapper, null, JsonRpc.INVALID_REQUEST, "Invalid request"));
         }
@@ -234,10 +238,6 @@ public final class McpServer {
         }
     }
 
-    private ObjectNode initialize(JsonNode params, Caller caller) {
-        return initialize(params, caller, false);
-    }
-
     private ObjectNode initialize(JsonNode params, Caller caller, boolean moonshotDialect) {
         if (params == null || !params.isObject()) {
             throw new IllegalArgumentException("initialize params must be an object");
@@ -265,10 +265,6 @@ public final class McpServer {
         return result;
     }
 
-    private ObjectNode listTools(Caller caller) {
-        return listTools(caller, false);
-    }
-
     private ObjectNode listTools(Caller caller, boolean moonshotDialect) {
         ObjectNode result = mapper.createObjectNode();
         // The catalog manifest entries ({name, description, inputSchema}) are already the
@@ -286,7 +282,7 @@ public final class McpServer {
     /**
      * Determines whether the given MCP client info name represents a Moonshot/Kimi client.
      */
-    public static boolean isMoonshotClient(String clientName) {
+    static boolean isMoonshotClient(String clientName) {
         if (clientName == null || clientName.isBlank()) {
             return false;
         }
@@ -298,8 +294,9 @@ public final class McpServer {
      * Sanitizes a tool manifest for strict function-calling validators like Moonshot Flavored
      * JSON Schema (MFJS). Strips parent {@code type} (and numeric/string bounds) when {@code anyOf}
      * or {@code oneOf} is present, ensuring variant subschemas carry their own {@code type}.
+     * The input is not modified; returns a sanitized deep copy, or {@code null} for {@code null}.
      */
-    public static ArrayNode sanitizeForMoonshot(ArrayNode manifest) {
+    static ArrayNode sanitizeForMoonshot(ArrayNode manifest) {
         if (manifest == null) {
             return null;
         }
@@ -312,7 +309,14 @@ public final class McpServer {
         return copy;
     }
 
-    public static void sanitizeSchemaForMoonshot(JsonNode node) {
+    /**
+     * Applies the Moonshot schema sanitization in place: at every object carrying an
+     * {@code anyOf} or {@code oneOf} union, removes the parent {@code type} (pushing it into
+     * variant subschemas that lack one when it is a single textual type) and drops the
+     * {@code pattern}, {@code minimum}, {@code maximum}, {@code exclusiveMinimum}, and
+     * {@code exclusiveMaximum} keywords the strict validator refuses beside a union.
+     */
+    static void sanitizeSchemaForMoonshot(JsonNode node) {
         if (node == null) {
             return;
         }
@@ -342,7 +346,7 @@ public final class McpServer {
                 obj.remove("exclusiveMinimum");
                 obj.remove("exclusiveMaximum");
             }
-            obj.fields().forEachRemaining(entry -> sanitizeSchemaForMoonshot(entry.getValue()));
+            obj.properties().forEach(entry -> sanitizeSchemaForMoonshot(entry.getValue()));
         } else if (node.isArray()) {
             node.forEach(McpServer::sanitizeSchemaForMoonshot);
         }
@@ -482,10 +486,12 @@ public final class McpServer {
             return state;
         }
 
+        /** Whether this session renders tool schemas in the Moonshot-sanitized dialect. */
         public boolean isMoonshotDialect() {
             return moonshotDialect;
         }
 
+        /** Enables or disables the Moonshot tool-schema dialect for this session. */
         public void setMoonshotDialect(boolean moonshotDialect) {
             this.moonshotDialect = moonshotDialect;
         }
@@ -517,7 +523,7 @@ public final class McpServer {
                         ? message.get("params") : mapper.createObjectNode();
                 String clientName = initParams.path("clientInfo").path("name").asText("");
                 if (isMoonshotClient(clientName)) {
-                    this.moonshotDialect = true;
+                    setMoonshotDialect(true);
                 }
                 ObjectNode result;
                 try {
@@ -593,7 +599,7 @@ public final class McpServer {
             String key = idKey(message.get("id"));
             FutureTask<Optional<ObjectNode>> task = new FutureTask<>(() -> {
                 try {
-                    Optional<ObjectNode> response = McpServer.this.handle(message, caller);
+                    Optional<ObjectNode> response = McpServer.this.handle(message, caller, moonshotDialect);
                     if (completion != null && inFlight.containsKey(key)
                             && !Thread.currentThread().isInterrupted()) {
                         completion.accept(response);

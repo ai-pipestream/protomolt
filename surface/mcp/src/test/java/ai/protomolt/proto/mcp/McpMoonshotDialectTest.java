@@ -149,7 +149,7 @@ class McpMoonshotDialectTest {
                         .withFailMessage("Found parent 'type' beside anyOf/oneOf in: " + node)
                         .isFalse();
             }
-            node.fields().forEachRemaining(entry -> assertNoParentTypeBesideUnion(entry.getValue()));
+            node.properties().forEach(entry -> assertNoParentTypeBesideUnion(entry.getValue()));
         } else if (node.isArray()) {
             node.forEach(this::assertNoParentTypeBesideUnion);
         }
