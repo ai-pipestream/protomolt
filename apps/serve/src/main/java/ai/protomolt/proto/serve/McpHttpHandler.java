@@ -273,6 +273,10 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
             return;
         }
         McpServer.Session session = server.openSession(caller);
+        String flavorHeader = exchange.getRequestHeaders().getFirst("X-Schema-Flavor");
+        if (flavorHeader != null && flavorHeader.equalsIgnoreCase("moonshot")) {
+            session.setMoonshotDialect(true);
+        }
         Optional<com.fasterxml.jackson.databind.node.ObjectNode> response = session.handle(message);
         if (response.isEmpty() || response.get().has("error")) {
             session.close();
