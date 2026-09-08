@@ -36,6 +36,8 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
     private static final String CONTENT_TYPE = "application/json; charset=utf-8";
     private static final String SESSION_HEADER = "Mcp-Session-Id";
     private static final String VERSION_HEADER = "MCP-Protocol-Version";
+    private static final String SCHEMA_FLAVOR_HEADER = "X-Schema-Flavor";
+    private static final String SCHEMA_FLAVOR_MOONSHOT = "moonshot";
     private static final int MAX_BODY_BYTES = 16 * 1024 * 1024;
     private static final int MAX_SESSIONS = 256;
 
@@ -273,6 +275,10 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
             return;
         }
         McpServer.Session session = server.openSession(caller);
+        String flavorHeader = exchange.getRequestHeaders().getFirst(SCHEMA_FLAVOR_HEADER);
+        if (flavorHeader != null && flavorHeader.trim().equalsIgnoreCase(SCHEMA_FLAVOR_MOONSHOT)) {
+            session.setMoonshotDialect(true);
+        }
         Optional<com.fasterxml.jackson.databind.node.ObjectNode> response = session.handle(message);
         if (response.isEmpty() || response.get().has("error")) {
             session.close();

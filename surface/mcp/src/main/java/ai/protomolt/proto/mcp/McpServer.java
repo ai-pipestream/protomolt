@@ -21,6 +21,7 @@ import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CancellationException;
@@ -181,6 +182,15 @@ public final class McpServer {
 
     /** Dispatches one JSON-RPC message as {@code caller}. */
     public Optional<ObjectNode> handle(JsonNode message, Caller caller) {
+        return handle(message, caller, false);
+    }
+
+    /**
+     * Dispatches one JSON-RPC message as {@code caller}. When {@code moonshotDialect} is set,
+     * tool schemas in {@code initialize} and {@code tools/list} are rendered in the
+     * Moonshot-sanitized form.
+     */
+    private Optional<ObjectNode> handle(JsonNode message, Caller caller, boolean moonshotDialect) {
         if (!message.isObject()) {
             return Optional.of(JsonRpc.error(mapper, null, JsonRpc.INVALID_REQUEST, "Invalid request"));
         }
@@ -201,9 +211,9 @@ public final class McpServer {
         try {
             return switch (method) {
                 case "initialize" -> Optional.of(JsonRpc.result(mapper, id,
-                        initialize(params, caller)));
+                        initialize(params, caller, moonshotDialect)));
                 case "ping" -> Optional.of(JsonRpc.result(mapper, id, mapper.createObjectNode()));
-                case "tools/list" -> Optional.of(JsonRpc.result(mapper, id, listTools(caller)));
+                case "tools/list" -> Optional.of(JsonRpc.result(mapper, id, listTools(caller, moonshotDialect)));
                 case "tools/call" -> Optional.of(JsonRpc.result(mapper, id,
                         callTool(params, caller)));
                 case "resources/list" -> Optional.of(JsonRpc.result(mapper, id, listResources(params)));
@@ -228,7 +238,7 @@ public final class McpServer {
         }
     }
 
-    private ObjectNode initialize(JsonNode params, Caller caller) {
+    private ObjectNode initialize(JsonNode params, Caller caller, boolean moonshotDialect) {
         if (params == null || !params.isObject()) {
             throw new IllegalArgumentException("initialize params must be an object");
         }
@@ -244,22 +254,102 @@ public final class McpServer {
         ObjectNode serverInfo = result.putObject("serverInfo");
         serverInfo.put("name", serverName);
         serverInfo.put("version", serverVersion);
-        addToolCatalogMetadata(result, catalog.list(caller));
+        ArrayNode manifest = catalog.list(caller);
+        if (moonshotDialect) {
+            manifest = sanitizeForMoonshot(manifest);
+        }
+        addToolCatalogMetadata(result, manifest);
         if (!instructions.isEmpty()) {
             result.put("instructions", instructions);
         }
         return result;
     }
 
-    private ObjectNode listTools(Caller caller) {
+    private ObjectNode listTools(Caller caller, boolean moonshotDialect) {
         ObjectNode result = mapper.createObjectNode();
         // The catalog manifest entries ({name, description, inputSchema}) are already the
         // MCP tool shape; inputSchema is JSON Schema in both worlds. The manifest is the
         // caller's view: only tools whose scope the caller holds.
         ArrayNode manifest = catalog.list(caller);
+        if (moonshotDialect) {
+            manifest = sanitizeForMoonshot(manifest);
+        }
         result.set("tools", manifest);
         addToolCatalogMetadata(result, manifest);
         return result;
+    }
+
+    /**
+     * Determines whether the given MCP client info name represents a Moonshot/Kimi client.
+     */
+    static boolean isMoonshotClient(String clientName) {
+        if (clientName == null || clientName.isBlank()) {
+            return false;
+        }
+        String normalized = clientName.toLowerCase(Locale.ROOT);
+        return normalized.contains("kimi") || normalized.contains("moonshot");
+    }
+
+    /**
+     * Sanitizes a tool manifest for strict function-calling validators like Moonshot Flavored
+     * JSON Schema (MFJS). Strips parent {@code type} (and numeric/string bounds) when {@code anyOf}
+     * or {@code oneOf} is present, ensuring variant subschemas carry their own {@code type}.
+     * The input is not modified; returns a sanitized deep copy, or {@code null} for {@code null}.
+     */
+    static ArrayNode sanitizeForMoonshot(ArrayNode manifest) {
+        if (manifest == null) {
+            return null;
+        }
+        ArrayNode copy = manifest.deepCopy();
+        for (JsonNode tool : copy) {
+            if (tool.isObject() && tool.has("inputSchema")) {
+                sanitizeSchemaForMoonshot(tool.get("inputSchema"));
+            }
+        }
+        return copy;
+    }
+
+    /**
+     * Applies the Moonshot schema sanitization in place: at every object carrying an
+     * {@code anyOf} or {@code oneOf} union, removes the parent {@code type} (pushing it into
+     * variant subschemas that lack one when it is a single textual type) and drops the
+     * {@code pattern}, {@code minimum}, {@code maximum}, {@code exclusiveMinimum}, and
+     * {@code exclusiveMaximum} keywords the strict validator refuses beside a union.
+     */
+    static void sanitizeSchemaForMoonshot(JsonNode node) {
+        if (node == null) {
+            return;
+        }
+        if (node.isObject()) {
+            ObjectNode obj = (ObjectNode) node;
+            boolean hasAnyOf = obj.has("anyOf");
+            boolean hasOneOf = obj.has("oneOf");
+            if (hasAnyOf || hasOneOf) {
+                JsonNode parentType = obj.remove("type");
+                if (parentType != null && parentType.isTextual()) {
+                    String typeStr = parentType.asText();
+                    Consumer<JsonNode> ensureType = branch -> {
+                        if (branch.isObject() && !branch.has("type")) {
+                            ((ObjectNode) branch).put("type", typeStr);
+                        }
+                    };
+                    if (hasAnyOf && obj.get("anyOf").isArray()) {
+                        obj.get("anyOf").forEach(ensureType);
+                    }
+                    if (hasOneOf && obj.get("oneOf").isArray()) {
+                        obj.get("oneOf").forEach(ensureType);
+                    }
+                }
+                obj.remove("pattern");
+                obj.remove("minimum");
+                obj.remove("maximum");
+                obj.remove("exclusiveMinimum");
+                obj.remove("exclusiveMaximum");
+            }
+            obj.properties().forEach(entry -> sanitizeSchemaForMoonshot(entry.getValue()));
+        } else if (node.isArray()) {
+            node.forEach(McpServer::sanitizeSchemaForMoonshot);
+        }
     }
 
     private void addToolCatalogMetadata(ObjectNode result, ArrayNode manifest) {
@@ -390,8 +480,20 @@ public final class McpServer {
         private final java.util.concurrent.Semaphore inFlightSlots =
                 new java.util.concurrent.Semaphore(MAX_IN_FLIGHT_PER_SESSION);
 
+        private volatile boolean moonshotDialect = false;
+
         public State state() {
             return state;
+        }
+
+        /** Whether this session renders tool schemas in the Moonshot-sanitized dialect. */
+        public boolean isMoonshotDialect() {
+            return moonshotDialect;
+        }
+
+        /** Enables or disables the Moonshot tool-schema dialect for this session. */
+        public void setMoonshotDialect(boolean moonshotDialect) {
+            this.moonshotDialect = moonshotDialect;
         }
 
         public String negotiatedProtocolVersion() {
@@ -404,7 +506,7 @@ public final class McpServer {
                         "Invalid request"));
             }
             if (!message.has("method")) {
-                return McpServer.this.handle(message, caller);
+                return McpServer.this.handle(message, caller, moonshotDialect);
             }
             String method = message.get("method").asText();
             if (JsonRpc.isNotification(message)) {
@@ -417,10 +519,15 @@ public final class McpServer {
                     return Optional.of(JsonRpc.error(mapper, id, JsonRpc.INVALID_REQUEST,
                             "initialize must be the first request"));
                 }
+                JsonNode initParams = message.has("params")
+                        ? message.get("params") : mapper.createObjectNode();
+                String clientName = initParams.path("clientInfo").path("name").asText("");
+                if (isMoonshotClient(clientName)) {
+                    setMoonshotDialect(true);
+                }
                 ObjectNode result;
                 try {
-                    result = initialize(message.has("params")
-                            ? message.get("params") : mapper.createObjectNode(), caller);
+                    result = initialize(initParams, caller, moonshotDialect);
                 } catch (IllegalArgumentException e) {
                     return Optional.of(JsonRpc.error(mapper, id, JsonRpc.INVALID_PARAMS,
                             e.getMessage()));
@@ -439,7 +546,7 @@ public final class McpServer {
             if (state == State.CLOSED) {
                 return Optional.of(lifecycleError(id, "MCP session is closed"));
             }
-            return McpServer.this.handle(message, caller);
+            return McpServer.this.handle(message, caller, moonshotDialect);
         }
 
         private void handleNotification(String method, JsonNode params) {
@@ -492,7 +599,7 @@ public final class McpServer {
             String key = idKey(message.get("id"));
             FutureTask<Optional<ObjectNode>> task = new FutureTask<>(() -> {
                 try {
-                    Optional<ObjectNode> response = McpServer.this.handle(message, caller);
+                    Optional<ObjectNode> response = McpServer.this.handle(message, caller, moonshotDialect);
                     if (completion != null && inFlight.containsKey(key)
                             && !Thread.currentThread().isInterrupted()) {
                         completion.accept(response);

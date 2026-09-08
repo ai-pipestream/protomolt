@@ -291,6 +291,13 @@ embedding inference: is in [Operating an OpenVINO server](../tutorials/openvino.
   latest supported.
 - Stdout carries protocol traffic only; diagnostics go to stderr, as the stdio
   transport requires.
+- Tool schemas are served in a Moonshot-sanitized dialect to clients that
+  identify as Kimi or Moonshot in `initialize`'s `clientInfo.name`: no parent
+  `type` or numeric/string bounds beside an `anyOf`/`oneOf` union, which those
+  clients' strict function-calling validators refuse. The streamable HTTP mount
+  also enables it for the session when `initialize` carries the
+  `X-Schema-Flavor: moonshot` request header. All other clients receive the
+  standard rendering unchanged.
 
 ## Framework hosts
 

@@ -155,6 +155,76 @@ class McpHttpTest {
     }
 
     @Test
+    void moonshotSchemaFlavorHeaderEnablesTheDialectForTheSession() throws Exception {
+        HttpResponse<String> init = post("""
+                {"jsonrpc":"2.0","id":40,"method":"initialize","params":{
+                  "protocolVersion":"2025-06-18","capabilities":{},
+                  "clientInfo":{"name":"test","version":"0"}}}
+                """, "X-Schema-Flavor", "moonshot");
+        assertThat(init.statusCode()).isEqualTo(200);
+        HttpSession session = new HttpSession(
+                init.headers().firstValue("Mcp-Session-Id").orElseThrow(),
+                MAPPER.readTree(init.body()).path("result").path("protocolVersion").asText());
+        assertThat(post(session, """
+                {"jsonrpc":"2.0","method":"notifications/initialized"}
+                """).statusCode()).isEqualTo(202);
+
+        HttpResponse<String> listed = post(session, """
+                {"jsonrpc":"2.0","id":41,"method":"tools/list"}
+                """);
+        assertThat(listed.statusCode()).isEqualTo(200);
+        assertNoParentTypeBesideUnion(
+                MAPPER.readTree(listed.body()).path("result").path("tools"));
+
+        HttpSession standard = initializeSession();
+        assertThat(post(standard, """
+                {"jsonrpc":"2.0","method":"notifications/initialized"}
+                """).statusCode()).isEqualTo(202);
+        HttpResponse<String> standardListed = post(standard, """
+                {"jsonrpc":"2.0","id":42,"method":"tools/list"}
+                """);
+        JsonNode standardTools = MAPPER.readTree(standardListed.body()).path("result").path("tools");
+        assertThat(standardTools.size())
+                .isEqualTo(MAPPER.readTree(listed.body()).path("result").path("tools").size());
+        // The standard rendering must actually contain the shapes the dialect removes,
+        // or the sanitization assertion above proves nothing.
+        assertThat(countParentTypeBesideUnion(standardTools))
+                .as("standard manifest must contain parent-type-beside-union nodes "
+                        + "for the sanitization assertions to be meaningful")
+                .isPositive();
+    }
+
+    private static int countParentTypeBesideUnion(JsonNode node) {
+        int count = 0;
+        if (node.isObject()) {
+            if ((node.has("anyOf") || node.has("oneOf")) && node.has("type")) {
+                count++;
+            }
+            for (var entry : node.properties()) {
+                count += countParentTypeBesideUnion(entry.getValue());
+            }
+        } else if (node.isArray()) {
+            for (JsonNode element : node) {
+                count += countParentTypeBesideUnion(element);
+            }
+        }
+        return count;
+    }
+
+    private static void assertNoParentTypeBesideUnion(JsonNode node) {
+        if (node.isObject()) {
+            if (node.has("anyOf") || node.has("oneOf")) {
+                assertThat(node.has("type"))
+                        .withFailMessage("Found parent 'type' beside anyOf/oneOf in: " + node)
+                        .isFalse();
+            }
+            node.properties().forEach(entry -> assertNoParentTypeBesideUnion(entry.getValue()));
+        } else if (node.isArray()) {
+            node.forEach(McpHttpTest::assertNoParentTypeBesideUnion);
+        }
+    }
+
+    @Test
     void workspaceBootstrapIsReadableOverStreamableHttp() throws Exception {
         HttpSession session = initializeSession();
         assertThat(post(session, """
