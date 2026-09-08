@@ -118,6 +118,45 @@ class McpMoonshotDialectTest {
     }
 
     @Test
+    void sanitizeSchemaForMoonshotPushesTextualParentTypeIntoAnyOfBranches() {
+        ObjectNode property = mapper.createObjectNode();
+        property.put("type", "string");
+        ArrayNode anyOf = property.putArray("anyOf");
+        anyOf.addObject().put("format", "date-time");
+        anyOf.addObject().put("type", "string").put("pattern", "^[a-z]+$");
+
+        McpServer.sanitizeSchemaForMoonshot(property);
+
+        assertThat(property.has("type")).isFalse();
+        // The branch with its own type keeps it; the branch without one inherits the parent's.
+        assertThat(property.get("anyOf").get(0).get("type").asText()).isEqualTo("string");
+        assertThat(property.get("anyOf").get(1).get("type").asText()).isEqualTo("string");
+        assertThat(property.get("anyOf").get(1).get("pattern").asText()).isEqualTo("^[a-z]+$");
+    }
+
+    @Test
+    void sanitizeForMoonshotReturnsNullForNull() {
+        assertThat(McpServer.sanitizeForMoonshot(null)).isNull();
+    }
+
+    @Test
+    void sanitizeForMoonshotDoesNotMutateTheInputManifest() {
+        ArrayNode manifest = mapper.createArrayNode();
+        ObjectNode tool = manifest.addObject();
+        tool.put("name", "example");
+        ObjectNode inputSchema = tool.putObject("inputSchema");
+        inputSchema.put("type", "object");
+        inputSchema.putArray("oneOf").addObject().putArray("required").add("fieldA");
+        String before = manifest.toString();
+
+        ArrayNode sanitized = McpServer.sanitizeForMoonshot(manifest);
+
+        assertThat(manifest.toString()).isEqualTo(before);
+        assertThat(sanitized).isNotSameAs(manifest);
+        assertThat(sanitized.get(0).get("inputSchema").has("type")).isFalse();
+    }
+
+    @Test
     void toolsListAppliesSanitizationOnlyWhenMoonshotDialectActive() {
         McpServer.Session kimiSession = server.openSession();
         ObjectNode kimiInit = mapper.createObjectNode();
@@ -136,7 +175,9 @@ class McpMoonshotDialectTest {
         // Verify that NO tool in kimiTools has both type and anyOf/oneOf on the same object
         assertNoParentTypeBesideUnion(kimiTools);
 
-        // In contrast, direct handle without moonshot dialect preserves the standard schema
+        // In contrast, direct handle without moonshot dialect preserves the standard schema.
+        // The standalone catalog carries no parent-type-beside-union nodes, so the end-to-end
+        // sanitization proof with the full catalog lives in McpHttpTest (apps/serve).
         ObjectNode standardToolsRes = server.handle(request(3, "tools/list", null)).orElseThrow();
         ArrayNode standardTools = (ArrayNode) standardToolsRes.get("result").get("tools");
         assertThat(standardTools).isNotEmpty();

@@ -183,8 +183,32 @@ class McpHttpTest {
         HttpResponse<String> standardListed = post(standard, """
                 {"jsonrpc":"2.0","id":42,"method":"tools/list"}
                 """);
-        assertThat(MAPPER.readTree(standardListed.body()).path("result").path("tools").size())
+        JsonNode standardTools = MAPPER.readTree(standardListed.body()).path("result").path("tools");
+        assertThat(standardTools.size())
                 .isEqualTo(MAPPER.readTree(listed.body()).path("result").path("tools").size());
+        // The standard rendering must actually contain the shapes the dialect removes,
+        // or the sanitization assertion above proves nothing.
+        assertThat(countParentTypeBesideUnion(standardTools))
+                .as("standard manifest must contain parent-type-beside-union nodes "
+                        + "for the sanitization assertions to be meaningful")
+                .isPositive();
+    }
+
+    private static int countParentTypeBesideUnion(JsonNode node) {
+        int count = 0;
+        if (node.isObject()) {
+            if ((node.has("anyOf") || node.has("oneOf")) && node.has("type")) {
+                count++;
+            }
+            for (var entry : node.properties()) {
+                count += countParentTypeBesideUnion(entry.getValue());
+            }
+        } else if (node.isArray()) {
+            for (JsonNode element : node) {
+                count += countParentTypeBesideUnion(element);
+            }
+        }
+        return count;
     }
 
     private static void assertNoParentTypeBesideUnion(JsonNode node) {
