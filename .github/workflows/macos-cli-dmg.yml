@@ -1,0 +1,211 @@
+# Builds the protomolt-cli GraalVM native binary for macOS on Apple silicon
+# (darwin-aarch64) and packages it as a .dmg.
+#
+# Called from the release workflow with the released version (the .dmg is then
+# attached to the GitHub release), or dispatched manually to build from the
+# chosen ref (the .dmg is uploaded as a workflow artifact only).
+#
+# Codesigning and notarization are optional and keyed on repository secrets:
+#
+#   MACOS_SIGNING_CERT_P12       base64 of a Developer ID Application .p12
+#   MACOS_SIGNING_CERT_PASSWORD  the .p12 password
+#   MACOS_SIGNING_IDENTITY       (optional) full identity string; defaults to
+#                                the first "Developer ID Application" in the
+#                                imported keychain
+#   APPLE_NOTARY_KEY_ID          App Store Connect API key id
+#   APPLE_NOTARY_ISSUER_ID       App Store Connect issuer id
+#   APPLE_NOTARY_KEY_P8          base64 of the App Store Connect API .p8 key
+#
+# With no secrets configured the job still produces a working unsigned DMG;
+# Gatekeeper then requires a one-time `xattr -d com.apple.quarantine` on the
+# downloaded binary (documented in docs/apps/cli.md). Notarization runs only
+# when the binary was also signed: Apple rejects unsigned submissions.
+name: macOS CLI DMG
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: Released semver (without the v prefix); attaches the DMG to the GitHub release
+        required: false
+        type: string
+    secrets:
+      MACOS_SIGNING_CERT_P12:
+        required: false
+      MACOS_SIGNING_CERT_PASSWORD:
+        required: false
+      MACOS_SIGNING_IDENTITY:
+        required: false
+      APPLE_NOTARY_KEY_ID:
+        required: false
+      APPLE_NOTARY_ISSUER_ID:
+        required: false
+      APPLE_NOTARY_KEY_P8:
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    # macos-15 GitHub-hosted runners are Apple silicon; native-image does not
+    # cross-compile, so this is the only runner shape that can produce the
+    # darwin-aarch64 binary without a self-hosted Mac.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version != '' && inputs.version != null && format('v{0}', inputs.version) || github.ref }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      # Same GraalVM CE pin as docker-publish.yml, macOS flavor. The macOS
+      # tarball nests the JDK under Contents/Home (an app-bundle layout), so
+      # JAVA_HOME is resolved after extraction instead of using
+      # --strip-components.
+      - name: Set up GraalVM CE
+        run: |
+          BASE=https://github.com/graalvm/graalvm-ce-builds/releases/download/graal-25.1.3/graalvm-community-jdk-25i1-25.0.3_macos-aarch64_bin.tar.gz
+          curl -sL -o /tmp/graalvm.tgz "$BASE"
+          echo "$(curl -sL "$BASE.sha256")  /tmp/graalvm.tgz" | shasum -a 256 -c
+          mkdir -p "$RUNNER_TEMP/graalvm"
+          tar xzf /tmp/graalvm.tgz -C "$RUNNER_TEMP/graalvm" --strip-components=1
+          GRAAL_HOME="$RUNNER_TEMP/graalvm/Contents/Home"
+          echo "$GRAAL_HOME/bin" >> "$GITHUB_PATH"
+          echo "JAVA_HOME=$GRAAL_HOME" >> "$GITHUB_ENV"
+          "$GRAAL_HOME/bin/native-image" --version
+
+      - name: Build the native CLI (darwin-aarch64)
+        run: ./gradlew :protomolt-cli:nativeCompile --no-daemon
+
+      - name: Smoke-test the binary
+        run: |
+          BIN=apps/cli/build/native/nativeCompile/protomolt-cli
+          file "$BIN" | grep -q 'Mach-O 64-bit executable arm64'
+          "$BIN" help
+          "$BIN" list | head -5
+
+      - name: Resolve version label
+        id: ver
+        run: |
+          V="${{ inputs.version }}"
+          if [ -z "$V" ]; then
+            V=$(git describe --tags --always | sed 's/^v//')
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "dmg=protomolt-cli-$V-macos-aarch64.dmg" >> "$GITHUB_OUTPUT"
+
+      # Secrets are not readable from job-level `if`, so the gates are step
+      # outputs computed from env-mapped secrets.
+      - name: Detect signing and notarization configuration
+        id: cfg
+        env:
+          P12: ${{ secrets.MACOS_SIGNING_CERT_P12 }}
+          NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          SIGN=false; NOTARIZE=false
+          [ -n "$P12" ] && SIGN=true
+          if [ "$SIGN" = true ] && [ -n "$NOTARY_KEY" ] && [ -n "$NOTARY_KEY_ID" ] && [ -n "$NOTARY_ISSUER" ]; then
+            NOTARIZE=true
+          fi
+          echo "sign=$SIGN" >> "$GITHUB_OUTPUT"
+          echo "notarize=$NOTARIZE" >> "$GITHUB_OUTPUT"
+          echo "Signing: $SIGN, notarization: $NOTARIZE"
+
+      - name: Import the Developer ID certificate
+        if: steps.cfg.outputs.sign == 'true'
+        env:
+          P12: ${{ secrets.MACOS_SIGNING_CERT_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_SIGNING_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(uuidgen)
+          echo "$P12" | base64 -d > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          rm "$RUNNER_TEMP/cert.p12"
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+
+      - name: Codesign the binary
+        if: steps.cfg.outputs.sign == 'true'
+        env:
+          CONFIGURED_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: |
+          IDENTITY="$CONFIGURED_IDENTITY"
+          if [ -z "$IDENTITY" ]; then
+            IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" \
+              | awk -F '"' '/Developer ID Application/ {print $2; exit}')
+          fi
+          [ -n "$IDENTITY" ] || { echo "No Developer ID Application identity found"; exit 1; }
+          codesign --force --options runtime --timestamp --sign "$IDENTITY" \
+            apps/cli/build/native/nativeCompile/protomolt-cli
+          codesign --verify --verbose=2 apps/cli/build/native/nativeCompile/protomolt-cli
+
+      - name: Package the DMG
+        run: |
+          STAGE="$RUNNER_TEMP/dmg-stage"
+          mkdir -p "$STAGE"
+          cp apps/cli/build/native/nativeCompile/protomolt-cli "$STAGE/protomolt-cli"
+          cat > "$STAGE/README.txt" <<'EOF'
+          ProtoMolt CLI (macOS, Apple silicon)
+
+          Install: copy protomolt-cli somewhere on your PATH, e.g.
+
+            cp /Volumes/ProtoMolt\ CLI/protomolt-cli /usr/local/bin/
+
+          If this build is unsigned (no Developer ID in the release notes),
+          clear the quarantine attribute once after copying:
+
+            xattr -d com.apple.quarantine /usr/local/bin/protomolt-cli
+
+          Then: protomolt-cli help
+          EOF
+          hdiutil create -volname "ProtoMolt CLI" -srcfolder "$STAGE" \
+            -ov -format UDZO "${{ steps.ver.outputs.dmg }}"
+          hdiutil verify "${{ steps.ver.outputs.dmg }}"
+
+      - name: Notarize and staple the DMG
+        if: steps.cfg.outputs.notarize == 'true'
+        env:
+          NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          echo "$NOTARY_KEY" | base64 -d > "$RUNNER_TEMP/notary-key.p8"
+          xcrun notarytool submit "${{ steps.ver.outputs.dmg }}" \
+            --key "$RUNNER_TEMP/notary-key.p8" \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER" \
+            --wait
+          rm "$RUNNER_TEMP/notary-key.p8"
+          xcrun stapler staple "${{ steps.ver.outputs.dmg }}"
+          spctl --assess --type open --context context:primary-signature \
+            -v "${{ steps.ver.outputs.dmg }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.ver.outputs.dmg }}
+          path: ${{ steps.ver.outputs.dmg }}
+          if-no-files-found: error
+
+      - name: Attach the DMG to the GitHub release
+        if: inputs.version != '' && inputs.version != null
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "v${{ inputs.version }}" \
+            "${{ steps.ver.outputs.dmg }}#protomolt-cli ${{ inputs.version }} (macOS Apple silicon .dmg)" \
+            --clobber
+
+      - name: Delete the signing keychain
+        if: always() && steps.cfg.outputs.sign == 'true'
+        run: security delete-keychain "$KEYCHAIN" || true

@@ -126,3 +126,15 @@ jobs:
       packages: write
     with:
       version: ${{ needs.release.outputs.version }}
+
+  # Native darwin-aarch64 CLI, packaged as a .dmg and attached to the release.
+  # Signing and notarization activate automatically when the Apple secrets
+  # exist; without them the DMG is unsigned (see macos-cli-dmg.yml).
+  macos-dmg:
+    needs: release
+    uses: ./.github/workflows/macos-cli-dmg.yml
+    permissions:
+      contents: write
+    secrets: inherit
+    with:
+      version: ${{ needs.release.outputs.version }}
