@@ -72,12 +72,13 @@ docker run --rm --entrypoint bash protomolt-worker-cpp:local -lc \
   'clang++ --version; cmake --version; conan --version; grpcurl --version'
 ```
 
-The Java image defaults to JDK 21. Interactive shells can select another
+The Java image defaults to Temurin 25 so the agent-host entrypoint matches
+the `--release 25` compile target. Interactive shells can select another
 installed runtime without downloading it:
 
 ```shell
 source "$SDKMAN_DIR/bin/sdkman-init.sh"
-sdk use java 25.0.4-tem
+sdk use java 21.0.12-tem
 sdk use java 26.0.2-tem
 sdk use java 25.2.4-graalce
 ```

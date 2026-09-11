@@ -85,8 +85,10 @@ docker compose -f deploy/krick-1/compose.yml logs -f
 ```
 
 Only the `glimmer-vllm` inference sidecar is built locally, from
-`Dockerfile.glimmer-vllm`; the two workers are pulled from GHCR. To update the
-workers, repeat the `pull` and `up -d` steps.
+`Dockerfile.glimmer-vllm`; the two workers are pulled from GHCR. The published
+image defaults `JAVA_HOME` to Temurin 25, so drop any host-local `JAVA_HOME`
+override after the next `edge` publish. To update the workers, repeat the
+`pull` and `up -d` steps.
 
 `PROTOMOLT_MCP_TOKEN` is required. Put it in a `.env` file next to the
 compose file (gitignored) or export it in the shell. The MCP bearer token is

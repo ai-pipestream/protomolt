@@ -115,7 +115,7 @@ RUN curl -fsSL https://get.sdkman.io | bash \
     && sdk install java "${JAVA_25_VERSION}" \
     && sdk install java "${JAVA_26_VERSION}" \
     && sdk install java "${GRAALVM_VERSION}" \
-    && sdk default java "${JAVA_21_VERSION}" \
+    && sdk default java "${JAVA_25_VERSION}" \
     && sdk install gradle "${GRADLE_VERSION}" \
     && sdk install maven "${MAVEN_VERSION}" \
     && sdk flush archives \
@@ -136,6 +136,9 @@ RUN case "${TARGETARCH}" in \
     && ln -s /opt/sdkman/candidates/java/25.2.4-graalce/bin/native-image /usr/local/bin/native-image \
     && chmod -R a+rwX /opt/sdkman
 
+# AgentHost is compiled with --release 25 (class file 69). The Gradle start
+# script honors JAVA_HOME, which follows sdkman's `current` symlink, so the
+# default must stay on Temurin 25. JDK 21, 26, and GraalVM remain installed.
 ENV JAVA_HOME=/opt/sdkman/candidates/java/current \
     GRAALVM_HOME=/opt/sdkman/candidates/java/25.2.4-graalce \
     PATH=/opt/sdkman/candidates/java/current/bin:/opt/sdkman/candidates/gradle/current/bin:/opt/sdkman/candidates/maven/current/bin:${PATH}

@@ -10,11 +10,13 @@ Both agents come from the same published image,
 `ghcr.io/ai-pipestream/protomolt-worker-java:edge` (see
 [deploy/workers/README.md](../workers/README.md)), pulled from GHCR. Krick is
 a pure pull-and-restart consumer: no local Gradle build or `docker build` is
-required. Set `PROTOMOLT_WORKER_IMAGE` to pin a verified manifest digest
-instead of the moving `edge` tag. Provider authentication stays in the host's
-`~/.kimi-code` and `~/.codex` directories, which the containers mount read
-and write so provider sessions survive restarts. Nothing in this directory
-carries a credential.
+required. The image defaults `JAVA_HOME` to Temurin 25, so drop any host-local
+`JAVA_HOME` override after the next `edge` publish. Set
+`PROTOMOLT_WORKER_IMAGE` to pin a verified manifest digest instead of the
+moving `edge` tag. Provider authentication stays in the host's `~/.kimi-code`
+and `~/.codex` directories, which the containers mount read and write so
+provider sessions survive restarts. Nothing in this directory carries a
+credential.
 
 ## Prerequisites
 

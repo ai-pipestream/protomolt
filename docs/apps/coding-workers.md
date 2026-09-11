@@ -14,10 +14,11 @@ The published images are intentionally language-specific:
 | `ghcr.io/ai-pipestream/protomolt-worker-java:edge` | Temurin JDK 21, 25, and 26; GraalVM; SDKMAN; Gradle; Maven; Java gRPC generation |
 | `ghcr.io/ai-pipestream/protomolt-worker-cpp:edge` | GCC; Clang; CMake; Ninja; Conan; C++ gRPC libraries and generation |
 
-Both images support `linux/amd64` and `linux/arm64`. Their common layer
-contains the Java 21 agent-host runtime, Codex CLI, Node, Bun, Python, uv, Git,
-`buf`, `protoc`, `grpcurl`, and the Docker client. The Docker client does not
-grant build authority unless a separately controlled builder is configured.
+Both images support `linux/amd64` and `linux/arm64`. They run
+`protomolt-agent-host` on Java 25. Their common layer also contains Codex CLI,
+Node, Bun, Python, uv, Git, `buf`, `protoc`, `grpcurl`, and the Docker client.
+The Docker client does not grant build authority unless a separately controlled
+builder is configured.
 
 Use one container per trust boundary and language environment. This keeps the
 large compiler stacks separate and avoids sharing writable build caches across
@@ -94,19 +95,20 @@ cluster administration credentials.
 
 ## Selecting a Java runtime
 
-JDK 21 is the default in the Java image. The other installed runtimes require
-no download:
+Temurin 25 is the default in the Java image so AgentHost (compiled with
+`--release 25`) starts without a `JAVA_HOME` override. The other installed
+runtimes require no download:
 
 ```shell
 source "$SDKMAN_DIR/bin/sdkman-init.sh"
-sdk use java 25.0.4-tem
+sdk use java 21.0.12-tem
 sdk use java 26.0.2-tem
 sdk use java 25.2.4-graalce
 ```
 
-This lets a worker build the current JDK 21 application, exercise newer JDK
-targets, and produce GraalVM native images without maintaining one oversized
-all-language image.
+This lets a worker run the agent host on JDK 25, still build JDK 21
+applications, exercise JDK 26, and produce GraalVM native images without
+maintaining one oversized all-language image.
 
 ## Build, run, and verify
 

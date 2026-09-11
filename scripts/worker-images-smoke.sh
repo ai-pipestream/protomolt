@@ -24,6 +24,12 @@ docker run --rm -i --entrypoint bash protomolt-worker-java:test -s <<'JAVA_SMOKE
 set -eo pipefail
 source "$SDKMAN_DIR/bin/sdkman-init.sh"
 set -u
+# Default JAVA_HOME must be Temurin 25: AgentHostMain is --release 25 (class file 69).
+java -version 2>&1 | grep -F 'version "25.'
+case "$(readlink -f "${JAVA_HOME}")" in
+  */25.0.4-tem) ;;
+  *) printf 'JAVA_HOME is not Temurin 25: %s -> %s\n' "${JAVA_HOME}" "$(readlink -f "${JAVA_HOME}")" >&2; exit 1 ;;
+esac
 protomolt-agent-host --help >/dev/null
 node --version
 bun --version
