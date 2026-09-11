@@ -10,6 +10,10 @@
 # job stitches the arch tags into the user-facing tag. The worker images use
 # the same native-runner pattern. protomolt-serve is a JVM image and stays
 # amd64-only until someone asks for more.
+#
+# The hardened public demo on Docker Hub (pipestreamai/protomolt-serve) is
+# a separate workflow: docker-hub-publish.yml. Do not fold Hub tags into
+# this file; NAS compose pins ghcr.io/ai-pipestream/protomolt-serve.
 name: Docker Publish
 
 on:

@@ -44,6 +44,7 @@ for path in [
     "docker-compose.yml",
     ".github/workflows/ci.yml",
     ".github/workflows/docker-publish.yml",
+    ".github/workflows/docker-hub-publish.yml",
     ".github/workflows/nano1-arm64-smoke.yml",
     ".forgejo/workflows/publish-registry.yml",
     ".forgejo/workflows/tei-integration.yml",
@@ -195,6 +196,7 @@ python3 - <<'PYEOF'
 import os, sys
 pairs = [
     ("apps/serve/Dockerfile", "build/install/protomolt-serve", "apps/serve/build.gradle", "protomolt-serve"),
+    ("apps/serve/Dockerfile.dhi", "build/install/protomolt-serve", "apps/serve/build.gradle", "protomolt-serve"),
     ("repo/service/Dockerfile", "build/install/protomolt-repo-service", "repo/service/build.gradle", "protomolt-repo-service"),
     ("apps/document-platform/Dockerfile", "build/install/protomolt-document-platform", "apps/document-platform/build.gradle", "protomolt-document-platform"),
     ("apps/agent-host/Dockerfile", "build/install/protomolt-agent-host", "apps/agent-host/build.gradle", "protomolt-agent-host"),
@@ -210,6 +212,21 @@ for dockerfile, copy_source, gradle_file, distribution in pairs:
         print(gradle_file, "applies no application plugin; the distribution cannot build")
         sys.exit(1)
     print("dockerfile OK", dockerfile, "->", copy_source)
+
+dhi = open("apps/serve/Dockerfile.dhi").read()
+if "dhi.io/eclipse-temurin:25" not in dhi:
+    print("Dockerfile.dhi must use the DHI temurin 25 runtime (dhi.io/eclipse-temurin:25)")
+    sys.exit(1)
+if 'ENTRYPOINT ["java", "-cp", "/opt/protomolt-serve/lib/*", "ai.protomolt.proto.serve.ProtoMoltServe"]' not in dhi:
+    print("Dockerfile.dhi must enter via java -cp (shell-less DHI has no Gradle start script)")
+    sys.exit(1)
+if any(line.startswith("HEALTHCHECK") for line in dhi.splitlines()):
+    print("Dockerfile.dhi must not declare a HEALTHCHECK; the runtime image has no shell")
+    sys.exit(1)
+if "USER 10001" in dhi:
+    print("Dockerfile.dhi must keep DHI nonroot (65532), not the GHCR uid 10001")
+    sys.exit(1)
+print("Dockerfile.dhi is a shell-less DHI runtime with a java -cp entrypoint")
 
 agent_host = open("apps/agent-host/Dockerfile").read()
 # The requirement is javac, not a particular release: this image runs delegated builds

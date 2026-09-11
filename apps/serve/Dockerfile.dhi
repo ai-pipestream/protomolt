@@ -1,0 +1,43 @@
+# Hardened public demo image for Docker Hub (pipestreamai/protomolt-serve).
+# Runtime is Docker Hardened Images temurin: shell-less, no package manager,
+# uid 65532 nonroot out of the box. The Gradle start script cannot run here,
+# so java is invoked directly on the installDist classpath.
+#
+# Build the distribution on the host first (the image stays a thin JRE layer):
+#   ./gradlew :protomolt-serve:installDist
+#   docker build -f apps/serve/Dockerfile.dhi -t protomolt-serve:dhi apps/serve
+#   docker run --rm -p 8080:8080 -p 9090:9090 protomolt-serve:dhi --demo
+#
+# --demo writes a throwaway registry and workflow workspace under
+# java.io.tmpdir (/tmp) and may write gather caches under HOME (also /tmp
+# here). Do not add --read-only unless you mount a writable volume or tmpfs
+# on /tmp.
+#
+# Digest pinning: dhi.io community tags move. After `docker login dhi.io`,
+# refresh a pin with:
+#   docker buildx imagetools inspect dhi.io/eclipse-temurin:25 \
+#     --format '{{.Manifest.Digest}}'
+#   docker buildx imagetools inspect dhi.io/eclipse-temurin:25-jdk-dev \
+#     --format '{{.Manifest.Digest}}'
+# Append @sha256:<index-digest> to the FROM lines below. Use the multi-arch
+# index digest, not a single-platform blob. The Hub publish workflow prints
+# the resolved digests on each build.
+#
+# GHCR / NAS keeps apps/serve/Dockerfile (uid 10001, bash HEALTHCHECK). Do
+# not fold this file into that path: Portainer chowns /data to 10001.
+
+FROM dhi.io/eclipse-temurin:25-jdk-dev AS staged
+COPY build/install/protomolt-serve /opt/protomolt-serve
+# Jars inherit the build host's cache permissions (some are 0600). The -dev
+# variant has a shell so we can normalize read bits before the runtime COPY.
+RUN chmod -R a+rX /opt/protomolt-serve
+
+FROM dhi.io/eclipse-temurin:25
+COPY --from=staged /opt/protomolt-serve /opt/protomolt-serve
+USER nonroot
+ENV HOME=/tmp
+WORKDIR /tmp
+EXPOSE 8080 9090 8081
+# No HEALTHCHECK: the runtime image has no shell. Probe GET /health from
+# the host or orchestrator (see scripts/serve-dhi-smoke.sh).
+ENTRYPOINT ["java", "-cp", "/opt/protomolt-serve/lib/*", "ai.protomolt.proto.serve.ProtoMoltServe"]

@@ -20,7 +20,7 @@ servers without reflection work from a registered schema instead (see
 ## 1. Start ProtoMolt
 
 ```shell
-docker run -p 8080:8080 -p 9090:9090 ghcr.io/ai-pipestream/protomolt-serve --demo
+docker run -p 8080:8080 -p 9090:9090 pipestreamai/protomolt-serve --demo
 ```
 
 (Or run the launcher from a [release zip or a clone](../surface/grpc-service.md#running-everything-protomolt-serve).)
