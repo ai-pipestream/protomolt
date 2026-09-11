@@ -71,7 +71,7 @@ Status vocabulary: **shipped** (exercised by tests/CI), **working, pre-release**
 | In-memory proto compiler | Compiles `.proto` source sets with Square Wire on an in-memory filesystem — no protoc binary | Anyone compiling schemas at runtime | Shipped |
 | CEL mapping API | Text mapping rules (`target = source`, `+=`, `-target`) plus one shared CEL engine used by validation, quality, projection, metrics, shapes, and Connect transforms | Data/integration engineers | Shipped |
 | Validation engine | `validate.v1` dialect (36 string rule tags, taxonomy/postal gates) behind a neutral rule-source SPI | Schema owners | Shipped |
-| protovalidate compatibility | Vendored `buf.validate` dialect as a plug-in rule source; **passes buf's full protovalidate conformance suite with no skip list, enforced in CI on every push** (pinned upstream commit just past v1.2.2) | Teams already on buf validate | Shipped |
+| protovalidate compatibility | Schemas annotated with `(buf.validate.field)` / `(buf.validate.message)` options in `.proto` files — including predefined-rule extensions — validate end-to-end through the same `ProtoValidator`; the module vendors `buf/validate/validate.proto` (pinned v1.2.2) and re-parses descriptors built without the extension registry so the options are never silently dropped. **Passes buf's full protovalidate conformance suite, 2872 of 2872 cases, no skip list, enforced in CI on every push.** The same options also feed JSON Schema generation through the neutral constraint model | Teams already on buf validate | Shipped |
 | Breaking-change detection | Typed schema diff (33 stable rule ids) plus the seven Confluent compatibility policies | Registry operators, CI | Shipped |
 | Code generation, no protoc | protoc's own generators bundled as one WebAssembly module: java, kotlin, grpc-java, python, cpp, csharp, ruby, php, objc; works inside the native-image CLI | Polyglot consumers | Shipped |
 | JSON Schema / OpenAPI generation | JSON Schema 2020-12 folding in validation rules; OpenAPI 3.0.3 from service descriptors | API publishers | Shipped (OpenAPI does not read validation rules) |
@@ -145,7 +145,7 @@ Status vocabulary: **shipped** (exercised by tests/CI), **working, pre-release**
 |---|---|---|---|
 | Parquet, Hadoop-free | Descriptor-driven Parquet from `Descriptor` + `Message`, no generated classes, no Hadoop (a test fails if a Hadoop class loads); S3 upload variant | Lake pipelines | Shipped |
 | Apache Iceberg | Descriptor-driven table schemas and append sink through any catalog; `S3FileIO` wiring for any S3-compatible store | Lakehouse | Shipped (equality deletes and v3 variant columns are later phases) |
-| S3-compatible storage | Blob store (repo), Parquet sink, Iceberg tables, and search index snapshots all target **any S3-compatible endpoint** (AWS SDK with path-style endpoint override) | Self-hosters (MinIO, RustFS, etc.) and AWS users | Shipped |
+| Pluggable object storage | `BlobStore` (repo blobs) and `SnapshotStore` (search index snapshots) are provider-neutral interfaces — callers never see provider SDK types, so Azure Blob or GCS is one new adapter, not a sweep. Shipped adapters target **any S3-compatible endpoint** (AWS SDK with path-style endpoint override: AWS, MinIO, SeaweedFS, RustFS), with Redis and caching blob-store decorators; Parquet and Iceberg sinks are S3-wired today | Self-hosters and AWS users | Shipped (S3-compatible adapters only; no Azure/GCS adapter in-tree yet) |
 | Bundle sinks | Rendered file bundles to directory, git (JGit), zip; OKF markdown knowledge bundles from schemas | Docs/knowledge pipelines | Shipped (S3 bundle sink planned, does not exist) |
 
 ### Inference and LLM integration
@@ -155,6 +155,7 @@ Status vocabulary: **shipped** (exercised by tests/CI), **working, pre-release**
 | Inference provider SPI | Three-method provider contract, in-memory model catalog, credential resolver that never leaks material; OpenVINO Model Server and OpenAI-compatible (`/v1`: Ollama, vLLM, llama.cpp) providers | Self-hosted model users | Shipped (catalog rebuilt from flags at start; not persistent) |
 | Inference gRPC service | `Generate`, `GenerateStream`, `ListModels`, `DescribeModel`, requests validated against declared rules before any provider is touched | Remote inference consumers | Shipped, but **has no production client** — every in-tree consumer uses the in-process facade |
 | Structured generation | Fill a protobuf message with a model: prompt packet + JSON Schema decoder constraint + strict parse + validation + retry from rendered rejection feedback (max 3), every attempt carried as provenance | Structured extraction | Shipped (unary only, by design) |
+| Court-document metadata PoC | A worked, in-tree case study (`protobuf/llm/examples/court-decoration/`): the CourtListener corpus (9.7M opinions, cleaned via a sibling gRPC HTML-rewriter service, chunked to 86.6M), metadata extracted by LLM against an `llm.v1`/`validate.v1`-annotated proto form, output stored as citation-backed claims that can be challenged and re-derived; four unedited QA rounds with findings | Evidence for the structured-extraction story | Proven PoC / case study (harness lives outside this repo; outputs and schema are in-tree) |
 | Screening | OpenNLP model-driven detection over declared sensitivity classes with mask/tag/refuse policy; **the model manifest version is carried as evidence** with every decision | PII/compliance | Shipped as a library (no gRPC service of its own; masking is reachable via the `mask-message` verb) |
 
 ### Workflows, pipelines, and evidence
@@ -176,14 +177,14 @@ Verdicts: **confirmed**, **needs rewording**, **understated**, or **not in this 
 |---|---|---|
 | Started as protobuf library helpers (CEL mapping API, descriptor helpers) | **Confirmed** | `core/` + `transform/mapper*` are exactly this and remain the foundation. |
 | gRPC services exposable as MCP + OpenAPI | **Confirmed, understated** | It's eight fronts, not two: typed gRPC + reflection, JSON/REST, OpenAPI 3, Swagger UI, MCP (stdio + streamable HTTP), ACP, CLI. And the inverse also holds: ProtoMolt can *consume* any reflectable gRPC service dynamically. |
-| Validations 100% compatible with buf validation | **Needs rewording** | The strong, defensible claim: ProtoMolt vendors the `buf.validate` dialect and **passes buf's full protovalidate conformance suite with no skip list, enforced in CI on every push** (pinned upstream commit just past v1.2.2). Say "passes buf's protovalidate conformance suite", not "100% compatible" — ProtoMolt also has its own `validate.v1` dialect, which is separate and richer in places (taxonomy, postal, `ignore_if_zero`). |
+| Validations compatible with buf validation (`buf.validate` annotations in `.proto` files) | **Confirmed** | The founder means the protobuf annotation syntax, and that is supported end-to-end: `.proto` files carrying `(buf.validate.field)` and `(buf.validate.message)` options — including predefined-rule extensions — compile and validate through `ProtoValidator` with the vendored `buf/validate/validate.proto` (pinned v1.2.2), and options on descriptors built without the extension registry are recovered by re-parse rather than dropped. Conformance-proven: **2872 of 2872 cases of buf's own protovalidate conformance suite, no skip list, enforced in CI on every push.** Website wording: "supports buf's protovalidate annotations, proven by buf's full conformance suite." ProtoMolt additionally has its own `validate.v1` dialect, richer in places (taxonomy, postal, `ignore_if_zero`, `skip_when`). |
 | Proto enhancements for vectors; Lucene, Solr, OpenSearch | **Confirmed, incomplete** | `index.hints.v1` carries vector dims, similarity, and HNSW parameters as descriptor options. Four engine mappers, not three: **Qdrant** is also shipped. Caveat: Solr and Qdrant are write-shape only; only the built-in Lucene service and OpenSearch have a read side. |
-| Rust turboquant search engine coming | **Not in this repo** | turbovec (TurboQuant scalar quantization + SIMD exact scan) is a separate repository with **zero references in protomolt today**. Its own docs state intent to become a protomolt search provider. If mentioned at all, mark it clearly as a separate, upcoming project. Same for distributed-search/knn-node (already consumes protomolt's mapping SPI; developer preview). |
+| Rust TurboQuant search engine coming | **Imminent, sibling repo** | turbovec (TurboQuant scalar quantization + SIMD exact scan, exact by construction) is a sibling ai-pipestream repository; the founder reports integration is about a week out. For website planning treat it as a present/near-term search engine option and feature it accordingly — but as of this commit there is no integration code in this tree, so keep the site honest that the engine ships from its own repo and lands as a protomolt search provider. distributed-search/knn-node (streamed cross-shard vector search on a forked Lucene) already consumes protomolt's mapping SPI. |
 | Kafka Connect compatibility | **Confirmed, understated** | Not just compatibility: a gRPC sink, a resumable gRPC source, four protobuf-aware transforms, plus Iceberg and OpenSearch sink connectors, and a Confluent-wire serde with schema enforcement. |
 | Pipeline architecture | **Confirmed with caveat** | Workflows (serial, durable via jobs) are complete including record/replay/promote. Streaming pipelines are checked and executed in-process, but external-completion steps are refused — durable pipeline execution is planned, not shipped. |
-| Inference + evidence-based document cleanup via gRPC | **Needs rewording** | Three real things, but the phrase maps to none exactly: (1) an inference gRPC service exists but has no production client — in-tree consumers are in-process; (2) structured generation validates and retries with provenance for every attempt; (3) the screening engine detects sensitive content with the model manifest carried as evidence — but it is a library, not a gRPC service. "Document cleanup" as a named feature does not exist; avoid the phrase or define it. |
+| Inference + evidence-based document cleanup (proven PoC: court documents, metadata filled on the fly) | **Confirmed — the PoC is in-tree** | `protobuf/llm/examples/court-decoration/` is the saved, unedited record of a real metadata pipeline over the CourtListener corpus (9.7M court opinions → 86.6M chunks). The document cleanup pass ran through `grpc-lol-html`, a sibling gRPC service wrapping Cloudflare's streaming HTML rewriter. The metadata shape is a protobuf message annotated with `llm.v1` instructions and `validate.v1` rules; `render-prompt` compiles it into the model's instruction packet and `validate-message` deterministically checks the output. Model output is stored as a **claim with citations into the source text and the index generation**, challengeable and re-derivable — that is the "evidence-based" part, and it's genuine. Four QA rounds (3 personas × Qwen3-14B) are saved with findings; round 1 was 45/45 schema-valid, and the `skip_when` validator feature was built for this. Website framing: "schema-as-contract metadata extraction, proven on 9.7M court opinions" — a PoC/case study, not a packaged product feature. |
 | Confluent-compatible schema registry backed by git | **Confirmed** | The registry speaks the Confluent subjects protocol and git commits are the storage. Also worth saying: client-side publishers for real Confluent and Apicurio registries. Don't claim mirroring/federation between the three — only pull-only git-to-git sync exists. |
-| Storage: S3 and other providers | **Needs rewording** | The accurate claim is "**any S3-compatible store**" (endpoint-override throughout: repo blobs, Parquet, Iceberg, search snapshots). There is no GCS/Azure driver. "Other providers" is true only in the sense of Postgres (ledgers, jobs, authz), Kafka, and Redis-variant blob caching. |
+| Storage: generic interface, S3 and other providers can plug in | **Half confirmed** | The seam is real: `BlobStore` (repo blobs) is an explicitly provider-neutral port — its own contract states callers never see provider SDK types so "a future backend (Azure Blob, GCS, …) is one new implementation" — and `SnapshotStore` (search index snapshots) is likewise an interface. But the only provider adapters shipped today are S3-compatible (`S3BlobStore`, used against AWS S3, SeaweedFS, MinIO, RustFS via endpoint override) plus Redis/caching decorators; Parquet and Iceberg sinks are also wired to S3 only (Iceberg's own Azure/GCS FileIO bundles would be the path there). Accurate website claim: "pluggable object storage behind a provider-neutral interface; S3-compatible stores supported today, Azure/GCS are one adapter away" — do not claim Azure works today. |
 | MCP can expose ANY gRPC service | **Confirmed** | Via `reflect` + `grpc-invoke` + the service-workspace verbs over MCP, an agent registers, inspects, and invokes any reflectable gRPC service with no stubs. This is the strongest single demo the project has. |
 | Platform + library; protobuf/gRPC-focused application framework | **Confirmed** | 98 library modules usable independently; the platform composes from the same modules via roles. |
 
@@ -237,6 +238,12 @@ Plain-language, evidence-backed sections; each maps to shipped code.
    index with no ETL.
 9. **"Proof of work done."** Signed work records and the zero-dependency
    verifier — show a record verifying offline.
+9b. **Case study: 9.7 million court opinions.** The court-decoration example
+   is a ready-made story: dirty scraped HTML → gRPC cleaning service → an
+   annotated proto form as both prompt and contract → deterministic
+   validation → citation-backed claims instead of unverifiable model output.
+   The unedited QA rounds are publishable evidence of the method working and
+   failing honestly.
 10. **Getting started.** The existing one-liner:
     `docker run -p 8080:8080 -p 9090:9090 ghcr.io/ai-pipestream/protomolt-serve --demo`.
 
@@ -252,14 +259,18 @@ superlatives would.
   is `ai.pipestream`. Java/proto namespace is `ai.protomolt.proto.*`. Config
   prefix `protomolt.*`, env prefix `PROTOMOLT_*`.
 - **Pre-1.0** — the project publishes `0.1.0-SNAPSHOT`. Do not imply GA.
-- **"Passes buf's protovalidate conformance suite (no skip list, in CI)"** —
-  use this exact shape; avoid "100% compatible with buf".
+- **"Supports buf's protovalidate annotations (`buf.validate` options in
+  `.proto` files), proven by buf's full conformance suite — 2872/2872 cases,
+  no skip list, enforced in CI"** — use this shape. It is about the protobuf
+  annotation syntax, not the buf CLI; don't imply buf-CLI feature parity.
 - **"Confluent subjects protocol"** — the registry *speaks the protocol*;
   don't say "drop-in Confluent replacement" (no mirroring, HTTP-only API,
   server-side compatibility gate semantics are ProtoMolt's own).
 - **"Confluent wire format"** — the serde implements the published framing
   spec exactly; safe to claim.
-- **"Any S3-compatible store"** — not "multi-cloud storage".
+- **Storage wording** — "pluggable object storage behind a provider-neutral
+  interface; any S3-compatible store today" is accurate. Azure/GCS are
+  designed-for but have no shipped adapter; don't list them as supported.
 - **Vocabulary (ADR-001), enforced in this repo:** *workflow* (authored
   definition), *run* (durable execution), *pipeline/processor* (in-process
   streaming), *service*, *role*, *gate*, *mapping* (index definitions),
@@ -267,8 +278,11 @@ superlatives would.
   not appear: recipe, chain, directive, index plan, door.
 - **MCP / ACP** — Model Context Protocol and Agent Client Protocol; both
   shipped. MCP is stdio + streamable HTTP; ACP is stdio.
-- **turbovec / TurboQuant** — separate repository, zero integration today;
-  only describe as future/adjacent, never as a shipped ProtoMolt feature.
+- **turbovec / TurboQuant** — a sibling ai-pipestream repository (Rust,
+  exact-by-construction quantized search); integration into ProtoMolt is
+  imminent per the founder, so it can be featured — but attribute it to its
+  own repo and, until the integration lands here, use "landing now" rather
+  than "shipped in ProtoMolt".
 - **gRParse** — a separate C++ parsing fleet ProtoMolt adapts to; the shared
   document model is docling-core v2 field parity, canonical in this repo.
 - **OpenNLP** — Apache OpenNLP preview builds are used in exactly two places
