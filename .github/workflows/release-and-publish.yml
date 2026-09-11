@@ -127,12 +127,13 @@ jobs:
     with:
       version: ${{ needs.release.outputs.version }}
 
-  # Native darwin-aarch64 CLI, packaged as a .dmg and attached to the release.
-  # Signing and notarization activate automatically when the Apple secrets
-  # exist; without them the DMG is unsigned (see macos-cli-dmg.yml).
+  # protomolt-serve for darwin-aarch64: jpackage bundles the distribution with
+  # an embedded runtime into a .dmg attached to the release. Signing and
+  # notarization activate automatically when the Apple secrets exist; without
+  # them the DMG is unsigned (see macos-serve-dmg.yml).
   macos-dmg:
     needs: release
-    uses: ./.github/workflows/macos-cli-dmg.yml
+    uses: ./.github/workflows/macos-serve-dmg.yml
     permissions:
       contents: write
     secrets: inherit

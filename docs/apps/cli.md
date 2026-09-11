@@ -18,40 +18,6 @@ also be run from a jar or embedded directly. `ProtoMoltCli.run` takes its
 streams and its catalog as arguments; `main` only wires the process streams
 and the exit code.
 
-## macOS (.dmg)
-
-Each release attaches `protomolt-cli-<version>-macos-aarch64.dmg`: the GraalVM
-native darwin-aarch64 binary, built on a GitHub-hosted `macos-15` Apple-silicon
-runner by `.github/workflows/macos-cli-dmg.yml`. The release workflow calls it
-with the released version; it can also be dispatched manually from any ref, in
-which case the DMG is a workflow artifact named from `git describe` instead of
-a release asset. It is native-image (the same binary the Linux CLI images
-ship), not jpackage: jpackage would bundle a JRE app-image, which is larger,
-starts slower, and buys nothing for a single self-contained executable.
-
-Install: open the DMG and copy `protomolt-cli` onto your `PATH`.
-
-Signing and notarization are optional and turn on automatically when the
-repository secrets exist; none of them are required to produce a working DMG.
-
-| Secret | Holds |
-|---|---|
-| `MACOS_SIGNING_CERT_P12` | base64 of a Developer ID Application certificate exported as .p12 |
-| `MACOS_SIGNING_CERT_PASSWORD` | the .p12 password |
-| `MACOS_SIGNING_IDENTITY` | optional identity string; defaults to the first Developer ID Application in the imported certificate |
-| `APPLE_NOTARY_KEY_ID` | App Store Connect API key id |
-| `APPLE_NOTARY_ISSUER_ID` | App Store Connect issuer id |
-| `APPLE_NOTARY_KEY_P8` | base64 of the App Store Connect API private key (.p8) |
-
-With the first two set, the binary is codesigned with the hardened runtime;
-with all six, the DMG is also notarized and stapled, so Gatekeeper accepts it
-with no prompts. Without them the DMG is unsigned and macOS quarantines the
-downloaded binary; clear it once after copying:
-
-```shell
-xattr -d com.apple.quarantine /usr/local/bin/protomolt-cli
-```
-
 ## Invocation
 
 | Command | Does |
