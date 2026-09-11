@@ -58,11 +58,11 @@ JSON/REST, OpenAPI, Swagger UI, MCP, a task console and a git-backed registry:
 docker run -p 8080:8080 -p 9090:9090 pipestreamai/protomolt-serve --demo
 ```
 
-That Hub image is a Docker Hardened Image (`dhi.io/eclipse-temurin:25`,
-non-root uid 65532). `--demo` needs a writable `/tmp` for the seeded
-registry; do not add `--read-only` unless you mount a volume or tmpfs
-there. The NAS / Portainer coordinator keeps pulling
-`ghcr.io/ai-pipestream/protomolt-serve`.
+That Hub image is a Docker Hardened Image
+(`dhi.io/eclipse-temurin:25-debian13`, Debian 13 JRE, non-root uid 65532).
+`--demo` needs a writable `/tmp` for the seeded registry; do not add
+`--read-only` unless you mount a volume or tmpfs there. The NAS /
+Portainer coordinator keeps pulling `ghcr.io/ai-pipestream/protomolt-serve`.
 
 What you get, all from `apps/serve`
 (`apps/serve/src/main/java/ai/protomolt/proto/serve/ProtoMoltServe.java`):

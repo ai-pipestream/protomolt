@@ -214,8 +214,15 @@ for dockerfile, copy_source, gradle_file, distribution in pairs:
     print("dockerfile OK", dockerfile, "->", copy_source)
 
 dhi = open("apps/serve/Dockerfile.dhi").read()
-if "dhi.io/eclipse-temurin:25" not in dhi:
-    print("Dockerfile.dhi must use the DHI temurin 25 runtime (dhi.io/eclipse-temurin:25)")
+from_lines = [line for line in dhi.splitlines() if line.startswith("FROM ")]
+if not any("dhi.io/eclipse-temurin:25-debian13@sha256:" in line for line in from_lines):
+    print("Dockerfile.dhi runtime must be digest-pinned dhi.io/eclipse-temurin:25-debian13")
+    sys.exit(1)
+if not any("dhi.io/eclipse-temurin:25-jdk-debian13-dev@sha256:" in line for line in from_lines):
+    print("Dockerfile.dhi staged image must be digest-pinned dhi.io/eclipse-temurin:25-jdk-debian13-dev")
+    sys.exit(1)
+if any("alpine" in line for line in from_lines):
+    print("Dockerfile.dhi must stay on Debian 13; do not use Alpine DHI tags")
     sys.exit(1)
 if 'ENTRYPOINT ["java", "-cp", "/opt/protomolt-serve/lib/*", "ai.protomolt.proto.serve.ProtoMoltServe"]' not in dhi:
     print("Dockerfile.dhi must enter via java -cp (shell-less DHI has no Gradle start script)")
@@ -226,7 +233,7 @@ if any(line.startswith("HEALTHCHECK") for line in dhi.splitlines()):
 if "USER 10001" in dhi:
     print("Dockerfile.dhi must keep DHI nonroot (65532), not the GHCR uid 10001")
     sys.exit(1)
-print("Dockerfile.dhi is a shell-less DHI runtime with a java -cp entrypoint")
+print("Dockerfile.dhi is a digest-pinned Debian 13 DHI runtime with a java -cp entrypoint")
 
 agent_host = open("apps/agent-host/Dockerfile").read()
 # The requirement is javac, not a particular release: this image runs delegated builds

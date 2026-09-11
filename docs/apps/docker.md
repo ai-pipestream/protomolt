@@ -1,7 +1,8 @@
 # Running in Docker
 
 The public demo is a one-liner on Docker Hub. The image is a Docker Hardened
-Image runtime (`dhi.io/eclipse-temurin:25`, uid 65532, no shell):
+Image runtime (`dhi.io/eclipse-temurin:25-debian13`, Debian 13 JRE, uid 65532,
+no shell). Alpine DHI tags are not used.
 
 ```shell
 docker run -p 8080:8080 -p 9090:9090 pipestreamai/protomolt-serve --demo
@@ -221,17 +222,19 @@ version tag when the workflow is dispatched with one. Secrets required:
 docker run -p 8080:8080 -p 9090:9090 pipestreamai/protomolt-serve --demo
 ```
 
-`FROM` lines in `apps/serve/Dockerfile.dhi` use moving community tags. To
-pin a digest after `docker login dhi.io`:
+`FROM` lines in `apps/serve/Dockerfile.dhi` pin the Debian 13 multi-arch
+index digests (`25-debian13` JRE, `25-jdk-debian13-dev` for the chmod
+stage). To refresh after `docker login dhi.io`:
 
 ```shell
-docker buildx imagetools inspect dhi.io/eclipse-temurin:25 --format '{{.Manifest.Digest}}'
-docker buildx imagetools inspect dhi.io/eclipse-temurin:25-jdk-dev --format '{{.Manifest.Digest}}'
+docker buildx imagetools inspect dhi.io/eclipse-temurin:25-debian13 --format '{{.Manifest.Digest}}'
+docker buildx imagetools inspect dhi.io/eclipse-temurin:25-jdk-debian13-dev --format '{{.Manifest.Digest}}'
 ```
 
-Append `@sha256:<index-digest>` to each `FROM`. Use the multi-arch index
-digest, not a single-platform blob. The Hub publish job prints the
-resolved digests on every run.
+Replace `@sha256:<index-digest>` on each `FROM`. Use the multi-arch index
+digest, not a single-platform blob. The Hub catalog specifications pages
+for `debian-13/jre-25` and `debian-13/jdk-25-dev` also list the current
+index digest. The Hub publish job prints the resolved digests on every run.
 
 GHCR remains the NAS path, published by the existing Docker Publish
 workflow (release semver + `latest`, or `edge` on dispatch):

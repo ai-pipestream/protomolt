@@ -9,7 +9,7 @@
 #
 # Multi-arch (amd64 + arm64): the JVM distribution is platform-neutral, so
 # Gradle runs once on the runner and buildx stamps both runtime platforms.
-# The DHI temurin runtime is published for both, matching collector/grPOIc.
+# The DHI temurin Debian 13 runtime (25-debian13) is published for both.
 name: Docker Hub Publish
 
 on:
@@ -76,9 +76,9 @@ jobs:
 
       - name: Record DHI base digests
         run: |
-          echo "Refresh a Dockerfile.dhi pin by appending these index digests to FROM."
-          docker buildx imagetools inspect dhi.io/eclipse-temurin:25
-          docker buildx imagetools inspect dhi.io/eclipse-temurin:25-jdk-dev
+          echo "Refresh Dockerfile.dhi pins with these Debian 13 index digests."
+          docker buildx imagetools inspect dhi.io/eclipse-temurin:25-debian13
+          docker buildx imagetools inspect dhi.io/eclipse-temurin:25-jdk-debian13-dev
 
       - name: Compute tags
         id: tags
