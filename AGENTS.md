@@ -171,8 +171,10 @@ Current implementation and deployment snapshot, verified 2026-08-14:
   path are not yet deployed and proven. Do not report symmetric collaboration
   until both exist and pass a live task.
 - The Java and C++ coding worker images are published for amd64 and arm64. The
-  krick-1 Compose file still uses `protomolt-agent-host:local`; migrating it to
-  a language image is separate deployment work.
+ krick and krick-1 Compose files pull
+ `ghcr.io/ai-pipestream/protomolt-worker-java:edge` (overridable through
+ `PROTOMOLT_WORKER_IMAGE`); neither host builds `protomolt-agent-host:local`
+ anymore.
 - Nano1 is a trusted, manual-only native ARM64 GitHub runner. Its Docker group
   authority belongs only to the runner service. Never select its labels from a
   pull-request workflow or expose its Docker socket to a coding worker.

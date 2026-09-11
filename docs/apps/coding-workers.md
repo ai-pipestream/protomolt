@@ -120,7 +120,7 @@ recovery, and coordinator versus worker roles. The [task console](task-console.m
 shows the shared durable task, messages, progress, and review decisions.
 
 The krick-1 deployment uses a Kimi worker and a GPU-only Muse Glimmer worker.
-Its current Compose file still builds the smaller agent-host image, so changing
-that deployment to the language-specific images is a separate, explicit
-migration. See [the krick-1 guide](../../deploy/krick-1/README.md) for the
-verified Intel B70 inference settings.
+Its Compose file pulls the published Java worker image from GHCR, so the host
+needs no local Gradle build. See
+[the krick-1 guide](../../deploy/krick-1/README.md) for the verified Intel B70
+inference settings.

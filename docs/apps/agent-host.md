@@ -100,8 +100,9 @@ A container image carrying the launcher and the Codex CLI is built from
 CLI ships inside its own configuration directory and enters the container
 through a mount; provider authentication is always mounted, never baked in.
 [deploy/krick/](../../deploy/krick/README.md) defines the workstation stack
-that runs one Kimi worker and one Codex coordinator from that image, plus the
-exact host-Java commands for the same two agents.
+that runs one Kimi worker and one Codex coordinator from the published
+`ghcr.io/ai-pipestream/protomolt-worker-java:edge` image, plus the exact
+host-Java commands for the same two agents.
 
 Persistent coding workers can instead use the language-specific Java and C++
 images. They add compilers, build systems, gRPC generators, and common agent
