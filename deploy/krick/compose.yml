@@ -3,8 +3,11 @@
 # must not be deployed there. The agents reach the coordinator over its public
 # MCP endpoint.
 #
-#   ./gradlew :protomolt-agent-host:installDist
-#   docker compose -f deploy/krick/compose.yml build
+# Both agents run the published Java coding worker image from GHCR; no local
+# Gradle build or docker build is needed on this host. Set
+# PROTOMOLT_WORKER_IMAGE to pin a verified digest instead of the edge tag.
+#
+#   docker compose -f deploy/krick/compose.yml pull
 #   docker compose -f deploy/krick/compose.yml up -d
 #   docker compose -f deploy/krick/compose.yml logs -f
 #
@@ -16,10 +19,7 @@ name: protomolt-krick-agents
 
 services:
   kimi-worker:
-    build:
-      context: ../../apps/agent-host
-      dockerfile: Dockerfile
-    image: protomolt-agent-host:local
+    image: ${PROTOMOLT_WORKER_IMAGE:-ghcr.io/ai-pipestream/protomolt-worker-java:edge}
     container_name: protomolt-kimi-worker
     # Match the host user so the mounted worktree, state, and provider config
     # directories stay writable and host-side file ownership is unchanged.
@@ -54,10 +54,7 @@ services:
     restart: unless-stopped
 
   codex-coordinator:
-    build:
-      context: ../../apps/agent-host
-      dockerfile: Dockerfile
-    image: protomolt-agent-host:local
+    image: ${PROTOMOLT_WORKER_IMAGE:-ghcr.io/ai-pipestream/protomolt-worker-java:edge}
     container_name: protomolt-codex-coordinator
     user: "${KRICK_AGENT_UID:-1000}:${KRICK_AGENT_GID:-1000}"
     command:
