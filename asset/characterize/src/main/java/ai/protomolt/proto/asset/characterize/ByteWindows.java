@@ -5,11 +5,13 @@ package ai.protomolt.proto.asset.characterize;
  * window at the start of the content and a window at the end, addressed in
  * the asset's own offset space.
  *
- * <p>Identification never reads a whole asset. Every signature worth
- * evaluating is anchored — to the first bytes or to the last — so two
- * resident windows answer the question at a cost that does not grow with
- * the asset. A tarball of forty gigabytes and one of forty bytes cost the
- * same to identify.
+ * <p>Identification never reads a whole asset. Most published signatures
+ * are anchored to the first bytes or to the last, and none of them
+ * declares an unlimited reach, so two resident windows answer the question
+ * at a cost that does not grow with the asset. A tarball of forty
+ * gigabytes and one of forty bytes cost the same to identify. The minority
+ * anchored nowhere are searched inside the windows and report that they
+ * could not conclude, rather than an absence they never established.
  *
  * <p>Offsets are absolute, measured from the start of the content, and a
  * byte outside both windows is <em>not observable</em> rather than absent:

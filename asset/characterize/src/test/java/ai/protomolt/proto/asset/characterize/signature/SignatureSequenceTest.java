@@ -59,15 +59,28 @@ class SignatureSequenceTest {
     }
 
     @Test
-    @DisplayName("later pieces are measured from the end of the piece before")
+    @DisplayName("a later piece is floored by its distance, not capped by it")
     void chainedPieces() {
+        // Only the first piece is bounded above by its stated distance.
+        // For the pieces after it the registries publish a maximum their
+        // own matcher does not enforce, so it reads as "at least this far
+        // after", and treating it as a ceiling loses real matches.
         SignatureSequence signature = leading(
                 piece(0, 0, "'HEAD'"),
                 piece(2, 4, "'TAIL'"));
         assertThat(signature.matchIn(content("HEAD..TAIL"))).isEqualTo(Outcome.MATCHED);
         assertThat(signature.matchIn(content("HEAD....TAIL"))).isEqualTo(Outcome.MATCHED);
+        assertThat(signature.matchIn(content("HEAD.........TAIL"))).isEqualTo(Outcome.MATCHED);
+        // The minimum still binds: closer than the floor is no match.
         assertThat(signature.matchIn(content("HEAD.TAIL"))).isEqualTo(Outcome.NOT_MATCHED);
-        assertThat(signature.matchIn(content("HEAD.....TAIL"))).isEqualTo(Outcome.NOT_MATCHED);
+    }
+
+    @Test
+    @DisplayName("the first piece is still capped by its stated distance")
+    void firstPieceIsCapped() {
+        SignatureSequence signature = leading(piece(0, 4, "'MARK'"));
+        assertThat(signature.matchIn(content("....MARK"))).isEqualTo(Outcome.MATCHED);
+        assertThat(signature.matchIn(content(".....MARK"))).isEqualTo(Outcome.NOT_MATCHED);
     }
 
     @Test

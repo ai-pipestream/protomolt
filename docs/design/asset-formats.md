@@ -197,9 +197,31 @@ sets contain none, and a test over all 3460 distinct published expressions
 pins that, so the day one appears it surfaces in a build rather than in a
 slow read.
 
-Distances are measured to the edge of a signature's extent, not to the
-pattern inside it — the two differ whenever a wide flanking fragment is
-involved, and reading it the other way silently searches the wrong span.
+Three placement rules are not in the published grammar and have to be
+taken from the reference implementation's behaviour. Each one, read the
+obvious way instead, silently identifies nothing.
+
+- **Distances run to the edge of a signature's extent**, not to the
+  pattern inside it. The two differ whenever a wide flanking fragment is
+  involved.
+- **Only the first piece is capped by its stated maximum.** For the pieces
+  after it the maximum is published but not enforced, so it reads as a
+  floor: "at least this far after", not "at most". Reading it as a ceiling
+  costs a tenth of the corpus.
+- **Fragment alternatives at one position are searched, not committed
+  to.** They can differ in length, and the shortest that fits may leave
+  the next position nowhere to go.
+
+A sequence that declares no anchor at all is anchored nowhere rather than
+at the beginning: 2,576 of the 2,674 published sequences name an anchor
+and 98 name none. Those are searched within the windows, and where the
+windows cannot settle the question they report that, instead of an
+absence.
+
+These are measured, not asserted. The identifier runs against the format
+registry's own skeleton corpus, a file per signature built to match it:
+**2,250 of 2,255**. The five that remain are the five the registry itself
+publishes as not matching their own name.
 
 The definitions are bundled from DROID under the BSD 3-Clause licence,
 with attribution in `NOTICE` and `licenses/LICENSE-droid-signatures.txt`.
