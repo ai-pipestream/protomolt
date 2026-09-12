@@ -27,6 +27,9 @@ dependencies {
     // Classification: the asset family's identification seam and state
     // machine behind the archive's doors.
     implementation project(':protomolt-asset-characterize')
+    // Bridging: the routing rule and the transformations this host runs
+    // itself.
+    implementation project(':protomolt-asset-bridge')
     implementation libs.grpc.netty.shaded
     implementation libs.grpc.services
     implementation libs.grpc.inprocess

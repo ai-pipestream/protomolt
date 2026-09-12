@@ -238,6 +238,11 @@ Tests are testcontainers integration tests (Docker required): PostgreSQL 17
 for the ledger, LocalStack for S3, the full stack booted through
 `RepoServices` with no mocks.
 
+- `ArchiveBridgeIT` — bridging end to end: a classified container derives
+  its member listing beside the untouched original, a re-run is
+  idempotent by content, a bridge this host does not run reports
+  `DEFERRED`, a broken container fails loud and lands nothing, and an
+  unclassified or conflicted entry is refused by its state.
 - `ArchiveClassificationIT` — the classification state machine behind the
   doors: verification and conflict from real bytes, grammar refusals
   naming the rule, HTTP-door identification, after-the-fact
@@ -387,6 +392,9 @@ The design of record is [docs/design/archive.md](../docs/design/archive.md).
 - `ClassifyEntry` — declare (or re-declare) the entry's format and have
   characterization re-read the primary rendition's bytes; returns the
   state machine's resolution.
+- `BridgeEntry` — run the bridges the entry's classification makes
+  applicable, landing their derived renditions beside the untouched
+  original; returns one outcome per bridge considered.
 
 Entries carry an asset **classification** — the state machine from
 [docs/design/asset-formats.md](../docs/design/asset-formats.md):
@@ -397,6 +405,17 @@ tar — and a declaration must name its file) and an `ObjectStoreOrigin`
 (coordinates required); characterization reads the primary rendition's
 bytes through the asset family's one detection seam, and listings filter
 by state.
+
+A classified entry can then be **bridged**: `BridgeEntry` derives
+renditions under the platform's well-known names (`members` first) beside
+the original, each pinning its own `schema_subject` so the output is
+schema-validated data rather than loose bytes. Bridging is gated on the
+state machine — an `UNCLASSIFIED` or `CONFLICTED` entry names no single
+format and is refused `FAILED_PRECONDITION` — and every bridge reports
+what it did: `PRODUCED`, `UNCHANGED` (content addressing makes a re-run
+idempotent), `DEFERRED` (applicable, but its extraction rides a service
+this host does not run), or `FAILED` with the reason verbatim. Derived
+renditions never become the rendition an entry is characterized from.
 
 ### HTTP `POST /v1/archive:upload`
 

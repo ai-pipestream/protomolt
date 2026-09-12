@@ -33,6 +33,10 @@ A new leaf family, `asset/`:
   the parse coordinator's existing content sniffing and the archive's doors
   consult the same identifier and can never disagree about what a `tar`
   is.
+- **`asset/bridge`** — the transformations: the routing rule that says
+  which bridges a characterized format applies, the well-known derived
+  rendition names and the shape each output pins, and the pure-JDK bridges
+  a host can run without reaching any other service.
 
 The archive's spine already carries the metamodel's structural concepts,
 so none of them need new machinery: a *collection* is an archive; a *file
@@ -214,10 +218,10 @@ gate on quality the way it gates on classification state.
 ## Bridging: derived renditions under standard names
 
 A bridge is a characterization-gated transformation that adds derived
-renditions to the same entry — provenance-stamped, never replacing the
-original, refused when the entry is `CONFLICTED` or `UNCLASSIFIED`. Most
-format pairs deliberately do not bridge; a bridge exists only where a
-real tool in the platform produces it. The v1 bridge set:
+renditions to the same asset — provenance-stamped, never replacing the
+original, refused when the asset is `CONFLICTED` or `UNCLASSIFIED`. Most
+format pairs deliberately do not bridge; a bridge exists only where a real
+tool in the platform produces it. The v1 bridge set:
 
 | From (format) | Derived rendition | Content |
 | --- | --- | --- |
@@ -226,21 +230,69 @@ real tool in the platform produces it. The v1 bridge set:
 | `DelimitedTable` / `NdjsonDataset` | `schema` + `dataset` | inferred schema; the normalized tabular form (`CONTENT_CLASS_TABULAR_DATA`) |
 | `SpreadsheetDocument` | `dataset` | sheet data normalized for analysis tools |
 | `PdfDocument` / `WordDocument` / `HtmlDocument` | `text` | extracted prose (`INFORMATIONAL_TEXT`) |
-| `PdfDocument` (scanned) / `RasterImage` | `ocr-text` | recovered text with its measured `OCR_TEXT` quality profile |
+| `RasterImage` | `ocr-text` | recovered text with its measured `OCR_TEXT` quality profile |
 | chat/transcript formats | `conversation` | turn-segmented text (`CONVERSATIONAL_TEXT`) |
 
 The derived rendition names (`members`, `schema`, `dataset`, `text`,
 `ocr-text`, `conversation`) are well-known names in the archive's open
 rendition vocabulary — conventions, not a closed enum — and each derived
-rendition's descriptor pins its shape via `schema_subject`, so a bridge's
-output is itself schema-validated data, not loose bytes.
+rendition's descriptor pins its shape via `schema_subject` (taken from the
+generated message's own descriptor, so the pin cannot drift), so a
+bridge's output is itself schema-validated data, not loose bytes.
 
-Execution rides existing machinery end to end: the parse coordinator's
-plugin contract runs the extraction, a durable `bridge-entry` workflow
-(jobs family) makes a bridge a resumable run with evidence, the quality
-family scores what needs scoring, and the archive's `UploadRendition`
-lands the outputs with attribution. Bridging adds no new runtime — only
-the routing rule *characterized format → applicable bridges*.
+The bridge KINDS, by contrast, are a closed `BridgeKind` enum, for the
+same reason format claims are: bridge selection gates behavior. A scanned
+PDF is the one row above that is not a routing decision — "scanned" is a
+finding, not a property of the format, so a PDF routes to `text` and
+escalates to `ocr-text` only once the text bridge reports it found no
+prose.
+
+### Applicable, executable, and what a bridge reports
+
+Two questions are kept apart on purpose. **Applicability** is the routing
+rule above: a pure function of the format of record, which the state
+machine supplies (the declaration under `DECLARED`/`VERIFIED`, the
+identification under `IDENTIFIED`; the other two states name no single
+format and are refused). **Executability** is a property of the running
+host: the container bridge is pure JDK and runs anywhere, while text and
+OCR extraction ride a parser service that a given host may not reach.
+
+So every bridge a run considers reports an outcome, and none is silently
+skipped:
+
+- `PRODUCED` — a derived rendition landed.
+- `UNCHANGED` — the bridge reproduced exactly the bytes already stored.
+  Derived renditions are content-addressed like every other rendition, so
+  re-running a bridge moves no root checksum and lands no version:
+  idempotence falls out of the archive's addressing rather than needing a
+  bridge-ran-already flag.
+- `DEFERRED` — applicable here, executed elsewhere. The caller is told, so
+  it can route the work instead of assuming it done.
+- `FAILED` — the bridge ran and could not finish, with the reason
+  verbatim. Nothing lands.
+
+A run lands every rendition it produced in ONE new version, so bridging an
+asset costs one version however many bridges applied.
+
+### The derived-primary rule
+
+An entry classifies from its primary rendition, and bridging adds
+renditions to that entry — so a derived rendition must never become the
+primary, or bridging would silently re-point an asset's classification at
+its own output. The rule: the primary is `original` when the entry has
+one, otherwise the first rendition that is **not** a well-known derived
+name. The list of derived names comes from `BridgeKind` itself, so it
+cannot fall out of step with what the bridges actually write.
+
+### Execution beyond this host
+
+Bridges that need a real extraction tool ride existing machinery end to
+end: the parse coordinator's plugin contract runs the extraction, a
+durable `bridge-entry` workflow (jobs family) makes a bridge a resumable
+run with evidence, the quality family scores what needs scoring, and the
+archive's `UploadRendition` lands the outputs with attribution. Bridging
+adds no new runtime — only the routing rule *characterized format →
+applicable bridges*, and the outcome vocabulary that says who ran what.
 
 ## Surface changes
 
@@ -256,6 +308,10 @@ the routing rule *characterized format → applicable bridges*.
   request characterization; returns the resulting `Classification`.
 - `ListEntries` gains a classification-state filter;
   `ArchiveStats` gains per-state counts.
+- `BridgeEntry` RPC — run the bridges the entry's classification makes
+  applicable (or a named subset, refused by name when one does not
+  apply); returns the landed version and one `BridgeOutcome` per bridge
+  considered.
 
 **Characterization** (`asset/characterize`): one seam —
 `Characterizer.identify(bytes prefix, filename) → (FormatFact, evidence)`
@@ -300,9 +356,11 @@ rather than a parallel metadata system.
    engine; migrate parse sniffing onto it.
 3. Archive integration — classification storage, door validation, the
    `ClassifyEntry` RPC, state stats.
-4. Bridges, one at a time, each landing with its workflow and tests:
-   container `members` first (cheapest, purely structural), then
-   `schema`/`dataset`, then `text`/`ocr-text` with quality scoring.
+4. Bridges, one at a time, each landing with its tests: the routing
+   rule, the outcome vocabulary, and container `members` (cheapest,
+   purely structural, pure JDK); then `schema`/`dataset`; then
+   `text`/`ocr-text` with quality scoring, which is where the parser
+   plugin contract and the durable `bridge-entry` workflow enter.
 5. Search/metric facets over the new fields.
 
 ## Decisions of record

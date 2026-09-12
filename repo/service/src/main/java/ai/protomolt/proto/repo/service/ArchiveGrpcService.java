@@ -1,6 +1,8 @@
 package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.repo.archive.v1.ArchiveServiceGrpc;
+import ai.protomolt.proto.repo.archive.v1.BridgeEntryRequest;
+import ai.protomolt.proto.repo.archive.v1.BridgeEntryResponse;
 import ai.protomolt.proto.repo.archive.v1.ClassifyEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.ClassifyEntryResponse;
 import ai.protomolt.proto.repo.archive.v1.CreateArchiveRequest;
@@ -135,6 +137,12 @@ final class ArchiveGrpcService extends ArchiveServiceGrpc.ArchiveServiceImplBase
     public void classifyEntry(ClassifyEntryRequest request,
                               StreamObserver<ClassifyEntryResponse> observer) {
         GrpcErrors.run(observer, () -> operations.classifyEntry(request));
+    }
+
+    @Override
+    public void bridgeEntry(BridgeEntryRequest request,
+                            StreamObserver<BridgeEntryResponse> observer) {
+        GrpcErrors.run(observer, () -> operations.bridgeEntry(request));
     }
 
     @Override

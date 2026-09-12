@@ -1,0 +1,6 @@
+description = 'Bridges: the characterization-gated transformations that derive renditions from an asset, and the routing rule that says which apply'
+
+dependencies {
+    api project(':protomolt-asset-proto')
+    api project(':protomolt-asset-characterize')
+}
