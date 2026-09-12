@@ -4,7 +4,10 @@ import ai.protomolt.proto.composer.Channels;
 import ai.protomolt.proto.composer.NodeContext;
 import ai.protomolt.proto.composer.ServiceModule;
 import ai.protomolt.proto.composer.ServiceMount;
+import ai.protomolt.proto.registry.GitSchemaRegistryStore;
 import io.grpc.Server;
+
+import java.util.List;
 
 /**
  * The document store as a mountable role. Wiring starts the in-process
@@ -49,6 +52,17 @@ public final class RepoServiceModule implements ServiceModule {
         // listener is the one reachable from elsewhere, so that is the one guarded.
         String apiToken = context.environment().get("PROTOMOLT_API_TOKEN");
         String credential = apiToken == null || apiToken.isBlank() ? null : apiToken;
+        // With a co-mounted registry, register the bridge-entry workflow so
+        // operators can submit bridging as a durable run by name; without one
+        // the two RPCs still answer, there is just no declared envelope.
+        List<GitSchemaRegistryStore> registries =
+                context.contributions().all(GitSchemaRegistryStore.class);
+        if (!registries.isEmpty()) {
+            registries.getFirst().putWorkflow(
+                    ArchiveWorkflows.BRIDGE_ENTRY_WORKFLOW,
+                    ArchiveWorkflows.bridgeEntryWorkflow(
+                            context.channels().targetOf(ROLE), 300_000).toString());
+        }
         return new ServiceMount() {
             @Override
             public void start() {

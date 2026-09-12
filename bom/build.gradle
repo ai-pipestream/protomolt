@@ -125,6 +125,7 @@ def supportedModules = [
         'protomolt-asset-proto',
         'protomolt-asset-characterize',
         'protomolt-asset-bridge',
+        'protomolt-asset-bridge-parse',
         'protomolt-asset-catalog',
         'protomolt-repo-proto',
         'protomolt-repo-container',

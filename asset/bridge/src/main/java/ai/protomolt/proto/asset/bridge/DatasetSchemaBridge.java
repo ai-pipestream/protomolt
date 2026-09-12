@@ -283,13 +283,14 @@ public final class DatasetSchemaBridge implements Bridge {
         if (exhausted) {
             return Derivation.of(schema);
         }
-        return new Derivation(schema, null, List.of(
+        return new Derivation(schema.toByteArray(), null, List.of(
                 "schema inferred from the first " + inspected
                         + " rows; the row count is unknown"));
     }
 
     private static Derivation empty(String why) {
-        return new Derivation(DatasetSchema.newBuilder().setRowCount(0).build(), null,
+        return new Derivation(
+                DatasetSchema.newBuilder().setRowCount(0).build().toByteArray(), null,
                 List.of(why));
     }
 }

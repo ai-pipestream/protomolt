@@ -128,7 +128,7 @@ class DatasetSchemaBridgeTest {
         Bridge.Derivation derivation = new DatasetSchemaBridge(10).derive(
                 new ByteArrayInputStream(rows.toString().getBytes(StandardCharsets.UTF_8)),
                 new Bridge.Context(csv(","), "rows.csv"));
-        DatasetSchema schema = (DatasetSchema) derivation.content();
+        DatasetSchema schema = DatasetSchema.parseFrom(derivation.content());
 
         assertThat(schema.getRowsInspected()).isEqualTo(10);
         assertThat(schema.getRowCount()).isEqualTo(-1);
@@ -268,8 +268,8 @@ class DatasetSchemaBridgeTest {
     }
 
     private DatasetSchema schema(FormatFact format, byte[] content) throws IOException {
-        return (DatasetSchema) bridge.derive(new ByteArrayInputStream(content),
-                new Bridge.Context(format, "dataset")).content();
+        return DatasetSchema.parseFrom(bridge.derive(new ByteArrayInputStream(content),
+                new Bridge.Context(format, "dataset")).content());
     }
 
     private static DatasetField field(DatasetSchema schema, String name) {

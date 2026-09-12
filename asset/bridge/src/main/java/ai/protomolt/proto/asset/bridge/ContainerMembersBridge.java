@@ -219,12 +219,12 @@ public final class ContainerMembersBridge implements Bridge {
         }
 
         Derivation complete() {
-            return new Derivation(build(), null, warnings(List.of()));
+            return new Derivation(build().toByteArray(), null, warnings(List.of()));
         }
 
         Derivation truncated(String reason) {
             members.setTruncated(true).setTruncationReason(reason);
-            return new Derivation(build(), null, warnings(List.of(
+            return new Derivation(build().toByteArray(), null, warnings(List.of(
                     "container listing truncated: " + reason)));
         }
 

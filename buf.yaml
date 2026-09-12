@@ -38,6 +38,8 @@ modules:
     name: buf.build/ai-pipestream/asset
   - path: asset/catalog/src/main/proto
     name: buf.build/ai-pipestream/asset-catalog
+  - path: asset/bridge-parse/src/main/proto
+    name: buf.build/ai-pipestream/asset-bridge-parse
   - path: repo/proto/src/main/proto
     name: buf.build/ai-pipestream/repo
   - path: account/proto/src/main/proto

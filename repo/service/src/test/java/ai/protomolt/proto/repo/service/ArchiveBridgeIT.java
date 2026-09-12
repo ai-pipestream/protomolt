@@ -9,8 +9,16 @@ import ai.protomolt.proto.asset.v1.DatasetSchema;
 import ai.protomolt.proto.asset.v1.DelimitedTable;
 import ai.protomolt.proto.asset.v1.FieldKind;
 import ai.protomolt.proto.asset.v1.HeaderPresence;
+import ai.protomolt.proto.asset.v1.ContentClass;
+import ai.protomolt.proto.asset.v1.ContentProfile;
 import ai.protomolt.proto.asset.v1.ParquetDataset;
+import ai.protomolt.proto.asset.v1.QualityScore;
+import ai.protomolt.proto.asset.bridge.Bridge;
+import ai.protomolt.proto.asset.bridge.BridgeEngine;
+import ai.protomolt.proto.asset.bridge.ContainerMembersBridge;
+import ai.protomolt.proto.asset.bridge.DatasetSchemaBridge;
 import ai.protomolt.proto.asset.v1.FormatFact;
+import ai.protomolt.proto.asset.v1.HtmlDocument;
 import ai.protomolt.proto.asset.v1.PdfDocument;
 import ai.protomolt.proto.asset.v1.PlainText;
 import ai.protomolt.proto.asset.v1.TarArchive;
@@ -50,6 +58,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
 import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -98,7 +107,13 @@ class ArchiveBridgeIT {
                 "it-bridge",
                 0,
                 null, null, null, null, 0, 0L);
-        services = RepoServices.build(config);
+        // The standard bridges plus a stand-in for the parser lane: prose
+        // that finds nothing, and OCR that recovers text with a measured
+        // score. What is under test is the archive's escalation, not a
+        // parser.
+        services = RepoServices.build(config, new BridgeEngine(List.of(
+                new ContainerMembersBridge(), new DatasetSchemaBridge(),
+                new SilentProseBridge(), new RecoveringOcrBridge())));
         services.startInProcess("bridge-it");
         channel = InProcessChannelBuilder.forName("bridge-it").build();
         archives = ArchiveServiceGrpc.newBlockingStub(channel);
@@ -258,23 +273,123 @@ class ArchiveBridgeIT {
     }
 
     @Test
-    void aBridgeThisHostDoesNotRunIsDeferredNotSkipped() {
-        // A PDF applies the text bridge, whose extraction rides a parser
-        // service. The archive says so by name instead of reporting success.
-        put("paper", "paper.pdf", FormatFact.newBuilder()
-                        .setPdf(PdfDocument.newBuilder().setFilename("paper.pdf")).build(),
-                "%PDF-1.7\nnot really a pdf".getBytes(StandardCharsets.UTF_8));
+    void aScannedDocumentEscalatesToOcrOnlyOnceTheProseBridgeFindsNothing() {
+        // The routing rule sends a PDF to the text bridge and nowhere else.
+        // "Scanned" is a finding, so OCR joins the run only after the prose
+        // bridge reports it recovered nothing.
+        put("scan", "scan.pdf", FormatFact.newBuilder()
+                        .setPdf(PdfDocument.newBuilder().setFilename("scan.pdf")).build(),
+                "%PDF-1.7 a scanned page".getBytes(StandardCharsets.UTF_8));
 
-        BridgeEntryResponse response = archives.bridgeEntry(bridge("paper"));
+        BridgeEntryResponse response = archives.bridgeEntry(bridge("scan"));
+
+        assertThat(response.getOutcomesList()).extracting(
+                        outcome -> outcome.getBridge() + ":" + outcome.getRendition())
+                .containsExactly(
+                        "BRIDGE_KIND_DOCUMENT_TEXT:text",
+                        "BRIDGE_KIND_OCR_TEXT:ocr-text");
+        assertThat(response.getOutcomes(0).getDetail())
+                .contains("recovered no prose");
+
+        GetEntryResponse entry = archives.getEntry(GetEntryRequest.newBuilder()
+                .setAddress(address("scan")).build());
+        // The empty prose rendition is stored as empty rather than absent:
+        // the bridge ran, and what it found is nothing.
+        assertThat(renditionNamed(entry, "text").getSizeBytes()).isZero();
+        // The recovered text carries a measured score, as the content
+        // contract requires of OCR.
+        RenditionManifestEntry ocr = renditionNamed(entry, "ocr-text");
+        assertThat(ocr.getRendition().getMediaType()).isEqualTo("text/plain");
+        assertThat(ocr.getContentProfile().getContentClass())
+                .isEqualTo(ContentClass.CONTENT_CLASS_OCR_TEXT);
+        assertThat(ocr.getContentProfile().getQuality().getScore()).isGreaterThan(0.0);
+        assertThat(new String(bytesOf(entry, "ocr-text").toByteArray(),
+                StandardCharsets.UTF_8)).contains("recovered");
+    }
+
+    @Test
+    void aDocumentWithProseNeverEscalates() {
+        put("readable", "readable.html", FormatFact.newBuilder()
+                        .setHtml(HtmlDocument.newBuilder()
+                                .setFilename("readable.html")).build(),
+                "<html><body>real prose</body></html>".getBytes(StandardCharsets.UTF_8));
+
+        BridgeEntryResponse response = archives.bridgeEntry(bridge("readable"));
+
+        assertThat(response.getOutcomesList()).singleElement().satisfies(outcome ->
+                assertThat(outcome.getBridge())
+                        .isEqualTo(BridgeKind.BRIDGE_KIND_DOCUMENT_TEXT));
+    }
+
+    @Test
+    void aBridgeThisHostDoesNotRunIsDeferredNotSkipped() {
+        // A parquet dataset applies the schema bridge, which reads no
+        // Parquet footer here. The archive says so by name instead of
+        // reporting success.
+        put("columns", "columns.parquet", FormatFact.newBuilder()
+                        .setParquet(ParquetDataset.newBuilder()
+                                .setFilename("columns.parquet")).build(),
+                "PAR1 not really a parquet file".getBytes(StandardCharsets.UTF_8));
+
+        BridgeEntryResponse response = archives.bridgeEntry(bridge("columns"));
 
         assertThat(response.getOutcomesList()).singleElement().satisfies(outcome -> {
-            assertThat(outcome.getBridge()).isEqualTo(BridgeKind.BRIDGE_KIND_DOCUMENT_TEXT);
-            assertThat(outcome.getRendition()).isEqualTo("text");
+            assertThat(outcome.getBridge()).isEqualTo(BridgeKind.BRIDGE_KIND_DATASET_SCHEMA);
             assertThat(outcome.getStatus()).isEqualTo(BridgeStatus.BRIDGE_STATUS_DEFERRED);
-            assertThat(outcome.getDetail()).contains("parser service");
+            assertThat(outcome.getDetail()).contains("Parquet reader");
         });
         // Nothing landed, so the entry is still at the version the save made.
         assertThat(response.getVersion()).isEqualTo(1);
+    }
+
+    /** Stands in for a parser that recovers no prose from a scan. */
+    private static final class SilentProseBridge implements Bridge {
+        @Override
+        public BridgeKind kind() {
+            return BridgeKind.BRIDGE_KIND_DOCUMENT_TEXT;
+        }
+
+        @Override
+        public boolean handles(FormatFact format) {
+            return format.getFormatCase() == FormatFact.FormatCase.PDF
+                    || format.getFormatCase() == FormatFact.FormatCase.HTML;
+        }
+
+        @Override
+        public Derivation derive(InputStream original, Context context) {
+            String text = context.format().getFormatCase() == FormatFact.FormatCase.HTML
+                    ? "real prose" : "";
+            return Derivation.ofText(text, ContentProfile.newBuilder()
+                            .setContentClass(ContentClass.CONTENT_CLASS_INFORMATIONAL_TEXT)
+                            .build(),
+                    text.isEmpty()
+                            ? List.of("the parser recovered no prose from this document")
+                            : List.of());
+        }
+    }
+
+    /** Stands in for an OCR pass that recovers text and measures it. */
+    private static final class RecoveringOcrBridge implements Bridge {
+        @Override
+        public BridgeKind kind() {
+            return BridgeKind.BRIDGE_KIND_OCR_TEXT;
+        }
+
+        @Override
+        public boolean handles(FormatFact format) {
+            return format.getFormatCase() == FormatFact.FormatCase.PDF
+                    || format.getFormatCase() == FormatFact.FormatCase.IMAGE;
+        }
+
+        @Override
+        public Derivation derive(InputStream original, Context context) {
+            return Derivation.ofText("text recovered from the scanned page",
+                    ContentProfile.newBuilder()
+                            .setContentClass(ContentClass.CONTENT_CLASS_OCR_TEXT)
+                            .setQuality(QualityScore.newBuilder().setScore(0.72))
+                            .build(),
+                    List.of());
+        }
     }
 
     @Test
