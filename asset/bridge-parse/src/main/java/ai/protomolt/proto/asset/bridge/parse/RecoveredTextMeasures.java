@@ -8,6 +8,7 @@ import ai.protomolt.proto.quality.QualityReport;
 import ai.protomolt.proto.quality.QualityScorer;
 
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Measuring recovered text, and scoring what was measured.
@@ -32,6 +33,14 @@ public final class RecoveredTextMeasures {
 
     /** Shortest line that reads as prose rather than a fragment. */
     private static final int MIN_PROSE_LINE = 20;
+
+    /**
+     * Punctuation hanging off either end of a token. Compiled once: a page
+     * of OCR is hundreds of thousands of tokens, and compiling a pattern
+     * per token would cost more than every other measurement together.
+     */
+    private static final Pattern EDGE_PUNCTUATION =
+            Pattern.compile("^[\\p{Punct}]+|[\\p{Punct}]+$");
 
     /** The punctuation prose is made of, as opposed to symbol confetti. */
     private static final String SENTENCE_PUNCTUATION = ".,;:!?'\"()-\u2019\u201c\u201d\u2014";
@@ -139,7 +148,7 @@ public final class RecoveredTextMeasures {
 
     /** Word-shaped: plausible length, mostly letters. */
     private static boolean wordShaped(String token) {
-        String trimmed = token.replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "");
+        String trimmed = EDGE_PUNCTUATION.matcher(token).replaceAll("");
         if (trimmed.length() < MIN_WORD_LENGTH || trimmed.length() > MAX_WORD_LENGTH) {
             return false;
         }
