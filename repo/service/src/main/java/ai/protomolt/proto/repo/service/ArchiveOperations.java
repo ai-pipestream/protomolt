@@ -832,15 +832,14 @@ final class ArchiveOperations {
                     + ArchiveClassifications.stateName(state)
                     + "; bridging needs a classification that names exactly one format");
         }
-        List<BridgeKind> applicable =
-                Bridges.applicableTo(Bridges.formatOfRecord(classification));
+        FormatFact format = Bridges.formatOfRecord(classification);
+        List<BridgeKind> applicable = Bridges.applicableTo(format);
         List<BridgeKind> wanted = request.getBridgesList().isEmpty()
                 ? applicable : request.getBridgesList();
         for (BridgeKind kind : request.getBridgesList()) {
             if (!applicable.contains(kind)) {
                 throw invalidArgument("bridge " + kind.name() + " does not apply to a "
-                        + Bridges.formatOfRecord(classification).getFormatCase().name()
-                        .toLowerCase(Locale.ROOT) + " asset");
+                        + format.getFormatCase().name().toLowerCase(Locale.ROOT) + " asset");
             }
         }
 
@@ -852,7 +851,6 @@ final class ArchiveOperations {
                     + "' has no present primary rendition to bridge from");
         }
 
-        FormatFact format = Bridges.formatOfRecord(classification);
         List<BridgeOutcome.Builder> outcomes = new ArrayList<>();
         Map<RenditionDescriptor, Derived> produced = new LinkedHashMap<>();
         // The run list can grow: a document the prose bridge finds nothing
