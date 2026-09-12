@@ -407,14 +407,16 @@ bytes through the asset family's one detection seam, and listings filter
 by state.
 
 A classified entry can then be **bridged**: `BridgeEntry` derives
-renditions under the platform's well-known names (`members` first) beside
-the original, each pinning its own `schema_subject` so the output is
+renditions under the platform's well-known names (`members` for a tar or
+zip, `schema` for a delimited table, NDJSON file, or Avro container)
+beside the original, each pinning its own `schema_subject` so the output is
 schema-validated data rather than loose bytes. Bridging is gated on the
 state machine — an `UNCLASSIFIED` or `CONFLICTED` entry names no single
 format and is refused `FAILED_PRECONDITION` — and every bridge reports
 what it did: `PRODUCED`, `UNCHANGED` (content addressing makes a re-run
-idempotent), `DEFERRED` (applicable, but its extraction rides a service
-this host does not run), or `FAILED` with the reason verbatim. Derived
+idempotent), `DEFERRED` (applicable, but the work needs a reader or a
+service this host does not carry, named in the detail), or `FAILED` with
+the reason verbatim. Derived
 renditions never become the rendition an entry is characterized from.
 
 ### HTTP `POST /v1/archive:upload`

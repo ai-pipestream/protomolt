@@ -1,6 +1,7 @@
 package ai.protomolt.proto.asset.bridge;
 
 import ai.protomolt.proto.asset.v1.BridgeKind;
+import ai.protomolt.proto.asset.v1.FormatFact;
 
 import java.util.EnumMap;
 import java.util.List;
@@ -42,20 +43,23 @@ public final class BridgeEngine {
      * @return the standard engine
      */
     public static BridgeEngine standard() {
-        return new BridgeEngine(List.of(new ContainerMembersBridge()));
+        return new BridgeEngine(List.of(new ContainerMembersBridge(),
+                new DatasetSchemaBridge()));
     }
 
     /**
-     * The bridge for a kind, when this engine can run it.
+     * The bridge for a kind and format, when this engine can run it.
      *
      * @param kind the bridge kind
-     * @return the bridge, or empty when the kind executes elsewhere
+     * @param format the format of record
+     * @return the bridge, or empty when the pair executes elsewhere
      */
-    public Optional<Bridge> forKind(BridgeKind kind) {
-        return Optional.ofNullable(bridges.get(kind));
+    public Optional<Bridge> forKind(BridgeKind kind, FormatFact format) {
+        return Optional.ofNullable(bridges.get(kind))
+                .filter(bridge -> bridge.handles(format));
     }
 
-    /** The kinds this engine executes in process. */
+    /** The kinds this engine has a bridge for at all. */
     public Set<BridgeKind> executable() {
         return Set.copyOf(bridges.keySet());
     }

@@ -4,6 +4,12 @@ import ai.protomolt.proto.asset.v1.BridgeKind;
 import ai.protomolt.proto.asset.v1.BridgeStatus;
 import ai.protomolt.proto.asset.v1.ContainerMember;
 import ai.protomolt.proto.asset.v1.ContainerMembers;
+import ai.protomolt.proto.asset.v1.DatasetField;
+import ai.protomolt.proto.asset.v1.DatasetSchema;
+import ai.protomolt.proto.asset.v1.DelimitedTable;
+import ai.protomolt.proto.asset.v1.FieldKind;
+import ai.protomolt.proto.asset.v1.HeaderPresence;
+import ai.protomolt.proto.asset.v1.ParquetDataset;
 import ai.protomolt.proto.asset.v1.FormatFact;
 import ai.protomolt.proto.asset.v1.PdfDocument;
 import ai.protomolt.proto.asset.v1.PlainText;
@@ -192,6 +198,63 @@ class ArchiveBridgeIT {
         GetEntryResponse entry = archives.getEntry(GetEntryRequest.newBuilder()
                 .setAddress(address("archive-zip")).build());
         assertThat(renditionNames(entry)).contains("members");
+    }
+
+    @Test
+    void aDeclaredCsvDerivesItsSchemaFromTheDeclarationsOwnParsingRules()
+            throws InvalidProtocolBufferException {
+        // Characterization never identifies a delimited table, because the
+        // delimiter and header presence are part of the producer's claim.
+        // The bridge reads them straight off that claim.
+        put("rows", "rows.csv", FormatFact.newBuilder()
+                        .setDelimited(DelimitedTable.newBuilder()
+                                .setFilename("rows.csv")
+                                .setDelimiter(";")
+                                .setHeader(HeaderPresence.HEADER_PRESENCE_PRESENT)).build(),
+                "id;label;ratio\n1;first;0.5\n2;second;1.5\n"
+                        .getBytes(StandardCharsets.UTF_8));
+
+        BridgeEntryResponse response = archives.bridgeEntry(bridge("rows"));
+
+        assertThat(response.getOutcomesList()).extracting(
+                        outcome -> outcome.getBridge() + ":" + outcome.getStatus())
+                .containsExactly(
+                        "BRIDGE_KIND_DATASET_SCHEMA:BRIDGE_STATUS_PRODUCED",
+                        "BRIDGE_KIND_TABULAR_DATASET:BRIDGE_STATUS_DEFERRED");
+
+        GetEntryResponse entry = archives.getEntry(GetEntryRequest.newBuilder()
+                .setAddress(address("rows")).build());
+        assertThat(renditionNamed(entry, "schema").getRendition().getSchemaSubject())
+                .isEqualTo("ai.protomolt.proto.asset.v1.DatasetSchema");
+
+        DatasetSchema schema = DatasetSchema.parseFrom(bytesOf(entry, "schema"));
+        assertThat(schema.getFieldsList()).extracting(DatasetField::getName)
+                .containsExactly("id", "label", "ratio");
+        assertThat(schema.getFieldsList()).extracting(DatasetField::getKind)
+                .containsExactly(FieldKind.FIELD_KIND_INTEGER,
+                        FieldKind.FIELD_KIND_STRING,
+                        FieldKind.FIELD_KIND_DOUBLE);
+        assertThat(schema.getRowCount()).isEqualTo(2);
+        assertThat(schema.getDeclaredByFormat()).isFalse();
+    }
+
+    @Test
+    void aParquetAssetDefersItsSchemaWithTheReasonNamed() {
+        put("columns", "columns.parquet", FormatFact.newBuilder()
+                        .setParquet(ParquetDataset.newBuilder()
+                                .setFilename("columns.parquet")).build(),
+                "PAR1 not really a parquet file".getBytes(StandardCharsets.UTF_8));
+
+        BridgeEntryResponse response = archives.bridgeEntry(bridge("columns"));
+
+        // One kind, two formats, two answers: the schema bridge reads a CSV
+        // and does not read a Parquet footer, and the caller is told which.
+        assertThat(response.getOutcomesList()).singleElement().satisfies(outcome -> {
+            assertThat(outcome.getBridge()).isEqualTo(BridgeKind.BRIDGE_KIND_DATASET_SCHEMA);
+            assertThat(outcome.getStatus()).isEqualTo(BridgeStatus.BRIDGE_STATUS_DEFERRED);
+            assertThat(outcome.getDetail()).contains("Parquet reader");
+        });
+        assertThat(response.getVersion()).isEqualTo(1);
     }
 
     @Test

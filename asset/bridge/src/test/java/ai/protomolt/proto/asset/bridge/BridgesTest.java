@@ -155,10 +155,51 @@ class BridgesTest {
     @Test
     void theStandardEngineRunsOnlyWhatNeedsNoOtherService() {
         BridgeEngine engine = BridgeEngine.standard();
-        assertThat(engine.executable())
-                .containsExactly(BridgeKind.BRIDGE_KIND_CONTAINER_MEMBERS);
-        assertThat(engine.forKind(BridgeKind.BRIDGE_KIND_CONTAINER_MEMBERS)).isPresent();
-        assertThat(engine.forKind(BridgeKind.BRIDGE_KIND_DOCUMENT_TEXT)).isEmpty();
+        assertThat(engine.executable()).containsExactlyInAnyOrder(
+                BridgeKind.BRIDGE_KIND_CONTAINER_MEMBERS,
+                BridgeKind.BRIDGE_KIND_DATASET_SCHEMA);
+        assertThat(engine.forKind(BridgeKind.BRIDGE_KIND_CONTAINER_MEMBERS, tar()))
+                .isPresent();
+        assertThat(engine.forKind(BridgeKind.BRIDGE_KIND_DOCUMENT_TEXT, tar())).isEmpty();
+    }
+
+    @Test
+    void executabilityIsPerFormatNotJustPerKind() {
+        BridgeEngine engine = BridgeEngine.standard();
+        FormatFact ndjson = FormatFact.newBuilder()
+                .setNdjson(NdjsonDataset.newBuilder().setFilename("rows.ndjson")).build();
+        FormatFact parquet = FormatFact.newBuilder()
+                .setParquet(ParquetDataset.newBuilder().setFilename("f.parquet")).build();
+
+        // One kind, two formats, two answers: the schema bridge reads NDJSON
+        // and does not read a Parquet footer.
+        assertThat(engine.forKind(BridgeKind.BRIDGE_KIND_DATASET_SCHEMA, ndjson)).isPresent();
+        assertThat(engine.forKind(BridgeKind.BRIDGE_KIND_DATASET_SCHEMA, parquet)).isEmpty();
+    }
+
+    @Test
+    void everyDeferrableKindNamesWhatItNeeds() {
+        FormatFact parquet = FormatFact.newBuilder()
+                .setParquet(ParquetDataset.newBuilder().setFilename("f.parquet")).build();
+        assertThat(Bridges.deferralReason(BridgeKind.BRIDGE_KIND_DATASET_SCHEMA, parquet))
+                .contains("Parquet reader");
+        assertThat(Bridges.deferralReason(BridgeKind.BRIDGE_KIND_TABULAR_DATASET, parquet))
+                .contains("Parquet emitter");
+        assertThat(Bridges.deferralReason(BridgeKind.BRIDGE_KIND_DOCUMENT_TEXT, tar()))
+                .contains("parser service");
+        assertThat(Bridges.deferralReason(BridgeKind.BRIDGE_KIND_OCR_TEXT, tar()))
+                .contains("parser service");
+    }
+
+    @Test
+    void theDerivedNamesAreExactlyWhatTheBridgesWrite() {
+        // The list a consumer excludes when picking a primary rendition comes
+        // from BridgeKind itself, so it cannot fall out of step.
+        assertThat(Bridges.derivedName("members")).isTrue();
+        assertThat(Bridges.derivedName("schema")).isTrue();
+        assertThat(Bridges.derivedName("ocr-text")).isTrue();
+        assertThat(Bridges.derivedName("original")).isFalse();
+        assertThat(Bridges.derivedName("zip-file")).isFalse();
     }
 
     private static FormatFact tar() {
