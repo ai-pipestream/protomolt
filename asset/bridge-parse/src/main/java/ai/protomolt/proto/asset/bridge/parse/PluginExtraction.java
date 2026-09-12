@@ -65,6 +65,9 @@ public final class PluginExtraction implements ParserExtraction {
             // Identity is provenance, not correctness: a parser that answered
             // the parse but not GetParserInfo still produced text.
         }
+        // The plugin contract carries no confidence field, so nothing is
+        // reported here rather than a number being invented. An extractor
+        // whose engine states one supplies it through its own Result.
         return Result.of(textOf(outcome), name, version,
                 outcome.output().getWarningsList());
     }
