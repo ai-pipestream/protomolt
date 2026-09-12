@@ -89,6 +89,9 @@ public final class AssetCatalogRows {
             }
             ContentProfile profile = rendition.getContentProfile();
             if (contentClass.isEmpty()) {
+                // Manifests are ordered by rendition name, so an asset with
+                // several profiled renditions reports the first of them by
+                // that order — the same one on every projection.
                 contentClass = contentClassName(profile);
             }
             if (profile.hasQuality()) {

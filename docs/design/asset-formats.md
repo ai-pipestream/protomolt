@@ -233,6 +233,12 @@ tool in the platform produces it. The v1 bridge set:
 | `RasterImage`, and a `PdfDocument` the text bridge found nothing in | `ocr-text` | recovered text with its measured `OCR_TEXT` quality profile |
 | chat/transcript formats | `conversation` | turn-segmented text (`CONVERSATIONAL_TEXT`) |
 
+The last row routes from nothing yet: no chat or transcript format is in
+the v1 registry, so the `conversation` kind exists in the contract and the
+routing rule sends it no format. A format joins the registry when
+something in the tree validates or bridges it, and this bridge is waiting
+on that, not the other way round.
+
 The derived rendition names (`members`, `schema`, `dataset`, `text`,
 `ocr-text`, `conversation`) are well-known names in the archive's open
 rendition vocabulary — conventions, not a closed enum — and each derived
@@ -241,7 +247,10 @@ generated message's own descriptor, so the pin cannot drift), so a
 bridge's output is itself schema-validated data, not loose bytes.
 
 The bridge KINDS, by contrast, are a closed `BridgeKind` enum, for the
-same reason format claims are: bridge selection gates behavior.
+same reason format claims are: bridge selection gates behavior. Adding a
+bridge is therefore an additive contract change — a new arm, its rendition
+name, its shape pin, its routing entry, its deferral reason, and an
+implementation — the same discipline as growing the format registry.
 
 ### Applicable, executable, and what a bridge reports
 
