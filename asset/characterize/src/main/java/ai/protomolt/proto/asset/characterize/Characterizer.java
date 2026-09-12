@@ -3,6 +3,7 @@ package ai.protomolt.proto.asset.characterize;
 import ai.protomolt.proto.asset.characterize.container.ContainerFormats;
 import ai.protomolt.proto.asset.characterize.container.ContainerIdentification;
 import ai.protomolt.proto.asset.characterize.container.ContainerKind;
+import ai.protomolt.proto.asset.characterize.signature.BinaryIdentification;
 import ai.protomolt.proto.asset.v1.AvroDataset;
 import ai.protomolt.proto.asset.v1.CharacterizationEvidence;
 import ai.protomolt.proto.asset.v1.FormatFact;
@@ -108,6 +109,9 @@ public final class Characterizer {
         }
         if (!extension.isEmpty()) {
             evidence.add(evidence("extension", "filename extension is ." + extension));
+        }
+        if (fact == null) {
+            publishedEvidence(windows, evidence);
         }
         return new Identification(fact, List.copyOf(evidence));
     }
@@ -304,6 +308,55 @@ public final class Characterizer {
                 .setFilename(matching(filename, FormatGrammars.IMAGE))).build();
     }
 
+    /** How many published formats an unclassified asset lists by name. */
+    private static final int PUBLISHED_EVIDENCE_LIMIT = 4;
+
+    /** The contract's limit on one observation. */
+    private static final int OBSERVATION_LIMIT = 500;
+
+    /**
+     * What the wider published signature set makes of an asset the
+     * registry could not place.
+     *
+     * <p>This runs only when nothing was concluded, which is both where it
+     * is useful and where its cost is affordable. Placing an asset takes a
+     * handful of table lookups; running a couple of thousand published
+     * signatures takes long enough to be worth avoiding on the assets that
+     * were already placed. On the assets that were not, a backlog entry
+     * reading "the bytes carry the signature of a particular published
+     * format" is the difference between something an operator can act on
+     * and an opaque blob.
+     *
+     * <p>None of it becomes a conclusion. The registry names the formats
+     * this platform can act on; a signature hit outside that list is an
+     * observation about bytes and stays one.
+     */
+    private static void publishedEvidence(ByteWindows windows,
+                                          List<CharacterizationEvidence> evidence) {
+        BinaryIdentification.Result published = BinaryIdentification.identify(windows);
+        if (published.hits().isEmpty()) {
+            evidence.add(evidence("published-signature", "no published signature matches: "
+                    + published.evaluated() + " were evaluated and " + published.notEvaluable()
+                    + " reached outside the captured windows"));
+            return;
+        }
+        int reported = 0;
+        for (BinaryIdentification.Hit hit : published.hits()) {
+            if (reported == PUBLISHED_EVIDENCE_LIMIT) {
+                break;
+            }
+            String mediaType = hit.mediaType().isBlank() ? "" : ", " + hit.mediaType();
+            evidence.add(evidence("published-signature", "the bytes carry the signature of "
+                    + hit.label() + " (" + hit.formatId() + ")" + mediaType));
+            reported++;
+        }
+        int remaining = published.hits().size() - reported;
+        if (remaining > 0) {
+            evidence.add(evidence("published-signature",
+                    remaining + " further published formats also match"));
+        }
+    }
+
     /** The filename when it matches the grammar; "" (left unset) otherwise. */
     private static String matching(String filename, Pattern grammar) {
         return filename != null && grammar.matcher(filename).matches() ? filename : "";
@@ -312,7 +365,8 @@ public final class Characterizer {
     private static CharacterizationEvidence evidence(String signal, String observation) {
         return CharacterizationEvidence.newBuilder()
                 .setSignal(signal)
-                .setObservation(observation)
+                .setObservation(observation.length() <= OBSERVATION_LIMIT
+                        ? observation : observation.substring(0, OBSERVATION_LIMIT))
                 .build();
     }
 }

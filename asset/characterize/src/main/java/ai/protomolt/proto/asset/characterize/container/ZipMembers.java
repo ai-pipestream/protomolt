@@ -29,7 +29,7 @@ import java.util.zip.Inflater;
  */
 public final class ZipMembers {
 
-    /** The signature of a central directory record, {@code PK}. */
+    /** The signature of a central directory record, the bytes {@code 50 4B 01 02}. */
     private static final byte[] DIRECTORY_ENTRY = {'P', 'K', 0x01, 0x02};
 
     /** The fixed part of a central directory record. */

@@ -23,10 +23,10 @@ public final class Trailers {
     /** The four bytes Parquet writes at both ends of a file. */
     public static final byte[] PARQUET_MAGIC = {'P', 'A', 'R', '1'};
 
-    /** The end-of-central-directory signature, {@code PK}. */
+    /** The end-of-central-directory signature, the bytes {@code 50 4B 05 06}. */
     private static final byte[] EOCD_SIGNATURE = {'P', 'K', 0x05, 0x06};
 
-    /** The Zip64 end-of-central-directory locator, {@code PK}. */
+    /** The Zip64 end-of-central-directory locator, the bytes {@code 50 4B 06 07}. */
     private static final byte[] ZIP64_LOCATOR_SIGNATURE = {'P', 'K', 0x06, 0x07};
 
     /** The fixed part of an end-of-central-directory record. */

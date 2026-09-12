@@ -85,14 +85,24 @@ public final class SignatureSequence {
             after = List.copyOf(after);
         }
 
-        /** The shortest span this piece and its fragments can occupy. */
-        int minExtent() {
-            return expression.minLength() + extent(before, true) + extent(after, true);
+        /** The shortest run of bytes the left-hand fragments occupy. */
+        int minLeading() {
+            return extent(before, true);
         }
 
-        /** The longest span this piece and its fragments can occupy. */
-        int maxExtent() {
-            return expression.maxLength() + extent(before, false) + extent(after, false);
+        /** The longest run of bytes the left-hand fragments occupy. */
+        int maxLeading() {
+            return extent(before, false);
+        }
+
+        /** The shortest run from the pattern's start to the extent's end. */
+        int minTrailing() {
+            return expression.minLength() + extent(after, true);
+        }
+
+        /** The longest run from the pattern's start to the extent's end. */
+        int maxTrailing() {
+            return expression.maxLength() + extent(after, false);
         }
 
         private static int extent(List<Fragment> fragments, boolean shortest) {
@@ -236,16 +246,23 @@ public final class SignatureSequence {
 
         /**
          * Places subsequence {@code index} and everything after it, given
-         * that its distance is measured from somewhere in
-         * {@code [from, to]}.
+         * that the extent may begin anywhere in {@code [from, to]}.
+         *
+         * <p>The distance is measured to the extent's near edge, which is
+         * where the outermost left-hand fragment begins, not to the
+         * pattern itself. The pattern's own start is therefore searched
+         * over the span the fragments could occupy, and a placement counts
+         * only when the extent lands where the distance says.
          */
         private boolean placeFrom(int index, long from, long to) {
             Subsequence subsequence = subsequences.get(index);
             long low = from + subsequence.minOffset();
             long high = to + subsequence.maxOffset();
-            for (long start = Math.max(0, low); start <= high; start++) {
+            long first = Math.max(0, low + subsequence.minLeading());
+            long last = Math.min(high + subsequence.maxLeading(), lastStart());
+            for (long start = first; start <= last; start++) {
                 long[] extent = place(subsequence, start);
-                if (extent == null) {
+                if (extent == null || extent[0] < low || extent[0] > high) {
                     continue;
                 }
                 if (index + 1 == subsequences.size()) {
@@ -256,6 +273,11 @@ public final class SignatureSequence {
                 }
             }
             return false;
+        }
+
+        /** The furthest start worth trying: the last byte that was captured. */
+        private long lastStart() {
+            return bytes.sizeKnown() ? bytes.sizeBytes() : bytes.head().length;
         }
 
         /** TRAILING places pieces right to left, from the content's end. */
@@ -271,15 +293,18 @@ public final class SignatureSequence {
             Subsequence subsequence = subsequences.get(index);
             for (int offset = subsequence.minOffset();
                     offset <= subsequence.maxOffset(); offset++) {
-                long end = cursor - offset;
-                if (end < 0) {
+                long edge = cursor - offset;
+                if (edge < 0) {
                     break;
                 }
-                long earliest = end - subsequence.maxExtent();
-                long latest = end - subsequence.minExtent();
-                for (long start = Math.max(0, earliest); start <= latest; start++) {
+                // The distance is measured to the extent's far edge, so the
+                // pattern's start is that edge less the pattern and any
+                // right-hand fragments.
+                long first = Math.max(0, edge - subsequence.maxTrailing());
+                long last = edge - subsequence.minTrailing();
+                for (long start = first; start <= last; start++) {
                     long[] extent = place(subsequence, start);
-                    if (extent == null || extent[1] != end) {
+                    if (extent == null || extent[1] != edge) {
                         continue;
                     }
                     if (index + 1 == subsequences.size()) {

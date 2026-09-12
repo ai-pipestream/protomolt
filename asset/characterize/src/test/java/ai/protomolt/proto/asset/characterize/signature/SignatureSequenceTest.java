@@ -41,8 +41,12 @@ class SignatureSequenceTest {
     @DisplayName("one piece at a fixed distance from the start")
     void anchoredAtTheStart() {
         SignatureSequence signature = leading(piece(0, 0, "'PK' 03 04"));
-        assertThat(signature.matchIn(content("PKrest"))).isEqualTo(Outcome.MATCHED);
-        assertThat(signature.matchIn(content("xPK"))).isEqualTo(Outcome.NOT_MATCHED);
+        assertThat(signature.matchIn(ByteWindows.ofWhole(
+                new byte[] {'P', 'K', 0x03, 0x04, 'r', 'e', 's', 't'})))
+                .isEqualTo(Outcome.MATCHED);
+        assertThat(signature.matchIn(ByteWindows.ofWhole(
+                new byte[] {'x', 'P', 'K', 0x03, 0x04})))
+                .isEqualTo(Outcome.NOT_MATCHED);
     }
 
     @Test
