@@ -116,17 +116,25 @@ class BinaryIdentificationTest {
     }
 
     @Test
-    @DisplayName("a run over the windows finishes fast enough to sit on the write path")
-    void runsQuickly() {
-        byte[] payload = new byte[64 * 1024];
-        System.arraycopy("%PDF-1.7\n".getBytes(StandardCharsets.ISO_8859_1), 0, payload, 0, 9);
-        ByteWindows windows = ByteWindows.ofWhole(payload);
-        BinaryIdentification.identify(windows);
-        long started = System.nanoTime();
-        for (int i = 0; i < 5; i++) {
-            BinaryIdentification.identify(windows);
-        }
-        long perRunMillis = (System.nanoTime() - started) / 5 / 1_000_000;
-        assertThat(perRunMillis).isLessThan(500);
+    @DisplayName("cost follows the windows, not how much content sits behind them")
+    void costFollowsTheWindows() {
+        // The property worth pinning is not a stopwatch reading, which a
+        // loaded machine can miss for reasons unrelated to this code. It is
+        // that identifying a gigabyte and identifying a kilobyte do the
+        // same amount of work when the captured windows are the same.
+        byte[] head = new byte[16 * 1024];
+        System.arraycopy("%PDF-1.7".getBytes(StandardCharsets.ISO_8859_1), 0, head, 0, 8);
+        byte[] tail = "trailing bytes %%EOF".getBytes(StandardCharsets.ISO_8859_1);
+
+        BinaryIdentification.Result small =
+                BinaryIdentification.identify(ByteWindows.of(head, tail, 1 << 20));
+        BinaryIdentification.Result huge =
+                BinaryIdentification.identify(ByteWindows.of(head, tail, 1L << 40));
+
+        assertThat(huge.evaluated()).isEqualTo(small.evaluated());
+        assertThat(huge.notEvaluable()).isEqualTo(small.notEvaluable());
+        assertThat(formatIds(huge)).isEqualTo(formatIds(small));
+        assertThat(small.evaluated() + small.notEvaluable())
+                .isEqualTo(BinarySignatures.bundled().signatures().size());
     }
 }

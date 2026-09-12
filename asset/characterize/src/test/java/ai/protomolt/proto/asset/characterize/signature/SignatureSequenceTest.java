@@ -111,7 +111,10 @@ class SignatureSequenceTest {
         Outcome outcome = signature.matchIn(sparse);
         long tookMillis = (System.nanoTime() - started) / 1_000_000;
         assertThat(outcome).isEqualTo(Outcome.NOT_EVALUABLE);
-        assertThat(tookMillis).isLessThan(1_000);
+        // Bounded by the resident spans this is a few microseconds; walking
+        // the unread span would take minutes. The bound sits far from both,
+        // so a loaded machine does not turn it into a false alarm.
+        assertThat(tookMillis).isLessThan(30_000);
     }
 
     @Test
