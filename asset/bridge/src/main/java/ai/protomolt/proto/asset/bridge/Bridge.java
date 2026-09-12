@@ -61,27 +61,39 @@ public interface Bridge {
     }
 
     /**
-     * One bridge's product: the typed content, the content profile when the
-     * bridge measured one, and any degradation it wants reported. A bridge
-     * that degraded still returns its product and reports how — the same
-     * honesty the parser contract requires.
+     * One bridge's product: the derived rendition's bytes, the content
+     * profile when the bridge measured one, and any degradation it wants
+     * reported. A bridge that degraded still returns its product and
+     * reports how — the same honesty the parser contract requires.
      *
-     * @param content the derived rendition's message
+     * <p>Bytes rather than a message, because not every derived rendition
+     * is protobuf: a structural listing is, and extracted prose is plain
+     * text. What a rendition decodes as is pinned on its descriptor by
+     * {@link Bridges#schemaSubject}, which is where that question belongs.
+     *
+     * @param content the derived rendition's bytes
      * @param profile what the content is, or null when the bridge measures
      *        no profile (a structural listing describes no content class)
      * @param warnings degradation notes, verbatim; empty when the bridge ran
      *        clean
      */
-    record Derivation(Message content, ContentProfile profile, List<String> warnings) {
+    record Derivation(byte[] content, ContentProfile profile, List<String> warnings) {
 
-        /** A clean derivation with no content profile. */
+        /** A clean derivation of a protobuf shape, with no content profile. */
         public static Derivation of(Message content) {
-            return new Derivation(content, null, List.of());
+            return new Derivation(content.toByteArray(), null, List.of());
         }
 
-        /** A clean derivation carrying a content profile. */
+        /** A derivation of a protobuf shape carrying a content profile. */
         public static Derivation of(Message content, ContentProfile profile) {
-            return new Derivation(content, profile, List.of());
+            return new Derivation(content.toByteArray(), profile, List.of());
+        }
+
+        /** A derivation of UTF-8 text carrying a content profile. */
+        public static Derivation ofText(String text, ContentProfile profile,
+                                        List<String> warnings) {
+            return new Derivation(text.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    profile, List.copyOf(warnings));
         }
 
         /** Whether the bridge reported degradation. */

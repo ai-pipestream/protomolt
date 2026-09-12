@@ -1,0 +1,29 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'The bridges that ride a parser: document text and recovered OCR text over the ParserPluginService contract, with the recovered text scored through the quality family'
+
+dependencies {
+    api project(':protomolt-asset-bridge')
+    // The parser contract and its one client.
+    api project(':protomolt-parse-service')
+    // Recovered text declares its own quality dimensions in CEL.
+    api project(':protomolt-protobuf-quality')
+    // The doc-level claim key the fleet's parsers fill; taken from the
+    // projection that defines it, so the two cannot drift.
+    implementation project(':protomolt-parse-document')
+    implementation libs.grpc.api
+
+    // The reference parser stands in for a real one: an in-process
+    // ParserPluginService means the bridges are tested over the wire idiom
+    // they actually use.
+    testImplementation project(':protomolt-parse-text')
+    testImplementation libs.grpc.inprocess
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}"
+    }
+}

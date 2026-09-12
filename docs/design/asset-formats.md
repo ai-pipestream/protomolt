@@ -230,7 +230,7 @@ tool in the platform produces it. The v1 bridge set:
 | `DelimitedTable` / `NdjsonDataset` | `schema` + `dataset` | inferred schema; the normalized tabular form (`CONTENT_CLASS_TABULAR_DATA`) |
 | `SpreadsheetDocument` | `dataset` | sheet data normalized for analysis tools |
 | `PdfDocument` / `WordDocument` / `HtmlDocument` | `text` | extracted prose (`INFORMATIONAL_TEXT`) |
-| `RasterImage` | `ocr-text` | recovered text with its measured `OCR_TEXT` quality profile |
+| `RasterImage`, and a `PdfDocument` the text bridge found nothing in | `ocr-text` | recovered text with its measured `OCR_TEXT` quality profile |
 | chat/transcript formats | `conversation` | turn-segmented text (`CONVERSATIONAL_TEXT`) |
 
 The derived rendition names (`members`, `schema`, `dataset`, `text`,
@@ -241,11 +241,7 @@ generated message's own descriptor, so the pin cannot drift), so a
 bridge's output is itself schema-validated data, not loose bytes.
 
 The bridge KINDS, by contrast, are a closed `BridgeKind` enum, for the
-same reason format claims are: bridge selection gates behavior. A scanned
-PDF is the one row above that is not a routing decision — "scanned" is a
-finding, not a property of the format, so a PDF routes to `text` and
-escalates to `ocr-text` only once the text bridge reports it found no
-prose.
+same reason format claims are: bridge selection gates behavior.
 
 ### Applicable, executable, and what a bridge reports
 
@@ -304,15 +300,55 @@ delimited table's delimiter and header presence come from the producer's
 declaration, never from a guess, which is the same fact that keeps
 characterization from identifying one.
 
-### Execution beyond this host
+### Text, OCR, and the escalation between them
 
-Bridges that need a real extraction tool ride existing machinery end to
-end: the parse coordinator's plugin contract runs the extraction, a
-durable `bridge-entry` workflow (jobs family) makes a bridge a resumable
-run with evidence, the quality family scores what needs scoring, and the
-archive's `UploadRendition` lands the outputs with attribution. Bridging
-adds no new runtime — only the routing rule *characterized format →
-applicable bridges*, and the outcome vocabulary that says who ran what.
+Prose extraction and OCR are the same call to two different parsers, so
+both ride the `ParserPluginService` contract through the coordinator's own
+client — one client for the contract, so a bridge and a parse job speak to
+a parser identically. The text comes from the parser's `body` claim, the
+doc-level field every parser in the fleet fills, and from the page events
+it streamed when it made no claim. A parser that fails, or completes
+without emitting a document, fails the bridge in the parser's own words.
+
+The two bridges differ in what they claim about the result. Prose claims
+`INFORMATIONAL_TEXT` and measures nothing. OCR claims `OCR_TEXT` and must
+measure, because the content contract refuses an OCR profile without a
+score — and the measurement is itself schema: `RecoveredText` counts what
+a pass left behind (text-bearing characters, word-shaped tokens, prose
+lines) and declares in CEL what those counts are worth, so "quality 0.62"
+is reviewable in git rather than buried in a scorer. The engine's own
+confidence rides along as provenance and is deliberately not scored: most
+engines report nothing, and a dimension that scored silence as zero would
+punish the output for the engine's reticence.
+
+**Escalation** is the one routing decision the format cannot make. A
+scanned PDF looks exactly like any other PDF, so the rule sends every PDF
+to the prose bridge and adds OCR only once that bridge reports it
+recovered nothing. The signal is the derivation itself — zero bytes of
+prose — not a string in a log, and the empty `text` rendition lands as
+empty rather than absent, because "the bridge ran and found nothing" is a
+different fact from "nobody looked."
+
+### Bridging as a durable run
+
+Bridging synchronously is right for a member listing and wrong for a page
+of OCR, so the same two calls also exist as `bridge-entry`, a two-step
+workflow in the jobs family: classify, then bridge. The jobs executor
+checkpoints the classification before the bridges start, requeues a
+transient failure with backoff, and keeps the outcomes as the run's
+evidence. Classification comes first on purpose — bridging refuses an
+asset whose classification names no single format, so a run that skipped
+straight to the bridges would fail on exactly the assets a bridging job
+exists to work through.
+
+Nothing new executes there: the workflow is the two RPCs the archive
+already serves, in the order they have to happen. A repo node with a
+co-mounted registry publishes the envelope so operators can submit it by
+name; a node without one still serves both RPCs.
+
+Bridging adds no new runtime — only the routing rule *characterized format
+→ applicable bridges*, the outcome vocabulary that says who ran what, and
+the one escalation above.
 
 ## Surface changes
 
@@ -397,9 +433,9 @@ looked" and one over "scored zero" are different questions.
    `ClassifyEntry` RPC, state stats.
 4. Bridges, one at a time, each landing with its tests: the routing
    rule, the outcome vocabulary, and container `members` (cheapest,
-   purely structural, pure JDK); then `schema`/`dataset`; then
-   `text`/`ocr-text` with quality scoring, which is where the parser
-   plugin contract and the durable `bridge-entry` workflow enter.
+   purely structural, pure JDK); then `schema`; then `text`/`ocr-text`
+   with quality scoring, the parser plugin contract, and the durable
+   `bridge-entry` workflow.
 5. The catalog subject and its facets over the new fields.
 
 ## Decisions of record

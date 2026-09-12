@@ -855,7 +855,11 @@ final class ArchiveOperations {
         FormatFact format = Bridges.formatOfRecord(classification);
         List<BridgeOutcome.Builder> outcomes = new ArrayList<>();
         Map<RenditionDescriptor, Derived> produced = new LinkedHashMap<>();
-        for (BridgeKind kind : wanted) {
+        // The run list can grow: a document the prose bridge finds nothing
+        // in is a scan, and OCR applies only once that has been found.
+        List<BridgeKind> run = new ArrayList<>(wanted);
+        for (int at = 0; at < run.size(); at++) {
+            BridgeKind kind = run.get(at);
             BridgeOutcome.Builder outcome = BridgeOutcome.newBuilder()
                     .setBridge(kind)
                     .setRendition(Bridges.renditionName(kind));
@@ -880,6 +884,7 @@ final class ArchiveOperations {
                 continue;
             }
             produced.put(derivedDescriptor(kind), new Derived(derivation, outcome));
+            escalate(kind, derivation, format, run);
         }
 
         long landed = produced.isEmpty()
@@ -889,6 +894,23 @@ final class ArchiveOperations {
                 .setVersion(landed)
                 .addAllOutcomes(outcomes.stream().map(BridgeOutcome.Builder::build).toList())
                 .build();
+    }
+
+    /**
+     * The one escalation the routing rule cannot make on its own: a document
+     * whose prose bridge produced nothing is a scan, and "scanned" is a
+     * finding rather than a property of the format. OCR joins the run only
+     * once the finding exists, and only where this host can run it.
+     */
+    private void escalate(BridgeKind ran, Bridge.Derivation derivation, FormatFact format,
+                          List<BridgeKind> run) {
+        if (ran != BridgeKind.BRIDGE_KIND_DOCUMENT_TEXT
+                || derivation.content().length != 0
+                || run.contains(BridgeKind.BRIDGE_KIND_OCR_TEXT)
+                || bridgeEngine.forKind(BridgeKind.BRIDGE_KIND_OCR_TEXT, format).isEmpty()) {
+            return;
+        }
+        run.add(BridgeKind.BRIDGE_KIND_OCR_TEXT);
     }
 
     /** One bridge's product on its way into a manifest slot. */
@@ -928,7 +950,7 @@ final class ArchiveOperations {
             Map<String, byte[]> bytesByKey = new LinkedHashMap<>();
             for (Map.Entry<RenditionDescriptor, Derived> item : produced.entrySet()) {
                 RenditionDescriptor descriptor = item.getKey();
-                byte[] data = item.getValue().derivation().content().toByteArray();
+                byte[] data = item.getValue().derivation().content();
                 RenditionManifestEntry written = writtenEntry(descriptor, data, drive, address,
                         entryUuid, bridgedBy, now);
                 ContentProfile profile = item.getValue().derivation().profile();

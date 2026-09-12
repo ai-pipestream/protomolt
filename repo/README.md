@@ -242,10 +242,12 @@ for the ledger, LocalStack for S3, the full stack booted through
   carries the manifests a projection needs, and the rows it produces are
   the facts the archive already stored.
 - `ArchiveBridgeIT` — bridging end to end: a classified container derives
-  its member listing beside the untouched original, a re-run is
-  idempotent by content, a bridge this host does not run reports
-  `DEFERRED`, a broken container fails loud and lands nothing, and an
-  unclassified or conflicted entry is refused by its state.
+  its member listing beside the untouched original, a declared CSV
+  derives its schema, a re-run is idempotent by content, a scanned
+  document escalates to OCR on the prose bridge's finding, a bridge this
+  host does not run reports `DEFERRED`, a broken container fails loud and
+  lands nothing, and an unclassified or conflicted entry is refused by
+  its state.
 - `ArchiveClassificationIT` — the classification state machine behind the
   doors: verification and conflict from real bytes, grammar refusals
   naming the rule, HTTP-door identification, after-the-fact
@@ -421,6 +423,11 @@ idempotent), `DEFERRED` (applicable, but the work needs a reader or a
 service this host does not carry, named in the detail), or `FAILED` with
 the reason verbatim. Derived
 renditions never become the rendition an entry is characterized from.
+
+A host that can reach a parser passes its own `BridgeEngine` to
+`RepoServices.build`, adding the text and OCR bridges. A PDF the text
+bridge recovers no prose from escalates to OCR on that finding alone, and
+the empty `text` rendition lands as empty rather than absent.
 
 The catalog view over an archive rides
 [`asset/catalog`](../asset/README.md): `AssetCatalogRows.of(info, manifest)`

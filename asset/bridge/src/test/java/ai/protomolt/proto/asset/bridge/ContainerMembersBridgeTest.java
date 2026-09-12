@@ -130,7 +130,7 @@ class ContainerMembersBridgeTest {
 
         Bridge.Derivation derivation = bounded.derive(
                 new ByteArrayInputStream(archive.bytes()), TAR);
-        ContainerMembers members = (ContainerMembers) derivation.content();
+        ContainerMembers members = ContainerMembers.parseFrom(derivation.content());
 
         assertThat(members.getMemberCount()).isEqualTo(3);
         assertThat(members.getTruncated()).isTrue();
@@ -148,8 +148,8 @@ class ContainerMembersBridgeTest {
                 .bytes();
         ContainerMembersBridge stingy = new ContainerMembersBridge(50, 1024);
 
-        ContainerMembers members = (ContainerMembers) stingy.derive(
-                new ByteArrayInputStream(archive), TAR).content();
+        ContainerMembers members = ContainerMembers.parseFrom(stingy.derive(
+                new ByteArrayInputStream(archive), TAR).content());
 
         // Both members are listed with their real sizes; neither is hashed.
         // The first blows the budget on its own, and fixity then stops for
@@ -199,7 +199,7 @@ class ContainerMembersBridgeTest {
         assertThat(derivation.profile())
                 .as("a structural listing describes no content class")
                 .isNull();
-        return (ContainerMembers) derivation.content();
+        return ContainerMembers.parseFrom(derivation.content());
     }
 
     private static String sha256(String content) {
