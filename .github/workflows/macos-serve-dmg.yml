@@ -1,0 +1,238 @@
+# Packages protomolt-serve as a macOS Apple-silicon (darwin-aarch64) .dmg.
+#
+# protomolt-serve is a JVM application (the same installDist the Docker image
+# ships over a Temurin 25 JRE), so the DMG is built with jpackage: it bundles
+# the distribution's jars with an embedded jlink runtime into a self-contained
+# protomolt-serve.app, no JRE install required on the target Mac. jpackage's
+# default entitlements cover the HotSpot JIT under the hardened runtime.
+#
+# Called from the release workflow with the released version (the .dmg is then
+# attached to the GitHub release), or dispatched manually to build from the
+# chosen ref (the .dmg is uploaded as a workflow artifact only).
+#
+# Codesigning and notarization are optional and keyed on repository secrets:
+#
+#   MACOS_SIGNING_CERT_P12       base64 of a Developer ID Application .p12
+#   MACOS_SIGNING_CERT_PASSWORD  the .p12 password
+#   MACOS_SIGNING_IDENTITY       (optional) full identity string; defaults to
+#                                the first "Developer ID Application" in the
+#                                imported keychain
+#   APPLE_NOTARY_KEY_ID          App Store Connect API key id
+#   APPLE_NOTARY_ISSUER_ID       App Store Connect issuer id
+#   APPLE_NOTARY_KEY_P8          base64 of the App Store Connect API .p8 key
+#
+# With no secrets configured the job still produces a working unsigned DMG;
+# Gatekeeper then requires a one-time quarantine clear on the copied app
+# (documented in docs/apps/serve-macos.md). Notarization runs only when the
+# app was also signed: Apple rejects unsigned submissions.
+name: macOS Serve DMG
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: Released semver (without the v prefix); attaches the DMG to the GitHub release
+        required: false
+        type: string
+    secrets:
+      MACOS_SIGNING_CERT_P12:
+        required: false
+      MACOS_SIGNING_CERT_PASSWORD:
+        required: false
+      MACOS_SIGNING_IDENTITY:
+        required: false
+      APPLE_NOTARY_KEY_ID:
+        required: false
+      APPLE_NOTARY_ISSUER_ID:
+        required: false
+      APPLE_NOTARY_KEY_P8:
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    # macos-15 GitHub-hosted runners are Apple silicon; jpackage embeds the
+    # runtime of the JDK it runs on, so an arm64 runner yields an arm64 app
+    # with an arm64 runtime, without a self-hosted Mac.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version != '' && inputs.version != null && format('v{0}', inputs.version) || github.ref }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      # Temurin 25 matches the release build JDK and ships jpackage.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/console/package-lock.json
+
+      # The console's built assets are bundled into the serve jar by
+      # processResources, same as the Docker and release-zip builds.
+      - name: Build the console
+        run: |
+          cd apps/console
+          npm ci
+          npm run build
+
+      - name: Build the serve distribution
+        run: ./gradlew :protomolt-serve:installDist --no-daemon
+
+      - name: Smoke-test the distribution
+        run: apps/serve/build/install/protomolt-serve/bin/protomolt-serve --help
+
+      - name: Resolve version labels
+        id: ver
+        run: |
+          V="${{ inputs.version }}"
+          if [ -z "$V" ]; then
+            V=$(git describe --tags --always | sed 's/^v//')
+          fi
+          # jpackage's macOS --app-version (CFBundleVersion) must be up to
+          # three integers with the first greater than zero; the DMG filename
+          # keeps the real version, the bundle version falls back when the
+          # release version does not qualify (e.g. 0.x or a git describe).
+          APP_V=$(echo "$V" | grep -oE '^[1-9][0-9]*(\.[0-9]+){0,2}' || true)
+          [ -n "$APP_V" ] || APP_V=1.0.0
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "app-version=$APP_V" >> "$GITHUB_OUTPUT"
+          echo "dmg=protomolt-serve-$V-macos-aarch64.dmg" >> "$GITHUB_OUTPUT"
+          echo "Version: $V (bundle version $APP_V)"
+
+      # Secrets are not readable from job-level `if`, so the gates are step
+      # outputs computed from env-mapped secrets.
+      - name: Detect signing and notarization configuration
+        id: cfg
+        env:
+          P12: ${{ secrets.MACOS_SIGNING_CERT_P12 }}
+          NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          SIGN=false; NOTARIZE=false
+          [ -n "$P12" ] && SIGN=true
+          if [ "$SIGN" = true ] && [ -n "$NOTARY_KEY" ] && [ -n "$NOTARY_KEY_ID" ] && [ -n "$NOTARY_ISSUER" ]; then
+            NOTARIZE=true
+          fi
+          echo "sign=$SIGN" >> "$GITHUB_OUTPUT"
+          echo "notarize=$NOTARIZE" >> "$GITHUB_OUTPUT"
+          echo "Signing: $SIGN, notarization: $NOTARIZE"
+
+      - name: Import the Developer ID certificate
+        if: steps.cfg.outputs.sign == 'true'
+        env:
+          P12: ${{ secrets.MACOS_SIGNING_CERT_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_SIGNING_CERT_PASSWORD }}
+          CONFIGURED_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(uuidgen)
+          echo "$P12" | base64 -d > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          rm "$RUNNER_TEMP/cert.p12"
+          IDENTITY="$CONFIGURED_IDENTITY"
+          if [ -z "$IDENTITY" ]; then
+            IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" \
+              | awk -F '"' '/Developer ID Application/ {print $2; exit}')
+          fi
+          [ -n "$IDENTITY" ] || { echo "No Developer ID Application identity found"; exit 1; }
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      # jpackage signs the whole app bundle (nested jars, dylibs, launcher)
+      # with the hardened runtime and its JVM-suited default entitlements when
+      # --mac-sign is given, which manual codesign would have to replicate
+      # file by file.
+      - name: Package the DMG (jpackage)
+        run: |
+          DIST=apps/serve/build/install/protomolt-serve
+          MAIN_JAR=$(cd "$DIST/lib" && ls protomolt-serve-*.jar)
+          echo "Main jar: $MAIN_JAR"
+          SIGN_ARGS=()
+          if [ "${{ steps.cfg.outputs.sign }}" = "true" ]; then
+            SIGN_ARGS=(--mac-sign
+                       --mac-signing-keychain "$KEYCHAIN"
+                       --mac-app-image-sign-identity "$SIGN_IDENTITY")
+          fi
+          jpackage \
+            --type dmg \
+            --name protomolt-serve \
+            --app-version "${{ steps.ver.outputs.app-version }}" \
+            --vendor ai-pipestream \
+            --mac-package-identifier ai.protomolt.serve \
+            --input "$DIST/lib" \
+            --main-jar "$MAIN_JAR" \
+            --main-class ai.protomolt.proto.serve.ProtoMoltServe \
+            --add-modules ALL-DEFAULT \
+            --dest "$RUNNER_TEMP/jpackage-out" \
+            "${SIGN_ARGS[@]}"
+          mv "$RUNNER_TEMP/jpackage-out/protomolt-serve-${{ steps.ver.outputs.app-version }}.dmg" \
+            "${{ steps.ver.outputs.dmg }}"
+          hdiutil verify "${{ steps.ver.outputs.dmg }}"
+
+      # Run the packaged launcher against its embedded runtime: --help parses
+      # arguments and exits 0 without binding ports.
+      - name: Smoke-test the packaged app
+        run: |
+          MOUNT=$(hdiutil attach -nobrowse -readonly "${{ steps.ver.outputs.dmg }}" \
+            | awk -F '\t' '/\/Volumes\// {print $NF; exit}')
+          BIN="$MOUNT/protomolt-serve.app/Contents/MacOS/protomolt-serve"
+          file "$BIN" | grep -q arm64
+          "$BIN" --help
+          hdiutil detach "$MOUNT"
+
+      - name: Notarize and staple the DMG
+        if: steps.cfg.outputs.notarize == 'true'
+        env:
+          NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          echo "$NOTARY_KEY" | base64 -d > "$RUNNER_TEMP/notary-key.p8"
+          xcrun notarytool submit "${{ steps.ver.outputs.dmg }}" \
+            --key "$RUNNER_TEMP/notary-key.p8" \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER" \
+            --wait
+          rm "$RUNNER_TEMP/notary-key.p8"
+          xcrun stapler staple "${{ steps.ver.outputs.dmg }}"
+          spctl --assess --type open --context context:primary-signature \
+            -v "${{ steps.ver.outputs.dmg }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.ver.outputs.dmg }}
+          path: ${{ steps.ver.outputs.dmg }}
+          if-no-files-found: error
+
+      - name: Attach the DMG to the GitHub release
+        if: inputs.version != '' && inputs.version != null
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "v${{ inputs.version }}" \
+            "${{ steps.ver.outputs.dmg }}#protomolt-serve ${{ inputs.version }} (macOS Apple silicon .dmg, embedded runtime)" \
+            --clobber
+
+      - name: Delete the signing keychain
+        if: always() && steps.cfg.outputs.sign == 'true'
+        run: security delete-keychain "$KEYCHAIN" || true

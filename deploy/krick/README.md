@@ -6,8 +6,12 @@ design. This stack is not part of the NAS Portainer coordinator stack
 (`../portainer/`) and must not be deployed there; the agents reach the
 coordinator over its public MCP endpoint, `https://protomolt.rokkon.com/mcp`.
 
-Both agents come from the same image, `protomolt-agent-host:local`, built from
-`apps/agent-host/Dockerfile`. Provider authentication stays in the host's
+Both agents come from the same published image,
+`ghcr.io/ai-pipestream/protomolt-worker-java:edge` (see
+[deploy/workers/README.md](../workers/README.md)), pulled from GHCR. Krick is
+a pure pull-and-restart consumer: no local Gradle build or `docker build` is
+required. Set `PROTOMOLT_WORKER_IMAGE` to pin a verified manifest digest
+instead of the moving `edge` tag. Provider authentication stays in the host's
 `~/.kimi-code` and `~/.codex` directories, which the containers mount read
 and write so provider sessions survive restarts. Nothing in this directory
 carries a credential.
@@ -15,8 +19,6 @@ carries a credential.
 ## Prerequisites
 
 - Docker with the Compose plugin.
-- The agent host distribution: `./gradlew :protomolt-agent-host:installDist`
-  (the image build copies it).
 - An MCP bearer token for the coordinator in `PROTOMOLT_MCP_TOKEN`, either
   exported or in `deploy/krick/.env` (gitignored).
 - Kimi Code installed and authenticated on the host (`~/.kimi-code`), and the
@@ -46,10 +48,13 @@ at its original absolute path because linked worktrees refer to it there. Set
 ## Run
 
 ```shell
-docker compose -f deploy/krick/compose.yml build
+docker compose -f deploy/krick/compose.yml pull
 docker compose -f deploy/krick/compose.yml up -d
 docker compose -f deploy/krick/compose.yml logs -f
 ```
+
+To update, repeat `pull` and `up -d`; Compose recreates only the containers
+whose image changed.
 
 Stop with `docker compose -f deploy/krick/compose.yml down`. The bind-mounted
 state survives `down`; each host resumes its delegation cursor and its Kimi
@@ -65,6 +70,7 @@ stop the stack and clear `~/.local/state/protomolt-agents`, then start again.
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `PROTOMOLT_MCP_TOKEN` | yes | none | Bearer token the agent hosts send to the MCP endpoint |
+| `PROTOMOLT_WORKER_IMAGE` | no | `ghcr.io/ai-pipestream/protomolt-worker-java:edge` | Worker image; set a digest-pinned reference for a verified deployment |
 | `PROTOMOLT_MCP_ENDPOINT` | no | `https://protomolt.rokkon.com/mcp` | Coordinator MCP endpoint |
 | `KRICK_KIMI_IDENTITY` | no | `kimi-worker` | Worker identity the coordinator offers tasks to |
 | `KRICK_CODEX_IDENTITY` | no | `codex-coordinator` | Coordinator identity |

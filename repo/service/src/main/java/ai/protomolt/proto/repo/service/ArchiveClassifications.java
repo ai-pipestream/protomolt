@@ -108,7 +108,12 @@ final class ArchiveClassifications {
 
     /** The state-column value of a classification. */
     static String stateName(Classification classification) {
-        return classification.getState().name().substring(STATE_PREFIX.length());
+        return stateName(classification.getState());
+    }
+
+    /** The state-column value of a state. */
+    static String stateName(ClassificationState state) {
+        return state.name().substring(STATE_PREFIX.length());
     }
 
     /** The proto state for a stored state-column value. */

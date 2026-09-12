@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package ai.protomolt.proto.repo.archive.v1;
 
+import "ai/protomolt/proto/asset/v1/bridge.proto";
 import "ai/protomolt/proto/asset/v1/classification.proto";
 import "ai/protomolt/proto/asset/v1/format.proto";
 import "ai/protomolt/proto/repo/archive/v1/archive.proto";
@@ -507,6 +508,52 @@ message GetArchiveStatsResponse {
   ArchiveStats stats = 1;
 }
 
+// Request to bridge one entry: run the transformations its classification
+// makes applicable and land their derived renditions beside the original.
+// Bridging derives; it never converts in place, so the original rendition is
+// untouched by every outcome below.
+message BridgeEntryRequest {
+  // The entry's logical identity.
+  EntryAddress address = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true}
+  ];
+  // Restrict the run to these bridges. Empty runs every applicable one; a
+  // kind the entry's format does not apply is refused by name rather than
+  // silently ignored.
+  repeated ai.protomolt.proto.asset.v1.BridgeKind bridges = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      repeated: {max_items: 8}
+    }
+  ];
+  // Provenance stamped on the derived renditions. Unknown stays blank; the
+  // archive never invents an attribution.
+  WriteAttribution bridged_by = 3;
+}
+
+// What one bridge did.
+message BridgeOutcome {
+  // The bridge.
+  ai.protomolt.proto.asset.v1.BridgeKind bridge = 1;
+  // The derived rendition's name, set whenever the bridge names one.
+  string rendition = 2;
+  // What happened.
+  ai.protomolt.proto.asset.v1.BridgeStatus status = 3;
+  // Why, in the bridge's own words: the reason a DEFERRED bridge runs
+  // elsewhere, the error a FAILED one hit, the degradation a PRODUCED one
+  // reported. Blank when a bridge ran clean.
+  string detail = 4;
+}
+
+// Response carrying what the run produced.
+message BridgeEntryResponse {
+  // The entry's version after the run — unchanged when every bridge
+  // deduplicated or none produced.
+  int64 version = 1;
+  // One outcome per bridge the run considered, in routing order. A bridge
+  // that produced nothing still reports why.
+  repeated BridgeOutcome outcomes = 2;
+}
+
 // The generic document archive: entries with named renditions, attached
 // metadata, and per-archive versioning. Payload bytes live only in object
 // storage; the database holds the manifests (locations, hashes, sizes,
@@ -559,4 +606,9 @@ service ArchiveService {
   // Declare an entry's format and/or re-run characterization; returns the
   // state machine's resolution.
   rpc ClassifyEntry(ClassifyEntryRequest) returns (ClassifyEntryResponse);
+
+  // Run the bridges an entry's classification makes applicable, landing
+  // their derived renditions beside the original. Refused for an entry
+  // whose classification names no single format.
+  rpc BridgeEntry(BridgeEntryRequest) returns (BridgeEntryResponse);
 }

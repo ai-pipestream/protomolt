@@ -23,6 +23,11 @@ worker on the krick-1 workstation beside the existing Kimi worker:
 - `kimi-worker` is the existing Kimi delegation worker. Kimi authentication
   enters through the host `~/.kimi-code` mount and is never baked into an
   image or written to this package.
+- Both workers run the published
+  `ghcr.io/ai-pipestream/protomolt-worker-java:edge` image (see
+  [deploy/workers/README.md](../workers/README.md)); krick-1 pulls it from
+  GHCR and never builds the agent host locally. Set `PROTOMOLT_WORKER_IMAGE`
+  to pin a verified manifest digest instead of the moving `edge` tag.
 - `glimmer-worker` is an agent host using the `openai` provider. It reaches
   the model at `http://glimmer-vllm:8011/v1` over the Compose network and
   sends no credential to the sidecar.
@@ -73,11 +78,15 @@ unless-stopped`), like the rest of this stack.
 ## Run
 
 ```shell
-./gradlew :protomolt-agent-host:installDist
-docker compose -f deploy/krick-1/compose.yml build
+docker compose -f deploy/krick-1/compose.yml build glimmer-vllm
+docker compose -f deploy/krick-1/compose.yml pull kimi-worker glimmer-worker
 docker compose -f deploy/krick-1/compose.yml up -d
 docker compose -f deploy/krick-1/compose.yml logs -f
 ```
+
+Only the `glimmer-vllm` inference sidecar is built locally, from
+`Dockerfile.glimmer-vllm`; the two workers are pulled from GHCR. To update the
+workers, repeat the `pull` and `up -d` steps.
 
 `PROTOMOLT_MCP_TOKEN` is required. Put it in a `.env` file next to the
 compose file (gitignored) or export it in the shell. The MCP bearer token is
@@ -102,6 +111,7 @@ future transport work and are not configured here.
 | `GLIMMER_DEVICE_SELECTOR` | `level_zero:0` | the single B70 for inference |
 | `GLIMMER_HF_HUB_OFFLINE` | `1` | serve only from the local artifacts |
 | `PROTOMOLT_MCP_ENDPOINT` | `https://protomolt.rokkon.com/mcp` | coordinator MCP endpoint |
+| `PROTOMOLT_WORKER_IMAGE` | `ghcr.io/ai-pipestream/protomolt-worker-java:edge` | worker image; set a digest-pinned reference for a verified deployment |
 | `PROTOMOLT_MCP_TOKEN` | none, required | MCP bearer token |
 | `KRICK_KIMI_IDENTITY` | `kimi-worker` | Kimi worker identity |
 | `KRICK_GLIMMER_IDENTITY` | `glimmer-worker` | Glimmer worker identity |

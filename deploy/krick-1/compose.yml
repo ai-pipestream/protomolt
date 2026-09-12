@@ -6,8 +6,13 @@
 # managed by this stack; it is currently stopped with user approval to free
 # the B70.
 #
-#   ./gradlew :protomolt-agent-host:installDist
-#   docker compose -f deploy/krick-1/compose.yml build
+# The two workers run the published Java coding worker image from GHCR; no
+# local Gradle build is needed on this host. Set PROTOMOLT_WORKER_IMAGE to pin
+# a verified digest instead of the edge tag. Only the glimmer-vllm sidecar is
+# still built locally, from Dockerfile.glimmer-vllm.
+#
+#   docker compose -f deploy/krick-1/compose.yml build glimmer-vllm
+#   docker compose -f deploy/krick-1/compose.yml pull kimi-worker glimmer-worker
 #   docker compose -f deploy/krick-1/compose.yml up -d
 #   docker compose -f deploy/krick-1/compose.yml logs -f
 #
@@ -84,10 +89,7 @@ services:
     restart: unless-stopped
 
   kimi-worker:
-    build:
-      context: ../../apps/agent-host
-      dockerfile: Dockerfile
-    image: protomolt-agent-host:local
+    image: ${PROTOMOLT_WORKER_IMAGE:-ghcr.io/ai-pipestream/protomolt-worker-java:edge}
     container_name: protomolt-krick1-kimi-worker
     # Match the host user so the mounted worktree, state, and provider config
     # directories stay writable and host-side file ownership is unchanged.
@@ -122,10 +124,7 @@ services:
     restart: unless-stopped
 
   glimmer-worker:
-    build:
-      context: ../../apps/agent-host
-      dockerfile: Dockerfile
-    image: protomolt-agent-host:local
+    image: ${PROTOMOLT_WORKER_IMAGE:-ghcr.io/ai-pipestream/protomolt-worker-java:edge}
     container_name: protomolt-glimmer-worker
     user: "${KRICK_AGENT_UID:-1000}:${KRICK_AGENT_GID:-1000}"
     command:
