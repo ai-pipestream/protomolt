@@ -88,12 +88,14 @@ class TrailersTest {
     void commentContainingTheSignature() throws IOException {
         // The backwards search has to keep going until the declared comment
         // length actually reaches the end of the content.
-        byte[] archive = zip("PK looks like a record but is not", "a.txt");
+        String decoy = new String(new byte[] {'P', 'K', 0x05, 0x06}, StandardCharsets.ISO_8859_1)
+                + " looks like a record but is not";
+        byte[] archive = zip(decoy, "a.txt");
         EndOfCentralDirectory directory = Trailers.zipDirectory(ByteWindows.ofWhole(archive));
         assertThat(directory).isNotNull();
         assertThat(directory.entryCount()).isEqualTo(1);
-        assertThat(directory.recordOffset() + 22 + "PK looks like a record but is not"
-                .getBytes(StandardCharsets.UTF_8).length).isEqualTo(archive.length);
+        assertThat(directory.recordOffset() + 22
+                + decoy.getBytes(StandardCharsets.UTF_8).length).isEqualTo(archive.length);
     }
 
     @Test
