@@ -1,5 +1,8 @@
 package ai.protomolt.proto.asset.characterize;
 
+import ai.protomolt.proto.asset.characterize.container.ContainerFormats;
+import ai.protomolt.proto.asset.characterize.container.ContainerIdentification;
+import ai.protomolt.proto.asset.characterize.container.ContainerKind;
 import ai.protomolt.proto.asset.v1.AvroDataset;
 import ai.protomolt.proto.asset.v1.CharacterizationEvidence;
 import ai.protomolt.proto.asset.v1.FormatFact;
@@ -95,13 +98,70 @@ public final class Characterizer {
         if (sniff.sniffed()) {
             evidence.add(evidence("magic-bytes", "content sniffs as " + sniff.mimeType()));
         }
-        FormatFact fact = sniff.sniffed()
-                ? fromMediaType(sniff.mimeType(), windows, filename, extension, evidence)
-                : null;
+        // A container's leading bytes say only that it is a container. What
+        // is inside decides, and the filename is the last thing to ask.
+        ContainerIdentification.Result container = ContainerIdentification.identify(windows);
+        FormatFact fact = containerFact(container, filename, evidence);
+        if (fact == null && sniff.sniffed()) {
+            fact = fromMediaType(containerMediaType(container, sniff.mimeType()),
+                    windows, filename, extension, evidence);
+        }
         if (!extension.isEmpty()) {
             evidence.add(evidence("extension", "filename extension is ." + extension));
         }
         return new Identification(fact, List.copyOf(evidence));
+    }
+
+    /**
+     * The conclusion a container's members support, when the registry has
+     * an entry for the format they identify.
+     */
+    private static FormatFact containerFact(ContainerIdentification.Result container,
+                                            String filename,
+                                            List<CharacterizationEvidence> evidence) {
+        if (container.kind() == null) {
+            return null;
+        }
+        for (ContainerIdentification.Hit hit : container.hits()) {
+            FormatFact fact = ContainerFormats.factFor(hit.formatId(), filename);
+            if (fact != null) {
+                evidence.add(evidence("container",
+                        "members identify " + hit.description() + " (" + hit.formatId() + ")"));
+                return fact;
+            }
+        }
+        if (!container.hits().isEmpty()) {
+            ContainerIdentification.Hit hit = container.hits().getFirst();
+            evidence.add(evidence("container", "members identify " + hit.description()
+                    + " (" + hit.formatId() + "), for which the registry has no entry"));
+        } else if (!container.complete()) {
+            evidence.add(evidence("container", container.detail()));
+        } else {
+            evidence.add(evidence("container", "listed " + container.memberCount()
+                    + " members, matching no published container rule"));
+        }
+        return null;
+    }
+
+    /**
+     * What the content should be treated as when its members identified no
+     * format the registry knows.
+     *
+     * <p>This is where a filename stops being evidence and starts being a
+     * guess. The leading bytes of every OOXML document, OpenDocument file
+     * and EPUB are the same, so a name is the only thing that separates
+     * them, and a name can be wrong. Once the members have been listed and
+     * matched against the published rules, the archive is an archive: the
+     * name does not get to promote it into a format its members contradict.
+     * The exception is an examination that could not finish, where the name
+     * remains the best thing available.
+     */
+    private static String containerMediaType(ContainerIdentification.Result container,
+                                             String sniffed) {
+        if (container.kind() == null || !container.complete()) {
+            return sniffed;
+        }
+        return container.kind() == ContainerKind.ZIP ? "application/zip" : sniffed;
     }
 
     private static FormatFact fromMediaType(String mediaType, ByteWindows windows,
