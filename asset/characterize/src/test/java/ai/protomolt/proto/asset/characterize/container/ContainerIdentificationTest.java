@@ -2,6 +2,7 @@ package ai.protomolt.proto.asset.characterize.container;
 
 import ai.protomolt.proto.asset.characterize.ByteWindows;
 import ai.protomolt.proto.asset.characterize.Characterizer;
+import ai.protomolt.proto.asset.characterize.Trailers;
 import ai.protomolt.proto.asset.v1.CharacterizationEvidence;
 import ai.protomolt.proto.asset.v1.FormatFact;
 import org.junit.jupiter.api.DisplayName;
@@ -130,6 +131,57 @@ class ContainerIdentificationTest {
                 .isEqualTo("the exact bytes that went in");
     }
 
+    @Test
+    @DisplayName("a stored member reads back without inflating")
+    void storedMemberReadsBack() throws IOException {
+        byte[] archive = Containers.zipStored("plain.txt", "no compression here");
+        ByteWindows bytes = ByteWindows.ofWhole(archive);
+        ZipMembers.Member member = ZipMembers.list(bytes).getFirst();
+        assertThat(member.method()).isEqualTo(ZipMembers.STORED);
+        assertThat(new String(ZipMembers.read(bytes, member), StandardCharsets.UTF_8))
+                .isEqualTo("no compression here");
+    }
+
+    @Test
+    @DisplayName("a trailing archive comment does not stop the index from being found")
+    void archiveWithTrailingComment() throws IOException {
+        Map<String, String> members = new LinkedHashMap<>();
+        members.put("a.txt", "one");
+        byte[] archive = Containers.zipWithComment(members, "a comment written after the directory");
+        List<ZipMembers.Member> listed = ZipMembers.list(ByteWindows.ofWhole(archive));
+        assertThat(listed).extracting(ZipMembers.Member::name).containsExactly("a.txt");
+    }
+
+    @Test
+    @DisplayName("an archive with no members lists none, not null")
+    void emptyArchive() throws IOException {
+        byte[] archive = Containers.emptyZip();
+        assertThat(ZipMembers.list(ByteWindows.ofWhole(archive))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a member whose bytes lie outside the windows reads as unreadable, not absent")
+    void memberOutsideWindows() throws IOException {
+        Map<String, String> members = new LinkedHashMap<>();
+        members.put("a.txt", "short");
+        members.put("b.txt", "a body long enough to land past a narrow leading window");
+        byte[] archive = Containers.zip(members);
+
+        // The index is only ever read from the tail, so a window built from
+        // exactly the central directory onward still finds it; a leading
+        // window that stops before "b"'s local header leaves a genuine,
+        // unread gap in between that swallows all of "b"'s bytes.
+        ZipMembers.Member second = ZipMembers.list(ByteWindows.ofWhole(archive)).get(1);
+        long directoryOffset = Trailers.zipDirectory(ByteWindows.ofWhole(archive)).directoryOffset();
+        byte[] head = Arrays.copyOfRange(archive, 0, (int) second.headerOffset());
+        byte[] tail = Arrays.copyOfRange(archive, (int) directoryOffset, archive.length);
+        ByteWindows narrow = ByteWindows.of(head, tail, archive.length);
+
+        List<ZipMembers.Member> listed = ZipMembers.list(narrow);
+        assertThat(listed).extracting(ZipMembers.Member::name).containsExactly("a.txt", "b.txt");
+        assertThat(ZipMembers.read(narrow, listed.get(1))).isNull();
+    }
+
     // ------------------------------------------------------------------
     // Compound files
     // ------------------------------------------------------------------
@@ -199,6 +251,37 @@ class ContainerIdentificationTest {
         assertThat(members.content(members.entry("CompObj"))).hasSize(200);
         assertThat(new String(members.content(members.entry("Workbook")), 0, 23,
                 StandardCharsets.ISO_8859_1)).isEqualTo("a large workbook stream");
+    }
+
+    @Test
+    @DisplayName("a compound file with 4096-byte sectors (major version 4) is read")
+    void wideSectorCompoundFile() {
+        Map<String, byte[]> streams = new LinkedHashMap<>();
+        streams.put("BigStream", stream("content living in a 4096-byte sector", 5000));
+        Ole2Members members =
+                Ole2Members.read(ByteWindows.ofWhole(Containers.compoundWideSectors(streams)));
+        assertThat(members).isNotNull();
+        assertThat(members.complete()).isTrue();
+        assertThat(members.paths()).containsExactly("BigStream");
+        byte[] content = members.content(members.entry("BigStream"));
+        assertThat(content).hasSize(5000);
+        assertThat(new String(content, 0, 36, StandardCharsets.ISO_8859_1))
+                .isEqualTo("content living in a 4096-byte sector");
+    }
+
+    @Test
+    @DisplayName("a directory chain running outside the windows leaves the read incomplete")
+    void directoryOutsideWindows() {
+        Map<String, byte[]> streams = new LinkedHashMap<>();
+        streams.put("WordDocument", stream("body", 600));
+        byte[] document = Containers.compound(streams);
+        // Only the header is resident; the directory sector it points at,
+        // and everything past it, was never captured.
+        byte[] headerOnly = Arrays.copyOf(document, 512);
+        Ole2Members members = Ole2Members.read(ByteWindows.ofHead(headerOnly));
+        assertThat(members).isNotNull();
+        assertThat(members.complete()).isFalse();
+        assertThat(members.entries()).isEmpty();
     }
 
     // ------------------------------------------------------------------
