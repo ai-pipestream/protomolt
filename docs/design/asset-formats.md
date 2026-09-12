@@ -241,10 +241,15 @@ on that, not the other way round.
 
 The derived rendition names (`members`, `schema`, `dataset`, `text`,
 `ocr-text`, `conversation`) are well-known names in the archive's open
-rendition vocabulary — conventions, not a closed enum — and each derived
-rendition's descriptor pins its shape via `schema_subject` (taken from the
-generated message's own descriptor, so the pin cannot drift), so a
-bridge's output is itself schema-validated data, not loose bytes.
+rendition vocabulary — conventions, not a closed enum.
+
+A protobuf output pins the message it decodes as via `schema_subject`,
+read off the generated descriptor so the pin cannot drift, which makes
+that output schema-validated data instead of loose bytes. Extracted text
+is the exception: `text` and `ocr-text` are `text/plain` and pin nothing,
+because wrapping recovered text in a message would cost the consumers who
+want to read a text rendition as text. The descriptor says what each one
+is either way, with a media type always and a subject where one exists.
 
 The bridge KINDS, by contrast, are a closed `BridgeKind` enum, for the
 same reason format claims are: bridge selection gates behavior. Adding a
