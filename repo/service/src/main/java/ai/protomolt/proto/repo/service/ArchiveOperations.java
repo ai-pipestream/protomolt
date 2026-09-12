@@ -858,6 +858,11 @@ final class ArchiveOperations {
         // The run list can grow: a document the prose bridge finds nothing
         // in is a scan, and OCR applies only once that has been found.
         List<BridgeKind> run = new ArrayList<>(wanted);
+        // The blob store hands back bytes, not a stream, so the original is
+        // read whole — once for the whole run, however many bridges read it.
+        // Streaming reads are the store's own follow-on; bridging gains them
+        // for free when they land.
+        byte[] original = null;
         for (int at = 0; at < run.size(); at++) {
             BridgeKind kind = run.get(at);
             BridgeOutcome.Builder outcome = BridgeOutcome.newBuilder()
@@ -870,10 +875,9 @@ final class ArchiveOperations {
                         .setDetail(Bridges.deferralReason(kind, format));
                 continue;
             }
-            // The blob store hands back bytes, not a stream, so the original
-            // is read whole here. Streaming reads are the store's own
-            // follow-on; bridging gains them for free when they land.
-            byte[] original = blobStore.get(drive.bucket, primary.getObjectKey()).data();
+            if (original == null) {
+                original = blobStore.get(drive.bucket, primary.getObjectKey()).data();
+            }
             Bridge.Derivation derivation;
             try {
                 derivation = bridge.get().derive(new ByteArrayInputStream(original),
