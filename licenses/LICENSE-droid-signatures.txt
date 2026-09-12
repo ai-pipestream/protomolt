@@ -2,6 +2,7 @@ DROID signature definitions and the byte-pattern syntax they are written in
 
 Bundled at:
   asset/characterize/src/test/resources/ai/protomolt/proto/asset/characterize/signature/signature-corpus.txt
+  asset/characterize/src/main/resources/ai/protomolt/proto/asset/characterize/container/container-signatures.xml
 
 Upstream: https://github.com/digital-preservation/droid
 
