@@ -1,0 +1,30 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'The asset catalog subject: one flat row per stored asset, annotated for the search index and the metric service, plus the projection that builds a row from what the archive already stores'
+
+dependencies {
+    api project(':protomolt-asset-proto')
+    // The row projects an archive entry and its manifest.
+    api project(':protomolt-repo-proto')
+    // The row's fields carry indexing hints and metric member declarations;
+    // the annotations are the whole point of the subject.
+    api project(':protomolt-search-index-spi')
+    api project(':protomolt-protobuf-metric')
+    // The routing rule owns which rendition names a bridge produces.
+    implementation project(':protomolt-asset-bridge')
+    // The subject's proof is the real services answering over it: the real
+    // hint sources resolve the declarations, and a real Lucene index plus
+    // the real metric executor answer the catalog's questions.
+    testImplementation project(':protomolt-metric-spi')
+    testImplementation project(':protomolt-metric-lucene')
+    testImplementation project(':protomolt-metric-proto')
+    testImplementation project(':protomolt-search-service')
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}"
+    }
+}

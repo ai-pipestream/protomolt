@@ -36,6 +36,8 @@ modules:
     name: buf.build/ai-pipestream/jsonschema-testdata
   - path: asset/proto/src/main/proto
     name: buf.build/ai-pipestream/asset
+  - path: asset/catalog/src/main/proto
+    name: buf.build/ai-pipestream/asset-catalog
   - path: repo/proto/src/main/proto
     name: buf.build/ai-pipestream/repo
   - path: account/proto/src/main/proto

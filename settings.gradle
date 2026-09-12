@@ -349,6 +349,9 @@ project(':protomolt-asset-characterize').projectDir = file('asset/characterize')
 include 'protomolt-asset-bridge'
 project(':protomolt-asset-bridge').projectDir = file('asset/bridge')
 
+include 'protomolt-asset-catalog'
+project(':protomolt-asset-catalog').projectDir = file('asset/catalog')
+
 // repo/ — the claim-check document store.
 
 include 'protomolt-repo-proto'

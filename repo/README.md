@@ -238,6 +238,9 @@ Tests are testcontainers integration tests (Docker required): PostgreSQL 17
 for the ledger, LocalStack for S3, the full stack booted through
 `RepoServices` with no mocks.
 
+- `ArchiveCatalogIT` — the catalog view over a real archive: one listing
+  carries the manifests a projection needs, and the rows it produces are
+  the facts the archive already stored.
 - `ArchiveBridgeIT` — bridging end to end: a classified container derives
   its member listing beside the untouched original, a re-run is
   idempotent by content, a bridge this host does not run reports
@@ -418,6 +421,13 @@ idempotent), `DEFERRED` (applicable, but the work needs a reader or a
 service this host does not carry, named in the detail), or `FAILED` with
 the reason verbatim. Derived
 renditions never become the rendition an entry is characterized from.
+
+The catalog view over an archive rides
+[`asset/catalog`](../asset/README.md): `AssetCatalogRows.of(info, manifest)`
+projects one flat row per asset, whose fields declare their own index
+hints and metric members, so "how many Parquet datasets", "how much is
+unclassified", and the OCR quality distribution are ordinary metric
+queries over an ordinary subject.
 
 ### HTTP `POST /v1/archive:upload`
 

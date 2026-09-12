@@ -30,6 +30,8 @@ dependencies {
     // Bridging: the routing rule and the transformations this host runs
     // itself.
     implementation project(':protomolt-asset-bridge')
+    // The catalog projection is exercised against a real archive.
+    testImplementation project(':protomolt-asset-catalog')
     implementation libs.grpc.netty.shaded
     implementation libs.grpc.services
     implementation libs.grpc.inprocess
