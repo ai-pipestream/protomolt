@@ -128,6 +128,22 @@ class ByteWindowsTest {
     }
 
     @Test
+    @DisplayName("a zero-length span is trivially observable, but never at a negative offset")
+    void zeroLengthSpans() {
+        ByteWindows windows = ByteWindows.ofWhole(ramp(0, 4));
+        // Nothing to read means nothing can fail to be read, even where no
+        // byte actually sits — the offset alone does not make it a real
+        // span. A negative offset is never valid, span or not.
+        assertThat(windows.observable(4, 0)).isTrue();
+        assertThat(windows.observable(1000, 0)).isTrue();
+        assertThat(windows.observable(-1, 0)).isFalse();
+        assertThat(windows.slice(1000, 0)).isEqualTo(new byte[0]);
+        assertThat(windows.slice(-1, 0)).isNull();
+        // An empty pattern therefore matches vacuously, anywhere non-negative.
+        assertThat(windows.matchesAt(1000, new byte[0])).isTrue();
+    }
+
+    @Test
     @DisplayName("the defaults reach the structures they are sized for")
     void defaults() {
         // The ZIP end-of-central-directory record can sit 22 + 65,535 bytes

@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -48,6 +49,48 @@ final class Containers {
                 out.write(member.getValue().getBytes(StandardCharsets.UTF_8));
                 out.closeEntry();
             }
+        }
+        return bytes.toByteArray();
+    }
+
+    /** An archive with one member stored (not deflated). */
+    static byte[] zipStored(String name, String content) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        byte[] data = content.getBytes(StandardCharsets.UTF_8);
+        CRC32 crc = new CRC32();
+        crc.update(data);
+        try (ZipOutputStream out = new ZipOutputStream(bytes)) {
+            ZipEntry entry = new ZipEntry(name);
+            entry.setMethod(ZipEntry.STORED);
+            entry.setSize(data.length);
+            entry.setCompressedSize(data.length);
+            entry.setCrc(crc.getValue());
+            out.putNextEntry(entry);
+            out.write(data);
+            out.closeEntry();
+        }
+        return bytes.toByteArray();
+    }
+
+    /** An archive with a trailing archive comment after the central directory. */
+    static byte[] zipWithComment(Map<String, String> members, String comment) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (ZipOutputStream out = new ZipOutputStream(bytes)) {
+            for (Map.Entry<String, String> member : members.entrySet()) {
+                out.putNextEntry(new ZipEntry(member.getKey()));
+                out.write(member.getValue().getBytes(StandardCharsets.UTF_8));
+                out.closeEntry();
+            }
+            out.setComment(comment);
+        }
+        return bytes.toByteArray();
+    }
+
+    /** An archive with no members at all: just an end-of-central-directory record. */
+    static byte[] emptyZip() throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (ZipOutputStream out = new ZipOutputStream(bytes)) {
+            // No entries; closing writes a bare end-of-central-directory record.
         }
         return bytes.toByteArray();
     }
@@ -203,6 +246,85 @@ final class Containers {
         }
         System.arraycopy(miniContainer, 0, out, SECTOR_BYTES * (1 + firstMiniContainer),
                 miniContainer.length);
+        return out;
+    }
+
+    /**
+     * A compound file whose sectors are 4096 bytes, declaring major version
+     * 4. Every stream lands in a full sector regardless of size, so the
+     * nested mini filing system is not exercised here — the point is the
+     * larger sector size, not the mini stream, which {@link #compound} at
+     * 512 bytes already covers.
+     *
+     * @param streams member name to content
+     * @return the compound file's bytes
+     */
+    static byte[] compoundWideSectors(Map<String, byte[]> streams) {
+        final int sectorBytes = 4096;
+        final int entriesPerSector = sectorBytes / ENTRY_BYTES;
+
+        int directorySectors = Math.max(1,
+                (streams.size() + 1 + entriesPerSector - 1) / entriesPerSector);
+        int regularSectors = 0;
+        for (byte[] content : streams.values()) {
+            regularSectors += unitsFor(content.length, sectorBytes);
+        }
+        int totalSectors = 1 + directorySectors + regularSectors;
+        byte[] out = new byte[sectorBytes * (1 + totalSectors)];
+        int firstRegular = 1 + directorySectors;
+
+        System.arraycopy(Ole2Members.MAGIC, 0, out, 0, Ole2Members.MAGIC.length);
+        writeShort(out, 24, 0x003E);
+        writeShort(out, 26, 4);
+        writeShort(out, 28, 0xFFFE);
+        writeShort(out, 30, 12);
+        writeShort(out, 32, 6);
+        writeInt(out, 44, 1);
+        writeInt(out, 48, 1);
+        writeInt(out, 56, MINI_CUTOFF);
+        writeInt(out, 60, END_OF_CHAIN);
+        writeInt(out, 64, 0);
+        writeInt(out, 68, END_OF_CHAIN);
+        writeInt(out, 72, 0);
+        for (int i = 0; i < 109; i++) {
+            writeInt(out, 76 + i * 4, i == 0 ? 0 : FREE);
+        }
+
+        int tableAt = sectorBytes;
+        for (int i = 0; i < sectorBytes / 4; i++) {
+            writeInt(out, tableAt + i * 4, FREE);
+        }
+        writeInt(out, tableAt, TABLE);
+        chain(out, tableAt, 1, directorySectors);
+
+        int directoryAt = sectorBytes * 2;
+        for (int i = 0; i < directorySectors * entriesPerSector; i++) {
+            writeShort(out, directoryAt + i * ENTRY_BYTES + 64, 0);
+            out[directoryAt + i * ENTRY_BYTES + 66] = 0;
+            writeInt(out, directoryAt + i * ENTRY_BYTES + 68, FREE);
+            writeInt(out, directoryAt + i * ENTRY_BYTES + 72, FREE);
+            writeInt(out, directoryAt + i * ENTRY_BYTES + 76, FREE);
+        }
+        writeEntry(out, directoryAt, "Root Entry", 5, FREE, FREE,
+                streams.isEmpty() ? FREE : 1, END_OF_CHAIN, 0);
+
+        int index = 1;
+        int sector = firstRegular;
+        for (Map.Entry<String, byte[]> stream : streams.entrySet()) {
+            byte[] content = stream.getValue();
+            int span = unitsFor(content.length, sectorBytes);
+            writeEntry(out, directoryAt + index * ENTRY_BYTES, stream.getKey(), 2,
+                    FREE, index + 1 <= streams.size() ? index + 1 : FREE, FREE,
+                    sector, content.length);
+            chain(out, tableAt, sector, span);
+            for (int i = 0; i < span; i++) {
+                int from = i * sectorBytes;
+                System.arraycopy(content, from, out, sectorBytes * (1 + sector + i),
+                        Math.min(sectorBytes, content.length - from));
+            }
+            index++;
+            sector += span;
+        }
         return out;
     }
 

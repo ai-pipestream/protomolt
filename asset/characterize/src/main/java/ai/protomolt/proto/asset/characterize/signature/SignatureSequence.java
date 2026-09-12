@@ -2,7 +2,10 @@ package ai.protomolt.proto.asset.characterize.signature;
 
 import ai.protomolt.proto.asset.characterize.ByteWindows;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * A whole signature: an ordered run of subsequences placed relative to an
@@ -197,6 +200,15 @@ public final class SignatureSequence {
         return attempt.blind ? Outcome.NOT_EVALUABLE : Outcome.NOT_MATCHED;
     }
 
+    /** Fragments grouped by position, the group nearest the pattern first. */
+    private static List<List<Fragment>> groupByPosition(List<Fragment> fragments) {
+        Map<Integer, List<Fragment>> byPosition = new TreeMap<>();
+        for (Fragment fragment : fragments) {
+            byPosition.computeIfAbsent(fragment.position(), key -> new ArrayList<>()).add(fragment);
+        }
+        return List.copyOf(byPosition.values());
+    }
+
     private static List<Fragment> sortedByPosition(List<Fragment> fragments) {
         return fragments.stream()
                 .sorted((left, right) -> Integer.compare(left.position(), right.position()))
@@ -215,18 +227,41 @@ public final class SignatureSequence {
 
         /** LEADING and ANYWHERE both place pieces left to right. */
         boolean matchForward() {
-            if (anchor == Anchor.LEADING) {
-                return placeFrom(0, 0, 0);
+            return anchor == Anchor.LEADING
+                    ? placeFrom(0, 0, 0)
+                    : placeFrom(0, 0, lastStart());
+        }
+
+        /**
+         * Records a candidate range that reaches into the unread span.
+         *
+         * <p>Running past the end of the content is not a blind spot: the
+         * content stops there, so no placement was missed. Only positions
+         * inside the content but outside the windows leave the question
+         * open.
+         */
+        private void noteGap(long first, long last) {
+            if (!bytes.sizeKnown()) {
+                if (last >= bytes.head().length) {
+                    blind = true;
+                }
+                return;
             }
-            // An unanchored pattern is searched for, and searching is only
-            // possible where bytes are resident: the two windows, not the
-            // unread span between them.
+            last = Math.min(last, bytes.sizeBytes() - 1);
+            if (last < first) {
+                return;
+            }
+            long covered = 0;
             for (long[] span : residentSpans()) {
-                if (placeFrom(0, span[0], span[1])) {
-                    return true;
+                long begin = Math.max(first, span[0]);
+                long stop = Math.min(last, span[1]);
+                if (stop >= begin) {
+                    covered += stop - begin + 1;
                 }
             }
-            return false;
+            if (covered < last - first + 1) {
+                blind = true;
+            }
         }
 
         /** The spans an unanchored search may start in. */
@@ -253,23 +288,42 @@ public final class SignatureSequence {
          * pattern itself. The pattern's own start is therefore searched
          * over the span the fragments could occupy, and a placement counts
          * only when the extent lands where the distance says.
+         *
+         * <p>Only the first piece is bounded above by its stated distance.
+         * For the pieces after it the stated maximum is a hint the
+         * registries do not hold themselves to: their own matcher bounds
+         * the first piece and then searches forward to the end, so a
+         * published maximum of zero on a later piece means "somewhere
+         * after", not "immediately adjacent". Reading it as a ceiling
+         * costs a tenth of the corpus, which is what the skeleton
+         * conformance suite measures.
          */
         private boolean placeFrom(int index, long from, long to) {
             Subsequence subsequence = subsequences.get(index);
             long low = from + subsequence.minOffset();
-            long high = to + subsequence.maxOffset();
+            long high = index == 0 ? to + subsequence.maxOffset() : lastStart();
             long first = Math.max(0, low + subsequence.minLeading());
             long last = Math.min(high + subsequence.maxLeading(), lastStart());
-            for (long start = first; start <= last; start++) {
-                long[] extent = place(subsequence, start);
-                if (extent == null || extent[0] < low || extent[0] > high) {
-                    continue;
-                }
-                if (index + 1 == subsequences.size()) {
-                    return true;
-                }
-                if (placeFrom(index + 1, extent[1], extent[1])) {
-                    return true;
+            // Only resident positions are worth visiting: walking the unread
+            // span costs an offset for every byte that was never captured,
+            // and no pattern can match there. Skipping it silently would
+            // turn a blind spot into a clean non-match, so a candidate
+            // range that leaves the windows is recorded before it is
+            // narrowed to them.
+            noteGap(first, last);
+            for (long[] span : residentSpans()) {
+                for (long start = Math.max(first, span[0]);
+                        start <= Math.min(last, span[1]); start++) {
+                    long[] extent = place(subsequence, start);
+                    if (extent == null || extent[0] < low || extent[0] > high) {
+                        continue;
+                    }
+                    if (index + 1 == subsequences.size()) {
+                        return true;
+                    }
+                    if (placeFrom(index + 1, extent[1], extent[1])) {
+                        return true;
+                    }
                 }
             }
             return false;
@@ -291,8 +345,10 @@ public final class SignatureSequence {
 
         private boolean placeBackFrom(int index, long cursor) {
             Subsequence subsequence = subsequences.get(index);
-            for (int offset = subsequence.minOffset();
-                    offset <= subsequence.maxOffset(); offset++) {
+            // As with the forward direction, the stated maximum bounds the
+            // first piece alone; later pieces run back to the start.
+            long furthest = index == 0 ? subsequence.maxOffset() : cursor;
+            for (long offset = subsequence.minOffset(); offset <= furthest; offset++) {
                 long edge = cursor - offset;
                 if (edge < 0) {
                     break;
@@ -326,9 +382,11 @@ public final class SignatureSequence {
          *         or null when it does not fit here
          */
         private long[] place(Subsequence subsequence, long start) {
-            note(subsequence.expression(), start);
             int length = subsequence.expression().matchAt(bytes, start);
             if (length == SignatureExpression.NO_MATCH) {
+                // Only a failure needs explaining: a match plainly saw
+                // everything it needed, and this runs at every offset.
+                note(subsequence.expression(), start);
                 return null;
             }
             long rightEnd = placeFragments(subsequence.after(), start + length, true);
@@ -342,65 +400,76 @@ public final class SignatureSequence {
             return new long[] {leftStart, rightEnd};
         }
 
-        /**
-         * Chains one side's fragments outward from a cursor.
-         *
-         * @param rightward true for fragments after the subsequence
-         * @return the outermost boundary, or NO_MATCH
-         */
+        /** Chains one side's fragments outward from a cursor. */
         private long placeFragments(List<Fragment> fragments, long cursor, boolean rightward) {
             if (fragments.isEmpty()) {
                 return cursor;
             }
-            List<Fragment> ordered = sortedByPosition(fragments);
-            int position = ordered.getFirst().position();
-            boolean placedThisPosition = false;
-            for (Fragment fragment : ordered) {
-                if (fragment.position() != position) {
-                    if (!placedThisPosition) {
-                        return SignatureExpression.NO_MATCH;
-                    }
-                    position = fragment.position();
-                    placedThisPosition = false;
-                }
-                if (placedThisPosition) {
-                    continue;
-                }
-                long boundary = placeFragment(fragment, cursor, rightward);
-                if (boundary != SignatureExpression.NO_MATCH) {
-                    cursor = boundary;
-                    placedThisPosition = true;
-                }
-            }
-            return placedThisPosition ? cursor : SignatureExpression.NO_MATCH;
+            return placeGroups(groupByPosition(fragments), 0, cursor, rightward);
         }
 
-        /** One fragment at its permitted distances; the new boundary or NO_MATCH. */
-        private long placeFragment(Fragment fragment, long cursor, boolean rightward) {
-            for (int offset = fragment.minOffset(); offset <= fragment.maxOffset(); offset++) {
-                if (rightward) {
-                    long at = cursor + offset;
+        /**
+         * Places the fragment group at {@code index} and every group
+         * outside it, trying each alternative in turn.
+         *
+         * <p>Alternatives at one position can differ in length, and the
+         * shortest that fits here may leave the next position nowhere to
+         * go. The drawing-exchange signatures are built exactly that way:
+         * a line ending is published as the three alternatives 0A, 0D and
+         * 0D0A, and taking the one-byte form where the content used the
+         * two-byte form strands the digit that has to sit before it.
+         * Committing to the first fit loses those matches, so every
+         * alternative is tried against every group beyond it.
+         */
+        private long placeGroups(List<List<Fragment>> groups, int index, long cursor,
+                                 boolean rightward) {
+            if (index == groups.size()) {
+                return cursor;
+            }
+            for (Fragment fragment : groups.get(index)) {
+                for (int offset = fragment.minOffset(); offset <= fragment.maxOffset(); offset++) {
+                    long placed = rightward
+                            ? placeRight(fragment, cursor + offset, groups, index)
+                            : placeLeft(fragment, cursor - offset, groups, index);
+                    if (placed != SignatureExpression.NO_MATCH) {
+                        return placed;
+                    }
+                }
+            }
+            return SignatureExpression.NO_MATCH;
+        }
+
+        /** One right-hand alternative starting at an offset, then the rest. */
+        private long placeRight(Fragment fragment, long at, List<List<Fragment>> groups,
+                                int index) {
+            int length = fragment.expression().matchAt(bytes, at);
+            if (length == SignatureExpression.NO_MATCH) {
+                note(fragment.expression(), at);
+                return SignatureExpression.NO_MATCH;
+            }
+            return placeGroups(groups, index + 1, at + length, true);
+        }
+
+        /**
+         * One left-hand alternative ending at an offset, then the rest.
+         * Where it starts depends on how long it turns out to be, so each
+         * possible length is tried.
+         */
+        private long placeLeft(Fragment fragment, long stop, List<List<Fragment>> groups,
+                               int index) {
+            for (int length = fragment.expression().minLength();
+                    length <= fragment.expression().maxLength(); length++) {
+                long at = stop - length;
+                if (at < 0) {
+                    break;
+                }
+                if (fragment.expression().matchAt(bytes, at) != length) {
                     note(fragment.expression(), at);
-                    int length = fragment.expression().matchAt(bytes, at);
-                    if (length != SignatureExpression.NO_MATCH) {
-                        return at + length;
-                    }
-                } else {
-                    // A left fragment ends at the cursor less the distance,
-                    // so where it starts depends on how long it turns out
-                    // to be; each possible length is tried in turn.
-                    long end = cursor - offset;
-                    for (int length = fragment.expression().minLength();
-                            length <= fragment.expression().maxLength(); length++) {
-                        long at = end - length;
-                        if (at < 0) {
-                            break;
-                        }
-                        note(fragment.expression(), at);
-                        if (fragment.expression().matchAt(bytes, at) == length) {
-                            return at;
-                        }
-                    }
+                    continue;
+                }
+                long placed = placeGroups(groups, index + 1, at, false);
+                if (placed != SignatureExpression.NO_MATCH) {
+                    return placed;
                 }
             }
             return SignatureExpression.NO_MATCH;
