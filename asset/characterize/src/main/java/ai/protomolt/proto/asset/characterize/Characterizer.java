@@ -68,22 +68,35 @@ public final class Characterizer {
     }
 
     /**
-     * Identifies the format of some bytes.
+     * Identifies the format from a leading byte window alone. Nothing
+     * anchored to the end of the content is observable this way.
      *
-     * @param head the first bytes ({@link #PREFIX_BYTES} are plenty); may be
-     *        empty
+     * @param head the first bytes ({@link #PREFIX_BYTES} are plenty for the
+     *        leading magics); may be empty
      * @param filename the asset's filename; may be blank or null
      * @return the identification — never null, possibly empty-handed
      */
     public static Identification identify(byte[] head, String filename) {
+        return identify(ByteWindows.ofHead(head), filename);
+    }
+
+    /**
+     * Identifies the format of some content.
+     *
+     * @param windows the captured windows over the content
+     * @param filename the asset's filename; may be blank or null
+     * @return the identification — never null, possibly empty-handed
+     */
+    public static Identification identify(ByteWindows windows, String filename) {
         List<CharacterizationEvidence> evidence = new ArrayList<>();
+        byte[] head = windows.head();
         ContentTypeSniffer.Sniff sniff = ContentTypeSniffer.sniff(head, filename);
         String extension = ContentTypeSniffer.extensionOf(filename);
         if (sniff.sniffed()) {
             evidence.add(evidence("magic-bytes", "content sniffs as " + sniff.mimeType()));
         }
         FormatFact fact = sniff.sniffed()
-                ? fromMediaType(sniff.mimeType(), head, filename, extension, evidence)
+                ? fromMediaType(sniff.mimeType(), windows, filename, extension, evidence)
                 : null;
         if (!extension.isEmpty()) {
             evidence.add(evidence("extension", "filename extension is ." + extension));
@@ -91,20 +104,17 @@ public final class Characterizer {
         return new Identification(fact, List.copyOf(evidence));
     }
 
-    private static FormatFact fromMediaType(String mediaType, byte[] head, String filename,
-                                            String extension,
+    private static FormatFact fromMediaType(String mediaType, ByteWindows windows,
+                                            String filename, String extension,
                                             List<CharacterizationEvidence> evidence) {
+        byte[] head = windows.head();
         return switch (mediaType) {
             case "application/x-tar" -> FormatFact.newBuilder().setTar(
                     TarArchive.newBuilder()
                             .setFilename(matching(filename, FormatGrammars.TAR))).build();
-            case "application/zip" -> FormatFact.newBuilder().setZip(
-                    ZipArchive.newBuilder()
-                            .setFilename(matching(filename, FormatGrammars.ZIP))).build();
+            case "application/zip" -> zip(windows, filename, evidence);
             case "application/gzip" -> gzipOrTar(filename, evidence);
-            case "application/vnd.apache.parquet" -> FormatFact.newBuilder().setParquet(
-                    ParquetDataset.newBuilder()
-                            .setFilename(matching(filename, FormatGrammars.PARQUET))).build();
+            case "application/vnd.apache.parquet" -> parquet(windows, filename, evidence);
             case "application/avro" -> FormatFact.newBuilder().setAvro(
                     AvroDataset.newBuilder()
                             .setFilename(matching(filename, FormatGrammars.AVRO))).build();
@@ -129,6 +139,54 @@ public final class Characterizer {
             case "text/plain" -> textual(head, filename, extension, evidence);
             default -> mediaType.startsWith("image/") ? image(mediaType, filename) : null;
         };
+    }
+
+    /**
+     * Parquet writes its magic at both ends. The leading one identifies the
+     * format; the trailing one is what makes the content readable, because
+     * the schema and the row-group index live in the footer. A file with
+     * only the header is still a Parquet asset, so the conclusion stands —
+     * the damage is recorded as a finding, not hidden by refusing to name
+     * the format.
+     */
+    private static FormatFact parquet(ByteWindows windows, String filename,
+                                      List<CharacterizationEvidence> evidence) {
+        if (!Trailers.parquetFooterObservable(windows)) {
+            evidence.add(evidence("trailer", "the footer lies outside the captured window,"
+                    + " so whether the content is sealed was not established"));
+        } else if (Trailers.parquetSealed(windows)) {
+            evidence.add(evidence("trailer", "footer magic seals the content"));
+        } else {
+            evidence.add(evidence("trailer", "header magic without footer magic:"
+                    + " the content carries no readable schema or row-group index"));
+        }
+        return FormatFact.newBuilder().setParquet(ParquetDataset.newBuilder()
+                .setFilename(matching(filename, FormatGrammars.PARQUET))).build();
+    }
+
+    /**
+     * A ZIP's entry list lives in the central directory, which the format
+     * writes at the end. Finding its record proves the archive was closed;
+     * not finding one within reach means either a truncated archive or a
+     * trailer beyond the captured window, and those are recorded as the
+     * different observations they are.
+     */
+    private static FormatFact zip(ByteWindows windows, String filename,
+                                  List<CharacterizationEvidence> evidence) {
+        Trailers.EndOfCentralDirectory directory = Trailers.zipDirectory(windows);
+        if (directory != null) {
+            evidence.add(evidence("trailer", "central directory declares "
+                    + directory.entryCount() + " entries"));
+        } else if (!windows.sizeKnown()) {
+            evidence.add(evidence("trailer", "no trailing window was captured,"
+                    + " so the central directory was not looked for"));
+        } else {
+            evidence.add(evidence("trailer", "no central directory within reach of the"
+                    + " end: the archive is truncated or its trailer lies outside the"
+                    + " captured window"));
+        }
+        return FormatFact.newBuilder().setZip(ZipArchive.newBuilder()
+                .setFilename(matching(filename, FormatGrammars.ZIP))).build();
     }
 
     /** gzip magic: a tar-grammar name means a compressed tar, not a gzip file. */

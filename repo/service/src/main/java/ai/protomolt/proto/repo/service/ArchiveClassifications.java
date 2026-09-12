@@ -1,5 +1,6 @@
 package ai.protomolt.proto.repo.service;
 
+import ai.protomolt.proto.asset.characterize.ByteWindows;
 import ai.protomolt.proto.asset.characterize.Characterizer;
 import ai.protomolt.proto.asset.characterize.Classifications;
 import ai.protomolt.proto.asset.v1.Attribution;
@@ -16,6 +17,7 @@ import com.google.protobuf.Message;
 import com.google.protobuf.util.JsonFormat;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.stream.Collectors;
 
 import static ai.protomolt.proto.repo.service.GrpcErrors.invalidArgument;
@@ -90,18 +92,18 @@ final class ArchiveClassifications {
      *
      * @param declared the validated declaration, or null
      * @param origin the validated origin, or null
-     * @param primaryPrefix the primary rendition's first bytes, or null
-     *        when no bytes were available to read
+     * @param primaryWindows the primary rendition's captured windows, or
+     *        null when no bytes were available to read
      * @param filename the entry's filename, or null
      * @param writtenBy the write's attribution, or null
      * @return the resolved classification
      */
     static Classification classify(FormatFact declared, ObjectStoreOrigin origin,
-                                   byte[] primaryPrefix, String filename,
+                                   ByteWindows primaryWindows, String filename,
                                    WriteAttribution writtenBy) {
-        Characterizer.Identification identification = primaryPrefix != null
-                ? Characterizer.identify(primaryPrefix, filename)
-                : new Characterizer.Identification(null, java.util.List.of());
+        Characterizer.Identification identification = primaryWindows != null
+                ? Characterizer.identify(primaryWindows, filename)
+                : new Characterizer.Identification(null, List.of());
         return Classifications.resolve(declared, identification,
                 attribution(writtenBy), origin, Instant.now());
     }

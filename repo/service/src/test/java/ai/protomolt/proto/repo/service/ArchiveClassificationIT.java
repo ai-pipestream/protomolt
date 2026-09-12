@@ -1,5 +1,7 @@
 package ai.protomolt.proto.repo.service;
 
+import ai.protomolt.proto.asset.characterize.ByteWindows;
+import ai.protomolt.proto.asset.v1.CharacterizationEvidence;
 import ai.protomolt.proto.asset.v1.Classification;
 import ai.protomolt.proto.asset.v1.ClassificationState;
 import ai.protomolt.proto.asset.v1.FormatFact;
@@ -42,6 +44,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -229,6 +232,67 @@ class ArchiveClassificationIT {
         assertThat(c.getIdentified().getFormatCase()).isEqualTo(FormatFact.FormatCase.PDF);
         assertThat(c.getIdentified().getPdf().getFilename()).isEqualTo("scan.pdf");
         assertThat(c.hasDeclared()).isFalse();
+    }
+
+    @Test
+    void theStreamingDoorReadsTheTrailerOffTheSamePass() throws Exception {
+        // Parquet writes its magic at both ends. The leading one names the
+        // format; only the trailing one says the content carries a schema,
+        // and the streaming door never rewinds - so the finding proves the
+        // trailing window came off the upload pass itself.
+        byte[] sealed = new byte[TOO_BIG_FOR_THE_HEAD_WINDOW];
+        System.arraycopy(PARQUET_MAGIC, 0, sealed, 0, 4);
+        System.arraycopy(PARQUET_MAGIC, 0, sealed, sealed.length - 4, 4);
+        Classification whole = uploadOverHttp("sealed", "part-0.parquet", sealed);
+        assertThat(whole.getIdentified().getFormatCase())
+                .isEqualTo(FormatFact.FormatCase.PARQUET);
+        assertThat(observations(whole)).anyMatch(o -> o.contains("footer magic seals"));
+    }
+
+    @Test
+    void aHeaderWithoutItsFooterIsStillParquetAndSaysWhatIsWrong() throws Exception {
+        byte[] truncated = new byte[TOO_BIG_FOR_THE_HEAD_WINDOW];
+        System.arraycopy(PARQUET_MAGIC, 0, truncated, 0, 4);
+        Classification c = uploadOverHttp("truncated", "part-1.parquet", truncated);
+        // The format is not in doubt; the content's readability is. Naming
+        // the format and recording the damage beats refusing to do either.
+        assertThat(c.getIdentified().getFormatCase()).isEqualTo(FormatFact.FormatCase.PARQUET);
+        assertThat(observations(c))
+                .anyMatch(o -> o.contains("without footer magic"));
+    }
+
+    private static final byte[] PARQUET_MAGIC = {'P', 'A', 'R', '1'};
+
+    /**
+     * Big enough that the trailer is out of the leading window's reach, so
+     * these tests fail if the trailing window is not really being captured.
+     */
+    private static final int TOO_BIG_FOR_THE_HEAD_WINDOW = 4 * ByteWindows.DEFAULT_HEAD_BYTES;
+
+    /** Posts through the streaming door and reads back what it concluded. */
+    private static Classification uploadOverHttp(String entryId, String filename, byte[] body)
+            throws Exception {
+        HttpResponse<String> response = HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(URI.create(
+                                "http://127.0.0.1:" + http.port()
+                                        + UploadHttpServer.ARCHIVE_UPLOAD_PATH
+                                        + "?account_id=" + ACCOUNT + "&archive=classified"
+                                        + "&entry_id=" + entryId
+                                        + "&rendition=original&filename=" + filename))
+                        .POST(HttpRequest.BodyPublishers.ofByteArray(body))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(response.statusCode()).isEqualTo(200);
+        return archives.getEntryManifest(GetEntryManifestRequest.newBuilder()
+                        .setAddress(address(entryId)).build())
+                .getInfo().getClassification();
+    }
+
+    /** What the identifier says it saw. */
+    private static List<String> observations(Classification classification) {
+        return classification.getEvidenceList().stream()
+                .map(CharacterizationEvidence::getObservation)
+                .toList();
     }
 
     @Test
