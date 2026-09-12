@@ -238,6 +238,16 @@ Tests are testcontainers integration tests (Docker required): PostgreSQL 17
 for the ledger, LocalStack for S3, the full stack booted through
 `RepoServices` with no mocks.
 
+- `ArchiveCatalogIT` — the catalog view over a real archive: one listing
+  carries the manifests a projection needs, and the rows it produces are
+  the facts the archive already stored.
+- `ArchiveBridgeIT` — bridging end to end: a classified container derives
+  its member listing beside the untouched original, a declared CSV
+  derives its schema, a re-run is idempotent by content, a scanned
+  document escalates to OCR on the prose bridge's finding, a bridge this
+  host does not run reports `DEFERRED`, a broken container fails loud and
+  lands nothing, and an unclassified or conflicted entry is refused by
+  its state.
 - `ArchiveClassificationIT` — the classification state machine behind the
   doors: verification and conflict from real bytes, grammar refusals
   naming the rule, HTTP-door identification, after-the-fact
@@ -387,6 +397,9 @@ The design of record is [docs/design/archive.md](../docs/design/archive.md).
 - `ClassifyEntry` — declare (or re-declare) the entry's format and have
   characterization re-read the primary rendition's bytes; returns the
   state machine's resolution.
+- `BridgeEntry` — run the bridges the entry's classification makes
+  applicable, landing their derived renditions beside the untouched
+  original; returns one outcome per bridge considered.
 
 Entries carry an asset **classification** — the state machine from
 [docs/design/asset-formats.md](../docs/design/asset-formats.md):
@@ -397,6 +410,31 @@ tar — and a declaration must name its file) and an `ObjectStoreOrigin`
 (coordinates required); characterization reads the primary rendition's
 bytes through the asset family's one detection seam, and listings filter
 by state.
+
+A classified entry can then be **bridged**: `BridgeEntry` derives
+renditions under the platform's well-known names (`members` for a tar or
+zip, `schema` for a delimited table, NDJSON file, or Avro container)
+beside the original, each pinning its own `schema_subject` so the output is
+schema-validated data rather than loose bytes. Bridging is gated on the
+state machine — an `UNCLASSIFIED` or `CONFLICTED` entry names no single
+format and is refused `FAILED_PRECONDITION` — and every bridge reports
+what it did: `PRODUCED`, `UNCHANGED` (content addressing makes a re-run
+idempotent), `DEFERRED` (applicable, but the work needs a reader or a
+service this host does not carry, named in the detail), or `FAILED` with
+the reason verbatim. Derived
+renditions never become the rendition an entry is characterized from.
+
+A host that can reach a parser passes its own `BridgeEngine` to
+`RepoServices.build`, adding the text and OCR bridges. A PDF the text
+bridge recovers no prose from escalates to OCR on that finding alone, and
+the empty `text` rendition lands as empty rather than absent.
+
+The catalog view over an archive rides
+[`asset/catalog`](../asset/README.md): `AssetCatalogRows.of(info, manifest)`
+projects one flat row per asset, whose fields declare their own index
+hints and metric members, so "how many Parquet datasets", "how much is
+unclassified", and the OCR quality distribution are ordinary metric
+queries over an ordinary subject.
 
 ### HTTP `POST /v1/archive:upload`
 

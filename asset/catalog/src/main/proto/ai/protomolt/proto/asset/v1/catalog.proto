@@ -1,0 +1,309 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.asset.v1;
+
+import "ai/protomolt/proto/index/hints/v1/indexing_hints.proto";
+import "ai/protomolt/proto/metric/v1/metric.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.asset.v1";
+
+// ============================================================================
+// THE ASSET CATALOG SUBJECT — one flat row per stored asset, carrying what a
+// catalog view asks about: what state the asset is classified in, what kind
+// of format it holds, what its content is, how big it is, and how good the
+// recovered text was.
+//
+// This is a projection, not a second store. Every value below is already a
+// stored fact somewhere in the archive; the row exists so those facts reach
+// the search index and the metric service through the same annotations every
+// other subject uses. "How many Parquet datasets", "how much is
+// unclassified", "what does the OCR quality distribution look like" are then
+// ordinary metric queries, not bespoke endpoints.
+//
+// The dimensions are the three the classification layer introduced:
+// classification state, format kind, and content class. Each rides as a
+// KEYWORD so it groups exactly, and each is DECLARED as a metric dimension
+// rather than inferred, because a dimension is a decision.
+// ============================================================================
+
+// One asset, flattened for the catalog.
+message AssetCatalogRow {
+  option (ai.protomolt.proto.metric.v1.metric_message) = {
+    subject: "asset.catalog"
+    identity_field: "entry_uuid"
+    members: {
+      role: MEMBER_ROLE_MEASURE
+      aggregate: AGGREGATE_COUNT
+      name: "unclassified_assets"
+      filter_cel: "this.classification_state == 'UNCLASSIFIED'"
+    }
+    members: {
+      role: MEMBER_ROLE_MEASURE
+      aggregate: AGGREGATE_COUNT
+      name: "conflicted_assets"
+      filter_cel: "this.classification_state == 'CONFLICTED'"
+    }
+    members: {
+      role: MEMBER_ROLE_MEASURE
+      aggregate: AGGREGATE_COUNT
+      name: "bridged_assets"
+      filter_cel: "this.bridged == true"
+    }
+  };
+
+  // The owning account: every catalog question is asked inside one tenant.
+  string account_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    },
+    (ai.protomolt.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_KEYWORD
+      facetable: true
+    },
+    (ai.protomolt.proto.metric.v1.metric) = {role: MEMBER_ROLE_DIMENSION}
+  ];
+
+  // The archive holding the asset.
+  string archive = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {slug: true, max_len: 100}
+    },
+    (ai.protomolt.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_KEYWORD
+      facetable: true
+    },
+    (ai.protomolt.proto.metric.v1.metric) = {role: MEMBER_ROLE_DIMENSION}
+  ];
+
+  // The asset's stable identity, and the row's own identity.
+  string entry_uuid = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {uuid: true}
+    },
+    (ai.protomolt.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_KEYWORD
+      stored: true
+    }
+  ];
+
+  // The caller's own identity for the asset, kept searchable as text.
+  string entry_id = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 500}
+      ignore_if_zero: true
+    },
+    (ai.protomolt.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_TEXT}
+  ];
+
+  // The asset's filename.
+  string filename = 5 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 500}
+      ignore_if_zero: true
+    },
+    (ai.protomolt.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_TEXT}
+  ];
+
+  // The classification state's stored name (UNCLASSIFIED, DECLARED,
+  // IDENTIFIED, VERIFIED, CONFLICTED). The name rather than the number, so
+  // a facet reads as itself in a console and a query.
+  string classification_state = 6 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 40}
+    },
+    (ai.protomolt.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_KEYWORD
+      facetable: true
+    },
+    (ai.protomolt.proto.metric.v1.metric) = {role: MEMBER_ROLE_DIMENSION}
+  ];
+
+  // The format of record's kind, as the FormatFact arm's name in lower
+  // case ("tar", "parquet", "pdf"). Blank when the state names no single
+  // format, which is itself a fact worth grouping by.
+  string format_kind = 7 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 40}
+      ignore_if_zero: true
+    },
+    (ai.protomolt.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_KEYWORD
+      facetable: true
+      // "No single format" is an answer the catalog is asked for, so the
+      // index emits a token for it. Skipping the field would drop exactly
+      // the assets a backlog view is looking for.
+      null_value: "none"
+      skip_if_missing: false
+    },
+    (ai.protomolt.proto.metric.v1.metric) = {role: MEMBER_ROLE_DIMENSION}
+  ];
+
+  // The primary content class a rendition measured, without its enum
+  // prefix ("INFORMATIONAL_TEXT", "OCR_TEXT"). Blank when no rendition
+  // carries a content profile.
+  string content_class = 8 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 40}
+      ignore_if_zero: true
+    },
+    (ai.protomolt.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_KEYWORD
+      facetable: true
+      null_value: "none"
+      skip_if_missing: false
+    },
+    (ai.protomolt.proto.metric.v1.metric) = {role: MEMBER_ROLE_DIMENSION}
+  ];
+
+  // Whether the format of record was declared, identified, or both. This
+  // is the classification state again at a coarser grain, and it is the
+  // grain a trust question asks at.
+  bool verified = 9 [
+    (ai.protomolt.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_BOOLEAN
+      facetable: true
+      // False is the interesting half of each of these: not verified, not
+      // measured, not yet bridged.
+      null_value: "false"
+      skip_if_missing: false
+    },
+    (ai.protomolt.proto.metric.v1.metric) = {role: MEMBER_ROLE_DIMENSION}
+  ];
+
+  // Bytes the asset's current version holds across every present
+  // rendition.
+  int64 size_bytes = 10 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    },
+    (ai.protomolt.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_INT64
+      facetable: true
+    },
+    (ai.protomolt.proto.metric.v1.metric) = {
+      role: MEMBER_ROLE_MEASURE
+      aggregate: AGGREGATE_SUM
+      name: "stored_bytes"
+    }
+  ];
+
+  // How many renditions the current version holds.
+  int64 rendition_count = 11 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    },
+    (ai.protomolt.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_INT64
+      facetable: true
+    },
+    (ai.protomolt.proto.metric.v1.metric) = {
+      role: MEMBER_ROLE_MEASURE
+      aggregate: AGGREGATE_SUM
+      name: "renditions"
+    }
+  ];
+
+  // How many of those renditions a bridge produced.
+  int64 derived_renditions = 12 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    },
+    (ai.protomolt.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_INT64
+      facetable: true
+    },
+    (ai.protomolt.proto.metric.v1.metric) = {
+      role: MEMBER_ROLE_MEASURE
+      aggregate: AGGREGATE_SUM
+      name: "derived_renditions"
+    }
+  ];
+
+  // The best content-quality score any rendition measured, in [0, 1].
+  // Negative when nothing measured one: a distribution over "no score" and
+  // a distribution over "scored zero" are different questions, and zero
+  // would merge them.
+  double content_quality = 13 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      double: {gte: -1.0, lte: 1.0}
+    },
+    (ai.protomolt.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_DOUBLE
+      facetable: true
+    },
+    (ai.protomolt.proto.metric.v1.metric) = {
+      role: MEMBER_ROLE_MEASURE
+      aggregate: AGGREGATE_AVG
+      name: "mean_content_quality"
+      filter_cel: "this.quality_measured == true"
+    }
+  ];
+
+  // The asset's current version number.
+  int64 version = 14 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    },
+    (ai.protomolt.proto.index.hints.v1.index) = {type: INDEX_FIELD_TYPE_INT64}
+  ];
+
+  // When the asset last changed.
+  google.protobuf.Timestamp updated_at = 15 [
+    (ai.protomolt.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_DATE
+      facetable: true
+    },
+    (ai.protomolt.proto.metric.v1.metric) = {
+      role: MEMBER_ROLE_DIMENSION
+      default_grain: TIME_GRAIN_DAY
+    }
+  ];
+
+  // Whether any rendition carries a measured quality score. A row filter
+  // reads a bool, not a comparison, so the mean above needs this stated
+  // rather than derived from the sentinel.
+  bool quality_measured = 17 [
+    (ai.protomolt.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_BOOLEAN
+      facetable: true
+      // False is the interesting half of each of these: not verified, not
+      // measured, not yet bridged.
+      null_value: "false"
+      skip_if_missing: false
+    },
+    (ai.protomolt.proto.metric.v1.metric) = {role: MEMBER_ROLE_DIMENSION}
+  ];
+
+  // Whether a bridge has derived anything from this asset. The facet a
+  // backlog view opens with: what is classified but not yet bridged.
+  bool bridged = 18 [
+    (ai.protomolt.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_BOOLEAN
+      facetable: true
+      // False is the interesting half of each of these: not verified, not
+      // measured, not yet bridged.
+      null_value: "false"
+      skip_if_missing: false
+    },
+    (ai.protomolt.proto.metric.v1.metric) = {role: MEMBER_ROLE_DIMENSION}
+  ];
+
+  // When the classification last resolved.
+  google.protobuf.Timestamp classified_at = 16 [
+    (ai.protomolt.proto.index.hints.v1.index) = {
+      type: INDEX_FIELD_TYPE_DATE
+      facetable: true
+    },
+    (ai.protomolt.proto.metric.v1.metric) = {
+      role: MEMBER_ROLE_DIMENSION
+      default_grain: TIME_GRAIN_DAY
+    }
+  ];
+}

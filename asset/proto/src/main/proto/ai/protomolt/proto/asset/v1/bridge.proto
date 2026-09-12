@@ -1,0 +1,206 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.asset.v1;
+
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.asset.v1";
+
+// ============================================================================
+// BRIDGES — the characterization-gated transformations that carry an asset
+// from the format it arrived in to the shapes the rest of the platform
+// consumes.
+//
+// A bridge DERIVES; it never converts in place. The original bytes are
+// immutable, and every bridge output is a new rendition on the same asset,
+// provenance-stamped and shape-pinned. Bridging is gated on the
+// classification state machine: an asset nobody has classified, or one whose
+// declaration the bytes contradict, is not bridged — the routing rule is
+// "characterized format applies these bridges", and an uncharacterized
+// format applies none.
+//
+// Most format pairs deliberately do not bridge. A bridge exists only where a
+// real tool in the platform produces its output, which is why the kinds
+// below are a closed set: like format claims, bridge selection gates
+// behavior, and behavior-gating vocabulary must be exhaustive at compile
+// time. The derived RENDITION NAMES the kinds map to ("members", "schema",
+// "dataset", "text", "ocr-text", "conversation") are well-known conventions
+// in the archive's open rendition vocabulary — the archive imposes no closed
+// naming, and these are simply the names the platform's own bridges use.
+// ============================================================================
+
+// The transformations the platform ships. Each kind names one derived
+// rendition and one output shape.
+enum BridgeKind {
+  // Unset; never an applicable bridge.
+  BRIDGE_KIND_UNSPECIFIED = 0;
+  // A container's member listing, as ContainerMembers → "members".
+  BRIDGE_KIND_CONTAINER_MEMBERS = 1;
+  // A dataset's schema and shape profile, as DatasetSchema → "schema".
+  BRIDGE_KIND_DATASET_SCHEMA = 2;
+  // The normalized tabular form of a table → "dataset".
+  BRIDGE_KIND_TABULAR_DATASET = 3;
+  // Prose extracted from a document → "text".
+  BRIDGE_KIND_DOCUMENT_TEXT = 4;
+  // Text recovered from a scan or image, with its measured quality
+  // profile → "ocr-text".
+  BRIDGE_KIND_OCR_TEXT = 5;
+  // Turn-segmented conversation → "conversation".
+  BRIDGE_KIND_CONVERSATION = 6;
+}
+
+// What happened when a bridge was asked to run. A bridge that did not
+// produce says why; nothing is silently skipped.
+enum BridgeStatus {
+  // Unset; never a stored outcome.
+  BRIDGE_STATUS_UNSPECIFIED = 0;
+  // The bridge ran and a derived rendition landed.
+  BRIDGE_STATUS_PRODUCED = 1;
+  // The bridge ran and produced exactly the bytes already stored; no new
+  // version landed. Re-running a bridge is idempotent by content.
+  BRIDGE_STATUS_UNCHANGED = 2;
+  // The bridge applies to this asset but executes elsewhere — the
+  // extraction rides a parser or an external tool this service does not
+  // host. Named so a caller can route the work rather than assume it done.
+  BRIDGE_STATUS_DEFERRED = 3;
+  // The bridge ran and could not finish. The detail carries the reason
+  // verbatim; a failed bridge is reported, never swallowed.
+  BRIDGE_STATUS_FAILED = 4;
+}
+
+// One member of a container.
+message ContainerMember {
+  // The member's path inside the container, exactly as the container
+  // records it.
+  string path = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 1024}
+    }
+  ];
+  // The member's uncompressed size in bytes.
+  int64 size_bytes = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    }
+  ];
+  // Lowercase hex SHA-256 of the member's bytes. Present when the listing
+  // hashed this member; blank when hashing was bounded out or the member
+  // is a directory.
+  string sha256 = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {sha256_hex: true}
+      ignore_if_zero: true
+    }
+  ];
+  // The member's recorded modification time, when the container carries
+  // one.
+  google.protobuf.Timestamp modified_at = 4;
+  // Whether the member is a directory rather than a file.
+  bool directory = 5;
+}
+
+// A container's member listing: the "members" rendition's shape.
+message ContainerMembers {
+  // The members, in container order.
+  repeated ContainerMember members = 1;
+  // How many members the listing holds.
+  int64 member_count = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    }
+  ];
+  // Sum of the listed members' uncompressed sizes.
+  int64 total_bytes = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    }
+  ];
+  // True when the listing stopped at its bound rather than at the end of
+  // the container. A bounded listing says so; it never passes itself off
+  // as complete.
+  bool truncated = 4;
+  // Why the listing stopped, when it was bounded (e.g. "member limit
+  // 50000 reached"). Blank on a complete listing.
+  string truncation_reason = 5 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 300}
+      ignore_if_zero: true
+    }
+  ];
+}
+
+// The kind of value a dataset column holds. Deliberately coarse: this is a
+// shape profile for cataloguing, not a type system.
+enum FieldKind {
+  // Unset; never a stored kind.
+  FIELD_KIND_UNSPECIFIED = 0;
+  // Text.
+  FIELD_KIND_STRING = 1;
+  // Whole numbers.
+  FIELD_KIND_INTEGER = 2;
+  // Fractional numbers.
+  FIELD_KIND_DOUBLE = 3;
+  // True or false.
+  FIELD_KIND_BOOLEAN = 4;
+  // A date, time, or instant.
+  FIELD_KIND_TIMESTAMP = 5;
+  // A nested record.
+  FIELD_KIND_RECORD = 6;
+  // A repeated value.
+  FIELD_KIND_LIST = 7;
+  // Opaque bytes.
+  FIELD_KIND_BYTES = 8;
+}
+
+// One column of a dataset.
+message DatasetField {
+  // The column's name.
+  string name = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 300}
+    }
+  ];
+  // The column's kind.
+  FieldKind kind = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      enum: {defined_only: true}
+    }
+  ];
+  // Whether the column admits a missing value.
+  bool nullable = 3;
+  // The source's own type name, verbatim, when it has one (e.g. a Parquet
+  // logical type or an Avro schema type). Recorded, never interpreted.
+  string source_type = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 300}
+      ignore_if_zero: true
+    }
+  ];
+}
+
+// A dataset's schema and shape: the "schema" rendition's shape.
+message DatasetSchema {
+  // The columns, in dataset order.
+  repeated DatasetField fields = 1;
+  // Rows in the dataset when the format states or the reader counted one;
+  // -1 when the count is unknown, which is honest rather than zero.
+  int64 row_count = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: -1}
+    }
+  ];
+  // How many rows the reader inspected to conclude the schema. Zero when
+  // the format declares its schema and no inspection was needed.
+  int64 rows_inspected = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    }
+  ];
+  // Whether the schema was declared by the format itself (Parquet, Avro)
+  // rather than inferred from values.
+  bool declared_by_format = 4;
+}

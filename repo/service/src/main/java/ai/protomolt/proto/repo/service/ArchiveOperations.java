@@ -1,12 +1,21 @@
 package ai.protomolt.proto.repo.service;
 
+import ai.protomolt.proto.asset.bridge.Bridge;
+import ai.protomolt.proto.asset.bridge.BridgeEngine;
+import ai.protomolt.proto.asset.bridge.Bridges;
 import ai.protomolt.proto.asset.characterize.Characterizer;
+import ai.protomolt.proto.asset.v1.BridgeKind;
+import ai.protomolt.proto.asset.v1.BridgeStatus;
 import ai.protomolt.proto.asset.v1.Classification;
 import ai.protomolt.proto.asset.v1.ClassificationState;
+import ai.protomolt.proto.asset.v1.ContentProfile;
 import ai.protomolt.proto.asset.v1.FormatFact;
 import ai.protomolt.proto.asset.v1.ObjectStoreOrigin;
 import ai.protomolt.proto.repo.archive.v1.Archive;
 import ai.protomolt.proto.repo.archive.v1.ArchiveStats;
+import ai.protomolt.proto.repo.archive.v1.BridgeEntryRequest;
+import ai.protomolt.proto.repo.archive.v1.BridgeEntryResponse;
+import ai.protomolt.proto.repo.archive.v1.BridgeOutcome;
 import ai.protomolt.proto.repo.archive.v1.ClassificationStateCount;
 import ai.protomolt.proto.repo.archive.v1.ClassifyEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.ClassifyEntryResponse;
@@ -65,6 +74,7 @@ import jakarta.persistence.PersistenceException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.DigestInputStream;
@@ -74,6 +84,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -120,11 +132,18 @@ final class ArchiveOperations {
     private final ArchiveLedger ledger;
     private final DriveLedger drives;
     private final BlobStore blobStore;
+    private final BridgeEngine bridgeEngine;
 
     ArchiveOperations(ArchiveLedger ledger, DriveLedger drives, BlobStore blobStore) {
+        this(ledger, drives, blobStore, BridgeEngine.standard());
+    }
+
+    ArchiveOperations(ArchiveLedger ledger, DriveLedger drives, BlobStore blobStore,
+                      BridgeEngine bridgeEngine) {
         this.ledger = ledger;
         this.drives = drives;
         this.blobStore = blobStore;
+        this.bridgeEngine = bridgeEngine;
     }
 
     // ------------------------------------------------------------------
@@ -483,8 +502,7 @@ final class ArchiveOperations {
             // Classification recomputes when this upload carries the entry's
             // primary rendition (the manifest's "original", or its first
             // rendition when no "original" exists).
-            String primary = slots.containsKey(new Slot("original", ""))
-                    ? "original" : slots.firstKey().name();
+            String primary = primaryName(slots);
             if (descriptor.getName().equals(primary)) {
                 applyClassification(entry, declaredFormat, origin, capture.prefix(),
                         filename != null && !filename.isBlank() ? filename : entry.filename,
@@ -591,7 +609,17 @@ final class ArchiveOperations {
                 request.getArchive(), stateFilter, limit, offset);
         ListEntriesResponse.Builder response = ListEntriesResponse.newBuilder()
                 .setTotalCount(ledger.countEntries(request.getAccountId(), request.getArchive()));
-        page.forEach(entry -> response.addEntries(toProto(entry)));
+        for (ArchiveEntryRecord entry : page) {
+            response.addEntries(toProto(entry));
+            if (request.getIncludeManifests()) {
+                // Same order as the entries, and one manifest per entry even
+                // when a row's current version has gone missing: a listing
+                // whose two lists drift apart cannot be zipped.
+                response.addManifests(ledger.findVersion(entry.entryUuid, entry.currentVersion)
+                        .map(version -> ArchiveManifests.fromJson(version.manifest))
+                        .orElseGet(VersionManifest::getDefaultInstance));
+            }
+        }
         if (page.size() == limit) {
             response.setNextContinuationToken(Long.toString(offset + limit));
         }
@@ -785,18 +813,243 @@ final class ArchiveOperations {
                 .build();
     }
 
-    /** The manifest's primary rendition: "original", else its first. */
+    // ------------------------------------------------------------------
+    // Bridging
+    // ------------------------------------------------------------------
+
+    BridgeEntryResponse bridgeEntry(BridgeEntryRequest request) {
+        EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
+        ArchiveRecord archive = archiveOrThrow(address.getAccountId(), address.getArchive());
+        DriveRecord drive = driveOrThrow(archive);
+        ArchiveEntryRecord entry = entryOrThrow(address);
+
+        Classification classification = ArchiveClassifications.fromJson(entry.classification);
+        ClassificationState state = classification == null
+                ? ClassificationState.CLASSIFICATION_STATE_UNCLASSIFIED
+                : classification.getState();
+        if (!Bridges.bridgeable(state)) {
+            throw failedPrecondition("entry '" + address.getEntryId() + "' is "
+                    + ArchiveClassifications.stateName(state)
+                    + "; bridging needs a classification that names exactly one format");
+        }
+        List<BridgeKind> applicable =
+                Bridges.applicableTo(Bridges.formatOfRecord(classification));
+        List<BridgeKind> wanted = request.getBridgesList().isEmpty()
+                ? applicable : request.getBridgesList();
+        for (BridgeKind kind : request.getBridgesList()) {
+            if (!applicable.contains(kind)) {
+                throw invalidArgument("bridge " + kind.name() + " does not apply to a "
+                        + Bridges.formatOfRecord(classification).getFormatCase().name()
+                        .toLowerCase(Locale.ROOT) + " asset");
+            }
+        }
+
+        ArchiveVersionRecord version = versionOrThrow(entry, 0);
+        VersionManifest manifest = ArchiveManifests.fromJson(version.manifest);
+        RenditionManifestEntry primary = primaryOf(manifest);
+        if (primary == null || primary.getState() != RenditionState.RENDITION_STATE_PRESENT) {
+            throw failedPrecondition("entry '" + address.getEntryId()
+                    + "' has no present primary rendition to bridge from");
+        }
+
+        FormatFact format = Bridges.formatOfRecord(classification);
+        List<BridgeOutcome.Builder> outcomes = new ArrayList<>();
+        Map<RenditionDescriptor, Derived> produced = new LinkedHashMap<>();
+        // The run list can grow: a document the prose bridge finds nothing
+        // in is a scan, and OCR applies only once that has been found.
+        List<BridgeKind> run = new ArrayList<>(wanted);
+        for (int at = 0; at < run.size(); at++) {
+            BridgeKind kind = run.get(at);
+            BridgeOutcome.Builder outcome = BridgeOutcome.newBuilder()
+                    .setBridge(kind)
+                    .setRendition(Bridges.renditionName(kind));
+            outcomes.add(outcome);
+            Optional<Bridge> bridge = bridgeEngine.forKind(kind, format);
+            if (bridge.isEmpty()) {
+                outcome.setStatus(BridgeStatus.BRIDGE_STATUS_DEFERRED)
+                        .setDetail(Bridges.deferralReason(kind, format));
+                continue;
+            }
+            // The blob store hands back bytes, not a stream, so the original
+            // is read whole here. Streaming reads are the store's own
+            // follow-on; bridging gains them for free when they land.
+            byte[] original = blobStore.get(drive.bucket, primary.getObjectKey()).data();
+            Bridge.Derivation derivation;
+            try {
+                derivation = bridge.get().derive(new ByteArrayInputStream(original),
+                        new Bridge.Context(format, entry.filename));
+            } catch (IOException | RuntimeException e) {
+                outcome.setStatus(BridgeStatus.BRIDGE_STATUS_FAILED)
+                        .setDetail(e.getMessage() == null ? e.toString() : e.getMessage());
+                continue;
+            }
+            produced.put(derivedDescriptor(kind), new Derived(derivation, outcome));
+            escalate(kind, derivation, format, run);
+        }
+
+        long landed = produced.isEmpty()
+                ? entry.currentVersion
+                : landDerived(address, archive, drive, produced, request.getBridgedBy());
+        return BridgeEntryResponse.newBuilder()
+                .setVersion(landed)
+                .addAllOutcomes(outcomes.stream().map(BridgeOutcome.Builder::build).toList())
+                .build();
+    }
+
+    /**
+     * The one escalation the routing rule cannot make on its own: a document
+     * whose prose bridge produced nothing is a scan, and "scanned" is a
+     * finding rather than a property of the format. OCR joins the run only
+     * once the finding exists, and only where this host can run it.
+     */
+    private void escalate(BridgeKind ran, Bridge.Derivation derivation, FormatFact format,
+                          List<BridgeKind> run) {
+        if (ran != BridgeKind.BRIDGE_KIND_DOCUMENT_TEXT
+                || derivation.content().length != 0
+                || run.contains(BridgeKind.BRIDGE_KIND_OCR_TEXT)
+                || bridgeEngine.forKind(BridgeKind.BRIDGE_KIND_OCR_TEXT, format).isEmpty()) {
+            return;
+        }
+        run.add(BridgeKind.BRIDGE_KIND_OCR_TEXT);
+    }
+
+    /** One bridge's product on its way into a manifest slot. */
+    private record Derived(Bridge.Derivation derivation, BridgeOutcome.Builder outcome) {
+    }
+
+    /** The descriptor a bridge's output lands under: name, media type, shape pin. */
+    private static RenditionDescriptor derivedDescriptor(BridgeKind kind) {
+        RenditionDescriptor.Builder descriptor = RenditionDescriptor.newBuilder()
+                .setName(Bridges.renditionName(kind))
+                .setMediaType(Bridges.mediaType(kind));
+        String subject = Bridges.schemaSubject(kind);
+        if (!subject.isBlank()) {
+            descriptor.setSchemaSubject(subject);
+        }
+        return descriptor.build();
+    }
+
+    /**
+     * Lands every produced rendition in ONE new version beside the original,
+     * which is carried by reference and never rewritten. Content addressing
+     * makes re-running a bridge idempotent: identical output hashes to the
+     * same key, the root checksum does not move, and no version lands.
+     */
+    private long landDerived(EntryAddress address, ArchiveRecord archive, DriveRecord drive,
+                             Map<RenditionDescriptor, Derived> produced,
+                             WriteAttribution bridgedBy) {
+        UUID entryUuid = ArchiveIds.entryUuid(address);
+        for (int attempt = 1; ; attempt++) {
+            ArchiveEntryRecord entry = entryOrThrow(address);
+            long base = entry.currentVersion;
+            List<ArchiveVersionRecord> retained = ledger.allVersions(entryUuid);
+            VersionManifest current = manifestOf(retained, base);
+
+            TreeMap<Slot, RenditionManifestEntry> slots = slotsOf(current);
+            Instant now = Instant.now();
+            Map<String, byte[]> bytesByKey = new LinkedHashMap<>();
+            for (Map.Entry<RenditionDescriptor, Derived> item : produced.entrySet()) {
+                RenditionDescriptor descriptor = item.getKey();
+                byte[] data = item.getValue().derivation().content();
+                RenditionManifestEntry written = writtenEntry(descriptor, data, drive, address,
+                        entryUuid, bridgedBy, now);
+                ContentProfile profile = item.getValue().derivation().profile();
+                if (profile != null) {
+                    written = written.toBuilder().setContentProfile(profile).build();
+                }
+                slots.put(new Slot(descriptor.getName(), descriptor.getSubKey()), written);
+                if (written.getState() == RenditionState.RENDITION_STATE_PRESENT) {
+                    bytesByKey.put(written.getObjectKey(), data);
+                }
+            }
+            List<RenditionManifestEntry> ordered = new ArrayList<>(slots.values());
+            String root = ArchiveManifests.rootChecksum(ordered);
+            long totalBytes = ArchiveManifests.totalBytes(ordered);
+
+            boolean unchanged = root.equals(retained.stream()
+                    .filter(v -> v.version == base).findFirst().orElseThrow().rootChecksum);
+            for (Derived item : produced.values()) {
+                item.outcome().setStatus(unchanged
+                        ? BridgeStatus.BRIDGE_STATUS_UNCHANGED
+                        : BridgeStatus.BRIDGE_STATUS_PRODUCED);
+                if (item.derivation().degraded()) {
+                    item.outcome().setDetail(String.join("; ", item.derivation().warnings()));
+                }
+            }
+            if (unchanged) {
+                // Every bridge reproduced what the entry already holds.
+                return base;
+            }
+
+            Map<String, RenditionManifestEntry> before =
+                    ArchiveManifests.referencedObjects(manifests(retained));
+            for (Map.Entry<String, byte[]> object : bytesByKey.entrySet()) {
+                if (!before.containsKey(object.getKey())) {
+                    RenditionManifestEntry written = ordered.stream()
+                            .filter(item -> object.getKey().equals(item.getObjectKey()))
+                            .findFirst().orElseThrow();
+                    blobStore.put(new BlobStore.PutSpec(drive.bucket, object.getKey(),
+                                    contentTypeOf(written.getRendition()), null,
+                                    written.getSha256()),
+                            object.getValue());
+                }
+            }
+
+            long newVersion = base + 1;
+            long dropVersion = !archive.retainsVersions() && base != 0 ? base : 0;
+            VersionManifest manifest = manifestProto(address, newVersion, root, totalBytes,
+                    ordered, now);
+            entry.currentVersion = newVersion;
+            entry.updatedAt = now;
+            Map<String, RenditionManifestEntry> after = afterOwnership(retained, dropVersion,
+                    manifest);
+            StatsDelta delta = delta(0, 1 - (dropVersion != 0 ? 1 : 0), before, after,
+                    totalBytes - ArchiveManifests.totalBytes(current.getRenditionsList()));
+            try {
+                ledger.commitSave(entry, base,
+                        versionRow(entryUuid, newVersion, manifest, root, totalBytes, now),
+                        dropVersion, delta);
+            } catch (ArchiveLedger.VersionConflictException | PersistenceException e) {
+                if (attempt >= CONFLICT_RETRIES) {
+                    throw aborted("entry '" + address.getEntryId()
+                            + "' is being written concurrently");
+                }
+                continue;
+            }
+            deleteQuietly(drive, ArchiveManifests.unreferencedKeys(before, after));
+            return newVersion;
+        }
+    }
+
+    /**
+     * The manifest's primary rendition: "original", else the first rendition
+     * a bridge did not produce. Derived renditions are excluded on purpose —
+     * an entry must never end up characterized from its own bridge output.
+     */
     private static RenditionManifestEntry primaryOf(VersionManifest manifest) {
         RenditionManifestEntry first = null;
         for (RenditionManifestEntry item : manifest.getRenditionsList()) {
-            if (item.getRendition().getName().equals("original")) {
+            String name = item.getRendition().getName();
+            if (name.equals("original")) {
                 return item;
             }
-            if (first == null) {
+            if (first == null && !Bridges.derivedName(name)) {
                 first = item;
             }
         }
         return first;
+    }
+
+    /** The primary rendition's name among a save's slots, or null when none. */
+    private static String primaryName(TreeMap<Slot, RenditionManifestEntry> slots) {
+        if (slots.containsKey(new Slot("original", ""))) {
+            return "original";
+        }
+        return slots.keySet().stream()
+                .map(Slot::name)
+                .filter(name -> !Bridges.derivedName(name))
+                .findFirst()
+                .orElse(null);
     }
 
     /**
@@ -807,9 +1060,7 @@ final class ArchiveOperations {
      */
     private static byte[] primaryPrefix(TreeMap<Slot, RenditionManifestEntry> slots,
                                         PutEntryRequest request) {
-        String primary = slots.containsKey(new Slot("original", ""))
-                ? "original"
-                : slots.isEmpty() ? null : slots.firstKey().name();
+        String primary = primaryName(slots);
         if (primary == null) {
             return null;
         }

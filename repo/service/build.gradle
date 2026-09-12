@@ -27,6 +27,12 @@ dependencies {
     // Classification: the asset family's identification seam and state
     // machine behind the archive's doors.
     implementation project(':protomolt-asset-characterize')
+    // Bridging: the routing rule and the transformations this host runs
+    // itself. On the api surface because a composed host supplies its own
+    // BridgeEngine to RepoServices.build.
+    api project(':protomolt-asset-bridge')
+    // The catalog projection is exercised against a real archive.
+    testImplementation project(':protomolt-asset-catalog')
     implementation libs.grpc.netty.shaded
     implementation libs.grpc.services
     implementation libs.grpc.inprocess
@@ -36,6 +42,9 @@ dependencies {
     // The HTTP upload route's JSON receipts/errors (Jackson is the repo-wide
     // JSON library; see libs.versions.toml).
     implementation libs.jackson.databind
+    // A co-mounted registry gets the bridge-entry workflow envelope; a node
+    // without one still serves the RPCs the workflow calls.
+    implementation project(':protomolt-registry')
     implementation libs.slf4j.api
     // Kafka eventing: the event relay's producer type is part of the wiring
     // here (the serde itself stays behind repo-container's EventRelay).
@@ -52,6 +61,9 @@ dependencies {
     // Interop verification: a standard Confluent consumer against the events the relay
     // publishes and against our registry server. Test-scoped.
     testImplementation project(':protomolt-registry-service')
+    // The bridge-entry envelope is parsed and verified against the real
+    // descriptors rather than string-matched.
+    testImplementation project(':protomolt-grpc-workflow')
     testImplementation libs.confluent.kafka.protobuf.serializer
     testImplementation libs.confluent.kafka.schema.registry.client
 }
