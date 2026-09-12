@@ -85,6 +85,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -829,7 +830,7 @@ final class ArchiveOperations {
             if (!applicable.contains(kind)) {
                 throw invalidArgument("bridge " + kind.name() + " does not apply to a "
                         + Bridges.formatOfRecord(classification).getFormatCase().name()
-                        .toLowerCase() + " asset");
+                        .toLowerCase(Locale.ROOT) + " asset");
             }
         }
 
@@ -841,6 +842,7 @@ final class ArchiveOperations {
                     + "' has no present primary rendition to bridge from");
         }
 
+        FormatFact format = Bridges.formatOfRecord(classification);
         List<BridgeOutcome.Builder> outcomes = new ArrayList<>();
         Map<RenditionDescriptor, Derived> produced = new LinkedHashMap<>();
         for (BridgeKind kind : wanted) {
@@ -848,11 +850,10 @@ final class ArchiveOperations {
                     .setBridge(kind)
                     .setRendition(Bridges.renditionName(kind));
             outcomes.add(outcome);
-            Optional<Bridge> bridge = bridgeEngine.forKind(kind);
+            Optional<Bridge> bridge = bridgeEngine.forKind(kind, format);
             if (bridge.isEmpty()) {
                 outcome.setStatus(BridgeStatus.BRIDGE_STATUS_DEFERRED)
-                        .setDetail("this host runs no " + kind.name()
-                                + " bridge; the extraction rides a parser service");
+                        .setDetail(Bridges.deferralReason(kind, format));
                 continue;
             }
             // The blob store hands back bytes, not a stream, so the original
@@ -862,7 +863,7 @@ final class ArchiveOperations {
             Bridge.Derivation derivation;
             try {
                 derivation = bridge.get().derive(new ByteArrayInputStream(original),
-                        entry.filename);
+                        new Bridge.Context(format, entry.filename));
             } catch (IOException | RuntimeException e) {
                 outcome.setStatus(BridgeStatus.BRIDGE_STATUS_FAILED)
                         .setDetail(e.getMessage() == null ? e.toString() : e.getMessage());

@@ -73,7 +73,7 @@ public final class ContainerMembersBridge implements Bridge {
     }
 
     @Override
-    public Derivation derive(InputStream original, String filename) throws IOException {
+    public Derivation derive(InputStream original, Context context) throws IOException {
         PushbackInputStream head = new PushbackInputStream(
                 new BufferedInputStream(original), ZIP_MAGIC.length);
         if (startsWith(head, GZIP_MAGIC)) {

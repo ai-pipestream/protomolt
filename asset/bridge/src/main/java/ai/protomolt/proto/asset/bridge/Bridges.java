@@ -137,6 +137,34 @@ public final class Bridges {
     }
 
     /**
+     * Why a bridge that applies here executes somewhere else. A caller told
+     * only "deferred" cannot route the work; a caller told what the bridge
+     * needs can.
+     *
+     * @param kind the bridge
+     * @param format the format of record
+     * @return one sentence naming what the transformation needs
+     */
+    public static String deferralReason(BridgeKind kind, FormatFact format) {
+        return switch (kind) {
+            case BRIDGE_KIND_DATASET_SCHEMA -> format.getFormatCase()
+                    == FormatFact.FormatCase.PARQUET
+                    ? "reading a Parquet footer needs the Parquet reader, which the asset "
+                            + "family does not carry"
+                    : "no schema reader for this format is wired here";
+            case BRIDGE_KIND_TABULAR_DATASET ->
+                    "normalizing a table into a dataset rendition runs through the "
+                            + "platform's Parquet emitter";
+            case BRIDGE_KIND_DOCUMENT_TEXT, BRIDGE_KIND_OCR_TEXT, BRIDGE_KIND_CONVERSATION ->
+                    "the extraction runs through a parser service this host does not reach";
+            case BRIDGE_KIND_CONTAINER_MEMBERS ->
+                    "no container reader is wired here";
+            case BRIDGE_KIND_UNSPECIFIED, UNRECOGNIZED ->
+                    throw new IllegalArgumentException("no deferral reason for " + kind);
+        };
+    }
+
+    /**
      * The media type of a bridge's output bytes.
      *
      * @param kind the bridge

@@ -2,6 +2,8 @@ package ai.protomolt.proto.asset.bridge;
 
 import ai.protomolt.proto.asset.v1.ContainerMember;
 import ai.protomolt.proto.asset.v1.ContainerMembers;
+import ai.protomolt.proto.asset.v1.FormatFact;
+import ai.protomolt.proto.asset.v1.TarArchive;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
@@ -19,6 +21,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** The container bridge against real tar, tar.gz, and zip bytes. */
 class ContainerMembersBridgeTest {
+
+    private static final Bridge.Context TAR = new Bridge.Context(
+            FormatFact.newBuilder()
+                    .setTar(TarArchive.newBuilder().setFilename("bundle.tar")).build(),
+            "bundle.tar");
 
     private final ContainerMembersBridge bridge = new ContainerMembersBridge();
 
@@ -122,7 +129,7 @@ class ContainerMembersBridgeTest {
         ContainerMembersBridge bounded = new ContainerMembersBridge(3, 1 << 20);
 
         Bridge.Derivation derivation = bounded.derive(
-                new ByteArrayInputStream(archive.bytes()), "bundle.tar");
+                new ByteArrayInputStream(archive.bytes()), TAR);
         ContainerMembers members = (ContainerMembers) derivation.content();
 
         assertThat(members.getMemberCount()).isEqualTo(3);
@@ -142,7 +149,7 @@ class ContainerMembersBridgeTest {
         ContainerMembersBridge stingy = new ContainerMembersBridge(50, 1024);
 
         ContainerMembers members = (ContainerMembers) stingy.derive(
-                new ByteArrayInputStream(archive), "bundle.tar").content();
+                new ByteArrayInputStream(archive), TAR).content();
 
         // Both members are listed with their real sizes; neither is hashed.
         // The first blows the budget on its own, and fixity then stops for
@@ -160,7 +167,7 @@ class ContainerMembersBridgeTest {
         byte[] archive = Tars.archive().file("big.bin", new byte[4096]).bytes();
 
         Bridge.Derivation derivation = new ContainerMembersBridge(50, 1024)
-                .derive(new ByteArrayInputStream(archive), "bundle.tar");
+                .derive(new ByteArrayInputStream(archive), TAR);
 
         assertThat(derivation.degraded()).isTrue();
         assertThat(derivation.warnings()).containsExactly(
@@ -172,7 +179,7 @@ class ContainerMembersBridgeTest {
         byte[] notAnArchive = "this is just some text, not an archive at all\n"
                 .repeat(40).getBytes(StandardCharsets.UTF_8);
 
-        assertThatThrownBy(() -> bridge.derive(new ByteArrayInputStream(notAnArchive), "x.tar"))
+        assertThatThrownBy(() -> bridge.derive(new ByteArrayInputStream(notAnArchive), TAR))
                 .isInstanceOf(IOException.class)
                 .hasMessageContaining("not a tar header block");
     }
@@ -188,7 +195,7 @@ class ContainerMembersBridgeTest {
 
     private ContainerMembers list(byte[] container) throws IOException {
         Bridge.Derivation derivation =
-                bridge.derive(new ByteArrayInputStream(container), null);
+                bridge.derive(new ByteArrayInputStream(container), TAR);
         assertThat(derivation.profile())
                 .as("a structural listing describes no content class")
                 .isNull();

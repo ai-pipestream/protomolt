@@ -12,7 +12,7 @@ of the platform consumes. The design of record is
 |--------|----------------|------|
 | `asset/proto` | `:protomolt-asset-proto` | The contract: `FormatFact` (the closed format registry, each format's rules annotated), `Classification` (the five-state machine with per-state shape rules), `ContentProfile` (content classes with measured quality) |
 | `asset/characterize` | `:protomolt-asset-characterize` | The engine: the shared media-type sniffer, format grammars compiled from the contract's own expressions (descriptor-parity tested), the identifier, the declared-versus-identified compatibility relation, and the state machine's one resolution point |
-| `asset/bridge` | `:protomolt-asset-bridge` | The transformations: the routing rule (characterized format applies these bridges), the derived rendition names and shape pins, and the pure-JDK bridges a host can run itself |
+| `asset/bridge` | `:protomolt-asset-bridge` | The transformations: the routing rule (characterized format applies these bridges), the derived rendition names and shape pins, and the pure-JDK bridges a host can run itself: container `members`, and `schema` for delimited tables, NDJSON, and Avro |
 
 Consumers: the archive (`repo/`) stores classifications, validates
 declarations at its doors, and runs bridges through `BridgeEntry`; the

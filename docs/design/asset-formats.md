@@ -249,13 +249,15 @@ prose.
 
 ### Applicable, executable, and what a bridge reports
 
-Two questions are kept apart on purpose. **Applicability** is the routing
+Two questions are separated on purpose. **Applicability** is the routing
 rule above: a pure function of the format of record, which the state
 machine supplies (the declaration under `DECLARED`/`VERIFIED`, the
 identification under `IDENTIFIED`; the other two states name no single
 format and are refused). **Executability** is a property of the running
-host: the container bridge is pure JDK and runs anywhere, while text and
-OCR extraction ride a parser service that a given host may not reach.
+host, and of the format: the container and schema bridges are pure JDK,
+but the same schema bridge that reads a CSV, an NDJSON file, and an Avro
+container does not read a Parquet footer, and text extraction runs
+through a parser service a given host may not reach.
 
 So every bridge a run considers reports an outcome, and none is silently
 skipped:
@@ -266,8 +268,10 @@ skipped:
   re-running a bridge moves no root checksum and lands no version:
   idempotence falls out of the archive's addressing rather than needing a
   bridge-ran-already flag.
-- `DEFERRED` — applicable here, executed elsewhere. The caller is told, so
-  it can route the work instead of assuming it done.
+- `DEFERRED` — applicable here, executed elsewhere, with the reason named
+  (a Parquet reader, the Parquet emitter, a parser service). The caller is
+  told what the work needs, so it can route it instead of assuming it
+  done.
 - `FAILED` — the bridge ran and could not finish, with the reason
   verbatim. Nothing lands.
 
@@ -283,6 +287,22 @@ its own output. The rule: the primary is `original` when the entry has
 one, otherwise the first rendition that is **not** a well-known derived
 name. The list of derived names comes from `BridgeKind` itself, so it
 cannot fall out of step with what the bridges actually write.
+
+### Declared schemas and inferred ones
+
+The `schema` rendition carries both kinds of answer and marks which it
+is. Avro **declares** its schema in the container header, so the bridge
+reads it, sets `declared_by_format`, and infers nothing. Delimited tables
+and NDJSON declare nothing, so the bridge **infers** from a bounded
+prefix of the rows and reports `rows_inspected` alongside a `row_count`
+of -1 when it stopped early. A consumer can then tell a schema the format
+stated from one a bridge concluded, and weigh them differently.
+
+Inference widens only — integers among decimals read as double, mixed
+values read as string — so the answer does not depend on row order. A
+delimited table's delimiter and header presence come from the producer's
+declaration, never from a guess, which is the same fact that keeps
+characterization from identifying one.
 
 ### Execution beyond this host
 
@@ -378,3 +398,9 @@ rather than a parallel metadata system.
 - **Conflict resolution ergonomics**: the console surface for
   `CONFLICTED` entries (re-declare, accept the identification, leave
   flagged) is a follow-on, alongside the bridge trains.
+- **Which readers the asset family carries**: the family holds itself to
+  the JDK, so it reads tar, zip, delimited text, NDJSON, and the Avro
+  container header, and it does not read a Parquet footer — that needs
+  the Parquet library, which belongs with the emitters rather than with a
+  leaf contract. Parquet's `schema` and every `dataset` rendition are
+  therefore `DEFERRED` with the reason named, not silently missing.
