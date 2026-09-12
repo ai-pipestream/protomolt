@@ -338,13 +338,22 @@ project(':protomolt-authz-grpc').projectDir = file('surface/authz-grpc')
 include 'protomolt-authz-jdbc'
 project(':protomolt-authz-jdbc').projectDir = file('surface/authz-jdbc')
 
-// asset/ — typed asset formats, classification, and characterization.
+// asset/ — typed asset formats, classification, characterization, and bridging.
 
 include 'protomolt-asset-proto'
 project(':protomolt-asset-proto').projectDir = file('asset/proto')
 
 include 'protomolt-asset-characterize'
 project(':protomolt-asset-characterize').projectDir = file('asset/characterize')
+
+include 'protomolt-asset-bridge'
+project(':protomolt-asset-bridge').projectDir = file('asset/bridge')
+
+include 'protomolt-asset-bridge-parse'
+project(':protomolt-asset-bridge-parse').projectDir = file('asset/bridge-parse')
+
+include 'protomolt-asset-catalog'
+project(':protomolt-asset-catalog').projectDir = file('asset/catalog')
 
 // repo/ — the claim-check document store.
 

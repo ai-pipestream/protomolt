@@ -1,0 +1,110 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.asset.v1;
+
+import "ai/protomolt/proto/quality/v1/quality.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.asset.v1";
+
+// ============================================================================
+// RECOVERED TEXT — what a measurement of OCR output actually consists of.
+//
+// The content contract requires OCR text to carry a measured quality score
+// and never an assumed one. This message is that measurement: plain counts
+// taken from the recovered characters, with the scoring itself declared on
+// the message as CEL dimensions, the way the quality family declares every
+// other score. The dimensions travel with the descriptor, so what "quality
+// 0.62" meant is reviewable in git rather than buried in a scorer.
+//
+// Every dimension below is a ratio of things counted in the output. None
+// of them asks a model, and none of them is a guess: an OCR pass that
+// recovers mostly punctuation, mostly one-character tokens, or mostly
+// stub lines scores badly because those are exactly the shapes a failed
+// pass leaves behind.
+// ============================================================================
+
+// The measurements one OCR pass leaves behind, and the dimensions they
+// score under.
+message RecoveredText {
+  option (ai.protomolt.proto.quality.v1.quality) = {
+    dimension: {
+      id: "legible-characters"
+      // Share of the output that carries text: letters, digits, spacing,
+      // and sentence punctuation. Replacement characters, control bytes,
+      // and loose symbol confetti are what a failed pass emits, so they
+      // are exactly what this does NOT count.
+      cel: "this.character_count > 0"
+           " ? double(this.text_characters) / double(this.character_count)"
+           " : 0.0"
+      weight: 0.3
+    }
+    dimension: {
+      id: "word-shape"
+      // Share of tokens shaped like words: letters, of plausible length.
+      // The strongest single signal, because a pass that recovered real
+      // words recovered a document.
+      cel: "this.word_count > 0"
+           " ? double(this.well_formed_words) / double(this.word_count)"
+           " : 0.0"
+      weight: 0.5
+    }
+    dimension: {
+      id: "layout-coherence"
+      // Share of lines long enough to be prose. A scan whose lines are all
+      // fragments recovered a layout, not a document.
+      cel: "this.line_count > 0"
+           " ? 1.0 - (double(this.stub_line_count) / double(this.line_count))"
+           " : 0.0"
+      weight: 0.2
+    }
+  };
+
+  // Characters in the recovered text.
+  int64 character_count = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    }
+  ];
+  // Of those, the ones carrying text: letters, digits, spacing, and
+  // sentence punctuation.
+  int64 text_characters = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    }
+  ];
+  // Whitespace-separated tokens in the recovered text.
+  int64 word_count = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    }
+  ];
+  // Of those, the ones shaped like words.
+  int64 well_formed_words = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    }
+  ];
+  // Lines in the recovered text.
+  int64 line_count = 5 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    }
+  ];
+  // Of those, the ones too short to be prose.
+  int64 stub_line_count = 6 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    }
+  ];
+  // The engine's own confidence, when it reports one; -1 when it does not.
+  // Kept as provenance and deliberately NOT scored: most engines report
+  // nothing, and a dimension that scores zero for silence would punish the
+  // output for the engine's reticence.
+  double engine_confidence = 7 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      double: {gte: -1.0, lte: 1.0}
+    }
+  ];
+}

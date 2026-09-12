@@ -11,6 +11,7 @@ import ai.protomolt.proto.repo.container.blob.S3BlobStore;
 import ai.protomolt.proto.repo.container.ledger.DocumentLedger;
 import ai.protomolt.proto.repo.container.ledger.DriveLedger;
 import ai.protomolt.proto.repo.container.ledger.DriveRecord;
+import ai.protomolt.proto.asset.bridge.BridgeEngine;
 import ai.protomolt.proto.repo.container.ledger.LedgerDatabase;
 import ai.protomolt.proto.repo.container.ledger.Tx;
 import ai.protomolt.proto.repo.container.lifecycle.CoherenceProbe;
@@ -125,6 +126,10 @@ public final class RepoServices implements AutoCloseable {
     private volatile boolean lifecycleClosed;
 
     private RepoServices(RepoServiceConfig config) {
+        this(config, BridgeEngine.standard());
+    }
+
+    private RepoServices(RepoServiceConfig config, BridgeEngine bridges) {
         this.config = config;
         this.database = new LedgerDatabase(config.ledger());
         this.tx = new Tx(database.entityManagerFactory());
@@ -194,7 +199,7 @@ public final class RepoServices implements AutoCloseable {
                 config.defaultBucketBase(), config.s3Region());
         this.archiveOperations = new ArchiveOperations(
                 new ai.protomolt.proto.repo.container.archive.ArchiveLedger(tx),
-                driveLedger, blobStore);
+                driveLedger, blobStore, bridges);
         this.services = List.of(
                 documentService,
                 new ArchiveGrpcService(archiveOperations),
@@ -217,6 +222,19 @@ public final class RepoServices implements AutoCloseable {
      */
     public static RepoServices build(RepoServiceConfig config) {
         return new RepoServices(config);
+    }
+
+    /**
+     * Builds the service set with an explicit bridge engine. The default
+     * engine runs what needs no other service; a host that can reach a
+     * parser supplies one that also runs the text and OCR bridges.
+     *
+     * @param config the service configuration
+     * @param bridges the bridges this host can execute
+     * @return the service set
+     */
+    public static RepoServices build(RepoServiceConfig config, BridgeEngine bridges) {
+        return new RepoServices(config, bridges);
     }
 
     /**
