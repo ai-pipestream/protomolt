@@ -3,7 +3,9 @@ package ai.protomolt.proto.repo.service;
 import ai.protomolt.proto.asset.bridge.Bridge;
 import ai.protomolt.proto.asset.bridge.BridgeEngine;
 import ai.protomolt.proto.asset.bridge.Bridges;
+import ai.protomolt.proto.asset.characterize.ByteWindows;
 import ai.protomolt.proto.asset.characterize.Characterizer;
+import ai.protomolt.proto.asset.characterize.WindowCapture;
 import ai.protomolt.proto.asset.v1.BridgeKind;
 import ai.protomolt.proto.asset.v1.BridgeStatus;
 import ai.protomolt.proto.asset.v1.Classification;
@@ -306,7 +308,8 @@ final class ArchiveOperations {
             ArchiveEntryRecord entry = entryRow(existing.orElse(null), address, entryUuid,
                     request, now);
             applyClassification(entry, declared, origin,
-                    primaryPrefix(slots, request), entry.filename, request.getWrittenBy());
+                    primaryWindows(slots, request), entry.filename,
+                    request.getWrittenBy());
             if (current != null && root.equals(retained.stream()
                     .filter(v -> v.version == base).findFirst().orElseThrow().rootChecksum)) {
                 // Identical content: no bytes move, no version lands; the
@@ -405,7 +408,7 @@ final class ArchiveOperations {
         // stage under the entry and settle onto the final key by server-side
         // copy once the digest completes.
         MessageDigest digest = ArchiveManifests.sha256();
-        PrefixCapture capture = new PrefixCapture(body, Characterizer.PREFIX_BYTES);
+        WindowCapture capture = new WindowCapture(body);
         body = capture;
         String sha256;
         String objectKey;
@@ -504,7 +507,7 @@ final class ArchiveOperations {
             // rendition when no "original" exists).
             String primary = primaryName(slots);
             if (descriptor.getName().equals(primary)) {
-                applyClassification(entry, declaredFormat, origin, capture.prefix(),
+                applyClassification(entry, declaredFormat, origin, capture.windows(),
                         filename != null && !filename.isBlank() ? filename : entry.filename,
                         writtenBy);
             }
@@ -795,17 +798,16 @@ final class ArchiveOperations {
         // Characterize the current version's primary rendition from the
         // store. A primary whose bytes are gone characterizes nothing —
         // the resolution then rests on the declaration alone.
-        byte[] prefix = null;
+        ByteWindows windows = null;
         ArchiveVersionRecord version = versionOrThrow(entry, 0);
         VersionManifest manifest = ArchiveManifests.fromJson(version.manifest);
         RenditionManifestEntry primary = primaryOf(manifest);
         if (primary != null
                 && primary.getState() == RenditionState.RENDITION_STATE_PRESENT) {
-            byte[] bytes = blobStore.get(drive.bucket, primary.getObjectKey()).data();
-            prefix = bytes.length <= Characterizer.PREFIX_BYTES
-                    ? bytes : java.util.Arrays.copyOf(bytes, Characterizer.PREFIX_BYTES);
+            windows = ByteWindows.ofWhole(
+                    blobStore.get(drive.bucket, primary.getObjectKey()).data());
         }
-        applyClassification(entry, declared, origin, prefix, entry.filename,
+        applyClassification(entry, declared, origin, windows, entry.filename,
                 request.hasClassifiedBy() ? request.getClassifiedBy() : null);
         ledger.mergeEntry(entry);
         return ClassifyEntryResponse.newBuilder()
@@ -1055,13 +1057,14 @@ final class ArchiveOperations {
     }
 
     /**
-     * The primary rendition's byte prefix when THIS save carries it; null
-     * when the primary's bytes are not in the request (identification is
-     * then skipped rather than invented — ClassifyEntry re-reads from the
-     * store on demand).
+     * The primary rendition's windows when THIS save carries it; null when
+     * the primary's bytes are not in the request (identification is then
+     * skipped rather than invented — ClassifyEntry re-reads from the store
+     * on demand). A unary save holds the whole rendition already, so both
+     * windows are resident and nothing is truncated away.
      */
-    private static byte[] primaryPrefix(TreeMap<Slot, RenditionManifestEntry> slots,
-                                        PutEntryRequest request) {
+    private static ByteWindows primaryWindows(TreeMap<Slot, RenditionManifestEntry> slots,
+                                              PutEntryRequest request) {
         String primary = primaryName(slots);
         if (primary == null) {
             return null;
@@ -1069,9 +1072,7 @@ final class ArchiveOperations {
         for (RenditionContent content : request.getRenditionsList()) {
             if (content.getRendition().getName().equals(primary)
                     && !content.getData().isEmpty()) {
-                byte[] data = content.getData().toByteArray();
-                return data.length <= Characterizer.PREFIX_BYTES
-                        ? data : java.util.Arrays.copyOf(data, Characterizer.PREFIX_BYTES);
+                return ByteWindows.ofWhole(content.getData().toByteArray());
             }
         }
         return null;
@@ -1079,7 +1080,7 @@ final class ArchiveOperations {
 
     /** Resolves and stamps the entry's classification columns. */
     private static void applyClassification(ArchiveEntryRecord entry, FormatFact declared,
-                                            ObjectStoreOrigin origin, byte[] prefix,
+                                            ObjectStoreOrigin origin, ByteWindows windows,
                                             String filename, WriteAttribution writtenBy) {
         Classification stored = ArchiveClassifications.fromJson(entry.classification);
         if (declared == null && stored != null && stored.hasDeclared()) {
@@ -1090,53 +1091,15 @@ final class ArchiveOperations {
         if (origin == null && stored != null && stored.hasOrigin()) {
             origin = stored.getOrigin();
         }
-        if (declared == null && prefix == null && stored != null) {
+        if (declared == null && windows == null && stored != null) {
             // Nothing new to resolve against; the stored classification
             // stands.
             return;
         }
         Classification classification = ArchiveClassifications.classify(
-                declared, origin, prefix, filename, writtenBy);
+                declared, origin, windows, filename, writtenBy);
         entry.classification = ArchiveClassifications.toJson(classification);
         entry.classificationState = ArchiveClassifications.stateName(classification);
-    }
-
-    /**
-     * A stream wrapper capturing the first bytes as they pass — the
-     * characterization prefix, read without a second trip to the store.
-     */
-    private static final class PrefixCapture extends java.io.FilterInputStream {
-        private final byte[] head;
-        private int captured;
-
-        PrefixCapture(InputStream in, int prefixBytes) {
-            super(in);
-            this.head = new byte[prefixBytes];
-        }
-
-        byte[] prefix() {
-            return java.util.Arrays.copyOf(head, captured);
-        }
-
-        @Override
-        public int read() throws java.io.IOException {
-            int b = super.read();
-            if (b >= 0 && captured < head.length) {
-                head[captured++] = (byte) b;
-            }
-            return b;
-        }
-
-        @Override
-        public int read(byte[] buffer, int offset, int length) throws java.io.IOException {
-            int n = super.read(buffer, offset, length);
-            if (n > 0 && captured < head.length) {
-                int take = Math.min(n, head.length - captured);
-                System.arraycopy(buffer, offset, head, captured, take);
-                captured += take;
-            }
-            return n;
-        }
     }
 
     // ------------------------------------------------------------------
