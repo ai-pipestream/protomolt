@@ -2,6 +2,10 @@
 # before the image (./gradlew :protomolt-serve:installDist), keeping the image
 # a thin JRE layer over the launcher.
 #
+# This file is the GHCR / NAS image (uid 10001, bash HEALTHCHECK). Portainer
+# chowns /data to 10001; do not switch this path to DHI uid 65532. The
+# hardened public demo on Docker Hub is apps/serve/Dockerfile.dhi.
+#
 #   docker run -p 8080:8080 -p 9090:9090 ghcr.io/ai-pipestream/protomolt-serve --demo
 FROM eclipse-temurin:25-jre
 

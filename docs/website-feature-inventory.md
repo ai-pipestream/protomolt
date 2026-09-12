@@ -245,7 +245,7 @@ Plain-language, evidence-backed sections; each maps to shipped code.
    The unedited QA rounds are publishable evidence of the method working and
    failing honestly.
 10. **Getting started.** The existing one-liner:
-    `docker run -p 8080:8080 -p 9090:9090 ghcr.io/ai-pipestream/protomolt-serve --demo`.
+    `docker run -p 8080:8080 -p 9090:9090 pipestreamai/protomolt-serve --demo`.
 
 Tone guidance: the codebase's own documentation style — stating limits by
 name ("write shape only, no read side", "the role mount is inert") — is

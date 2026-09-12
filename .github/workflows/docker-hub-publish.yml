@@ -1,0 +1,110 @@
+# Publishes the hardened public demo image to
+# docker.io/pipestreamai/protomolt-serve. Every push to main republishes
+# :latest; a manual dispatch with a version input also tags that version.
+# Docker Hub credentials come from the DOCKER_USER / DOCKER_TOKEN secrets
+# (org or repo). The same account is used to pull dhi.io bases.
+#
+# GHCR publish stays in docker-publish.yml and is unchanged: NAS / Portainer
+# keep pulling ghcr.io/ai-pipestream/protomolt-serve.
+#
+# Multi-arch (amd64 + arm64): the JVM distribution is platform-neutral, so
+# Gradle runs once on the runner and buildx stamps both runtime platforms.
+# The DHI temurin Debian 13 runtime (25-debian13) is published for both.
+name: Docker Hub Publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Extra version tag (for example 0.1.0); optional
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.repository == 'ai-pipestream/protomolt'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/console/package-lock.json
+
+      - name: Build the console
+        run: |
+          cd apps/console
+          npm ci
+          npm run build
+
+      - name: Build the serve distribution
+        run: ./gradlew :protomolt-serve:installDist --no-daemon
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub (docker.io)
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Log in to dhi.io
+        uses: docker/login-action@v3
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Record DHI base digests
+        run: |
+          echo "Refresh Dockerfile.dhi pins with these Debian 13 index digests."
+          docker buildx imagetools inspect dhi.io/eclipse-temurin:25-debian13
+          docker buildx imagetools inspect dhi.io/eclipse-temurin:25-jdk-debian13-dev
+
+      - name: Compute tags
+        id: tags
+        run: |
+          tags="docker.io/pipestreamai/protomolt-serve:latest"
+          if [ -n "${{ inputs.version }}" ]; then
+            tags="$tags,docker.io/pipestreamai/protomolt-serve:${{ inputs.version }}"
+          fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke the hardened image locally
+        run: ./scripts/serve-dhi-smoke.sh --skip-dist
+
+      - name: Build and push the Hub image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/serve
+          file: apps/serve/Dockerfile.dhi
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          sbom: false
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=ProtoMolt hardened public demo: gRPC, REST/OpenAPI/Swagger, MCP, registry
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ inputs.version != '' && inputs.version || 'latest' }}

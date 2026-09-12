@@ -55,8 +55,14 @@ Run one process that gives you gRPC with reflection, the same verbs over
 JSON/REST, OpenAPI, Swagger UI, MCP, a task console and a git-backed registry:
 
 ```shell
-docker run -p 8080:8080 -p 9090:9090 ghcr.io/ai-pipestream/protomolt-serve --demo
+docker run -p 8080:8080 -p 9090:9090 pipestreamai/protomolt-serve --demo
 ```
+
+That Hub image is a Docker Hardened Image
+(`dhi.io/eclipse-temurin:25-debian13`, Debian 13 JRE, non-root uid 65532).
+`--demo` needs a writable `/tmp` for the seeded registry; do not add
+`--read-only` unless you mount a volume or tmpfs there. The NAS /
+Portainer coordinator keeps pulling `ghcr.io/ai-pipestream/protomolt-serve`.
 
 What you get, all from `apps/serve`
 (`apps/serve/src/main/java/ai/protomolt/proto/serve/ProtoMoltServe.java`):
@@ -92,10 +98,11 @@ MCP) while leaving the documentation surfaces (health, OpenAPI, Swagger UI)
 open. With a token set and no task-console options, the browser surfaces are
 replaced by a handler that says they are disabled.
 
-From a clone, `docker compose up` builds and runs the same server, and
+From a clone, `docker compose up` builds and runs the GHCR-layout server, and
 `docker compose run --rm acp` is the ACP agent an IDE drives over stdio;
-`./scripts/docker-smoke.sh` brings the stack up and proves both the MCP and ACP
-surfaces answer. See [Running in Docker](docs/apps/docker.md).
+`./scripts/serve-dhi-smoke.sh` builds the hardened Hub image and proves
+`--demo`; `./scripts/docker-smoke.sh` brings the Compose stack up and proves
+both the MCP and ACP surfaces answer. See [Running in Docker](docs/apps/docker.md).
 
 Prefer a process over a container? Every release attaches runnable
 `protomolt-serve` and `protomolt-mcp` zips (JRE 25+ is the only prerequisite),

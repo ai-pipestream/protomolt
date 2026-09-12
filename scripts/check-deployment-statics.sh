@@ -44,6 +44,7 @@ for path in [
     "docker-compose.yml",
     ".github/workflows/ci.yml",
     ".github/workflows/docker-publish.yml",
+    ".github/workflows/docker-hub-publish.yml",
     ".github/workflows/nano1-arm64-smoke.yml",
     ".forgejo/workflows/publish-registry.yml",
     ".forgejo/workflows/tei-integration.yml",
@@ -195,6 +196,7 @@ python3 - <<'PYEOF'
 import os, sys
 pairs = [
     ("apps/serve/Dockerfile", "build/install/protomolt-serve", "apps/serve/build.gradle", "protomolt-serve"),
+    ("apps/serve/Dockerfile.dhi", "build/install/protomolt-serve", "apps/serve/build.gradle", "protomolt-serve"),
     ("repo/service/Dockerfile", "build/install/protomolt-repo-service", "repo/service/build.gradle", "protomolt-repo-service"),
     ("apps/document-platform/Dockerfile", "build/install/protomolt-document-platform", "apps/document-platform/build.gradle", "protomolt-document-platform"),
     ("apps/agent-host/Dockerfile", "build/install/protomolt-agent-host", "apps/agent-host/build.gradle", "protomolt-agent-host"),
@@ -210,6 +212,28 @@ for dockerfile, copy_source, gradle_file, distribution in pairs:
         print(gradle_file, "applies no application plugin; the distribution cannot build")
         sys.exit(1)
     print("dockerfile OK", dockerfile, "->", copy_source)
+
+dhi = open("apps/serve/Dockerfile.dhi").read()
+from_lines = [line for line in dhi.splitlines() if line.startswith("FROM ")]
+if not any("dhi.io/eclipse-temurin:25-debian13@sha256:" in line for line in from_lines):
+    print("Dockerfile.dhi runtime must be digest-pinned dhi.io/eclipse-temurin:25-debian13")
+    sys.exit(1)
+if not any("dhi.io/eclipse-temurin:25-jdk-debian13-dev@sha256:" in line for line in from_lines):
+    print("Dockerfile.dhi staged image must be digest-pinned dhi.io/eclipse-temurin:25-jdk-debian13-dev")
+    sys.exit(1)
+if any("alpine" in line for line in from_lines):
+    print("Dockerfile.dhi must stay on Debian 13; do not use Alpine DHI tags")
+    sys.exit(1)
+if 'ENTRYPOINT ["java", "-cp", "/opt/protomolt-serve/lib/*", "ai.protomolt.proto.serve.ProtoMoltServe"]' not in dhi:
+    print("Dockerfile.dhi must enter via java -cp (shell-less DHI has no Gradle start script)")
+    sys.exit(1)
+if any(line.startswith("HEALTHCHECK") for line in dhi.splitlines()):
+    print("Dockerfile.dhi must not declare a HEALTHCHECK; the runtime image has no shell")
+    sys.exit(1)
+if "USER 10001" in dhi:
+    print("Dockerfile.dhi must keep DHI nonroot (65532), not the GHCR uid 10001")
+    sys.exit(1)
+print("Dockerfile.dhi is a digest-pinned Debian 13 DHI runtime with a java -cp entrypoint")
 
 agent_host = open("apps/agent-host/Dockerfile").read()
 # The requirement is javac, not a particular release: this image runs delegated builds

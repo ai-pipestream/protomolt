@@ -1,9 +1,34 @@
 # Running in Docker
 
-ProtoMolt ships two runtime images built from this repository for Compose: the server
+The public demo is a one-liner on Docker Hub. The image is a Docker Hardened
+Image runtime (`dhi.io/eclipse-temurin:25-debian13`, Debian 13 JRE, uid 65532,
+no shell). Alpine DHI tags are not used.
+
+```shell
+docker run -p 8080:8080 -p 9090:9090 pipestreamai/protomolt-serve --demo
+```
+
+`--demo` seeds a throwaway git registry and a sample schema under `/tmp`
+(`HOME` and `java.io.tmpdir` in this image). Do not add `--read-only`
+unless you mount a writable volume or tmpfs on `/tmp`. That is the
+opposite of diskless collectors such as grPOIc, which never write.
+
+From a clone, smoke the same Dockerfile before trusting Hub:
+
+```shell
+./scripts/serve-dhi-smoke.sh
+```
+
+The NAS / Portainer coordinator is a different image:
+`ghcr.io/ai-pipestream/protomolt-serve` (uid 10001, bash `HEALTHCHECK`),
+published by `.github/workflows/docker-publish.yml`. Do not point that
+stack at the Hub DHI tag: Portainer chowns `/data` to 10001.
+
+ProtoMolt also ships two runtime images built from this repository for Compose: the server
 (`protomolt-serve`), which exposes the whole API over the network, and the ACP agent
 (`protomolt-acp-agent`), which an IDE drives over stdio. `docker-compose.yml` at the
-repository root builds and runs both. (The release pipeline additionally publishes a
+repository root builds those from `apps/serve/Dockerfile` (the GHCR layout), not
+`Dockerfile.dhi`. (The release pipeline additionally publishes a
 third image, the native `protomolt-cli`: see [The published images](#the-published-images).)
 
 ## Build and run
@@ -146,6 +171,11 @@ the distribution first) and skips when Docker is unavailable:
 ./gradlew :protomolt-serve:test --tests '*ContainerSmokeIntegrationTest'
 ```
 
+That suite covers `apps/serve/Dockerfile` (the GHCR / Compose image). The
+hardened Hub image is smoked separately: `./scripts/serve-dhi-smoke.sh`
+builds `Dockerfile.dhi`, starts `--demo`, and waits on `GET /health` from
+the host because the DHI runtime has no shell for an image HEALTHCHECK.
+
 ## Keeping schemas
 
 `--demo` uses an ephemeral registry that is gone when the container stops. For a registry that
@@ -182,7 +212,32 @@ claude mcp add --transport http protomolt http://localhost:8080/mcp --header "ap
 
 ## The published images
 
-A release also publishes the server image on its own, for a one-line run without a clone:
+The hardened public demo publishes to Docker Hub on every push to `main`
+(`.github/workflows/docker-hub-publish.yml`), as `:latest`, and also as a
+version tag when the workflow is dispatched with one. Secrets required:
+`DOCKER_USER` and `DOCKER_TOKEN` (a Docker Hub account that can push
+`pipestreamai/protomolt-serve` and pull `dhi.io/eclipse-temurin`).
+
+```shell
+docker run -p 8080:8080 -p 9090:9090 pipestreamai/protomolt-serve --demo
+```
+
+`FROM` lines in `apps/serve/Dockerfile.dhi` pin the Debian 13 multi-arch
+index digests (`25-debian13` JRE, `25-jdk-debian13-dev` for the chmod
+stage). To refresh after `docker login dhi.io`:
+
+```shell
+docker buildx imagetools inspect dhi.io/eclipse-temurin:25-debian13 --format '{{.Manifest.Digest}}'
+docker buildx imagetools inspect dhi.io/eclipse-temurin:25-jdk-debian13-dev --format '{{.Manifest.Digest}}'
+```
+
+Replace `@sha256:<index-digest>` on each `FROM`. Use the multi-arch index
+digest, not a single-platform blob. The Hub catalog specifications pages
+for `debian-13/jre-25` and `debian-13/jdk-25-dev` also list the current
+index digest. The Hub publish job prints the resolved digests on every run.
+
+GHCR remains the NAS path, published by the existing Docker Publish
+workflow (release semver + `latest`, or `edge` on dispatch):
 
 ```shell
 docker run -p 8080:8080 -p 9090:9090 ghcr.io/ai-pipestream/protomolt-serve --demo
