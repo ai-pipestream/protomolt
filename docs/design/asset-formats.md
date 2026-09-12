@@ -29,10 +29,12 @@ A new leaf family, `asset/`:
   the parse family (which produces them), and the search mapping subjects
   (which facet on them).
 - **`asset/characterize`** — the engine: pure-JDK format identification
-  (magic bytes, extension grammar, per-format probes) behind one seam, so
-  the parse coordinator's existing content sniffing and the archive's doors
-  consult the same identifier and can never disagree about what a `tar`
-  is.
+  behind one seam, so the parse coordinator's content sniffing and the
+  archive's doors consult the same identifier and can never disagree about
+  what a `tar` is. It holds the byte windows and their streaming capture,
+  the built-in magic and grammar table, the container readers for ZIP and
+  compound files, and the compiler and matcher for published signature
+  definitions.
 - **`asset/bridge`** — the transformations: the routing rule that says
   which bridges a characterized format applies, the well-known derived
   rendition names and the shape each output pins, and the pure-JDK bridges
@@ -107,6 +109,100 @@ be exhaustive at compile time. Growing the registry is an additive proto
 change with a new message and its rules — the same discipline as every
 other contract here. The rendition vocabulary itself stays open; it is
 only the *typed claims about* renditions that come from a closed set.
+
+## How identification reads an asset
+
+Identification never reads a whole asset. Its cost is fixed, and a
+forty-gigabyte tarball costs the same to identify as a forty-byte one.
+Three layers do the work, each running only where the one before it fell
+short.
+
+### Two windows, one pass
+
+`ByteWindows` is the bounded view identification is allowed to have: a
+leading window of 64 KiB and a trailing one of 128 KiB, addressed in the
+asset's own absolute offset space. `WindowCapture` fills both during the
+pass that already computes the SHA-256 on the way to the object store, so
+no upload is traversed twice, and the trailing window is a fixed ring
+whose cost does not grow with content size.
+
+Both sizes are chosen against facts rather than taste. The trailing size
+covers the 65,557 bytes a ZIP comment may push the end-of-central-directory
+record back by. Between them the windows reach 98.5% of the published
+signature set's leading patterns and 98% of its trailing ones.
+
+A position in neither window is `NOT_OBSERVED`, and that is distinct from
+a position looked at and found empty. Every layer above preserves the
+distinction: a pattern reaching past the windows has not failed to match,
+it has failed to be evaluated, and reporting the first as the second turns
+a blind spot into a false negative.
+
+The trailing window is what makes a format's own closing structures
+readable. Parquet writes its magic at both ends, and only the trailing one
+means the content carries a schema; a file with the header alone is still
+Parquet, and the damage is recorded rather than hidden. A ZIP's index sits
+immediately before its trailing record, so for any archive with a modest
+number of members the entry list is resident too.
+
+### Containers identify by their members
+
+Every OOXML document, OpenDocument file, EPUB and JAR begins with the same
+four bytes, and every legacy Office document with the same eight. Leading
+magic therefore says only "this is a container", and the format that
+matters is one level in.
+
+`ZipMembers` lists an archive from its index and inflates a member through
+`java.util.zip`. `Ole2Members` traverses a compound file's sector table,
+directory tree and the nested filing system that holds members below the
+small-member cutoff. Both stop wherever the layout leads outside the
+windows and report that they did. `ContainerIdentification` applies the
+published container rules to what they found.
+
+Once the members have been listed and tested, a filename no longer gets to
+promote an archive into a format its members contradict. That is the point
+of the layer: a `.docx` renamed to `.dat` is identified correctly, and a
+plain archive named `.docx` is not mistaken for a word processor document.
+An examination that could not finish still falls back to the name, because
+there the name remains the best thing available.
+
+### Published signatures as evidence
+
+`BinarySignatures` carries the wider published set: 2273 signatures over
+roughly 1500 formats. `BinaryIdentification` applies them and reports
+which formats the bytes resemble.
+
+None of it produces a classification. The registry names the formats this
+platform can act on, and a hit outside that list is an observation about
+bytes, filed as `CharacterizationEvidence`. What it buys is triage: an
+asset the registry cannot place is far more useful in a backlog when the
+record names a published format than when it says only that the bytes are
+none of the eighteen.
+
+Because the set costs a couple of thousand pattern runs, it applies only
+where the built-in table concluded no format — which is both where it
+helps and where the cost is affordable.
+
+### The signature engine
+
+`SignatureExpression` compiles the byte-pattern syntax the registries
+publish: hex values, Latin-1 strings, ranges, sets, bitmasks, inversions,
+alternatives and unknown stretches. `SignatureSequence` places a
+signature's pieces relative to an anchor, with distances between them and
+optional flanking fragments, and answers `MATCHED`, `NOT_MATCHED` or
+`NOT_EVALUABLE`.
+
+A pattern with an unlimited stretch is compiled but refused, because
+matching it would mean reading to the end of the content. The published
+sets contain none, and a test over all 3460 distinct published expressions
+pins that, so the day one appears it surfaces in a build rather than in a
+slow read.
+
+Distances are measured to the edge of a signature's extent, not to the
+pattern inside it — the two differ whenever a wide flanking fragment is
+involved, and reading it the other way silently searches the wrong span.
+
+The definitions are bundled from DROID under the BSD 3-Clause licence,
+with attribution in `NOTICE` and `licenses/LICENSE-droid-signatures.txt`.
 
 ## Classification is a state, not an option
 
@@ -435,7 +531,16 @@ looked" and one over "scored zero" are different questions.
 5. **One detector.** Every consumer of "what is this file" — archive
    doors, parse routing, bridge gating — calls the same characterization
    seam.
-6. **Proto-first.** The generated `v1` messages are the internal model.
+6. **Identification is bounded.** It reads two windows and never the whole
+   asset. A pattern reaching past them reports that it could not be
+   evaluated; it never reports absence it did not establish.
+7. **A container is identified by its members.** Once they have been
+   listed and tested, a filename does not get to name a format the members
+   contradict.
+8. **Evidence is not a conclusion.** A published signature hit names a
+   format the registry has no entry for; it stays an observation and never
+   becomes a classification.
+9. **Proto-first.** The generated `v1` messages are the internal model.
 
 ## Sequencing
 
@@ -464,6 +569,19 @@ looked" and one over "scored zero" are different questions.
   `ClassifyEntry` re-reads the stored bytes on demand. A declaration
   once made is never silently withdrawn: later saves without a fresh
   declaration re-resolve against the standing claim.
+- **Window sizes**: 64 KiB leading and 128 KiB trailing, fixed. The
+  trailing size is set by the ZIP end-of-central-directory record's
+  furthest legal position, not by preference, and the pair reaches
+  approximately 98% of the published signature set either way.
+- **Which layer concludes and which observes**: the built-in table and the
+  container rules produce `FormatFact` conclusions; the wider published set
+  produces evidence only. A published format identifier earns a conclusion
+  only where the registry entry it maps to already admits that format's
+  file names, which is why OpenDocument spreadsheets conclude and
+  OpenDocument text does not.
+- **Where the expensive layer runs**: the published set applies only after
+  the built-in path has concluded nothing, so a placed asset pays none of
+  its cost.
 - **Conflict resolution ergonomics**: the console surface for
   `CONFLICTED` entries (re-declare, accept the identification, leave
   flagged) is a follow-on, alongside the bridge trains.

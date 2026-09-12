@@ -22,3 +22,11 @@ KServe Open Inference Protocol (Predict Protocol v2) definition
 Copyright the KServe authors; Copyright 2020 kubeflow.org
 https://github.com/kserve/kserve
 Bundled at: search/embedding/ovms/src/main/proto/
+
+This product bundles format signature definitions from DROID under the BSD
+3-Clause License. The full license text, and what is bundled, is in
+licenses/LICENSE-droid-signatures.txt.
+
+DROID format signature definitions
+Copyright (c) 2016 The National Archives
+https://github.com/digital-preservation/droid

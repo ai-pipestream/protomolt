@@ -1,5 +1,9 @@
 package ai.protomolt.proto.asset.characterize;
 
+import ai.protomolt.proto.asset.characterize.container.ContainerFormats;
+import ai.protomolt.proto.asset.characterize.container.ContainerIdentification;
+import ai.protomolt.proto.asset.characterize.container.ContainerKind;
+import ai.protomolt.proto.asset.characterize.signature.BinaryIdentification;
 import ai.protomolt.proto.asset.v1.AvroDataset;
 import ai.protomolt.proto.asset.v1.CharacterizationEvidence;
 import ai.protomolt.proto.asset.v1.FormatFact;
@@ -68,43 +72,113 @@ public final class Characterizer {
     }
 
     /**
-     * Identifies the format of some bytes.
+     * Identifies the format from a leading byte window alone. Nothing
+     * anchored to the end of the content is observable this way.
      *
-     * @param head the first bytes ({@link #PREFIX_BYTES} are plenty); may be
-     *        empty
+     * @param head the first bytes ({@link #PREFIX_BYTES} are plenty for the
+     *        leading magics); may be empty
      * @param filename the asset's filename; may be blank or null
      * @return the identification — never null, possibly empty-handed
      */
     public static Identification identify(byte[] head, String filename) {
+        return identify(ByteWindows.ofHead(head), filename);
+    }
+
+    /**
+     * Identifies the format of some content.
+     *
+     * @param windows the captured windows over the content
+     * @param filename the asset's filename; may be blank or null
+     * @return the identification — never null, possibly empty-handed
+     */
+    public static Identification identify(ByteWindows windows, String filename) {
         List<CharacterizationEvidence> evidence = new ArrayList<>();
+        byte[] head = windows.head();
         ContentTypeSniffer.Sniff sniff = ContentTypeSniffer.sniff(head, filename);
         String extension = ContentTypeSniffer.extensionOf(filename);
         if (sniff.sniffed()) {
             evidence.add(evidence("magic-bytes", "content sniffs as " + sniff.mimeType()));
         }
-        FormatFact fact = sniff.sniffed()
-                ? fromMediaType(sniff.mimeType(), head, filename, extension, evidence)
-                : null;
+        // A container's leading bytes say only that it is a container. What
+        // is inside decides, and the filename is the last thing to ask.
+        ContainerIdentification.Result container = ContainerIdentification.identify(windows);
+        FormatFact fact = containerFact(container, filename, evidence);
+        if (fact == null && sniff.sniffed()) {
+            fact = fromMediaType(containerMediaType(container, sniff.mimeType()),
+                    windows, filename, extension, evidence);
+        }
         if (!extension.isEmpty()) {
             evidence.add(evidence("extension", "filename extension is ." + extension));
+        }
+        if (fact == null) {
+            publishedEvidence(windows, evidence);
         }
         return new Identification(fact, List.copyOf(evidence));
     }
 
-    private static FormatFact fromMediaType(String mediaType, byte[] head, String filename,
-                                            String extension,
+    /**
+     * The conclusion a container's members support, when the registry has
+     * an entry for the format they identify.
+     */
+    private static FormatFact containerFact(ContainerIdentification.Result container,
+                                            String filename,
                                             List<CharacterizationEvidence> evidence) {
+        if (container.kind() == null) {
+            return null;
+        }
+        for (ContainerIdentification.Hit hit : container.hits()) {
+            FormatFact fact = ContainerFormats.factFor(hit.formatId(), filename);
+            if (fact != null) {
+                evidence.add(evidence("container",
+                        "members identify " + hit.description() + " (" + hit.formatId() + ")"));
+                return fact;
+            }
+        }
+        if (!container.hits().isEmpty()) {
+            ContainerIdentification.Hit hit = container.hits().getFirst();
+            evidence.add(evidence("container", "members identify " + hit.description()
+                    + " (" + hit.formatId() + "), for which the registry has no entry"));
+        } else if (!container.complete()) {
+            evidence.add(evidence("container", container.detail()));
+        } else {
+            evidence.add(evidence("container", "listed " + container.memberCount()
+                    + " members, matching no published container rule"));
+        }
+        return null;
+    }
+
+    /**
+     * What the content should be treated as when its members identified no
+     * format the registry knows.
+     *
+     * <p>This is where a filename stops being evidence and starts being a
+     * guess. The leading bytes of every OOXML document, OpenDocument file
+     * and EPUB are the same, so a name is the only thing that separates
+     * them, and a name can be wrong. Once the members have been listed and
+     * matched against the published rules, the archive is an archive: the
+     * name does not get to promote it into a format its members contradict.
+     * The exception is an examination that could not finish, where the name
+     * remains the best thing available.
+     */
+    private static String containerMediaType(ContainerIdentification.Result container,
+                                             String sniffed) {
+        if (container.kind() == null || !container.complete()) {
+            return sniffed;
+        }
+        return container.kind() == ContainerKind.ZIP ? "application/zip" : sniffed;
+    }
+
+    private static FormatFact fromMediaType(String mediaType, ByteWindows windows,
+                                            String filename, String extension,
+                                            List<CharacterizationEvidence> evidence) {
+        byte[] head = windows.head();
         return switch (mediaType) {
             case "application/x-tar" -> FormatFact.newBuilder().setTar(
                     TarArchive.newBuilder()
                             .setFilename(matching(filename, FormatGrammars.TAR))).build();
-            case "application/zip" -> FormatFact.newBuilder().setZip(
-                    ZipArchive.newBuilder()
-                            .setFilename(matching(filename, FormatGrammars.ZIP))).build();
+            case "application/zip" -> zip(windows, filename, evidence);
             case "application/gzip" -> gzipOrTar(filename, evidence);
-            case "application/vnd.apache.parquet" -> FormatFact.newBuilder().setParquet(
-                    ParquetDataset.newBuilder()
-                            .setFilename(matching(filename, FormatGrammars.PARQUET))).build();
+            case "application/vnd.apache.parquet" -> parquet(windows, filename, evidence);
             case "application/avro" -> FormatFact.newBuilder().setAvro(
                     AvroDataset.newBuilder()
                             .setFilename(matching(filename, FormatGrammars.AVRO))).build();
@@ -129,6 +203,54 @@ public final class Characterizer {
             case "text/plain" -> textual(head, filename, extension, evidence);
             default -> mediaType.startsWith("image/") ? image(mediaType, filename) : null;
         };
+    }
+
+    /**
+     * Parquet writes its magic at both ends. The leading one identifies the
+     * format; the trailing one is what makes the content readable, because
+     * the schema and the row-group index live in the footer. A file with
+     * only the header is still a Parquet asset, so the conclusion stands —
+     * the damage is recorded as a finding, not hidden by refusing to name
+     * the format.
+     */
+    private static FormatFact parquet(ByteWindows windows, String filename,
+                                      List<CharacterizationEvidence> evidence) {
+        if (!Trailers.parquetFooterObservable(windows)) {
+            evidence.add(evidence("trailer", "the footer lies outside the captured window,"
+                    + " so whether the content is sealed was not established"));
+        } else if (Trailers.parquetSealed(windows)) {
+            evidence.add(evidence("trailer", "footer magic seals the content"));
+        } else {
+            evidence.add(evidence("trailer", "header magic without footer magic:"
+                    + " the content carries no readable schema or row-group index"));
+        }
+        return FormatFact.newBuilder().setParquet(ParquetDataset.newBuilder()
+                .setFilename(matching(filename, FormatGrammars.PARQUET))).build();
+    }
+
+    /**
+     * A ZIP's entry list lives in the central directory, which the format
+     * writes at the end. Finding its record proves the archive was closed;
+     * not finding one within reach means either a truncated archive or a
+     * trailer beyond the captured window, and those are recorded as the
+     * different observations they are.
+     */
+    private static FormatFact zip(ByteWindows windows, String filename,
+                                  List<CharacterizationEvidence> evidence) {
+        Trailers.EndOfCentralDirectory directory = Trailers.zipDirectory(windows);
+        if (directory != null) {
+            evidence.add(evidence("trailer", "central directory declares "
+                    + directory.entryCount() + " entries"));
+        } else if (!windows.sizeKnown()) {
+            evidence.add(evidence("trailer", "no trailing window was captured,"
+                    + " so the central directory was not looked for"));
+        } else {
+            evidence.add(evidence("trailer", "no central directory within reach of the"
+                    + " end: the archive is truncated or its trailer lies outside the"
+                    + " captured window"));
+        }
+        return FormatFact.newBuilder().setZip(ZipArchive.newBuilder()
+                .setFilename(matching(filename, FormatGrammars.ZIP))).build();
     }
 
     /** gzip magic: a tar-grammar name means a compressed tar, not a gzip file. */
@@ -186,6 +308,55 @@ public final class Characterizer {
                 .setFilename(matching(filename, FormatGrammars.IMAGE))).build();
     }
 
+    /** How many published formats an unclassified asset lists by name. */
+    private static final int PUBLISHED_EVIDENCE_LIMIT = 4;
+
+    /** The contract's limit on one observation. */
+    private static final int OBSERVATION_LIMIT = 500;
+
+    /**
+     * What the wider published signature set makes of an asset the
+     * registry could not place.
+     *
+     * <p>This runs only when nothing was concluded, which is both where it
+     * is useful and where its cost is affordable. Placing an asset takes a
+     * handful of table lookups; running a couple of thousand published
+     * signatures takes long enough to be worth avoiding on the assets that
+     * were already placed. On the assets that were not, a backlog entry
+     * reading "the bytes carry the signature of a particular published
+     * format" is the difference between something an operator can act on
+     * and an opaque blob.
+     *
+     * <p>None of it becomes a conclusion. The registry names the formats
+     * this platform can act on; a signature hit outside that list is an
+     * observation about bytes and stays one.
+     */
+    private static void publishedEvidence(ByteWindows windows,
+                                          List<CharacterizationEvidence> evidence) {
+        BinaryIdentification.Result published = BinaryIdentification.identify(windows);
+        if (published.hits().isEmpty()) {
+            evidence.add(evidence("published-signature", "no published signature matches: "
+                    + published.evaluated() + " were evaluated and " + published.notEvaluable()
+                    + " reached outside the captured windows"));
+            return;
+        }
+        int reported = 0;
+        for (BinaryIdentification.Hit hit : published.hits()) {
+            if (reported == PUBLISHED_EVIDENCE_LIMIT) {
+                break;
+            }
+            String mediaType = hit.mediaType().isBlank() ? "" : ", " + hit.mediaType();
+            evidence.add(evidence("published-signature", "the bytes carry the signature of "
+                    + hit.label() + " (" + hit.formatId() + ")" + mediaType));
+            reported++;
+        }
+        int remaining = published.hits().size() - reported;
+        if (remaining > 0) {
+            evidence.add(evidence("published-signature",
+                    remaining + " further published formats also match"));
+        }
+    }
+
     /** The filename when it matches the grammar; "" (left unset) otherwise. */
     private static String matching(String filename, Pattern grammar) {
         return filename != null && grammar.matcher(filename).matches() ? filename : "";
@@ -194,7 +365,8 @@ public final class Characterizer {
     private static CharacterizationEvidence evidence(String signal, String observation) {
         return CharacterizationEvidence.newBuilder()
                 .setSignal(signal)
-                .setObservation(observation)
+                .setObservation(observation.length() <= OBSERVATION_LIMIT
+                        ? observation : observation.substring(0, OBSERVATION_LIMIT))
                 .build();
     }
 }
