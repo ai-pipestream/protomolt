@@ -344,11 +344,30 @@ delimited table's delimiter and header presence — is never identified,
 only declared: concluding nothing is the honest verdict, and the
 evidence still records what was seen.
 
-**Search and metrics**: classification state, format kind, and content
-class join the mapping subjects as facetable fields — the catalog view
-(how many parquet datasets, how much unclassified, OCR quality
-distribution) falls out of the existing search and metric services
-rather than a parallel metadata system.
+**Search and metrics**: `AssetCatalogRow` is one flat row per stored
+asset, carrying classification state, format kind, content class, size,
+rendition counts, and measured quality. Its fields declare their own
+index hints and metric members, so the catalog view (how many Parquet
+datasets, how much is unclassified, what the OCR quality distribution
+looks like) is an ordinary group-by query over an ordinary subject — no
+endpoint in the tree knows those questions, and no parallel metadata
+system holds the answers.
+
+The row is a projection, never a second store: every value it carries is
+already stored, and `AssetCatalogRows.of(EntryInfo, VersionManifest)`
+computes nothing, reads no object, and calls no service. `ListEntries`
+grew an `include_manifests` flag so one paged listing carries everything
+the projection needs.
+
+Two conventions keep a facet honest. Enums project as their bare names
+(`VERIFIED`, `OCR_TEXT`) rather than numbers, so a facet reads as itself.
+And an absent value is a real answer that must not vanish: an asset whose
+classification names no single format has a blank `format_kind`, which
+would be skipped by an index that drops unset fields, so the fields
+carrying "no answer" declare a `null_value` and refuse to be skipped. An
+unmeasured quality is -1 rather than 0 for the same reason, with the mean
+filtered to what was actually scored, because a distribution over "nobody
+looked" and one over "scored zero" are different questions.
 
 ## Rules
 
@@ -381,7 +400,7 @@ rather than a parallel metadata system.
    purely structural, pure JDK); then `schema`/`dataset`; then
    `text`/`ocr-text` with quality scoring, which is where the parser
    plugin contract and the durable `bridge-entry` workflow enter.
-5. Search/metric facets over the new fields.
+5. The catalog subject and its facets over the new fields.
 
 ## Decisions of record
 

@@ -609,7 +609,17 @@ final class ArchiveOperations {
                 request.getArchive(), stateFilter, limit, offset);
         ListEntriesResponse.Builder response = ListEntriesResponse.newBuilder()
                 .setTotalCount(ledger.countEntries(request.getAccountId(), request.getArchive()));
-        page.forEach(entry -> response.addEntries(toProto(entry)));
+        for (ArchiveEntryRecord entry : page) {
+            response.addEntries(toProto(entry));
+            if (request.getIncludeManifests()) {
+                // Same order as the entries, and one manifest per entry even
+                // when a row's current version has gone missing: a listing
+                // whose two lists drift apart cannot be zipped.
+                response.addManifests(ledger.findVersion(entry.entryUuid, entry.currentVersion)
+                        .map(version -> ArchiveManifests.fromJson(version.manifest))
+                        .orElseGet(VersionManifest::getDefaultInstance));
+            }
+        }
         if (page.size() == limit) {
             response.setNextContinuationToken(Long.toString(offset + limit));
         }

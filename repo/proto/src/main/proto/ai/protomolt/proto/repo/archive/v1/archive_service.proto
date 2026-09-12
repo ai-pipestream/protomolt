@@ -317,6 +317,11 @@ message ListEntriesRequest {
   // Optional classification-state filter: only entries in this state.
   // Unspecified = no filter.
   ai.protomolt.proto.asset.v1.ClassificationState classification_state = 5;
+  // Include each entry's current-version manifest in the response. A
+  // catalog projection needs rendition sizes and content profiles, and
+  // fetching them one entry at a time turns one listing into a page of
+  // round trips.
+  bool include_manifests = 6;
   // Owning account.
   string account_id = 1 [
     (ai.protomolt.proto.validate.v1.field) = {
@@ -354,6 +359,10 @@ message ListEntriesResponse {
   string next_continuation_token = 2;
   // Total number of live entries in the archive.
   int64 total_count = 3;
+  // Each listed entry's current-version manifest, in the same order as
+  // `entries`, when the request asked for them. Empty otherwise — a
+  // listing that does not need manifests should not pay for them.
+  repeated VersionManifest manifests = 4;
 }
 
 // Request to list an entry's retained versions, newest first.
