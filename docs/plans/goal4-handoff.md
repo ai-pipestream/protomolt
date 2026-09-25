@@ -128,7 +128,7 @@ activity or files as proof a background process is still running.
 ## Separate Kimi review
 
 Checkpoint commit: `5afb985e4917745e853b5f38a3be46eb964a7f42`.
-A separate Kimi CLI review was launched in plan mode, limited to reading source
+A separate Kimi CLI review is limited by its prompt to reading source
 and reporting defects, with a 45-minute timeout. It cannot establish release
 qualification and has not been authorized to edit, build, or deploy.
 
@@ -138,3 +138,6 @@ completion: `exit-code.txt` and `finished.txt` in that directory. Inspect proces
 state as well as these files before assuming it is still running or starting a
 replacement. The Codex goal remains active unless the user explicitly requests
 pausing it; asking about allowance alone does not change that status.
+The initial invocation refused `--prompt` together with `--plan`; the corrected
+runner uses prompt mode with explicit read-only scope. The user-systemd unit
+`protomolt-goal4-kimi-review` owns the detached review, when successfully started.
