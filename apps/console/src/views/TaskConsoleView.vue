@@ -256,7 +256,7 @@
                   color="success"
                   prepend-icon="mdi-check-decagram"
                   :loading="reviewing"
-                  :disabled="!reviewVerdict.trim()"
+                  :disabled="!reviewableCandidate || !reviewVerdict.trim()"
                   @click="acceptCandidate"
                 >Accept the work</v-btn>
               </div>
@@ -286,7 +286,7 @@
                 color="warning"
                 prepend-icon="mdi-file-undo-outline"
                 :loading="reviewing"
-                :disabled="!reviewFeedback.trim()"
+                :disabled="!reviewableCandidate || !reviewFeedback.trim()"
                 @click="requestRevision"
               >Request revision</v-btn>
             </div>
@@ -336,7 +336,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   checkStatuses,
   frameFacts,
@@ -387,10 +387,22 @@ let watchController: AbortController | null = null
 
 const contract = computed(() => checkStatuses(events.value))
 const candidate = computed(() => latestCandidate(events.value))
+const reviewableCandidate = computed(() =>
+  candidate.value !== null && candidate.value.attempt > 0 && candidate.value.revision > 0)
+const reviewIdentity = computed(() => {
+  const current = candidate.value
+  return selected.value && current
+    ? `${selected.value.taskId}:${current.attempt}:${current.revision}`
+    : ''
+})
 const completeChecks = computed(() =>
   offerChecks.value.filter((check) => check.name.trim()))
 const terminalPhase = computed(() =>
   ['accepted', 'failed', 'cancelled', 'expired'].includes(selected.value?.phase ?? ''))
+
+watch(reviewIdentity, (next, previous) => {
+  if (next !== previous) resetReviewDraft()
+})
 
 onMounted(async () => {
   try {
@@ -560,12 +572,13 @@ async function exportSignedRecord() {
 }
 
 async function acceptCandidate() {
-  if (!selected.value || !reviewVerdict.value.trim()) return
+  const reviewedCandidate = candidate.value
+  if (!selected.value || !reviewableCandidate.value || !reviewedCandidate || !reviewVerdict.value.trim()) return
   reviewing.value = true
   try {
-    await taskApi.reviewAccept(selected.value.taskId, reviewVerdict.value.trim())
-    reviewVerdict.value = ''
-    failedChecks.value = []
+    await taskApi.reviewAccept(selected.value.taskId, reviewedCandidate.attempt,
+      reviewedCandidate.revision, reviewVerdict.value.trim())
+    resetReviewDraft()
     await refreshSummaries()
   } catch (failure) {
     error.value = message(failure)
@@ -575,13 +588,13 @@ async function acceptCandidate() {
 }
 
 async function requestRevision() {
-  if (!selected.value || !reviewFeedback.value.trim()) return
+  const reviewedCandidate = candidate.value
+  if (!selected.value || !reviewableCandidate.value || !reviewedCandidate || !reviewFeedback.value.trim()) return
   reviewing.value = true
   try {
-    await taskApi.reviewRevise(selected.value.taskId, reviewFeedback.value.trim(),
-      failedChecks.value)
-    reviewFeedback.value = ''
-    failedChecks.value = []
+    await taskApi.reviewRevise(selected.value.taskId, reviewedCandidate.attempt,
+      reviewedCandidate.revision, reviewFeedback.value.trim(), failedChecks.value)
+    resetReviewDraft()
     await refreshSummaries()
   } catch (failure) {
     error.value = message(failure)
@@ -594,6 +607,12 @@ function toggleFailedCheck(name: string) {
   failedChecks.value = failedChecks.value.includes(name)
     ? failedChecks.value.filter((check) => check !== name)
     : [...failedChecks.value, name]
+}
+
+function resetReviewDraft() {
+  reviewVerdict.value = ''
+  reviewFeedback.value = ''
+  failedChecks.value = []
 }
 
 /** Saves the recorded transcript as a plain-text file, cursor-ordered. */

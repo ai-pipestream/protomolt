@@ -114,7 +114,7 @@ class TaskConsoleRecordTest {
                         .setCommit("0123456789abcdef0123456789abcdef01234567")
                         .setSubject("earn a receipt"))
                 .build());
-        bridge.review(taskId, CandidateReviewer.ReviewDecision.accept("evidence holds"));
+        bridge.review(taskId, 1, 1, CandidateReviewer.ReviewDecision.accept("evidence holds"));
 
         HttpResponse<String> exported = post("/api/tasks/" + taskId + "/record");
         assertThat(exported.statusCode()).isEqualTo(200);

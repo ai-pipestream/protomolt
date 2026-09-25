@@ -183,6 +183,13 @@ contract of done. Both go on the transcript as recorded protocol facts, because
 a judgement without a reason is not one the transcript can defend later. The
 route answers 200 with the decision and the task's resulting phase.
 
+Every review must include the positive integer `attempt` and `revision` of the
+candidate the reviewer inspected. A stale attempt or revision is refused with
+409 before recording a decision. Missing or malformed identities return 400.
+The console sends the displayed candidate's identity and clears review drafts
+when that identity changes, so feedback written for an earlier candidate is
+not carried into its replacement.
+
 A review with no open candidate is refused with 409, and a review naming a task
 the coordinator does not hold is refused with 400.
 
@@ -190,8 +197,9 @@ the coordinator does not hold is refused with 400.
 
 The task header carries the offer's acceptance checks as the contract of done,
 each joined with the latest candidate's evidence for it. The join is narrow on
-purpose: only the evidence recorded on completion frames whose revision matches
-the newest candidate counts, so a superseded revision's proof cannot vouch for
+purpose: only the evidence recorded on the completion frame identified by the
+current attempt, revision, and cursor counts, so an earlier attempt or
+superseded revision's proof cannot vouch for
 the one under review. A check whose evidence records a passing verdict renders
 as passed, a check whose evidence records anything else renders as failed, and a
 check no candidate has proved yet renders as unproven.

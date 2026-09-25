@@ -365,7 +365,7 @@ message ReportProgressResponse {
   int32 progress_seq = 2;
 }
 
-// Applies an external review decision to the open completion candidate.
+// Applies an external review decision to one identified completion candidate.
 message ReviewCandidateRequest {
   option (ai.protomolt.proto.validate.v1.message) = {
     cel: {
@@ -420,6 +420,16 @@ message ReviewCandidateRequest {
         string: {slug: true, max_len: 128}
       }
     }
+  ];
+  // The task attempt that produced the candidate. The decision is refused when
+  // a later attempt is currently under review.
+  int32 attempt = 6 [
+    (ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 1024}
+  ];
+  // The completion revision this decision reviewed. The decision is refused
+  // when the worker has already submitted a newer revision.
+  int32 revision = 7 [
+    (ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 1024}
   ];
 }
 

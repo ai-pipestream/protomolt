@@ -56,7 +56,9 @@ full lease duration from that moment, or its recorded expiry if that is later.
 A worker cannot mark its own task complete. It submits a completion candidate
 with evidence for every required check and at least one commit or artifact
 reference, plus the typed deliverable when the spec named one. The coordinator either accepts that revision or requests another
-revision with structured feedback.
+revision with structured feedback. External reviews must name the inspected
+candidate's `attempt` and `revision`; a stale or missing identity is refused
+rather than applied to whichever candidate is current when the review arrives.
 
 Blocked, failed, cancelled, rejected, expired, and accepted attempts are
 terminal. Task messages are the one exception after acceptance: the worker's
@@ -362,6 +364,14 @@ envelope is that request's canonical proto3 JSON: there is no wrapper member,
 the verb's published schema is derived from the descriptor, and the request's
 declared rules are checked on the catalog path, which does not sit behind the
 validating gRPC interceptor.
+
+Review clients must send `attempt` and `revision` from the inspected completion
+with `taskId`. Missing or out-of-range selectors fail contract validation;
+selectors that differ from the current candidate fail before a verdict is
+recorded. Upgrade clients and coordinator together: these fields are additive
+on the protobuf wire, but old review requests that omit them are intentionally
+refused. Never retry a stale verdict by replacing its selectors without reviewing
+the new candidate. The browser clears draft verdicts when its candidate changes.
 
 `delegation-watch` is a long poll over the coordinator's cursor-addressable
 event feed. The caller passes its last cursor and a bounded timeout; the

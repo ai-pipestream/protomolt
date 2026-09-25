@@ -131,6 +131,32 @@ describe('checkStatuses', () => {
     const events = [offerEvent(1, [{ name: 'tests-green', description: 'vitest suite passes' }])]
     expect(checkStatuses(events).map((status) => status.status)).toEqual(['unproven'])
   })
+
+  it('does not borrow evidence from the same revision in an earlier attempt', () => {
+    const events = [
+      offerEvent(1, [{ name: 'tests-green' }]),
+      completionEvent(2, {
+        attempt: 1, revision: 1,
+        evidence: [{ checkName: 'tests-green', verdict: 'CHECK_VERDICT_PASSED' }],
+      }),
+      offerEvent(3, [{ name: 'tests-green' }]),
+      completionEvent(4, { attempt: 2, revision: 1, evidence: [] }),
+    ]
+    expect(checkStatuses(events).map((status) => status.status)).toEqual(['unproven'])
+  })
+
+  it('clears the earlier attempt evidence when a new offer arrives', () => {
+    const events = [
+      offerEvent(1, [{ name: 'tests-green' }]),
+      completionEvent(2, {
+        attempt: 1, revision: 1,
+        evidence: [{ checkName: 'tests-green', verdict: 'CHECK_VERDICT_PASSED' }],
+      }),
+      offerEvent(3, [{ name: 'tests-green' }]),
+    ]
+    expect(latestCandidate(events)).toBeNull()
+    expect(checkStatuses(events).map((status) => status.status)).toEqual(['unproven'])
+  })
 })
 
 describe('latestCandidate', () => {

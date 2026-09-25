@@ -262,12 +262,18 @@ public final class InProcessDelegationCoordinator
         }
     }
 
-    /** Applies an external review decision to the current completion candidate. */
-    public void review(String taskId, ReviewDecision decision) {
+    /** Applies an external review decision to its identified completion candidate. */
+    public void review(String taskId, int attempt, int revision, ReviewDecision decision) {
+        if (attempt < 1 || revision < 1) {
+            throw new IllegalArgumentException("review attempt and revision must be positive");
+        }
         synchronized (lock) {
             TaskRuntime task = requireTask(taskId);
             if (task.phase != DelegationReducer.Phase.CANDIDATE) {
                 throw new IllegalStateException("task has no candidate under review");
+            }
+            if (task.attempt != attempt || task.candidate.getRevision() != revision) {
+                throw new IllegalStateException("review does not match the open candidate");
             }
             applyReview(task, Objects.requireNonNull(decision, "decision"));
         }
@@ -422,9 +428,10 @@ public final class InProcessDelegationCoordinator
                     .setReason(reason)
                     .build();
             emit(requireAdmittedWorker(task.workerId), task.taskId, task.attempt,
-                    DelegateResponse.newBuilder().setCancellation(cancellation));
-            task.phase = DelegationReducer.Phase.CANCELLED;
-            task.leaseGeneration++;
+                    DelegateResponse.newBuilder().setCancellation(cancellation), () -> {
+                        task.phase = DelegationReducer.Phase.CANCELLED;
+                        task.leaseGeneration++;
+                    });
         }
     }
 
@@ -674,9 +681,10 @@ public final class InProcessDelegationCoordinator
                         .setVerdict(verdict)
                         .build();
                 emit(session, task.taskId, task.attempt,
-                        DelegateResponse.newBuilder().setAccepted(payload));
-                task.phase = DelegationReducer.Phase.ACCEPTED;
-                task.leaseGeneration++;
+                        DelegateResponse.newBuilder().setAccepted(payload), () -> {
+                            task.phase = DelegationReducer.Phase.ACCEPTED;
+                            task.leaseGeneration++;
+                        });
             }
             case ReviewDecision.Revise(String feedback, List<String> failedChecks) -> {
                 RevisionRequested payload = RevisionRequested.newBuilder()
@@ -686,8 +694,8 @@ public final class InProcessDelegationCoordinator
                         .addAllFailedChecks(failedChecks)
                         .build();
                 emit(session, task.taskId, task.attempt,
-                        DelegateResponse.newBuilder().setRevisionRequested(payload));
-                task.phase = DelegationReducer.Phase.LEASED;
+                        DelegateResponse.newBuilder().setRevisionRequested(payload),
+                        () -> task.phase = DelegationReducer.Phase.LEASED);
                 rearmLease(task, session);
             }
             // The candidate stays open for an explicit review action; the
@@ -767,9 +775,10 @@ public final class InProcessDelegationCoordinator
                 .setReason(reason)
                 .build();
         emit(requireAdmittedWorker(task.workerId), task.taskId, task.attempt,
-                DelegateResponse.newBuilder().setExpired(expired));
-        task.phase = DelegationReducer.Phase.EXPIRED;
-        task.leaseGeneration++;
+                DelegateResponse.newBuilder().setExpired(expired), () -> {
+                    task.phase = DelegationReducer.Phase.EXPIRED;
+                    task.leaseGeneration++;
+                });
     }
 
     private void emit(Session session, String taskId, int attempt,
@@ -795,7 +804,16 @@ public final class InProcessDelegationCoordinator
         session.commitCoordinatorSeq(taskId, attempt, seq);
         afterPersist.run();
         if (session.connected) {
-            session.responses.onNext(response);
+            try {
+                session.responses.onNext(response);
+            } catch (RuntimeException deliveryFailure) {
+                // The transcript and live projection have already committed. A broken
+                // stream cannot undo the decision; the worker can replay the event feed.
+                session.connected = false;
+                LOG.log(System.Logger.Level.WARNING,
+                        "worker response stream failed for worker " + session.workerId
+                                + "; recorded frame remains available for replay");
+            }
         }
         // A dead stream gets nothing; the recorded frame is on the event feed and the
         // next stream for this worker continues the coordinator sequence past it.

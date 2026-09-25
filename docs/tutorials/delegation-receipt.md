@@ -203,7 +203,7 @@ reason is not one the transcript can defend later. Send it back first:
 
 ```shell
 curl -sS -b "$COOKIE" -H 'content-type: application/json' \
-  -d '{"decision":"revise",
+  -d '{"decision":"revise","attempt":1,"revision":1,
        "feedback":"tests cover the happy path only",
        "failedChecks":["unit-tests"]}' \
   "http://localhost:8080/api/tasks/$TASK/review"
@@ -221,7 +221,7 @@ accept:
 mcp '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"delegation-candidate","arguments":{"workerId":"kimi-worker","taskId":"'"$TASK"'","candidate":{"attempt":1,"revision":2,"summary":"added the refusal cases","evidence":[{"checkName":"unit-tests","verdict":"CHECK_VERDICT_PASSED","detail":"happy path plus every refusal","ranAt":"2026-08-12T01:00:00Z"}],"commits":[{"repository":"protomolt","commit":"89abcdef0123456789abcdef0123456789abcdef","subject":"cover the refusal cases"}]}}}}'
 
 curl -sS -b "$COOKIE" -H 'content-type: application/json' \
-  -d '{"decision":"accept","verdict":"checks green and the diff is scoped"}' \
+  -d '{"decision":"accept","attempt":1,"revision":2,"verdict":"checks green and the diff is scoped"}' \
   "http://localhost:8080/api/tasks/$TASK/review"
 ```
 

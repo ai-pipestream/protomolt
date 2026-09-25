@@ -130,7 +130,7 @@ describe('TaskConsoleView', () => {
     expect(accept.attributes('disabled')).toBeUndefined()
     await accept.trigger('click')
     await flushPromises()
-    expect(api.reviewAccept).toHaveBeenCalledWith('task-1', 'done to my satisfaction')
+    expect(api.reviewAccept).toHaveBeenCalledWith('task-1', 1, 1, 'done to my satisfaction')
   })
 
   it('requests a revision with feedback and the toggled failed checks', async () => {
@@ -145,7 +145,41 @@ describe('TaskConsoleView', () => {
     await wrapper.findAll('button').find((b) => b.text().includes('Request revision'))!
       .trigger('click')
     await flushPromises()
-    expect(api.reviewRevise).toHaveBeenCalledWith('task-1', 'lint still complains', ['lint-clean'])
+    expect(api.reviewRevise).toHaveBeenCalledWith('task-1', 1, 1, 'lint still complains', ['lint-clean'])
+  })
+
+  it('clears a review draft when a newer candidate arrives', async () => {
+    let resolveWatch!: ((value: { events: typeof completionEvent[]; cursor: number; truncated: boolean }) => void)
+    api.watchEvents.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveWatch = resolve
+    }))
+    const wrapper = await mountView()
+
+    await wrapper.find('.review-panel input').setValue('approve revision one')
+    await wrapper.find('.review-panel textarea').setValue('fix the edge case')
+    await wrapper.findAll('.review-panel .v-chip').find((chip) => chip.text() === 'lint-clean')!
+      .trigger('click')
+
+    resolveWatch({
+      events: [{
+        ...completionEvent,
+        cursor: 3,
+        entry: { workerFrame: { completion: {
+          ...completionEvent.entry.workerFrame.completion,
+          revision: 2,
+          summary: 'New evidence for the corrected candidate',
+        } } },
+      }],
+      cursor: 3,
+      truncated: false,
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Candidate revision 2 awaits your judgement')
+    expect((wrapper.find('.review-panel input').element as HTMLInputElement).value).toBe('')
+    expect((wrapper.find('.review-panel textarea').element as HTMLTextAreaElement).value).toBe('')
+    expect(wrapper.findAll('.review-panel .v-chip').find((chip) => chip.text() === 'lint-clean')!
+      .classes()).not.toContain('v-chip--variant-flat')
   })
 
   it('offers a task through the dialog with its contract of done', async () => {

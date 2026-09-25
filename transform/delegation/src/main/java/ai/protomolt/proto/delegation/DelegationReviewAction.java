@@ -25,7 +25,8 @@ final class DelegationReviewAction extends DelegationAction {
         return "Applies the review verdict for a task's open completion candidate: "
                 + "REVIEW_DECISION_ACCEPT with a verdict line, or REVIEW_DECISION_REVISE "
                 + "with feedback and the failed checks. The candidate must be under review "
-                + "(submitted, not yet decided).";
+                + "(submitted, not yet decided). Supply the attempt and revision of the "
+                + "candidate you inspected; a decision for a different candidate is refused.";
     }
 
     @Override
@@ -55,7 +56,7 @@ final class DelegationReviewAction extends DelegationAction {
                     "delegation-review needs a decision the contract defines");
         };
         try {
-            bridge.review(request.getTaskId(), review);
+            bridge.review(request.getTaskId(), request.getAttempt(), request.getRevision(), review);
         } catch (RuntimeException e) {
             throw failure(e);
         }

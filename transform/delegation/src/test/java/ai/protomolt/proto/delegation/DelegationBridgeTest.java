@@ -62,11 +62,17 @@ class DelegationBridgeTest {
 
         bridge.submitCandidate("bridge-kimi", taskId, candidate(1, 1));
         waitForPhase(taskId, DelegationReducer.Phase.CANDIDATE);
-        bridge.review(taskId, CandidateReviewer.ReviewDecision.revise("prove the edge case",
-                List.of("unit-tests")));
+        bridge.review(taskId, 1, 1, CandidateReviewer.ReviewDecision.revise(
+                "prove the edge case", List.of("unit-tests")));
         bridge.submitCandidate("bridge-kimi", taskId, candidate(1, 2));
         waitForPhase(taskId, DelegationReducer.Phase.CANDIDATE);
-        bridge.review(taskId, CandidateReviewer.ReviewDecision.accept("verified"));
+        int entriesBeforeStaleReview = coordinator.transcript().getEntriesCount();
+        assertThrows(IllegalStateException.class, () -> bridge.review(taskId, 1, 1,
+                CandidateReviewer.ReviewDecision.accept("stale verdict")));
+        assertEquals(entriesBeforeStaleReview, coordinator.transcript().getEntriesCount());
+        assertEquals(DelegationReducer.Phase.CANDIDATE,
+                coordinator.state().tasks().get(taskId).phase());
+        bridge.review(taskId, 1, 2, CandidateReviewer.ReviewDecision.accept("verified"));
         waitForPhase(taskId, DelegationReducer.Phase.ACCEPTED);
 
         assertTrue(coordinator.state().clean(), coordinator.state().findings().toString());
@@ -74,6 +80,36 @@ class DelegationBridgeTest {
         assertEquals(2, state.candidateRevision());
         assertEquals(2, state.lastProgressSeq());
         assertEquals(1, state.lastCheckpointSeq());
+    }
+
+    @Test
+    void aReviewForAnEarlierAttemptCannotSettleANewOffer() throws Exception {
+        coordinator = new InProcessDelegationCoordinator();
+        bridge = new DelegationBridge(coordinator);
+        bridge.registerWorker(hello());
+        String taskId = UUID.randomUUID().toString();
+
+        bridge.offer("bridge-kimi", taskId, DelegationFixtures.spec("unit-tests"),
+                Duration.ofSeconds(30), null);
+        bridge.accept("bridge-kimi", taskId, 1);
+        bridge.submitCandidate("bridge-kimi", taskId, candidate(1, 1));
+        waitForPhase(taskId, DelegationReducer.Phase.CANDIDATE);
+        bridge.cancel(taskId, "begin a fresh attempt");
+
+        assertEquals(2, bridge.offer("bridge-kimi", taskId,
+                DelegationFixtures.spec("unit-tests"), Duration.ofSeconds(30), null).getAttempt());
+        bridge.accept("bridge-kimi", taskId, 2);
+        bridge.submitCandidate("bridge-kimi", taskId, candidate(2, 1));
+        waitForPhase(taskId, DelegationReducer.Phase.CANDIDATE);
+        int entriesBeforeStaleReview = coordinator.transcript().getEntriesCount();
+
+        assertThrows(IllegalStateException.class, () -> bridge.review(taskId, 1, 1,
+                CandidateReviewer.ReviewDecision.accept("stale verdict")));
+        assertEquals(entriesBeforeStaleReview, coordinator.transcript().getEntriesCount());
+        assertEquals(DelegationReducer.Phase.CANDIDATE,
+                coordinator.state().tasks().get(taskId).phase());
+        bridge.review(taskId, 2, 1, CandidateReviewer.ReviewDecision.accept("verified"));
+        waitForPhase(taskId, DelegationReducer.Phase.ACCEPTED);
     }
 
     @Test
