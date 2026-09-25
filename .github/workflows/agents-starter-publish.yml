@@ -1,0 +1,551 @@
+# Publishes the separate agent-coordination starter from one merged main commit.
+# Before dispatch, create agents-starter-<12sha> at that commit and push the tag
+# to Forgejo origin first, then the GitHub mirror. This workflow never moves it.
+name: Agents Starter Publish
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: agents-starter-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.source.outputs.version }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Guard immutable source and release asset
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [ "${{ github.ref }}" = refs/heads/main ] || {
+            echo 'agents starter publishing requires GitHub main' >&2; exit 1;
+          }
+          SHA=$(git rev-parse HEAD)
+          git fetch origin main --quiet
+          [ "$SHA" = "$(git rev-parse origin/main)" ] || {
+            echo 'main moved; dispatch again' >&2; exit 1;
+          }
+          VERSION=agents-starter-${SHA:0:12}
+          [ "$(git rev-list -n 1 "refs/tags/$VERSION" 2>/dev/null)" = "$SHA" ] || {
+            echo 'create and push the same-SHA agents-starter tag to Forgejo and GitHub before dispatch' >&2
+            exit 1
+          }
+          ASSET=protomolt-agents-starter-$VERSION.zip
+          if gh release view "$VERSION" --json assets --jq '.assets[].name' 2>/dev/null \
+            | grep -Fxq "$ASSET"; then
+            echo 'agents starter asset already exists; refusing overwrite' >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$SHA" >> "$GITHUB_OUTPUT"
+
+  native:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/console/package-lock.json
+
+      - name: Build console and agents distributions natively
+        run: |
+          npm ci --prefix apps/console
+          npm run build --prefix apps/console
+          ./gradlew :protomolt-serve:installDist \
+            :protomolt-repo-service:installDist \
+            :protomolt-agent-host:installDist \
+            :protomolt-acp-agent:installDist \
+            :protomolt-record-verifier:jar --no-daemon
+
+      - name: Log in to GHCR for native image publication
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Reuse only absent-or-matching partial arch tags
+        id: existing
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          for pair in serve:protomolt-serve repo:protomolt-repo-service agent:protomolt-agent-host acp:protomolt-acp-agent; do
+            KEY=${pair%%:*}
+            IMAGE=${pair#*:}
+            TAG=ghcr.io/${{ github.repository_owner }}/$IMAGE:$VERSION-$ARCH
+            if docker buildx imagetools inspect "$TAG" >/dev/null 2>inspect-error.txt; then
+              docker pull --platform "linux/$ARCH" "$TAG" >/dev/null
+              [ "$(docker image inspect "$TAG" --format '{{.Architecture}}')" = "$ARCH" ]
+              [ "$(docker image inspect "$TAG" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SOURCE_SHA" ] || {
+                echo "existing $TAG does not belong to source $SOURCE_SHA" >&2; exit 1;
+              }
+              echo "$KEY=true" >> "$GITHUB_OUTPUT"
+            elif grep -Eqi 'not found|manifest unknown' inspect-error.txt; then
+              echo "$KEY=false" >> "$GITHUB_OUTPUT"
+            else
+              cat inspect-error.txt >&2
+              exit 1
+            fi
+          done
+
+      - name: Publish native serve image
+        if: steps.existing.outputs.serve != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/serve
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/protomolt-serve:${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.source_sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Publish native repo-service image
+        if: steps.existing.outputs.repo != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: repo/service
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/protomolt-repo-service:${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.source_sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Publish native thin AgentHost image
+        if: steps.existing.outputs.agent != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/agent-host
+          file: apps/agent-host/Dockerfile.starter
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/protomolt-agent-host:${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.source_sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Publish native ACP stdio image
+        if: steps.existing.outputs.acp != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: surface/acp
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/protomolt-acp-agent:${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.source_sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Pull and inspect all four native images
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          for IMAGE in protomolt-serve protomolt-repo-service protomolt-agent-host protomolt-acp-agent; do
+            TAG=ghcr.io/${{ github.repository_owner }}/$IMAGE:$VERSION-$ARCH
+            docker pull --platform "linux/$ARCH" "$TAG"
+            [ "$(docker image inspect "$TAG" --format '{{.Architecture}}')" = "$ARCH" ]
+            [ "$(docker image inspect "$TAG" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SOURCE_SHA" ]
+          done
+
+      - name: Install checked grpcurl for direct gRPC acceptance
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          BASE=https://github.com/fullstorydev/grpcurl/releases/download/v1.9.4
+          if [ "$ARCH" = amd64 ]; then ASSET_ARCH=x86_64; else ASSET_ARCH=arm64; fi
+          FILE=grpcurl_1.9.4_linux_${ASSET_ARCH}.tar.gz
+          curl -fsSL "$BASE/$FILE" -o "$RUNNER_TEMP/$FILE"
+          curl -fsSL "$BASE/grpcurl_1.9.4_checksums.txt" -o "$RUNNER_TEMP/grpcurl-checksums.txt"
+          (cd "$RUNNER_TEMP" && grep " $FILE$" grpcurl-checksums.txt | sha256sum -c)
+          tar -xzf "$RUNNER_TEMP/$FILE" -C "$RUNNER_TEMP" grpcurl
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Install pinned native Chromium for browser acceptance
+        run: bash .github/scripts/install-agents-browser.sh
+
+      - name: Start and qualify native published images
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          DIR="$RUNNER_TEMP/agents-native-$ARCH"
+          mkdir -p "$DIR"
+          cp deploy/agents/compose.yml deploy/agents/export-record.sh \
+            deploy/agents/verify-offline.sh deploy/agents/smoke.mjs \
+            deploy/agents/protocol-smoke.mjs deploy/agents/browser-smoke.mjs \
+            deploy/agents/custom-report.binpb "$DIR/"
+          cp .github/scripts/agents-starter-qualify.sh "$DIR/qualify.sh"
+          JAR=$(find apps/record-verifier/build/libs -maxdepth 1 \
+            -name 'protomolt-record-verifier-*.jar' ! -name '*-sources.jar' \
+            ! -name '*-javadoc.jar' -print -quit)
+          test -n "$JAR"
+          cp "$JAR" "$DIR/record-verifier.jar"
+          printf 'PROTOMOLT_VERSION=%s-%s\nCOMPOSE_PROJECT_NAME=agents-native-%s\nPROTOMOLT_HTTP_PORT=18080\nPROTOMOLT_GRPC_PORT=19090\n' \
+            "$VERSION" "$ARCH" "$ARCH" > "$DIR/.env"
+          cd "$DIR"
+          docker compose config --quiet
+          docker compose --profile acp config --quiet
+          trap 'docker compose down -v --remove-orphans >/dev/null' EXIT
+          docker compose up -d --pull always
+          ./qualify.sh
+
+      - name: Save native qualification receipt and browser view
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agents-native-${{ matrix.arch }}-${{ needs.prepare.outputs.version }}
+          path: |
+            ${{ runner.temp }}/agents-native-${{ matrix.arch }}/qualification.json
+            ${{ runner.temp }}/agents-native-${{ matrix.arch }}/browser-smoke.png
+          if-no-files-found: warn
+          retention-days: 14
+
+  manifests:
+    needs: [prepare, native]
+    runs-on: ubuntu-latest
+    outputs:
+      serve_digest: ${{ steps.publish.outputs.serve_digest }}
+      repo_digest: ${{ steps.publish.outputs.repo_digest }}
+      agent_digest: ${{ steps.publish.outputs.agent_digest }}
+      acp_digest: ${{ steps.publish.outputs.acp_digest }}
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish or verify immutable multiarch tags
+        id: publish
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          for pair in serve:protomolt-serve repo:protomolt-repo-service agent:protomolt-agent-host acp:protomolt-acp-agent; do
+            KEY=${pair%%:*}
+            IMAGE=${pair#*:}
+            BASE=ghcr.io/${{ github.repository_owner }}/$IMAGE
+            TAG=$BASE:$VERSION
+            if docker buildx imagetools inspect "$TAG" >/dev/null 2>inspect-error.txt; then
+              echo "Reusing existing version tag: $TAG"
+            elif grep -Eqi 'not found|manifest unknown' inspect-error.txt; then
+              docker buildx imagetools create -t "$TAG" "$TAG-amd64" "$TAG-arm64"
+            else
+              cat inspect-error.txt >&2
+              exit 1
+            fi
+            RAW=$(docker buildx imagetools inspect "$TAG" --raw)
+            printf '%s\n' "$RAW" | jq -e '
+              [.manifests[] | select(.platform.os == "linux") | .platform.architecture]
+              | unique | sort == ["amd64", "arm64"]' >/dev/null
+            for ARCH in amd64 arm64; do
+              CHILD=$(printf '%s\n' "$RAW" | jq -r --arg arch "$ARCH" \
+                '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest')
+              CONFIG=$(docker buildx imagetools inspect "$BASE@$CHILD" --format '{{json .Image}}')
+              printf '%s\n' "$CONFIG" | jq -e --arg arch "$ARCH" --arg sha "$SOURCE_SHA" \
+                '.architecture == $arch and .config.Labels["org.opencontainers.image.revision"] == $sha' >/dev/null
+            done
+            DIGEST=$(docker buildx imagetools inspect "$TAG" --format '{{json .}}' | jq -r '.manifest.digest')
+            [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+            echo "${KEY}_digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          done
+
+  bundle:
+    needs: [prepare, manifests]
+    runs-on: ubuntu-latest
+    outputs:
+      asset_sha256: ${{ steps.assemble.outputs.asset_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/console/package-lock.json
+
+      - name: Install checked grpcurl for clean-pull protocol test
+        run: |
+          set -euo pipefail
+          BASE=https://github.com/fullstorydev/grpcurl/releases/download/v1.9.4
+          FILE=grpcurl_1.9.4_linux_x86_64.tar.gz
+          curl -fsSL "$BASE/$FILE" -o "$RUNNER_TEMP/$FILE"
+          curl -fsSL "$BASE/grpcurl_1.9.4_checksums.txt" -o "$RUNNER_TEMP/grpcurl-checksums.txt"
+          (cd "$RUNNER_TEMP" && grep " $FILE$" grpcurl-checksums.txt | sha256sum -c)
+          tar -xzf "$RUNNER_TEMP/$FILE" -C "$RUNNER_TEMP" grpcurl
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Install pinned Chromium for clean-bundle browser acceptance
+        run: bash .github/scripts/install-agents-browser.sh
+
+      - name: Build standalone verifier and digest-pinned agents bundle
+        id: assemble
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SERVE_DIGEST: ${{ needs.manifests.outputs.serve_digest }}
+          REPO_DIGEST: ${{ needs.manifests.outputs.repo_digest }}
+          AGENT_DIGEST: ${{ needs.manifests.outputs.agent_digest }}
+          ACP_DIGEST: ${{ needs.manifests.outputs.acp_digest }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          multiarch_digest() {
+            local image="$1" raw digest
+            raw=$(docker buildx imagetools inspect "$image" --raw)
+            printf '%s\n' "$raw" | jq -e '
+              [.manifests[] | select(.platform.os == "linux") | .platform.architecture]
+              | unique | index("amd64") != null and index("arm64") != null' >/dev/null
+            digest=$(docker buildx imagetools inspect "$image" --format '{{json .}}' | jq -r '.manifest.digest')
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            printf '%s' "$digest"
+          }
+          ALPINE_DIGEST=$(multiarch_digest alpine:3.21)
+          RUSTFS_DIGEST=$(multiarch_digest rustfs/rustfs:1.0.0-beta.11-preview.1)
+          CURL_DIGEST=$(multiarch_digest curlimages/curl:8.22.0)
+          POSTGRES_DIGEST=$(multiarch_digest postgres:18.6-alpine)
+          GRPCURL_DIGEST=$(multiarch_digest fullstorydev/grpcurl:v1.9.3-alpine)
+          ./gradlew :protomolt-record-verifier:jar --no-daemon
+          DIR="$RUNNER_TEMP/protomolt-agents-starter-$VERSION"
+          mkdir -p "$DIR/contracts"
+          cp deploy/agents/compose.yml deploy/agents/compose.kimi.yml \
+            deploy/agents/README.md deploy/agents/PROVIDERS.md \
+            deploy/agents/export-record.sh \
+            deploy/agents/verify-offline.sh deploy/agents/smoke.mjs \
+            deploy/agents/protocol-smoke.mjs deploy/agents/browser-smoke.mjs \
+            deploy/agents/custom-report.binpb \
+            deploy/agents/custom-report.proto "$DIR/"
+          cp apps/console/public/contracts/coordination-report.binpb \
+            apps/console/public/contracts/coordination_report.proto "$DIR/contracts/"
+          cp .github/scripts/agents-starter-qualify.sh "$DIR/qualify.sh"
+          JAR=$(find apps/record-verifier/build/libs -maxdepth 1 \
+            -name 'protomolt-record-verifier-*.jar' ! -name '*-sources.jar' \
+            ! -name '*-javadoc.jar' -print -quit)
+          test -n "$JAR"
+          cp "$JAR" "$DIR/record-verifier.jar"
+          cat > "$DIR/.env" <<EOF
+          PROTOMOLT_VERSION=$VERSION
+          PROTOMOLT_SERVE_IMAGE=ghcr.io/${{ github.repository_owner }}/protomolt-serve@$SERVE_DIGEST
+          PROTOMOLT_REPO_IMAGE=ghcr.io/${{ github.repository_owner }}/protomolt-repo-service@$REPO_DIGEST
+          PROTOMOLT_AGENT_IMAGE=ghcr.io/${{ github.repository_owner }}/protomolt-agent-host@$AGENT_DIGEST
+          PROTOMOLT_ACP_IMAGE=ghcr.io/${{ github.repository_owner }}/protomolt-acp-agent@$ACP_DIGEST
+          PROTOMOLT_ALPINE_IMAGE=alpine@$ALPINE_DIGEST
+          PROTOMOLT_RUSTFS_IMAGE=rustfs/rustfs@$RUSTFS_DIGEST
+          PROTOMOLT_CURL_IMAGE=curlimages/curl@$CURL_DIGEST
+          PROTOMOLT_POSTGRES_IMAGE=postgres@$POSTGRES_DIGEST
+          PROTOMOLT_GRPCURL_IMAGE=fullstorydev/grpcurl@$GRPCURL_DIGEST
+          EOF
+          jq -n --arg revision "$SOURCE_SHA" --arg version "$VERSION" \
+            --arg serve "$SERVE_DIGEST" --arg repo "$REPO_DIGEST" \
+            --arg agent "$AGENT_DIGEST" --arg acp "$ACP_DIGEST" --arg alpine "$ALPINE_DIGEST" \
+            --arg rustfs "$RUSTFS_DIGEST" --arg curl "$CURL_DIGEST" \
+            --arg postgres "$POSTGRES_DIGEST" --arg grpcurl "$GRPCURL_DIGEST" \
+            --arg composeSha "$(sha256sum "$DIR/compose.yml" | cut -d ' ' -f1)" \
+            --arg kimiComposeSha "$(sha256sum "$DIR/compose.kimi.yml" | cut -d ' ' -f1)" \
+            '{sourceRevision:$revision, version:$version,
+              composeSha256:$composeSha, kimiComposeSha256:$kimiComposeSha,
+              imageDigests:{serve:$serve, repoService:$repo, agentHost:$agent, acpAgent:$acp,
+                alpine:$alpine, rustfs:$rustfs, curl:$curl,
+                postgres:$postgres, grpcurl:$grpcurl}}' > "$DIR/SOURCE.json"
+          (cd "$DIR" && docker compose config --quiet)
+          (cd "$DIR" && docker compose --profile acp config --quiet)
+          (cd "$RUNNER_TEMP" && zip -qr "protomolt-agents-starter-$VERSION.zip" "protomolt-agents-starter-$VERSION")
+          ASSET_SHA=$(sha256sum "$RUNNER_TEMP/protomolt-agents-starter-$VERSION.zip" | cut -d ' ' -f1)
+          echo "asset_sha256=$ASSET_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Anonymous clean download, pull, and full bundled acceptance
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          export DOCKER_CONFIG="$RUNNER_TEMP/docker-anonymous"
+          mkdir -p "$DOCKER_CONFIG" "$RUNNER_TEMP/agents-clean"
+          cd "$RUNNER_TEMP/agents-clean"
+          unzip -q "$RUNNER_TEMP/protomolt-agents-starter-$VERSION.zip"
+          cd "protomolt-agents-starter-$VERSION"
+          printf '\nCOMPOSE_PROJECT_NAME=agents-clean-pull\nPROTOMOLT_HTTP_PORT=18080\nPROTOMOLT_GRPC_PORT=19090\n' >> .env
+          docker compose config --quiet
+          trap 'docker compose down -v --remove-orphans >/dev/null' EXIT
+          docker compose --profile acp pull --quiet
+          docker compose up -d --pull never
+          ./qualify.sh
+
+      - name: Save clean-bundle qualification receipt and browser view
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agents-clean-${{ needs.prepare.outputs.version }}
+          path: |
+            ${{ runner.temp }}/agents-clean/protomolt-agents-starter-${{ needs.prepare.outputs.version }}/qualification.json
+            ${{ runner.temp }}/agents-clean/protomolt-agents-starter-${{ needs.prepare.outputs.version }}/browser-smoke.png
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Create immutable prerelease or attach missing asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          ASSET="$RUNNER_TEMP/protomolt-agents-starter-$VERSION.zip"
+          [ "$(git rev-list -n 1 "refs/tags/$VERSION")" = "$SOURCE_SHA" ] || {
+            echo 'agents starter tag moved' >&2; exit 1;
+          }
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            EXISTING=$(gh release view "$VERSION" --json assets --jq '.assets[].name')
+            if printf '%s\n' "$EXISTING" | grep -Fxq "protomolt-agents-starter-$VERSION.zip"; then
+              echo 'agents starter release asset exists; refusing overwrite' >&2
+              exit 1
+            fi
+            gh release upload "$VERSION" "$ASSET"
+          else
+            gh release create "$VERSION" "$ASSET" --verify-tag \
+              --title "ProtoMolt agents starter $VERSION" --prerelease \
+              --notes "Agent coordination fixture starter for commit $SOURCE_SHA. Includes digest-pinned native linux/amd64 and linux/arm64 serve, repo-service, agent-host, and ACP images, a standalone offline record verifier, and separate fixture protocol evidence. Kimi CLI and credentials are optional runtime mounts and are not bundled."
+          fi
+
+  public-download:
+    needs: [prepare, bundle]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install checked grpcurl for downloaded-package protocol test
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          BASE=https://github.com/fullstorydev/grpcurl/releases/download/v1.9.4
+          if [ "$ARCH" = amd64 ]; then ASSET_ARCH=x86_64; else ASSET_ARCH=arm64; fi
+          FILE=grpcurl_1.9.4_linux_${ASSET_ARCH}.tar.gz
+          curl -fsSL "$BASE/$FILE" -o "$RUNNER_TEMP/$FILE"
+          curl -fsSL "$BASE/grpcurl_1.9.4_checksums.txt" -o "$RUNNER_TEMP/grpcurl-checksums.txt"
+          (cd "$RUNNER_TEMP" && grep " $FILE$" grpcurl-checksums.txt | sha256sum -c)
+          tar -xzf "$RUNNER_TEMP/$FILE" -C "$RUNNER_TEMP" grpcurl
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Install pinned Chromium for downloaded-package browser acceptance
+        run: bash .github/scripts/install-agents-browser.sh
+
+      - name: Anonymous release download and full package acceptance
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          EXPECTED_SHA: ${{ needs.bundle.outputs.asset_sha256 }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          export DOCKER_CONFIG="$RUNNER_TEMP/docker-anonymous-public-$ARCH"
+          mkdir -p "$DOCKER_CONFIG" "$RUNNER_TEMP/agents-public-$ARCH"
+          cd "$RUNNER_TEMP/agents-public-$ARCH"
+          ASSET=protomolt-agents-starter-$VERSION.zip
+          URL=https://github.com/${{ github.repository }}/releases/download/$VERSION/$ASSET
+          curl --fail --location --silent --show-error \
+            --retry 5 --retry-delay 3 "$URL" -o "$ASSET"
+          [ "$(sha256sum "$ASSET" | cut -d ' ' -f1)" = "$EXPECTED_SHA" ] || {
+            echo 'anonymous release download differs from the qualified bundle' >&2
+            exit 1
+          }
+          unzip -tq "$ASSET" >/dev/null
+          unzip -q "$ASSET"
+          cd "protomolt-agents-starter-$VERSION"
+          jq -e --arg sha "$SOURCE_SHA" --arg version "$VERSION" \
+            '.sourceRevision == $sha and .version == $version' SOURCE.json >/dev/null
+          printf '\nCOMPOSE_PROJECT_NAME=agents-public-%s\nPROTOMOLT_HTTP_PORT=18080\nPROTOMOLT_GRPC_PORT=19090\n' "$ARCH" >> .env
+          docker compose config --quiet
+          trap 'docker compose down -v --remove-orphans >/dev/null' EXIT
+          docker compose --profile acp pull --quiet
+          docker compose up -d --pull never
+          ./qualify.sh
+          echo "Anonymous downloaded ZIP passed full agents starter acceptance on $ARCH."
+
+      - name: Save downloaded-package qualification receipt and browser view
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agents-public-${{ matrix.arch }}-${{ needs.prepare.outputs.version }}
+          path: |
+            ${{ runner.temp }}/agents-public-${{ matrix.arch }}/protomolt-agents-starter-${{ needs.prepare.outputs.version }}/qualification.json
+            ${{ runner.temp }}/agents-public-${{ matrix.arch }}/protomolt-agents-starter-${{ needs.prepare.outputs.version }}/browser-smoke.png
+          if-no-files-found: warn
+          retention-days: 14

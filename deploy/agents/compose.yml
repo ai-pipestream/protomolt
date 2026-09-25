@@ -1,0 +1,288 @@
+name: protomolt-agents-starter
+
+# The release bundle supplies a digest-pinned .env. No application image is built here.
+services:
+  bootstrap:
+    image: ${PROTOMOLT_ALPINE_IMAGE:-alpine:3.21}
+    user: "0:0"
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        umask 077
+        mkdir -p /operator /console /coordination /database /s3 /transcript \
+          /authz /identity /serve-data /agent-state /agent-workspace /evidence /rustfs-data
+        if [ -e /authz/ready ]; then
+          for path in /operator/token /console/token /coordination/token \
+            /database/password /s3/access-key /s3/secret-key \
+            /transcript/key /authz/policy.json; do
+            test -s "$$path" || { echo "starter secrets are incomplete; restore the original volumes" >&2; exit 1; }
+          done
+        else
+          for path in /operator/token /console/token /coordination/token \
+            /database/password /s3/access-key /s3/secret-key; do
+            if [ ! -s "$$path" ]; then
+              od -An -tx1 -N32 /dev/urandom | tr -d ' \n' > "$$path"
+            fi
+          done
+          if [ ! -s /transcript/key ]; then
+            head -c 32 /dev/urandom | base64 | tr -d '\n' > /transcript/key
+          fi
+          digest="$$(sha256sum /coordination/token | cut -d ' ' -f1)"
+          printf '{"principals":[{"name":"trusted-agent-host","credentialSha256":["%s"],"scopes":["worker-coordinate"]}]}' \
+            "$$digest" > /authz/policy.json
+          touch /authz/ready
+        fi
+        chown 10001:10001 /operator /console /coordination /database /s3 \
+          /transcript /authz /identity /serve-data /agent-state \
+          /agent-workspace /evidence /rustfs-data
+        chown 10001:10001 /operator/token /console/token /coordination/token \
+          /database/password /s3/access-key /s3/secret-key /transcript/key \
+          /authz/policy.json /authz/ready
+        chmod 0700 /operator /console /coordination /database /s3 /transcript /authz /identity
+        chmod 0750 /coordination
+        # A same-host Kimi process can use a different host UID, with group 10001
+        # for the shared content-addressed evidence directory.
+        chmod 2770 /evidence
+        chmod 0400 /operator/token /console/token /coordination/token \
+          /database/password /s3/access-key /s3/secret-key /transcript/key \
+          /authz/policy.json /authz/ready
+        chmod 0440 /coordination/token
+    volumes:
+      - operator-secret:/operator
+      - console-secret:/console
+      - coordination-secret:/coordination
+      - database-secret:/database
+      - s3-secret:/s3
+      - transcript-secret:/transcript
+      - authz-data:/authz
+      - signing-identity:/identity
+      - serve-data:/serve-data
+      - agent-state:/agent-state
+      - agent-workspace:/agent-workspace
+      - evidence-data:/evidence
+      - rustfs-data:/rustfs-data
+
+  signing-init:
+    image: ${PROTOMOLT_SERVE_IMAGE:-ghcr.io/ai-pipestream/protomolt-serve:${PROTOMOLT_VERSION:?Use the published agent starter bundle}}
+    user: "10001:10001"
+    restart: "no"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        umask 077
+        exec java -cp '/opt/protomolt-serve/lib/*' \
+          ai.protomolt.proto.serve.StarterSigningIdentity /identity
+    volumes:
+      - signing-identity:/identity
+
+  rustfs:
+    image: ${PROTOMOLT_RUSTFS_IMAGE:-rustfs/rustfs:1.0.0-beta.11-preview.1}
+    command: ["/data"]
+    environment:
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: :9000
+      RUSTFS_CONSOLE_ENABLE: "false"
+      RUSTFS_ACCESS_KEY_FILE: /run/s3/access-key
+      RUSTFS_SECRET_KEY_FILE: /run/s3/secret-key
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    volumes:
+      - rustfs-data:/data
+      - s3-secret:/run/s3:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  rustfs-init:
+    image: ${PROTOMOLT_CURL_IMAGE:-curlimages/curl:8.22.0}
+    user: "10001:10001"
+    restart: "no"
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        access="$$(cat /run/s3/access-key)"
+        secret="$$(cat /run/s3/secret-key)"
+        curl --fail --silent --show-error --output /dev/null \
+          --aws-sigv4 aws:amz:us-east-1:s3 --user "$$access:$$secret" \
+          -X PUT http://rustfs:9000/agent-starter
+    volumes:
+      - s3-secret:/run/s3:ro
+
+  repo-postgres:
+    image: ${PROTOMOLT_POSTGRES_IMAGE:-postgres:18.6-alpine}
+    environment:
+      POSTGRES_USER: starter
+      POSTGRES_DB: documents
+      POSTGRES_PASSWORD_FILE: /run/database/password
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    volumes:
+      - repo-postgres-data:/var/lib/postgresql
+      - database-secret:/run/database:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  repo-service:
+    image: ${PROTOMOLT_REPO_IMAGE:-ghcr.io/ai-pipestream/protomolt-repo-service:${PROTOMOLT_VERSION:?Use the published agent starter bundle}}
+    environment:
+      DOCUMENT_PLATFORM_GRPC_PORT: "9090"
+      DOCUMENT_PLATFORM_HTTP_PORT: "off"
+      DOCUMENT_PLATFORM_JDBC_URL: jdbc:postgresql://repo-postgres:5432/documents
+      DOCUMENT_PLATFORM_USERNAME: starter
+      DOCUMENT_PLATFORM_S3_ENDPOINT: http://rustfs:9000
+      DOCUMENT_PLATFORM_S3_REGION: us-east-1
+    depends_on:
+      repo-postgres:
+        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export DOCUMENT_PLATFORM_PASSWORD="$$(cat /run/database/password)"
+        export DOCUMENT_PLATFORM_S3_ACCESS_KEY="$$(cat /run/s3/access-key)"
+        export DOCUMENT_PLATFORM_S3_SECRET_KEY="$$(cat /run/s3/secret-key)"
+        exec /opt/protomolt-repo-service/bin/protomolt-repo-service
+    volumes:
+      - database-secret:/run/database:ro
+      - s3-secret:/run/s3:ro
+    restart: unless-stopped
+
+  repo-init:
+    image: ${PROTOMOLT_GRPCURL_IMAGE:-fullstorydev/grpcurl:v1.9.3-alpine}
+    restart: "no"
+    depends_on:
+      repo-service:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if grpcurl -plaintext \
+          -d '{"name":"agent-starter","account_id":"agent-starter","drive_type":"DRIVE_TYPE_CUSTOM","bucket":"agent-starter"}' \
+          repo-service:9090 ai.protomolt.proto.repo.v1.DriveService/CreateDrive \
+          >/dev/null 2>/tmp/create-error; then
+          exit 0
+        fi
+        grep -Eqi 'AlreadyExists|already exists' /tmp/create-error || {
+          cat /tmp/create-error >&2; exit 1;
+        }
+
+  serve:
+    image: ${PROTOMOLT_SERVE_IMAGE:-ghcr.io/ai-pipestream/protomolt-serve:${PROTOMOLT_VERSION:?Use the published agent starter bundle}}
+    user: "10001:10001"
+    environment:
+      PROTOMOLT_ACCESS_POLICY: /run/authz/policy.json
+      PROTOMOLT_TRUST_SNAPSHOT: /run/identity/trust.binpb
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+      signing-init:
+        condition: service_completed_successfully
+      repo-init:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export PROTOMOLT_API_TOKEN="$$(cat /run/operator/token)"
+        export PROTOMOLT_TASK_CONSOLE_TOKEN="$$(cat /run/console/token)"
+        export PROTOMOLT_TRANSCRIPT_KEY="$$(cat /run/transcript/key)"
+        export PROTOMOLT_RECEIPT_KEY_FILE=/run/identity/seed.bin
+        export PROTOMOLT_RECEIPT_KEY_ID="$$(cat /run/identity/key-id)"
+        export PROTOMOLT_RECEIPT_ISSUER="$$(cat /run/identity/issuer)"
+        exec /opt/protomolt-serve/bin/protomolt-serve \
+          --host 0.0.0.0 --http-port 8080 --grpc-port 9090 \
+          --registry-git /data/serve/registry \
+          --service-workspace /data/serve/services \
+          --workflow-workspace /data/serve/workflows \
+          --delegation-repo-endpoint repo-service:9090 \
+          --delegation-repo-drive agent-starter
+    ports:
+      - "127.0.0.1:${PROTOMOLT_HTTP_PORT:-8080}:8080"
+      - "127.0.0.1:${PROTOMOLT_GRPC_PORT:-9090}:9090"
+    volumes:
+      - operator-secret:/run/operator:ro
+      - console-secret:/run/console:ro
+      - transcript-secret:/run/transcript:ro
+      - authz-data:/run/authz:ro
+      - signing-identity:/run/identity:ro
+      - serve-data:/data/serve
+      - evidence-data:/data/evidence:ro
+    restart: unless-stopped
+
+  fixture-worker:
+    image: ${PROTOMOLT_AGENT_IMAGE:-ghcr.io/ai-pipestream/protomolt-agent-host:${PROTOMOLT_VERSION:?Use the published agent starter bundle}}
+    user: "10001:10001"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+      serve:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export PROTOMOLT_MCP_TOKEN="$$(cat /run/coordination/token)"
+        exec /opt/protomolt-agent-host/bin/protomolt-agent-host \
+          --endpoint http://serve:8080/mcp --role worker \
+          --identity fixture-worker --provider fixture \
+          --workspace /workspace --state /state/fixture-worker.json \
+          --token-env PROTOMOLT_MCP_TOKEN
+    volumes:
+      - coordination-secret:/run/coordination:ro
+      - agent-state:/state
+      - agent-workspace:/workspace
+      - evidence-data:/workspace/artifacts
+    restart: unless-stopped
+
+  # ACP is a stdio client launched by an IDE or the protocol qualification.
+  # It receives only the trusted coordination credential, not operator secrets.
+  acp-agent:
+    profiles: [acp]
+    image: ${PROTOMOLT_ACP_IMAGE:-ghcr.io/ai-pipestream/protomolt-acp-agent:${PROTOMOLT_VERSION:?Use the published agent starter bundle}}
+    user: "10001:10001"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+      serve:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export PROTOMOLT_API_TOKEN="$$(cat /run/coordination/token)"
+        exec /opt/protomolt-acp-agent/bin/protomolt-acp-agent \
+          --remote-target serve:9090
+    volumes:
+      - coordination-secret:/run/coordination:ro
+
+volumes:
+  operator-secret:
+  console-secret:
+  coordination-secret:
+  database-secret:
+  s3-secret:
+  transcript-secret:
+  authz-data:
+  signing-identity:
+  serve-data:
+  agent-state:
+  agent-workspace:
+  evidence-data:
+  rustfs-data:
+  repo-postgres-data:

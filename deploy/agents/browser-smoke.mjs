@@ -1,0 +1,66 @@
+#!/usr/bin/env node
+// Real Chromium qualification; Node 22+ and a separately installed browser.
+import {spawn,execFileSync} from 'node:child_process';
+import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join,dirname} from 'node:path';
+import {fileURLToPath} from 'node:url';
+const profile=mkdtempSync(join(tmpdir(),'protomolt-browser-'));
+const base=process.env.HTTP_BASE ?? 'http://127.0.0.1:8080';
+const composeDirectory=process.env.STARTER_DIR ?? process.cwd();
+const screenshotPath=process.env.SCREENSHOT_PATH ?? join(composeDirectory,'browser-smoke.png');
+const debugPort=process.env.CHROME_DEBUG_PORT ?? '9237';
+const browser=spawn(process.env.CHROME_BIN ?? 'google-chrome',['--headless=new','--no-sandbox','--disable-gpu',`--remote-debugging-port=${debugPort}`,`--user-data-dir=${profile}`,'--window-size=1280,1200','about:blank'],{stdio:'ignore'});
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+let socket;
+try {
+  let pages;
+  for(let i=0;i<100;i++){try{pages=await(await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json();break}catch{await sleep(100)}}
+  if(!pages)throw new Error('Chromium did not expose its debugging endpoint');
+  socket=new WebSocket(pages.find(p=>p.type==='page').webSocketDebuggerUrl);
+  await new Promise(r=>socket.onopen=r);
+  let id=0;const pending=new Map();
+  socket.onmessage=e=>{const m=JSON.parse(e.data);if(m.id){const p=pending.get(m.id);pending.delete(m.id);m.error?p.reject(new Error(m.error.message)):p.resolve(m.result)}};
+  const call=(method,params={})=>new Promise((resolve,reject)=>{const n=++id;pending.set(n,{resolve,reject});socket.send(JSON.stringify({id:n,method,params}))});
+  const evaluate=async expression=>(await call('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true})).result?.value;
+  const until=async expression=>{for(let i=0;i<240;i++){if(await evaluate(expression))return;await sleep(250)}throw new Error('Browser expectation timed out')};
+  await call('Runtime.enable'); await call('Page.enable');
+  const navigation=await call('Page.navigate',{url:base+'/console/tasks'});
+  if(navigation.errorText)throw new Error('Browser navigation failed: '+navigation.errorText);
+  await until(`!!document.querySelector('input[type="password"]')`);
+  const token=execFileSync('docker',['compose','exec','-T','serve','cat','/run/console/token'],{cwd:composeDirectory,encoding:'utf8'}).trim();
+  await evaluate(`(()=>{const input=document.querySelector('input[type="password"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(token)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await evaluate(`[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Connect').click()`);
+  await until(`document.body.innerText.includes('Agent tasks')`);
+  await evaluate(`[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Offer a task').click()`);
+  await until(`[...document.querySelectorAll('button')].some(x=>x.textContent.trim()==='Use coordination example')`);
+  await evaluate(`[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Use coordination example').click()`);
+  await until(`document.body.innerText.includes('CoordinationReport example')`);
+  await evaluate(`[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Offer').click()`);
+  await until(`document.querySelector('.typed-result')?.innerText.includes('Fixture coordination report')`);
+  await until(`document.body.innerText.includes('Responsible: Reviewer')`);
+  const status=await evaluate(`fetch('/api/task-session').then(r=>r.json())`);
+  if(!status.authenticated)throw new Error('Browser cookie authentication failed');
+  const screenshot=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});
+  writeFileSync(screenshotPath,Buffer.from(screenshot.data,'base64'));
+  await evaluate(`(()=>{const box=[...document.querySelectorAll('.v-input')].find(x=>x.textContent.includes('Acceptance verdict'));const input=box.querySelector('input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Browser harness inspected the fixture report; no model or external test claim.');input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await until(`[...document.querySelectorAll('button')].some(x=>x.textContent.trim()==='Accept the work'&&!x.disabled)`);
+  await evaluate(`[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Accept the work').click()`);
+  await until(`document.body.innerText.includes('The reviewer accepted this task.')`);
+  await evaluate(`[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Offer a task').click()`);
+  await until(`[...document.querySelectorAll('button')].some(x=>x.textContent.trim()==='Use coordination example')`);
+  await evaluate(`[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Use coordination example').click()`);
+  await until(`document.body.innerText.includes('CoordinationReport example')`);
+  const documentNode=await call('DOM.getDocument');
+  const fileNode=await call('DOM.querySelector',{nodeId:documentNode.root.nodeId,selector:'input[type="file"]'});
+  await call('DOM.setFileInputFiles',{nodeId:fileNode.nodeId,files:[join(dirname(fileURLToPath(import.meta.url)),'custom-report.binpb')]});
+  await until(`document.body.innerText.includes('custom-report.binpb')`);
+  const setType=type=>evaluate(`(()=>{const input=[...document.querySelectorAll('.v-input')].find(x=>x.textContent.includes('Fully qualified message type')).querySelector('input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(type)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await setType('example.MissingReport');
+  await evaluate(`[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Offer').click()`);
+  await until(`!!document.querySelector('.v-overlay .v-alert')?.textContent.trim()`);
+  await setType('ai.protomolt.proto.starter.protocol.v1.CustomProtocolReport');
+  await evaluate(`[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Offer').click()`);
+  await until(`document.body.innerText.includes('Fixture supports only the CoordinationReport deliverable contract')`);
+  console.log(JSON.stringify({browser:'Chromium',login:true,coordination:'TYPED_CANDIDATE',accepted:true,custom_contract_upload:true,invalid_contract_feedback:true,unsupported_contract_rejected:true,session:status.authenticated,screenshot:screenshotPath,provider:'fixture',liveModel:false}));
+} finally {socket?.close();browser.kill();await sleep(500);rmSync(profile,{recursive:true,force:true})}

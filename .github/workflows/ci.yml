@@ -46,6 +46,8 @@ jobs:
 
       - name: Buf lint
         run: buf lint
+      - name: Check browser coordination descriptor matches source
+        run: apps/console/scripts/coordination-contract.sh --check
 
       # Static checks for the deployment package (compose files, Dockerfiles,
       # scripts). In-process only: no containers, GPU, or live calls.
@@ -54,6 +56,8 @@ jobs:
 
       - name: Starter configuration
         run: deploy/starter/check-static.sh
+      - name: Agent starter configuration
+        run: deploy/agents/check-static.sh
 
       - name: Buf breaking (PRs)
         if: github.event_name == 'pull_request'

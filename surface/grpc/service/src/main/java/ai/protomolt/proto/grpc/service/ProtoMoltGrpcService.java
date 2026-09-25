@@ -3,6 +3,7 @@ package ai.protomolt.proto.grpc.service;
 import ai.protomolt.proto.grpc.service.contract.ProtoMoltServiceSchema;
 import ai.protomolt.proto.actions.ActionCatalog;
 import ai.protomolt.proto.actions.ActionException;
+import ai.protomolt.proto.actions.CatalogContract;
 import ai.protomolt.proto.authz.grpc.CallerContexts;
 import ai.protomolt.proto.grpc.invoke.DynamicGrpcCalls;
 import com.google.protobuf.Descriptors.FileDescriptor;
@@ -37,6 +38,31 @@ public final class ProtoMoltGrpcService {
         Objects.requireNonNull(catalog, "catalog");
         FileDescriptor file = ProtoMoltServiceSchema.file();
         ServiceDescriptor service = ProtoMoltServiceSchema.service();
+        Map<MethodDescriptor, String> bindings = new LinkedHashMap<>();
+        for (MethodDescriptor method : service.getMethods()) {
+            bindings.put(method, CatalogBridge.actionName(method));
+        }
+        return definition(catalog, service, bindings, false);
+    }
+
+    /** Binds an already-declared contributed service through the same catalog and caller context. */
+    public static ServerServiceDefinition contributed(ActionCatalog catalog,
+                                                      ServiceDescriptor service) {
+        Objects.requireNonNull(catalog, "catalog");
+        Objects.requireNonNull(service, "service");
+        Map<MethodDescriptor, String> bindings = ContractActionBindings.mounted(catalog, service);
+        if (bindings.size() != service.getMethods().size()) {
+            throw new IllegalStateException("Cannot mount partial gRPC service "
+                    + service.getFullName());
+        }
+        return definition(catalog, service, bindings, true);
+    }
+
+    private static ServerServiceDefinition definition(ActionCatalog catalog,
+                                                      ServiceDescriptor service,
+                                                      Map<MethodDescriptor, String> bindings,
+                                                      boolean validateResponse) {
+        FileDescriptor file = service.getFile();
 
         // The grpc descriptors must be the same instances in the service descriptor and the
         // bound methods, so build them once.
@@ -54,16 +80,24 @@ public final class ProtoMoltGrpcService {
         ServerServiceDefinition.Builder definition =
                 ServerServiceDefinition.builder(grpcService.build());
         methods.forEach((method, grpcMethod) -> definition.addMethod(grpcMethod,
-                ServerCalls.asyncUnaryCall(handler(catalog, method))));
+                ServerCalls.asyncUnaryCall(handler(catalog, bindings.get(method), method,
+                        validateResponse))));
         return definition.build();
     }
 
     private static ServerCalls.UnaryMethod<DynamicMessage, DynamicMessage> handler(
-            ActionCatalog catalog, MethodDescriptor method) {
+            ActionCatalog catalog, String verb, MethodDescriptor method,
+            boolean validateResponse) {
         return (request, responseObserver) -> {
             try {
-                DynamicMessage response = CatalogBridge.execute(catalog, method, request,
+                DynamicMessage response = CatalogBridge.execute(catalog, verb, method, request,
                         CallerContexts.current());
+                if (validateResponse && !CatalogContract.inspect(response).valid()) {
+                    responseObserver.onError(Status.DATA_LOSS
+                            .withDescription("invalid-upstream-response: " + method.getName())
+                            .asRuntimeException());
+                    return;
+                }
                 responseObserver.onNext(response);
                 responseObserver.onCompleted();
             } catch (ActionException e) {

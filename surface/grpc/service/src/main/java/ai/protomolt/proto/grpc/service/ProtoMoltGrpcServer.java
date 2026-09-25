@@ -3,6 +3,7 @@ package ai.protomolt.proto.grpc.service;
 import ai.protomolt.proto.actions.ActionCatalog;
 import ai.protomolt.proto.authz.CallerResolver;
 import ai.protomolt.proto.authz.grpc.ApiTokenServerInterceptor;
+import com.google.protobuf.Descriptors.ServiceDescriptor;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import io.grpc.protobuf.services.ProtoReflectionServiceV1;
@@ -10,6 +11,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.Collection;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -64,7 +67,15 @@ public final class ProtoMoltGrpcServer implements AutoCloseable {
      */
     public static ProtoMoltGrpcServer start(String host, int port, ActionCatalog catalog,
                                             String apiToken, CallerResolver resolver) {
+        return start(host, port, catalog, apiToken, resolver, List.of());
+    }
+
+    /** Starts ProtoMolt and complete contributed catalog services on one authenticated listener. */
+    public static ProtoMoltGrpcServer start(String host, int port, ActionCatalog catalog,
+                                            String apiToken, CallerResolver resolver,
+                                            Collection<ServiceDescriptor> contributed) {
         Objects.requireNonNull(catalog, "catalog");
+        Objects.requireNonNull(contributed, "contributed");
         if (resolver != null && apiToken == null) {
             throw new IllegalArgumentException(
                     "an access-policy resolver requires the operator api token");
@@ -79,6 +90,9 @@ public final class ProtoMoltGrpcServer implements AutoCloseable {
                     .executor(executor)
                     .addService(ProtoMoltGrpcService.definition(catalog))
                     .addService(ProtoReflectionServiceV1.newInstance());
+            for (ServiceDescriptor service : contributed) {
+                builder.addService(ProtoMoltGrpcService.contributed(catalog, service));
+            }
             if (apiToken != null) {
                 builder.intercept(new ApiTokenServerInterceptor(apiToken, resolver));
             }

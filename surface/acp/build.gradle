@@ -14,6 +14,9 @@ dependencies {
     implementation libs.jackson.databind
     implementation libs.slf4j.api
     implementation project(':protomolt-grpc-invoke')
+    // The remote agent exposes the already-declared delegation RPCs and resolves
+    // caller-owned Any values against each task offer's descriptor.
+    implementation project(':protomolt-delegation')
     implementation libs.protobuf.java.util
 
     runtimeOnly libs.slf4j.simple
