@@ -164,6 +164,49 @@ class CorrectionGrpcServiceTest {
     }
 
     @Test
+    void duplicateRunIdWhileTheFirstRunIsActiveReturnsAlreadyExists() throws Exception {
+        provider.blockNext();
+        Context.CancellableContext context = Context.current().withCancellation();
+        Capture<RunCorrectionResponse> first = new Capture<>();
+        context.run(() -> service.runCorrection(request("same-active"), first));
+        assertThat(provider.started.await(5, TimeUnit.SECONDS)).isTrue();
+
+        var duplicate = run(request("same-active"));
+        assertThat(code(duplicate.failure)).isEqualTo(Status.Code.ALREADY_EXISTS);
+        assertThat(provider.invocations()).isEqualTo(1);
+        assertThat(evaluator.invocations()).isZero();
+
+        context.cancel(null);
+        assertThat(provider.cancelled.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(first.callbacks.get()).isZero();
+    }
+
+    @Test
+    void durableDuplicateWinsOverBusyCapacityButANewRunIsStillRejected() throws Exception {
+        provider.script(VALID_CONTACT);
+        assertThat(run(request("already-used")).failure).isNull();
+        assertThat(provider.invocations()).isEqualTo(1);
+        assertThat(evaluator.invocations()).isEqualTo(1);
+
+        provider.blockNext();
+        Context.CancellableContext activeContext = Context.current().withCancellation();
+        Capture<RunCorrectionResponse> active = new Capture<>();
+        activeContext.run(() -> service.runCorrection(request("holds-capacity"), active));
+        assertThat(provider.started.await(5, TimeUnit.SECONDS)).isTrue();
+
+        var duplicate = run(request("already-used"));
+        assertThat(code(duplicate.failure)).isEqualTo(Status.Code.ALREADY_EXISTS);
+        var distinct = run(request("new-while-busy"));
+        assertThat(code(distinct.failure)).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+        assertThat(provider.invocations()).isEqualTo(2);
+        assertThat(evaluator.invocations()).isEqualTo(1);
+
+        activeContext.cancel(null);
+        assertThat(provider.cancelled.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(active.callbacks.get()).isZero();
+    }
+
+    @Test
     void tamperedStoredReceiptIsReportedAsDataLoss() throws Exception {
         provider.script(VALID_CONTACT);
         assertThat(run(request("tampered")).failure).isNull();
