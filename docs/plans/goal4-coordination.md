@@ -34,6 +34,15 @@ worker's report or a reviewer's semantic judgment true.
 - Export deterministic transcript bytes from the same snapshot as the signed
   record. Any record's referenced artifacts must all be supplied and rehashed
   before full artifact verification is claimed.
+- Mount the existing DelegationService contract on native gRPC through the same
+  catalog actions used by MCP and REST. Share contract-to-action matching and
+  the existing server authorization interceptor; do not introduce another task
+  service or authentication path. Native binary Any preserves the offered type.
+- Extend the remote ACP adapter with `delegation/<RpcName>` commands for those
+  existing methods. Recover caller-defined Any descriptors from authenticated
+  task history and render each event with its own task/attempt contract, even
+  after adapter restart. gRPC schema validation alone is not evidence of gRPC
+  coordination, and an ACP-capable provider is not evidence of this ACP surface.
 
 ## Starter runtime
 
@@ -83,6 +92,8 @@ the worker runs on another host. No inference deployment changes are needed.
 3. Reject invalid candidates before review. Request revision, refuse a delayed
    decision for the older revision/attempt without mutation, and accept the
    inspected replacement. A rejected unsupported offer does not linger.
+   Exercise delegation itself over native gRPC, MCP, and the remote ACP adapter,
+   including custom typed results and existing scoped authorization.
 4. Restart coordinator and worker; recover task history, identity, cursors, and
    subsequent conversation/review. Show useful errors on missing dependencies
    rather than falling back to an empty transcript.
