@@ -116,6 +116,10 @@ public final class DelegationRecordProjector {
                 DelegateResponse frame = entry.getCoordinatorFrame();
                 switch (frame.getPayloadCase()) {
                     case OFFER -> {
+                        // A prior attempt's terminal outcome cannot sign a new live attempt.
+                        completeness = null;
+                        accepted = null;
+                        open = null;
                         spec = frame.getOffer().getSpec();
                         workerId = entry.getWorkerId();
                         manifest.addSteps(step("offer",
@@ -178,6 +182,18 @@ public final class DelegationRecordProjector {
                         completeness = terminal(
                                 CompletenessStatus.COMPLETENESS_STATUS_PARTIAL,
                                 "the worker reported failure before acceptance");
+                    }
+                    case REJECT -> {
+                        manifest.addSteps(step("rejected", StepOutcome.STEP_OUTCOME_FAILED,
+                                frame.getReject().getReason()));
+                        completeness = terminal(CompletenessStatus.COMPLETENESS_STATUS_PARTIAL,
+                                "the worker rejected the offer before acceptance");
+                    }
+                    case BLOCKED -> {
+                        manifest.addSteps(step("blocked", StepOutcome.STEP_OUTCOME_FAILED,
+                                frame.getBlocked().getReason()));
+                        completeness = terminal(CompletenessStatus.COMPLETENESS_STATUS_PARTIAL,
+                                "the worker reported a blocker before acceptance");
                     }
                     case CANCELLED -> {
                         manifest.addSteps(step("cancelled",

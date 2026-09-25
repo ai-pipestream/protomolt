@@ -146,6 +146,61 @@ class AgentHostAcceptanceTest {
     }
 
     @Test
+    void workerCannotAcceptAndRejectTheSameOfferInOneBatch() throws Exception {
+        Path workspace = Files.createDirectory(temporary.resolve("contradiction-workspace"));
+        Path state = temporary.resolve("contradiction-state/worker.json");
+        AgentProvider contradictory = new AgentProvider() {
+            @Override public String name() { return "contradictory"; }
+            @Override public String sessionId() { return "contradictory-session"; }
+            @Override public String prompt(String value) {
+                try {
+                    ObjectNode packet = (ObjectNode) MAPPER.readTree(
+                            value.substring(value.lastIndexOf("Packet:\n") + 8));
+                    ObjectNode reply = MAPPER.createObjectNode();
+                    ArrayNode cursors = reply.putArray("handledEventCursors");
+                    packet.path("events").forEach(event -> cursors.add(event.path("cursor").asLong()));
+                    ArrayNode commands = reply.putArray("commands");
+                    commands.addObject().put("tool", "delegation-accept")
+                            .putObject("arguments").put("taskId", TASK).put("attempt", 1);
+                    commands.addObject().put("tool", "delegation-reject")
+                            .putObject("arguments").put("taskId", TASK).put("attempt", 1)
+                            .put("reason", "also refusing").put("retryable", true);
+                    return reply.toString();
+                } catch (Exception e) {
+                    throw new AgentHostException("could not read fixture packet", e);
+                }
+            }
+            @Override public void close() { }
+        };
+        try (ProtoMoltServe serve = ProtoMoltServe.start(
+                new ProtoMoltServe.Options("127.0.0.1", 0, 0, null, 0));
+             AgentHost worker = host(
+                     URI.create("http://127.0.0.1:" + serve.httpPort() + "/mcp"),
+                     AgentRole.WORKER, WORKER, "contradictory", state, workspace,
+                     contradictory);
+             McpHttpClient coordinator = new McpHttpClient(
+                     URI.create("http://127.0.0.1:" + serve.httpPort() + "/mcp"),
+                     () -> null)) {
+            worker.connect();
+            ObjectNode spec = MAPPER.createObjectNode().put("objective", "do the work");
+            spec.putArray("requiredChecks").addObject().put("name", "unit-tests");
+            coordinator.callTool("delegation-offer", MAPPER.createObjectNode()
+                    .put("workerId", WORKER).put("taskId", TASK)
+                    .put("leaseSeconds", 300).set("spec", spec));
+
+            assertThatThrownBy(worker::pollOnce)
+                    .isInstanceOf(AgentHostException.class)
+                    .hasMessageContaining("exactly once");
+            ObjectNode transcript = coordinator.callTool("delegation-transcript",
+                    MAPPER.createObjectNode().put("taskId", TASK));
+            assertThat(transcript.toString()).contains("offer")
+                    .doesNotContain("\"accept\"")
+                    .doesNotContain("\"reject\"");
+            assertThat(worker.state().cursor()).isZero();
+        }
+    }
+
+    @Test
     void acceptingWithoutSubmittingSaysSoInsteadOfGoingQuiet() throws Exception {
         // The failure this reproduces was found in production: a worker accepted a task,
         // returned nothing else, and both sides then waited. The coordinator waited for a

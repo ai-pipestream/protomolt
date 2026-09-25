@@ -120,6 +120,7 @@ final class AgentHost implements AutoCloseable {
                 // a contract the state file cannot describe is not one this host can use
             }
         });
+        provider.deliverableContracts(Map.copyOf(contracts));
         provider.outputSchema(AgentTurn.outputSchema(config.role(), contracts));
         syncProviderSession();
     }
@@ -422,8 +423,22 @@ final class AgentHost implements AutoCloseable {
                     ? entry.path("coordinatorFrame") : entry.path("workerFrame");
             if (config.role() == AgentRole.WORKER) {
                 if (frame.has("offer")) {
-                    requireTaskCommand(turn, taskId, Set.of("delegation-accept"),
-                            "a task offer requires delegation-accept");
+                    int attempt = frame.path("offer").path("attempt").asInt();
+                    long decisions = turn.commands().stream().filter(command ->
+                            ("delegation-accept".equals(command.tool())
+                                    || "delegation-reject".equals(command.tool()))
+                                    && taskId.equals(command.arguments().path("taskId").asText()))
+                            .count();
+                    boolean correctAttempt = turn.commands().stream().anyMatch(command ->
+                            ("delegation-accept".equals(command.tool())
+                                    || "delegation-reject".equals(command.tool()))
+                                    && taskId.equals(command.arguments().path("taskId").asText())
+                                    && attempt == command.arguments().path("attempt").asInt());
+                    if (decisions != 1 || !correctAttempt) {
+                        throw new ModelReplyException("a task offer requires"
+                                + " delegation-accept or delegation-reject exactly once"
+                                + " for task " + taskId + " attempt " + attempt);
+                    }
                 }
                 if (frame.has("revisionRequested")) {
                     requireTaskCommand(turn, taskId, Set.of(
@@ -550,6 +565,7 @@ final class AgentHost implements AutoCloseable {
         });
         state = state.withContracts(serialized);
         states.save(state);
+        provider.deliverableContracts(Map.copyOf(contracts));
         provider.outputSchema(AgentTurn.outputSchema(config.role(), contracts));
     }
 
@@ -631,7 +647,8 @@ final class AgentHost implements AutoCloseable {
     private String commandContract() {
         String contract = AgentTurn.commandContract(config.role());
         return config.role() == AgentRole.WORKER
-                ? contract + " An offer requires delegation-accept. A question requires "
+                ? contract + " An offer requires delegation-accept or delegation-reject."
+                + " A question requires "
                 + "delegation-message. Guidance and revision requests require a task "
                 + "action and cannot use host-ack alone."
                 : contract + " A completion candidate requires delegation-review naming "

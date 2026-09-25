@@ -1,6 +1,8 @@
 package ai.protomolt.proto.agenthost;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import ai.protomolt.proto.delegation.v1.DeliverableContract;
+import java.util.Map;
 
 /** One resumable model session driven by event packets from the delegation coordinator. */
 public interface AgentProvider extends AutoCloseable {
@@ -42,6 +44,10 @@ public interface AgentProvider extends AutoCloseable {
      * contracts the host knows change the schema.
      */
     default void outputSchema(ObjectNode schema) {
+    }
+
+    /** Supplies the exact offered contracts to providers that validate local fixture output. */
+    default void deliverableContracts(Map<String, DeliverableContract> contracts) {
     }
 
     @Override

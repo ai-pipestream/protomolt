@@ -11,7 +11,7 @@ option java_package = "ai.protomolt.proto.delegation.v1";
 
 // ============================================================================
 // DELEGATION ACTION CONTRACTS - the request and response messages of the
-// twelve delegation catalog verbs.
+// delegation catalog verbs.
 //
 // A catalog verb is invoked with one JSON document, and that document is the
 // canonical proto3 JSON of the request message declared here: there is no

@@ -25,6 +25,7 @@ public final class DelegationActions {
                 .register(new DelegationWorkerListAction(bridge))
                 .register(new DelegationOfferAction(bridge))
                 .register(new DelegationAcceptAction(bridge))
+                .register(new DelegationRejectAction(bridge))
                 .register(new DelegationProgressAction(bridge))
                 .register(new DelegationCheckpointAction(bridge))
                 .register(new DelegationCandidateAction(bridge))

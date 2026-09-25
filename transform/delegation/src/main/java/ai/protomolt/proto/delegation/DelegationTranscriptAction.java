@@ -6,6 +6,8 @@ import ai.protomolt.proto.actions.CatalogContract;
 import ai.protomolt.proto.delegation.v1.ReadTranscriptRequest;
 import ai.protomolt.proto.delegation.v1.ReadTranscriptResponse;
 import com.google.protobuf.Message;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.util.JsonFormat;
 
 import com.google.protobuf.Descriptors.Descriptor;
 import java.util.List;
@@ -40,6 +42,11 @@ final class DelegationTranscriptAction extends DelegationAction {
     @Override
     public Descriptor responseType() {
         return ReadTranscriptResponse.getDescriptor();
+    }
+
+    @Override public ObjectNode renderJsonReply(Message reply, JsonFormat.TypeRegistry registry)
+            throws ActionException {
+        return DelegationEventJson.render(reply, name(), bridge.coordinator());
     }
 
     @Override

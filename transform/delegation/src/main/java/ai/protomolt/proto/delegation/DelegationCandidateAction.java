@@ -8,6 +8,8 @@ import ai.protomolt.proto.delegation.v1.SubmitCandidateRequest;
 import ai.protomolt.proto.delegation.v1.SubmitCandidateResponse;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Message;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.util.JsonFormat;
 
 /** Submits one revision of completion evidence for coordinator review. */
 final class DelegationCandidateAction extends DelegationAction {
@@ -43,6 +45,13 @@ final class DelegationCandidateAction extends DelegationAction {
     @Override
     public Descriptor responseType() {
         return SubmitCandidateResponse.getDescriptor();
+    }
+
+    @Override
+    public JsonFormat.TypeRegistry typeRegistry(ObjectNode input) {
+        return bridge.coordinator().deliverableContract(input.path("taskId").asText())
+                .map(DeliverableContracts::typeRegistry)
+                .orElseGet(JsonFormat.TypeRegistry::getEmptyTypeRegistry);
     }
 
     @Override
