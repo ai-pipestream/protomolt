@@ -3,7 +3,6 @@ package ai.protomolt.receipt.verify;
 import ai.protomolt.receipt.verify.ExternalVerifier.Check;
 import ai.protomolt.receipt.verify.ExternalVerifier.Result;
 import java.io.IOException;
-import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -26,9 +25,24 @@ public final class Main {
     }
 
     public static void main(String[] args) throws IOException {
-        if (args.length < 2 || args.length > 3) {
+        if (args.length == 3 && "--list-artifacts".equals(args[0])) {
+            byte[] record = Files.readAllBytes(Path.of(args[1]));
+            byte[] trust = Files.readAllBytes(Path.of(args[2]));
+            try {
+                for (String digest : ExternalVerifier.verifiedArtifactDigests(record, trust)) {
+                    System.out.println(digest);
+                }
+            } catch (IllegalArgumentException refused) {
+                System.err.println("refused: " + refused.getMessage());
+                System.exit(1);
+            }
+            return;
+        }
+        if (args.length < 2 || args.length > 3
+                || (args.length > 0 && "--list-artifacts".equals(args[0]))) {
             System.err.println(
-                    "usage: record-verifier <record-file> <trust-file> [artifact-dir]");
+                    "usage: record-verifier <record-file> <trust-file> [artifact-dir]"
+                            + " | --list-artifacts <record-file> <trust-file>");
             System.exit(2);
             return;
         }
@@ -36,16 +50,7 @@ public final class Main {
         byte[] trust = Files.readAllBytes(Path.of(args[1]));
         Map<String, byte[]> artifacts = null;
         if (args.length == 3) {
-            artifacts = new HashMap<>();
-            try (DirectoryStream<Path> entries =
-                         Files.newDirectoryStream(Path.of(args[2]))) {
-                for (Path entry : entries) {
-                    if (Files.isRegularFile(entry)) {
-                        artifacts.put(entry.getFileName().toString(),
-                                Files.readAllBytes(entry));
-                    }
-                }
-            }
+            artifacts = loadReferencedArtifacts(record, trust, Path.of(args[2]));
         }
         Result result;
         try {
@@ -64,5 +69,18 @@ public final class Main {
         }
         System.out.println(result.verified() ? "VERIFIED" : "REFUSED");
         System.exit(result.verified() ? 0 : 1);
+    }
+
+    static Map<String, byte[]> loadReferencedArtifacts(byte[] record, byte[] trust,
+                                                        Path directory) throws IOException {
+        Map<String, byte[]> artifacts = new HashMap<>();
+        if (!ExternalVerifier.verify(record, trust).verified()) return artifacts;
+        for (String digest : ExternalVerifier.verifiedArtifactDigests(record, trust)) {
+            Path entry = directory.resolve(digest);
+            if (Files.isRegularFile(entry)) {
+                artifacts.put(digest, Files.readAllBytes(entry));
+            }
+        }
+        return artifacts;
     }
 }
