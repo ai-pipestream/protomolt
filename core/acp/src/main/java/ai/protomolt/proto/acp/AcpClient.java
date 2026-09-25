@@ -68,10 +68,18 @@ public final class AcpClient implements AutoCloseable {
      * visible and the pipe can never fill up and block the agent.
      */
     public static AcpClient launch(String... command) throws IOException {
+        return launchWithStderr(System.err, command);
+    }
+
+    /** Launches with an explicit diagnostic sink; callers handling sensitive
+     * inference inputs may use {@link OutputStream#nullOutputStream()}.
+     * The caller owns the sink; it is never closed by this client. */
+    public static AcpClient launchWithStderr(OutputStream diagnostics, String... command) throws IOException {
+        java.util.Objects.requireNonNull(diagnostics, "diagnostics");
         Process child = new ProcessBuilder(command).start();
         Thread.ofVirtual().name("acp-agent-stderr").start(() -> {
             try {
-                child.getErrorStream().transferTo(System.err);
+                child.getErrorStream().transferTo(diagnostics);
             } catch (IOException ignored) {
                 // The agent exited; nothing more to copy.
             }

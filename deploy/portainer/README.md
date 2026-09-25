@@ -162,3 +162,66 @@ holds the schema Git history, service registrations, workflows, and evidence.
 `rustfs-data` and `repo-postgres-data` together hold the encrypted delegation
 transcript; both are useless without `PROTOMOLT_TRANSCRIPT_KEY`, so back the
 key up with the same care as the volumes.
+
+## Isolated Goal 2 candidate
+
+`compose.goal2-candidate.yml` is a separate Portainer stack named
+`protomolt-goal2-candidate` on endpoint 3. It is for proving the new correction
+service and its recorded outcome against a fresh coordinator. Do not update
+stack 20 with this file. The candidate has its own coordinator, repo-service,
+PostgreSQL, RustFS, correction workspace, named volumes, and credentials.
+Keycloak and Traefik are omitted because this candidate uses neither browser
+identity nor public routes. Its only host bindings are NAS loopback HTTP
+`29902`, coordinator gRPC `29903`, registry `29904`, and correction gRPC
+`29905`. Access them through SSH from the trusted workstation.
+
+Build the serve, repo-service, and correction distributions from the exact
+Goal 2 source tree, then build their Docker images. Tag each with that tree's
+unique source revision and load those tags into the NAS Docker engine before
+creating the stack in Portainer. The image load supplies artifacts; Portainer
+alone creates, updates, stops, and removes candidate services. Set the three
+image references with `PROTOMOLT_CANDIDATE_SERVE_IMAGE`,
+`PROTOMOLT_CANDIDATE_REPO_IMAGE`, and
+`PROTOMOLT_CANDIDATE_CORRECTION_IMAGE`. A mutable `edge` tag does not prove the
+candidate source. Record the image IDs returned by `docker image inspect` and
+the running IDs after Portainer starts the stack.
+
+Set these **new** stack variables in Portainer. Do not copy values from the
+live coordinator stack:
+
+| Variable | Purpose |
+|---|---|
+| `PROTOMOLT_CANDIDATE_API_TOKEN` | Coordinator API bearer token |
+| `PROTOMOLT_CANDIDATE_TASK_CONSOLE_TOKEN` | Separate console login token |
+| `PROTOMOLT_CANDIDATE_TRANSCRIPT_KEY` | Base64-encoded 32-byte transcript key |
+| `PROTOMOLT_CANDIDATE_DB_PASSWORD` | Candidate PostgreSQL role password |
+| `PROTOMOLT_CANDIDATE_RUSTFS_SECRET_KEY` | Candidate RustFS secret |
+| `PROTOMOLT_CANDIDATE_CORRECTION_TOKEN` | Correction gRPC caller token |
+| `PROTOMOLT_CANDIDATE_INFERENCE_TOKEN` | Token shared with the trusted inference bridge; it is not a provider key |
+
+The correction container stores its signing key, trust material, and completed
+run artifacts under its own `correction-data` volume. Its `remote-prompt` mode
+calls `host.docker.internal:29930` with the inference token. On the NAS,
+`sshd` has `GatewayPorts no`, so a reverse SSH forward from the trusted
+workstation listens only on NAS loopback:
+
+```shell
+ssh -N -R 127.0.0.1:29930:127.0.0.1:29930 nas
+```
+
+Run that only while the authenticated bridge is listening on workstation
+loopback port `29930`. The Portainer-owned `inference-forward` sidecar binds
+`172.17.0.1:29930` on the NAS Docker bridge and relays to the SSH listener.
+It has no public host port. Confirm the NAS Docker bridge is still
+`172.17.0.1` before creating the stack; change the sidecar bind address if
+Docker's host gateway differs. This tunnel is a bounded candidate test path,
+not the durable worker transport planned for a later goal.
+
+Before a live correction, check `/health` through NAS loopback, confirm the
+running image IDs, and register `correction:9090` as a plaintext reflected
+service in this candidate coordinator's service workspace. The current
+service-profile host refuses credential references at invocation. Keep that
+boundary explicit when evaluating authenticated `service-invoke`; direct
+authenticated gRPC access to the correction port is the candidate fallback
+until a credential resolver is present. A successful stack start alone does
+not prove a live model correction, judgment, or signed receipt.

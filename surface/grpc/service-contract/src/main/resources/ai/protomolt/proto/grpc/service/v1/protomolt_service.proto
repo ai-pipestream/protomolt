@@ -15,6 +15,7 @@ package ai.protomolt.proto.grpc.service.v1;
 
 import "ai/protomolt/proto/grpc/profile/v1/service_profile.proto";
 import "ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto";
+import "ai/protomolt/proto/inference/v1/structured.proto";
 import "ai/protomolt/proto/receipt/v1/receipt.proto";
 import "ai/protomolt/proto/validate/v1/validate.proto";
 import "google/protobuf/struct.proto";
@@ -1586,10 +1587,14 @@ message WorkflowStep {
 message StructuredStep {
   // Fully qualified message type the model fills.
   string target_type = 1;
-  // Catalog model id; must declare the structured-output capability.
+  // Catalog model id; native/default mode requires structured-output capability.
   string model = 2;
   // Attempt budget; 0 takes the coordinator default (3, hard-capped at 3).
   int32 max_attempts = 3;
+  // Explicit prompt-guided opt-in; omission preserves native constraints.
+  ai.protomolt.proto.inference.v1.StructuredGenerationMode mode = 4 [
+    (ai.protomolt.proto.validate.v1.field).enum.defined_only = true
+  ];
 }
 
 // A typed inter-step edge: map the named scope entries ('input' or prior step

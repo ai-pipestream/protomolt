@@ -1,0 +1,21 @@
+{
+  "name": "correct-contact",
+  "schema": {"type": "ai.protomolt.proto.correction.v1.RawContact"},
+  "inputType": "ai.protomolt.proto.correction.v1.RawContact",
+  "deadlineMs": 30000,
+  "steps": [{
+    "name": "correct",
+    "structured": {
+      "targetType": "ai.protomolt.proto.correction.v1.CorrectedContact",
+      "model": "starter-correction",
+      "maxAttempts": 3
+    },
+    "edge": {
+      "sources": ["input"],
+      "produceType": "ai.protomolt.proto.correction.v1.RawContact",
+      "rules": ["record_id = input.record_id", "contact_text = input.contact_text", "internal_notes = input.internal_notes"],
+      "projectTo": "ai.protomolt.proto.correction.v1.ContactGrounding",
+      "validate": true
+    }
+  }]
+}

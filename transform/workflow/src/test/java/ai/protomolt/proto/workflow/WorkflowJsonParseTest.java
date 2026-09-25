@@ -4,6 +4,7 @@ import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.sources.CompiledProtos;
 import ai.protomolt.proto.sources.ProtoSourceCompiler;
 import ai.protomolt.proto.sources.ProtoSourceSet;
+import ai.protomolt.proto.inference.v1.StructuredGenerationMode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -104,7 +105,16 @@ class WorkflowJsonParseTest {
         assertThat(parsed.steps().getFirst().structured().model())
                 .isEqualTo("structured-model");
         assertThat(parsed.steps().getFirst().structured().maxAttempts()).isEqualTo(2);
+        assertThat(parsed.steps().getFirst().structured().mode())
+                .isEqualTo(StructuredGenerationMode.STRUCTURED_GENERATION_MODE_UNSPECIFIED);
         assertThat(new WorkflowVerifier().verify(parsed)).isEmpty();
+
+        ((ObjectNode) step.get("structured")).put("mode", "STRUCTURED_GENERATION_MODE_PROMPT_GUIDED");
+        CompiledWorkflow promptGuided = WorkflowJson.parse(workflow, context);
+        assertThat(promptGuided.steps().getFirst().structured().mode())
+                .isEqualTo(StructuredGenerationMode.STRUCTURED_GENERATION_MODE_PROMPT_GUIDED);
+        assertThat(WorkflowCompiler.compile(promptGuided).getSteps(0).getStructured().getMode())
+                .isEqualTo(StructuredGenerationMode.STRUCTURED_GENERATION_MODE_PROMPT_GUIDED);
     }
 
     @Test
@@ -144,6 +154,17 @@ class WorkflowJsonParseTest {
                 .put("model", "structured-model")
                 .put("maxAttempts", 4_294_967_296L);
         assertThat(failure(overflowingAttempts).getMessage()).contains("int32");
+
+        ObjectNode unknownMode = workflow();
+        ObjectNode unknownModeStep = firstStep(unknownMode);
+        unknownModeStep.remove("target");
+        unknownModeStep.remove("method");
+        unknownModeStep.putObject("structured")
+                .put("targetType", "workflow.test.Embedding")
+                .put("model", "structured-model")
+                .put("mode", 73);
+        assertThat(failure(unknownMode).step).isEqualTo("tokenize");
+        assertThat(failure(unknownMode).getMessage()).contains("unknown structured generation mode");
     }
 
     @Test

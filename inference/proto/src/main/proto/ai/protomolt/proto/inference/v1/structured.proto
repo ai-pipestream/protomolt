@@ -27,6 +27,19 @@ option java_package = "ai.protomolt.proto.inference.v1";
 // surprise.
 // ============================================================================
 
+// How the provider is asked to produce structured output. Every mode still
+// requires strict protobuf JSON parsing and runtime validation before success.
+// Unsupported modes fail before invocation; there is no automatic fallback.
+enum StructuredGenerationMode {
+  // Backwards-compatible default: require native structured-output capability.
+  STRUCTURED_GENERATION_MODE_UNSPECIFIED = 0;
+  // Send the JSON Schema as a native provider response-format constraint.
+  STRUCTURED_GENERATION_MODE_NATIVE = 1;
+  // Explicit opt-in: include the schema in the text prompt, without a native
+  // response-format constraint. Rejections use the same bounded repair loop.
+  STRUCTURED_GENERATION_MODE_PROMPT_GUIDED = 2;
+}
+
 // One structured-generation request: the message type to fill, the catalog
 // model id to fill it with, and optional sampling controls.
 message GenerateStructuredRequest {
@@ -45,8 +58,8 @@ message GenerateStructuredRequest {
   ];
 
   // The catalog id of the model to run (see list-models). The model's
-  // declared capabilities must include structured_output; unknown or
-  // incompatible ids fail before invocation.
+  // declared capabilities must include structured_output in native/default
+  // mode; unknown or incompatible ids fail before invocation.
   string model = 2 [
     (ai.protomolt.proto.validate.v1.field) = {
       required: true
@@ -93,6 +106,11 @@ message GenerateStructuredRequest {
   // unresolvable grounding type fails before any model invocation.
   google.protobuf.Any grounding = 8 [
     (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+
+  // Explicit provider mode. Omission preserves the native capability gate.
+  StructuredGenerationMode mode = 9 [
+    (ai.protomolt.proto.validate.v1.field).enum.defined_only = true
   ];
 }
 

@@ -245,7 +245,7 @@ message StructuredGenerationSpec {
     (ai.protomolt.proto.validate.v1.field).string.pattern = "^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+$",
     (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
   ];
-  // Catalog model id; must declare the structured-output capability.
+  // Catalog model id; native/default mode requires structured-output capability.
   // Bounded to 256 characters by WorkflowValidation.
   string model = 2 [
     (ai.protomolt.proto.validate.v1.field) = {
@@ -260,6 +260,12 @@ message StructuredGenerationSpec {
       gte: 0
       lte: 3
     },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Bound into the workflow fingerprint and replay snapshot. Omission retains
+  // native output constraints; prompt guidance must be explicitly selected.
+  ai.protomolt.proto.inference.v1.StructuredGenerationMode mode = 4 [
+    (ai.protomolt.proto.validate.v1.field).enum.defined_only = true,
     (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
   ];
 }

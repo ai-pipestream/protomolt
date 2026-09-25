@@ -22,9 +22,11 @@ import ai.protomolt.proto.inference.v1.FinishReason;
 import ai.protomolt.proto.inference.v1.GenerateRequest;
 import ai.protomolt.proto.inference.v1.GenerateResponse;
 import ai.protomolt.proto.inference.v1.GenerateStreamRequest;
+import ai.protomolt.proto.inference.v1.GenerateStructuredRequest;
 import ai.protomolt.proto.inference.v1.ModelCapabilities;
 import ai.protomolt.proto.inference.v1.ModelEntry;
 import ai.protomolt.proto.inference.v1.Usage;
+import ai.protomolt.proto.inference.v1.StructuredGenerationMode;
 import ai.protomolt.proto.sources.CompiledProtos;
 import ai.protomolt.proto.sources.ProtoSourceCompiler;
 import ai.protomolt.proto.sources.ProtoSourceSet;
@@ -181,6 +183,14 @@ class StructuredWorkflowReplayTest {
                 List.of(CompiledWorkflow.Step.structured("fill", form, MODEL, 0)), null);
     }
 
+    private static CompiledWorkflow structuredWorkflow(StructuredGenerationMode mode) {
+        return new CompiledWorkflow("fill-intake", List.of(file), ticket, 10_000,
+                List.of(new CompiledWorkflow.Step("fill",
+                        CompiledWorkflow.Step.STRUCTURED_DEPENDENCY, false, null,
+                        null, List.of(), List.of(), false, 0, "",
+                        new CompiledWorkflow.StructuredSpec(form, MODEL, 0, mode))), null);
+    }
+
     /** A gRPC echo step feeding the structured step, projecting the form's name. */
     private static CompiledWorkflow mixedWorkflow() {
         return new CompiledWorkflow("echo-and-fill", List.of(file), ticket, 10_000,
@@ -214,7 +224,8 @@ class StructuredWorkflowReplayTest {
         provider.script("this is not json", VALID_FORM);
         ArtifactRepository artifacts = new FileSystemArtifactRepository(dir.resolve("a"));
         RunEvidenceRepository runs = new FileSystemRunEvidenceRepository(dir.resolve("r"));
-        CompiledWorkflow definition = structuredWorkflow();
+        CompiledWorkflow definition = structuredWorkflow(
+                StructuredGenerationMode.STRUCTURED_GENERATION_MODE_PROMPT_GUIDED);
 
         RunEvidence evidence = new WorkflowRunRecorder(runner(), artifacts, runs)
                 .record("run-1", null, definition, ticket("anything"));
@@ -225,6 +236,10 @@ class StructuredWorkflowReplayTest {
         assertThat(step.getStatus()).isEqualTo(StepStatus.STEP_STATUS_SUCCEEDED);
         assertThat(step.getGrpcStatusCode()).isEqualTo(0);
         assertThat(step.getRequestArtifact().getRedacted()).isTrue();
+        GenerateStructuredRequest savedRequest = GenerateStructuredRequest.parseFrom(
+                artifacts.find(step.getRequestArtifact().getSha256()).orElseThrow().content());
+        assertThat(savedRequest.getMode())
+                .isEqualTo(StructuredGenerationMode.STRUCTURED_GENERATION_MODE_PROMPT_GUIDED);
         assertThat(step.getResponseArtifact().getRedacted()).isTrue();
 
         var structured = step.getStructured();
@@ -253,9 +268,23 @@ class StructuredWorkflowReplayTest {
                 .doesNotContain("this is not json");
 
         Workflow workflow = WorkflowCompiler.compile(definition);
+        assertThat(workflow.getSteps(0).getStructured().getMode())
+                .isEqualTo(StructuredGenerationMode.STRUCTURED_GENERATION_MODE_PROMPT_GUIDED);
         WorkflowReplay.ReplayResult replay = WorkflowReplay.replay(
                 workflow, evidence, List.of(file), artifacts);
         assertThat(replay.ok()).as(replay.failure()).isTrue();
+
+        provider.script(VALID_FORM, VALID_FORM);
+        var nativeResponse = generator.generate(ai.protomolt.proto.inference.v1.GenerateStructuredRequest
+                .newBuilder().setTargetType(FORM).setModel(MODEL).build(), form);
+        var promptGuidedResponse = generator.generate(ai.protomolt.proto.inference.v1.GenerateStructuredRequest
+                .newBuilder().setTargetType(FORM).setModel(MODEL)
+                .setMode(StructuredGenerationMode.STRUCTURED_GENERATION_MODE_PROMPT_GUIDED)
+                .build(), form);
+        assertThat(promptGuidedResponse.getPromptFingerprint())
+                .isNotEqualTo(nativeResponse.getPromptFingerprint());
+        assertThat(promptGuidedResponse.getSchemaFingerprint())
+                .isEqualTo(nativeResponse.getSchemaFingerprint());
     }
 
     @Test

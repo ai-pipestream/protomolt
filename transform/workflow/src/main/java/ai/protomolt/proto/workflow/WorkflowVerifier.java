@@ -302,6 +302,9 @@ public final class WorkflowVerifier {
     private static void verifyStructured(CompiledWorkflow workflow, CompiledWorkflow.Step step,
                                          List<Finding> findings) {
         CompiledWorkflow.StructuredSpec spec = step.structured();
+        if (spec.mode() == ai.protomolt.proto.inference.v1.StructuredGenerationMode.UNRECOGNIZED) {
+            findings.add(new Finding(step.name(), "structured", "unknown structured generation mode"));
+        }
         if (spec.model().isBlank()) {
             findings.add(new Finding(step.name(), "structured",
                     "structured step model must not be blank"));

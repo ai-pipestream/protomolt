@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.correction.v1;
+
+import "ai/protomolt/proto/projection/v1/projection.proto";
+import "ai/protomolt/proto/meta/v1/metadata.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.correction.v1";
+
+// Bounded raw input. Deliberately accepts malformed contact data for correction.
+message RawContact {
+  // Stable source identity, preserved in the corrected result by host policy.
+  string record_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 128}}];
+  // Untrusted source text, possibly misspelled or incomplete.
+  string contact_text = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 8192}}];
+  // Internal source notes excluded from model grounding by the projection.
+  string internal_notes = 3 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 8192,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "secret"
+  ];
+}
+
+// The only source fields the correction model is allowed to see.
+message ContactGrounding {
+  option (ai.protomolt.proto.projection.v1.sources).source = "ai.protomolt.proto.correction.v1.RawContact";
+  // Source record identity.
+  string record_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 128}},
+    (ai.protomolt.proto.projection.v1.from).paths.path = "record_id"
+  ];
+  // Source contact data; the provider must not invent missing facts.
+  string contact_text = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 8192}},
+    (ai.protomolt.proto.projection.v1.from).paths.path = "contact_text"
+  ];
+}
+
+// Example caller-owned strict result. Valid syntax is not evidence of truth.
+message CorrectedContact {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "deliverable-contact-method"
+    message: "a contact must have an email address or explicitly require human review"
+    expression: "this.email != '' || this.needs_review"
+  };
+  // Original record identity. Equality with the source is a host obligation.
+  string record_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 128}}];
+  // Person or organization name supported by the source.
+  string display_name = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {min_len: 2, max_len: 120}}];
+  // Syntactically valid address, or empty when the source cannot support one.
+  string email = 3 [(ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {email: true, max_len: 254}}];
+  // Unknown or ambiguous source facts require review rather than invention.
+  bool needs_review = 4;
+}
+
+// Explicit permitted evidence for source-support judgment. Internal notes have
+// no field here; validators still check both the source and proposed result.
+message ContactEvidence {
+  // The actual model-visible source reconstructed from recorded evidence.
+  ContactGrounding source = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Candidate whose syntax has passed the caller's result contract.
+  CorrectedContact candidate = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+}

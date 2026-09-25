@@ -190,6 +190,7 @@ dependencies {
 def deliberatelyUnconstrained = [
         'bom',                                          // the platform itself
         'samples', 'protomolt-system-tests',            // never published
+        'protomolt-correction',                          // candidate runnable app
         'protomolt-protobuf-validation-conformance',    // conformance executor, not a library
 ]
 

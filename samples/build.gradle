@@ -4,7 +4,24 @@ plugins {
 
 description = 'Examples for Pipestream protobuf tools'
 
+// Compile the existing court-decoration contract directly for deterministic
+// regressions; the schema remains owned by protobuf/llm/examples.
+sourceSets.main.proto.srcDir '../protobuf/llm/examples/court-decoration/proto'
+
 dependencies {
+    implementation project(':protomolt-correction')
+    // Starter contracts reuse the existing task, workflow, projection and receipt
+    // models. They add examples and validation fixtures, not a mounted service.
+    implementation project(':protomolt-delegation')
+    implementation project(':protomolt-projection')
+    implementation project(':protomolt-workflow')
+    implementation project(':protomolt-protobuf-llm')
+    implementation project(':protomolt-inference-service')
+    implementation project(':protomolt-inference-openai')
+    implementation project(':protomolt-registry')
+    testImplementation project(':protomolt-grpc-service-contract')
+    testImplementation project(':protomolt-http-jsonschema')
+    testImplementation project(':protomolt-http-openapi')
     implementation project(':protomolt-mapper-cel')
     implementation project(':protomolt-server-jdk')
     // Live SharePoint read -> infer-schema sample.
@@ -57,6 +74,24 @@ tasks.register('runCelMapping', JavaExec) {
     description = 'Run CelMappingSample'
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'ai.protomolt.proto.samples.CelMappingSample'
+}
+
+tasks.register('runCorrection', JavaExec) {
+    group = 'application'
+    description = 'Recorded contact correction, configured evaluation and offline-verified receipts; -PliveCorrection opts into a configured live provider'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'ai.protomolt.proto.correction.CorrectionSample'
+    doFirst {
+        args '--workspace', (findProperty('correctionWorkspace') ?: layout.buildDirectory.dir('correction-example').get().asFile).toString()
+        if (project.hasProperty('liveCorrection')) args '--live'
+        if (project.hasProperty('verifyCorrectionRun')) {
+            if (!project.hasProperty('correctionTrust')) {
+                throw new GradleException('Offline verification needs -PcorrectionTrust=/path/to/trust.pb')
+            }
+            args '--verify', project.property('verifyCorrectionRun').toString()
+            args '--trust', project.property('correctionTrust').toString()
+        }
+    }
 }
 
 tasks.register('runJsonRestServer', JavaExec) {

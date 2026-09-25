@@ -526,7 +526,8 @@ public final class WorkflowRunner {
         GenerateStructuredRequest.Builder request = GenerateStructuredRequest.newBuilder()
                 .setTargetType(step.structured().targetType().getFullName())
                 .setModel(step.structured().model())
-                .setMaxAttempts(step.structured().maxAttempts());
+                .setMaxAttempts(step.structured().maxAttempts())
+                .setMode(step.structured().mode());
         if (grounding != null) {
             request.setGrounding(grounding);
         }
