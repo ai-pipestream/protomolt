@@ -382,6 +382,7 @@ message ModelEntry {
   // itself never enters the catalog.
   string credential_ref = 7 [
     (ai.protomolt.proto.validate.v1.field) = {
+      ignore_if_zero: true
       string: {
         max_len: 256
         pattern: "^[a-z][a-z0-9-]*:[A-Za-z0-9._/-]+$"
