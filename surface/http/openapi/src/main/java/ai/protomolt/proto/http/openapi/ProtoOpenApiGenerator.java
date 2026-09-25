@@ -1,5 +1,6 @@
 package ai.protomolt.proto.http.openapi;
 
+import ai.protomolt.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.protomolt.proto.http.rest.ApiTokenRequirement;
 import ai.protomolt.proto.http.rest.ProtoApiToken;
 import ai.protomolt.proto.http.rest.ProtoRestExposed;
@@ -38,6 +39,7 @@ public final class ProtoOpenApiGenerator {
     private static final Logger LOG = LoggerFactory.getLogger(ProtoOpenApiGenerator.class);
 
     public static final String DEFAULT_SECURITY_SCHEME = "ApiToken";
+    private static final ProtoJsonSchemaGenerator VALIDATION = ProtoJsonSchemaGenerator.createTypeUniform();
 
     private final ObjectMapper mapper;
     private final String title;
@@ -250,7 +252,17 @@ public final class ProtoOpenApiGenerator {
 
         for (FieldDescriptor field : descriptor.getFields()) {
             String jsonName = field.getJsonName();
-            properties.put(jsonName, fieldSchema(field, schemas, visiting));
+            Map<String, Object> property = new LinkedHashMap<>(fieldSchema(field, schemas, visiting));
+            Map<String, Object> validation = VALIDATION.fieldValidationSchema(field);
+            // An extension alone cannot undo a child $ref: a client would still reject a
+            // nested value that the runtime deliberately does not inspect.
+            if (skipsNestedValidation(validation)) permissiveChild(property);
+            else {
+                skippedCollectionChild(property, validation, "items");
+                skippedCollectionChild(property, validation, "additionalProperties");
+            }
+            OpenApiValidation.merge(property, validation);
+            properties.put(jsonName, property);
             if (field.isRequired()) {
                 required.add(jsonName);
             }
@@ -259,8 +271,44 @@ public final class ProtoOpenApiGenerator {
         if (!required.isEmpty()) {
             schema.put("required", required);
         }
+        OpenApiValidation.merge(schema, VALIDATION.messageValidationSchema(descriptor));
         schemas.put(key, schema);
         visiting.remove(descriptor.getFullName());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static boolean skipsNestedValidation(Map<String, Object> validation) {
+        Object rules = validation.get("x-protomolt-runtime-rules");
+        return rules instanceof List<?> list && (list.contains("inspect-only")
+                || list.contains("ignore-always") || list.contains("skip-when"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void skippedCollectionChild(Map<String, Object> property,
+                                               Map<String, Object> validation, String name) {
+        Object childRules = validation.get(name);
+        Object childSchema = property.get(name);
+        if (childRules instanceof Map<?, ?> rules && childSchema instanceof Map<?, ?> schema
+                && skipsNestedValidation((Map<String, Object>) rules)) {
+            Map<String, Object> permissive = new LinkedHashMap<>((Map<String, Object>) schema);
+            permissiveChild(permissive);
+            property.put(name, permissive);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void permissiveChild(Map<String, Object> schema) {
+        if (schema.containsKey("$ref")) {
+            schema.clear();
+            schema.put("type", "object");
+        }
+        for (String child : List.of("items", "additionalProperties")) {
+            if (schema.get(child) instanceof Map<?, ?> nested) {
+                Map<String, Object> copy = new LinkedHashMap<>((Map<String, Object>) nested);
+                permissiveChild(copy);
+                schema.put(child, copy);
+            }
+        }
     }
 
     private static Map<String, Object> fieldSchema(

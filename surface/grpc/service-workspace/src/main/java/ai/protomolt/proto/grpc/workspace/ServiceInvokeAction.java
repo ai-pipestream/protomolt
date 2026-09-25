@@ -20,6 +20,7 @@ import ai.protomolt.proto.registry.SchemaRegistryStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Message;
+import io.grpc.Metadata;
 
 import com.google.protobuf.Descriptors.Descriptor;
 import java.io.IOException;
@@ -34,12 +35,19 @@ public final class ServiceInvokeAction implements StreamingAction {
     private final ServiceProfileRepository repository;
     private final SchemaRegistryStore registry;
     private final GrpcInvokeAction delegate;
+    private final ProfileCredentialResolver credentials;
 
     public ServiceInvokeAction(ServiceProfileRepository repository, SchemaRegistryStore registry,
                                ChannelFactory channels) {
+        this(repository, registry, channels, null);
+    }
+
+    public ServiceInvokeAction(ServiceProfileRepository repository, SchemaRegistryStore registry,
+                               ChannelFactory channels, ProfileCredentialResolver credentials) {
         this.repository = repository;
         this.registry = registry;
         this.delegate = new GrpcInvokeAction(channels);
+        this.credentials = credentials;
     }
 
     @Override
@@ -76,7 +84,7 @@ public final class ServiceInvokeAction implements StreamingAction {
         // The reply is the delegate's plus what only this verb knows: which stored profile
         // and endpoint the call went to, and the descriptor it was typed against.
         return Reply.of(responseType())
-                .copyFrom(delegate.execute(invocation.delegateRequest(), context))
+                .copyFrom(delegate.execute(invocation.delegateRequest(), context, invocation.headers()))
                 .set("serviceProfile", invocation.profile().getName())
                 .set("endpoint", invocation.endpoint().getName())
                 .set("descriptorFingerprint",
@@ -87,7 +95,9 @@ public final class ServiceInvokeAction implements StreamingAction {
     @Override
     public void executeStreaming(Message input, ActionContext context, StreamEmitter emitter)
             throws ActionException {
-        delegate.executeStreaming(prepare(input, context).delegateRequest(), context, emitter);
+        Invocation invocation = prepare(input, context);
+        delegate.executeStreaming(invocation.delegateRequest(), context, emitter,
+                invocation.headers());
     }
 
     private Invocation prepare(Message input, ActionContext context) throws ActionException {
@@ -105,12 +115,9 @@ public final class ServiceInvokeAction implements StreamingAction {
         }
         String endpointName = Fields.string(input, "endpoint");
         ServiceEndpoint endpoint = ServiceActionSupport.endpoint(profile, endpointName);
-        rejectUnresolvedTransport(endpoint);
-        MethodPolicy policy = profile.getMethodPoliciesList().stream()
-                .filter(candidate -> candidate.getMethod().equals(method))
-                .findFirst()
-                .orElse(null);
-        rejectApprovalRequired(policy, method);
+        MethodPolicy policy = ProfileMethodPolicy.find(profile, method);
+        ProfileMethodPolicy.requireAllowed(policy, method);
+        Metadata headers = ProfileCredentials.headers(profile, endpoint, credentials);
 
         DescriptorArtifact artifact;
         try {
@@ -125,55 +132,15 @@ public final class ServiceInvokeAction implements StreamingAction {
                 .set("request", request)
                 .set("tls", endpoint.getTransport() == Transport.TRANSPORT_TLS)
                 .set("maxResponses", maxResponses(input))
-                .set("deadlineMs", effectiveDeadline(input, policy));
+                .set("deadlineMs", ProfileMethodPolicy.deadline(policy,
+                        Fields.integer(input, "deadlineMs")));
         delegated.nest("schema")
                 .set("descriptorSetBase64", Base64.getEncoder()
                         .encodeToString(artifact.getDescriptorSet().toByteArray()))
                 .build();
-        return new Invocation(profile, endpoint, delegated.build());
+        return new Invocation(profile, endpoint, delegated.build(), headers);
     }
 
-    private static void rejectUnresolvedTransport(ServiceEndpoint endpoint) throws ActionException {
-        if (!endpoint.getCredentialRef().isBlank() || !endpoint.getTrustRef().isBlank()
-                || !endpoint.getClientCertificateRef().isBlank()) {
-            throw new ActionException("unsupported-transport",
-                    "invocation with credential, custom-trust, or client-certificate references "
-                            + "requires a configured credential resolver");
-        }
-    }
-
-    private static void rejectApprovalRequired(MethodPolicy policy, String method)
-            throws ActionException {
-        if (policy != null && (policy.getApprovalRequired()
-                || policy.getOperationList().contains(Operation.OPERATION_APPROVAL_REQUIRED))) {
-            throw new ActionException("approval-required",
-                    "method '" + method + "' requires approval outside this action");
-        }
-    }
-
-    private static int effectiveDeadline(Message input, MethodPolicy policy)
-            throws ActionException {
-        // Zero means the caller said nothing, which the message documents as the default.
-        int asked = Fields.integer(input, "deadlineMs");
-        boolean supplied = asked != 0;
-        int requested = supplied ? asked : ServiceActionSupport.DEFAULT_DEADLINE_MS;
-        if (policy == null || policy.getDeadline().equals(
-                com.google.protobuf.Duration.getDefaultInstance())) {
-            return requested;
-        }
-        Duration configured = Duration.ofSeconds(policy.getDeadline().getSeconds(),
-                policy.getDeadline().getNanos());
-        long configuredMs = Math.max(1, configured.toMillis());
-        if (configuredMs > Integer.MAX_VALUE) {
-            throw new ActionException("invalid-profile",
-                    "method deadline exceeds the supported millisecond range");
-        }
-        if (supplied && requested > configuredMs) {
-            throw ServiceActionSupport.invalid("'deadlineMs' exceeds the registered method policy",
-                    "/deadlineMs");
-        }
-        return supplied ? requested : Math.toIntExact(configuredMs);
-    }
 
     /** How many replies to collect; zero leaves the delegate's own default in place. */
     private static int maxResponses(Message input) throws ActionException {
@@ -199,6 +166,6 @@ public final class ServiceInvokeAction implements StreamingAction {
     }
 
     private record Invocation(ServiceProfile profile, ServiceEndpoint endpoint,
-                              Message delegateRequest) {
+                              Message delegateRequest, Metadata headers) {
     }
 }

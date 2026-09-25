@@ -42,7 +42,13 @@ class ServiceWorkspaceContractTest {
         }
         FieldDescriptor schema = descriptor.findFieldByName("schema");
         if (schema != null) {
-            builder.setField(schema, DynamicMessage.getDefaultInstance(schema.getMessageType()));
+            Descriptor schemaType = schema.getMessageType();
+            FieldDescriptor type = schemaType.findFieldByName("type");
+            DynamicMessage.Builder schemaValue = DynamicMessage.newBuilder(schemaType);
+            if (type != null) {
+                schemaValue.setField(type, "google.protobuf.Struct");
+            }
+            builder.setField(schema, schemaValue.build());
         }
         return builder;
     }
@@ -86,6 +92,21 @@ class ServiceWorkspaceContractTest {
         assertThat(validate("ServiceRefreshRequest", "deadline_ms", 60_000).valid()).isTrue();
         assertThat(validate("ServiceRefreshRequest", "deadline_ms", 60_001).valid()).isFalse();
         assertThat(validate("ServiceRefreshRequest", "deadline_ms", -1).valid()).isFalse();
+    }
+
+    @Test
+    void invocationContractsAdmitTheLongCorrectionWorkflowDeadline() {
+        for (String message : new String[]{"ServiceInvokeRequest", "GrpcInvokeRequest"}) {
+            assertThat(validate(message, "deadline_ms", 330_000).valid())
+                    .as("%s admits the starter workflow's five-and-a-half-minute deadline", message)
+                    .isTrue();
+            assertThat(validate(message, "deadline_ms", 360_000).valid())
+                    .as("%s admits the declared wire maximum", message)
+                    .isTrue();
+            assertThat(validate(message, "deadline_ms", 360_001).valid())
+                    .as("%s refuses values above the declared wire maximum", message)
+                    .isFalse();
+        }
     }
 
     @Test

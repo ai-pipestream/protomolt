@@ -197,6 +197,23 @@ public final class ProtoMoltCatalog {
                                      WorkflowVersionRepository workflowVersions,
                                      SchemaRegistryStore registry,
                                      Supplier<TrustSnapshot> trust) {
+        return full(context, gatherCacheRoot, workflows, jobs, maxAttemptsDefault, inference,
+                serviceProfiles, outboundPolicy, artifacts, runEvidence, workflowVersions,
+                registry, trust, null);
+    }
+
+    /** Complete catalog with a host-owned outbound profile credential resolver. */
+    public static ActionCatalog full(ActionContext context, Path gatherCacheRoot,
+                                     WorkflowRepository workflows, WorkflowRunStore jobs,
+                                     int maxAttemptsDefault, InferenceEngines inference,
+                                     ServiceProfileRepository serviceProfiles,
+                                     OutboundChannelPolicy outboundPolicy,
+                                     ArtifactRepository artifacts,
+                                     RunEvidenceRepository runEvidence,
+                                     WorkflowVersionRepository workflowVersions,
+                                     SchemaRegistryStore registry,
+                                     Supplier<TrustSnapshot> trust,
+                                     ai.protomolt.proto.grpc.workspace.ProfileCredentialResolver credentials) {
         OutboundChannelPolicy policy = outboundPolicy == null
                 ? OutboundChannelPolicy.defaults() : outboundPolicy;
         ChannelFactory channels = ChannelFactory.standard(policy);
@@ -218,8 +235,8 @@ public final class ProtoMoltCatalog {
                 .register(new GenerateAction(inference))
                 .register(new ListModelsAction(inference))
                 .register(new DescribeModelAction(inference));
-        ServiceWorkspaceActions.register(catalog, serviceProfiles, registry, channels);
-        ReflectedServiceActions.registerStored(catalog, serviceProfiles, registry, channels)
+        ServiceWorkspaceActions.register(catalog, serviceProfiles, registry, channels, credentials);
+        ReflectedServiceActions.registerStored(catalog, serviceProfiles, registry, channels, credentials)
                 .forEach((profile, why) -> LOG.warn(
                         "stored service profile '{}' did not become verbs: {}", profile, why));
         return trust == null

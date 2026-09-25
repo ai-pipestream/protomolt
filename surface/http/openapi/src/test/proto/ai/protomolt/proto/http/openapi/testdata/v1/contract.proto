@@ -1,0 +1,91 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.http.openapi.testdata.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.http.openapi.testdata";
+
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+enum ReviewState {
+  REVIEW_STATE_UNSPECIFIED = 0;
+  REVIEW_STATE_READY = 1;
+  REVIEW_STATE_DONE = 2;
+}
+
+message CreateRequest {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "request.not_blocked"
+    message: "the id must not be blocked"
+    expression: "this.external_id != 'blocked'"
+  };
+
+  string external_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: { min_len: 3, max_len: 12, pattern: "^[a-z]+$" }
+  }];
+  int32 score = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    int32: { gt: 0, lt: 10 }
+  }];
+  repeated string tags = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    repeated: {
+      min_items: 1
+      max_items: 3
+      unique: true
+      items: { string: { in: "alpha", in: "beta", in: "gamma", in: "delta" } }
+    }
+  }];
+  map<string, int64> metrics = 4 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    map: {
+      min_pairs: 1
+      max_pairs: 2
+      values: { int64: { gte: 0, lte: 100 } }
+    }
+  }];
+  int32 format_version = 5 [(ai.protomolt.proto.validate.v1.field) = {
+    int32: { const: 2 }
+  }];
+  ReviewState state = 6 [(ai.protomolt.proto.validate.v1.field) = {
+    enum: { defined_only: true, in: 1, in: 2 }
+  }];
+  int64 signed_offset = 7 [(ai.protomolt.proto.validate.v1.field) = {
+    int64: { gte: -9007199254740991, lte: 9007199254740991 }
+  }];
+  int32 optional_rank = 8 [(ai.protomolt.proto.validate.v1.field) = {
+    ignore_if_zero: true
+    int32: { gte: 5, lte: 20 }
+  }];
+}
+
+message CreateResponse {
+  Profile profile = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+message Profile {
+  string display_name = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: { min_len: 2, max_len: 24 }
+  }];
+  int64 balance = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    int64: { gte: 0, lte: 9007199254740991 }
+  }];
+  repeated string permissions = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    repeated: {
+      min_items: 1
+      max_items: 2
+      items: { string: { in: "read", in: "write" } }
+    }
+  }];
+  google.protobuf.Timestamp observed_at = 4 [(ai.protomolt.proto.validate.v1.field) = {
+    timestamp: { gte: { seconds: 1577836800 } }
+  }];
+}
+
+service EntryService {
+  rpc Create(CreateRequest) returns (CreateResponse);
+}

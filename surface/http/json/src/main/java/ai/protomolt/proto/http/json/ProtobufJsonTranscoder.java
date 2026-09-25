@@ -37,7 +37,7 @@ public final class ProtobufJsonTranscoder {
     public String toJson(Message message) {
         Objects.requireNonNull(message, "message");
         try {
-            return currentCodecs().printer().print(message);
+            return codecsFor(message.getDescriptorForType()).printer().print(message);
         } catch (InvalidProtocolBufferException e) {
             throw new ProtobufJsonException("Failed to serialize protobuf message to JSON", e);
         }
@@ -52,7 +52,7 @@ public final class ProtobufJsonTranscoder {
         Objects.requireNonNull(messageType, "messageType");
         try {
             Message.Builder builder = (Message.Builder) messageType.getMethod("newBuilder").invoke(null);
-            currentCodecs().parser().merge(json, builder);
+            codecsFor(builder.getDescriptorForType()).parser().merge(json, builder);
             return (T) builder.build();
         } catch (InvalidProtocolBufferException e) {
             throw new MalformedProtobufJsonException(
@@ -86,7 +86,7 @@ public final class ProtobufJsonTranscoder {
         Objects.requireNonNull(descriptor, "descriptor");
         try {
             DynamicMessage.Builder builder = DynamicMessage.newBuilder(descriptor);
-            currentCodecs().parser().merge(json, builder);
+            codecsFor(descriptor).parser().merge(json, builder);
             return builder.build();
         } catch (InvalidProtocolBufferException e) {
             throw new MalformedProtobufJsonException(
@@ -108,8 +108,27 @@ public final class ProtobufJsonTranscoder {
     }
 
     private static Codecs buildCodecs(DescriptorRegistry registry) {
+        return buildCodecs(registry, null);
+    }
+
+    /**
+     * Reflected messages can carry Any payloads declared in their descriptor closure
+     * without registering caller-provided schemas in the process-wide registry.
+     */
+    private Codecs codecsFor(Descriptor descriptor) {
+        if (descriptorRegistry != null && descriptorRegistry.registeredDescriptors().stream()
+                .anyMatch(registered -> registered == descriptor)) {
+            return currentCodecs();
+        }
+        return buildCodecs(descriptorRegistry, descriptor);
+    }
+
+    private static Codecs buildCodecs(DescriptorRegistry registry, Descriptor scoped) {
         int descriptorCount = 0;
         JsonFormat.TypeRegistry.Builder builder = JsonFormat.TypeRegistry.newBuilder();
+        // JsonFormat adds the descriptor's complete file/import closure. Put this
+        // call's schema first so an older globally registered copy cannot replace it.
+        if (scoped != null) builder.add(scoped);
         if (registry != null) {
             Collection<Descriptor> descriptors = registry.registeredDescriptors();
             descriptorCount = descriptors.size();

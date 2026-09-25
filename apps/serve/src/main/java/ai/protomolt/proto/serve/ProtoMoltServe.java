@@ -888,6 +888,14 @@ public final class ProtoMoltServe implements AutoCloseable {
 
     /** Starts every configured surface; closing stops them all. */
     public static ProtoMoltServe start(Options options) {
+        return start(options, CorrectionStarter.fromEnvironment(System.getenv()));
+    }
+
+    static ProtoMoltServe start(Options options, CorrectionStarter starter) {
+        if (starter != null && (options.apiToken() == null || options.apiToken().isBlank()
+                || options.taskConsole() == null)) {
+            throw new IllegalArgumentException("the correction starter requires API and console authentication");
+        }
         ActionContext context = ActionContext.create();
 
         ProtoMoltGrpcServer grpc = null;
@@ -981,17 +989,17 @@ public final class ProtoMoltServe implements AutoCloseable {
                         workflows, jobStore, jobsConfig.maxAttemptsDefault(),
                         inference, serviceProfiles,
                         outboundPolicy, artifacts, runEvidence, workflowVersions, store,
-                        trustSource(options));
+                        trustSource(options), starter == null ? null : starter.credentials());
                 return startWithJobsCatalog(options, context, catalog, store, workflows,
-                        serviceProfiles, jobsDatabase, jobsWorker, jobsRelay);
+                        serviceProfiles, jobsDatabase, jobsWorker, jobsRelay, starter);
             }
             // The catalog sees the store so run-workflow resolves stored workflow names.
             ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
                     workflows, null, 0, inference, serviceProfiles,
                     outboundPolicy, artifacts, runEvidence, workflowVersions, store,
-                    trustSource(options));
+                    trustSource(options), starter == null ? null : starter.credentials());
             return startWithJobsCatalog(options, context, catalog, store, workflows,
-                    serviceProfiles, null, null, null);
+                    serviceProfiles, null, null, null, starter);
         } catch (RuntimeException e) {
             if (registry != null) {
                 registry.close();
@@ -1018,7 +1026,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                                                        ServiceProfileRepository serviceProfiles,
                                                        WorkflowRunDatabase jobsDatabase,
                                                        WorkflowRunWorker jobsWorker,
-                                                       WorkflowRunEventRelay jobsRelay) {
+                                                       WorkflowRunEventRelay jobsRelay,
+                                                       CorrectionStarter starter) {
         ProtoMoltGrpcServer grpc = null;
         JdkProtoRestServer http = null;
         McpHttpHandler mcpHandler = null;
@@ -1027,6 +1036,7 @@ public final class ProtoMoltServe implements AutoCloseable {
         MeshClusterRuntime meshCluster = null;
         JdbcCallerResolver jdbcCallers = null;
         try {
+            if (starter != null) starter.install(catalog, serviceProfiles);
             if (options.demo()) {
                 DemoSchemas.seed(context.registry(), store);
             }
@@ -1162,6 +1172,9 @@ public final class ProtoMoltServe implements AutoCloseable {
                         .withContext("/api/tasks",
                                 new TaskConsoleApiHandler(bridge, taskSessions,
                                         RecordSigning.fromEnvironment()));
+                if (starter != null) {
+                    http.withContext("/api/correction", new CorrectionConsoleApiHandler(catalog, taskSessions));
+                }
             }
             if (options.apiToken() == null) {
                 http.withContext("/api/protomolt", new ApiProxyHandler("/api/protomolt",

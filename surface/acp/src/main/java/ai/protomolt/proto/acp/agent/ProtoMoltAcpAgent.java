@@ -24,6 +24,18 @@ import java.io.OutputStream;
 public final class ProtoMoltAcpAgent {
 
     public static void main(String[] args) {
+        if (args.length > 0) {
+            if (args.length < 2 || args.length > 3 || !args[0].equals("--remote-target")
+                    || (args.length == 3 && !args[2].equals("--tls"))) {
+                throw new IllegalArgumentException("usage: [--remote-target host:port [--tls]]");
+            }
+            String token = System.getenv("PROTOMOLT_API_TOKEN");
+            try (RemoteCatalogLineRunner runner = RemoteCatalogLineRunner.connect(
+                    args[1], args.length == 3, token)) {
+                AcpAgent.over(System.in, System.out, runner::run).run();
+            }
+            return;
+        }
         buildAgent(System.in, System.out, ProtoMoltCatalog.full(ActionContext.create())).run();
     }
 

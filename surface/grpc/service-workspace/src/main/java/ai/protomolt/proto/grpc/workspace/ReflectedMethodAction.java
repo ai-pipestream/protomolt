@@ -12,6 +12,7 @@ import ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint;
 import ai.protomolt.proto.grpc.profile.v1.ServiceProfile;
 import ai.protomolt.proto.grpc.profile.v1.Transport;
 import ai.protomolt.proto.registry.SchemaRegistryStore;
+import ai.protomolt.proto.validate.ValidationResult;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.DynamicMessage;
@@ -43,16 +44,27 @@ final class ReflectedMethodAction implements ProtoAction {
     private final ServiceProfileRepository repository;
     private final SchemaRegistryStore registry;
     private final ChannelFactory channels;
+    private final ProfileCredentialResolver credentials;
+    private final com.google.protobuf.util.JsonFormat.TypeRegistry types;
 
     ReflectedMethodAction(String name, String profileName, MethodDescriptor method,
                           ServiceProfileRepository repository, SchemaRegistryStore registry,
                           ChannelFactory channels) {
+        this(name, profileName, method, repository, registry, channels, null);
+    }
+
+    ReflectedMethodAction(String name, String profileName, MethodDescriptor method,
+                          ServiceProfileRepository repository, SchemaRegistryStore registry,
+                          ChannelFactory channels, ProfileCredentialResolver credentials) {
         this.name = name;
         this.profileName = profileName;
         this.method = method;
         this.repository = repository;
         this.registry = registry;
         this.channels = channels;
+        this.credentials = credentials;
+        this.types = com.google.protobuf.util.JsonFormat.TypeRegistry.newBuilder()
+                .add(method.getInputType()).add(method.getOutputType()).build();
     }
 
     @Override
@@ -82,25 +94,44 @@ final class ReflectedMethodAction implements ProtoAction {
     }
 
     @Override
+    public com.google.protobuf.util.JsonFormat.TypeRegistry typeRegistry() {
+        return types;
+    }
+
+    @Override
     public Message execute(Message input, ActionContext context) throws ActionException {
         ServiceProfile profile = profile();
         ServiceEndpoint endpoint = ServiceActionSupport.endpoint(profile, "");
+        String policyMethod = method.getService().getFullName() + "/" + method.getName();
+        var policy = ProfileMethodPolicy.find(profile, policyMethod);
+        ProfileMethodPolicy.requireAllowed(policy, policyMethod);
+        int deadline = ProfileMethodPolicy.deadline(policy, 0);
+        Metadata headers = ProfileCredentials.headers(profile, endpoint, credentials);
+        try {
+            channels.validateDeadline(deadline);
+        } catch (IllegalArgumentException invalid) {
+            throw new ActionException("invalid-profile", "profile method deadline is not allowed");
+        }
         ManagedChannel channel = channels.open(ServiceActionSupport.target(endpoint),
                 endpoint.getTransport() == Transport.TRANSPORT_TLS);
         try {
             List<DynamicMessage> responses = DynamicGrpcCalls.call(channel, method,
                     CatalogContract.as(input, DynamicMessage.getDefaultInstance(
                             method.getInputType()), name),
-                    CallOptions.DEFAULT.withDeadlineAfter(
-                            ServiceActionSupport.DEFAULT_DEADLINE_MS, TimeUnit.MILLISECONDS),
-                    new Metadata(), 1);
+                    CallOptions.DEFAULT.withDeadlineAfter(deadline, TimeUnit.MILLISECONDS),
+                    headers, 1);
             if (responses.isEmpty()) {
                 throw new ActionException("empty-response",
                         method.getFullName() + " answered with no message");
             }
             // A server-streaming method is driven by one request and answers with the first
             // reply; a caller who wants the rest of the stream uses service-invoke.
-            return responses.get(0);
+            DynamicMessage response = responses.get(0);
+            if (!ValidationResult.validate(response).valid()) {
+                throw new ActionException("invalid-upstream-response",
+                        method.getFullName() + " returned a response outside its contract");
+            }
+            return response;
         } catch (StatusRuntimeException e) {
             throw new ActionException("upstream-" + e.getStatus().getCode().name()
                     .toLowerCase(java.util.Locale.ROOT).replace('_', '-'),

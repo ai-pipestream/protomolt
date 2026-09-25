@@ -1,0 +1,103 @@
+name: protomolt-starter
+
+# This file is packaged with a release-specific .env. No build context or JDK is needed.
+services:
+  bootstrap:
+    image: alpine:3.21
+    restart: "no"
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        umask 077
+        mkdir -p /operator /console /correction /serve-data /correction-data
+        for name in operator console correction; do
+          if [ ! -s "/$$name/token" ]; then
+            od -An -tx1 -N32 /dev/urandom | tr -d ' \n' > "/$$name/token"
+          fi
+        done
+        chown 10001:10001 /operator /console /correction \
+          /operator/token /console/token /correction/token \
+          /serve-data /correction-data
+        chmod 0700 /operator /console /correction
+        chmod 0400 /operator/token /console/token /correction/token
+    volumes:
+      - operator-secret:/operator
+      - console-secret:/console
+      - correction-secret:/correction
+      - serve-data:/serve-data
+      - correction-data:/correction-data
+
+  serve:
+    image: ${PROTOMOLT_SERVE_IMAGE:-ghcr.io/ai-pipestream/protomolt-serve:${PROTOMOLT_VERSION:?Use the release starter bundle}}
+    restart: unless-stopped
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+      correction:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export PROTOMOLT_API_TOKEN="$$(cat /run/operator-secret/token)"
+        export PROTOMOLT_TASK_CONSOLE_TOKEN="$$(cat /run/console-secret/token)"
+        export PROTOMOLT_CORRECTION_API_TOKEN="$$(cat /run/correction-secret/token)"
+        exec /opt/protomolt-serve/bin/protomolt-serve \
+          --host 0.0.0.0 --http-port 8080 --grpc-port 9090 \
+          --registry-git /data/serve/registry \
+          --service-workspace /data/serve/services \
+          --workflow-workspace /data/serve/workflows
+    environment:
+      PROTOMOLT_CORRECTION_TARGET: correction:9090
+      PROTOMOLT_GATHER_CACHE: /data/serve/gather-cache
+      PROTOMOLT_GRPC_MAX_DEADLINE_MS: "360000"
+    ports:
+      - "127.0.0.1:${PROTOMOLT_HTTP_PORT:-8080}:8080"
+      - "127.0.0.1:${PROTOMOLT_GRPC_PORT:-9090}:9090"
+    volumes:
+      - operator-secret:/run/operator-secret:ro
+      - console-secret:/run/console-secret:ro
+      - correction-secret:/run/correction-secret:ro
+      - serve-data:/data/serve
+
+  correction:
+    image: ${PROTOMOLT_CORRECTION_IMAGE:-ghcr.io/ai-pipestream/protomolt-correction:${PROTOMOLT_VERSION:?Use the release starter bundle}}
+    restart: unless-stopped
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export PROTOMOLT_CORRECTION_API_TOKEN="$$(cat /run/correction-secret/token)"
+        exec /opt/protomolt-correction/bin/protomolt-correction \
+          --host 0.0.0.0 --port 9090 --workspace /data/correction --mode fixture
+    volumes:
+      - correction-secret:/run/correction-secret:ro
+      - correction-data:/data/correction
+
+  # ACP speaks stdio. Run on demand with: docker compose run --rm -T -i acp
+  acp:
+    profiles: [acp]
+    image: ${PROTOMOLT_ACP_IMAGE:-ghcr.io/ai-pipestream/protomolt-acp-agent:${PROTOMOLT_VERSION:?Use the release starter bundle}}
+    stdin_open: true
+    tty: false
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+      serve:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export PROTOMOLT_API_TOKEN="$$(cat /run/operator-secret/token)"
+        exec /opt/protomolt-acp-agent/bin/protomolt-acp-agent --remote-target serve:9090
+    volumes:
+      - operator-secret:/run/operator-secret:ro
+
+volumes:
+  operator-secret:
+  console-secret:
+  correction-secret:
+  serve-data:
+  correction-data:

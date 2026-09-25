@@ -8,8 +8,8 @@
 # protomolt-cli is multi-arch (linux/amd64 + linux/arm64): native-image does not
 # cross-compile, so each architecture builds on a matching runner and a manifest
 # job stitches the arch tags into the user-facing tag. The worker images use
-# the same native-runner pattern. protomolt-serve is a JVM image and stays
-# amd64-only until someone asks for more.
+# the same native-runner pattern. This workflow's `edge` serve image is amd64;
+# starter-publish.yml owns the native amd64/arm64 versioned serve manifests.
 #
 # The hardened public demo on Docker Hub (pipestreamai/protomolt-serve) is
 # a separate workflow: docker-hub-publish.yml. Do not fold Hub tags into
@@ -109,6 +109,8 @@ jobs:
           fi
 
       - name: Build and push protomolt-serve
+        # The versioned starter workflow owns the multi-platform serve tag.
+        if: ${{ inputs.version == '' }}
         uses: docker/build-push-action@v6
         with:
           context: apps/serve

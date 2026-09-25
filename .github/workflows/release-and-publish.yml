@@ -127,6 +127,15 @@ jobs:
     with:
       version: ${{ needs.release.outputs.version }}
 
+  starter:
+    needs: [release, docker]
+    uses: ./.github/workflows/starter-publish.yml
+    permissions:
+      contents: write
+      packages: write
+    with:
+      version: ${{ needs.release.outputs.version }}
+
   # protomolt-serve for darwin-aarch64: jpackage bundles the distribution with
   # an embedded runtime into a .dmg attached to the release. Signing and
   # notarization activate automatically when the Apple secrets exist; without

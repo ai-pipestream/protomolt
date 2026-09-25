@@ -29,6 +29,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * The external verifier: the same fixed pipeline of named checks as the platform's
@@ -79,6 +80,30 @@ public final class ExternalVerifier {
     /** Verifies without artifact bytes; the rehash check is skipped and named so. */
     public static Result verify(byte[] recordBytes, byte[] trustBytes) {
         return verify(recordBytes, trustBytes, null);
+    }
+
+    /** Returns only artifact names in a record accepted against the supplied trust snapshot. */
+    public static List<String> verifiedArtifactDigests(byte[] recordBytes, byte[] trustBytes) {
+        Result result = verify(recordBytes, trustBytes);
+        if (!result.verified()) {
+            throw new IllegalArgumentException("record refused by " + result.refusal().id()
+                    + ": " + result.refusal().detail());
+        }
+        try {
+            Manifest manifest = RecordWire.manifest(
+                    RecordWire.signed(recordBytes, new Notes()).manifest(), new Notes());
+            Set<String> digests = new TreeSet<>();
+            for (Artifact artifact : manifest.artifacts()) {
+                digests.add(artifact.sha256());
+            }
+            for (Step step : manifest.steps()) {
+                if (step.requestArtifact() != null) digests.add(step.requestArtifact().sha256());
+                if (step.responseArtifact() != null) digests.add(step.responseArtifact().sha256());
+            }
+            return List.copyOf(digests);
+        } catch (MalformedException impossible) {
+            throw new IllegalStateException("accepted record cannot fail a second parse", impossible);
+        }
     }
 
     /**
