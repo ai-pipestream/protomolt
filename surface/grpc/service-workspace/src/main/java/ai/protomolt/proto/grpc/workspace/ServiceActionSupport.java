@@ -21,6 +21,10 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.util.JsonFormat;
 import io.grpc.ManagedChannel;
+import io.grpc.Channel;
+import io.grpc.ClientInterceptors;
+import io.grpc.Metadata;
+import io.grpc.stub.MetadataUtils;
 
 import java.io.IOException;
 import java.util.Optional;
@@ -85,18 +89,23 @@ final class ServiceActionSupport {
                                           SchemaRegistryStore registry,
                                           ChannelFactory channels)
             throws ActionException, ReflectionException {
+        return reflectAndStore(profile, endpointName, deadlineMs, repository, registry,
+                channels, null);
+    }
+
+    static ServiceProfile reflectAndStore(ServiceProfile profile, String endpointName, int deadlineMs,
+                                          ServiceProfileRepository repository,
+                                          SchemaRegistryStore registry,
+                                          ChannelFactory channels,
+                                          ProfileCredentialResolver credentials)
+            throws ActionException, ReflectionException {
         try {
             ServiceProfileValidation.validateConnectionProfile(profile);
         } catch (IllegalArgumentException e) {
             throw invalid(e.getMessage(), "/profile");
         }
         ServiceEndpoint endpoint = endpoint(profile, endpointName);
-        if (!endpoint.getCredentialRef().isBlank() || !endpoint.getTrustRef().isBlank()
-                || !endpoint.getClientCertificateRef().isBlank()) {
-            throw new ActionException("unsupported-transport",
-                    "reflection with credential, custom-trust, or client-certificate references "
-                            + "requires a configured credential resolver");
-        }
+        Metadata headers = ProfileCredentials.headers(profile, endpoint, credentials);
         String target = target(endpoint);
         boolean tls = endpoint.getTransport() == Transport.TRANSPORT_TLS;
         try {
@@ -114,9 +123,12 @@ final class ServiceActionSupport {
         }
         ReflectionClient.Result reflected;
         try {
+            Channel reflectedChannel = headers.keys().isEmpty() ? channel
+                    : ClientInterceptors.intercept(channel,
+                            MetadataUtils.newAttachHeadersInterceptor(headers));
             reflected = channels.policy() == null
-                    ? ReflectionClient.discover(channel, deadlineMs)
-                    : ReflectionClient.discover(channel, deadlineMs, channels.policy());
+                    ? ReflectionClient.discover(reflectedChannel, deadlineMs)
+                    : ReflectionClient.discover(reflectedChannel, deadlineMs, channels.policy());
         } finally {
             channel.shutdownNow();
         }

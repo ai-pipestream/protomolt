@@ -50,6 +50,13 @@ class ErrorContractTest {
     }
 
     @Test
+    void invalidUpstreamResponseMapsToDataLoss() {
+        StatusRuntimeException e = CatalogBridge.toStatus(
+                new ActionException("invalid-upstream-response", "bad reply"));
+        assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.DATA_LOSS);
+    }
+
+    @Test
     void unknownActionMapsToUnimplemented() {
         StatusRuntimeException e = CatalogBridge.toStatus(
                 new ActionException("unknown-action", "no such verb"));

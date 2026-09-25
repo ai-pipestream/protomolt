@@ -22,18 +22,26 @@ public final class ServiceRegisterAction implements ProtoAction {
     private final ChannelFactory channels;
     private final SchemaRegistryStore registry;
     private final ProfileStored stored;
+    private final ProfileCredentialResolver credentials;
 
     public ServiceRegisterAction(ServiceProfileRepository repository, SchemaRegistryStore registry,
                                  ChannelFactory channels) {
-        this(repository, registry, channels, null);
+        this(repository, registry, channels, null, null);
     }
 
     ServiceRegisterAction(ServiceProfileRepository repository, SchemaRegistryStore registry,
                           ChannelFactory channels, ProfileStored stored) {
+        this(repository, registry, channels, stored, null);
+    }
+
+    ServiceRegisterAction(ServiceProfileRepository repository, SchemaRegistryStore registry,
+                          ChannelFactory channels, ProfileStored stored,
+                          ProfileCredentialResolver credentials) {
         this.repository = repository;
         this.registry = registry;
         this.channels = channels;
         this.stored = stored;
+        this.credentials = credentials;
     }
 
     @Override
@@ -74,7 +82,7 @@ public final class ServiceRegisterAction implements ProtoAction {
             ServiceProfile saved = ServiceActionSupport.reflectAndStore(profile,
                     endpoint.isEmpty() ? null : endpoint,
                     deadline(input),
-                    store, registry, channels);
+                    store, registry, channels, credentials);
             if (stored != null) {
                 stored.stored(saved);
             }

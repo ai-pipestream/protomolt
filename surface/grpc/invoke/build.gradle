@@ -7,6 +7,7 @@ dependencies {
     api libs.protobuf.java
 
     implementation project(':protomolt-http-json')
+    implementation project(':protomolt-protobuf-validation')
     implementation libs.grpc.stub
     implementation libs.grpc.services
 

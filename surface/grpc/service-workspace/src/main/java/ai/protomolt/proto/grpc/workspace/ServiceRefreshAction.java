@@ -23,18 +23,26 @@ public final class ServiceRefreshAction implements ProtoAction {
     private final ProfileStored stored;
     private final ChannelFactory channels;
     private final SchemaRegistryStore registry;
+    private final ProfileCredentialResolver credentials;
 
     public ServiceRefreshAction(ServiceProfileRepository repository, SchemaRegistryStore registry,
                                 ChannelFactory channels) {
-        this(repository, registry, channels, null);
+        this(repository, registry, channels, null, null);
     }
 
     ServiceRefreshAction(ServiceProfileRepository repository, SchemaRegistryStore registry,
                          ChannelFactory channels, ProfileStored stored) {
+        this(repository, registry, channels, stored, null);
+    }
+
+    ServiceRefreshAction(ServiceProfileRepository repository, SchemaRegistryStore registry,
+                         ChannelFactory channels, ProfileStored stored,
+                         ProfileCredentialResolver credentials) {
         this.repository = repository;
         this.registry = registry;
         this.channels = channels;
         this.stored = stored;
+        this.credentials = credentials;
     }
 
     @Override
@@ -79,7 +87,7 @@ public final class ServiceRefreshAction implements ProtoAction {
             ServiceProfile refreshed = ServiceActionSupport.reflectAndStore(profile,
                     endpoint.isEmpty() ? null : endpoint,
                     deadline(input),
-                    store, registry, channels);
+                    store, registry, channels, credentials);
             if (stored != null) {
                 stored.stored(refreshed);
             }

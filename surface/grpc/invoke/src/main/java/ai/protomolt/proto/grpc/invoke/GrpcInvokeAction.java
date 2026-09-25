@@ -19,6 +19,7 @@ import io.grpc.CallOptions;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.Metadata;
+import ai.protomolt.proto.validate.ValidationResult;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 
@@ -91,7 +92,13 @@ public final class GrpcInvokeAction implements StreamingAction {
 
     @Override
     public Message execute(Message input, ActionContext context) throws ActionException {
-        CallPlan plan = prepare(input, context);
+        return execute(input, context, new Metadata());
+    }
+
+    /** Host-only metadata stays outside the caller's protobuf action request. */
+    public Message execute(Message input, ActionContext context, Metadata hostHeaders)
+            throws ActionException {
+        CallPlan plan = prepare(input, context, hostHeaders);
 
         Reply result = Reply.of(responseType())
                 .set("method", plan.method().getFullName())
@@ -109,6 +116,9 @@ public final class GrpcInvokeAction implements StreamingAction {
             result.set("ok", true).set("status", "OK");
             List<String> failures = new ArrayList<>();
             for (DynamicMessage response : responses) {
+                if (!ValidationResult.validate(response).valid()) {
+                    return invalidUpstream();
+                }
                 try {
                     // The invoked service's replies have no shape this contract knows, so
                     // they travel as structures.
@@ -143,7 +153,13 @@ public final class GrpcInvokeAction implements StreamingAction {
     @Override
     public void executeStreaming(Message input, ActionContext context, StreamEmitter emitter)
             throws ActionException {
-        CallPlan plan = prepare(input, context);
+        executeStreaming(input, context, emitter, new Metadata());
+    }
+
+    /** Streaming sibling of the host-only metadata seam. */
+    public void executeStreaming(Message input, ActionContext context, StreamEmitter emitter,
+                                 Metadata hostHeaders) throws ActionException {
+        CallPlan plan = prepare(input, context, hostHeaders);
         ManagedChannel channel;
         try {
             channel = channelFactory.open(plan.target(), plan.tls());
@@ -155,6 +171,10 @@ public final class GrpcInvokeAction implements StreamingAction {
                 List<DynamicMessage> responses = DynamicGrpcCalls.call(
                         channel, plan.method(), plan.request(), plan.options(), plan.headers(), 1);
                 for (DynamicMessage response : responses) {
+                    if (!ValidationResult.validate(response).valid()) {
+                        emitter.emit(invalidUpstream());
+                        return;
+                    }
                     emitter.emit(oneResponse(context, response));
                 }
             } else {
@@ -163,6 +183,10 @@ public final class GrpcInvokeAction implements StreamingAction {
                     while (!stream.isClosed()) {
                         for (DynamicMessage response
                                 : stream.take(1, Duration.ofMillis(plan.deadlineMs()))) {
+                            if (!ValidationResult.validate(response).valid()) {
+                                emitter.emit(invalidUpstream());
+                                return;
+                            }
                             emitter.emit(oneResponse(context, response));
                         }
                     }
@@ -212,7 +236,8 @@ public final class GrpcInvokeAction implements StreamingAction {
         return terminal.build();
     }
 
-    private CallPlan prepare(Message input, ActionContext context) throws ActionException {
+    private CallPlan prepare(Message input, ActionContext context, Metadata hostHeaders)
+            throws ActionException {
         String target = Fields.string(input, "target");
         String methodName = Fields.string(input, "method");
         // The request is a structure: its shape is the callee's input type, which this
@@ -246,7 +271,12 @@ public final class GrpcInvokeAction implements StreamingAction {
             throw invalidInput("Request does not parse as " + method.getInputType().getFullName()
                     + ": " + e.getMessage(), "/request");
         }
-        return new CallPlan(method, request, headers(input), deadlineMs, maxResponses,
+        ValidationResult nested = ValidationResult.validate(request);
+        if (!nested.valid()) {
+            throw invalidInput("Nested request violates " + method.getInputType().getFullName()
+                    + ": " + nested.violations().getFirst().path(), "/request");
+        }
+        return new CallPlan(method, request, headers(input, hostHeaders), deadlineMs, maxResponses,
                 target, tls);
     }
 
@@ -297,17 +327,29 @@ public final class GrpcInvokeAction implements StreamingAction {
                 "/method");
     }
 
-    private static Metadata headers(Message input) throws ActionException {
+    private static Metadata headers(Message input, Metadata hostHeaders) throws ActionException {
         Metadata headers = new Metadata();
         for (var entry : Fields.map(input, "metadata").entrySet()) {
             String key = entry.getKey();
+            if (!hostHeaders.keys().isEmpty()
+                    && (key.equalsIgnoreCase("authorization") || key.equalsIgnoreCase("api_token"))) {
+                throw invalidInput("caller cannot override profile credentials", "/metadata/" + key);
+            }
             if (key.endsWith(Metadata.BINARY_HEADER_SUFFIX)) {
                 throw invalidInput("Binary metadata keys ('-bin') are not supported",
                         "/metadata/" + key);
             }
             headers.put(Metadata.Key.of(key, Metadata.ASCII_STRING_MARSHALLER), entry.getValue());
         }
+        headers.merge(hostHeaders);
         return headers;
+    }
+
+    private Message invalidUpstream() {
+        return Reply.of(responseType()).set("ok", false)
+                .set("status", "INVALID_UPSTREAM_RESPONSE")
+                .set("description", "upstream response violates its message contract")
+                .build();
     }
 
     private static String requireString(ObjectNode input, String field) throws ActionException {

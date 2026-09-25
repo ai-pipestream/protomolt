@@ -31,6 +31,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -41,8 +42,11 @@ class GrpcInvokeActionTest {
     private static final String PROTO = """
             syntax = "proto3";
             package invoke.test;
+            import "ai/protomolt/proto/validate/v1/validate.proto";
             message Ping { string text = 1; int32 count = 2; }
             message Pong { string text = 1; int32 index = 2; }
+            message StrictPing { optional string text = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {min_len: 2}}]; }
+            message StrictPong { optional string text = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {min_len: 2}}]; }
             service EchoService {
               rpc Echo(Ping) returns (Pong);
               rpc Split(Ping) returns (stream Pong);
@@ -50,6 +54,7 @@ class GrpcInvokeActionTest {
               rpc Fail(Ping) returns (Pong);
               rpc Slow(Ping) returns (Pong);
               rpc Open(Ping) returns (stream Pong);
+              rpc Strict(StrictPing) returns (StrictPong);
             }
             """;
 
@@ -60,10 +65,15 @@ class GrpcInvokeActionTest {
     private static String serverName;
     private static GrpcInvokeAction action;
     private static Descriptor pong;
+    private static String validateProto;
 
     @BeforeAll
     static void startDynamicServer() throws Exception {
+        validateProto = new String(GrpcInvokeActionTest.class.getClassLoader().getResourceAsStream(
+                "ai/protomolt/proto/validate/v1/validate.proto").readAllBytes(),
+                StandardCharsets.UTF_8);
         CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
+                .add("ai/protomolt/proto/validate/v1/validate.proto", validateProto, "test")
                 .add("invoke/test/echo.proto", PROTO, "test")
                 .build());
         FileDescriptor file = compiled.descriptorFor("invoke/test/echo.proto").orElseThrow();
@@ -105,6 +115,12 @@ class GrpcInvokeActionTest {
         definition.addMethod(method(service, "Open"), ServerCalls.asyncServerStreamingCall((request, out) -> {
             out.onNext(pong("tick", 0));
             // Stream deliberately left open, like a health Watch.
+        }));
+        Descriptor strictPong = file.findMessageTypeByName("StrictPong");
+        definition.addMethod(method(service, "Strict"), ServerCalls.asyncUnaryCall((request, out) -> {
+            out.onNext(DynamicMessage.newBuilder(strictPong)
+                    .setField(strictPong.findFieldByName("text"), "x").build());
+            out.onCompleted();
         }));
         definition.addMethod(method(service, "Fail"), ServerCalls.asyncUnaryCall((request, out) ->
                 out.onError(Status.INVALID_ARGUMENT.withDescription("bad ping").asRuntimeException())));
@@ -158,7 +174,8 @@ class GrpcInvokeActionTest {
         input.put("target", serverName);
         input.put("method", method);
         ObjectNode schema = input.putObject("schema");
-        schema.putObject("sources").put("invoke/test/echo.proto", PROTO);
+        schema.putObject("sources").put("invoke/test/echo.proto", PROTO)
+                .put("ai/protomolt/proto/validate/v1/validate.proto", validateProto);
         input.set("request", request);
         return input;
     }
@@ -171,6 +188,38 @@ class GrpcInvokeActionTest {
         assertThat(result.get("status").asText()).isEqualTo("OK");
         assertThat(result.get("methodType").asText()).isEqualTo("UNARY");
         assertThat(result.get("responses").get(0).get("text").asText()).isEqualTo("hello!");
+    }
+
+    @Test
+    void nestedRequestIsRejectedBeforeOpeningChannel() {
+        GrpcInvokeAction guarded = new GrpcInvokeAction(target -> {
+            throw new AssertionError("invalid nested request must not open a channel");
+        });
+        assertThatThrownBy(() -> dispatch(guarded, input("invoke.test.EchoService/Strict",
+                MAPPER.createObjectNode().put("text", "x"))))
+                .isInstanceOfSatisfying(ActionException.class,
+                        e -> assertThat(e.code()).isEqualTo("invalid-input"));
+    }
+
+    @Test
+    void invalidUpstreamResponseCannotBeSuccessful() throws Exception {
+        ObjectNode result = dispatch(action, input("invoke.test.EchoService/Strict",
+                MAPPER.createObjectNode().put("text", "valid")));
+        assertThat(result.path("ok").asBoolean()).isFalse();
+        assertThat(result.path("status").asText()).isEqualTo("INVALID_UPSTREAM_RESPONSE");
+        assertThat(result.path("responses").size()).isZero();
+    }
+
+    @Test
+    void streamedInvalidUpstreamResponseIsOnlyAnErrorTerminal() throws Exception {
+        List<ObjectNode> emitted = new ArrayList<>();
+        stream(action, input("invoke.test.EchoService/Strict",
+                MAPPER.createObjectNode().put("text", "valid")), emitted);
+        assertThat(emitted).hasSize(1);
+        assertThat(emitted.get(0).path("ok").asBoolean()).isFalse();
+        assertThat(emitted.get(0).path("status").asText())
+                .isEqualTo("INVALID_UPSTREAM_RESPONSE");
+        assertThat(emitted.get(0).path("responses").size()).isZero();
     }
 
     @Test

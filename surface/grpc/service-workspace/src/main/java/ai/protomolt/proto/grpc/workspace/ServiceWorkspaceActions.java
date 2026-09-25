@@ -27,17 +27,24 @@ public final class ServiceWorkspaceActions {
     /** Registers workspace verbs backed by the host's schema registry. */
     public static ActionCatalog register(ActionCatalog catalog, ServiceProfileRepository repository,
                                          SchemaRegistryStore registry, ChannelFactory channels) {
+        return register(catalog, repository, registry, channels, null);
+    }
+
+    /** Host credentials are kept outside the profile and action request contracts. */
+    public static ActionCatalog register(ActionCatalog catalog, ServiceProfileRepository repository,
+                                         SchemaRegistryStore registry, ChannelFactory channels,
+                                         ProfileCredentialResolver credentials) {
         Objects.requireNonNull(catalog, "catalog");
         Objects.requireNonNull(channels, "channels");
         // A stored profile's methods become live verbs the moment register or
         // refresh lands, so the workbench never advertises a verb that is not there.
         ProfileStored reflected = profile -> ReflectedServiceActions.register(
-                catalog, profile, repository, registry, channels);
+                catalog, profile, repository, registry, channels, credentials);
         return catalog
-                .register(new ServiceRegisterAction(repository, registry, channels, reflected))
+                .register(new ServiceRegisterAction(repository, registry, channels, reflected, credentials))
                 .register(new ServiceListAction(repository))
                 .register(new ServiceInspectAction(repository, registry))
-                .register(new ServiceRefreshAction(repository, registry, channels, reflected))
-                .register(new ServiceInvokeAction(repository, registry, channels));
+                .register(new ServiceRefreshAction(repository, registry, channels, reflected, credentials))
+                .register(new ServiceInvokeAction(repository, registry, channels, credentials));
     }
 }

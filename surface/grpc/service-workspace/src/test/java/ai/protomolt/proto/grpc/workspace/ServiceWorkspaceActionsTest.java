@@ -4,12 +4,19 @@ import ai.protomolt.proto.actions.ActionCatalog;
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.grpc.profile.FileSystemServiceProfileRepository;
+import ai.protomolt.proto.grpc.profile.v1.Transport;
 import ai.protomolt.proto.registry.InMemorySchemaRegistryStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
+import io.grpc.Metadata;
+import io.grpc.ServerCall;
+import io.grpc.ServerCallHandler;
+import io.grpc.ServerInterceptor;
+import io.grpc.ServerInterceptors;
+import io.grpc.Status;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.protobuf.services.HealthStatusManager;
@@ -17,6 +24,7 @@ import io.grpc.protobuf.services.ProtoReflectionServiceV1;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.UUID;
+import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,14 +43,27 @@ class ServiceWorkspaceActionsTest {
     private Server server;
     private FileSystemServiceProfileRepository repository;
     private ActionCatalog catalog;
+    private String requiredToken;
 
     @BeforeEach
     void start() throws Exception {
         serverName = "service-workspace-" + UUID.randomUUID();
         HealthStatusManager health = new HealthStatusManager();
+        ServerInterceptor auth = new ServerInterceptor() {
+            @Override public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+                    ServerCall<ReqT, RespT> call, Metadata headers,
+                    ServerCallHandler<ReqT, RespT> next) {
+                if (requiredToken != null && !requiredToken.equals(headers.get(
+                        Metadata.Key.of("authorization", Metadata.ASCII_STRING_MARSHALLER)))) {
+                    call.close(Status.UNAUTHENTICATED, new Metadata());
+                    return new ServerCall.Listener<>() {};
+                }
+                return next.startCall(call, headers);
+            }
+        };
         server = InProcessServerBuilder.forName(serverName)
-                .addService(health.getHealthService())
-                .addService(ProtoReflectionServiceV1.newInstance())
+                .addService(ServerInterceptors.intercept(health.getHealthService(), auth))
+                .addService(ServerInterceptors.intercept(ProtoReflectionServiceV1.newInstance(), auth))
                 .build()
                 .start();
         repository = new FileSystemServiceProfileRepository(directory);
@@ -161,12 +182,20 @@ class ServiceWorkspaceActionsTest {
                 (target, tls) -> {
                     throw new AssertionError("approval-required method must not open a channel");
                 });
+        ReflectedServiceActions.registerStored(guarded, repository, registry,
+                (target, tls) -> {
+                    throw new AssertionError("approval-required method must not open a channel");
+                });
         ObjectNode invocation = MAPPER.createObjectNode();
         invocation.put("name", "health-local");
         invocation.put("method", "grpc.health.v1.Health/Check");
         invocation.putObject("request");
 
         assertThatThrownBy(() -> guarded.execute("service-invoke", invocation))
+                .isInstanceOf(ActionException.class)
+                .extracting(error -> ((ActionException) error).code())
+                .isEqualTo("approval-required");
+        assertThatThrownBy(() -> guarded.execute("health-local-check", MAPPER.createObjectNode()))
                 .isInstanceOf(ActionException.class)
                 .extracting(error -> ((ActionException) error).code())
                 .isEqualTo("approval-required");
@@ -177,7 +206,58 @@ class ServiceWorkspaceActionsTest {
         assertThatThrownBy(() -> catalog.execute("service-register", registerInput(true)))
                 .isInstanceOf(ActionException.class)
                 .extracting(error -> ((ActionException) error).code())
-                .isEqualTo("unsupported-transport");
+                .isEqualTo("credential-unavailable");
+        assertThat(repository.list()).isEmpty();
+    }
+
+    @Test
+    void approvedCredentialIsUsedForReflectionInvokeAndReflectedVerb() throws Exception {
+        requiredToken = "Bearer test-token";
+        var binding = new EnvProfileCredentialResolver.Binding("health-local", "local",
+                "localhost", 50051, Transport.TRANSPORT_PLAINTEXT, "env:TEST_TOKEN");
+        var resolver = new EnvProfileCredentialResolver(Set.of(binding), ref -> "test-token");
+        ActionCatalog authenticated = ServiceWorkspaceActions.register(
+                ActionCatalog.defaults(ActionContext.create()), repository, null,
+                (target, tls) -> channel(), resolver);
+        ObjectNode registration = registerInput(false);
+        ((ObjectNode) registration.path("profile").path("endpoints").get(0))
+                .put("credentialRef", "env:TEST_TOKEN");
+        ObjectNode registered = authenticated.execute("service-register", registration);
+        assertThat(registered.path("ok").asBoolean()).isTrue();
+        assertThat(registered.toString()).doesNotContain("test-token");
+        ObjectNode invocation = MAPPER.createObjectNode();
+        invocation.put("name", "health-local");
+        invocation.put("method", "grpc.health.v1.Health/Check");
+        invocation.putObject("request");
+        assertThat(authenticated.execute("service-invoke", invocation).path("ok").asBoolean())
+                .isTrue();
+        invocation.putObject("metadata").put("authorization", "Bearer caller-override");
+        assertThatThrownBy(() -> authenticated.execute("service-invoke", invocation))
+                .isInstanceOfSatisfying(ActionException.class,
+                        e -> assertThat(e.code()).isEqualTo("invalid-input"));
+        assertThat(authenticated.execute("health-local-check", MAPPER.createObjectNode())
+                .path("status").asText()).isEqualTo("SERVING");
+        assertThat(authenticated.execute("service-refresh",
+                MAPPER.createObjectNode().put("name", "health-local"))
+                .path("ok").asBoolean()).isTrue();
+    }
+
+    @Test
+    void credentialBindingRejectsRetargetBeforeOpeningChannel() throws Exception {
+        var binding = new EnvProfileCredentialResolver.Binding("health-local", "local",
+                "localhost", 50051, Transport.TRANSPORT_PLAINTEXT, "env:TEST_TOKEN");
+        var resolver = new EnvProfileCredentialResolver(Set.of(binding), ref -> "test-token");
+        ActionCatalog guarded = ServiceWorkspaceActions.register(
+                ActionCatalog.defaults(ActionContext.create()), repository, null,
+                (target, tls) -> { throw new AssertionError("unapproved target must not open"); },
+                resolver);
+        ObjectNode registration = registerInput(false);
+        ObjectNode endpoint = (ObjectNode) registration.path("profile").path("endpoints").get(0);
+        endpoint.put("credentialRef", "env:TEST_TOKEN");
+        endpoint.put("host", "other.example");
+        assertThatThrownBy(() -> guarded.execute("service-register", registration))
+                .isInstanceOfSatisfying(ActionException.class,
+                        e -> assertThat(e.code()).isEqualTo("credential-unavailable"));
         assertThat(repository.list()).isEmpty();
     }
 

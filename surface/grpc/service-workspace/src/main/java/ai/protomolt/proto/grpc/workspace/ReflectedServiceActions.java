@@ -27,9 +27,10 @@ import java.util.Map;
  * <p>A service reaches ProtoMolt by reflection: {@code service-register} discovers its
  * descriptors and stores them. From that point the runtime knows every method's request and
  * response type, which is all a verb has to declare, so each method can be registered as one.
- * A verb bound this way is a verb like any other: an RPC on the gRPC surface, a method on the
- * REST mount, and an MCP tool whose input schema is derived from the request message. No code
- * is generated and nothing restarts.
+ * A verb bound this way is available to the catalog and MCP with an input schema derived
+ * from the request message. The static ProtoMolt gRPC service reaches it through
+ * {@code ServiceInvoke}; registration does not add new RPCs to that service. No code is
+ * generated and nothing restarts.
  *
  * <p>This is what dispatching on messages buys. While a verb was a JSON handler, binding a
  * reflected method meant writing the two conversions by hand for a type nobody had seen at
@@ -57,13 +58,21 @@ public final class ReflectedServiceActions {
                                         ServiceProfileRepository repository,
                                         SchemaRegistryStore registry, ChannelFactory channels)
             throws ActionException {
+        return register(catalog, profile, repository, registry, channels, null);
+    }
+
+    public static List<String> register(ActionCatalog catalog, ServiceProfile profile,
+                                        ServiceProfileRepository repository,
+                                        SchemaRegistryStore registry, ChannelFactory channels,
+                                        ProfileCredentialResolver credentials)
+            throws ActionException {
         List<MethodDescriptor> methods = unaryMethods(profile, repository, registry);
         Map<String, String> names = verbNames(profile, methods);
         List<String> registered = new ArrayList<>(methods.size());
         for (MethodDescriptor method : methods) {
             String verb = names.get(method.getFullName());
             catalog.replace(new ReflectedMethodAction(
-                    verb, profile.getName(), method, repository, registry, channels));
+                    verb, profile.getName(), method, repository, registry, channels, credentials));
             registered.add(verb);
         }
         return List.copyOf(registered);
@@ -82,6 +91,14 @@ public final class ReflectedServiceActions {
                                                      ServiceProfileRepository repository,
                                                      SchemaRegistryStore registry,
                                                      ChannelFactory channels) {
+        return registerStored(catalog, repository, registry, channels, null);
+    }
+
+    public static Map<String, String> registerStored(ActionCatalog catalog,
+                                                     ServiceProfileRepository repository,
+                                                     SchemaRegistryStore registry,
+                                                     ChannelFactory channels,
+                                                     ProfileCredentialResolver credentials) {
         Map<String, String> skipped = new LinkedHashMap<>();
         if (repository == null) {
             return skipped;
@@ -95,7 +112,7 @@ public final class ReflectedServiceActions {
         }
         for (ServiceProfile profile : profiles) {
             try {
-                register(catalog, profile, repository, registry, channels);
+                register(catalog, profile, repository, registry, channels, credentials);
             } catch (ActionException e) {
                 skipped.put(profile.getName(), e.getMessage());
             }

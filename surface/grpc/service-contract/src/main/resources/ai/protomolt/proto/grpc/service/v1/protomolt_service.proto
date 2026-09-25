@@ -446,11 +446,11 @@ message ServiceInvokeRequest {
     }
   ];
   // Call deadline in milliseconds; zero selects the registered method policy's
-  // value, or 15000. A registered method deadline is a ceiling, and 60000 is
-  // the outbound channel policy's.
+  // value, or 15000. The wire limit is 360000; the registered method and host
+  // outbound policy may impose a lower ceiling (60000 by default).
   int32 deadline_ms = 5 [
     (ai.protomolt.proto.validate.v1.field) = {
-      int32: {gte: 0, lte: 60000}
+      int32: {gte: 0, lte: 360000}
     }
   ];
   // Maximum server-streaming responses to collect; zero selects the action
@@ -1060,11 +1060,11 @@ message GrpcInvokeRequest {
       map: {max_pairs: 64}
     }
   ];
-  // Call deadline in milliseconds; zero selects 15000, and 60000 is the
-  // outbound channel policy's ceiling.
+  // Call deadline in milliseconds; zero selects 15000. The wire limit is
+  // 360000; the host outbound policy defaults to a lower ceiling of 60000.
   int32 deadline_ms = 6 [
     (ai.protomolt.proto.validate.v1.field) = {
-      int32: {gte: 0, lte: 60000}
+      int32: {gte: 0, lte: 360000}
     }
   ];
   // Cap on collected server-streaming responses; zero selects 64. The cap
