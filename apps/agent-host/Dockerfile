@@ -11,7 +11,7 @@
 # ~/.kimi-code from the host.
 #
 #   docker run --rm protomolt-agent-host:local --help
-FROM node:22.23.2-bookworm-slim AS node
+FROM node:22.23.3-bookworm-slim AS node
 
 FROM eclipse-temurin:25-jdk
 

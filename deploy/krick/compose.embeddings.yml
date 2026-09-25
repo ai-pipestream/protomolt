@@ -15,7 +15,7 @@ name: protomolt-krick-embeddings
 
 services:
   embedder-tei:
-    image: ${TEI_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:1.9.3}
+    image: ${TEI_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:1.9.4}
     container_name: protomolt-embedder-tei
     command:
       - --model-id
