@@ -186,11 +186,12 @@ public final class ActionCatalog {
         // Before the envelope is looked at: a caller who may not run the verb learns only
         // that, not whether the request they sent would have been accepted.
         requireScope(action, caller);
-        com.google.protobuf.util.JsonFormat.TypeRegistry registry = action.typeRegistry();
+        ObjectNode envelope = Inputs.requireEnvelope(input);
+        com.google.protobuf.util.JsonFormat.TypeRegistry registry =
+                action.typeRegistry(envelope);
         Message request = CatalogContract.toRequest(
-                Inputs.requireEnvelope(input), action.requestType(), name, registry);
-        return CatalogContract.toReply(
-                dispatch(action, name, request, caller), name, registry);
+                envelope, action.requestType(), name, registry);
+        return action.renderJsonReply(dispatch(action, name, request, caller), registry);
     }
 
     /** Dispatches a typed request to the named action with process authority. */
@@ -258,11 +259,13 @@ public final class ActionCatalog {
             JsonStreamEmitter emitter) throws ActionException {
         ProtoAction action = get(name);
         requireScope(action, caller);
-        com.google.protobuf.util.JsonFormat.TypeRegistry registry = action.typeRegistry();
+        ObjectNode envelope = Inputs.requireEnvelope(input);
+        com.google.protobuf.util.JsonFormat.TypeRegistry registry =
+                action.typeRegistry(envelope);
         Message request = CatalogContract.toRequest(
-                Inputs.requireEnvelope(input), action.requestType(), name, registry);
+                envelope, action.requestType(), name, registry);
         executeStreaming(name, request, caller,
-                message -> emitter.emit(CatalogContract.toReply(message, name, registry)));
+                message -> emitter.emit(action.renderJsonReply(message, registry)));
     }
 
     /** Spends the caller's budget on the action's scope, refusing when it is exhausted. */

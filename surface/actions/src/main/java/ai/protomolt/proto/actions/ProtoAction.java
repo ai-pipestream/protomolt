@@ -80,6 +80,18 @@ public interface ProtoAction {
         return com.google.protobuf.util.JsonFormat.TypeRegistry.getEmptyTypeRegistry();
     }
 
+    /** Resolves caller-owned Any types for this JSON request after scope authorization. */
+    default com.google.protobuf.util.JsonFormat.TypeRegistry typeRegistry(ObjectNode input) {
+        return typeRegistry();
+    }
+
+    /** Renders a JSON reply; actions with contextual Any fields can specialize this edge. */
+    default ObjectNode renderJsonReply(Message reply,
+            com.google.protobuf.util.JsonFormat.TypeRegistry registry)
+            throws ActionException {
+        return CatalogContract.toReply(reply, name(), registry);
+    }
+
     /**
      * Executes the action.
      *

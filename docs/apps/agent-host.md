@@ -1,9 +1,10 @@
 # Agent host
 
 `protomolt-agent-host` keeps a coding agent (Codex, Kimi, Cursor, Antigravity,
-Muse Code) or a local OpenAI-compatible model attached to the delegation tools
-on a ProtoMolt server. The server remains the coordinator and transcript authority. The host
-owns the model process, local workspace, MCP cursor, and provider session.
+Muse Code), a local OpenAI-compatible model, or the worker-only fixture attached
+to the delegation tools on a ProtoMolt server. The server remains the
+coordinator and transcript authority. The host owns the model process, local
+workspace, MCP cursor, and provider session.
 
 The host long-polls `/mcp` over a pooled HTTP/2 client. A model receives only
 events relevant to its role and must return a JSON command batch. The host
@@ -18,7 +19,8 @@ checks all of the following before calling a tool:
 
 A command's arguments are the canonical proto3 JSON of the request message the
 verb takes: `delegation-accept` carries an `AcceptTaskRequest`,
-`delegation-candidate` a `SubmitCandidateRequest`, and so on for the six other
+`delegation-reject` a `RejectTaskRequest`,
+`delegation-candidate` a `SubmitCandidateRequest`, and so on for the other
 delegation commands. The host parses the arguments into that message, refusing
 any member no field declares, and applies the message's own validation rules.
 Those are the rules the coordinator applies when the call arrives, message-level
@@ -108,6 +110,27 @@ Persistent coding workers can instead use the language-specific Java and C++
 images. They add compilers, build systems, gRPC generators, and common agent
 tools while preserving the same agent-host entrypoint and provider behavior.
 See [Coding workers](coding-workers.md) for the image and security boundaries.
+
+## Fixture worker
+
+For the coordination starter, `--provider fixture --role worker` runs a
+deterministic worker through the same MCP transport and command gates. It
+accepts only offers whose objective begins `Produce a coordination report`,
+whose sole required check is `fixture-report-valid`, and whose deliverable is
+the reviewed `CoordinationReport` shape. Other offers receive
+`delegation-reject`; the fixture cannot act as a coordinator. For a supported
+offer it writes validated protobuf bytes to `<workspace>/artifacts/<sha256>`
+and submits a candidate with that digest and a fixture-only check. The check
+means the report passed the offered runtime validator and its bytes were
+stored; it does not claim a build, external test, or repository commit.
+
+Example worker options are `--provider fixture --role worker --identity
+fixture-worker --workspace /var/lib/protomolt/fixture --state
+/var/lib/protomolt/fixture/host.json`, alongside the normal `--endpoint` and
+credential options. The workspace must persist across restarts. A coordinator
+on another host needs access to the artifact bytes separately; the candidate
+contains only the content digest. The fixture limits each poll to eight events
+so an offer's accept and candidate commands fit the host's 16-command turn cap.
 
 ## Kimi worker
 

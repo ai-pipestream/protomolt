@@ -1081,7 +1081,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                             : CallerResolver.chain(resolvers);
 
             grpc = ProtoMoltGrpcServer.start(options.host(), options.grpcPort(), catalog,
-                    options.apiToken(), callers);
+                    options.apiToken(), callers, contributedServices(meshCluster != null));
             if (options.demo() && store != null) {
                 // The demo workflow composes this server's own verbs, so it needs the bound
                 // gRPC port - seeded here rather than with the schemas.

@@ -6,6 +6,8 @@ import ai.protomolt.proto.actions.CatalogContract;
 import ai.protomolt.proto.delegation.v1.WatchEventsRequest;
 import ai.protomolt.proto.delegation.v1.WatchEventsResponse;
 import com.google.protobuf.Message;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.util.JsonFormat;
 
 import com.google.protobuf.Descriptors.Descriptor;
 import java.time.Duration;
@@ -56,6 +58,11 @@ final class DelegationWatchAction extends DelegationAction {
     @Override
     public Descriptor responseType() {
         return WatchEventsResponse.getDescriptor();
+    }
+
+    @Override public ObjectNode renderJsonReply(Message reply, JsonFormat.TypeRegistry registry)
+            throws ActionException {
+        return DelegationEventJson.render(reply, name(), bridge.coordinator());
     }
 
     @Override

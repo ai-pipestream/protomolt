@@ -1,6 +1,7 @@
 package ai.protomolt.proto.agenthost;
 
 import ai.protomolt.proto.delegation.v1.AcceptTaskRequest;
+import ai.protomolt.proto.delegation.v1.RejectTaskRequest;
 import ai.protomolt.proto.delegation.v1.DeliverableContract;
 import com.google.protobuf.util.JsonFormat.TypeRegistry;
 import com.google.protobuf.Any;
@@ -35,6 +36,7 @@ import com.google.protobuf.util.JsonFormat;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -74,6 +76,7 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
     /** The delegation request message each tool carries, by tool name. */
     private static final Map<String, Descriptor> REQUESTS = Map.of(
             "delegation-accept", AcceptTaskRequest.getDescriptor(),
+            "delegation-reject", RejectTaskRequest.getDescriptor(),
             "delegation-progress", ReportProgressRequest.getDescriptor(),
             "delegation-checkpoint", RecordCheckpointRequest.getDescriptor(),
             "delegation-candidate", SubmitCandidateRequest.getDescriptor(),
@@ -83,7 +86,7 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
             "delegation-cancel", CancelTaskRequest.getDescriptor());
 
     private static final List<String> WORKER_TOOLS = List.of(
-            ACK, "delegation-accept", MESSAGE,
+            ACK, "delegation-accept", "delegation-reject", MESSAGE,
             "delegation-progress", "delegation-checkpoint", "delegation-candidate");
     private static final List<String> COORDINATOR_TOOLS = List.of(
             ACK, "delegation-offer", MESSAGE,
@@ -301,7 +304,8 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
                                           Map<String, DeliverableContract> contracts) {
         SubmitCandidateRequest.Builder builder = SubmitCandidateRequest.newBuilder();
         try {
-            JsonFormat.parser().usingTypeRegistry(deliverableTypes(contracts))
+            JsonFormat.parser().usingTypeRegistry(deliverableTypes(
+                            contracts.get(arguments.path("taskId").asText())))
                     .merge(arguments.toString(), builder);
         } catch (InvalidProtocolBufferException e) {
             String reason = e.getMessage() == null ? "" : e.getMessage();
@@ -342,21 +346,14 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
         }
     }
 
-    /** The registry a candidate's proto3 JSON needs to read its deliverable. */
-    private static TypeRegistry deliverableTypes(Map<String, DeliverableContract> contracts) {
-        TypeRegistry.Builder registry = TypeRegistry.newBuilder();
-        Set<String> added = new HashSet<>();
-        for (DeliverableContract contract : contracts.values()) {
-            if (!added.add(contract.getTypeName())) {
-                continue;
-            }
-            try {
-                registry.add(DeliverableContracts.compile(contract).descriptor());
-            } catch (IllegalArgumentException unlinkable) {
-                // a contract the coordinator would refuse; the candidate check names it
-            }
+    /** Parse only against the addressed task's offer, never another task's same-named type. */
+    private static TypeRegistry deliverableTypes(DeliverableContract contract) {
+        if (contract == null) return TypeRegistry.getEmptyTypeRegistry();
+        try {
+            return DeliverableContracts.typeRegistry(contract);
+        } catch (IllegalArgumentException unlinkable) {
+            return TypeRegistry.getEmptyTypeRegistry();
         }
-        return registry.build();
     }
 
     private static String violations(String where, ValidationResult result) {
@@ -494,11 +491,12 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
         }
         ObjectNode properties = (ObjectNode) def.path("properties");
         ArrayNode required = (ArrayNode) def.path("required");
-        Map<String, DeliverableContract> byType = new LinkedHashMap<>();
+        Map<String, DeliverableContract> distinctContracts = new LinkedHashMap<>();
         for (DeliverableContract contract : contracts.values()) {
-            byType.putIfAbsent(contract.getTypeName(), contract);
+            distinctContracts.putIfAbsent(contract.getTypeName() + ":" + Base64.getEncoder()
+                    .encodeToString(contract.getDescriptorSet().toByteArray()), contract);
         }
-        if (byType.isEmpty()) {
+        if (distinctContracts.isEmpty()) {
             properties.remove("result");
             for (int i = 0; i < required.size(); i++) {
                 if ("result".equals(required.get(i).asText())) {
@@ -510,7 +508,10 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
         }
         ObjectNode result = MAPPER.createObjectNode();
         ArrayNode branches = result.putArray("anyOf");
-        for (DeliverableContract contract : byType.values()) {
+        List<String> identities = new ArrayList<>(distinctContracts.keySet());
+        identities.sort(String::compareTo);
+        for (int index = 0; index < identities.size(); index++) {
+            DeliverableContract contract = distinctContracts.get(identities.get(index));
             Descriptor type;
             try {
                 type = DeliverableContracts.compile(contract).descriptor();
@@ -519,13 +520,17 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
             }
             ObjectNode rendered = MAPPER.valueToTree(SCHEMAS.generateRooted(type));
             rendered.remove("$schema");
-            JsonNode nested = rendered.remove("$defs");
-            if (nested != null) {
+            JsonNode nested = rendered.path("$defs");
+            if (nested.isObject()) {
+                String namespace = "deliverable-" + index + "::";
+                Map<String, String> renamed = new LinkedHashMap<>();
+                nested.fieldNames().forEachRemaining(name ->
+                        renamed.put(name, namespace + name));
+                rewriteLocalRefs(rendered, renamed);
+                rendered.remove("$defs");
                 for (Map.Entry<String, JsonNode> entry : nested.properties()) {
-                    if (!defs.has(entry.getKey())) {
-                        harden(entry.getValue());
-                        defs.set(entry.getKey(), entry.getValue());
-                    }
+                    harden(entry.getValue());
+                    defs.set(renamed.get(entry.getKey()), entry.getValue());
                 }
             }
             ObjectNode members = rendered.withObject("properties");
@@ -538,6 +543,25 @@ record AgentTurn(List<Long> handledEventCursors, List<Command> commands) {
         }
         branches.addObject().put("type", "null");
         properties.set("result", result);
+    }
+
+    /** Keeps every local reference with its contract, including recursive references. */
+    private static void rewriteLocalRefs(JsonNode node, Map<String, String> renamed) {
+        if (node instanceof ObjectNode object) {
+            JsonNode ref = object.get("$ref");
+            if (ref != null && ref.isTextual()) {
+                String value = ref.asText();
+                String original = value.startsWith("#/$defs/")
+                        ? value.substring("#/$defs/".length()) : "";
+                String replacement = renamed.get(original);
+                if (replacement != null) {
+                    object.put("$ref", "#/$defs/" + replacement);
+                }
+            }
+            object.properties().forEach(entry -> rewriteLocalRefs(entry.getValue(), renamed));
+        } else if (node instanceof ArrayNode array) {
+            array.forEach(child -> rewriteLocalRefs(child, renamed));
+        }
     }
 
     private static ObjectNode commandSchema(AgentRole role, String tool, ObjectNode defs) {

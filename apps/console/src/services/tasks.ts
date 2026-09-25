@@ -77,6 +77,7 @@ export interface OfferResult {
 
 export interface ExportedTaskRecord {
   recordBase64: string
+  transcriptBase64: string
   manifestDigest: string
   recordId: string
 }
@@ -95,6 +96,18 @@ export interface CandidateView {
   attempt: number
   summary: string
   cursor: number
+  result?: Record<string, unknown>
+}
+
+export interface DeliverableContract {
+  descriptorSet: string
+  typeName: string
+}
+
+export interface OfferOptions {
+  contract?: DeliverableContract
+  taskId?: string
+  resumeFrom?: { attempt: number; checkpointSeq: number; resumeToken: string }
 }
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
@@ -191,6 +204,7 @@ export class TaskApi {
     requiredChecks: OfferedCheck[],
     allowedScopes: string[] = [],
     leaseMinutes = 30,
+    options: OfferOptions = {},
   ): Promise<OfferResult> {
     return this.json('POST', `${this.base}/offer`, {
       workerId,
@@ -198,7 +212,12 @@ export class TaskApi {
       requiredChecks,
       ...(allowedScopes.length ? { allowedScopes } : {}),
       leaseMinutes,
+      ...options,
     })
+  }
+
+  cancelTask(taskId: string, reason: string): Promise<{ taskId: string }> {
+    return this.json('POST', `${this.base}/${encodeURIComponent(taskId)}/cancel`, { reason })
   }
 
   /** The task's transcript, projected into a signed work record. */
@@ -326,7 +345,7 @@ export function frameFacts(event: TaskEvent): string[] {
     )
   }
   for (const artifact of value.artifacts ?? []) {
-    facts.push(`artifact · ${artifact.uri ?? artifact.digest ?? artifact.objectKey ?? 'recorded'}`)
+    facts.push(`artifact · ${artifact.uri ?? artifact.sha256 ?? artifact.digest ?? artifact.objectKey ?? 'recorded'}`)
   }
   if (value.state) {
     facts.push(`checkpoint state · ${value.state.uri ?? value.state.digest ?? 'recorded'}`)
@@ -382,10 +401,48 @@ export function latestCandidate(events: TaskEvent[]): CandidateView | null {
         attempt: completion.attempt ?? 0,
         summary: completion.summary ?? '',
         cursor: event.cursor,
+        ...(completion.result ? { result: completion.result } : {}),
       }
     }
   }
   return candidate
+}
+
+/** State and recovery are derived from the protocol; no speculative agent status. */
+export function taskRecovery(task: TaskSummary): { reason: string; actor: string; action: string; retry: boolean; cancel: boolean } {
+  if (task.phase === 'candidate') return {
+    reason: 'A validated candidate is waiting for review.', actor: 'Reviewer',
+    action: 'Inspect the result and evidence, then accept or request a revision.', retry: false, cancel: true,
+  }
+  if (['rejected', 'blocked', 'failed', 'cancelled', 'expired'].includes(task.phase)) return {
+    reason: `Attempt ${task.attempt} ended as ${task.phase}.`, actor: 'Coordinator',
+    action: 'Inspect the recorded reason and offer a new attempt, optionally from a checkpoint.', retry: true, cancel: false,
+  }
+  if (task.phase === 'accepted') return {
+    reason: 'The reviewer accepted this task.', actor: 'Coordinator',
+    action: 'Export the signed record. Create a new task for further work.', retry: false, cancel: false,
+  }
+  return {
+    reason: task.phase === 'offered' ? 'The worker has not accepted or rejected the offer.'
+      : 'The worker has a lease but has not submitted a current candidate.',
+    actor: task.workerId || 'Worker',
+    action: 'Send guidance or answer a question. Cancel if work should stop; an idle lease expires.', retry: false, cancel: true,
+  }
+}
+
+export function latestOffer(events: TaskEvent[]): Frame | undefined {
+  return [...events].reverse().map((event) => coordinatorFrame(event).offer).find(Boolean)
+}
+
+export function latestCheckpoint(events: TaskEvent[]): OfferOptions['resumeFrom'] {
+  for (const event of [...events].reverse()) {
+    const checkpoint = workerFrame(event).checkpoint
+    if (checkpoint) return {
+      attempt: checkpoint.attempt, checkpointSeq: checkpoint.checkpointSeq,
+      resumeToken: checkpoint.resumeToken,
+    }
+  }
+  return undefined
 }
 
 /**

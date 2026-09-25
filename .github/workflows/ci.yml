@@ -33,6 +33,8 @@ jobs:
       - uses: bufbuild/buf-action@v1
         with:
           setup_only: true
+          # Match coordination-contract.sh: bundled well-known descriptors vary by CLI version.
+          version: '1.70.0'
 
       - name: Build and test
         run: ./gradlew build --console=plain -PtestJdk=${{ matrix.test-jdk }}
@@ -46,6 +48,8 @@ jobs:
 
       - name: Buf lint
         run: buf lint
+      - name: Check browser coordination descriptor matches source
+        run: apps/console/scripts/coordination-contract.sh --check
 
       # Static checks for the deployment package (compose files, Dockerfiles,
       # scripts). In-process only: no containers, GPU, or live calls.
@@ -54,6 +58,8 @@ jobs:
 
       - name: Starter configuration
         run: deploy/starter/check-static.sh
+      - name: Agent starter configuration
+        run: deploy/agents/check-static.sh
 
       - name: Buf breaking (PRs)
         if: github.event_name == 'pull_request'

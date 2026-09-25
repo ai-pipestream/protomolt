@@ -153,8 +153,20 @@ an array of at most 64 entries, each a non-empty path of at most 512 characters.
 `requiredChecks` is an array of at least one and at most 64 objects, each with
 a required `name` of at most 128 characters and an optional `description` of at
 most 2048.
-`leaseMinutes` runs from 1 through 1440 and defaults to 30. The whole body is
-capped at 20 KiB; a larger one answers 413.
+`leaseMinutes` runs from 1 through 1440 and defaults to 30. An offer body is
+capped at 1 MiB; other request bodies remain capped at 20 KiB. Larger bodies
+answer 413. The protobuf frame limit is also enforced after schema rendering.
+
+The optional `contract` contains a base64 `descriptorSet` (up to 512 KiB decoded)
+and fully qualified `typeName`. The server links its imports and derives JSON
+Schema; it rejects a client-supplied `jsonSchema`. The dialog can load the
+CoordinationReport example or upload a caller's descriptor set. Runtime rules,
+including the example's cross-field finding count rule, are enforced before a
+candidate reaches review. JSON Schema does not represent every runtime rule.
+
+The example button selects the explicitly scripted fixture worker and its
+`fixture-report-valid` check. That check reports runtime validation and stored
+artifact bytes; it does not claim external test execution or model work.
 
 The task identity is generated server-side as a UUID and returned with the
 worker id under a 201, and the offer lands on the transcript like any other
@@ -283,7 +295,28 @@ carrying a single `error` member.
 | `/api/tasks/{id}/review` | POST | Accept or revise the open candidate |
 | `/api/tasks/{id}/record` | POST | The transcript as a signed work record |
 
-Request bodies are capped at 20 KiB. A task id that is not a UUID is a 400, a
+Request bodies are capped at 20 KiB, except offers at 1 MiB. A task id that is not a UUID is a 400, a
 task the coordinator does not hold is a 404 on the detail route, and a lifecycle
 conflict — an unadmitted worker, an occupied task, a candidate that is not
 there, a task still in flight — is a 409 that names what it found.
+
+## Recovery and typed results
+
+The selected task names the waiting reason, responsible actor, and next action.
+An accepted lease without a candidate can receive guidance, expire, or be
+cancelled with a reason through `POST /api/tasks/{id}/cancel`. A candidate waits
+for the reviewer. A rejected, blocked, failed, cancelled, or expired task can
+be offered again using its `taskId`; the coordinator assigns the next attempt.
+An optional `resumeFrom` names a recorded checkpoint's attempt, sequence, and
+token. The browser lets the operator edit objective, scopes, checks, and the
+deliverable contract while retaining existing constraints and context. An
+accepted task remains terminal; further work needs a new task.
+
+Typed results appear beside their attempt and revision. Historical events are
+rendered using the contract of the offer that preceded each event, so a later
+contract cannot change the interpretation of an earlier result.
+
+Record export also returns `transcriptBase64`, the exact deterministic bytes
+from the same snapshot used to sign the record. A later task message cannot
+change those bytes. Full offline artifact verification still requires every
+artifact referenced by that selected record, in addition to public trust.

@@ -488,6 +488,18 @@ public final class InProcessDelegationCoordinator
         return JsonFormat.TypeRegistry.newBuilder().add(types).build();
     }
 
+    /** The current offer's contract for one task, if its offer declared one. */
+    public Optional<ai.protomolt.proto.delegation.v1.DeliverableContract> deliverableContract(
+            String taskId) {
+        synchronized (lock) {
+            TaskRuntime task = tasks.get(taskId);
+            if (task == null || task.offer == null || !task.offer.getSpec().hasContract()) {
+                return Optional.empty();
+            }
+            return Optional.of(task.offer.getSpec().getContract());
+        }
+    }
+
     /** Returns the current replayable transcript. */
     public Transcript transcript() {
         synchronized (lock) {

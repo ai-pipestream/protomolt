@@ -35,15 +35,18 @@
         </div>
         <v-spacer />
         <v-btn color="primary" prepend-icon="mdi-briefcase-plus-outline" class="mr-1"
-               :disabled="!workers.length" @click="offerOpen = true">Offer a task</v-btn>
+               :disabled="!workers.length" @click="newOffer">Offer a task</v-btn>
         <v-btn icon="mdi-refresh" variant="text" aria-label="Refresh tasks" @click="refresh" />
         <v-btn prepend-icon="mdi-logout" variant="outlined" @click="logout">Sign out</v-btn>
       </div>
 
       <v-dialog v-model="offerOpen" max-width="640">
         <v-card rounded="lg">
-          <v-card-title>Offer a task</v-card-title>
+          <v-card-title>{{ offerTaskId ? 'Offer a new attempt' : 'Offer a task' }}</v-card-title>
           <v-card-text>
+            <v-alert v-if="offerError" type="error" variant="tonal" class="mb-3">{{ offerError }}</v-alert>
+            <v-btn v-if="!offerTaskId" variant="tonal" class="mb-3" :loading="loadingSample"
+                   @click="loadSample">Use coordination example</v-btn>
             <v-select v-model="offerWorker" :items="workers.map((worker) => worker.workerId)"
                       label="Worker" density="compact" class="mb-2" />
             <v-textarea v-model="offerObjective" label="Objective" rows="2" auto-grow
@@ -53,7 +56,7 @@
                           density="compact" class="mb-2" placeholder="apps/console, docs" />
             <div class="text-caption font-weight-medium mb-1">Acceptance checks</div>
             <p class="text-caption text-medium-emphasis mb-2">
-              The contract of done: the worker must prove each one ran before acceptance.
+              The worker must provide evidence for each check. Inspect that evidence before accepting.
             </p>
             <div v-for="(check, i) in offerChecks" :key="i" class="d-flex ga-2 mb-2">
               <v-text-field v-model="check.name" label="Check name" density="compact"
@@ -67,12 +70,30 @@
                    @click="offerChecks.push({ name: '', description: '' })">Add check</v-btn>
             <v-text-field v-model.number="offerLease" label="Lease minutes" type="number"
                           density="compact" style="max-width: 160px" />
+            <div class="text-subtitle-2 mb-2">Typed deliverable</div>
+            <p class="text-caption mb-2">
+              Upload a protobuf descriptor set with imports and enter its message type.
+              The coordinator derives the schema and validates results before review.
+            </p>
+            <input aria-label="Protobuf descriptor set" type="file" accept=".binpb,.pb,.bin,.protoset"
+                   @change="uploadContract" />
+            <v-text-field v-model="offerTypeName" label="Fully qualified message type" class="mt-2"
+                          placeholder="example.Report" />
+            <div v-if="offerDescriptor" class="text-caption">{{ offerDescriptorLabel }}</div>
+            <v-btn v-if="offerDescriptor" variant="text" size="small" @click="clearContract">Remove contract</v-btn>
+            <p v-if="sampleLoaded" class="text-caption mt-2">
+              This example uses a fixture worker, with no model calls or code execution.
+              The finding count must equal the number of findings; the runtime checks this rule.
+              <a :href="`${baseUrl}contracts/coordination_report.proto`" download>Download protobuf source</a>
+            </p>
+            <v-checkbox v-if="offerTaskId && resumeCheckpoint" v-model="resumeCheckpointEnabled"
+                        :label="`Resume from attempt ${resumeCheckpoint.attempt}, checkpoint ${resumeCheckpoint.checkpointSeq}`" />
           </v-card-text>
           <v-card-actions>
             <v-spacer />
             <v-btn variant="text" @click="offerOpen = false">Cancel</v-btn>
             <v-btn color="primary" :loading="offering"
-                   :disabled="!offerWorker || !offerObjective.trim() || !completeChecks.length"
+                   :disabled="!offerWorker || !offerObjective.trim() || !completeChecks.length || (!!offerDescriptor !== !!offerTypeName.trim())"
                    @click="offerTask">Offer</v-btn>
           </v-card-actions>
         </v-card>
@@ -159,6 +180,21 @@
             <v-card-subtitle class="pb-3">
               {{ selected.workerId }} · attempt {{ selected.attempt }} · checkpoint {{ selected.lastCheckpointSeq }}
             </v-card-subtitle>
+            <v-alert v-if="recovery" variant="tonal" type="info" class="mx-4 mb-3">
+              <div>{{ recovery.reason }}</div>
+              <div class="text-caption mt-1">Responsible: {{ recovery.actor }}. {{ recovery.action }}</div>
+              <v-btn v-if="recovery.retry" size="small" class="mt-2" @click="reoffer">Offer a new attempt</v-btn>
+              <details v-if="recovery.cancel" class="mt-2">
+                <summary>Stop this attempt</summary>
+                <v-text-field v-model="cancelReason" label="Reason to cancel" density="compact" class="mt-2" />
+                <v-btn size="small" :loading="cancelling" :disabled="!cancelReason.trim()"
+                       @click="cancelTask">Cancel attempt</v-btn>
+              </details>
+            </v-alert>
+            <div v-if="candidate?.result" class="px-4 pb-3">
+              <div class="text-subtitle-2">Typed result · attempt {{ candidate.attempt }} · revision {{ candidate.revision }}</div>
+              <pre class="typed-result text-caption">{{ JSON.stringify(candidate.result, null, 2) }}</pre>
+            </div>
             <div v-if="contract.length" class="px-4 pb-3 d-flex flex-wrap align-center ga-2">
               <span class="text-caption text-medium-emphasis">Contract of done</span>
               <v-tooltip v-for="check in contract" :key="check.name" location="bottom">
@@ -200,7 +236,9 @@
             </div>
             <v-divider />
 
-            <div class="timeline pa-5">
+            <details class="pa-4">
+              <summary>Recorded updates · {{ events.length }} frames</summary>
+              <div class="timeline pt-4">
               <v-alert
                 v-for="finding in findings"
                 :key="`${finding.frameId}:${finding.kind}`"
@@ -234,7 +272,8 @@
                 </div>
               </div>
               <div v-if="events.length === 0" class="text-medium-emphasis">No task frames recorded.</div>
-            </div>
+              </div>
+            </details>
 
             <v-divider />
             <div v-if="selected.phase === 'candidate' && candidate" class="review-panel pa-4">
@@ -343,6 +382,9 @@ import {
   frameKind,
   frameText,
   latestCandidate,
+  latestOffer,
+  latestCheckpoint,
+  taskRecovery,
   taskApi,
   TaskApiError,
   transcriptText,
@@ -351,6 +393,7 @@ import {
   type TaskMessageKind,
   type TaskSummary,
   type WorkerSummary,
+  type OfferOptions,
 } from '../services/tasks'
 
 const initializing = ref(true)
@@ -378,15 +421,29 @@ const offerChecks = ref<{ name: string; description: string }[]>(
   [{ name: '', description: '' }])
 const offerLease = ref(30)
 const offering = ref(false)
+const offerError = ref('')
+const offerTaskId = ref('')
+const offerDescriptor = ref('')
+const offerDescriptorLabel = ref('')
+const offerTypeName = ref('')
+const loadingSample = ref(false)
+const sampleLoaded = ref(false)
+const resumeCheckpoint = ref<OfferOptions['resumeFrom']>()
+const resumeCheckpointEnabled = ref(false)
+const cancelReason = ref('')
+const cancelling = ref(false)
+const baseUrl = import.meta.env.BASE_URL
 const exportingRecord = ref(false)
 const reviewVerdict = ref('')
 const reviewFeedback = ref('')
 const failedChecks = ref<string[]>([])
 const reviewing = ref(false)
 let watchController: AbortController | null = null
+let selectionGeneration = 0
 
 const contract = computed(() => checkStatuses(events.value))
 const candidate = computed(() => latestCandidate(events.value))
+const recovery = computed(() => selected.value ? taskRecovery(selected.value) : null)
 const reviewableCandidate = computed(() =>
   candidate.value !== null && candidate.value.attempt > 0 && candidate.value.revision > 0)
 const reviewIdentity = computed(() => {
@@ -398,7 +455,7 @@ const reviewIdentity = computed(() => {
 const completeChecks = computed(() =>
   offerChecks.value.filter((check) => check.name.trim()))
 const terminalPhase = computed(() =>
-  ['accepted', 'failed', 'cancelled', 'expired'].includes(selected.value?.phase ?? ''))
+  ['accepted', 'rejected', 'blocked', 'failed', 'cancelled', 'expired'].includes(selected.value?.phase ?? ''))
 
 watch(reviewIdentity, (next, previous) => {
   if (next !== previous) resetReviewDraft()
@@ -416,7 +473,10 @@ onMounted(async () => {
   }
 })
 
-onBeforeUnmount(() => watchController?.abort())
+onBeforeUnmount(() => {
+  selectionGeneration++
+  watchController?.abort()
+})
 
 async function login() {
   loginError.value = ''
@@ -434,6 +494,7 @@ async function login() {
 }
 
 async function logout() {
+  selectionGeneration++
   watchController?.abort()
   await taskApi.logout()
   authenticated.value = false
@@ -462,6 +523,7 @@ async function refresh() {
 }
 
 async function selectTask(task: TaskSummary) {
+  const generation = ++selectionGeneration
   watchController?.abort()
   selected.value = task
   recipient.value = task.workerId
@@ -470,12 +532,14 @@ async function selectTask(task: TaskSummary) {
   cursor.value = 0
   try {
     const detail = await taskApi.task(task.taskId)
+    if (generation !== selectionGeneration || selected.value?.taskId !== task.taskId) return
     selected.value = detail.task
     events.value = uniqueEvents(detail.events)
     findings.value = detail.findings
     cursor.value = Math.max(0, ...events.value.map((event) => event.cursor))
     watchTask(task.taskId)
   } catch (failure) {
+    if (generation !== selectionGeneration) return
     error.value = message(failure)
   }
 }
@@ -486,6 +550,7 @@ async function watchTask(taskId: string) {
   while (!controller.signal.aborted && selected.value?.taskId === taskId) {
     try {
       const update = await taskApi.watchEvents(cursor.value, taskId, 25_000, 128, controller.signal)
+      if (controller.signal.aborted || selected.value?.taskId !== taskId) return
       events.value = uniqueEvents([...events.value, ...update.events])
       cursor.value = Math.max(cursor.value, update.cursor)
       if (update.events.length) await refreshSummaries()
@@ -529,6 +594,7 @@ async function sendGuidance() {
 async function offerTask() {
   if (!offerWorker.value || !offerObjective.value.trim()) return
   offering.value = true
+  offerError.value = ''
   try {
     const scopes = offerScopes.value.split(',')
       .map((scope) => scope.trim()).filter(Boolean)
@@ -537,7 +603,13 @@ async function offerTask() {
       completeChecks.value.map((check) => ({
         name: check.name.trim(), description: check.description.trim(),
       })),
-      scopes, offerLease.value)
+      scopes, offerLease.value, {
+        ...(offerDescriptor.value ? { contract: {
+          descriptorSet: offerDescriptor.value, typeName: offerTypeName.value.trim(),
+        } } : {}),
+        ...(offerTaskId.value ? { taskId: offerTaskId.value } : {}),
+        ...(resumeCheckpointEnabled.value && resumeCheckpoint.value ? { resumeFrom: resumeCheckpoint.value } : {}),
+      })
     offerOpen.value = false
     offerObjective.value = ''
     offerChecks.value = [{ name: '', description: '' }]
@@ -545,9 +617,107 @@ async function offerTask() {
     const created = tasks.value.find((task) => task.taskId === offered.taskId)
     if (created) await selectTask(created)
   } catch (failure) {
-    error.value = message(failure)
+    offerError.value = message(failure)
   } finally {
     offering.value = false
+  }
+}
+
+function clearContract() {
+  offerDescriptor.value = ''
+  offerTypeName.value = ''
+  offerDescriptorLabel.value = ''
+  sampleLoaded.value = false
+}
+
+function newOffer() {
+  offerTaskId.value = ''
+  offerError.value = ''
+  offerObjective.value = ''
+  offerScopes.value = ''
+  offerChecks.value = [{ name: '', description: '' }]
+  offerLease.value = 30
+  offerWorker.value = workers.value.find((worker) => worker.connected)?.workerId ?? ''
+  clearContract()
+  resumeCheckpoint.value = undefined
+  resumeCheckpointEnabled.value = false
+  offerOpen.value = true
+}
+
+function bytesBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary)
+}
+
+async function uploadContract(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  offerError.value = ''
+  if (file.size === 0 || file.size > 512 * 1024) {
+    offerError.value = 'Choose a descriptor set between 1 byte and 512 KiB.'
+    return
+  }
+  try {
+    offerDescriptor.value = bytesBase64(new Uint8Array(await file.arrayBuffer()))
+    offerDescriptorLabel.value = file.name
+    sampleLoaded.value = false
+  } catch (failure) {
+    offerError.value = message(failure)
+  }
+}
+
+async function loadSample() {
+  loadingSample.value = true
+  offerError.value = ''
+  try {
+    const response = await fetch(`${baseUrl}contracts/coordination-report.binpb`)
+    if (!response.ok) throw new Error('The example descriptor could not be loaded.')
+    offerDescriptor.value = bytesBase64(new Uint8Array(await response.arrayBuffer()))
+    offerDescriptorLabel.value = 'CoordinationReport example'
+    offerTypeName.value = 'ai.protomolt.proto.samples.starter.v1.CoordinationReport'
+    offerObjective.value = 'Produce a coordination report about this starter task.'
+    offerChecks.value = [{ name: 'fixture-report-valid', description: 'Fixture report passes the runtime validator; no external test execution.' }]
+    offerWorker.value = workers.value.find((worker) => worker.provider === 'fixture')?.workerId ?? offerWorker.value
+    sampleLoaded.value = true
+  } catch (failure) {
+    offerError.value = message(failure)
+  } finally {
+    loadingSample.value = false
+  }
+}
+
+function reoffer() {
+  if (!selected.value || !recovery.value?.retry) return
+  const offer = latestOffer(events.value)
+  if (!offer) return
+  newOffer()
+  offerTaskId.value = selected.value.taskId
+  offerWorker.value = selected.value.workerId
+  offerObjective.value = offer.spec.objective
+  offerScopes.value = (offer.spec.allowedScope ?? []).join(', ')
+  offerChecks.value = (offer.spec.requiredChecks ?? []).map((check: { name: string; description?: string }) => ({
+    name: check.name, description: check.description ?? '',
+  }))
+  if (offer.spec.contract) {
+    offerDescriptor.value = offer.spec.contract.descriptorSet
+    offerTypeName.value = offer.spec.contract.typeName
+    offerDescriptorLabel.value = 'Contract from the previous attempt'
+  }
+  resumeCheckpoint.value = latestCheckpoint(events.value)
+}
+
+async function cancelTask() {
+  if (!selected.value || !cancelReason.value.trim()) return
+  cancelling.value = true
+  try {
+    await taskApi.cancelTask(selected.value.taskId, cancelReason.value.trim())
+    cancelReason.value = ''
+    await refreshSummaries()
+  } catch (failure) {
+    error.value = message(failure)
+  } finally {
+    cancelling.value = false
   }
 }
 
@@ -668,6 +838,15 @@ function message(failure: unknown): string {
 </script>
 
 <style scoped>
+.typed-result {
+  max-height: 24rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+summary {
+  cursor: pointer;
+}
 .worker-strip {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

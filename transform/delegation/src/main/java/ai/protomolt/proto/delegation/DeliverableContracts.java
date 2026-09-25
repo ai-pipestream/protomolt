@@ -16,6 +16,7 @@ import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.ExtensionRegistry;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.util.JsonFormat;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -100,6 +101,21 @@ public final class DeliverableContracts {
             throw new IllegalArgumentException(linked.failure());
         }
         return new Compiled(linked.descriptor(), linked.validator());
+    }
+
+    /** Types from the named deliverable's file and imports, including peer messages. */
+    public static JsonFormat.TypeRegistry typeRegistry(DeliverableContract contract) {
+        Descriptor named = compile(contract).descriptor();
+        JsonFormat.TypeRegistry.Builder registry = JsonFormat.TypeRegistry.newBuilder();
+        addFileTypes(named.getFile(), registry, new LinkedHashSet<>());
+        return registry.build();
+    }
+
+    private static void addFileTypes(FileDescriptor file, JsonFormat.TypeRegistry.Builder registry,
+                                     Set<String> seen) {
+        if (!seen.add(file.getName())) return;
+        file.getDependencies().forEach(dependency -> addFileTypes(dependency, registry, seen));
+        registry.add(file.getMessageTypes());
     }
 
     /**

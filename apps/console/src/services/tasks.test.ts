@@ -103,3 +103,40 @@ describe('TaskApi', () => {
     expect(failure).toMatchObject({ status: 401, message: 'authentication required' })
   })
 })
+
+import { latestCheckpoint, latestCandidate, taskRecovery, type TaskSummary } from './tasks'
+
+describe('coordination recovery', () => {
+  const task: TaskSummary = { taskId: 'task', phase: 'leased', attempt: 2,
+    workerId: 'worker-a', objective: 'Report', candidateRevision: 0,
+    lastProgressSeq: 0, lastCheckpointSeq: 0, lastCursor: 5 }
+
+  it('names the actor and a next action when accepted work has no candidate', () => {
+    expect(taskRecovery(task)).toMatchObject({ actor: 'worker-a', retry: false, cancel: true })
+    expect(taskRecovery(task).reason).toContain('has not submitted')
+    expect(taskRecovery(task).action).toContain('Send guidance')
+  })
+
+  it('offers a new attempt only for recoverable terminal states', () => {
+    for (const phase of ['rejected', 'blocked', 'failed', 'cancelled', 'expired']) {
+      expect(taskRecovery({ ...task, phase })).toMatchObject({ actor: 'Coordinator', retry: true, cancel: false })
+    }
+    expect(taskRecovery({ ...task, phase: 'accepted' })).toMatchObject({ retry: false, cancel: false })
+    expect(taskRecovery({ ...task, phase: 'accepted' }).action).toContain('new task')
+  })
+
+  it('retains a checkpoint attempt identity and drops the old candidate on reoffer', () => {
+    const events = [
+      { cursor: 1, taskId: 'task', workerId: 'worker-a', lane: 'LANE_WORKER', entry: {
+        workerFrame: { checkpoint: { attempt: 1, checkpointSeq: 2, resumeToken: 'saved' } },
+      } },
+      { cursor: 2, taskId: 'task', workerId: 'worker-a', lane: 'LANE_WORKER', entry: {
+        workerFrame: { completion: { attempt: 1, revision: 1, result: { headline: 'old' } } },
+      } },
+    ]
+    expect(latestCheckpoint(events)).toEqual({ attempt: 1, checkpointSeq: 2, resumeToken: 'saved' })
+    expect(latestCandidate(events)?.result).toEqual({ headline: 'old' })
+    expect(latestCandidate([...events, { cursor: 3, taskId: 'task', workerId: 'worker-a',
+      lane: 'LANE_COORDINATOR', entry: { coordinatorFrame: { offer: { attempt: 2 } } } }])).toBeNull()
+  })
+})

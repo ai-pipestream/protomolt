@@ -37,14 +37,15 @@ The coordinator offers a bounded `TaskSpec` with:
   (see [Deliverable contract](#deliverable-contract)); and
 - a lease duration and expiry.
 
-The worker accepts or rejects the offer. An accepted attempt may send
-heartbeats, monotonic progress, and resumable checkpoints. The coordinator may
-renew or expire the lease. Rejection, heartbeat and lease renewal are frames of
-the gRPC stream; the catalog verbs in [Live MCP surface](#live-mcp-surface)
-do not expose them, so a worker joined over MCP declines an offer by leaving it
-to expire or by asking a question, keeps an attempt alive with progress and
-checkpoints, and gets more time only through a new offer that names its last
-checkpoint. A later attempt can resume from a recorded
+The worker accepts or rejects the offer. `delegation-reject` exposes the
+existing rejection frame through the catalog and MCP surface. It requires the
+addressed worker, task, current offered attempt, reason, and retryable hint.
+Rejection ends that attempt; the hint does not create a new offer. An accepted
+attempt may send heartbeats, monotonic progress, and resumable checkpoints.
+The coordinator may renew or expire the lease. Heartbeat and lease renewal
+remain gRPC stream frames; a worker joined over MCP keeps an attempt alive
+with progress and checkpoints, and gets more time only through a new offer
+that names its last checkpoint. A later attempt can resume from a recorded
 checkpoint.
 
 The lease covers the worker's obligation and ends with its completion

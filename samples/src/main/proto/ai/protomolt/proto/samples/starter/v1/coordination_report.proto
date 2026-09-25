@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.samples.starter.v1;
+
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.samples.starter.v1";
+
+// An example caller-owned deliverable for the coordination starter. This message
+// is packed in CompletionCandidate.result; the existing candidate envelope owns
+// attempt, revision, evidence, and artifact references. It defines no new RPC.
+message CoordinationReport {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "report-count-matches-findings"
+    message: "finding_count must equal the number of findings"
+    expression: "this.finding_count == this.findings.size()"
+  };
+  // A short description of the submitted report.
+  string headline = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 8, max_len: 256}
+  }];
+  // Findings are statements to inspect, not independently verified facts.
+  repeated string findings = 2 [(ai.protomolt.proto.validate.v1.field).repeated = {
+    min_items: 1
+    max_items: 8
+    items: {string: {min_len: 1, max_len: 1024}}
+  }];
+  // Must agree with the list; this rule is enforced by the runtime validator.
+  int32 finding_count = 3 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 8}];
+}

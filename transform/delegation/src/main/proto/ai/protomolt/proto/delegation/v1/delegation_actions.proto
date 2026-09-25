@@ -11,7 +11,7 @@ option java_package = "ai.protomolt.proto.delegation.v1";
 
 // ============================================================================
 // DELEGATION ACTION CONTRACTS - the request and response messages of the
-// twelve delegation catalog verbs.
+// delegation catalog verbs.
 //
 // A catalog verb is invoked with one JSON document, and that document is the
 // canonical proto3 JSON of the request message declared here: there is no
@@ -128,6 +128,47 @@ message AcceptTaskResponse {
   string task_id = 2;
   // The accepted attempt.
   int32 attempt = 3;
+}
+
+// The addressed worker declines an open offer without taking its lease.
+// This is the request/response adapter for the existing TaskReject stream frame.
+message RejectTaskRequest {
+  // The admitted worker addressed by the offer; supplied by the worker host.
+  string worker_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {slug: true, max_len: 128}
+  }];
+  // The offered task.
+  string task_id = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {uuid: true}
+  }];
+  // Must match the current offered attempt. The handler refuses stale attempts,
+  // another worker's offer, and attempts already accepted or otherwise settled.
+  int32 attempt = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    int32: {gte: 1, lte: 1024}
+  }];
+  // Why this worker cannot take the task. Bounds match TaskReject.reason.
+  string reason = 4 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {max_len: 2048}
+  }];
+  // Advisory only: another worker may be suitable. Does not automatically retry.
+  bool retryable = 5;
+}
+
+// A recorded rejection ends this attempt. A later offer uses a new attempt.
+message RejectTaskResponse {
+  // A successful response means the rejection was recorded durably.
+  bool ok = 1 [(ai.protomolt.proto.validate.v1.field).bool.const = true];
+  // The task whose offer was declined.
+  string task_id = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {uuid: true}
+  }];
+  // The rejected attempt, echoed from the validated request.
+  int32 attempt = 3 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 1024}];
 }
 
 // Cancels a task's open offer, lease, or candidate review.
@@ -634,6 +675,9 @@ service DelegationService {
 
   // Takes the open offer's attempt lease.
   rpc AcceptTask(AcceptTaskRequest) returns (AcceptTaskResponse);
+
+  // Declines the addressed open offer without taking its lease.
+  rpc RejectTask(RejectTaskRequest) returns (RejectTaskResponse);
 
   // Cancels a task's open attempt; terminal the moment the coordinator emits it.
   rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);

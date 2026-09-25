@@ -3,7 +3,7 @@ package ai.protomolt.proto.serve;
 import ai.protomolt.proto.actions.ActionCatalog;
 import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.actions.Caller;
-import ai.protomolt.proto.actions.ProtoAction;
+import ai.protomolt.proto.grpc.service.ContractActionBindings;
 import ai.protomolt.proto.grpc.service.CatalogBridge;
 import ai.protomolt.proto.grpc.service.contract.ProtoMoltServiceSchema;
 import ai.protomolt.proto.http.rest.ApiTokenRequirement;
@@ -18,7 +18,6 @@ import com.google.protobuf.Descriptors.ServiceDescriptor;
 import com.google.protobuf.Message;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
@@ -80,18 +79,14 @@ public final class ProtoMoltRestMount {
                                 ApiTokenRequirement apiToken,
                                 Function<Map<String, String>, Caller> callers,
                                 Collection<ServiceDescriptor> contributed) {
-        Map<String, String> byContract = verbsByContract(catalog);
         List<ServiceDescriptor> services = new ArrayList<>();
         services.add(ProtoMoltServiceSchema.service());
         services.addAll(contributed);
         for (ServiceDescriptor service : services) {
-            for (MethodDescriptor method : service.getMethods()) {
-                String verb = byContract.get(contractOf(
-                        method.getInputType().getFullName(),
-                        method.getOutputType().getFullName()));
-                if (verb == null) {
-                    continue;
-                }
+            for (Map.Entry<MethodDescriptor, String> binding :
+                    ContractActionBindings.mounted(catalog, service).entrySet()) {
+                MethodDescriptor method = binding.getKey();
+                String verb = binding.getValue();
                 registry.register(service, method,
                         callers == null
                                 ? request -> dispatch(catalog, verb, method, request,
@@ -114,25 +109,6 @@ public final class ProtoMoltRestMount {
      * catalog is what this process wired. A method with no verb behind it is left off rather
      * than advertised as a route that answers unknown-action.
      */
-    private static Map<String, String> verbsByContract(ActionCatalog catalog) {
-        Map<String, String> byContract = new LinkedHashMap<>();
-        for (String name : catalog.names()) {
-            try {
-                ProtoAction action = catalog.get(name);
-                byContract.putIfAbsent(contractOf(action.requestType().getFullName(),
-                        action.responseType().getFullName()), name);
-            } catch (ActionException e) {
-                // The catalog just named it, so it cannot be unknown; nothing to recover.
-                throw new IllegalStateException(e);
-            }
-        }
-        return byContract;
-    }
-
-    private static String contractOf(String request, String response) {
-        return request + " -> " + response;
-    }
-
     /** A header-aware invoker; the plain path refuses rather than silently widening. */
     private record ScopedInvoker(ActionCatalog catalog, String verb, MethodDescriptor method,
                                  Function<Map<String, String>, Caller> callers)

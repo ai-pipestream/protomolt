@@ -13,11 +13,15 @@ import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.LinkOption;
 import java.nio.file.StandardCopyOption;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.Semaphore;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.RejectedExecutionException;
 
 /** Authenticated fixed-workflow RPC adapter; the server owns its interceptor. */
 final class CorrectionGrpcService extends CorrectionServiceGrpc.CorrectionServiceImplBase
@@ -26,6 +30,7 @@ final class CorrectionGrpcService extends CorrectionServiceGrpc.CorrectionServic
     private final TrustSnapshot trust;
     private final Path workspace;
     private final Semaphore capacity = new Semaphore(1);
+    private final Set<String> activeRunIds = ConcurrentHashMap.newKeySet();
     private final ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
 
     CorrectionGrpcService(ContactCorrection correction, TrustSnapshot trust, Path workspace) {
@@ -48,7 +53,16 @@ final class CorrectionGrpcService extends CorrectionServiceGrpc.CorrectionServic
                     .asRuntimeException());
             return;
         }
+        String runId = request.getRunId();
+        // Identity conflicts take precedence over transient capacity.
+        if (Files.exists(workspace.resolve("outcomes").resolve(runId), LinkOption.NOFOLLOW_LINKS)
+                || !activeRunIds.add(runId)) {
+            observer.onError(Status.ALREADY_EXISTS.withDescription("correction run id already used")
+                    .asRuntimeException());
+            return;
+        }
         if (!capacity.tryAcquire()) {
+            activeRunIds.remove(runId);
             observer.onError(Status.RESOURCE_EXHAUSTED.withDescription("correction worker busy")
                     .asRuntimeException());
             return;
@@ -60,37 +74,51 @@ final class CorrectionGrpcService extends CorrectionServiceGrpc.CorrectionServic
             if (active != null) active.interrupt();
         };
         call.addListener(cancellation, Runnable::run);
-        workers.execute(() -> {
-            worker.set(Thread.currentThread());
-            try {
-                if (call.isCancelled()) return;
-                String runId = request.getRunId();
-                ContactCorrection.Outcome result = correction.run(runId, request.getSource());
-                var check = correction.verify(result, trust);
-                if (!check.ok()) throw new IOException("recorded correction verification failed: " + check.reason());
-                CorrectionOutcome reply = outcome(runId, result.assessment(),
-                        result.executionReceipt(), result.assessmentReceipt());
-                markCompleted(runId);
-                if (!call.isCancelled()) {
-                    RunCorrectionResponse response = RunCorrectionResponse.newBuilder()
-                            .setOutcome(reply).build();
+        try {
+            workers.execute(() -> {
+                worker.set(Thread.currentThread());
+                RunCorrectionResponse response = null;
+                Throwable error = null;
+                try {
+                    if (call.isCancelled()) return;
+                    ContactCorrection.Outcome result = correction.run(runId, request.getSource());
+                    var check = correction.verify(result, trust);
+                    if (!check.ok()) throw new IOException("recorded correction verification failed: " + check.reason());
+                    CorrectionOutcome reply = outcome(runId, result.assessment(),
+                            result.executionReceipt(), result.assessmentReceipt());
+                    markCompleted(runId);
+                    response = RunCorrectionResponse.newBuilder().setOutcome(reply).build();
                     ValidationResult.validate(response).throwIfInvalid();
-                    observer.onNext(response);
-                    observer.onCompleted();
+                } catch (FileAlreadyExistsException duplicate) {
+                    error = Status.ALREADY_EXISTS
+                            .withDescription("correction run id already used").asRuntimeException();
+                } catch (Throwable failure) {
+                    error = Status.INTERNAL
+                            .withDescription("correction run failed; inspect recorded evidence")
+                            .asRuntimeException();
+                } finally {
+                    worker.set(null);
+                    call.removeListener(cancellation);
+                    activeRunIds.remove(runId);
+                    capacity.release();
                 }
-            } catch (FileAlreadyExistsException duplicate) {
-                if (!call.isCancelled()) observer.onError(Status.ALREADY_EXISTS
-                        .withDescription("correction run id already used").asRuntimeException());
-            } catch (Throwable failure) {
-                if (!call.isCancelled()) observer.onError(Status.INTERNAL
-                        .withDescription("correction run failed; inspect recorded evidence")
-                        .asRuntimeException());
-            } finally {
-                worker.set(null);
-                call.removeListener(cancellation);
-                capacity.release();
-            }
-        });
+                // A caller may start its next request inside a completion callback.
+                // Finish workspace cleanup and release capacity before notifying it.
+                if (!call.isCancelled()) {
+                    if (error != null) observer.onError(error);
+                    else {
+                        observer.onNext(response);
+                        observer.onCompleted();
+                    }
+                }
+            });
+        } catch (RejectedExecutionException stopped) {
+            call.removeListener(cancellation);
+            activeRunIds.remove(runId);
+            capacity.release();
+            observer.onError(Status.UNAVAILABLE.withDescription("correction worker stopped")
+                    .asRuntimeException());
+        }
     }
 
     @Override public void getCorrection(GetCorrectionRequest request,
@@ -151,5 +179,15 @@ final class CorrectionGrpcService extends CorrectionServiceGrpc.CorrectionServic
         }
     }
 
-    @Override public void close() { workers.shutdownNow(); }
+    @Override public void close() {
+        workers.shutdownNow();
+        try {
+            if (!workers.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                throw new IllegalStateException("correction workers did not stop");
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted while stopping correction workers", interrupted);
+        }
+    }
 }

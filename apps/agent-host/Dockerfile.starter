@@ -1,0 +1,14 @@
+# Coordination starter: actual AgentHost, with an explicit fixture provider.
+# Kimi's CLI and authentication enter through the optional runtime mount.
+# Coding toolchains and other provider CLIs belong in the full worker images.
+FROM eclipse-temurin:25-jre
+
+COPY build/install/protomolt-agent-host /opt/protomolt-agent-host
+RUN useradd --system --uid 10001 --create-home --home-dir /home/protomolt protomolt \
+    && chmod -R a+rX /opt/protomolt-agent-host \
+    && chmod 755 /home/protomolt
+USER 10001
+ENV HOME=/home/protomolt
+ENV PATH="/home/protomolt/.kimi-code/bin:/opt/protomolt-agent-host/bin:${PATH}"
+WORKDIR /home/protomolt
+ENTRYPOINT ["/opt/protomolt-agent-host/bin/protomolt-agent-host"]

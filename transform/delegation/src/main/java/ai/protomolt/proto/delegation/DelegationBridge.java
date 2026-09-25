@@ -8,6 +8,7 @@ import ai.protomolt.proto.delegation.v1.DelegateRequest;
 import ai.protomolt.proto.delegation.v1.DelegateResponse;
 import ai.protomolt.proto.delegation.v1.ProgressEvent;
 import ai.protomolt.proto.delegation.v1.TaskAccept;
+import ai.protomolt.proto.delegation.v1.TaskReject;
 import ai.protomolt.proto.delegation.v1.TaskMessage;
 import ai.protomolt.proto.delegation.v1.TaskMessageKind;
 import ai.protomolt.proto.delegation.v1.TaskOffer;
@@ -156,6 +157,16 @@ public final class DelegationBridge implements AutoCloseable {
         WorkerStream stream = requireStream(workerId);
         stream.sendChecked(taskId, attempt, DelegateRequest.newBuilder()
                 .setAccept(TaskAccept.newBuilder().setAttempt(attempt)));
+    }
+
+    /** Declines only the addressed open offer, recording a terminal rejected attempt. */
+    public void reject(String workerId, String taskId, int attempt, String reason,
+                       boolean retryable) {
+        Objects.requireNonNull(reason, "reason");
+        WorkerStream stream = requireStream(workerId);
+        stream.sendChecked(taskId, attempt, DelegateRequest.newBuilder()
+                .setReject(TaskReject.newBuilder().setAttempt(attempt)
+                        .setReason(reason).setRetryable(retryable)));
     }
 
     /**

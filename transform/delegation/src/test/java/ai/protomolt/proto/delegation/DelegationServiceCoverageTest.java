@@ -46,6 +46,6 @@ class DelegationServiceCoverageTest {
         assertThat(unreachable)
                 .as("request messages the verbs accept but no method takes")
                 .isEmpty();
-        assertThat(service.getMethods()).hasSize(12);
+        assertThat(service.getMethods()).hasSize(13);
     }
 }

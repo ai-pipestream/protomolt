@@ -75,6 +75,7 @@ public final class AgentHostMain {
 
     private static AgentProvider provider(Options options, AgentHostState state) {
         return switch (options.provider()) {
+            case "fixture" -> new FixtureAgentProvider(options.workspace());
             case "kimi" -> new AcpAgentProvider(options.workspace(), state.providerSessionId(),
                     List.of("kimi", "acp"), options.turnTimeout(), options.permissionPolicy());
             case "codex" -> new CodexAgentProvider(options.workspace(), options.state(),
@@ -99,7 +100,7 @@ public final class AgentHostMain {
 
     /** The provider names {@code --provider} accepts. */
     static final List<String> PROVIDERS = List.of("kimi", "codex", "openai", "cursor",
-            "antigravity", "muse");
+            "antigravity", "muse", "fixture");
 
     /**
      * The {@code muse serve} launch. Project skills and rules load only in a trusted
@@ -186,6 +187,14 @@ public final class AgentHostMain {
             if (!PROVIDERS.contains(normalizedProvider)) {
                 throw new IllegalArgumentException("provider must be one of " + PROVIDERS);
             }
+            if ("fixture".equals(normalizedProvider) && parsedRole != AgentRole.WORKER) {
+                throw new IllegalArgumentException("fixture provider supports only the worker role");
+            }
+            // A supported offer emits accept plus candidate; the host caps a turn at
+            // sixteen commands, so eight events is the most this provider can answer.
+            if ("fixture".equals(normalizedProvider)) {
+                maxEvents = Math.min(maxEvents, 8);
+            }
             Path workspacePath = Path.of(workspace).toAbsolutePath().normalize();
             if (!Files.isDirectory(workspacePath)) {
                 throw new IllegalArgumentException("workspace must be an existing directory");
@@ -232,7 +241,7 @@ public final class AgentHostMain {
         static String usage() {
             return "Usage: protomolt-agent-host --endpoint <https://host/mcp> "
                     + "--role <worker|coordinator> --identity <id> "
-                    + "--provider <kimi|codex|openai|cursor|antigravity|muse> "
+                    + "--provider <kimi|codex|openai|cursor|antigravity|muse|fixture> "
                     + "--workspace <dir> --state <file> "
                     + "[--model <name>] [--provider-endpoint <http://host:port/v1>] "
                     + "[--token-env <ENV_NAME>] "

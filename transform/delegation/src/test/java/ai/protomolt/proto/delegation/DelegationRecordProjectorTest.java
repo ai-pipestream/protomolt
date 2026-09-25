@@ -141,6 +141,31 @@ class DelegationRecordProjectorTest {
                 .hasMessageContaining("no recorded offer");
     }
 
+    @Test
+    void rejectedAndBlockedAttemptsProducePartialRecordsButAReofferIsLiveAgain() {
+        for (DelegateRequest.Builder terminal : List.of(
+                DelegateRequest.newBuilder().setReject(
+                        ai.protomolt.proto.delegation.v1.TaskReject.newBuilder()
+                                .setAttempt(1).setReason("unsupported contract")),
+                DelegateRequest.newBuilder().setBlocked(
+                        ai.protomolt.proto.delegation.v1.BlockedReport.newBuilder()
+                                .setAttempt(1).setReason("missing input")))) {
+            var entries = new java.util.ArrayList<TranscriptEntry>();
+            entries.add(coordinator(DelegateResponse.newBuilder()
+                    .setOffer(TaskOffer.newBuilder().setSpec(spec()).setAttempt(1))));
+            entries.add(worker(terminal));
+            var partial = DelegationRecordProjector.project(TASK_ID, entries, issuance());
+            assertThat(partial.getCompleteness().getStatus())
+                    .isEqualTo(CompletenessStatus.COMPLETENESS_STATUS_PARTIAL);
+            byte[] record = new RecordSigner(KEY_ID, KEYS.getPrivate()).sign(partial).toByteArray();
+            assertThat(RecordVerifier.verify(record, trust()).verified()).isTrue();
+            entries.add(coordinator(DelegateResponse.newBuilder()
+                    .setOffer(TaskOffer.newBuilder().setSpec(spec()).setAttempt(2))));
+            assertThatThrownBy(() -> DelegationRecordProjector.project(TASK_ID, entries, issuance()))
+                    .hasMessageContaining("still in flight");
+        }
+    }
+
     private static DelegationRecordProjector.Issuance issuance() {
         return new DelegationRecordProjector.Issuance(
                 "record-" + TASK_ID, ISSUER, KEY_ID, ISSUED_AT, "");

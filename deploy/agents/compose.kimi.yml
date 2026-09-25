@@ -1,0 +1,66 @@
+# Optional same-host Kimi worker. The authenticated Kimi configuration directory
+# is supplied by the operator and never included in the starter bundle.
+services:
+  kimi-init:
+    image: ${PROTOMOLT_ALPINE_IMAGE:-alpine:3.21}
+    profiles: [kimi]
+    user: "0:0"
+    restart: "no"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    environment:
+      KIMI_AGENT_UID: ${KIMI_AGENT_UID:?Set KIMI_AGENT_UID to the owner of KIMI_CODE_DIR}
+      KIMI_AGENT_GID: ${KIMI_AGENT_GID:?Set KIMI_AGENT_GID to the owner of KIMI_CODE_DIR}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        case "$$KIMI_AGENT_UID:$$KIMI_AGENT_GID" in
+          *[!0-9:]*|:*|*:) echo "Kimi UID and GID must be numeric" >&2; exit 1 ;;
+        esac
+        chown "$$KIMI_AGENT_UID:$$KIMI_AGENT_GID" /state /workspace /home-dir
+        chmod 0700 /state /workspace /home-dir
+        # Keep Docker from copying the image's UID-10001 home into this
+        # otherwise empty volume on the worker's first start.
+        touch /home-dir/.initialized
+        chown "$$KIMI_AGENT_UID:$$KIMI_AGENT_GID" /home-dir/.initialized
+    volumes:
+      - kimi-state:/state
+      - kimi-workspace:/workspace
+      - kimi-home:/home-dir
+
+  kimi-worker:
+    profiles: [kimi]
+    image: ${PROTOMOLT_AGENT_IMAGE:-ghcr.io/ai-pipestream/protomolt-agent-host:${PROTOMOLT_VERSION:?Use the published agent starter bundle}}
+    depends_on:
+      kimi-init:
+        condition: service_completed_successfully
+      serve:
+        condition: service_healthy
+    # Primary group must match the evidence reader even when a provider creates
+    # a temporary file elsewhere and renames it into the evidence directory.
+    user: "${KIMI_AGENT_UID:?Set KIMI_AGENT_UID to the owner of KIMI_CODE_DIR}:10001"
+    group_add: ["${KIMI_AGENT_GID:?Set KIMI_AGENT_GID to the owner of KIMI_CODE_DIR}"]
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        umask 0027
+        export PROTOMOLT_MCP_TOKEN="$$(cat /run/coordination/token)"
+        exec /opt/protomolt-agent-host/bin/protomolt-agent-host \
+          --endpoint http://serve:8080/mcp --role worker \
+          --identity kimi-worker --provider kimi \
+          --workspace /workspace --state /state/kimi-worker.json \
+          --token-env PROTOMOLT_MCP_TOKEN
+    volumes:
+      - coordination-secret:/run/coordination:ro
+      - kimi-state:/state
+      - kimi-workspace:/workspace
+      - kimi-home:/home/protomolt
+      - evidence-data:/workspace/artifacts
+      - ${KIMI_CODE_DIR:?Set an existing authenticated Kimi configuration directory}:/home/protomolt/.kimi-code
+    restart: unless-stopped
+
+volumes:
+  kimi-state:
+  kimi-workspace:
+  kimi-home:
