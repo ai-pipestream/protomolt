@@ -152,3 +152,10 @@ are excluded from local contributed RPC binding. The restart integration test
 now invokes native RegisterWorker after the original endpoint has stopped.
 That closes step 2 above for this source state; rebuilt-image/release gates
 remain outstanding. Recheck the actual PR/remotes/tag before repeating landing.
+
+PR #323's first hosted run passed the build, ACP tests, console, conformance,
+and integration but failed browser descriptor byte comparison: CI selected Buf
+1.73.0 while the asset was generated with 1.70.0. Reproduced locally; bundled
+google/protobuf/descriptor.proto changed between versions. CI and the asset
+generator now explicitly require 1.70.0 for reproducible descriptor bytes.
+The updated PR still needs its own green hosted run before merge.

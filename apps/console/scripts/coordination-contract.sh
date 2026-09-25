@@ -3,6 +3,11 @@
 set -euo pipefail
 repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
 cd "$repo_dir"
+buf_version=1.70.0
+if [[ "$(buf --version)" != "$buf_version" ]]; then
+  echo "Browser contract generation requires buf $buf_version (matching CI)." >&2
+  exit 1
+fi
 proto=samples/src/main/proto/ai/protomolt/proto/samples/starter/v1/coordination_report.proto
 assets=apps/console/public/contracts
 work_dir=$(mktemp -d)
