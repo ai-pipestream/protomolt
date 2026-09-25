@@ -176,3 +176,13 @@ messages. recordId labels the task; manifestDigest identifies a signed manifest.
 TaskConsoleRecordTest already verifies the old and new snapshots independently.
 Full build plus the dedicated ACP protocol lane passed after these changes
 (1494 tasks, 21 seconds; `/tmp/goal4-checkpoint-final-review-build.log`).
+
+A later hosted run exposed completion notification preceding capacity release:
+an immediate next request could see RESOURCE_EXHAUSTED. A deterministic test
+starts that request inside onCompleted and failed before the fix. Cleanup now
+precedes response notification, including errors; cancelled calls remain silent.
+Kimi's completed review remains at the path above. Its additional history-page
+recovery/native RPC coverage suggestions and packaging diagnostics belong to
+the release-qualification follow-up, also listed in PR #323's description.
+Full build plus ACP protocol tests passed again after the capacity fix
+(1494 tasks, 20 seconds; `/tmp/goal4-checkpoint-capacity-green.log`).

@@ -54,8 +54,7 @@ final class CorrectionGrpcService extends CorrectionServiceGrpc.CorrectionServic
             return;
         }
         String runId = request.getRunId();
-        // Identity conflicts take precedence over transient capacity, including the
-        // interval after onCompleted wakes a client but before worker cleanup finishes.
+        // Identity conflicts take precedence over transient capacity.
         if (Files.exists(workspace.resolve("outcomes").resolve(runId), LinkOption.NOFOLLOW_LINKS)
                 || !activeRunIds.add(runId)) {
             observer.onError(Status.ALREADY_EXISTS.withDescription("correction run id already used")
@@ -78,6 +77,8 @@ final class CorrectionGrpcService extends CorrectionServiceGrpc.CorrectionServic
         try {
             workers.execute(() -> {
                 worker.set(Thread.currentThread());
+                RunCorrectionResponse response = null;
+                Throwable error = null;
                 try {
                     if (call.isCancelled()) return;
                     ContactCorrection.Outcome result = correction.run(runId, request.getSource());
@@ -86,25 +87,29 @@ final class CorrectionGrpcService extends CorrectionServiceGrpc.CorrectionServic
                     CorrectionOutcome reply = outcome(runId, result.assessment(),
                             result.executionReceipt(), result.assessmentReceipt());
                     markCompleted(runId);
-                    if (!call.isCancelled()) {
-                        RunCorrectionResponse response = RunCorrectionResponse.newBuilder()
-                                .setOutcome(reply).build();
-                        ValidationResult.validate(response).throwIfInvalid();
-                        observer.onNext(response);
-                        observer.onCompleted();
-                    }
+                    response = RunCorrectionResponse.newBuilder().setOutcome(reply).build();
+                    ValidationResult.validate(response).throwIfInvalid();
                 } catch (FileAlreadyExistsException duplicate) {
-                    if (!call.isCancelled()) observer.onError(Status.ALREADY_EXISTS
-                            .withDescription("correction run id already used").asRuntimeException());
+                    error = Status.ALREADY_EXISTS
+                            .withDescription("correction run id already used").asRuntimeException();
                 } catch (Throwable failure) {
-                    if (!call.isCancelled()) observer.onError(Status.INTERNAL
+                    error = Status.INTERNAL
                             .withDescription("correction run failed; inspect recorded evidence")
-                            .asRuntimeException());
+                            .asRuntimeException();
                 } finally {
                     worker.set(null);
                     call.removeListener(cancellation);
                     activeRunIds.remove(runId);
                     capacity.release();
+                }
+                // A caller may start its next request inside a completion callback.
+                // Finish workspace cleanup and release capacity before notifying it.
+                if (!call.isCancelled()) {
+                    if (error != null) observer.onError(error);
+                    else {
+                        observer.onNext(response);
+                        observer.onCompleted();
+                    }
                 }
             });
         } catch (RejectedExecutionException stopped) {

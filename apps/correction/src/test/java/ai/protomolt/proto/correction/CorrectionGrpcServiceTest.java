@@ -184,6 +184,24 @@ class CorrectionGrpcServiceTest {
     }
 
     @Test
+    void completionCallbackCanImmediatelyStartTheNextRun() throws Exception {
+        provider.script(VALID_CONTACT);
+        provider.script(VALID_CONTACT);
+        Capture<RunCorrectionResponse> second = new Capture<>();
+        service.runCorrection(request("first-in-sequence"), new StreamObserver<>() {
+            @Override public void onNext(RunCorrectionResponse response) { }
+            @Override public void onError(Throwable failure) { second.onError(failure); }
+            @Override public void onCompleted() {
+                service.runCorrection(request("second-in-sequence"), second);
+            }
+        });
+        assertThat(second.done.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(second.failure).isNull();
+        assertThat(second.value.getOutcome().getRunId()).isEqualTo("second-in-sequence");
+        assertThat(provider.invocations()).isEqualTo(2);
+    }
+
+    @Test
     void durableDuplicateWinsOverBusyCapacityButANewRunIsStillRejected() throws Exception {
         provider.script(VALID_CONTACT);
         assertThat(run(request("already-used")).failure).isNull();
