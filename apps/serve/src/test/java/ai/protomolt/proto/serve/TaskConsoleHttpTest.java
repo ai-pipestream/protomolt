@@ -206,7 +206,8 @@ class TaskConsoleHttpTest {
         assertThat(unreasoned.body()).contains("verdict");
 
         HttpResponse<String> revised = post("/api/tasks/" + reviewed + "/review", """
-                {"decision":"revise","feedback":"tests cover the happy path only",
+                {"decision":"revise","attempt":1,"revision":1,
+                 "feedback":"tests cover the happy path only",
                  "failedChecks":["unit-tests"]}
                 """, cookie);
         assertThat(revised.statusCode()).isEqualTo(200);
@@ -219,17 +220,79 @@ class TaskConsoleHttpTest {
 
         // With no open candidate there is nothing to judge.
         HttpResponse<String> early = post("/api/tasks/" + reviewed + "/review",
-                "{\"decision\":\"accept\",\"verdict\":\"fine\"}", cookie);
+                "{\"decision\":\"accept\",\"attempt\":1,\"revision\":1,\"verdict\":\"fine\"}", cookie);
         assertThat(early.statusCode()).isEqualTo(409);
 
         bridge.submitCandidate("console-worker", reviewed, candidate(2));
         HttpResponse<String> accepted = post("/api/tasks/" + reviewed + "/review", """
-                {"decision":"accept","verdict":"checks green and the diff is scoped"}
+                {"decision":"accept","attempt":1,"revision":2,
+                 "verdict":"checks green and the diff is scoped"}
                 """, cookie);
         assertThat(accepted.statusCode()).isEqualTo(200);
         assertThat(body(accepted).path("phase").asText()).isEqualTo("accepted");
         assertThat(body(get("/api/tasks/" + reviewed, cookie)).path("events").toString())
                 .contains("checks green and the diff is scoped");
+    }
+
+    @Test
+    void delayedReviewCannotAcceptANewerCandidate() throws Exception {
+        DelegationBridge bridge = serve.delegationBridge();
+        String reviewed = UUID.randomUUID().toString();
+        bridge.offer("console-worker", reviewed, TaskSpec.newBuilder()
+                        .setObjective("Bind a review to the inspected candidate")
+                        .addRequiredChecks(AcceptanceCheck.newBuilder()
+                                .setName("unit-tests").setDescription("focused tests pass"))
+                        .build(), Duration.ofMinutes(5), null);
+        bridge.accept("console-worker", reviewed, 1);
+        bridge.submitCandidate("console-worker", reviewed, candidate(1));
+        String route = "/api/tasks/" + reviewed + "/review";
+        String delayedApproval = """
+                {"decision":"accept","attempt":1,"revision":1,
+                 "verdict":"I inspected revision one"}
+                """;
+
+        assertThat(post(route, """
+                {"decision":"revise","attempt":1,"revision":1,
+                 "feedback":"Add the missing edge case","failedChecks":["unit-tests"]}
+                """, cookie).statusCode()).isEqualTo(200);
+        bridge.submitCandidate("console-worker", reviewed, candidate(2));
+        JsonNode before = body(get("/api/tasks/" + reviewed, cookie));
+
+        HttpResponse<String> stale = post(route, delayedApproval, cookie);
+        assertThat(stale.statusCode()).isEqualTo(409);
+        JsonNode after = body(get("/api/tasks/" + reviewed, cookie));
+        assertThat(after.path("task").path("phase").asText()).isEqualTo("candidate");
+        assertThat(after.path("events")).isEqualTo(before.path("events"));
+
+        assertThat(post(route, """
+                {"decision":"accept","attempt":1,"revision":2,
+                 "verdict":"I inspected revision two"}
+                """, cookie).statusCode()).isEqualTo(200);
+    }
+
+    @Test
+    void reviewRequiresExactIntegerCandidateIdentity() throws Exception {
+        // Identity is validated before looking up the task, including large values
+        // and decimals that Jackson's permissive asInt() would otherwise truncate.
+        String route = "/api/tasks/" + UUID.randomUUID() + "/review";
+        for (String value : List.of("null", "0", "-1", "1.5", "2147483648", "\"1\"", "true")) {
+            for (String field : List.of("attempt", "revision")) {
+                var payload = JSON.createObjectNode()
+                        .put("decision", "accept").put("verdict", "reviewed")
+                        .put("attempt", 1).put("revision", 1);
+                payload.set(field, JSON.readTree(value));
+                HttpResponse<String> response = post(route, payload.toString(), cookie);
+                assertThat(response.statusCode()).as("%s=%s", field, value).isEqualTo(400);
+                assertThat(response.body()).contains(field);
+            }
+        }
+        for (String missing : List.of("attempt", "revision")) {
+            var payload = JSON.createObjectNode()
+                    .put("decision", "accept").put("verdict", "reviewed")
+                    .put("attempt", 1).put("revision", 1);
+            payload.remove(missing);
+            assertThat(post(route, payload.toString(), cookie).statusCode()).isEqualTo(400);
+        }
     }
 
     private static CompletionCandidate candidate(int revision) {

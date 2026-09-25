@@ -215,7 +215,9 @@ reviewable, so the mechanical part is done and what is left is judgement:
 - every required check: re-run it when it is cheap, otherwise read the `detail` and the
   commit's CI status.
 
-Then `delegation-review`: `REVIEW_DECISION_ACCEPT` with a `verdict` that says what was
+Then `delegation-review`, naming the `taskId`, `attempt`, and `revision` of the
+candidate you inspected. A stale review is refused; fetch and inspect the current
+candidate before making another decision. Use `REVIEW_DECISION_ACCEPT` with a `verdict` that says what was
 checked, or `REVIEW_DECISION_REVISE` with `feedback` and `failedChecks` (the check names
 that did not hold). `delegation-cancel` with a `reason` ends an attempt that should not
 continue.

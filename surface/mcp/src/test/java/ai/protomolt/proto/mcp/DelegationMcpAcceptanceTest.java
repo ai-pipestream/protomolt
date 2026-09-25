@@ -171,6 +171,7 @@ class DelegationMcpAcceptanceTest {
 
         call(codex, "delegation-review", MAPPER.createObjectNode()
                 .put("taskId", taskId)
+                .put("attempt", 1).put("revision", 1)
                 .put("decision", "REVIEW_DECISION_REVISE")
                 .put("feedback", "prove the edge case too")
                 .set("failedChecks", MAPPER.createArrayNode().add("unit-tests")));
@@ -208,6 +209,7 @@ class DelegationMcpAcceptanceTest {
 
         call(codex, "delegation-review", MAPPER.createObjectNode()
                 .put("taskId", taskId)
+                .put("attempt", 1).put("revision", 2)
                 .put("decision", "REVIEW_DECISION_ACCEPT")
                 .put("verdict", "acceptance checks verified"));
 

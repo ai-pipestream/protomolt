@@ -149,13 +149,21 @@ class DelegationActionSchemaTest {
     @Test
     void attemptNumbersCarryTheSameBoundEverywhere() {
         for (String verb : List.of("delegation-accept", "delegation-checkpoint",
-                "delegation-progress")) {
+                "delegation-progress", "delegation-review")) {
             JsonNode attempt = property(schemaOf(verb), "attempt");
             assertThat(attempt.path("minimum").asInt()).as("%s attempt minimum", verb)
                     .isEqualTo(1);
             assertThat(attempt.path("maximum").asInt()).as("%s attempt maximum", verb)
                     .isEqualTo(1_024);
         }
+    }
+
+    /** A review also names the submitted revision, so delayed decisions have a target. */
+    @Test
+    void reviewRevisionCarriesTheSamePositiveBound() {
+        JsonNode revision = property(schemaOf("delegation-review"), "revision");
+        assertThat(revision.path("minimum").asInt()).isEqualTo(1);
+        assertThat(revision.path("maximum").asInt()).isEqualTo(1_024);
     }
 
     /** The review decision is an enum, so its legal values are visible rather than guessed. */

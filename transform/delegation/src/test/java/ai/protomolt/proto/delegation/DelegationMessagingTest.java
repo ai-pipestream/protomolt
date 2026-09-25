@@ -90,7 +90,8 @@ class DelegationMessagingTest {
 
         release.countDown();
         waitForPhase(taskId, DelegationReducer.Phase.CANDIDATE);
-        coordinator.review(taskId, CandidateReviewer.ReviewDecision.accept("verified"));
+        coordinator.review(taskId, 1, 1,
+                CandidateReviewer.ReviewDecision.accept("verified"));
         waitForPhase(taskId, DelegationReducer.Phase.ACCEPTED);
 
         Transcript transcript = coordinator.transcript();

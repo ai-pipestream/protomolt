@@ -207,9 +207,16 @@ export class TaskApi {
   }
 
   /** Accepts the open candidate, with the reviewer's verdict on the record. */
-  reviewAccept(taskId: string, verdict: string): Promise<ReviewResult> {
+  reviewAccept(
+    taskId: string,
+    attempt: number,
+    revision: number,
+    verdict: string,
+  ): Promise<ReviewResult> {
     return this.json('POST', `${this.base}/${encodeURIComponent(taskId)}/review`, {
       decision: 'accept',
+      attempt,
+      revision,
       verdict,
     })
   }
@@ -217,11 +224,15 @@ export class TaskApi {
   /** Returns the open candidate for revision, naming the checks that failed. */
   reviewRevise(
     taskId: string,
+    attempt: number,
+    revision: number,
     feedback: string,
     failedChecks: string[] = [],
   ): Promise<ReviewResult> {
     return this.json('POST', `${this.base}/${encodeURIComponent(taskId)}/review`, {
       decision: 'revise',
+      attempt,
+      revision,
       feedback,
       ...(failedChecks.length ? { failedChecks } : {}),
     })
@@ -339,7 +350,8 @@ export function checkStatuses(events: TaskEvent[]): CheckStatus[] {
   if (candidate) {
     for (const event of events) {
       const completion = workerFrame(event).completion
-      if (completion?.revision === candidate.revision) {
+      if (event.cursor === candidate.cursor && completion?.attempt === candidate.attempt
+          && completion.revision === candidate.revision) {
         for (const proof of completion.evidence ?? []) {
           evidence.set(proof.checkName, proof)
         }
@@ -358,10 +370,11 @@ export function checkStatuses(events: TaskEvent[]): CheckStatus[] {
   })
 }
 
-/** The newest completion candidate on the transcript, or null before any. */
+/** The newest completion in the current offer, or null before its first candidate. */
 export function latestCandidate(events: TaskEvent[]): CandidateView | null {
   let candidate: CandidateView | null = null
   for (const event of events) {
+    if (coordinatorFrame(event).offer) candidate = null
     const completion = workerFrame(event).completion
     if (completion) {
       candidate = {

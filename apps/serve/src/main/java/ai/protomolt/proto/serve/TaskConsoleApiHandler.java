@@ -372,13 +372,24 @@ final class TaskConsoleApiHandler implements HttpHandler {
             default -> throw new IllegalArgumentException(
                     "decision must be 'accept' or 'revise'");
         };
-        bridge.review(taskId, applied);
+        int attempt = requiredPositiveInt(parsed, "attempt");
+        int revision = requiredPositiveInt(parsed, "revision");
+        bridge.review(taskId, attempt, revision, applied);
         DelegationReducer.TaskState state = bridge.coordinator().state().tasks().get(taskId);
         ObjectNode response = JSON.createObjectNode();
         response.put("decision", decision);
         response.put("phase", state == null ? ""
                 : state.phase().name().toLowerCase(Locale.ROOT));
         respondJson(exchange, 200, response);
+    }
+
+    private static int requiredPositiveInt(JsonNode parsed, String name) {
+        JsonNode value = parsed.get(name);
+        if (value == null || !value.isIntegralNumber() || !value.canConvertToInt()
+                || value.intValue() < 1) {
+            throw new IllegalArgumentException(name + " must be a positive 32-bit integer");
+        }
+        return value.intValue();
     }
 
     private static List<String> failedChecks(JsonNode parsed) {

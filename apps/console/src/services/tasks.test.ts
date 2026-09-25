@@ -68,6 +68,34 @@ describe('TaskApi', () => {
     })
   })
 
+  it('binds review decisions to the candidate attempt and revision the reviewer saw', async () => {
+    fetchMock.mockResolvedValue(json({ decision: 'accept', phase: 'accepted' }))
+
+    await api.reviewAccept('t1', 4, 7, 'done to my satisfaction')
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/tasks/t1/review')
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      decision: 'accept',
+      attempt: 4,
+      revision: 7,
+      verdict: 'done to my satisfaction',
+    })
+  })
+
+  it('binds revision requests to the candidate attempt and revision the reviewer saw', async () => {
+    fetchMock.mockResolvedValue(json({ decision: 'revise', phase: 'working' }))
+
+    await api.reviewRevise('t1', 4, 7, 'lint still complains', ['lint-clean'])
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      decision: 'revise',
+      attempt: 4,
+      revision: 7,
+      feedback: 'lint still complains',
+      failedChecks: ['lint-clean'],
+    })
+  })
+
   it('surfaces bounded server errors with their status', async () => {
     fetchMock.mockResolvedValue(json({ error: 'authentication required' }, 401))
     const failure = await api.listTasks().catch((error) => error)

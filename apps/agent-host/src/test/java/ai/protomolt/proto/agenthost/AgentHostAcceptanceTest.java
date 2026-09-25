@@ -602,10 +602,16 @@ class AgentHostAcceptanceTest {
                             .put("kind", "TASK_MESSAGE_KIND_ANSWER")
                             .put("text", "Yes, keep the lifecycle reducer unchanged")));
                 }
-                if (hasPayload(packet, "completion")) {
-                    commands.add(command("delegation-review", MAPPER.createObjectNode()
-                            .put("taskId", TASK).put("decision", "REVIEW_DECISION_ACCEPT")
-                            .put("verdict", "required check and commit verified")));
+                for (JsonNode event : packet.path("events")) {
+                    JsonNode completion = event.path("entry").path("workerFrame")
+                            .path("completion");
+                    if (!completion.isMissingNode()) {
+                        commands.add(command("delegation-review", MAPPER.createObjectNode()
+                                .put("taskId", TASK).put("decision", "REVIEW_DECISION_ACCEPT")
+                                .put("attempt", completion.path("attempt").asInt())
+                                .put("revision", completion.path("revision").asInt())
+                                .put("verdict", "required check and commit verified")));
+                    }
                 }
                 if (commands.isEmpty()) {
                     commands.add(command("host-ack", MAPPER.createObjectNode()

@@ -104,7 +104,7 @@ class TranscriptRepositoryCoordinatorTest {
             assertThat(restored.state().tasks().get(TASK).phase())
                     .isEqualTo(DelegationReducer.Phase.CANDIDATE);
 
-            restored.review(TASK, CandidateReviewer.ReviewDecision.accept(
+            restored.review(TASK, 1, 1, CandidateReviewer.ReviewDecision.accept(
                     "verified after the restart"));
             assertThat(responses.values).hasSize(2);
             assertThat(responses.values.get(1).hasAccepted()).isTrue();
@@ -112,6 +112,48 @@ class TranscriptRepositoryCoordinatorTest {
             assertThat(restored.state().tasks().get(TASK).phase())
                     .isEqualTo(DelegationReducer.Phase.ACCEPTED);
             assertThat(restored.state().clean()).isTrue();
+        }
+    }
+
+    @Test
+    void afterRestartAReviewForAnEarlierAttemptCannotMutateTheOpenCandidate() {
+        TaskSpec taskSpec = spec("build");
+        Transcript stored = new DelegationFixtures.TranscriptBuilder()
+                .hello(WORKER)
+                .admit(WORKER)
+                .offer(TASK, WORKER, 1, taskSpec)
+                .accept(TASK, WORKER, 1)
+                .candidateForAttempt(TASK, WORKER, 1, 1, taskSpec)
+                .cancel(TASK, WORKER, 1, "superseded before review completed")
+                .offer(TASK, WORKER, 2, taskSpec)
+                .accept(TASK, WORKER, 2)
+                .candidateForAttempt(TASK, WORKER, 2, 1, taskSpec)
+                .build();
+        InMemoryTranscriptRepository repository = new InMemoryTranscriptRepository();
+        repository.save(stored);
+
+        try (InProcessDelegationCoordinator restored = new InProcessDelegationCoordinator(
+                AdmissionPolicy.allowAll(), CandidateReviewer.manual(), CLOCK, repository)) {
+            assertThat(restored.state().tasks().get(TASK).phase())
+                    .isEqualTo(DelegationReducer.Phase.CANDIDATE);
+            assertThat(restored.state().tasks().get(TASK).attempt()).isEqualTo(2);
+            assertThat(restored.state().tasks().get(TASK).candidateRevision()).isEqualTo(1);
+
+            assertThatThrownBy(() -> restored.review(TASK, 1, 1,
+                    CandidateReviewer.ReviewDecision.accept("stale verdict from attempt 1")))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("does not match the open candidate");
+
+            assertThat(restored.transcript()).isEqualTo(stored);
+            assertThat(repository.load()).contains(stored);
+            assertThat(restored.state().tasks().get(TASK).phase())
+                    .isEqualTo(DelegationReducer.Phase.CANDIDATE);
+
+            restored.review(TASK, 2, 1,
+                    CandidateReviewer.ReviewDecision.accept("verified attempt 2"));
+            assertThat(restored.state().tasks().get(TASK).phase())
+                    .isEqualTo(DelegationReducer.Phase.ACCEPTED);
+            assertThat(repository.load()).contains(restored.transcript());
         }
     }
 
@@ -127,7 +169,7 @@ class TranscriptRepositoryCoordinatorTest {
             TaskMessage note = restored.sendMessage(WORKER, TASK,
                     TaskMessageKind.TASK_MESSAGE_KIND_NOTE, "reviewing the candidate now",
                     "", List.of());
-            restored.review(TASK, CandidateReviewer.ReviewDecision.accept(
+            restored.review(TASK, 1, 1, CandidateReviewer.ReviewDecision.accept(
                     "verified while the worker was away"));
 
             List<InProcessDelegationCoordinator.Event> events = restored.eventsAfter(TASK, 0);
@@ -160,7 +202,7 @@ class TranscriptRepositoryCoordinatorTest {
 
         try (InProcessDelegationCoordinator restored = new InProcessDelegationCoordinator(
                 AdmissionPolicy.allowAll(), CandidateReviewer.manual(), CLOCK, repository)) {
-            restored.review(TASK, CandidateReviewer.ReviewDecision.revise(
+            restored.review(TASK, 1, 1, CandidateReviewer.ReviewDecision.revise(
                     "the build check did not run", List.of("build")));
 
             List<InProcessDelegationCoordinator.Event> events = restored.eventsAfter(TASK, 0);

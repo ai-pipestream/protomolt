@@ -3,6 +3,7 @@ package ai.protomolt.proto.delegation;
 import ai.protomolt.proto.actions.ActionCatalog;
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.actions.ActionException;
+import ai.protomolt.proto.delegation.v1.CompletionCandidate;
 import ai.protomolt.proto.delegation.v1.WorkerCapability;
 import ai.protomolt.proto.delegation.v1.WorkerHello;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -11,6 +12,8 @@ import com.google.protobuf.util.JsonFormat;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.util.UUID;
 
@@ -95,6 +98,8 @@ class DelegationActionContractTest {
     void anAcceptanceWithoutAVerdictIsRefusedByTheCrossFieldRule() {
         ObjectNode envelope = envelope()
                 .put("taskId", UUID.randomUUID().toString())
+                .put("attempt", 1)
+                .put("revision", 1)
                 .put("decision", "REVIEW_DECISION_ACCEPT");
         ActionException refusal = catchThrowableOfType(
                 () -> dispatch("delegation-review", envelope),
@@ -102,6 +107,111 @@ class DelegationActionContractTest {
         assertThat(refusal.code()).isEqualTo("invalid-input");
         assertThat(refusal.details().orElseThrow().toString())
                 .contains("acceptance-carries-verdict");
+    }
+
+    /** A review must bind its verdict to one attempt and candidate revision. */
+    @Test
+    void aReviewWithoutCandidateSelectorsIsRefusedByTheDeclaredRules() {
+        ObjectNode envelope = envelope()
+                .put("taskId", UUID.randomUUID().toString())
+                .put("decision", "REVIEW_DECISION_ACCEPT")
+                .put("verdict", "verified");
+        ActionException refusal = catchThrowableOfType(
+                () -> dispatch("delegation-review", envelope),
+                ActionException.class);
+        assertThat(refusal.code()).isEqualTo("invalid-input");
+        assertThat(refusal.details().orElseThrow().toString())
+                .contains("attempt").contains("revision");
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "attempt, 0", "attempt, -1", "attempt, 1025",
+            "revision, 0", "revision, -1", "revision, 1025"
+    })
+    void reviewSelectorsOutsideTheRuntimeBoundAreRefusedBeforeLifecycleLookup(
+            String selector, int value) {
+        ObjectNode request = reviewEnvelope().put(selector, value);
+        int entriesBefore = coordinator.transcript().getEntriesCount();
+
+        ActionException refusal = catchThrowableOfType(
+                () -> dispatch("delegation-review", request), ActionException.class);
+
+        assertThat(refusal.code()).isEqualTo("invalid-input");
+        assertThat(refusal.details().orElseThrow().toString())
+                .contains(selector).contains("int32.gte_lte");
+        assertThat(coordinator.transcript().getEntriesCount())
+                .as("contract rejection must happen before any coordinator lookup or write")
+                .isEqualTo(entriesBefore);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "attempt, 1", "attempt, 1024", "revision, 1", "revision, 1024"
+    })
+    void reviewSelectorsAtBothRuntimeBoundsPassValidationBeforeLifecycleLookup(
+            String selector, int value) {
+        ObjectNode request = reviewEnvelope().put(selector, value);
+        int entriesBefore = coordinator.transcript().getEntriesCount();
+
+        ActionException lifecycleRefusal = catchThrowableOfType(
+                () -> dispatch("delegation-review", request), ActionException.class);
+
+        // The task does not exist, so dispatch reaches coordinator state lookup. A contract
+        // refusal here would mean the declared inclusive endpoint is not actually accepted.
+        assertThat(lifecycleRefusal.code()).isEqualTo("delegation-rejected");
+        assertThat(lifecycleRefusal.code()).isNotEqualTo("invalid-input");
+        assertThat(coordinator.transcript().getEntriesCount()).isEqualTo(entriesBefore);
+    }
+
+    private static ObjectNode reviewEnvelope() {
+        return envelope()
+                .put("taskId", UUID.randomUUID().toString())
+                .put("decision", "REVIEW_DECISION_ACCEPT")
+                .put("verdict", "verified")
+                .put("attempt", 1)
+                .put("revision", 1);
+    }
+
+    /** A delayed review for a different candidate is rejected without adding a verdict. */
+    @Test
+    void aReviewForTheWrongCandidateDoesNotMutateTheTranscript() throws Exception {
+        String taskId = UUID.randomUUID().toString();
+        bridge.offer(WORKER, taskId, DelegationFixtures.spec("unit-tests"),
+                java.time.Duration.ofSeconds(30), null);
+        bridge.accept(WORKER, taskId, 1);
+        bridge.submitCandidate(WORKER, taskId, CompletionCandidate.newBuilder()
+                .setAttempt(1)
+                .setRevision(1)
+                .setSummary("implemented and proven")
+                .addEvidence(DelegationFixtures.evidence("unit-tests"))
+                .addCommits(DelegationFixtures.commit("contract-output"))
+                .build());
+        int entriesBefore = coordinator.transcript().getEntriesCount();
+
+        ActionException refusal = catchThrowableOfType(
+                () -> dispatch("delegation-review", envelope()
+                        .put("taskId", taskId)
+                        .put("attempt", 1)
+                        .put("revision", 2)
+                        .put("decision", "REVIEW_DECISION_ACCEPT")
+                        .put("verdict", "stale verdict")),
+                ActionException.class);
+        assertThat(refusal.code()).isEqualTo("delegation-rejected");
+        assertThat(refusal.getMessage()).contains("does not match the open candidate");
+        assertThat(coordinator.transcript().getEntriesCount()).isEqualTo(entriesBefore);
+        assertThat(coordinator.state().tasks().get(taskId).phase())
+                .isEqualTo(DelegationReducer.Phase.CANDIDATE);
+
+        ObjectNode accepted = dispatch("delegation-review", envelope()
+                .put("taskId", taskId)
+                .put("attempt", 1)
+                .put("revision", 1)
+                .put("decision", "REVIEW_DECISION_ACCEPT")
+                .put("verdict", "verified"));
+        assertThat(accepted.path("ok").asBoolean()).isTrue();
+        assertThat(coordinator.state().tasks().get(taskId).phase())
+                .isEqualTo(DelegationReducer.Phase.ACCEPTED);
     }
 
     /** A coordinator message that names no worker is refused by the CEL rule. */

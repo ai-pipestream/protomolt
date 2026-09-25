@@ -232,9 +232,10 @@ public final class DelegationBridge implements AutoCloseable {
         return coordinator.deliverableTypes();
     }
 
-    /** Applies an external review decision; see the coordinator. */
-    public void review(String taskId, CandidateReviewer.ReviewDecision decision) {
-        coordinator.review(taskId, decision);
+    /** Applies an external review decision to its identified candidate; see the coordinator. */
+    public void review(String taskId, int attempt, int revision,
+                       CandidateReviewer.ReviewDecision decision) {
+        coordinator.review(taskId, attempt, revision, decision);
     }
 
     /** Cancels the current offer or lease; see the coordinator. */
