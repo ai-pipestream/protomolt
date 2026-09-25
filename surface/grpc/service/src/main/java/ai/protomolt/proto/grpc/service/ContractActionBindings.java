@@ -20,6 +20,12 @@ public final class ContractActionBindings {
         for (String name : catalog.names()) {
             try {
                 ProtoAction action = catalog.get(name);
+                // A saved profile can describe this very server. Its proxy remains
+                // available as a catalog verb, but cannot replace a local RPC or
+                // make local binding ambiguous when the profile is restored.
+                if (ai.protomolt.proto.grpc.workspace.ReflectedServiceActions.isReflected(action)) {
+                    continue;
+                }
                 String key = contract(action.requestType().getFullName(),
                         action.responseType().getFullName());
                 String previous = byContract.putIfAbsent(key, name);

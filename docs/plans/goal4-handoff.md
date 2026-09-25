@@ -141,3 +141,14 @@ pausing it; asking about allowance alone does not change that status.
 The initial invocation refused `--prompt` together with `--plan`; the corrected
 runner uses prompt mode with explicit read-only scope. The user-systemd unit
 `protomolt-goal4-kimi-review` owns the detached review, when successfully started.
+
+## Checkpoint landing follow-up
+
+The user subsequently authorized committing, pushing, merging to main and tagging
+this moment. Final `./gradlew build :protomolt-acp-agent:acpProtocolTest` passed
+(1494 tasks, 42 seconds; `/tmp/goal4-checkpoint-full-build-fixed.log`). This caught
+and fixed a reflected self-profile restart regression: remote profile proxies
+are excluded from local contributed RPC binding. The restart integration test
+now invokes native RegisterWorker after the original endpoint has stopped.
+That closes step 2 above for this source state; rebuilt-image/release gates
+remain outstanding. Recheck the actual PR/remotes/tag before repeating landing.

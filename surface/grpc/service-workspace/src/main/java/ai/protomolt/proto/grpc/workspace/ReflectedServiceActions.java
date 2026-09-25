@@ -44,6 +44,11 @@ public final class ReflectedServiceActions {
     private ReflectedServiceActions() {
     }
 
+    /** A remote profile proxy must not be rebound as this process's local service. */
+    public static boolean isReflected(ai.protomolt.proto.actions.ProtoAction action) {
+        return action instanceof ReflectedMethodAction;
+    }
+
     /**
      * Registers every unary method of {@code profile} as a verb on {@code catalog}.
      *

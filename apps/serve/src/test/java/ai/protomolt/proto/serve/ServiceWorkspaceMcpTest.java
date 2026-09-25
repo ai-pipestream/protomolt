@@ -60,6 +60,21 @@ class ServiceWorkspaceMcpTest {
             // The endpoint from the first process is gone. Inspection must still work from the
             // persisted profile and content-addressed descriptor artifact.
             try (ProtoMoltServe restarted = start()) {
+                // The persisted self-profile includes DelegationService now. Bind
+                // its local implementation, not a proxy to the stopped first server.
+                var channel = io.grpc.ManagedChannelBuilder.forAddress(
+                        "127.0.0.1", restarted.grpcPort()).usePlaintext().build();
+                try {
+                    var worker = ai.protomolt.proto.delegation.v1.DelegationServiceGrpc
+                            .newBlockingStub(channel).withDeadlineAfter(5,
+                                    java.util.concurrent.TimeUnit.SECONDS)
+                            .registerWorker(ai.protomolt.proto.delegation.v1.RegisterWorkerRequest
+                                    .newBuilder().setWorkerId("restart-native-worker")
+                                    .setProvider("fixture").build());
+                    assertThat(worker.getAdmitted()).isTrue();
+                } finally {
+                    channel.shutdownNow();
+                }
                 ObjectNode inspect = MAPPER.createObjectNode().put("name", "protomolt-self");
                 JsonNode persisted = tool(http, restarted.httpPort(), "service-inspect", inspect);
                 assertThat(persisted.path("profile").path("endpoints").get(0)
