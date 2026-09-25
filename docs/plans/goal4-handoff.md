@@ -124,3 +124,17 @@ retracted. A signed receipt proves integrity, not semantic correctness.
 Root reviews/owns the design; Sol supplied bounded implementation, Luna tests.
 All Codex subagents stopped at this checkpoint. Do not rely on old agent
 activity or files as proof a background process is still running.
+
+## Separate Kimi review
+
+Checkpoint commit: `5afb985e4917745e853b5f38a3be46eb964a7f42`.
+A separate Kimi CLI review was launched in plan mode, limited to reading source
+and reporting defects, with a 45-minute timeout. It cannot establish release
+qualification and has not been authorized to edit, build, or deploy.
+
+Runner and exact prompt: `/work/worktrees/protomolt/goal4-kimi-review/run.sh`
+and `prompt.txt`. Output: `review.txt`; process diagnostics: `stderr.log`;
+completion: `exit-code.txt` and `finished.txt` in that directory. Inspect process
+state as well as these files before assuming it is still running or starting a
+replacement. The Codex goal remains active unless the user explicitly requests
+pausing it; asking about allowance alone does not change that status.
