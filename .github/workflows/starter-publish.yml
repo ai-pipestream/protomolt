@@ -1,0 +1,403 @@
+# Publish the three image-only starter services on native runners. Manual runs
+# publish a commit-addressed prerelease from current main. The ordinary release
+# workflow calls this with its already-created v<semver> tag and release.
+# Before a manual dispatch, tag the same merged main SHA as starter-<12sha>,
+# push that tag to Forgejo `origin` first and GitHub `github` second, then run
+# this workflow on GitHub main. The job refuses a missing or moved tag.
+name: Starter Publish
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: Existing release version, without v (workflow_call only)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: starter-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.source.outputs.version }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      release_tag: ${{ steps.source.outputs.release_tag }}
+      manual: ${{ steps.source.outputs.manual }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version != '' && format('v{0}', inputs.version) || github.ref }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Resolve and guard immutable source
+        id: source
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SHA=$(git rev-parse HEAD)
+          if [ -z "$RELEASE_VERSION" ]; then
+            [ "${{ github.ref }}" = refs/heads/main ] || { echo 'manual starter publishing requires main' >&2; exit 1; }
+            git fetch origin main --quiet
+            [ "$SHA" = "$(git rev-parse origin/main)" ] || { echo 'main moved; dispatch again' >&2; exit 1; }
+            VERSION=starter-${SHA:0:12}
+            TAG=$VERSION
+            MANUAL=true
+            [ "$(git rev-list -n 1 "refs/tags/$TAG" 2>/dev/null)" = "$SHA" ] || {
+              echo 'create and push the same-SHA starter tag to Forgejo, then GitHub, before dispatch' >&2
+              exit 1
+            }
+          else
+            [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'expected released semver' >&2; exit 1; }
+            VERSION=$RELEASE_VERSION
+            TAG=v$VERSION
+            MANUAL=false
+            [ "$(git rev-list -n 1 "refs/tags/$TAG")" = "$SHA" ] || exit 1
+            gh release view "$TAG" >/dev/null
+          fi
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            [ "$(git rev-list -n 1 "refs/tags/$TAG")" = "$SHA" ] || { echo 'tag points to a different commit' >&2; exit 1; }
+          fi
+          if gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null \
+            | grep -Fxq "protomolt-starter-$VERSION.zip"; then
+            echo 'starter release asset already exists; refusing overwrite' >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "manual=$MANUAL" >> "$GITHUB_OUTPUT"
+
+  native:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/console/package-lock.json
+
+      - name: Build console and starter distributions
+        run: |
+          npm ci --prefix apps/console
+          npm run build --prefix apps/console
+          ./gradlew :protomolt-serve:installDist :protomolt-correction:installDist \
+            :protomolt-acp-agent:installDist :protomolt-record-verifier:jar --no-daemon
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Reuse matching partial arch images only
+        id: existing
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          for pair in serve:protomolt-serve correction:protomolt-correction acp:protomolt-acp-agent; do
+            KEY=${pair%%:*}
+            IMAGE=${pair#*:}
+            TAG=ghcr.io/${{ github.repository_owner }}/$IMAGE:$VERSION-$ARCH
+            if docker buildx imagetools inspect "$TAG" >/dev/null 2>inspect-error.txt; then
+              echo "$KEY=true" >> "$GITHUB_OUTPUT"
+            elif grep -Eqi 'not found|manifest unknown' inspect-error.txt; then
+              echo "$KEY=false" >> "$GITHUB_OUTPUT"
+            else
+              cat inspect-error.txt >&2
+              exit 1
+            fi
+          done
+
+      - name: Push serve for ${{ matrix.arch }}
+        if: steps.existing.outputs.serve != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/serve
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/protomolt-serve:${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.source_sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Push correction for ${{ matrix.arch }}
+        if: steps.existing.outputs.correction != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/correction
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/protomolt-correction:${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.source_sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Push ACP for ${{ matrix.arch }}
+        if: steps.existing.outputs.acp != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: surface/acp
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/protomolt-acp-agent:${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.source_sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Pull and inspect the published native images
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          for IMAGE in protomolt-serve protomolt-correction protomolt-acp-agent; do
+            TAG=ghcr.io/${{ github.repository_owner }}/$IMAGE:$VERSION-$ARCH
+            docker pull --platform "linux/$ARCH" "$TAG"
+            [ "$(docker image inspect --platform "linux/$ARCH" "$TAG" --format '{{.Architecture}}')" = "$ARCH" ]
+            [ "$(docker image inspect --platform "linux/$ARCH" "$TAG" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SOURCE_SHA" ]
+          done
+
+      - name: Install checked grpcurl for direct gRPC acceptance
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          BASE=https://github.com/fullstorydev/grpcurl/releases/download/v1.9.4
+          if [ "$ARCH" = amd64 ]; then
+            ASSET_ARCH=x86_64
+          else
+            ASSET_ARCH=arm64
+          fi
+          FILE=grpcurl_1.9.4_linux_${ASSET_ARCH}.tar.gz
+          curl -fsSL "$BASE/$FILE" -o "$RUNNER_TEMP/$FILE"
+          curl -fsSL "$BASE/grpcurl_1.9.4_checksums.txt" -o "$RUNNER_TEMP/grpcurl-checksums.txt"
+          (cd "$RUNNER_TEMP" && grep " $FILE$" grpcurl-checksums.txt | sha256sum -c)
+          tar -xzf "$RUNNER_TEMP/$FILE" -C "$RUNNER_TEMP" grpcurl
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Start and test the native starter stack
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/starter-smoke"
+          cd "$RUNNER_TEMP/starter-smoke"
+          cp "$GITHUB_WORKSPACE/deploy/starter/compose.yml" .
+          cp "$GITHUB_WORKSPACE/deploy/starter/verify-receipt.sh" .
+          cp "$GITHUB_WORKSPACE/deploy/starter/smoke.mjs" .
+          JAR=$(find "$GITHUB_WORKSPACE/apps/record-verifier/build/libs" -maxdepth 1 \
+            -name 'protomolt-record-verifier-*.jar' ! -name '*-sources.jar' \
+            ! -name '*-javadoc.jar' -print -quit)
+          test -n "$JAR"
+          cp "$JAR" record-verifier.jar
+          printf 'PROTOMOLT_VERSION=%s-%s\nCOMPOSE_PROJECT_NAME=starter-native-%s\nPROTOMOLT_HTTP_PORT=18080\nPROTOMOLT_GRPC_PORT=19090\n' \
+            "$VERSION" "$ARCH" "$ARCH" > .env
+          trap 'docker compose down -v --remove-orphans >/dev/null' EXIT
+          docker compose up -d --wait --pull always
+          SMOKE=$(HTTP_BASE=http://127.0.0.1:18080 GRPC_TARGET=127.0.0.1:19090 REQUIRE_GRPCURL=1 node smoke.mjs)
+          printf '%s\n' "$SMOKE" | jq -e '.run and .authenticated_console and .mcp and .acp' >/dev/null
+          RUN_ID=$(printf '%s\n' "$SMOKE" | jq -r '.run')
+          ./verify-receipt.sh "$RUN_ID"
+          VERIFY_SAVED_RUN="$RUN_ID" HTTP_BASE=http://127.0.0.1:18080 \
+            node smoke.mjs | jq -e '.retrieved_after_restart == true' >/dev/null
+
+  manifests:
+    needs: [prepare, native]
+    runs-on: ubuntu-latest
+    outputs:
+      serve_digest: ${{ steps.publish.outputs.serve_digest }}
+      correction_digest: ${{ steps.publish.outputs.correction_digest }}
+      acp_digest: ${{ steps.publish.outputs.acp_digest }}
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish or verify immutable multi-arch tags
+        id: publish
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          for pair in serve:protomolt-serve correction:protomolt-correction acp:protomolt-acp-agent; do
+            KEY=${pair%%:*}
+            IMAGE=${pair#*:}
+            BASE=ghcr.io/${{ github.repository_owner }}/$IMAGE
+            TAG=$BASE:$VERSION
+            if docker buildx imagetools inspect "$TAG" >/dev/null 2>inspect-error.txt; then
+              echo "Reusing existing version tag: $TAG"
+            elif grep -Eqi 'not found|manifest unknown' inspect-error.txt; then
+              docker buildx imagetools create -t "$TAG" "$TAG-amd64" "$TAG-arm64"
+            else
+              cat inspect-error.txt >&2
+              exit 1
+            fi
+            RAW=$(docker buildx imagetools inspect "$TAG" --raw)
+            printf '%s\n' "$RAW" | jq -e '
+              [.manifests[] | select(.platform.os == "linux") | .platform.architecture] 
+              | unique | sort == ["amd64", "arm64"]' >/dev/null
+            for ARCH in amd64 arm64; do
+              docker pull --platform "linux/$ARCH" "$TAG"
+              [ "$(docker image inspect --platform "linux/$ARCH" "$TAG" --format '{{.Architecture}}')" = "$ARCH" ]
+              [ "$(docker image inspect --platform "linux/$ARCH" "$TAG" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SOURCE_SHA" ]
+            done
+            DIGEST=$(docker buildx imagetools inspect "$TAG" --format '{{json .}}' | jq -r '.manifest.digest')
+            [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+            echo "${KEY}_digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          done
+
+  bundle:
+    needs: [prepare, manifests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/console/package-lock.json
+
+      - name: Build standalone verifier and version-pinned starter bundle
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SERVE_DIGEST: ${{ needs.manifests.outputs.serve_digest }}
+          CORRECTION_DIGEST: ${{ needs.manifests.outputs.correction_digest }}
+          ACP_DIGEST: ${{ needs.manifests.outputs.acp_digest }}
+        run: |
+          set -euo pipefail
+          ./gradlew :protomolt-record-verifier:jar --no-daemon
+          DIR="$RUNNER_TEMP/protomolt-starter-$VERSION"
+          mkdir -p "$DIR"
+          cp deploy/starter/compose.yml deploy/starter/compose.live.yml \
+            deploy/starter/README.md deploy/starter/verify-receipt.sh \
+            deploy/starter/smoke.mjs "$DIR/"
+          JAR=$(find apps/record-verifier/build/libs -maxdepth 1 \
+            -name 'protomolt-record-verifier-*.jar' ! -name '*-sources.jar' \
+            ! -name '*-javadoc.jar' -print -quit)
+          test -n "$JAR"
+          cp "$JAR" "$DIR/record-verifier.jar"
+          printf 'PROTOMOLT_VERSION=%s\nPROTOMOLT_SERVE_IMAGE=ghcr.io/${{ github.repository_owner }}/protomolt-serve@%s\nPROTOMOLT_CORRECTION_IMAGE=ghcr.io/${{ github.repository_owner }}/protomolt-correction@%s\nPROTOMOLT_ACP_IMAGE=ghcr.io/${{ github.repository_owner }}/protomolt-acp-agent@%s\n' \
+            "$VERSION" "$SERVE_DIGEST" "$CORRECTION_DIGEST" "$ACP_DIGEST" > "$DIR/.env"
+          (cd "$DIR" && docker compose config --quiet)
+          (cd "$RUNNER_TEMP" && zip -qr "protomolt-starter-$VERSION.zip" "protomolt-starter-$VERSION")
+
+      - name: Anonymous clean pull and bundled acceptance
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          export DOCKER_CONFIG="$RUNNER_TEMP/docker-anonymous"
+          mkdir -p "$DOCKER_CONFIG"
+          cd "$RUNNER_TEMP/protomolt-starter-$VERSION"
+          printf '\nCOMPOSE_PROJECT_NAME=starter-clean-pull\nPROTOMOLT_HTTP_PORT=18080\nPROTOMOLT_GRPC_PORT=19090\n' >> .env
+          trap 'docker compose down -v --remove-orphans >/dev/null' EXIT
+          docker compose --profile acp pull --quiet
+          docker compose up -d --wait --pull never
+          SMOKE=$(HTTP_BASE=http://127.0.0.1:18080 GRPC_TARGET=127.0.0.1:19090 node smoke.mjs)
+          printf '%s\n' "$SMOKE" | jq -e '.run and .authenticated_console and .mcp and .acp' >/dev/null
+          RUN_ID=$(printf '%s\n' "$SMOKE" | jq -r '.run')
+          ./verify-receipt.sh "$RUN_ID"
+          VERIFY_SAVED_RUN="$RUN_ID" HTTP_BASE=http://127.0.0.1:18080 \
+            node smoke.mjs | jq -e '.retrieved_after_restart == true' >/dev/null
+
+      - name: Log in for the existing serve latest contract
+        if: needs.prepare.outputs.manual == 'false'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Advance serve latest after semver acceptance
+        if: needs.prepare.outputs.manual == 'false'
+        env:
+          SERVE_DIGEST: ${{ needs.manifests.outputs.serve_digest }}
+        run: |
+          set -euo pipefail
+          IMAGE=ghcr.io/${{ github.repository_owner }}/protomolt-serve
+          docker buildx imagetools create -t "$IMAGE:latest" "$IMAGE@$SERVE_DIGEST"
+
+      - name: Create prerelease or attach to existing semver release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.release_tag }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          MANUAL: ${{ needs.prepare.outputs.manual }}
+        run: |
+          set -euo pipefail
+          ASSET="$RUNNER_TEMP/protomolt-starter-$VERSION.zip"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            EXISTING=$(gh release view "$TAG" --json assets --jq '.assets[].name')
+            if printf '%s\n' "$EXISTING" | grep -Fxq "protomolt-starter-$VERSION.zip"; then
+              echo 'starter release asset already exists; refusing overwrite' >&2
+              exit 1
+            fi
+            TAG_SHA=$(git rev-list -n 1 "refs/tags/$TAG")
+            [ "$TAG_SHA" = "$SOURCE_SHA" ] || { echo 'existing tag changed' >&2; exit 1; }
+            gh release upload "$TAG" "$ASSET"
+          else
+            [ "$MANUAL" = true ] || { echo 'semver release is missing' >&2; exit 1; }
+            gh release create "$TAG" "$ASSET" --verify-tag \
+              --title "ProtoMolt starter $VERSION" --prerelease \
+              --notes "Image-only fixture starter for commit $SOURCE_SHA. Includes digest-pinned linux/amd64 and linux/arm64 images and an offline record verifier."
+
+          fi

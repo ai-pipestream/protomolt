@@ -63,6 +63,14 @@ records using the standalone verifier with Docker networking disabled. Execution
 verification rehashed four artifacts; assessment verification rehashed fourteen.
 The exported bundle contains public trust and evidence, not the signing identity.
 
+The reusable `deploy/starter/smoke.mjs` subsequently passed all protocol checks
+with `REQUIRE_GRPCURL=1`. Its receipt helper run for
+`contact-4603113f-84ad-4832-a726-7086e7c826db` exported only ten distinct referenced
+artifacts from a shared store of 444, verified both records offline, and the
+`VERIFY_SAVED_RUN` mode retrieved the same accepted outcome after restart.
+The standalone verifier's full tests passed after adding trusted artifact
+listing and ignoring unrelated files. Actionlint passed on the changed workflows.
+
 ## Remaining release gates
 
 The committed smoke script will repeat protocol acceptance on each native image

@@ -1,0 +1,4 @@
+.env
+inference-token
+evidence/
+record-verifier.jar

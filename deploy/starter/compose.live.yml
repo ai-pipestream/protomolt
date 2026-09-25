@@ -1,0 +1,21 @@
+# Optional remote inference. Start with:
+# docker compose -f compose.yml -f compose.live.yml up -d
+# Put a provider-bridge API token in ./inference-token (chmod 600) first.
+services:
+  correction:
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export PROTOMOLT_CORRECTION_API_TOKEN="$$(cat /run/correction-secret/token)"
+        export PROTOMOLT_INFERENCE_API_TOKEN="$$(cat /run/inference-token)"
+        exec /opt/protomolt-correction/bin/protomolt-correction \
+          --host 0.0.0.0 --port 9090 --workspace /data/correction \
+          --mode remote-prompt --inference-target "$${PROTOMOLT_INFERENCE_TARGET}"
+    environment:
+      PROTOMOLT_INFERENCE_TARGET: ${PROTOMOLT_INFERENCE_TARGET:?Set the private inference gRPC target}
+    volumes:
+      - ./inference-token:/run/inference-token:ro
+      - correction-live-data:/data/correction
+
+volumes:
+  correction-live-data:

@@ -52,6 +52,9 @@ jobs:
       - name: Deployment statics
         run: scripts/check-deployment-statics.sh
 
+      - name: Starter configuration
+        run: deploy/starter/check-static.sh
+
       - name: Buf breaking (PRs)
         if: github.event_name == 'pull_request'
         run: buf breaking --against ".git#branch=origin/${{ github.base_ref }}"
