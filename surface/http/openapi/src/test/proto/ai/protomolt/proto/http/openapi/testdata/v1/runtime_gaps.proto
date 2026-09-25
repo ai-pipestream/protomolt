@@ -1,0 +1,41 @@
+syntax = "proto3";
+package ai.protomolt.proto.http.openapi.gaps.v1;
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.http.openapi.gaps";
+
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+message Child {
+  string value = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true string: { min_len: 3 }
+  }];
+}
+
+message Input {
+  Child inspected = 1 [(ai.protomolt.proto.validate.v1.field).inspect_only = true];
+  repeated Child inspected_many = 2 [(ai.protomolt.proto.validate.v1.field).inspect_only = true];
+  map<string, Child> inspected_map = 3 [(ai.protomolt.proto.validate.v1.field).inspect_only = true];
+  int32 outside = 4 [(ai.protomolt.proto.validate.v1.field).int32 = {
+    gt: 10 lt: 3 in: 2 in: 11
+  }];
+  int64 wide_outside = 5 [(ai.protomolt.proto.validate.v1.field).int64 = {
+    gt: 10 lt: 3
+  }];
+  double float_outside = 6 [(ai.protomolt.proto.validate.v1.field).double = {
+    gt: 10 lt: 3
+  }];
+  int32 must_be_nonzero = 7 [(ai.protomolt.proto.validate.v1.field).required = true];
+  uint64 unsigned_outside = 8 [(ai.protomolt.proto.validate.v1.field).uint64 = {
+    gt: 18446744073709551610 lt: 3
+  }];
+}
+
+message Skipped {
+  option (ai.protomolt.proto.validate.v1.message).skip_when = "incomplete";
+  bool incomplete = 1;
+  Child child = 2;
+}
+
+service GapService {
+  rpc Check(Input) returns (Skipped);
+}

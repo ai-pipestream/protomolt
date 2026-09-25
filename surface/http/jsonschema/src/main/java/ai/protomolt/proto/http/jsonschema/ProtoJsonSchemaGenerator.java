@@ -6,6 +6,7 @@ import ai.protomolt.proto.validate.model.EnumConstraints;
 import ai.protomolt.proto.validate.model.FieldConstraints;
 import ai.protomolt.proto.validate.model.FloatingConstraints;
 import ai.protomolt.proto.validate.model.IntegralConstraints;
+import ai.protomolt.proto.validate.model.IgnoreMode;
 import ai.protomolt.proto.validate.model.MapConstraints;
 import ai.protomolt.proto.validate.model.RepeatedConstraints;
 import ai.protomolt.proto.validate.model.StringConstraints;
@@ -91,6 +92,80 @@ public final class ProtoJsonSchemaGenerator {
         return new Generation().run(descriptor);
     }
 
+    /**
+     * Validation keywords without a protobuf JSON type schema. Other schema dialects
+     * can reuse the rule translation while retaining their own encoding of types.
+     * Conditional and unrepresentable rules are identified as runtime obligations.
+     */
+    public Map<String, Object> fieldValidationSchema(FieldDescriptor field) {
+        Objects.requireNonNull(field, "field");
+        Generation generation = new Generation(true);
+        List<FieldConstraints> constraints = generation.constraintsFor(field);
+        List<String> runtime = new ArrayList<>();
+        for (ValidationRuleSource source : sources) {
+            var message = source.messageConstraints(field.getContainingType());
+            if (message.isPresent()) {
+                if (!message.get().skipWhen().isBlank()) {
+                    return Map.of("x-protomolt-runtime-rules", List.of("skip-when"));
+                }
+                if (message.get().oneofs().stream().anyMatch(o -> o.fields().contains(field.getName()))) {
+                    return Map.of("x-protomolt-runtime-rules", List.of("message-oneof"));
+                }
+            }
+        }
+        if (constraints.stream().anyMatch(c -> c.ignore() == IgnoreMode.ALWAYS)) {
+            return Map.of("x-protomolt-runtime-rules", List.of("ignore-always"));
+        }
+        if (constraints.stream().anyMatch(c -> c.ignore() == IgnoreMode.IF_ZERO_VALUE)) {
+            // A plain bound would reject zero values that the runtime deliberately skips.
+            return Map.of("x-protomolt-runtime-rules", List.of("ignore-if-zero-value"));
+        }
+        for (FieldConstraints c : constraints) {
+            if (c.bytes().isPresent()) runtime.add("bytes");
+            if (c.timestamp().isPresent()) runtime.add("timestamp");
+            if (c.duration().isPresent()) runtime.add("duration");
+            if (c.any().isPresent()) runtime.add("any");
+            if (c.fieldMask().isPresent()) runtime.add("field-mask");
+            if (c.taxonomy().isPresent()) runtime.add("taxonomy");
+            if (c.inspectOnly()) runtime.add("inspect-only");
+        }
+        if (!field.hasPresence() && constraints.stream().anyMatch(FieldConstraints::required)) {
+            // A protobuf implicit-presence scalar is absent at its zero value even if the
+            // JSON property was supplied; OAS required checks only property existence.
+            runtime.add(field.isRepeated() ? "required-empty-collection" : "required-implicit-zero");
+        }
+        Map<String, Object> schema = generation.fieldSchema(field, constraints);
+        if (!runtime.isEmpty()) schema.put("x-protomolt-runtime-rules", runtime.stream().distinct().toList());
+        return schema;
+    }
+
+    /** Message validation shared by JSON Schema consumers and OpenAPI publication. */
+    public Map<String, Object> messageValidationSchema(Descriptor descriptor) {
+        Map<String, Object> schema = new LinkedHashMap<>();
+        List<String> required = new ArrayList<>();
+        Generation generation = new Generation();
+        for (FieldDescriptor field : descriptor.getFields()) {
+            List<FieldConstraints> rules = generation.constraintsFor(field);
+            if (field.isRequired() || (rules.stream().anyMatch(FieldConstraints::required)
+                    && rules.stream().noneMatch(c -> c.ignore() == IgnoreMode.ALWAYS))) {
+                required.add(field.getJsonName());
+            }
+        }
+        if (!required.isEmpty()) schema.put("required", required);
+        List<String> runtime = new ArrayList<>();
+        for (ValidationRuleSource source : sources) {
+            source.messageConstraints(descriptor).ifPresent(c -> {
+                Generation.celInto(schema, c.cel());
+                if (!c.oneofs().isEmpty()) runtime.add("message-oneof");
+                if (!c.requiredOneofs().isEmpty()) runtime.add("required-oneof");
+                if (!c.skipWhen().isBlank()) runtime.add("skip-when");
+            });
+        }
+        if (runtime.contains("skip-when")) schema.remove("required");
+        if (!runtime.isEmpty()) schema.put("x-protomolt-runtime-rules", runtime.stream().distinct().toList());
+        return schema;
+    }
+
     /** Generates the schema as pretty-printed JSON text. */
     /**
      * The schema with the root message described at the top level.
@@ -134,6 +209,12 @@ public final class ProtoJsonSchemaGenerator {
 
     /** Per-call state: the $defs under construction and the worklist of message types. */
     private final class Generation {
+
+        private final boolean validationOnly;
+
+        Generation() { this(false); }
+
+        Generation(boolean validationOnly) { this.validationOnly = validationOnly; }
 
         private final Map<String, Object> defs = new LinkedHashMap<>();
         private final Deque<Descriptor> queue = new ArrayDeque<>();
@@ -286,6 +367,7 @@ public final class ProtoJsonSchemaGenerator {
 
         /** Schema for the field's canonical proto3 JSON encoding, before constraints. */
         private Map<String, Object> baseSchema(FieldDescriptor field) {
+            if (validationOnly) return new LinkedHashMap<>();
             return switch (field.getType()) {
                 case INT32, SINT32, SFIXED32 -> schemaOf("type", "integer");
                 case UINT32, FIXED32 -> schemaOf("type", "integer", "minimum", 0L);
@@ -354,6 +436,10 @@ public final class ProtoJsonSchemaGenerator {
 
         /** Constraint keywords for the field's type, from one source's constraints. */
         private Map<String, Object> overlayFor(FieldDescriptor field, FieldConstraints c) {
+            if (validationOnly && c.ignore() != IgnoreMode.UNSPECIFIED) {
+                return schemaOf("x-protomolt-runtime-rules", List.of(
+                        c.ignore() == IgnoreMode.ALWAYS ? "ignore-always" : "ignore-if-zero-value"));
+            }
             return switch (field.getJavaType()) {
                 case STRING -> c.string().map(Generation::stringOverlay)
                         .orElseGet(LinkedHashMap::new);
@@ -469,10 +555,17 @@ public final class ProtoJsonSchemaGenerator {
             if (!bothSpellings) {
                 Map<String, Object> o = new LinkedHashMap<>();
                 n.constant().ifPresent(v -> o.put("const", integral(n, v)));
-                n.gte().ifPresent(v -> o.put("minimum", integral(n, v)));
-                n.gt().ifPresent(v -> o.put("exclusiveMinimum", integral(n, v)));
-                n.lte().ifPresent(v -> o.put("maximum", integral(n, v)));
-                n.lt().ifPresent(v -> o.put("exclusiveMaximum", integral(n, v)));
+                BigInteger lower = n.gt().isPresent() ? big(n, n.gt().getAsLong())
+                        : n.gte().isPresent() ? big(n, n.gte().getAsLong()) : null;
+                BigInteger upper = n.lt().isPresent() ? big(n, n.lt().getAsLong())
+                        : n.lte().isPresent() ? big(n, n.lte().getAsLong()) : null;
+                if (lower != null && upper != null && upper.compareTo(lower) < 0) {
+                    Map<String, Object> low = new LinkedHashMap<>();
+                    Map<String, Object> high = new LinkedHashMap<>();
+                    addIntegralBounds(low, n, true);
+                    addIntegralBounds(high, n, true, false);
+                    o.put("anyOf", List.of(low, high));
+                } else addIntegralBounds(o, n, false);
                 if (!n.in().isEmpty()) {
                     o.put("enum", n.in().stream().map(v -> integral(n, v)).toList());
                 }
@@ -518,38 +611,58 @@ public final class ProtoJsonSchemaGenerator {
                 }
             }
 
+            BigInteger rawLower = n.gt().isPresent() ? big(n, n.gt().getAsLong())
+                    : n.gte().isPresent() ? big(n, n.gte().getAsLong()) : null;
+            BigInteger rawUpper = n.lt().isPresent() ? big(n, n.lt().getAsLong())
+                    : n.lte().isPresent() ? big(n, n.lte().getAsLong()) : null;
             BigInteger lo = null;
             BigInteger hi = null;
-            if (n.gte().isPresent()) {
-                lo = big(n, n.gte().getAsLong());
-            }
             if (n.gt().isPresent()) {
-                BigInteger candidate = big(n, n.gt().getAsLong()).add(BigInteger.ONE);
-                lo = lo == null ? candidate : lo.max(candidate);
-            }
-            if (n.lte().isPresent()) {
-                hi = big(n, n.lte().getAsLong());
-            }
+                lo = big(n, n.gt().getAsLong()).add(BigInteger.ONE);
+            } else if (n.gte().isPresent()) lo = big(n, n.gte().getAsLong());
             if (n.lt().isPresent()) {
-                BigInteger candidate = big(n, n.lt().getAsLong()).subtract(BigInteger.ONE);
-                hi = hi == null ? candidate : hi.min(candidate);
-            }
+                hi = big(n, n.lt().getAsLong()).subtract(BigInteger.ONE);
+            } else if (n.lte().isPresent()) hi = big(n, n.lte().getAsLong());
             if (lo != null || hi != null) {
                 if (n.unsigned() && lo == null) {
                     lo = BigInteger.ZERO; // unsigned fields are implicitly bounded below
                 }
                 Map<String, Object> numeric = new LinkedHashMap<>();
                 numeric.put("type", "integer");
-                n.gte().ifPresent(v -> numeric.put("minimum", integral(n, v)));
-                n.gt().ifPresent(v -> numeric.put("exclusiveMinimum", integral(n, v)));
-                n.lte().ifPresent(v -> numeric.put("maximum", integral(n, v)));
-                n.lt().ifPresent(v -> numeric.put("exclusiveMaximum", integral(n, v)));
-                Map<String, Object> stringForm = schemaOf(
-                        "type", "string",
-                        "pattern", DecimalRangePattern.range(lo, hi));
-                merge(o, schemaOf("anyOf", List.of(numeric, stringForm)));
+                addIntegralBounds(numeric, n, false);
+                if (rawLower != null && rawUpper != null
+                        && rawUpper.compareTo(rawLower) < 0) {
+                    Map<String, Object> lowerNumeric = schemaOf("type", "integer");
+                    Map<String, Object> upperNumeric = schemaOf("type", "integer");
+                    addIntegralBounds(lowerNumeric, n, true);
+                    addIntegralBounds(upperNumeric, n, true, false);
+                    merge(o, schemaOf("anyOf", List.of(lowerNumeric, upperNumeric,
+                            schemaOf("type", "string", "pattern", DecimalRangePattern.range(lo, null)),
+                            schemaOf("type", "string", "pattern", DecimalRangePattern.range(null, hi)))));
+                } else {
+                    Map<String, Object> stringForm = schemaOf(
+                            "type", "string", "pattern", DecimalRangePattern.range(lo, hi));
+                    merge(o, schemaOf("anyOf", List.of(numeric, stringForm)));
+                }
             }
             return o;
+        }
+
+        private static void addIntegralBounds(Map<String, Object> out, IntegralConstraints n,
+                                              boolean lowerOnly) {
+            addIntegralBounds(out, n, lowerOnly, true);
+        }
+
+        private static void addIntegralBounds(Map<String, Object> out, IntegralConstraints n,
+                                              boolean oneSide, boolean lower) {
+            if (!oneSide || lower) {
+                if (n.gt().isPresent()) out.put("exclusiveMinimum", integral(n, n.gt().getAsLong()));
+                else n.gte().ifPresent(v -> out.put("minimum", integral(n, v)));
+            }
+            if (!oneSide || !lower) {
+                if (n.lt().isPresent()) out.put("exclusiveMaximum", integral(n, n.lt().getAsLong()));
+                else n.lte().ifPresent(v -> out.put("maximum", integral(n, v)));
+            }
         }
 
         /** Both accepted JSON spellings of a 64-bit integer: number and decimal string. */
@@ -578,10 +691,24 @@ public final class ProtoJsonSchemaGenerator {
         private static Map<String, Object> floatingOverlay(FloatingConstraints n) {
             Map<String, Object> o = new LinkedHashMap<>();
             n.constant().ifPresent(v -> o.put("const", v));
-            n.gte().ifPresent(v -> o.put("minimum", v));
-            n.gt().ifPresent(v -> o.put("exclusiveMinimum", v));
-            n.lte().ifPresent(v -> o.put("maximum", v));
-            n.lt().ifPresent(v -> o.put("exclusiveMaximum", v));
+            double lower = n.gt().isPresent() ? n.gt().getAsDouble()
+                    : n.gte().isPresent() ? n.gte().getAsDouble() : Double.NaN;
+            double upper = n.lt().isPresent() ? n.lt().getAsDouble()
+                    : n.lte().isPresent() ? n.lte().getAsDouble() : Double.NaN;
+            if (!Double.isNaN(lower) && !Double.isNaN(upper) && upper < lower) {
+                Map<String, Object> low = new LinkedHashMap<>();
+                Map<String, Object> high = new LinkedHashMap<>();
+                if (n.gt().isPresent()) low.put("exclusiveMinimum", lower);
+                else low.put("minimum", lower);
+                if (n.lt().isPresent()) high.put("exclusiveMaximum", upper);
+                else high.put("maximum", upper);
+                o.put("anyOf", List.of(low, high));
+            } else {
+                if (n.gt().isPresent()) o.put("exclusiveMinimum", lower);
+                else n.gte().ifPresent(v -> o.put("minimum", v));
+                if (n.lt().isPresent()) o.put("exclusiveMaximum", upper);
+                else n.lte().ifPresent(v -> o.put("maximum", v));
+            }
             if (!n.in().isEmpty()) {
                 o.put("enum", List.copyOf(n.in()));
             }
