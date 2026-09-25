@@ -194,8 +194,8 @@ jobs:
           for IMAGE in protomolt-serve protomolt-correction protomolt-acp-agent; do
             TAG=ghcr.io/${{ github.repository_owner }}/$IMAGE:$VERSION-$ARCH
             docker pull --platform "linux/$ARCH" "$TAG"
-            [ "$(docker image inspect --platform "linux/$ARCH" "$TAG" --format '{{.Architecture}}')" = "$ARCH" ]
-            [ "$(docker image inspect --platform "linux/$ARCH" "$TAG" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SOURCE_SHA" ]
+            [ "$(docker image inspect "$TAG" --format '{{.Architecture}}')" = "$ARCH" ]
+            [ "$(docker image inspect "$TAG" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SOURCE_SHA" ]
           done
 
       - name: Install checked grpcurl for direct gRPC acceptance
@@ -283,9 +283,11 @@ jobs:
               [.manifests[] | select(.platform.os == "linux") | .platform.architecture] 
               | unique | sort == ["amd64", "arm64"]' >/dev/null
             for ARCH in amd64 arm64; do
-              docker pull --platform "linux/$ARCH" "$TAG"
-              [ "$(docker image inspect --platform "linux/$ARCH" "$TAG" --format '{{.Architecture}}')" = "$ARCH" ]
-              [ "$(docker image inspect --platform "linux/$ARCH" "$TAG" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SOURCE_SHA" ]
+              CHILD=$(printf '%s\n' "$RAW" | jq -r --arg arch "$ARCH" \
+                '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest')
+              CONFIG=$(docker buildx imagetools inspect "$BASE@$CHILD" --format '{{json .Image}}')
+              printf '%s\n' "$CONFIG" | jq -e --arg arch "$ARCH" --arg sha "$SOURCE_SHA" \
+                '.architecture == $arch and .config.Labels["org.opencontainers.image.revision"] == $sha' >/dev/null
             done
             DIGEST=$(docker buildx imagetools inspect "$TAG" --format '{{json .}}' | jq -r '.manifest.digest')
             [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
