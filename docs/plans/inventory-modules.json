@@ -1,0 +1,779 @@
+{
+  "baseline": "dc49800cd66950356a883d99141e00427df6ad65",
+  "source": "settings.gradle",
+  "scope": "Every declared Gradle project; family disposition and evidence are in its review. This roster is not a test or release claim.",
+  "modules": [
+    {
+      "project": "bom",
+      "path": "bom",
+      "review": "inventory-coverage.md"
+    },
+    {
+      "project": "protomolt-descriptors",
+      "path": "core/descriptors",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-helpers",
+      "path": "core/helpers",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-sources",
+      "path": "core/sources",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-formats",
+      "path": "core/formats",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-codegen",
+      "path": "core/codegen",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-compat",
+      "path": "core/compat",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-acp",
+      "path": "core/acp",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-acquire-gather",
+      "path": "acquire/gather/core",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-acquire-gather-git",
+      "path": "acquire/gather/git",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-acquire-gather-maven",
+      "path": "acquire/gather/maven",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-acquire-msgraph",
+      "path": "acquire/msgraph",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-acquire-confluence",
+      "path": "acquire/confluence",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-acquire-connector",
+      "path": "acquire/connector",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-acquire-pull",
+      "path": "acquire/pull",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-acquire-s3",
+      "path": "acquire/s3",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-acquire-jdbc",
+      "path": "acquire/jdbc",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-registry-proto",
+      "path": "schema/registry/proto",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-registry",
+      "path": "schema/registry/core",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-registry-service",
+      "path": "schema/registry/service",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-schema-apicurio",
+      "path": "schema/apicurio/runtime",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-schema-apicurio-deployment",
+      "path": "schema/apicurio/deployment",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-schema-confluent",
+      "path": "schema/confluent",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-protobuf-metadata",
+      "path": "protobuf/metadata",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-protobuf-quality",
+      "path": "protobuf/quality",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-protobuf-llm",
+      "path": "protobuf/llm",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-protobuf-metric",
+      "path": "protobuf/metric",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-protobuf-prompt",
+      "path": "protobuf/prompt",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-protobuf-validation",
+      "path": "protobuf/validation",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-protobuf-validation-protovalidate",
+      "path": "protobuf/validation-protovalidate",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-protobuf-validation-conformance",
+      "path": "protobuf/validation-conformance",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-protobuf-seo",
+      "path": "protobuf/seo",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-protobuf-types",
+      "path": "protobuf/types",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-mapper",
+      "path": "transform/mapper/core",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-mapper-cel",
+      "path": "transform/mapper/cel",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-mapper-metadata",
+      "path": "transform/mapper/metadata",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-shapes",
+      "path": "transform/shapes",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-projection",
+      "path": "transform/projection",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-pipeline",
+      "path": "transform/pipeline",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-delegation",
+      "path": "transform/delegation",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-screening",
+      "path": "transform/screening",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-receipt",
+      "path": "transform/receipt",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-workflow",
+      "path": "transform/workflow",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-mesh-proto",
+      "path": "mesh/proto",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-mesh-contracts",
+      "path": "mesh/contracts",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-mesh-cluster",
+      "path": "mesh/cluster",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-search-index-spi",
+      "path": "search/index/spi",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-search-chunk",
+      "path": "search/chunk",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-search-proto",
+      "path": "search/proto",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-search-service",
+      "path": "search/service",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-search-snapshot-s3",
+      "path": "search/snapshot-s3",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-search-console",
+      "path": "search/console",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-search-index-ndjson",
+      "path": "search/index/ndjson",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-search-index-lucene",
+      "path": "search/index/lucene",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-search-index-opensearch",
+      "path": "search/index/opensearch",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-search-index-solr",
+      "path": "search/index/solr",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-search-index-qdrant",
+      "path": "search/index/qdrant",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-search-index-protobuf",
+      "path": "search/index/protobuf",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-search-embedding",
+      "path": "search/embedding/core",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-search-embedding-model2vec",
+      "path": "search/embedding/model2vec",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-search-embedding-tei",
+      "path": "search/embedding/tei",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-search-embedding-ovms",
+      "path": "search/embedding/ovms",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-search-embedding-harness",
+      "path": "search/embedding/harness",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-search-rerank",
+      "path": "search/rerank/core",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-search-rerank-tei",
+      "path": "search/rerank/tei",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-search-rerank-ovms",
+      "path": "search/rerank/ovms",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-search-rerank-harness",
+      "path": "search/rerank/harness",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-metric-proto",
+      "path": "metric/proto",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-metric-spi",
+      "path": "metric/spi",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-metric-lucene",
+      "path": "metric/lucene",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-metric-service",
+      "path": "metric/service",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-metric-iceberg",
+      "path": "metric/iceberg",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-emit",
+      "path": "sink/emit/core",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-emit-okf",
+      "path": "sink/emit/okf",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-emit-parquet",
+      "path": "sink/emit/parquet",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-emit-parquet-s3",
+      "path": "sink/emit/parquet-s3",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-iceberg",
+      "path": "sink/iceberg",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-iceberg-s3",
+      "path": "sink/iceberg-s3",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-kafka-wire",
+      "path": "sink/kafka/wire",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-kafka-connect",
+      "path": "sink/kafka/connect",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-kafka-connect-iceberg",
+      "path": "sink/kafka/connect-iceberg",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-kafka-connect-opensearch",
+      "path": "sink/kafka/connect-opensearch",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-kafka-serde",
+      "path": "sink/kafka/serde",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-kafka-serde-micrometer",
+      "path": "sink/kafka/serde-micrometer",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-grpc-invoke",
+      "path": "surface/grpc/invoke",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-grpc-channel-policy",
+      "path": "surface/grpc/channel-policy",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-grpc-service",
+      "path": "surface/grpc/service",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-grpc-service-contract",
+      "path": "surface/grpc/service-contract",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-grpc-service-profile",
+      "path": "surface/grpc/service-profile",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-grpc-service-workspace",
+      "path": "surface/grpc/service-workspace",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-grpc-workflow",
+      "path": "surface/grpc/workflow",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-grpc-validation",
+      "path": "surface/grpc/validation",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-grpc-validation-micrometer",
+      "path": "surface/grpc/validation-micrometer",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-http-json",
+      "path": "surface/http/json",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-http-rest",
+      "path": "surface/http/rest",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-http-openapi",
+      "path": "surface/http/openapi",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-http-jsonschema",
+      "path": "surface/http/jsonschema",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-mcp",
+      "path": "surface/mcp",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-acp-agent",
+      "path": "surface/acp",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-actions",
+      "path": "surface/actions",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-authz",
+      "path": "surface/authz",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-authz-grpc",
+      "path": "surface/authz-grpc",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-authz-jdbc",
+      "path": "surface/authz-jdbc",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-asset-proto",
+      "path": "asset/proto",
+      "review": "inventory-coverage.md"
+    },
+    {
+      "project": "protomolt-asset-characterize",
+      "path": "asset/characterize",
+      "review": "inventory-coverage.md"
+    },
+    {
+      "project": "protomolt-asset-bridge",
+      "path": "asset/bridge",
+      "review": "inventory-coverage.md"
+    },
+    {
+      "project": "protomolt-asset-bridge-parse",
+      "path": "asset/bridge-parse",
+      "review": "inventory-coverage.md"
+    },
+    {
+      "project": "protomolt-asset-catalog",
+      "path": "asset/catalog",
+      "review": "inventory-coverage.md"
+    },
+    {
+      "project": "protomolt-repo-proto",
+      "path": "repo/proto",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-repo-container",
+      "path": "repo/container",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-repo-service",
+      "path": "repo/service",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-account-proto",
+      "path": "account/proto",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-account-service",
+      "path": "account/service",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-jobs-proto",
+      "path": "jobs/proto",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-jobs-service",
+      "path": "jobs/service",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-inference-proto",
+      "path": "inference/proto",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-inference-spi",
+      "path": "inference/spi",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-inference-openvino",
+      "path": "inference/openvino",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-inference-service",
+      "path": "inference/service",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-inference-openai",
+      "path": "inference/openai",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-inference-structured",
+      "path": "inference/structured",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-intake-proto",
+      "path": "intake/proto",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-intake-service",
+      "path": "intake/service",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-parse-proto",
+      "path": "parse/proto",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-parse-document",
+      "path": "parse/document",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-parse-service",
+      "path": "parse/service",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-parse-text",
+      "path": "parse/text",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-parse-grparse",
+      "path": "parse/grparse",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-parse-playground",
+      "path": "parse/playground",
+      "review": "inventory-data-foundations.md"
+    },
+    {
+      "project": "protomolt-composer",
+      "path": "host/composer",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-config",
+      "path": "host/config",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-config-registry",
+      "path": "host/config-registry",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-config-kafka",
+      "path": "host/config-kafka",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-server-common",
+      "path": "host/server/common",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-server-jdk",
+      "path": "host/server/jdk",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-server-vertx",
+      "path": "host/server/vertx",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-server-netty",
+      "path": "host/server/netty",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-server-spring",
+      "path": "host/server/spring",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-server-micronaut",
+      "path": "host/server/micronaut",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-server-quarkus",
+      "path": "host/server/quarkus",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-integration-quarkus",
+      "path": "host/integration/quarkus/runtime",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-integration-quarkus-deployment",
+      "path": "host/integration/quarkus/deployment",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-integration-spring",
+      "path": "host/integration/spring",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-serve",
+      "path": "apps/serve",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-record-verifier",
+      "path": "apps/record-verifier",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-document-platform",
+      "path": "apps/document-platform",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-cli",
+      "path": "apps/cli",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "protomolt-agent-host",
+      "path": "apps/agent-host",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "project": "samples",
+      "path": "samples",
+      "review": "inventory-coverage.md"
+    },
+    {
+      "project": "protomolt-system-tests",
+      "path": "tests/system",
+      "review": "inventory-coverage.md"
+    }
+  ],
+  "nonGradle": [
+    {
+      "path": "apps/console",
+      "review": "inventory-apps-execution.md"
+    },
+    {
+      "path": "protobuf/llm/examples",
+      "review": "starter-contract-inventory.md"
+    },
+    {
+      "path": "deploy",
+      "review": "inventory-coverage.md"
+    },
+    {
+      "path": "docs/tutorials",
+      "review": "inventory-coverage.md"
+    },
+    {
+      "path": "scripts",
+      "review": "inventory-coverage.md"
+    }
+  ]
+}

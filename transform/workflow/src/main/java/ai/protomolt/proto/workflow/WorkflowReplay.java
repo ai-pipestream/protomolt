@@ -299,7 +299,7 @@ public final class WorkflowReplay {
             return fail(steps, name, recorded.getStatus(),
                     "target type " + spec.getTargetType() + " not in the replay schema");
         }
-        if (!StructuredProvenance.promptFingerprint(target)
+        if (!StructuredProvenance.promptFingerprint(target, spec.getMode())
                 .equals(provenance.getPromptFingerprint())) {
             return fail(steps, name, recorded.getStatus(),
                     "recorded prompt fingerprint does not match the replay schema's "
@@ -325,6 +325,7 @@ public final class WorkflowReplay {
                 .setTargetType(spec.getTargetType())
                 .setModel(spec.getModel())
                 .setMaxAttempts(spec.getMaxAttempts())
+                .setMode(spec.getMode())
                 .build());
         Message request = parse(artifacts, recorded.getRequestArtifact(),
                 GenerateStructuredRequest.getDescriptor(), "request of step " + name);
@@ -549,7 +550,7 @@ public final class WorkflowReplay {
                     "target type " + spec.getTargetType() + " not in the replay schema");
         }
         String promptFingerprint = StructuredProvenance.promptFingerprint(target,
-                Any.pack(delivered), typeRegistry(schema));
+                Any.pack(delivered), typeRegistry(schema), spec.getMode());
         if (!promptFingerprint.equals(provenance.getPromptFingerprint())) {
             return fail(steps, name, recorded.getStatus(),
                     "recorded prompt fingerprint does not match the replay schema's "

@@ -103,7 +103,7 @@ public final class WorkflowJson {
                         Fields.flag(step, "validate"),
                         Fields.integer(step, "deadlineMs"), text(step, "completion"),
                         new CompiledWorkflow.StructuredSpec(targetType, model,
-                                Fields.integer(structured, "maxAttempts")),
+                                Fields.integer(structured, "maxAttempts"), structuredMode(structured)),
                         edge(step, name, schema),
                         fanOut(step, name, schema))));
                 continue;
@@ -153,6 +153,14 @@ public final class WorkflowJson {
     }
 
     /** A string field, or null when it is blank: absent and empty mean the same here. */
+    private static ai.protomolt.proto.inference.v1.StructuredGenerationMode structuredMode(Message message) {
+        var field = message.getDescriptorForType().findFieldByName("mode");
+        var value = (com.google.protobuf.Descriptors.EnumValueDescriptor) message.getField(field);
+        var mode = ai.protomolt.proto.inference.v1.StructuredGenerationMode.forNumber(value.getNumber());
+        if (mode == null) throw new IllegalArgumentException("unknown structured generation mode");
+        return mode;
+    }
+
     private static String text(Message message, String field) {
         String value = Fields.string(message, field);
         return value.isBlank() ? null : value;

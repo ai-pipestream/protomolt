@@ -72,6 +72,7 @@ public final class WorkflowCompiler {
                                 .setTargetType(step.structured().targetType().getFullName())
                                 .setModel(step.structured().model())
                                 .setMaxAttempts(step.structured().maxAttempts())
+                                .setMode(step.structured().mode())
                                 .build())
                         .setCompletion(StepCompletion.STEP_COMPLETION_LIVE), step)
                         .build());

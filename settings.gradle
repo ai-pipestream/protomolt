@@ -481,6 +481,9 @@ project(':protomolt-integration-spring').projectDir = file('host/integration/spr
 include 'protomolt-serve'
 project(':protomolt-serve').projectDir = file('apps/serve')
 
+include 'protomolt-correction'
+project(':protomolt-correction').projectDir = file('apps/correction')
+
 include 'protomolt-record-verifier'
 project(':protomolt-record-verifier').projectDir = file('apps/record-verifier')
 

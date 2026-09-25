@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.correction.v1;
+
+import "ai/protomolt/proto/correction/v1/correction.proto";
+import "ai/protomolt/proto/grpc/workflow/v1/workflow_assessment.proto";
+import "ai/protomolt/proto/receipt/v1/receipt.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.correction.v1";
+
+// Candidate starter service for the single reviewed correct-contact workflow.
+// Not an arbitrary-schema generation API. Accessible through ordinary service
+// registration/reflection as well as a generated gRPC client.
+service CorrectionService {
+  // Runs the fixed workflow synchronously. Requests and successful responses
+  // pass ProtoMolt runtime validation. Invalid candidates never reach judgment.
+  // run_id is single-use: duplicate or interrupted IDs return ALREADY_EXISTS;
+  // this starter does not promise crash resumption or idempotent retry.
+  // Provider/repair/evaluation failures return a FAILED assessment with evidence.
+  // Cancellation interrupts local work best-effort; it never implies acceptance.
+  rpc RunCorrection(RunCorrectionRequest) returns (RunCorrectionResponse);
+  // Reads a completed outcome without model calls. NOT_FOUND means no completed
+  // outcome, including interrupted runs. Access requires the same service token.
+  rpc GetCorrection(GetCorrectionRequest) returns (GetCorrectionResponse);
+}
+
+// One single-use invocation of the reviewed workflow.
+message RunCorrectionRequest {
+  // This starter exposes only correct-contact.
+  string workflow_name = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true, string: {in: ["correct-contact"]}
+  }];
+  // Caller-chosen identity; reused IDs never repeat provider calls.
+  string run_id = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true, string: {max_len: 128, slug: true}
+  }];
+  // Raw source; private fields are projected out before provider invocation.
+  RawContact source = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// Synchronous completion, including a recorded failed assessment.
+message RunCorrectionResponse {
+  // Verified records for this run, bound to the request's run ID.
+  CorrectionOutcome outcome = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// Retrieve one previously completed outcome without any provider call.
+message GetCorrectionRequest {
+  // Identity allocated by the original caller.
+  string run_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true, string: {max_len: 128, slug: true}
+  }];
+}
+
+// An authenticated read of verified stored evidence.
+message GetCorrectionResponse {
+  // Verified records for the requested run.
+  CorrectionOutcome outcome = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// The handler must bind all three records to the same run and verify both
+// signatures before returning. Annotation validation alone cannot prove this.
+// Receipt validity records a judgment; it is not proof of semantic correctness.
+message CorrectionOutcome {
+  // Shared identity of the execution and assessment.
+  string run_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true, string: {max_len: 128, slug: true}
+  }];
+  // Validation and semantic-review decision with evidence and policy bindings.
+  ai.protomolt.proto.grpc.workflow.v1.WorkflowAssessment assessment = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true
+  ];
+  // Original workflow execution record signed by the configured issuer.
+  ai.protomolt.proto.receipt.v1.SignedWorkRecord execution_receipt = 3 [
+    (ai.protomolt.proto.validate.v1.field).required = true
+  ];
+  // Separate signed assessment; no synthetic evaluation step is inserted.
+  ai.protomolt.proto.receipt.v1.SignedWorkRecord assessment_receipt = 4 [
+    (ai.protomolt.proto.validate.v1.field).required = true
+  ];
+}

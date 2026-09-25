@@ -9,6 +9,8 @@ import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.util.JsonFormat;
 
 import java.nio.charset.StandardCharsets;
+import ai.protomolt.proto.inference.v1.StructuredGenerationMode;
+import ai.protomolt.proto.inference.structured.StructuredGenerator;
 
 /**
  * Recomputes the prompt and schema fingerprints of a structured-generation step
@@ -23,8 +25,8 @@ final class StructuredProvenance {
     }
 
     /** Lowercase SHA-256 hex of the persona-free rendered instructions. */
-    static String promptFingerprint(Descriptor targetType) {
-        return sha256Hex(render(targetType).getInstructions());
+    static String promptFingerprint(Descriptor targetType, StructuredGenerationMode mode) {
+        return sha256Hex(StructuredGenerator.instructions(render(targetType), mode));
     }
 
     /**
@@ -33,8 +35,8 @@ final class StructuredProvenance {
      * fingerprint of a grounded structured step here from the re-derived grounding.
      */
     static String promptFingerprint(Descriptor targetType, Any grounding,
-                                    JsonFormat.TypeRegistry typeRegistry) {
-        return sha256Hex(render(targetType, grounding, typeRegistry).getInstructions());
+                                    JsonFormat.TypeRegistry typeRegistry, StructuredGenerationMode mode) {
+        return sha256Hex(StructuredGenerator.instructions(render(targetType, grounding, typeRegistry), mode));
     }
 
     /** Lowercase SHA-256 hex of the persona-free response JSON Schema. */

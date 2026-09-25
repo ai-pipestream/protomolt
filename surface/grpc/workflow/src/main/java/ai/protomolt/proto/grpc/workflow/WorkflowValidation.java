@@ -398,6 +398,8 @@ public final class WorkflowValidation {
 
     /** Validates a structured-generation specification. */
     public static void validate(StructuredGenerationSpec spec) {
+        require(spec.getMode() != ai.protomolt.proto.inference.v1.StructuredGenerationMode.UNRECOGNIZED,
+                "step.structured.mode must be a defined mode");
         validateType(spec.getTargetType(), "step.structured.target_type");
         require(!spec.getModel().isBlank()
                         && spec.getModel().length() <= MAX_MODEL_LENGTH,

@@ -226,11 +226,18 @@ public record CompiledWorkflow(String name, List<FileDescriptor> files, Descript
      * @param maxAttempts the attempt cap; 0 applies the coordinator default, and the
      *        value never exceeds the coordinator's hard cap of 3
      */
-    public record StructuredSpec(Descriptor targetType, String model, int maxAttempts) {
+    public record StructuredSpec(Descriptor targetType, String model, int maxAttempts,
+            ai.protomolt.proto.inference.v1.StructuredGenerationMode mode) {
+
+        public StructuredSpec(Descriptor targetType, String model, int maxAttempts) {
+            this(targetType, model, maxAttempts,
+                    ai.protomolt.proto.inference.v1.StructuredGenerationMode.STRUCTURED_GENERATION_MODE_UNSPECIFIED);
+        }
 
         public StructuredSpec {
             Objects.requireNonNull(targetType, "targetType");
             Objects.requireNonNull(model, "model");
+            Objects.requireNonNull(mode, "mode");
         }
     }
 

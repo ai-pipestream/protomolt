@@ -1,0 +1,222 @@
+# Isolated Goal 2 NAS candidate. Create as a NEW Portainer stack named
+# protomolt-goal2-candidate; never update the production coordinator stack.
+# Secrets are new Portainer stack variables, not values from production.
+services:
+  serve-init:
+    image: busybox:1.38.0
+    user: "0:0"
+    command: ["sh", "-ec", "mkdir -p /data/registry.git /data/services /data/workflows && chown -R 10001:10001 /data"]
+    volumes:
+      - coordinator-data:/data
+    restart: "no"
+
+  serve:
+    image: ${PROTOMOLT_CANDIDATE_SERVE_IMAGE:?set the locally loaded candidate serve image}
+    pull_policy: never
+    command:
+      - --registry-git
+      - /data/registry.git
+      - --service-workspace
+      - /data/services
+      - --workflow-workspace
+      - /data/workflows
+      - --delegation-repo-endpoint
+      - repo-service:9090
+      - --delegation-repo-drive
+      - candidate
+      - --mesh-cluster-id
+      - goal2-candidate
+      - --mesh-cluster-name
+      - Goal 2 candidate
+      - --mesh-trust-domain
+      - goal2-candidate.local
+      - --mesh-created-at
+      - "2026-09-25T00:00:00Z"
+      - --demo
+    environment:
+      PROTOMOLT_API_TOKEN: ${PROTOMOLT_CANDIDATE_API_TOKEN:?set a NEW candidate API token}
+      PROTOMOLT_TASK_CONSOLE_TOKEN: ${PROTOMOLT_CANDIDATE_TASK_CONSOLE_TOKEN:?set a NEW candidate console token}
+      PROTOMOLT_TRANSCRIPT_KEY: ${PROTOMOLT_CANDIDATE_TRANSCRIPT_KEY:?set a NEW candidate transcript key}
+      PROTOMOLT_JOBS_JDBC: jdbc:postgresql://repo-postgres:5432/jobs
+      PROTOMOLT_JOBS_USER: candidate
+      PROTOMOLT_JOBS_PASSWORD: ${PROTOMOLT_CANDIDATE_DB_PASSWORD:?set a NEW candidate database password}
+      JAVA_TOOL_OPTIONS: -Dprotomolt.typeUniformSchemas=true
+    depends_on:
+      serve-init:
+        condition: service_completed_successfully
+      repo-init:
+        condition: service_completed_successfully
+      jobs-init:
+        condition: service_completed_successfully
+    volumes:
+      - coordinator-data:/data
+    ports:
+      - "127.0.0.1:29902:8080"
+      - "127.0.0.1:29903:9090"
+      - "127.0.0.1:29904:8081"
+    restart: unless-stopped
+
+  rustfs:
+    image: rustfs/rustfs:1.0.0-beta.11-preview.1
+    command: ["/data"]
+    environment:
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: :9000
+      RUSTFS_CONSOLE_ENABLE: "false"
+      RUSTFS_ACCESS_KEY: candidate
+      RUSTFS_SECRET_KEY: ${PROTOMOLT_CANDIDATE_RUSTFS_SECRET_KEY:?set a NEW candidate S3 secret}
+    volumes:
+      - rustfs-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    mem_limit: 1g
+    restart: unless-stopped
+
+  rustfs-init:
+    image: curlimages/curl:8.22.0
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    environment:
+      CANDIDATE_S3_SECRET: ${PROTOMOLT_CANDIDATE_RUSTFS_SECRET_KEY:?set a NEW candidate S3 secret}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        curl --fail --silent --show-error --output /dev/null \
+          --aws-sigv4 aws:amz:us-east-1:s3 \
+          --user "candidate:$${CANDIDATE_S3_SECRET}" \
+          -X PUT http://rustfs:9000/candidate
+    restart: "no"
+
+  repo-postgres:
+    image: postgres:18.6-alpine
+    environment:
+      POSTGRES_USER: candidate
+      POSTGRES_PASSWORD: ${PROTOMOLT_CANDIDATE_DB_PASSWORD:?set a NEW candidate database password}
+      POSTGRES_DB: documents
+    volumes:
+      - repo-postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    mem_limit: 512m
+    restart: unless-stopped
+
+  repo-service:
+    image: ${PROTOMOLT_CANDIDATE_REPO_IMAGE:?set the locally loaded candidate repo image}
+    pull_policy: never
+    environment:
+      DOCUMENT_PLATFORM_GRPC_PORT: "9090"
+      DOCUMENT_PLATFORM_HTTP_PORT: "off"
+      DOCUMENT_PLATFORM_JDBC_URL: jdbc:postgresql://repo-postgres:5432/documents
+      DOCUMENT_PLATFORM_USERNAME: candidate
+      DOCUMENT_PLATFORM_PASSWORD: ${PROTOMOLT_CANDIDATE_DB_PASSWORD:?set a NEW candidate database password}
+      DOCUMENT_PLATFORM_S3_ENDPOINT: http://rustfs:9000
+      DOCUMENT_PLATFORM_S3_REGION: us-east-1
+      DOCUMENT_PLATFORM_S3_ACCESS_KEY: candidate
+      DOCUMENT_PLATFORM_S3_SECRET_KEY: ${PROTOMOLT_CANDIDATE_RUSTFS_SECRET_KEY:?set a NEW candidate S3 secret}
+    depends_on:
+      repo-postgres:
+        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
+    mem_limit: 1g
+    restart: unless-stopped
+
+  repo-init:
+    image: fullstorydev/grpcurl:v1.9.3-alpine
+    depends_on:
+      repo-service:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        grpcurl -plaintext \
+          -d '{"name":"candidate","account_id":"candidate","drive_type":"DRIVE_TYPE_CUSTOM","bucket":"candidate"}' \
+          repo-service:9090 ai.protomolt.proto.repo.v1.DriveService/CreateDrive
+    restart: "no"
+
+  jobs-init:
+    image: postgres:18.6-alpine
+    depends_on:
+      repo-postgres:
+        condition: service_healthy
+    environment:
+      PGUSER: candidate
+      PGPASSWORD: ${PROTOMOLT_CANDIDATE_DB_PASSWORD:?set a NEW candidate database password}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        exists="$$(psql -v ON_ERROR_STOP=1 -h repo-postgres -U candidate -d postgres -tAc \
+          "SELECT 1 FROM pg_database WHERE datname = 'jobs'")"
+        if [ "$${exists}" = "1" ]; then
+          echo "jobs database already exists"
+          exit 0
+        fi
+        psql -v ON_ERROR_STOP=1 -h repo-postgres -U candidate -d postgres \
+          -c 'CREATE DATABASE jobs OWNER candidate'
+    restart: "no"
+
+  correction-init:
+    image: busybox:1.38.0
+    user: "0:0"
+    command: ["sh", "-ec", "mkdir -p /data/correction && chown -R 10001:10001 /data/correction"]
+    volumes:
+      - correction-data:/data/correction
+    restart: "no"
+
+  correction:
+    image: ${PROTOMOLT_CANDIDATE_CORRECTION_IMAGE:?set the locally loaded candidate correction image}
+    pull_policy: never
+    command:
+      - --workspace
+      - /data/correction
+      - --host
+      - 0.0.0.0
+      - --port
+      - "9090"
+      - --mode
+      - remote-prompt
+      - --inference-target
+      - host.docker.internal:29930
+    environment:
+      PROTOMOLT_CORRECTION_API_TOKEN: ${PROTOMOLT_CANDIDATE_CORRECTION_TOKEN:?set a NEW candidate correction token}
+      PROTOMOLT_INFERENCE_API_TOKEN: ${PROTOMOLT_CANDIDATE_INFERENCE_TOKEN:?set the bridge token; never use a provider key here}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - correction-data:/data/correction
+    ports:
+      - "127.0.0.1:29905:9090"
+    depends_on:
+      correction-init:
+        condition: service_completed_successfully
+      inference-forward:
+        condition: service_started
+    restart: unless-stopped
+
+  # SSH reverse forwarding is constrained to NAS 127.0.0.1 by GatewayPorts=no.
+  # This sidecar exposes it to candidate containers ONLY on the Docker bridge.
+  # No credential is held by this sidecar; both gRPC hops require their tokens.
+  inference-forward:
+    image: alpine/socat:1.8.0.3@sha256:beb4a68d9e4fe6b0f21ea774a0fde6c31f580dde6368939ed70100c5385b015e
+    network_mode: host
+    command:
+      - -d
+      - -d
+      - TCP-LISTEN:29930,bind=172.17.0.1,reuseaddr,fork
+      - TCP:127.0.0.1:29930
+    restart: unless-stopped
+
+volumes:
+  coordinator-data:
+  rustfs-data:
+  repo-postgres-data:
+  correction-data:

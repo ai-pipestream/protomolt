@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.grpc.workflow.v1;
+
+import "ai/protomolt/proto/inference/v1/evaluation.proto";
+import "ai/protomolt/proto/meta/v1/metadata.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.grpc.workflow.v1";
+
+// A local policy outcome. A valid or signed result alone is not acceptance.
+enum AssessmentDisposition {
+  // Missing policy outcome is invalid.
+  ASSESSMENT_DISPOSITION_UNSPECIFIED = 0;
+  // The configured policy accepted the validated, evaluated result.
+  ASSESSMENT_DISPOSITION_ACCEPTED = 1;
+  // The result is unresolved or lacks sufficient support; human review is needed.
+  ASSESSMENT_DISPOSITION_REVIEW = 2;
+  // Execution or evaluation failed; no affirmative decision was made.
+  ASSESSMENT_DISPOSITION_FAILED = 3;
+}
+
+// Immutable post-run assessment. Stored separately from the immutable execution
+// evidence and bound into a distinct-policy signed work record, never inserted
+// as a fictitious executed workflow step. Stored digests require host rechecking.
+message WorkflowAssessment {
+  option (ai.protomolt.proto.meta.v1.message).sensitivity = "internal";
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "assessment-acceptance-needs-judgment"
+    message: "acceptance requires a request and a successful judgment"
+    expression: "this.disposition != 1 || (has(this.request) && has(this.response))"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "assessment-response-needs-request"
+    message: "a response cannot exist without its request"
+    expression: "!has(this.response) || has(this.request)"
+  };
+  // Recorded workflow run being assessed.
+  string run_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}}];
+  // Exact stored RunEvidence bytes.
+  string run_evidence_sha256 = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}}];
+  // Exact stored signed execution record container, not its unsigned manifest.
+  string execution_record_sha256 = 3 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}}];
+  // Exact permitted source artifact from the recorded run.
+  string input_sha256 = 4 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}}];
+  // Exact stored local policy configuration and version.
+  string policy_sha256 = 5 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}}];
+  // Policy outcome, independent of execution status and receipt completeness.
+  AssessmentDisposition disposition = 6 [(ai.protomolt.proto.validate.v1.field).enum = {defined_only: true, not_in: 0}];
+  // Bounded diagnostic code, without provider text or source content.
+  string reason = 7 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}}];
+  // Request after authority, binding, and runtime validation; absent if refused earlier.
+  ai.protomolt.proto.inference.v1.EvaluateRequest request = 8;
+  // Validated and correlated judgment; absent on provider or contract failure.
+  ai.protomolt.proto.inference.v1.EvaluateResponse response = 9;
+  // Pinned configured evaluator identity; required by the host when a request exists.
+  string evaluator_configuration_sha256 = 10 [(ai.protomolt.proto.validate.v1.field) = {ignore_if_zero: true, string: {sha256_hex: true}}];
+}

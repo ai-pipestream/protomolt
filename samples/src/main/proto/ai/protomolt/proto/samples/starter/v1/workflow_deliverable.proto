@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.samples.starter.v1;
+
+import "ai/protomolt/proto/delegation/v1/delegation.proto";
+import "ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.samples.starter.v1";
+
+// An example caller-defined TaskSpec.contract result. Pack this as
+// CompletionCandidate.result; keep TaskSpec.required_checks and the candidate's
+// existing evidence/lifecycle envelope. This adds no second task protocol.
+message WorkflowDeliverable {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "deliverable-has-steps"
+    message: "a workflow deliverable must contain execution steps"
+    expression: "has(this.workflow) && this.workflow.steps.size() > 0"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "deliverable-checks-passed"
+    message: "every reported check must pass and reference its output"
+    expression: "this.checks.all(c, c.verdict == 1 && c.artifacts.size() > 0)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "deliverable-unique-checks"
+    message: "a check must not appear twice"
+    expression: "this.checks.all(c, this.checks.filter(other, other.check_name == c.check_name).size() == 1)"
+  };
+  // Existing durable workflow shape; WorkflowValidation/WorkflowChecker still
+  // check its semantics before storage or execution.
+  ai.protomolt.proto.grpc.workflow.v1.Workflow workflow = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Exact serialized workflow bytes, checked against the inline workflow.
+  ai.protomolt.proto.grpc.workflow.v1.ArtifactReference workflow_artifact = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Complete descriptor/import closure used to compile and test the workflow.
+  ai.protomolt.proto.grpc.workflow.v1.ArtifactReference descriptors = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Inputs and expected outputs used by the recorded checks.
+  repeated ai.protomolt.proto.grpc.workflow.v1.ArtifactReference fixtures = 4 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 32}];
+  // Existing check evidence, as reported by the worker, not independently proven.
+  repeated ai.protomolt.proto.delegation.v1.CheckEvidence checks = 5 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 32}];
+  // Recorded run whose input/output evidence exercises this exact workflow.
+  string run_id = 6 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}}];
+  // Serialized existing SignedWorkRecord. Resolve and use VerifyWorkRecord;
+  // this reference alone is not proof of signature validity or a passing policy.
+  ai.protomolt.proto.grpc.workflow.v1.ArtifactReference receipt = 7 [(ai.protomolt.proto.validate.v1.field).required = true];
+}

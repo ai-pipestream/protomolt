@@ -1,0 +1,38 @@
+plugins {
+    id 'application'
+    alias(libs.plugins.protobuf)
+}
+
+description = 'Fixed recorded contact correction candidate service'
+
+dependencies {
+    implementation project(':protomolt-delegation')
+    implementation project(':protomolt-projection')
+    implementation project(':protomolt-workflow')
+    implementation project(':protomolt-inference-service')
+    implementation project(':protomolt-inference-openai')
+    implementation project(':protomolt-registry')
+    implementation project(':protomolt-protobuf-validation')
+    implementation project(':protomolt-receipt')
+    implementation project(':protomolt-grpc-workflow')
+    implementation project(':protomolt-authz-grpc')
+    implementation project(':protomolt-acp')
+    implementation libs.protobuf.java.util
+    implementation libs.grpc.stub
+    implementation libs.grpc.protobuf
+    implementation libs.grpc.netty.shaded
+    implementation libs.grpc.services
+    implementation libs.jackson.databind
+    runtimeOnly libs.slf4j.simple
+    compileOnly libs.javax.annotation.api
+}
+
+protobuf {
+    protoc { artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}" }
+    plugins { grpc { artifact = "io.grpc:protoc-gen-grpc-java:${libs.versions.grpc.get()}" } }
+    generateProtoTasks { all().configureEach { plugins { grpc {} } } }
+}
+
+application {
+    mainClass = 'ai.protomolt.proto.correction.CorrectionServer'
+}

@@ -17,6 +17,7 @@ import ai.protomolt.proto.inference.v1.GenerateStructuredResponse;
 import ai.protomolt.proto.inference.v1.ModelCapabilities;
 import ai.protomolt.proto.inference.v1.ModelEntry;
 import ai.protomolt.proto.inference.v1.StructuredAttempt;
+import ai.protomolt.proto.inference.v1.StructuredGenerationMode;
 import ai.protomolt.proto.inference.v1.Usage;
 import ai.protomolt.proto.validate.ProtoValidator;
 import com.google.protobuf.Any;
@@ -171,6 +172,52 @@ class StructuredGeneratorTest {
     @Test
     void modelWithoutStructuredOutputFailsBeforeInvocation() {
         GenerateStructuredRequest request = request(TEXT_ONLY_MODEL).build();
+
+        assertThatThrownBy(() -> generator.generate(request))
+                .isInstanceOfSatisfying(StructuredGenerationException.class,
+                        e -> assertThat(e.getAttempts()).isEmpty());
+        assertThat(provider.invocations()).isZero();
+    }
+
+    @Test
+    void omittedAndExplicitNativeModesRequireTheNativeCapabilityBeforeInvocation() {
+        for (GenerateStructuredRequest request : List.of(
+                request(TEXT_ONLY_MODEL).build(),
+                request(TEXT_ONLY_MODEL)
+                        .setMode(StructuredGenerationMode.STRUCTURED_GENERATION_MODE_NATIVE)
+                        .build())) {
+            assertThatThrownBy(() -> generator.generate(request))
+                    .isInstanceOfSatisfying(StructuredGenerationException.class,
+                            e -> assertThat(e.getAttempts()).isEmpty());
+        }
+        assertThat(provider.invocations()).isZero();
+    }
+
+    @Test
+    void promptGuidedModeUsesPromptSchemaWithoutNativeConstraintAndRepairsAtMostThreeTimes() {
+        provider.script("not json", "{\"name\":\"Ada\",\"age\":200}", VALID_FORM_JSON,
+                "never reached");
+
+        GenerateStructuredResponse response = generator.generate(request(TEXT_ONLY_MODEL)
+                .setMode(StructuredGenerationMode.STRUCTURED_GENERATION_MODE_PROMPT_GUIDED)
+                .build());
+
+        assertThat(response.getAttemptsCount()).isEqualTo(3);
+        assertThat(response.getAttempts(0).getOutcome())
+                .isEqualTo(AttemptOutcome.ATTEMPT_OUTCOME_PARSE_FAILED);
+        assertThat(response.getAttempts(1).getOutcome())
+                .isEqualTo(AttemptOutcome.ATTEMPT_OUTCOME_VALIDATION_FAILED);
+        assertThat(response.getAttempts(2).getOutcome())
+                .isEqualTo(AttemptOutcome.ATTEMPT_OUTCOME_SUCCEEDED);
+        assertThat(provider.invocations()).isEqualTo(3);
+        assertThat(provider.lastRequest().hasStructuredOutput()).isFalse();
+        assertThat(provider.lastRequest().getMessages(0).getContent())
+                .contains("JSON Schema");
+    }
+
+    @Test
+    void unknownGenerationModeIsRejectedBeforeProviderInvocation() {
+        GenerateStructuredRequest request = request(STRUCTURED_MODEL).setModeValue(73).build();
 
         assertThatThrownBy(() -> generator.generate(request))
                 .isInstanceOfSatisfying(StructuredGenerationException.class,

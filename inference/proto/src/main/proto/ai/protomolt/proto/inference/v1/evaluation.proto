@@ -1,0 +1,239 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.inference.v1;
+
+import "ai/protomolt/proto/meta/v1/metadata.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/any.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.inference.v1";
+
+// Contract only. No host mounts this service yet. An evaluator supplies judgments;
+// the coordinator applies its own acceptance policy after validating the response.
+service EvaluationService {
+  // Evaluates a validated candidate using only its declared evidence projection.
+  // Invalid input fails before provider invocation; provider errors are gRPC
+  // errors, never successful judgments. See docs/plans/starter-contracts.md.
+  rpc Evaluate(EvaluateRequest) returns (EvaluateResponse);
+}
+
+// A delegation candidate's lifecycle identity, checked atomically at review time.
+message EvaluationCandidate {
+  // Coordinator-owned task UUID.
+  string task_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  // Lease attempt that produced this candidate.
+  int32 attempt = 2 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 1024}];
+  // Completion revision within the attempt.
+  int32 revision = 3 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 1024}];
+}
+
+// The immutable material a judgment is about. Digests are not proof by
+// themselves: the host must resolve and recompute them before invoking a model.
+message EvaluationBinding {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "evaluation-subject-required"
+    message: "exactly one candidate or workflow run is required"
+    expression: "has(this.candidate) || has(this.run_id)"
+  };
+  // The lifecycle scope. A workflow run ID is the existing RunEvidence slug.
+  oneof subject {
+    // Agent result whose attempt and revision must still be current.
+    EvaluationCandidate candidate = 1;
+    // Recorded workflow run whose result and evidence are being evaluated.
+    string run_id = 2 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, slug: true, max_len: 128}];
+  }
+  // SHA-256 of the validated result's exact stored binary bytes.
+  string result_sha256 = 3 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}}];
+  // SHA-256 of the complete stored result descriptor set, including rules.
+  string descriptor_sha256 = 4 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}}];
+  // Full protobuf name of the result type within that descriptor set.
+  string result_type = 5 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {protobuf_fqn: true, max_len: 512}}];
+  // SHA-256 of the exact stored projected evidence Any bytes.
+  string evidence_sha256 = 6 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}}];
+  // SHA-256 of the stored projection descriptor/configuration closure.
+  string projection_sha256 = 7 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}}];
+  // SHA-256 of the stored EvaluationRubric bytes.
+  string rubric_sha256 = 8 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}}];
+  // SHA-256 of the coordinator-owned acceptance policy artifact.
+  string policy_sha256 = 9 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}}];
+}
+
+// Questions evaluated independently against one evidence projection.
+message EvaluationRubric {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "unique-question-ids"
+    message: "question ids must be unique"
+    expression: "this.questions.all(q, this.questions.filter(other, other.id == q.id).size() == 1)"
+  };
+  // Bounded question set; ordering is retained in the stored rubric.
+  repeated EvaluationQuestion questions = 1 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 32}];
+}
+
+// One caller-defined question with an explicit answer type.
+message EvaluationQuestion {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "question-kind-required"
+    message: "a question must declare choice, score, or probability criteria"
+    expression: "has(this.choice) || has(this.score) || has(this.probability)"
+  };
+  // Stable rubric-local identifier echoed by the answer.
+  string id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}}];
+  // Semantic instruction. Validation cannot establish that a judgment is true.
+  string instruction = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 8192}}];
+  // Exactly one judgment kind.
+  oneof kind {
+    // Select one explicitly supplied option.
+    ChoiceCriteria choice = 3;
+    // Score against ordered, caller-defined levels.
+    ScoreCriteria score = 4;
+    // Estimate the probability that the instruction's proposition is true.
+    ProbabilityCriteria probability = 5;
+  }
+}
+
+// Unordered alternatives; exact option membership is checked against the request.
+message ChoiceCriteria {
+  // Unique nonempty option identifiers, also used as labels in this starter contract.
+  repeated string options = 1 [(ai.protomolt.proto.validate.v1.field).repeated = {
+    min_items: 2, max_items: 32, unique: true,
+    items: {string: {min_len: 1, max_len: 512}}
+  }];
+}
+
+// Ordinal scale; level zero is the first label, level N-1 the last.
+message ScoreCriteria {
+  // Unique descriptions in increasing score order. Fractional scores are allowed.
+  repeated string levels = 1 [(ai.protomolt.proto.validate.v1.field).repeated = {
+    min_items: 2, max_items: 32, unique: true,
+    items: {string: {min_len: 1, max_len: 512}}
+  }];
+}
+
+// A probability question needs no ordinal scale or separate confidence value.
+message ProbabilityCriteria {}
+
+// A bounded provider-neutral evaluation request. Schema resolution and mechanical
+// candidate validation happen before this service; the host must recheck their
+// immutable binding rather than trust a caller's claim that validation happened.
+message EvaluateRequest {
+  option (ai.protomolt.proto.meta.v1.message).sensitivity = "internal";
+  // Idempotency key scoped to the authenticated caller and this operation.
+  string request_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  // Exact candidate, contract, evidence, rubric, and policy identities.
+  EvaluationBinding binding = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Descriptor-backed evidence produced by the existing projection engine.
+  // The host resolves its type and validates the unpacked message as well.
+  google.protobuf.Any evidence = 3 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // The question set whose stored bytes binding.rubric_sha256 identifies.
+  EvaluationRubric rubric = 4 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Configured evaluator profile name; no URL, credential, or provider lock-in.
+  string evaluator_profile = 5 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {path_safe_name: true, max_len: 128}}];
+}
+
+// One normalized distribution entry. Probability presence matters: absent and
+// explicitly zero are different protocol states.
+message EvaluationProbability {
+  // Exact option or level label from the request.
+  string label = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 512}}];
+  // Finite probability in [0,1], including an explicitly supplied zero.
+  optional double probability = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, double: {gte: 0, lte: 1, finite: true}}];
+}
+
+// Chosen label and the full distribution over the caller's options.
+message ChoiceJudgment {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "chosen-option-present"
+    message: "the chosen option must occur in the distribution"
+    expression: "this.distribution.exists(p, p.label == this.option)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "unique-choice-labels"
+    message: "distribution labels must be unique"
+    expression: "this.distribution.all(p, this.distribution.filter(other, other.label == p.label).size() == 1)"
+  };
+  // Selected caller-defined option.
+  string option = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 512}}];
+  // All options exactly once; the host checks membership and sum within 1e-6 of 1.
+  repeated EvaluationProbability distribution = 2 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 2, max_items: 32}];
+  // Optional provider confidence; it is never fabricated from a missing value.
+  optional double confidence = 3 [(ai.protomolt.proto.validate.v1.field).double = {gte: 0, lte: 1, finite: true}];
+}
+
+// Probability-weighted ordinal score on the request's zero-based level scale.
+message ScoreJudgment {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "score-within-scale"
+    message: "score must lie within the supplied distribution's ordinal scale"
+    expression: "has(this.score) && this.score <= double(this.distribution.size() - 1)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "unique-score-labels"
+    message: "distribution labels must be unique"
+    expression: "this.distribution.all(p, this.distribution.filter(other, other.label == p.label).size() == 1)"
+  };
+  // Finite weighted score; host also checks equality to the weighted distribution.
+  optional double score = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, double: {gte: 0, lte: 31, finite: true}}];
+  // Every requested level in the original order, with normalized probabilities.
+  repeated EvaluationProbability distribution = 2 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 2, max_items: 32}];
+  // Provider confidence when available, distinct from the ordinal score.
+  optional double confidence = 3 [(ai.protomolt.proto.validate.v1.field).double = {gte: 0, lte: 1, finite: true}];
+}
+
+// The probability that the caller's proposition is true.
+message ProbabilityJudgment {
+  // Explicit zero is valid. A missing, NaN, or infinite probability is invalid.
+  optional double probability = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, double: {gte: 0, lte: 1, finite: true}}];
+}
+
+// Typed answer to one question; not an acceptance decision.
+message EvaluationAnswer {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "answer-kind-required"
+    message: "an answer must contain one typed judgment"
+    expression: "has(this.choice) || has(this.score) || has(this.probability)"
+  };
+  // Request question identifier, checked by the host before applying policy.
+  string question_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}}];
+  // Exactly one answer, of the kind the caller requested.
+  oneof judgment {
+    // Choice over the supplied options.
+    ChoiceJudgment choice = 2;
+    // Score over the supplied levels.
+    ScoreJudgment score = 3;
+    // Probability of the supplied proposition.
+    ProbabilityJudgment probability = 4;
+  }
+}
+
+// Successful evaluation only. Transport/provider errors never populate this
+// message. Validation of these annotations precedes request matching and policy.
+message EvaluateResponse {
+  option (ai.protomolt.proto.meta.v1.message).sensitivity = "internal";
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "unique-answer-ids"
+    message: "question ids must be unique in a response"
+    expression: "this.answers.all(a, this.answers.filter(other, other.question_id == a.question_id).size() == 1)"
+  };
+  // Exact request id, with retries returning the recorded completed response.
+  string request_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  // Exact immutable request binding, never rewritten by an adapter.
+  EvaluationBinding binding = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // One answer for every request question; host checks exact coverage and kinds.
+  repeated EvaluationAnswer answers = 3 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 32},
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Actual provider that executed the judgment.
+  string provider = 4 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 128}}];
+  // Actual provider model identifier, not only the configured profile name.
+  string model = 5 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 256}}];
+  // Provider-reported version when available; absence means unknown.
+  optional string model_version = 6 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 512}];
+}

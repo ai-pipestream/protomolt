@@ -10,6 +10,7 @@ dependencies {
     api project(':protomolt-grpc-workflow')
     // Structured-generation steps execute through this coordinator.
     api project(':protomolt-inference-structured')
+    implementation project(':protomolt-inference-service')
     // Typed edges project their produced values with this compiled projection.
     api project(':protomolt-projection')
     // Run evidence projects into canonical signed work records.

@@ -83,6 +83,7 @@ built-in action exposed by the standalone and full catalogs.
 - [Python clients without protoc](tutorials/python.md)
 - [Streaming through the ACP agent](tutorials/streaming.md)
 - [Earning a signed receipt from a delegated task](tutorials/delegation-receipt.md)
+- [Recorded correction with a verifiable assessment](tutorials/recorded-correction.md)
 
 ## Architecture and records
 

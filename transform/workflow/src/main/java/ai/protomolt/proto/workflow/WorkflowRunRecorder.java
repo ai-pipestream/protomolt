@@ -295,7 +295,7 @@ public final class WorkflowRunRecorder {
                 .newBuilder()
                 .setTargetType(target.getFullName())
                 .setModel(step.structured().model())
-                .setPromptFingerprint(StructuredProvenance.promptFingerprint(target))
+                .setPromptFingerprint(StructuredProvenance.promptFingerprint(target, step.structured().mode()))
                 .setSchemaFingerprint(StructuredProvenance.schemaFingerprint(target))
                 .setValidationPassed(false);
         for (StructuredAttempt attempt : attempts) {
