@@ -50,6 +50,9 @@ human verdict. A terminal task can export a signed record. Keep the exported
 record, the exact transcript bytes from the same export, public trust snapshot,
 and every referenced artifact together for offline verification; a signature
 proves integrity and attribution, not the truth of the worker's claims.
+An export captures the transcript at that moment. Later conversation may appear
+in another export; retain each record with its own transcript. `recordId` is a
+task-scoped label, while `manifestDigest` identifies the signed manifest.
 
 HTTP/MCP listens only on `127.0.0.1:8080`, and gRPC on `127.0.0.1:9090`.
 Override `PROTOMOLT_HTTP_PORT` and `PROTOMOLT_GRPC_PORT` in `.env` for other

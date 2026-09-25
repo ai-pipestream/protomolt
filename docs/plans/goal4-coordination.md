@@ -99,8 +99,10 @@ the worker runs on another host. No inference deployment changes are needed.
    rather than falling back to an empty transcript.
 5. Export the selected signed record, public trust, exact signed transcript,
    and referenced artifact bytes. Verify offline with networking disabled;
-   tampering/missing bytes must fail. Post-acceptance messages cannot produce a
-   transcript that differs from the exported record's snapshot.
+   tampering/missing bytes must fail. Each export must contain the exact
+   transcript snapshot that its record signs. Later settlement messages may
+   appear in a new export without changing an earlier export. The task-scoped
+   recordId is a label; manifestDigest identifies the signed manifest.
 6. Run a bounded real Kimi CLI task separately. Record source/image revision,
    provider and CLI/model identification when available, exact operations and
    test evidence. Publish a provider matrix distinguishing this live proof,

@@ -39,6 +39,30 @@ class RemoteDelegationLineRunnerTest {
     private static final String CHECK = "report-check";
 
     @Test
+    void serverRefusalIsDistinctFromClientJsonFailureAndDoesNotAppend() throws Exception {
+        try (Fixture fixture = new Fixture(); RemoteCatalogLineRunner runner = fixture.runner(TOKEN)) {
+            RecordingContext context = new RecordingContext();
+            String taskId = UUID.randomUUID().toString();
+            runner.run("delegation/RegisterWorker {\"workerId\":\"" + WORKER
+                    + "\",\"provider\":\"fixture\"}", context);
+            DeliverableContract contract = contract("count", DescriptorProtos.FieldDescriptorProto.Type.TYPE_INT32);
+            offer(runner, context, taskId, contract, 1);
+            runner.run("delegation/AcceptTask {\"workerId\":\"" + WORKER
+                    + "\",\"taskId\":\"" + taskId + "\",\"attempt\":1}", context);
+            int before = fixture.coordinator.transcript().getEntriesCount();
+            String candidate = candidateJson(contract, 1, "count", -1);
+            runner.run("delegation/SubmitCandidate {\"workerId\":\"" + WORKER
+                    + "\",\"taskId\":\"" + taskId + "\",\"candidate\":" + candidate + "}", context);
+            assertThat(last(context)).startsWith("worker-stream-failed:");
+            assertThat(fixture.coordinator.transcript().getEntriesCount()).isEqualTo(before);
+            runner.run("delegation/RegisterWorker {\"workerId\":\"" + WORKER
+                    + "\",\"provider\":\"fixture\"}", context);
+            assertThat(last(context)).contains("\"admitted\": true");
+            submit(runner, context, taskId, contract, 1, "count", 1);
+        }
+    }
+
+    @Test
     void customAnyUsesEachHistoricalAttemptContractAfterRunnerRestart() throws Exception {
         try (Fixture fixture = new Fixture()) {
             RecordingContext first = new RecordingContext();
@@ -196,10 +220,18 @@ class RemoteDelegationLineRunnerTest {
             DescriptorProtos.FieldDescriptorProto.Type fieldType) {
         DescriptorProtos.FieldDescriptorProto field = DescriptorProtos.FieldDescriptorProto
                 .newBuilder().setName(fieldName).setNumber(1).setType(fieldType).build();
+        var report = DescriptorProtos.DescriptorProto.newBuilder().setName("Report").addField(field);
+        if (fieldType == DescriptorProtos.FieldDescriptorProto.Type.TYPE_INT32) {
+            report.setOptions(DescriptorProtos.MessageOptions.newBuilder().setExtension(
+                    ai.protomolt.proto.validate.ValidateProto.message,
+                    ai.protomolt.proto.validate.MessageRules.newBuilder().addCel(
+                            ai.protomolt.proto.validate.CelRule.newBuilder().setId("positive-count")
+                                    .setMessage("count must be positive").setExpression("this.count > 0"))
+                            .build()));
+        }
         DescriptorProtos.FileDescriptorProto file = DescriptorProtos.FileDescriptorProto
                 .newBuilder().setName("native.proto").setPackage("native.v1").setSyntax("proto3")
-                .addMessageType(DescriptorProtos.DescriptorProto.newBuilder().setName("Report")
-                        .addField(field)).build();
+                .addMessageType(report).build();
         return DeliverableContract.newBuilder().setTypeName("native.v1.Report")
                 .setDescriptorSet(DescriptorProtos.FileDescriptorSet.newBuilder().addFile(file)
                         .build().toByteString()).build();

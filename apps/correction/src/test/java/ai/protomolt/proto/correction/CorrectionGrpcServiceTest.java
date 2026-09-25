@@ -33,11 +33,13 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class CorrectionGrpcServiceTest {
     private static final String VALID_CONTACT = "{\"recordId\":\"contact-1\","
@@ -207,6 +209,23 @@ class CorrectionGrpcServiceTest {
     }
 
     @Test
+    void closeWaitsForCancelledWorkerToFinishBeforeWorkspaceCanBeRemoved() throws Exception {
+        provider.blockNext();
+        provider.cancellationCleanup = new CompletableFuture<>();
+        service.runCorrection(request("close-active"), new Capture<>());
+        assertThat(provider.started.await(5, TimeUnit.SECONDS)).isTrue();
+        CompletableFuture<Void> closing = CompletableFuture.runAsync(service::close);
+        try {
+            assertThat(provider.cancelled.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThatThrownBy(() -> closing.get(200, TimeUnit.MILLISECONDS))
+                    .isInstanceOf(java.util.concurrent.TimeoutException.class);
+        } finally {
+            provider.cancellationCleanup.complete(null);
+            closing.get(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     void tamperedStoredReceiptIsReportedAsDataLoss() throws Exception {
         provider.script(VALID_CONTACT);
         assertThat(run(request("tampered")).failure).isNull();
@@ -286,6 +305,7 @@ class CorrectionGrpcServiceTest {
         private final AtomicBoolean block = new AtomicBoolean();
         final CountDownLatch started = new CountDownLatch(1);
         final CountDownLatch cancelled = new CountDownLatch(1);
+        volatile CompletableFuture<Void> cancellationCleanup = CompletableFuture.completedFuture(null);
         synchronized void script(String value) { responses.add(value); }
         void blockNext() { block.set(true); }
         int invocations() { return calls.get(); }
@@ -298,6 +318,7 @@ class CorrectionGrpcServiceTest {
                     new CountDownLatch(1).await();
                 } catch (InterruptedException interrupted) {
                     cancelled.countDown();
+                    cancellationCleanup.join();
                     Thread.currentThread().interrupt();
                     throw new InferenceException("cancelled", interrupted);
                 }

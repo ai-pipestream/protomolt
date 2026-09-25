@@ -174,5 +174,15 @@ final class CorrectionGrpcService extends CorrectionServiceGrpc.CorrectionServic
         }
     }
 
-    @Override public void close() { workers.shutdownNow(); }
+    @Override public void close() {
+        workers.shutdownNow();
+        try {
+            if (!workers.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                throw new IllegalStateException("correction workers did not stop");
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted while stopping correction workers", interrupted);
+        }
+    }
 }

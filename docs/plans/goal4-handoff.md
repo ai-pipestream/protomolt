@@ -159,3 +159,20 @@ and integration but failed browser descriptor byte comparison: CI selected Buf
 google/protobuf/descriptor.proto changed between versions. CI and the asset
 generator now explicitly require 1.70.0 for reproducible descriptor bytes.
 The updated PR still needs its own green hosted run before merge.
+
+The next hosted run exposed a shutdown race in the correction service: cancelling
+a worker did not wait for its cleanup before returning from close. Close now
+waits up to ten seconds for termination and reports timeout/interruption. A
+regression test holds provider cleanup open and proves close waits for it.
+
+Kimi's read-only review identified a release-smoke error-code assumption. Root
+tested the actual path: a CEL-invalid candidate returns worker-stream-failed,
+does not append, and requires RegisterWorker before the corrected submission.
+The ACP regression test and release smoke now cover that recovery. Kimi's
+suggested delegation-rejected code was not borne out by the runtime test.
+Its snapshot concern was resolved by making the existing semantics explicit:
+each export signs its own exact transcript; later exports may include settlement
+messages. recordId labels the task; manifestDigest identifies a signed manifest.
+TaskConsoleRecordTest already verifies the old and new snapshots independently.
+Full build plus the dedicated ACP protocol lane passed after these changes
+(1494 tasks, 21 seconds; `/tmp/goal4-checkpoint-final-review-build.log`).

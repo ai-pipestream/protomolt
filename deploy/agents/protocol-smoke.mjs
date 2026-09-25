@@ -297,9 +297,14 @@ async function runAcpQualification() {
     const before = await transcript(acpTask)
     const invalid = await prompt('SubmitCandidate', { workerId: acpWorker, taskId: acpTask,
       candidate: candidate(1, 1, acpCheck, { ...acpResult, observationCount: 2 }, acpArtifact) })
-    assert.ok(invalid.startsWith('invalid-input:'), 'ACP invalid CEL report was accepted')
+    assert.ok(invalid.startsWith('worker-stream-failed:'),
+      'ACP invalid CEL report did not receive the coordinator contract refusal')
     const after = await transcript(acpTask)
     assert.equal(after.cursor, before.cursor)
+    // The coordinator closes the invalid worker stream; reconnect before correcting it.
+    const reconnected = JSON.parse(await prompt('RegisterWorker', {
+      workerId: acpWorker, provider: 'protocol-fixture' }))
+    assert.equal(reconnected.admitted, true)
     const submitted = JSON.parse(await prompt('SubmitCandidate', { workerId: acpWorker,
       taskId: acpTask, candidate: candidate(1, 1, acpCheck, acpResult, acpArtifact) }))
     assert.equal(submitted.ok, true)
