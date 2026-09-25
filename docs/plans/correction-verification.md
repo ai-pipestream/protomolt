@@ -1,5 +1,9 @@
 # Goal 2 correction verification
 
+The later [NAS candidate verification](nas-candidate-verification.md) closes the
+live correction acceptance check and records the mounted fixed-workflow service.
+The following sections retain the earlier local and diagnostic evidence.
+
 Local implementation on `feat/starter-contracts`, based on
 `dc49800cd66950356a883d99141e00427df6ad65`, 2026-09-25 UTC.
 See the [runnable walkthrough](../tutorials/recorded-correction.md).
