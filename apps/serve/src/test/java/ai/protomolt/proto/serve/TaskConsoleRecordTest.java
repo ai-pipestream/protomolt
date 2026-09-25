@@ -19,6 +19,9 @@ import ai.protomolt.proto.receipt.TrustSnapshot;
 import ai.protomolt.proto.receipt.TrustedIssuer;
 import ai.protomolt.proto.receipt.TrustedKey;
 import ai.protomolt.proto.receipt.Verification;
+import ai.protomolt.proto.receipt.WorkRecords;
+import ai.protomolt.proto.delegation.v1.Transcript;
+import ai.protomolt.proto.delegation.v1.TaskMessageKind;
 import ai.protomolt.proto.workflow.RecordSigning;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -127,6 +130,24 @@ class TaskConsoleRecordTest {
         assertThat(verification.verified())
                 .as(verification.checks().toString())
                 .isTrue();
+        byte[] transcript = Base64.getDecoder().decode(body.path("transcriptBase64").asText());
+        String digest = WorkRecords.sha256Hex(transcript);
+        assertThat(verification.manifest().getArtifactsList()).anySatisfy(artifact -> {
+            assertThat(artifact.getSha256()).isEqualTo(digest);
+            assertThat(artifact.getSizeBytes()).isEqualTo(transcript.length);
+        });
+        bridge.sendCoordinatorMessage("record-worker", taskId, TaskMessageKind.TASK_MESSAGE_KIND_NOTE,
+                "Message after the exported snapshot", "", java.util.List.of());
+        assertThat(Transcript.parseFrom(transcript).toString())
+                .doesNotContain("Message after the exported snapshot");
+        JsonNode later = JSON.readTree(post("/api/tasks/" + taskId + "/record").body());
+        byte[] laterTranscript = Base64.getDecoder().decode(later.path("transcriptBase64").asText());
+        assertThat(Transcript.parseFrom(laterTranscript).toString())
+                .contains("Message after the exported snapshot");
+        Verification laterVerification = RecordVerifier.verify(
+                Base64.getDecoder().decode(later.path("recordBase64").asText()), trust());
+        assertThat(laterVerification.manifest().getArtifactsList()).anySatisfy(artifact ->
+                assertThat(artifact.getSha256()).isEqualTo(WorkRecords.sha256Hex(laterTranscript)));
     }
 
     private static TrustSnapshot trust() {

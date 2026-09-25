@@ -8,6 +8,10 @@ import ai.protomolt.proto.delegation.DelegationBridge;
 import ai.protomolt.proto.delegation.DelegationReducer;
 import ai.protomolt.proto.delegation.InProcessDelegationCoordinator;
 import ai.protomolt.proto.delegation.DelegationRecordProjector;
+import ai.protomolt.proto.delegation.DeliverableContracts;
+import ai.protomolt.proto.delegation.v1.CheckpointReference;
+import ai.protomolt.proto.delegation.v1.DeliverableContract;
+import ai.protomolt.proto.delegation.v1.Transcript;
 import ai.protomolt.proto.delegation.v1.AcceptanceCheck;
 import ai.protomolt.proto.delegation.v1.DelegateResponse;
 import ai.protomolt.proto.delegation.v1.TaskSpec;
@@ -22,6 +26,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.ByteString;
 import com.google.protobuf.util.JsonFormat;
 import com.google.protobuf.util.Timestamps;
 import com.sun.net.httpserver.HttpExchange;
@@ -46,6 +51,8 @@ final class TaskConsoleApiHandler implements HttpHandler {
     private static final JsonFormat.Printer PROTO_JSON =
             JsonFormat.printer().omittingInsignificantWhitespace();
     private static final int MAX_BODY_BYTES = 20 * 1024;
+    private static final int MAX_OFFER_BYTES = 1024 * 1024;
+    private static final int MAX_DESCRIPTOR_BYTES = 512 * 1024;
     private static final int MAX_EVENTS = 256;
 
     private final DelegationBridge bridge;
@@ -159,6 +166,10 @@ final class TaskConsoleApiHandler implements HttpHandler {
             exportRecord(exchange, taskId);
             return;
         }
+        if (parts.length == 3 && "cancel".equals(parts[2]) && "POST".equals(method)) {
+            cancelTask(exchange, taskId);
+            return;
+        }
         exchange.sendResponseHeaders(404, -1);
     }
 
@@ -174,7 +185,7 @@ final class TaskConsoleApiHandler implements HttpHandler {
                 projection.lastCursors().getOrDefault(taskId, 0L)));
         ArrayNode events = response.putArray("events");
         bridge.coordinator().eventsAfter(taskId, 0).stream().limit(MAX_EVENTS)
-                .map(TaskConsoleApiHandler::eventJson).forEach(events::add);
+                .map(this::eventJson).forEach(events::add);
         response.put("cursor", projection.cursor());
         response.set("findings", findingsJson(projection.reduced().findings().stream()
                 .filter(finding -> taskId.equals(finding.taskId())).toList()));
@@ -206,7 +217,7 @@ final class TaskConsoleApiHandler implements HttpHandler {
         }
         ObjectNode response = JSON.createObjectNode();
         ArrayNode result = response.putArray("events");
-        events.stream().limit(max).map(TaskConsoleApiHandler::eventJson)
+        events.stream().limit(max).map(this::eventJson)
                 .forEach(result::add);
         long cursor = events.stream().limit(max).mapToLong(
                 InProcessDelegationCoordinator.Event::cursor).max().orElse(after);
@@ -248,7 +259,7 @@ final class TaskConsoleApiHandler implements HttpHandler {
      * like any other protocol fact.
      */
     private void offerTask(HttpExchange exchange) throws IOException {
-        byte[] body = BoundedBodies.read(exchange.getRequestBody(), MAX_BODY_BYTES);
+        byte[] body = BoundedBodies.read(exchange.getRequestBody(), MAX_OFFER_BYTES);
         if (body == null) {
             exchange.sendResponseHeaders(413, -1);
             return;
@@ -263,8 +274,43 @@ final class TaskConsoleApiHandler implements HttpHandler {
             throw new IllegalArgumentException("offer body must be a JSON object");
         }
         String workerId = requiredText(parsed, "workerId", 128);
+        String requestedId = optionalText(parsed, "taskId", 36);
+        String taskId = requestedId.isBlank() ? UUID.randomUUID().toString() : decodedUuid(requestedId);
+        TaskSpec previous = TaskSpec.getDefaultInstance();
+        if (!requestedId.isBlank()) {
+            if (!bridge.coordinator().state().tasks().containsKey(taskId)) {
+                throw new IllegalArgumentException("taskId must name an existing task to re-offer");
+            }
+            for (var event : bridge.coordinator().eventsAfter(taskId, 0)) {
+                if (event.entry().getCoordinatorFrame().hasOffer()) {
+                    previous = event.entry().getCoordinatorFrame().getOffer().getSpec();
+                }
+            }
+        }
+        // Retain protocol fields the bounded form cannot edit (constraints/context).
         TaskSpec.Builder spec = TaskSpec.newBuilder()
+                .mergeFrom(previous).clearAllowedScope().clearRequiredChecks().clearContract()
                 .setObjective(requiredText(parsed, "objective", 4096));
+        JsonNode contract = parsed.get("contract");
+        if (contract != null && !contract.isNull()) {
+            if (!contract.isObject() || contract.has("jsonSchema")) {
+                throw new IllegalArgumentException(
+                        "contract must contain descriptorSet and typeName; jsonSchema is derived by the server");
+            }
+            byte[] descriptor;
+            try {
+                descriptor = java.util.Base64.getDecoder().decode(
+                        requiredText(contract, "descriptorSet", MAX_OFFER_BYTES));
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("contract.descriptorSet must be base64 descriptor bytes");
+            }
+            if (descriptor.length == 0 || descriptor.length > MAX_DESCRIPTOR_BYTES) {
+                throw new IllegalArgumentException("contract.descriptorSet must contain 1 to 524288 bytes");
+            }
+            spec.setContract(DeliverableContract.newBuilder()
+                    .setDescriptorSet(ByteString.copyFrom(descriptor))
+                    .setTypeName(requiredText(contract, "typeName", 512)));
+        }
         JsonNode scopes = parsed.get("allowedScopes");
         if (scopes != null && !scopes.isNull()) {
             if (!scopes.isArray() || scopes.size() > 64) {
@@ -300,13 +346,43 @@ final class TaskConsoleApiHandler implements HttpHandler {
                         || parsed.path("leaseMinutes").isNull() ? null
                         : parsed.path("leaseMinutes").asText(),
                 1, 24 * 60, 30, "leaseMinutes");
-        String taskId = UUID.randomUUID().toString();
-        bridge.offer(workerId, taskId, spec.build(),
-                Duration.ofMinutes(leaseMinutes), null);
+        CheckpointReference resumeFrom = null;
+        JsonNode resume = parsed.get("resumeFrom");
+        if (resume != null && !resume.isNull()) {
+            if (requestedId.isBlank() || !resume.isObject()) {
+                throw new IllegalArgumentException("resumeFrom requires an existing taskId and checkpoint object");
+            }
+            resumeFrom = CheckpointReference.newBuilder()
+                    .setAttempt(requiredPositiveInt(resume, "attempt"))
+                    .setCheckpointSeq(requiredPositiveInt(resume, "checkpointSeq"))
+                    .setResumeToken(requiredText(resume, "resumeToken", 512)).build();
+        }
+        TaskOffer offer = bridge.offer(workerId, taskId, spec.build(),
+                Duration.ofMinutes(leaseMinutes), resumeFrom);
         ObjectNode response = JSON.createObjectNode();
         response.put("taskId", taskId);
         response.put("workerId", workerId);
+        response.put("attempt", offer.getAttempt());
         respondJson(exchange, 201, response);
+    }
+
+    private void cancelTask(HttpExchange exchange, String taskId) throws IOException {
+        byte[] body = BoundedBodies.read(exchange.getRequestBody(), MAX_BODY_BYTES);
+        if (body == null) {
+            exchange.sendResponseHeaders(413, -1);
+            return;
+        }
+        JsonNode parsed;
+        try {
+            parsed = JSON.readTree(body);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("invalid JSON");
+        }
+        if (parsed == null || !parsed.isObject()) {
+            throw new IllegalArgumentException("cancel body must be a JSON object");
+        }
+        bridge.cancel(taskId, requiredText(parsed, "reason", 2048));
+        respondJson(exchange, 200, JSON.createObjectNode().put("taskId", taskId));
     }
 
     /**
@@ -336,6 +412,9 @@ final class TaskConsoleApiHandler implements HttpHandler {
         byte[] record = signing.signer().sign(manifest).toByteArray();
         ObjectNode response = JSON.createObjectNode();
         response.put("recordBase64", java.util.Base64.getEncoder().encodeToString(record));
+        byte[] transcript = WorkRecords.deterministicBytes(
+                Transcript.newBuilder().addAllEntries(entries).build());
+        response.put("transcriptBase64", java.util.Base64.getEncoder().encodeToString(transcript));
         response.put("manifestDigest",
                 WorkRecords.sha256Hex(WorkRecords.canonicalBytes(manifest)));
         response.put("recordId", "record-" + taskId);
@@ -463,19 +542,38 @@ final class TaskConsoleApiHandler implements HttpHandler {
         return result;
     }
 
-    private static ObjectNode eventJson(InProcessDelegationCoordinator.Event event) {
+    private ObjectNode eventJson(InProcessDelegationCoordinator.Event event) {
         ObjectNode node = JSON.createObjectNode();
         node.put("cursor", event.cursor());
         node.put("workerId", event.workerId());
         node.put("taskId", event.taskId());
         node.put("lane", event.entry().getLane().name());
-        node.set("entry", protoJson(event.entry()));
+        // Resolve Any against the offer that preceded this event, not a global registry:
+        // callers may reuse a type name in different tasks or later attempts.
+        JsonFormat.Printer printer = PROTO_JSON;
+        DeliverableContract contract = null;
+        for (var prior : bridge.coordinator().eventsAfter(event.taskId(), 0)) {
+            if (prior.cursor() > event.cursor()) break;
+            if (prior.entry().hasCoordinatorFrame()
+                    && prior.entry().getCoordinatorFrame().hasOffer()) {
+                var spec = prior.entry().getCoordinatorFrame().getOffer().getSpec();
+                contract = spec.hasContract() ? spec.getContract() : null;
+            }
+        }
+        if (contract != null) {
+            printer = printer.usingTypeRegistry(DeliverableContracts.typeRegistry(contract));
+        }
+        node.set("entry", protoJson(event.entry(), printer));
         return node;
     }
 
     private static JsonNode protoJson(com.google.protobuf.Message message) {
+        return protoJson(message, PROTO_JSON);
+    }
+
+    private static JsonNode protoJson(com.google.protobuf.Message message, JsonFormat.Printer printer) {
         try {
-            return JSON.readTree(PROTO_JSON.print(message));
+            return JSON.readTree(printer.print(message));
         } catch (InvalidProtocolBufferException e) {
             throw new IllegalStateException("could not render delegation event", e);
         } catch (IOException e) {

@@ -22,6 +22,7 @@ vi.mock('../services/tasks', async (importOriginal) => {
       reviewRevise: vi.fn(),
       offerTask: vi.fn(),
       exportRecord: vi.fn(),
+      cancelTask: vi.fn(),
     },
   }
 })
@@ -210,7 +211,7 @@ describe('TaskConsoleView', () => {
     await flushPromises()
 
     expect(api.offerTask).toHaveBeenCalledWith('worker-a', 'Prove the offer lane',
-      [{ name: 'unit-tests', description: 'focused tests pass' }], [], 30)
+      [{ name: 'unit-tests', description: 'focused tests pass' }], [], 30, {})
   })
 
   it('shows the signed-record export only for a terminal task', async () => {
@@ -231,5 +232,107 @@ describe('TaskConsoleView', () => {
     const inFlight = await mountView()
     expect(inFlight.findAll('button').some((b) => b.text().includes('Signed record')))
       .toBe(false)
+  })
+})
+
+describe('coordination starter controls', () => {
+  it('shows typed results alongside the exact candidate identity', async () => {
+    const typed = { ...completionEvent, entry: { workerFrame: { completion: {
+      ...completionEvent.entry.workerFrame.completion,
+      result: { '@type': 'type.googleapis.com/caller.Report', headline: 'Caller-defined result' },
+    } } } }
+    api.task.mockResolvedValue({ task, events: [offerEvent, typed], cursor: 2, findings: [] })
+    const wrapper = await mountView()
+    expect(wrapper.find('.typed-result').text()).toContain('Caller-defined result')
+    expect(wrapper.text()).toContain('Responsible: Reviewer')
+    wrapper.unmount()
+  })
+
+  it('shows a useful next action for a leased task and cancels with a reason', async () => {
+    const leased = { ...task, phase: 'leased' }
+    api.listTasks.mockResolvedValue({ tasks: [leased], cursor: 1, findings: [] })
+    api.task.mockResolvedValue({ task: leased, events: [offerEvent], cursor: 1, findings: [] })
+    api.cancelTask.mockResolvedValue({ taskId: task.taskId })
+    const wrapper = await mountView()
+    expect(wrapper.text()).toContain('has not submitted a current candidate')
+    expect(wrapper.text()).toContain('Responsible: worker-a')
+    await wrapper.findAllComponents({ name: 'VTextField' })
+      .find((field) => field.props('label') === 'Reason to cancel')!.setValue('Change scope before retrying')
+    await wrapper.findAll('button').find((button) => button.text() === 'Cancel attempt')!.trigger('click')
+    await flushPromises()
+    expect(api.cancelTask).toHaveBeenCalledWith('task-1', 'Change scope before retrying')
+    wrapper.unmount()
+  })
+
+  it('loads the sample descriptor and sends its contract with the example offer', async () => {
+    api.listTasks.mockResolvedValue({ tasks: [], cursor: 0, findings: [] })
+    api.listWorkers.mockResolvedValue([{ workerId: 'fixture-worker', admitted: true,
+      connected: true, provider: 'fixture', model: '', capabilities: [] }])
+    api.offerTask.mockResolvedValue({ taskId: 'new-task', workerId: 'fixture-worker' })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true,
+      arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer }))
+    const wrapper = await mountView()
+    try {
+      await wrapper.findAll('button').find((button) => button.text() === 'Offer a task')!.trigger('click')
+      await flushPromises()
+      const dialog = wrapper.getComponent({ name: 'VDialog' })
+      await dialog.findAllComponents({ name: 'VBtn' })
+        .find((button) => button.text() === 'Use coordination example')!.trigger('click')
+      await flushPromises()
+      expect(dialog.findComponent({ name: 'VCardText' }).text()).toContain('no model calls or code execution')
+      await dialog.findAllComponents({ name: 'VBtn' })
+        .find((button) => button.text() === 'Offer')!.trigger('click')
+      await flushPromises()
+      expect(api.offerTask).toHaveBeenCalledWith('fixture-worker',
+        'Produce a coordination report about this starter task.',
+        expect.arrayContaining([expect.objectContaining({ name: 'fixture-report-valid' })]), [], 30,
+        { contract: { descriptorSet: 'AQID', typeName: 'ai.protomolt.proto.samples.starter.v1.CoordinationReport' } })
+    } finally {
+      wrapper.unmount()
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
+describe('task selection isolation', () => {
+  const other = { ...task, taskId: 'task-2', objective: 'A different task', lastCursor: 1 }
+  const otherEvent = { ...completionEvent, taskId: other.taskId, entry: { workerFrame: {
+    completion: { ...completionEvent.entry.workerFrame.completion, summary: 'Candidate belonging to task two' },
+  } } }
+
+  it('discards a detail response after the user has selected another task', async () => {
+    let resolveOther!: (value: unknown) => void
+    api.listTasks.mockResolvedValue({ tasks: [task, other], cursor: 2, findings: [] })
+    api.task.mockImplementation((id: string) => id === other.taskId
+      ? new Promise((resolve) => { resolveOther = resolve })
+      : Promise.resolve({ task, events: [offerEvent, completionEvent], cursor: 2, findings: [] }))
+    const wrapper = await mountView()
+    await wrapper.findAllComponents({ name: 'VListItem' })
+      .find((item) => item.text().includes(other.objective))!.trigger('click')
+    await flushPromises()
+    await wrapper.findAllComponents({ name: 'VListItem' })
+      .find((item) => item.text().includes(task.objective))!.trigger('click')
+    await flushPromises()
+    resolveOther({ task: other, events: [otherEvent], cursor: 2, findings: [] })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Candidate belonging to task two')
+    expect(wrapper.find('.review-panel').text()).toContain('Console wired and verified')
+    wrapper.unmount()
+  })
+
+  it('discards a long-poll reply for the task that was left', async () => {
+    let resolveWatch!: (value: unknown) => void
+    api.listTasks.mockResolvedValue({ tasks: [task, other], cursor: 2, findings: [] })
+    api.watchEvents.mockImplementationOnce(() => new Promise((resolve) => { resolveWatch = resolve }))
+    const wrapper = await mountView()
+    api.task.mockResolvedValue({ task: other, events: [otherEvent], cursor: 2, findings: [] })
+    await wrapper.findAllComponents({ name: 'VListItem' })
+      .find((item) => item.text().includes(other.objective))!.trigger('click')
+    await flushPromises()
+    resolveWatch({ events: [{ ...completionEvent, cursor: 99 }], cursor: 99, truncated: false })
+    await flushPromises()
+    expect(wrapper.find('.review-panel').text()).toContain('Candidate belonging to task two')
+    expect(wrapper.find('.review-panel').text()).not.toContain('Console wired and verified')
+    wrapper.unmount()
   })
 })
