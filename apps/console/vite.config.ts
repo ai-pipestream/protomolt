@@ -39,6 +39,10 @@ export default defineConfig({
         target: serve,
         changeOrigin: true,
       },
+      '/api/correction': {
+        target: serve,
+        changeOrigin: true,
+      },
     },
   },
   test: {

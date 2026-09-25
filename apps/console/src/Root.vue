@@ -61,6 +61,7 @@ import { registryApi } from './services/api'
 
 /** The console's sections; each one is a top-level route the rail links to. */
 const sections = [
+  { to: '/start', icon: 'mdi-play-circle-outline', title: 'Start', hint: 'Run a recorded correction' },
   { to: '/tasks', icon: 'mdi-account-network', title: 'Tasks', hint: 'Follow durable agent work' },
   { to: '/schema-registry', icon: 'mdi-source-repository', title: 'Schemas', hint: 'Browse and version subjects' },
   { to: '/workflows', icon: 'mdi-link-variant', title: 'Workflows', hint: 'Compose services, one typed call' },
@@ -72,7 +73,7 @@ const sections = [
 
 const theme = useTheme()
 const route = useRoute()
-const taskRoute = computed(() => route.path.startsWith('/tasks'))
+const taskRoute = computed(() => route.path.startsWith('/tasks') || route.path.startsWith('/start'))
 const isDark = computed(() => theme.global.current.value.dark)
 
 function toggleTheme() {
