@@ -61,6 +61,8 @@ try {
   await until(`!!document.querySelector('.v-overlay .v-alert')?.textContent.trim()`);
   await setType('ai.protomolt.proto.starter.protocol.v1.CustomProtocolReport');
   await evaluate(`[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Offer').click()`);
+  await until(`document.body.innerText.includes('ended as rejected')`);
+  await evaluate(`[...document.querySelectorAll('summary')].find(x=>x.textContent.startsWith('Recorded updates')).click()`);
   await until(`document.body.innerText.includes('Fixture supports only the CoordinationReport deliverable contract')`);
   console.log(JSON.stringify({browser:'Chromium',login:true,coordination:'TYPED_CANDIDATE',accepted:true,custom_contract_upload:true,invalid_contract_feedback:true,unsupported_contract_rejected:true,session:status.authenticated,screenshot:screenshotPath,provider:'fixture',liveModel:false}));
 } finally {socket?.close();browser.kill();await sleep(500);rmSync(profile,{recursive:true,force:true})}

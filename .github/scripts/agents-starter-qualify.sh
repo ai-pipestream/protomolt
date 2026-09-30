@@ -68,6 +68,7 @@ printf '%s\n' "$BROWSER" | jq -e '
 
 ./verify-offline.sh "$TASK_ID"
 EXTRACTED="$PWD/evidence/$TASK_ID/extracted"
+ORIGINAL_RECORD_SHA=$(sha256sum "$EXTRACTED/record.binpb" | cut -d ' ' -f1)
 TAMPER=$(mktemp -d)
 trap 'rm -rf "$TAMPER"' EXIT
 cp -a "$EXTRACTED/." "$TAMPER/"
@@ -110,6 +111,13 @@ RESUMED=$(VERIFY_SAVED_TASK="$TASK_ID" HTTP_BASE="$HTTP_BASE" node smoke.mjs)
 printf '%s\n' "$RESUMED" | jq -e --arg id "$TASK_ID" '
     .retrieved_after_restart == true and .conversation_after_restart == true
     and .post_acceptance_record == true and .taskId == $id' >/dev/null
+# A new export may include later conversation; the original signed snapshot stays valid.
+test "$(sha256sum "$EXTRACTED/record.binpb" | cut -d ' ' -f1)" = "$ORIGINAL_RECORD_SHA"
+docker run --rm --pull=never --network none --read-only \
+  --user "$(id -u):$(id -g)" --entrypoint java \
+  -v "$EXTRACTED:/evidence:ro" -v "$PWD/record-verifier.jar:/verifier.jar:ro" \
+  "$IMAGE_ID" -cp /verifier.jar ai.protomolt.receipt.verify.Main \
+  /evidence/record.binpb /evidence/trust.binpb /evidence/artifacts
 mv "evidence/$TASK_ID" "evidence/$TASK_ID-before-restart"
 ./verify-offline.sh "$TASK_ID"
 
@@ -129,7 +137,8 @@ jq -n --argjson smoke "$SMOKE" --argjson protocol "$PROTOCOL" \
      conversation:$resumed.conversation_after_restart,
      postAcceptanceRecord:$resumed.post_acceptance_record,
      trustSha256:$trustSha256},
-   offline:{initialVerified:true, tamperRefused:true, postRestartVerified:true}}' \
+   offline:{initialVerified:true, tamperRefused:true,
+     originalSnapshotVerifiedAfterConversation:true, postRestartVerified:true}}' \
   > qualification.json
 
 printf 'Agents starter qualification passed: task %s survived restart and verified offline.\n' "$TASK_ID"

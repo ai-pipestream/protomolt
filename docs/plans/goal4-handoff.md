@@ -1,25 +1,65 @@
 # Goal 4 handoff — 2026-09-25
 
-Read this before continuing. The user has about 3% Codex allowance remaining
-until tomorrow and requested a durable stopping point and possible Kimi help.
+Read this before continuing. On September 25 the user reported about 3% Codex
+allowance remaining and requested a durable stopping point and possible Kimi help.
 Goal 4 is **active and incomplete**, not blocked by an external dependency.
-Do not publish, merge, or declare completion from this checkpoint alone.
+Do not declare completion from a source checkpoint or local qualification alone.
 
 ## Exact checkout and landed prerequisite
 
 - Checkout: `/work/worktrees/protomolt/goal4-starter`
-- Branch: `feat/goal4-starter`
-- Base: `55caed3402335f7468ab4731bb79cf7b0349757a`
+- Follow-up branch: `feat/goal4-qualification`
+- Base: `962fbaa9f54acb9c186a2958b6219c1e70fe91b4`
 - PR #322, revision/attempt protection, is merged; its four hosted checks passed.
   <https://github.com/ai-pipestream/protomolt/pull/322>
-- Goal 4 commits and checkpoint are local. No Goal 4 PR, push, release, or NAS
-  promotion has happened. Recheck remotes and live main before publication.
+- PR #323 merged after all four checks passed. Both remote main branches and
+  the annotated `goal4-checkpoint-2026-09-25` tag point to the base above.
+  No starter release or NAS promotion has happened. Recheck live refs before publication.
 - Push Forgejo `origin` first, GitHub `github` second. GitHub CI is the build of
   record; merge only green, then sync Forgejo main. Read root `AGENTS.md`.
 
 The completion plan is `docs/plans/goal4-coordination.md`. Earlier goals and
 scope boundaries are in `/work/website/protomolt/.research/adoption-goals.md`.
 Goal 5 workflow authoring and Goal 7 Jev integration remain separate.
+
+## Latest local qualification
+
+Full build and dedicated ACP protocol tests passed after this follow-up:
+1494 tasks, 1m 19s, recorded in `/tmp/goal4-qualification-full-build.log`.
+
+The follow-up now proves cold ACP ReadTranscript/WatchEvents rendering when the
+requested page omits the offer, including two attempts with incompatible
+same-name schemas. Native Offer/Reject/ReadTranscript/Watch tests pass, preserve
+custom Any bytes, reject duplicate task rejection, and report DATA_LOSS for an
+invalid successful handler response. Worker reconnection after a rejected frame
+is documented in `docs/transform/delegation.md`.
+
+Fresh local AMD64 images passed the complete `.github/scripts/agents-starter-qualify.sh`
+against the existing disposable stack on ports 29832/29833. This includes actual
+packaged ACP, browser custom upload/review, invalid candidates before append,
+restart conversation and stable signer trust, offline verification, tamper
+detection, and re-verification of the original snapshot after later conversation.
+Two harness defects were fixed during execution: grpcurl returned task_id, and
+the browser had to expand Recorded updates to inspect the rejection reason.
+
+- Qualification JSON: `/tmp/protomolt-goal4-local/qualification.json`
+- Log: `/tmp/goal4-local-qualification.log`
+- Screenshot: `/tmp/goal4-qualified-browser.png`
+- Task: `0d5461db-5be4-435c-a4f6-dddefc332d82`
+- Original manifest: `a15d69f7069f58ce909b1d0328f4e432af2abe05f8de90088b7c0e824588ce8c`
+- Later manifest: `c04f57327110c512e860d1dc1df24786310688a5c4f5e1a54d0e615e52649192`
+- Serve image: `sha256:2f1dc09be44266e52970d7ad680d4b14a586b14c97bb31c183e804cb7870d4eb`
+- Repo image: `sha256:62e18f67a337be2d9a243bb3f6dfd96a64bd774a08f4def8439a2b0880e7f9ea`
+- AgentHost image: `sha256:a0df5e72e16cda4a6a911e53d8f35e82e7736f732fb6569326996cff60060603`
+- ACP image: `sha256:4d524c4a0fe1b4d0ccaa4f15924a0697458613f7d259b278963f84d04b31f91e`
+
+These images were built from the checkpoint application source on the follow-up
+branch, with the test/documentation/harness changes described above. They are
+local development images, not a published release. The remaining sequence is
+review/check/push this follow-up, merge on green, then publish immutable images
+and the downloadable bundle and inspect native AMD64/ARM64 and anonymous-pull
+qualification. The dated evidence below records earlier states; this section
+supersedes its old local-image and unexecuted-ACP limitations.
 
 ## Implemented in this branch
 
