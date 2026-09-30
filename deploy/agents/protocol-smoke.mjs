@@ -161,7 +161,10 @@ function offerGrpc(worker, typeName, descriptorSet, check, objective) {
       requiredChecks: [{ name: check, description: 'Harness report and artifact check' }],
       contract: { descriptorSet, typeName } } })
   assert.equal(response.ok, true)
-  return response.taskId
+  // grpcurl may emit the protobuf field name instead of its JSON spelling.
+  const taskId = response.taskId ?? response.task_id
+  assert.ok(taskId, 'Native OfferTask must return the generated task identity')
+  return taskId
 }
 async function accept(worker, taskId) {
   const response = await mcp.tool('delegation-accept', { workerId: worker, taskId, attempt: 1 })

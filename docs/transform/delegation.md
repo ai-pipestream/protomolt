@@ -24,6 +24,15 @@ Each worker opens one `AgentDelegationService.Delegate` stream and sends a
 The coordinator replies with an admission decision before sending work. One
 stream represents one worker session.
 
+The current coordinator closes a worker stream when it rejects a worker frame,
+including a completion candidate that violates its deliverable contract. The
+invalid candidate is not appended or sent for review. Catalog, MCP, and remote
+ACP callers receive `worker-stream-failed` and must register the same worker
+again before submitting a correction. Reconnection preserves recorded task
+history; it does not create another attempt or waive its contract. Read the
+current task state before retrying so the attempt, revision, and lease remain
+valid. A client-side JSON parsing error does not reach or close the stream.
+
 ## Task lifecycle
 
 The coordinator offers a bounded `TaskSpec` with:

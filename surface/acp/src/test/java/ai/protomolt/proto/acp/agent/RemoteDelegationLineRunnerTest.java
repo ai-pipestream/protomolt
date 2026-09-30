@@ -114,6 +114,29 @@ class RemoteDelegationLineRunnerTest {
             assertThat(rendered.findValues("count")).extracting(node -> node.asInt()).contains(42);
             assertThat(rendered.findValues("value")).isEmpty();
 
+            // A cold adapter receiving only a completion must fetch the earlier offer.
+            // Exercise both RPCs and both same-name schemas without seeding their caches.
+            int recovered = 0;
+            for (var event : rendered.path("events")) {
+                if (!event.path("entry").path("workerFrame").has("completion")) continue;
+                long cursor = event.path("cursor").asLong();
+                assertThat(cursor).isPositive();
+                for (String method : List.of("ReadTranscript", "WatchEvents")) {
+                    RecordingContext page = new RecordingContext();
+                    String limit = method.equals("ReadTranscript")
+                            ? "\"maxEntries\":1" : "\"maxEvents\":1,\"timeoutMs\":0";
+                    try (RemoteCatalogLineRunner cold = fixture.runner(TOKEN)) {
+                        cold.run("delegation/" + method + " {\"taskId\":\"" + taskId
+                                + "\",\"afterCursor\":" + (cursor - 1) + "," + limit + "}", page);
+                    }
+                    var recoveredPage = JSON.readTree(last(page));
+                    assertThat(recoveredPage.path("events").size()).isEqualTo(1);
+                    assertThat(recoveredPage.path("events").get(0)).isEqualTo(event);
+                    recovered++;
+                }
+            }
+            assertThat(recovered).isEqualTo(4);
+
             RecordingContext watch = new RecordingContext();
             try (RemoteCatalogLineRunner restarted = fixture.runner(TOKEN)) {
                 restarted.run("delegation/WatchEvents {\"taskId\":\"" + taskId

@@ -4,6 +4,7 @@ import ai.protomolt.proto.actions.ActionCatalog;
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.actions.Scopes;
+import ai.protomolt.proto.actions.ProtoAction;
 import ai.protomolt.proto.authz.CallerResolver;
 import ai.protomolt.proto.delegation.DelegationActions;
 import ai.protomolt.proto.delegation.DelegationBridge;
@@ -61,12 +62,10 @@ class DelegationGrpcMountTest {
                     .addRequiredChecks(AcceptanceCheck.newBuilder().setName(CHECK)
                             .setDescription("The harness inspected bytes"))
                     .setContract(contract).build();
-            var offerRequest = JSON.createObjectNode().put("workerId", WORKER)
-                    .put("taskId", task);
-            offerRequest.set("spec", JSON.readTree(com.google.protobuf.util.JsonFormat.printer()
-                    .print(spec)));
-            var offered = fixture.catalog.execute("delegation-offer", offerRequest);
-            assertThat(offered.path("ok").asBoolean()).isTrue();
+            var offered = OfferTaskResponse.parseFrom(fixture.call("OfferTask",
+                    OfferTaskRequest.newBuilder().setWorkerId(WORKER).setTaskId(task)
+                            .setSpec(spec).setLeaseSeconds(300).build(), "operator").toByteString());
+            assertThat(offered.getOk()).isTrue();
             fixture.call("AcceptTask", AcceptTaskRequest.newBuilder().setWorkerId(WORKER)
                     .setTaskId(task).setAttempt(1).build(), "operator");
 
@@ -104,6 +103,48 @@ class DelegationGrpcMountTest {
             var transcript = fixture.catalog.execute("delegation-transcript",
                     JSON.createObjectNode().put("taskId", task).put("maxEntries", 100));
             assertThat(transcript.toString()).contains("accepted").contains("native.v1.Report");
+            var nativeTranscript = ReadTranscriptResponse.parseFrom(fixture.call("ReadTranscript",
+                    ReadTranscriptRequest.newBuilder().setTaskId(task).setMaxEntries(100).build(),
+                    "operator").toByteString());
+            var nativeWatch = WatchEventsResponse.parseFrom(fixture.call("WatchEvents",
+                    WatchEventsRequest.newBuilder().setTaskId(task).setMaxEvents(100).build(),
+                    "operator").toByteString());
+            assertThat(nativeWatch.getEventsList()).isEqualTo(nativeTranscript.getEventsList());
+            assertThat(nativeTranscript.getEventsList().stream()
+                    .filter(event -> event.getEntry().getWorkerFrame().hasCompletion())
+                    .map(event -> event.getEntry().getWorkerFrame().getCompletion().getResult()))
+                    .containsExactly(candidate.getResult());
+        }
+    }
+
+    @Test void nativeRejectRecordsTheAddressedOfferAndCannotRepeatIt() throws Exception {
+        try (Fixture fixture = new Fixture()) {
+            fixture.call("RegisterWorker", RegisterWorkerRequest.newBuilder()
+                    .setWorkerId(WORKER).setProvider("fixture").build(), "operator");
+            String task = UUID.randomUUID().toString();
+            fixture.call("OfferTask", OfferTaskRequest.newBuilder().setWorkerId(WORKER)
+                    .setTaskId(task).setLeaseSeconds(300).setSpec(TaskSpec.newBuilder()
+                            .setObjective("Decline unsupported work").addAllowedScope("protocol/**")
+                            .addRequiredChecks(AcceptanceCheck.newBuilder().setName(CHECK)
+                                    .setDescription("Inspect the report"))
+                            .setContract(customContract())).build(), "operator");
+            var request = RejectTaskRequest.newBuilder().setWorkerId(WORKER).setTaskId(task)
+                    .setAttempt(1).setReason("Unsupported report contract").setRetryable(true).build();
+            var reply = RejectTaskResponse.parseFrom(fixture.call("RejectTask", request,
+                    "operator").toByteString());
+            assertThat(reply.getOk()).isTrue();
+            assertThat(reply.getTaskId()).isEqualTo(task);
+            assertThat(reply.getAttempt()).isEqualTo(1);
+            var transcript = ReadTranscriptResponse.parseFrom(fixture.call("ReadTranscript",
+                    ReadTranscriptRequest.newBuilder().setTaskId(task).build(), "operator").toByteString());
+            assertThat(transcript.getEventsList().stream()
+                    .filter(event -> event.getEntry().getWorkerFrame().hasReject())
+                    .map(event -> event.getEntry().getWorkerFrame().getReject().getReason()))
+                    .containsExactly("Unsupported report contract");
+            int before = fixture.coordinator.transcript().getEntriesCount();
+            assertThat(catchThrowableOfType(() -> fixture.call("RejectTask", request, "operator"),
+                    StatusRuntimeException.class)).isNotNull();
+            assertThat(fixture.coordinator.transcript().getEntriesCount()).isEqualTo(before);
         }
     }
 
@@ -130,6 +171,30 @@ class DelegationGrpcMountTest {
                     StatusRuntimeException.class);
             assertThat(unknown.getStatus().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
             assertThat(fixture.coordinator.transcript().getEntriesCount()).isEqualTo(before);
+        }
+    }
+
+    @Test void invalidSuccessfulResponseIsReportedAsDataLoss() {
+        try (Fixture fixture = new Fixture(true)) {
+            var failure = catchThrowableOfType(() -> fixture.call("RejectTask",
+                    RejectTaskRequest.newBuilder().setWorkerId(WORKER)
+                            .setTaskId(UUID.randomUUID().toString()).setAttempt(1)
+                            .setReason("Valid request to a deliberately broken test handler").build(),
+                    "operator"), StatusRuntimeException.class);
+            assertThat(failure).isNotNull();
+            assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.DATA_LOSS);
+            assertThat(failure.getStatus().getDescription()).contains("invalid-upstream-response");
+        }
+    }
+
+    private static final class InvalidRejectAction implements ProtoAction {
+        @Override public String name() { return "delegation-reject"; }
+        @Override public String description() { return "Test handler with an invalid success envelope"; }
+        @Override public String requiredScope() { return Scopes.WORKER_COORDINATE; }
+        @Override public Descriptors.Descriptor requestType() { return RejectTaskRequest.getDescriptor(); }
+        @Override public Descriptors.Descriptor responseType() { return RejectTaskResponse.getDescriptor(); }
+        @Override public Message execute(Message input, ActionContext context) {
+            return RejectTaskResponse.getDefaultInstance();
         }
     }
 
@@ -160,7 +225,10 @@ class DelegationGrpcMountTest {
         final ProtoMoltGrpcServer server;
         final ManagedChannel channel;
 
-        Fixture() {
+        Fixture() { this(false); }
+
+        Fixture(boolean invalidResponse) {
+            if (invalidResponse) catalog.replace(new InvalidRejectAction());
             CallerResolver resolver = credential -> "reader".equals(credential)
                     ? Optional.of(Caller.scoped("reader", Set.of(Scopes.SCHEMA_READ)))
                     : Optional.empty();
