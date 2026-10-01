@@ -63,9 +63,10 @@ JDK or image build is required. The example author is scripted and requires
 no model-provider account.
 
 To connect an existing gRPC endpoint, start with
-[service workspaces](docs/surface/service-workspace.md). To use individual
-libraries in your own Java process, see the dependency example below and the
-[library guides](docs/README.md#core-and-schema).
+[the MCP and ACP walkthrough](docs/tutorials/connect-grpc-service.md). To use
+individual libraries in your own Java process, run the
+[standalone protobuf toolkit example](examples/protobuf-toolkit/README.md),
+then consult the [library guides](docs/README.md#core-and-schema).
 
 ### Single-process demo and source builds
 
