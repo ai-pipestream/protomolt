@@ -43,7 +43,8 @@ clients consume the fingerprint rather than recreating it.
 
 Annotations enforce shape, bounds and required fields. Handler obligations
 enforce caller/holder equality, a clean trusted transcript, a current LEASED
-attempt, unexpired lease and the next candidate revision. The selected offer
+attempt, unexpired lease and the next candidate revision for new execution.
+Completed replay follows the separate state rules below. The selected offer
 must contain the configured policy reference and supported deliverable contract.
 Reject unsupported rules or check names before any external call. Validate the
 successful response, including its nested deliverable, before returning it.
@@ -61,9 +62,11 @@ all pinned acceptance fixtures. Compile against the pinned descriptor closure
 and approved targets. Derive a stable run identity from the persisted intent.
 Store artifacts and the exact signed response before marking preparation
 complete. Completed retries return the stored response without rerunning calls,
-after authorization and binding checks. They may be read after candidate
-submission if the same holder and attempt still own the task; a superseded
-attempt or different holder is refused.
+after authorization and binding checks. Permit replay in LEASED only for the
+currently expected revision, and in CANDIDATE only for that submitted revision.
+Require the same holder, attempt and persisted offer binding in both cases.
+Refuse replay in ACCEPTED or other terminal phases, after supersession, or once
+a revision request advances the expected revision. Never execute in CANDIDATE.
 
 Incomplete retries may repeat fixture and recorded-run RPCs. Remote services
 must enforce the caller's stable operation key. Cancellation or deadline expiry
@@ -76,6 +79,15 @@ Recovery must inspect an existing immutable recorded run before calling
 `WorkflowRunRecorder` again: timestamped evidence cannot be overwritten with a
 new recording under the same ID. Distinguish failed evidence, incomplete intent
 and completed response explicitly. Do not silently start a replacement run.
+A stored failed run makes preparation terminal, even when its original cause
+was a transport failure. Return FAILED_PRECONDITION with a stable
+`preparation-attempt-failed` reason on subsequent calls. The worker reports the
+attempt failed through delegation; the coordinator must explicitly reoffer a
+new attempt for corrected source or execution. The remote-author acceptance
+test must demonstrate this recovery, rather than leave a task lingering.
+UNAVAILABLE is retryable only while no immutable failed run exists; recovery
+must inspect storage before choosing that classification. This first contract
+does not introduce multiple preparation generations inside one task revision.
 
 Current artifact and run repositories do not establish power-loss durability.
 The initial guarantee is process-restart recovery with intact storage. Missing
