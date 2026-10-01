@@ -179,6 +179,13 @@ a second workflow language, receipt format, or task lifecycle. Its annotations
 refuse empty workflows, absent evidence, failed/duplicate checks, and missing
 artifact references. These remain worker reports until checked independently.
 
+Goal 5 adds a sample `WorkflowAuthoringDeliverable` wrapper that retains the
+executable `CompiledWorkflow` JSON artifact and named acceptance fixtures.
+`WorkflowAuthoringPolicy` pins descriptors, fixtures and permitted target/method/
+TLS combinations under caller authority. This extends the sample contract;
+it is not a mounted authoring API. The [Goal 5 implementation plan](goal5-authoring.md)
+tracks verification helpers and the remaining candidate/promotion bindings.
+
 Before acceptance the reviewer must also verify that:
 
 - Stored workflow bytes match the inline workflow and its artifact digest.

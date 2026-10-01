@@ -124,7 +124,9 @@ Local verification of this first slice: completion regression failed against
 the old behavior, then passed after the fix. The final jobs suite passed 108
 tests with no failures or skips, including PostgreSQL insert/completion races,
 changed named definitions and legacy checkpoint retries. The full Gradle build,
-Buf lint and compatibility checks passed. Hosted CI and landing remain pending.
+Buf lint and compatibility checks passed. All hosted CI checks passed for
+`a92ef98d8ec68a313db1388bc97af28ddcbce8e9`. PR #325 merged as
+`3e7a36c14f898655eae0e611d8407a632c2da2ae`; GitHub and Forgejo main were synced.
 
 ## Authoring bridge findings
 
@@ -141,3 +143,50 @@ and verify the receipt with all artifact bytes supplied. Then bind the verified
 manifest's run ID and workflow fingerprint to independently loaded run evidence.
 Existing signature verification and self-reported PASSED checks alone do not
 establish these conditions.
+
+## Authoring contract and verification implementation
+
+The draft `WorkflowAuthoringDeliverable` composes the existing deliverable with
+an executable-source reference and named input/output fixture references.
+`WorkflowAuthoringPolicy` is caller-owned: its artifact belongs in the immutable
+task offer's context or equivalent trusted reviewer configuration. It pins the
+descriptor artifact, expected fixtures, and exact target/method/TLS permissions.
+The candidate cannot replace that policy. Fixture references are checked against
+policy directly; the old deliverable's fixture list remains recorded-run evidence
+and is not required to duplicate every acceptance fixture.
+
+`WorkflowAuthoringPreflight` is a library helper, not a mounted API. It resolves
+full artifact references, requires exact embedded descriptor bytes, validates and
+compiles the source, compares the durable workflow, and checks every call against
+policy before any execution. Its first fixture path supports synchronous unary
+gRPC steps; structured-generation, external-completion and fan-out steps are
+explicitly refused. The existing runtimes continue to support their own modes.
+Every admitted step must enable response validation in the retained executable
+source so subsequent execution preserves that boundary.
+All descriptor imports, including built-in option definitions, must be present
+in the pinned artifact; general schema-resolver fallbacks are not admitted here.
+Only successful preflight can construct the result accepted by fixture execution.
+
+`WorkflowAuthoringFixtures` matches the exact caller-owned fixture list, loads
+and validates all input/expected messages before the first RPC, then executes
+the workflow and compares actual output messages. It validates mapped requests
+before calls and successful responses before the next step, rejects unknown
+fields, and stores observed outputs. Real unary gRPC tests cover mismatched
+expectations, malformed bytes, annotation-invalid fixtures and responses.
+References pin exact stored bytes, while invocation and output equality use
+parsed protobuf messages; equivalent binary encodings are accepted explicitly.
+
+`WorkflowAuthoringReceipt` authenticates a receipt, compares its exact projection
+to independently loaded run evidence and the compiled fingerprint, and verifies
+all referenced artifact bytes and metadata. It does not establish fixture success
+or authorize a worker to supply its own run evidence. Callers must obtain that
+evidence from the configured run repository.
+
+Remaining bindings: compare checks in the enclosing candidate, resolve the caller
+policy from the offered task, load the authoritative run and replay it against
+the admitted workflow, and connect the reviewed result to promotion and
+asynchronous submission. Tests of these helpers alone do not qualify the third
+starter. Local verification currently covers 163 workflow tests and eight starter
+contract tests with no failures or skips, plus Buf lint and compatibility against
+main. The wrapper also passes the existing dynamic deliverable-contract boundary
+with its complete descriptor/import closure.
