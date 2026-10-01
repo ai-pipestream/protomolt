@@ -1,0 +1,114 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.workflow.authoring.v1;
+
+import "ai/protomolt/proto/delegation/v1/delegation.proto";
+import "ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "ai/protomolt/proto/workflow/authoring/v1/workflow_preparation.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.workflow.authoring.v1";
+
+// Immutable server-owned intent, limited to 8 MiB before reservation and reserved
+// only after deterministic preflight. Successful responses remain limited to
+// 4 MiB, leaving space for intent and outcome within the record's 16 MiB cap.
+// Never accept this message from an author as evidence of authorization.
+message WorkflowPreparationIntent {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "preparation-run-identity"
+    message: "the run identity must derive from the preparation UUID"
+    expression: "has(this.binding) && this.run_id == 'prepare-' + this.binding.preparation_id"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "preparation-request-binding"
+    message: "the binding must name the reserved request"
+    expression: "has(this.request) && has(this.binding) && this.request.task_id == this.binding.task_id && this.request.attempt == this.binding.attempt && this.request.revision == this.binding.revision && this.request.preparation_id == this.binding.preparation_id"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "preparation-offer-binding"
+    message: "the selected offer must name the holder, task and attempt"
+    expression: "has(this.selected_offer) && this.selected_offer.worker_id == this.holder && has(this.selected_offer.coordinator_frame) && has(this.selected_offer.coordinator_frame.offer) && has(this.binding) && this.selected_offer.coordinator_frame.task_id == this.binding.task_id && this.selected_offer.coordinator_frame.offer.attempt == this.binding.attempt"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "preparation-policy-snapshot"
+    message: "policy must be an unredacted protobuf artifact matching snapshot size"
+    expression: "has(this.policy) && this.policy.media_type == 'application/x-protobuf' && !this.policy.redacted && this.policy.size_bytes == uint(size(this.policy_proto))"
+  };
+  // Stored format version. Unknown versions fail closed.
+  int32 version = 1 [(ai.protomolt.proto.validate.v1.field).int32.const = 1];
+  // Exact source bytes and retry identity; whitespace is significant.
+  PrepareWorkflowCandidateRequest request = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Server-computed hashes. Recompute source and offer digests on every read.
+  WorkflowPreparationBinding binding = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Authenticated principal, equal to the selected delegation worker ID.
+  string holder = 4 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}}];
+  // Selected immutable coordinator offer entry from the trusted transcript.
+  ai.protomolt.proto.delegation.v1.TranscriptEntry selected_offer = 5 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Full reference pinned in the offered task context, verified by the handler.
+  ai.protomolt.proto.grpc.workflow.v1.ArtifactReference policy = 6 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Exact stored WorkflowAuthoringPolicy bytes. Handler hashes, parses, validates
+  // and rejects unknown fields before reservation and again on recovery.
+  bytes policy_proto = 7 [(ai.protomolt.proto.validate.v1.field).bytes = {min_len: 1, max_len: 4194304}];
+  // Exactly "prepare-" plus preparation_id, never changed on resume. An existing
+  // run is reusable only after verifying its input, compiled workflow and intent;
+  // its name alone does not establish provenance.
+  string run_id = 8 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}}];
+}
+
+// Why a reserved preparation cannot be retried in the same delegation attempt.
+enum WorkflowPreparationFailureReason {
+  // Not a valid terminal reason.
+  WORKFLOW_PREPARATION_FAILURE_REASON_UNSPECIFIED = 0;
+  // Immutable failed RunEvidence exists for the reserved run identity.
+  WORKFLOW_PREPARATION_FAILURE_REASON_RECORDED_RUN_FAILED = 1;
+  // Live fixture output failed its caller-pinned expected result or contract.
+  WORKFLOW_PREPARATION_FAILURE_REASON_FIXTURE_REJECTED = 2;
+}
+
+// Safe structured terminal detail for preparation-attempt-failed. Do not include
+// source data, provider exceptions or credentials. A new coordinator attempt is
+// required; repeated calls return this state without performing external calls.
+message WorkflowPreparationFailure {
+  // Exact reserved identity, checked against the authoritative intent.
+  WorkflowPreparationBinding binding = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Stable public reason; infrastructure interruption alone is not terminal.
+  WorkflowPreparationFailureReason reason = 2 [(ai.protomolt.proto.validate.v1.field).enum = {defined_only: true, not_in: [0]}];
+  // Reserved run identity. A fixture rejection may happen before a run exists;
+  // this field must never be treated as proof of stored RunEvidence.
+  string run_id = 3 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}}];
+}
+
+// One authoritative ledger record. Handler rejects unknown fields, malformed or
+// noncanonical bytes and records exceeding 16 MiB before use. State replacement
+// is atomic; only pending may transition to completed or failed. Terminal state
+// is immutable, and retries may not replace any part of intent.
+message WorkflowPreparationRecord {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "preparation-state-required"
+    message: "a preparation must have exactly one state"
+    expression: "has(this.pending) || has(this.completed) || has(this.failed)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "preparation-completed-binding"
+    message: "completed evidence must match the reserved binding and run"
+    expression: "!has(this.completed) || (has(this.intent) && this.completed.binding == this.intent.binding && this.completed.authored.deliverable.run_id == this.intent.run_id)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "preparation-failed-binding"
+    message: "terminal failure must match the reserved binding and run"
+    expression: "!has(this.failed) || (has(this.intent) && this.failed.binding == this.intent.binding && this.failed.run_id == this.intent.run_id)"
+  };
+  // Immutable after the initial atomic tuple/UUID reservation.
+  WorkflowPreparationIntent intent = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Exclusive persisted execution outcome. Pending does not prove no RPC ran:
+  // a crashed process may have committed remote effects or recorded evidence.
+  oneof state {
+    // Incomplete intent; recovery checks existing evidence before executing.
+    bool pending = 2 [(ai.protomolt.proto.validate.v1.field).bool.const = true];
+    // Exact validated response returned on permitted completed retries.
+    PrepareWorkflowCandidateResponse completed = 3;
+    // Exact terminal failure returned on retries without new calls.
+    WorkflowPreparationFailure failed = 4;
+  }
+}

@@ -63,7 +63,8 @@ Before external calls, atomically reserve task/attempt/revision and preparation
 UUID in a keyed intent store. Persist the exact source bytes, authenticated
 holder, selected offer, policy and their fingerprints. A changed UUID for an
 already reserved revision, changed source under the same UUID, or reuse of a UUID
-for another task conflicts. Scope this namespace to the coordinator store.
+for any different task/attempt/revision tuple conflicts, including a later
+attempt of the same task. Scope this namespace to the coordinator store.
 Use one authoritative record per tuple under a global cross-process lock, with
 UUID uniqueness verified under that lock, or a transaction with both unique
 constraints. A secondary index is rebuildable; independent create-if-absent
@@ -186,3 +187,50 @@ Hash recomputation, trusted transcript membership, lease/holder checks, signatur
 trust and executable-source semantics are handler obligations in every dialect.
 No generator changes belong in this slice. Verify the concrete mounted OpenAPI
 document when adding the RPC; it has no advertised operation today.
+
+## Persisted state contract
+
+`workflow_preparation_state.proto` defines an immutable intent and one exclusive
+pending, completed or failed state. Intent retains exact source and policy bytes,
+the selected offer, authenticated holder, binding and stable run ID. Native CEL
+binds request identity to the response identity, selected offer to holder/task/
+attempt, and terminal outcomes to the intent's binding and run. Hashes, policy
+contents and transcript membership still require independent handler checks.
+The run ID is exactly `prepare-` plus the canonical preparation UUID. Existing
+run evidence must still match the source, compiled workflow and pinned input;
+the ID alone is insufficient to adopt it.
+
+Reject intent over 8 MiB before reservation and successful responses over 4 MiB
+before completion. The store must reject records over 16 MiB, unknown fields
+and noncanonical bytes. Separate bounds leave room for intent plus response;
+reservation cannot consume all the space required by a terminal record.
+Read corruption is an error, never an absent reservation. Recompute source and
+offer hashes, parse/validate/hash the policy snapshot and check its full pinned
+reference before use. Only pending may transition to completed or failed; an
+exact terminal retry returns the prior record and a changed terminal outcome
+conflicts. A fixture-rejected terminal state can precede RunEvidence creation;
+its reserved run ID does not assert a recorded run exists.
+
+Serialize execution per task/attempt/revision across threads and processes, not
+just individual ledger writes. Hold that lock through recovery, external calls
+and terminal-state persistence to prevent concurrent timestamped run recordings.
+Use a separate short global reservation lock to enforce tuple and UUID uniqueness
+atomically. Establish one lock order: per-intent execution lock, then global
+reservation lock; never hold the global lock during external calls. A process
+crash releases execution ownership while leaving the pending intent recoverable.
+Every resumed execution rechecks the delegation lease before calls. Locking the
+ledger does not lock the transcript and does not replace admission checks.
+
+Contract fixtures must exercise each state through generated and dynamic
+messages, absent state and pending=false, request/offer binding mismatches,
+policy snapshot metadata, unsupported failure reasons and terminal run/binding
+mismatches. No implementation or mounted operation is established by these
+stored-message definitions.
+
+The storage SPI is `WorkflowPreparationRepository`: snapshot `find`, and
+`withExclusiveIntent` whose callback receives `current`, `reserveOrMatch`,
+`complete` and `fail`. Session use after callback return is invalid. This slice
+defines the interface only; filesystem implementation and concurrency/failure
+tests follow. Local validation passes all 44 authoring tests without skips,
+including nine state-contract tests, plus Buf lint and full-descriptor
+compatibility against the request/response contract commit `2fea5dc8`.
