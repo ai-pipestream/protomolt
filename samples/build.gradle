@@ -11,6 +11,9 @@ description = 'Examples for Pipestream protobuf tools'
 sourceSets.main.proto.srcDir '../protobuf/llm/examples/court-decoration/proto'
 
 dependencies {
+    // The starter distribution adds sample template providers to the production
+    // server's classpath. The server itself has no dependency on samples.
+    runtimeOnly project(':protomolt-serve')
     implementation project(':protomolt-correction')
     // Starter contracts reuse the existing task, workflow, projection and receipt
     // models. They add examples and validation fixtures, not a mounted service.
@@ -29,6 +32,8 @@ dependencies {
     testImplementation project(':protomolt-http-openapi')
     testImplementation project(':protomolt-sources')
     testImplementation libs.grpc.inprocess
+    testImplementation libs.testcontainers.postgresql
+    testImplementation libs.testcontainers.junit.jupiter
     implementation project(':protomolt-mapper-cel')
     implementation project(':protomolt-server-jdk')
     // Live SharePoint read -> infer-schema sample.
@@ -166,8 +171,29 @@ tasks.register('installAuthoringFixture', Sync) {
     }
 }
 
+tasks.register('authoringCoordinatorStartScripts', CreateStartScripts) {
+    applicationName = 'authoring-coordinator'
+    mainClass = 'ai.protomolt.proto.serve.ProtoMoltServe'
+    classpath = files(tasks.named('jar'), configurations.runtimeClasspath)
+    outputDir = layout.buildDirectory.dir('generated/authoring-coordinator-scripts').get().asFile
+}
+
+tasks.register('installAuthoringCoordinator', Sync) {
+    group = 'application'
+    description = 'Install the production coordinator with the starter template provider'
+    dependsOn tasks.named('jar'), tasks.named('authoringCoordinatorStartScripts')
+    into layout.buildDirectory.dir('install/authoring-coordinator')
+    from(tasks.named('authoringCoordinatorStartScripts')) {
+        into 'bin'
+        filePermissions { unix('rwxr-xr-x') }
+    }
+    from(files(tasks.named('jar'), configurations.runtimeClasspath)) {
+        into 'lib'
+    }
+}
+
 tasks.named('test') {
-    dependsOn tasks.named('installAuthoringFixture')
+    dependsOn tasks.named('installAuthoringFixture'), tasks.named('installAuthoringCoordinator')
 }
 
 tasks.register('runAcpStreamingDemo', JavaExec) {
