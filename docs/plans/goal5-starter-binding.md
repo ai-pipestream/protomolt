@@ -41,6 +41,27 @@ workflow or qualify a deployed ACP/browser path.
 
 ## External service and scripted author
 
+### Remote authoring boundary found during integration
+
+`worker-coordinate` permits candidate submission, but the existing remote
+workbench has separate permissions: reflection/invocation use `service-invoke`,
+compilation uses `schema-read`, and checking, recording and receipt export use
+`workflow-run`. That last permission also permits promotion. There is no mounted
+general upload/read operation over the coordinator's `ArtifactRepository` for
+source, descriptors, workflow bytes and signed receipts.
+
+A trusted local Java harness can reuse `ReflectionClient`, `DynamicGrpcCalls`,
+`WorkflowJson`, `WorkflowCompiler`, `WorkflowRunRecorder`, `WorkRecordProjector`
+and `RecordSigner`, then submit through `DelegationWorker`. That is useful
+integration evidence, but does not establish the planned remote worker entry
+point. Do not substitute an operator token or shared writable coordinator
+workspace for that missing boundary. The next contract review must choose
+bounded artifact transport with narrow authoring authority or a typed
+candidate-preparation operation over the same libraries, preserving caller-owned
+policy, independent review and separate operator launch authorization. Record
+its requests, successful responses, identity checks and negative authorization
+tests before implementing the remote scripted author.
+
 The reviewed example contract is
 `samples/src/main/proto/ai/protomolt/proto/samples/authoring/v1/authoring_fixture.proto`.
 It declares `NormalizeText` and `WriteRecord`, plus the sample-private durable
