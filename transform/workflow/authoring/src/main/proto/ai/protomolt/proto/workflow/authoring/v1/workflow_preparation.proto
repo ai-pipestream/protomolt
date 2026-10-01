@@ -1,0 +1,70 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.workflow.authoring.v1;
+
+import "ai/protomolt/proto/samples/starter/v1/workflow_deliverable.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.workflow.authoring.v1";
+
+// Bounded remote author input. These messages do not mount an RPC yet.
+// The handler must authenticate the current lease holder and resolve the pinned
+// offer, policy, descriptors and fixtures before executing any external calls.
+// Shape validity establishes neither authorization nor semantic correctness.
+message PrepareWorkflowCandidateRequest {
+  // Preserve the task UUID spelling supplied by delegation; it is a string key.
+  string task_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  // Current coordinator attempt, independently checked against its transcript.
+  int32 attempt = 2 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 1024}];
+  // Next candidate revision for new execution, not a worker-selected generation.
+  int32 revision = 3 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 1024}];
+  // Write-once idempotency identity. Changed source or task identity conflicts.
+  // A different UUID cannot replace a preparation reserved for this revision.
+  string preparation_id = 4 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true, string: {uuid: true, pattern: "^[0-9a-f-]{36}$"}
+  }];
+  // Exact UTF-8 executable workflow JSON, bounded in bytes, base64 on JSON edges.
+  // UTF-8 decoding, JSON parsing, pinned descriptors, target restrictions and
+  // validate_contract=true are handler checks. Whitespace changes retry identity.
+  bytes executable_source_json = 5 [(ai.protomolt.proto.validate.v1.field).bytes = {
+    min_len: 1, max_len: 1048576
+  }];
+}
+
+// Server-derived identity of one immutable preparation. Clients copy this
+// binding; supplied hashes do not establish authority or prove referenced data.
+message WorkflowPreparationBinding {
+  // Exact task key from the request and trusted offer.
+  string task_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  // Attempt bound to the authenticated holder and selected offer.
+  int32 attempt = 2 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 1024}];
+  // Candidate revision for which this preparation was reserved.
+  int32 revision = 3 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 1024}];
+  // Exact canonical UUID from the reserved request.
+  string preparation_id = 4 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true, string: {uuid: true, pattern: "^[0-9a-f-]{36}$"}
+  }];
+  // SHA-256 of deterministic protobuf serialization of the selected offer
+  // TranscriptEntry, including its coordinator envelope. Not the full transcript.
+  string offer_entry_sha256 = 5 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}}];
+  // SHA-256 of the exact executable_source_json request bytes.
+  string source_sha256 = 6 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}}];
+}
+
+// Successful preparation, not acceptance, promotion or job submission.
+// Validate the response before returning it. Unknown fields are rejected at
+// the handler boundary. Completed retries return the stored response only in
+// the allowed lifecycle states; incomplete retries may repeat idempotent RPCs.
+message PrepareWorkflowCandidateResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "preparation-source-binding"
+    message: "the source artifact must name the prepared source digest"
+    expression: "has(this.binding) && has(this.authored) && has(this.authored.executable_source) && this.authored.executable_source.sha256 == this.binding.source_sha256"
+  };
+  // Handler checks exact request, authenticated holder, offer and stored intent.
+  WorkflowPreparationBinding binding = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Reuses the existing candidate payload. All checks and artifact references
+  // derive from server-observed execution; independent review reruns fixtures.
+  ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringDeliverable authored = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
