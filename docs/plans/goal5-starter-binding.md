@@ -41,6 +41,35 @@ workflow or qualify a deployed ACP/browser path.
 
 ## External service and scripted author
 
+### Installed-process acceptance test
+
+`AuthoringRemoteProcessTest` now passes locally with three installed Java
+processes: the coordinator, external fixture, and `AuthoringWorker`. The author
+receives only its `workflow-author` token through the environment. It registers,
+reads its assigned context, accepts the task, discovers the fixture through
+reflection, compares its descriptor closure to the pinned contract, and probes
+the real normalization/write methods before requesting preparation.
+
+The worker submits the preparation response's actual checks and artifacts. Its
+event reader requires the exact persisted candidate before accepting the
+matching review outcome. A separate operator offers the task through MCP and
+launches the accepted workflow through gRPC. The test verifies the preparation's
+signed receipt, asynchronous job completion, result digest, and fixture records
+under distinct policy-fixture and job operation IDs. The repository-service stub
+preserves bytes and media types; it does not replace the coordinator, reviewer,
+preparation handler, job worker, or external fixture execution.
+
+The focused local test completed with one test and no skips or failures. This is
+source/installed-process evidence while the sample and mount PRs are under review,
+not a published image or deployment claim. The full Goal 5 gates below remain.
+
+The sample author currently covers an initial run. Its deterministic preparation
+ID does not provide author-process restart recovery: the unary bridge can retain
+a live registration after that process exits. The separate required crash test
+must kill the workflow worker at the remote-effect/checkpoint boundary; the
+fixture-process recovery test and this successful initial author run do not
+establish that behavior.
+
 ### Remote authoring boundary found during integration
 
 `worker-coordinate` permits candidate submission, but the existing remote
