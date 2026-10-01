@@ -14,6 +14,7 @@ import ai.protomolt.proto.delegation.RepositoryServiceTranscriptRepository;
 import ai.protomolt.proto.delegation.storage.v1.EncryptedRepositoryState;
 import ai.protomolt.proto.grpc.workflow.FileSystemArtifactRepository;
 import ai.protomolt.proto.grpc.workflow.v1.ArtifactReference;
+import ai.protomolt.proto.registry.GitSchemaRegistryStore;
 import ai.protomolt.proto.receipt.KeyState;
 import ai.protomolt.proto.receipt.RecordKeys;
 import ai.protomolt.proto.receipt.RecordVerifier;
@@ -27,6 +28,7 @@ import ai.protomolt.proto.samples.authoring.v1.WriteRecordRequest;
 import ai.protomolt.proto.samples.authoring.v1.WriteRecordResponse;
 import ai.protomolt.proto.samples.starter.v1.WorkflowAcceptanceFixture;
 import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchRequest;
+import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchResult;
 import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringPolicy;
 import ai.protomolt.proto.samples.starter.v1.WorkflowPermittedCall;
 import ai.protomolt.proto.samples.starter.v1.WorkflowAcceptedCandidate;
@@ -82,19 +84,38 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Base64;
+import javax.crypto.spec.SecretKeySpec;
+import java.util.Properties;
 import java.util.UUID;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.TimeUnit;
-import javax.crypto.spec.SecretKeySpec;
+import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.serialization.ByteArrayDeserializer;
+import org.apache.kafka.common.serialization.ByteArraySerializer;
+import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.io.TempDir;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.redpanda.RedpandaContainer;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Installed-process proof of remote authoring, independent review, signed preparation and launch. */
 @Tag("integration")
@@ -106,6 +127,7 @@ class AuthoringRemoteProcessTest {
     private static final String OPERATOR_TOKEN = "remote-process-operator-token";
     private static final String AUTHOR_TOKEN = "remote-process-author-token";
     private static final String BROWSER_TOKEN = "remote-process-browser-launch-token";
+    private static final String KAFKA_LAUNCH_TOKEN = "remote-process-kafka-launch-token";
     private static final String CONSOLE_TOKEN = "remote-process-default-console-token";
     private static final String COORDINATE_TOKEN = "remote-process-coordinate-token";
     private static final String TRANSCRIPT_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
@@ -132,6 +154,7 @@ class AuthoringRemoteProcessTest {
         Process worker = null;
         Server repository = null;
         ManagedChannel channel = null;
+        RedpandaContainer broker = null;
         try {
             postgres.start();
             FakeDocumentService documents = new FakeDocumentService(failFirstReview);
@@ -326,11 +349,90 @@ class AuthoringRemoteProcessTest {
             var inputBuilder = preparedInput.toBuilder().clear();
             JsonFormat.parser().merge(browserInput.body(), inputBuilder);
             assertThat(inputBuilder.build()).isEqualTo(preparedInput);
+
+            // The named registry entry is mutable. The accepted launch must use
+            // its independently checked, pinned source instead of this value.
+            try (var mutableRegistry = GitSchemaRegistryStore.builder().repositoryDir(registry).build()) {
+                mutableRegistry.putWorkflow(
+                        prepared.getCompleted().getAuthored().getDeliverable().getWorkflow().getName(),
+                        "{\"name\":\"rotated-untrusted-workflow\",\"steps\":[]}");
+            }
+            broker = new RedpandaContainer(DockerImageName.parse(
+                    "docker.redpanda.com/redpandadata/redpanda:v22.2.1"));
+            broker.start();
+            String bootstrap = broker.getBootstrapServers();
+            String topic = "accepted-launch-" + UUID.randomUUID().toString().substring(0, 8);
+            String group = "accepted-launch-process-" + UUID.randomUUID();
+            createLaunchTopic(bootstrap, topic);
+            publishLaunch(bootstrap, topic, launchRequest);
+            TopicPartition partition = new TopicPartition(topic, 0);
+            var scopedLaunch = WorkflowAuthoringServiceGrpc.newBlockingStub(channel)
+                    .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(bearer(KAFKA_LAUNCH_TOKEN)));
+            // Denied broker processing cannot use a worker's author credential.
+            try (var deniedConsumer = launchConsumer(bootstrap, group + "-denied")) {
+                var deniedRecord = pollLaunch(deniedConsumer, topic);
+                var deniedLaunch = WorkflowAuthoringServiceGrpc.newBlockingStub(channel)
+                        .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(bearer(AUTHOR_TOKEN)))
+                        .withDeadlineAfter(10, TimeUnit.SECONDS);
+                assertThatThrownBy(() -> new AcceptedWorkflowKafkaBridge(deniedConsumer,
+                        deniedLaunch::launchAcceptedWorkflow).process(deniedRecord))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class,
+                                failure -> assertThat(failure.getStatus().getCode())
+                                        .isEqualTo(Status.Code.PERMISSION_DENIED));
+                assertThat(deniedConsumer.committed(Set.of(partition)).get(partition)).isNull();
+                assertThat(statusService.getWorkflowLaunchStatus(statusRequest).getNotAuthorized()).isTrue();
+            }
+
+            AtomicBoolean loseFirstReply = new AtomicBoolean(true);
+            AtomicReference<WorkflowAuthoringLaunchResult> firstServerResult = new AtomicReference<>();
+            try (var firstConsumer = launchConsumer(bootstrap, group)) {
+                ConsumerRecord<String, byte[]> first = pollLaunch(firstConsumer, topic);
+                assertThat(first.offset()).isZero();
+                assertThatThrownBy(() -> new AcceptedWorkflowKafkaBridge(firstConsumer, request -> {
+                    WorkflowAuthoringLaunchResult result = scopedLaunch.withDeadlineAfter(30, TimeUnit.SECONDS)
+                            .launchAcceptedWorkflow(request);
+                    firstServerResult.set(result);
+                    if (loseFirstReply.getAndSet(false)) {
+                        // Test-owned lost response after the installed server committed.
+                        throw Status.UNAVAILABLE.asRuntimeException();
+                    }
+                    return result;
+                }).process(first)).isInstanceOfSatisfying(StatusRuntimeException.class,
+                        failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+                assertThat(firstConsumer.committed(Set.of(partition)).get(partition)).isNull();
+                assertThat(firstServerResult.get()).isNotNull();
+            }
+            try (var retryConsumer = launchConsumer(bootstrap, group)) {
+                ConsumerRecord<String, byte[]> replay = pollLaunch(retryConsumer, topic);
+                assertThat(replay.offset()).isZero();
+                new AcceptedWorkflowKafkaBridge(retryConsumer, request -> {
+                    WorkflowAuthoringLaunchResult result = scopedLaunch.withDeadlineAfter(30, TimeUnit.SECONDS)
+                            .launchAcceptedWorkflow(request);
+                    assertThat(result).isEqualTo(firstServerResult.get());
+                    return result;
+                }).process(replay);
+                assertThat(retryConsumer.committed(Set.of(partition)).get(partition).offset()).isEqualTo(1);
+            }
+            WorkflowAuthoringLaunchRequest changed = launchRequest.toBuilder()
+                    .setInput(input.toBuilder().setSha256("f".repeat(64)).build()).build();
+            publishLaunch(bootstrap, topic, changed);
+            try (var conflictConsumer = launchConsumer(bootstrap, group)) {
+                ConsumerRecord<String, byte[]> conflict = pollLaunch(conflictConsumer, topic);
+                assertThat(conflict.offset()).isEqualTo(1);
+                assertThatThrownBy(() -> new AcceptedWorkflowKafkaBridge(conflictConsumer,
+                        request -> scopedLaunch.withDeadlineAfter(30, TimeUnit.SECONDS)
+                                .launchAcceptedWorkflow(request)).process(conflict))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class,
+                                failure -> assertThat(failure.getStatus().getCode())
+                                        .isEqualTo(Status.Code.ALREADY_EXISTS));
+                assertThat(conflictConsumer.committed(Set.of(partition)).get(partition).offset()).isEqualTo(1);
+            }
             var browserLaunch = browserCall(httpPort, "launch", launchRequest, launchCookie);
             assertThat(browserLaunch.statusCode()).isEqualTo(200);
             var launched = authoring.withDeadlineAfter(30, TimeUnit.SECONDS)
                     .launchAcceptedWorkflow(launchRequest);
             assertThat(launched.getJobId()).isEqualTo(LAUNCH_ID);
+            assertThat(launched).isEqualTo(firstServerResult.get());
             var launchBuilder = launched.toBuilder().clear();
             JsonFormat.parser().merge(browserLaunch.body(), launchBuilder);
             assertThat(launchBuilder.build()).isEqualTo(launched);
@@ -370,6 +472,7 @@ class AuthoringRemoteProcessTest {
             stop(coordinator);
             stop(fixture);
             if (repository != null) repository.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
+            if (broker != null) broker.stop();
             postgres.stop();
         }
     }
@@ -670,11 +773,54 @@ class AuthoringRemoteProcessTest {
                 {"principals":[
                   {"name":"%s","credentialSha256":["%s"],"scopes":["workflow-author"]},
                   {"name":"browser-launcher","credentialSha256":["%s"],"scopes":["worker-coordinate","workflow-launch"]},
+                  {"name":"kafka-launch-bridge","credentialSha256":["%s"],"scopes":["workflow-launch"]},
                   {"name":"review-coordinator","credentialSha256":["%s"],"scopes":["worker-coordinate"]}
                 ]}
                 """.formatted(PRINCIPAL, sha256(AUTHOR_TOKEN.getBytes(StandardCharsets.UTF_8)),
                         sha256(BROWSER_TOKEN.getBytes(StandardCharsets.UTF_8)),
+                        sha256(KAFKA_LAUNCH_TOKEN.getBytes(StandardCharsets.UTF_8)),
                         sha256(COORDINATE_TOKEN.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private static void createLaunchTopic(String bootstrap, String topic) throws Exception {
+        try (var admin = AdminClient.create(Map.of("bootstrap.servers", bootstrap))) {
+            admin.createTopics(List.of(new NewTopic(topic, 1, (short) 1)))
+                    .all().get(20, TimeUnit.SECONDS);
+        }
+    }
+
+    private static void publishLaunch(String bootstrap, String topic,
+            WorkflowAuthoringLaunchRequest request) throws Exception {
+        Properties properties = new Properties();
+        properties.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrap);
+        properties.put(ProducerConfig.ACKS_CONFIG, "all");
+        try (var producer = new KafkaProducer<>(properties,
+                new StringSerializer(), new ByteArraySerializer())) {
+            producer.send(new ProducerRecord<>(topic, request.getLaunchId(), request.toByteArray()))
+                    .get(20, TimeUnit.SECONDS);
+        }
+    }
+
+    private static KafkaConsumer<String, byte[]> launchConsumer(String bootstrap, String group) {
+        Properties properties = new Properties();
+        properties.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrap);
+        properties.put(ConsumerConfig.GROUP_ID_CONFIG, group);
+        properties.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+        properties.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        properties.put(ConsumerConfig.ALLOW_AUTO_CREATE_TOPICS_CONFIG, "false");
+        properties.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "1");
+        return new KafkaConsumer<>(properties, new StringDeserializer(), new ByteArrayDeserializer());
+    }
+
+    private static ConsumerRecord<String, byte[]> pollLaunch(
+            KafkaConsumer<String, byte[]> consumer, String topic) {
+        consumer.subscribe(List.of(topic));
+        long deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
+        while (System.nanoTime() < deadline) {
+            var records = consumer.poll(Duration.ofMillis(250));
+            if (!records.isEmpty()) return records.iterator().next();
+        }
+        throw new AssertionError("Kafka launch record did not arrive");
     }
 
     private static String loginBrowser(int port, String token) throws Exception {

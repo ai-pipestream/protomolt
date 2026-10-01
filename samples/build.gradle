@@ -24,6 +24,7 @@ dependencies {
     implementation project(':protomolt-grpc-invoke')
     implementation project(':protomolt-protobuf-validation')
     implementation project(':protomolt-jobs-service')
+    implementation libs.kafka.clients
     implementation project(':protomolt-protobuf-llm')
     implementation project(':protomolt-inference-service')
     implementation project(':protomolt-inference-openai')
@@ -34,6 +35,7 @@ dependencies {
     testImplementation project(':protomolt-sources')
     testImplementation libs.grpc.inprocess
     testImplementation libs.testcontainers.postgresql
+    testImplementation libs.testcontainers.redpanda
     testImplementation libs.testcontainers.junit.jupiter
     implementation project(':protomolt-mapper-cel')
     implementation project(':protomolt-server-jdk')
@@ -206,6 +208,27 @@ tasks.register('installAuthoringWorker', Sync) {
     dependsOn tasks.named('jar'), tasks.named('authoringWorkerStartScripts')
     into layout.buildDirectory.dir('install/authoring-worker')
     from(tasks.named('authoringWorkerStartScripts')) {
+        into 'bin'
+        filePermissions { unix('rwxr-xr-x') }
+    }
+    from(files(tasks.named('jar'), configurations.runtimeClasspath)) {
+        into 'lib'
+    }
+}
+
+tasks.register('acceptedWorkflowKafkaBridgeStartScripts', CreateStartScripts) {
+    applicationName = 'accepted-workflow-kafka-bridge'
+    mainClass = 'ai.protomolt.proto.samples.AcceptedWorkflowKafkaBridge'
+    classpath = files(tasks.named('jar'), configurations.runtimeClasspath)
+    outputDir = layout.buildDirectory.dir('generated/accepted-workflow-kafka-bridge-scripts').get().asFile
+}
+
+tasks.register('installAcceptedWorkflowKafkaBridge', Sync) {
+    group = 'application'
+    description = 'Install the optional Kafka-to-authenticated-launch sample bridge'
+    dependsOn tasks.named('jar'), tasks.named('acceptedWorkflowKafkaBridgeStartScripts')
+    into layout.buildDirectory.dir('install/accepted-workflow-kafka-bridge')
+    from(tasks.named('acceptedWorkflowKafkaBridgeStartScripts')) {
         into 'bin'
         filePermissions { unix('rwxr-xr-x') }
     }
