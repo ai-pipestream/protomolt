@@ -108,7 +108,7 @@ public final class CatalogBridge {
             case "resource-exhausted" -> io.grpc.Status.RESOURCE_EXHAUSTED;
             case "invalid-upstream-response" -> io.grpc.Status.DATA_LOSS;
             case "workflow-authoring-rejected", "preparation-attempt-failed" -> io.grpc.Status.FAILED_PRECONDITION;
-            case "workflow-launch-conflict", "workflow-preparation-conflict" -> io.grpc.Status.ALREADY_EXISTS;
+            case "workflow-launch-conflict", "workflow-preparation-conflict", "workflow-authoring-conflict" -> io.grpc.Status.ALREADY_EXISTS;
             case "workflow-authoring-unavailable" -> io.grpc.Status.UNAVAILABLE;
             case "workflow-authoring-deadline" -> io.grpc.Status.DEADLINE_EXCEEDED;
             case "workflow-authoring-storage-failed" -> io.grpc.Status.INTERNAL;
