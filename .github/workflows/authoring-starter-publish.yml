@@ -306,6 +306,23 @@ jobs:
           mkdir -p "$DIR"
           cp deploy/authoring/compose.yml deploy/authoring/README.md \
             deploy/authoring/browser-smoke.mjs "$DIR/"
+          cat > "$DIR/README.md" <<EOF
+          # ProtoMolt workflow authoring starter
+
+          Prerelease candidate for source commit $SOURCE_SHA.
+          This bundle pins every container image by digest. Docker Compose is
+          the only host runtime required for the walkthrough; no local image
+          build or JDK is needed. The author is scripted and uses no model key.
+
+          Check the Authoring Starter Publish workflow for this source commit
+          before use. A release asset can exist before both native downloaded
+          package checks finish; the asset alone does not prove qualification.
+
+          Run these commands in this extracted directory:
+
+          EOF
+          awk 'BEGIN { copy=0 } /^```sh$/ { copy=1 } copy { print }' \
+            deploy/authoring/README.md >> "$DIR/README.md"
           cat > "$DIR/.env" <<EOF
           PROTOMOLT_AUTHORING_IMAGE=ghcr.io/${{ github.repository_owner }}/protomolt-authoring@$AUTHORING_DIGEST
           PROTOMOLT_REPO_IMAGE=ghcr.io/${{ github.repository_owner }}/protomolt-repo-service@$REPO_DIGEST
