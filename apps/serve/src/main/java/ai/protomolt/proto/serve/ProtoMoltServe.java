@@ -1316,6 +1316,10 @@ public final class ProtoMoltServe implements AutoCloseable {
                 if (starter != null) {
                     http.withContext("/api/correction", new CorrectionConsoleApiHandler(catalog, taskSessions));
                 }
+                if (authoring != null && taskSessions.requiresLogin()) {
+                    http.withContext("/api/workflow-launch",
+                            new WorkflowLaunchConsoleApiHandler(catalog, taskSessions));
+                }
             }
             if (options.apiToken() == null) {
                 http.withContext("/api/protomolt", new ApiProxyHandler("/api/protomolt",
