@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.workflow.authoring.v1;
+
+import "ai/protomolt/proto/delegation/v1/delegation.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.workflow.authoring.v1";
+
+// One host-configured starter. No caller-selected policy or descriptor overrides.
+message WorkflowAuthoringTemplate {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "authoring-template-contract"
+    message: "an authoring template requires a result contract, policy context and checks"
+    expression: "has(this.spec) && has(this.spec.contract) && this.spec.context.size() > 0 && this.spec.required_checks.size() > 0"
+  };
+  // Complete result descriptor closure, default objective, pinned policy context
+  // and required checks. The handler verifies those identities before returning.
+  ai.protomolt.proto.delegation.v1.TaskSpec spec = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Fixed offer duration, included in the template fingerprint.
+  int32 lease_seconds = 2 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 86400}];
+}
+
+// The host currently has one configured authoring policy.
+message GetWorkflowAuthoringTemplateRequest {}
+
+// Native validation alone cannot prove descriptor closure or content hashes.
+message GetWorkflowAuthoringTemplateResponse {
+  // Exact trusted configuration whose deterministic bytes identify this template.
+  WorkflowAuthoringTemplate template = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // SHA-256 of deterministic serialized template bytes, recomputed by the handler.
+  string template_sha256 = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {pattern: "^[0-9a-f]{64}$"}}];
+}
+
+// Persist this whole intent before sending; exact retries return the first offer.
+message StartWorkflowAuthoringRequest {
+  // Canonical lowercase UUID. A different start intent under this key conflicts.
+  string task_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true, pattern: "^[0-9a-f-]{36}$"}}];
+  // Selected registered worker; admission is checked atomically for new starts.
+  string worker_id = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}}];
+  // Pins the server template observed before starting.
+  string template_sha256 = 3 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {pattern: "^[0-9a-f]{64}$"}}];
+  // Guidance only; cannot replace policy, checks, descriptors or permitted calls.
+  string objective = 4 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 4096}}];
+}
+
+// Historical admission acknowledgement, not current task status or acceptance.
+message StartWorkflowAuthoringResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "authoring-start-first-offer"
+    message: "a start acknowledges the original first offer without a resume point"
+    expression: "has(this.offer) && this.offer.attempt == 1 && !has(this.offer.resume_from) && this.offer.start_binding_sha256 != ''"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "authoring-start-objective"
+    message: "the original offer must preserve the requested objective"
+    expression: "has(this.request) && has(this.offer) && has(this.offer.spec) && this.offer.spec.objective == this.request.objective"
+  };
+  // Exact validated request. The handler also verifies the persisted binding.
+  StartWorkflowAuthoringRequest request = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Original committed lease and rendered spec, even after the task has finished.
+  ai.protomolt.proto.delegation.v1.TaskOffer offer = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
