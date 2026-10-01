@@ -3,6 +3,7 @@ export type TaskMessageKind = 'question' | 'answer' | 'guidance' | 'note'
 export interface TaskSessionStatus {
   authenticated: boolean
   loginRequired: boolean
+  principal?: string
 }
 
 export interface WorkerSummary {

@@ -111,6 +111,20 @@ beforeEach(() => {
 })
 
 describe('TaskConsoleView', () => {
+  it('only enables the authoring form for an authenticated named principal', async () => {
+    const unnamed = await mountView()
+    const unnamedButton = unnamed.findAll('button').find((b) => b.text().includes('Author a workflow'))!
+    expect(unnamedButton.attributes('disabled')).toBeDefined()
+    unnamed.unmount()
+
+    api.sessionStatus.mockResolvedValue({ authenticated: true, loginRequired: true,
+      principal: 'coordinator-one' })
+    const named = await mountView()
+    const namedButton = named.findAll('button').find((b) => b.text().includes('Author a workflow'))!
+    expect(namedButton.attributes('disabled')).toBeUndefined()
+    named.unmount()
+  })
+
   it('renders the contract of done and the candidate review panel', async () => {
     const wrapper = await mountView()
     const text = wrapper.text()
@@ -196,7 +210,9 @@ describe('TaskConsoleView', () => {
     await wrapper.findAll('button').find((b) => b.text().includes('Offer a task'))!
       .trigger('click')
     await flushPromises()
-    const dialog = wrapper.getComponent({ name: 'VDialog' })
+    const dialog = wrapper.findAllComponents({ name: 'VDialog' })
+      .find((item) => item.findAllComponents({ name: 'VBtn' })
+        .some((action) => action.text() === 'Use coordination example'))!
     await dialog.findComponent({ name: 'VSelect' }).setValue('worker-a')
     await dialog.findComponent({ name: 'VTextarea' }).setValue('Prove the offer lane')
     // VSelect renders an internal VTextField, so the row is: select, scopes,
@@ -275,7 +291,9 @@ describe('coordination starter controls', () => {
     try {
       await wrapper.findAll('button').find((button) => button.text() === 'Offer a task')!.trigger('click')
       await flushPromises()
-      const dialog = wrapper.getComponent({ name: 'VDialog' })
+      const dialog = wrapper.findAllComponents({ name: 'VDialog' })
+        .find((item) => item.findAllComponents({ name: 'VBtn' })
+          .some((action) => action.text() === 'Use coordination example'))!
       await dialog.findAllComponents({ name: 'VBtn' })
         .find((button) => button.text() === 'Use coordination example')!.trigger('click')
       await flushPromises()

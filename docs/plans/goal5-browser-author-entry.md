@@ -22,8 +22,10 @@ template integrity, message bounds, permission checks and error mappings. A
 malformed persisted offer fails as corrupt evidence without policy reads or new
 transcript entries. The secured console mounts fixed template and start POST
 routes under `/api/workflow-authoring`; both retain the authenticated principal
-and require `worker-coordinate`. The browser form and idle-author assignment
-discovery remain unfinished.
+and require `worker-coordinate`. The browser form is implemented locally with
+principal-scoped saved requests and exact retry after reload. All 237 console
+tests, type checking, production build and session HTTP tests pass. Rendered-browser
+verification and idle-author assignment discovery remain unfinished.
 
 The installed-process test obtains the template and starts authoring over MCP,
 waits for independent acceptance, and recovers the original offer over MCP,

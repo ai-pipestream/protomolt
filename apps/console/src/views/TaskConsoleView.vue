@@ -34,11 +34,23 @@
           </div>
         </div>
         <v-spacer />
+        <v-btn variant="tonal" prepend-icon="mdi-creation" class="mr-1"
+               :disabled="!principal" @click="authoringOpen = true">Author a workflow</v-btn>
         <v-btn color="primary" prepend-icon="mdi-briefcase-plus-outline" class="mr-1"
                :disabled="!workers.length" @click="newOffer">Offer a task</v-btn>
         <v-btn icon="mdi-refresh" variant="text" aria-label="Refresh tasks" @click="refresh" />
         <v-btn prepend-icon="mdi-logout" variant="outlined" @click="logout">Sign out</v-btn>
       </div>
+
+      <v-dialog v-model="authoringOpen" max-width="640">
+        <v-card rounded="lg">
+          <v-card-title>Start workflow authoring</v-card-title>
+          <WorkflowAuthoringPanel v-if="authoringOpen && principal" :key="principal"
+                                  :workers="workers" :principal="principal"
+                                  @started="onAuthoringStarted" />
+          <v-card-actions><v-spacer /><v-btn variant="text" @click="authoringOpen = false">Close</v-btn></v-card-actions>
+        </v-card>
+      </v-dialog>
 
       <v-dialog v-model="offerOpen" max-width="640">
         <v-card rounded="lg">
@@ -379,6 +391,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import WorkflowLaunchPanel from '../components/WorkflowLaunchPanel.vue'
+import WorkflowAuthoringPanel from '../components/WorkflowAuthoringPanel.vue'
 import {
   checkStatuses,
   frameFacts,
@@ -401,6 +414,7 @@ import {
 
 const initializing = ref(true)
 const authenticated = ref(false)
+const principal = ref('')
 const loginToken = ref('')
 const loginError = ref('')
 const loggingIn = ref(false)
@@ -417,6 +431,7 @@ const messageText = ref('')
 const sending = ref(false)
 const messageKinds: TaskMessageKind[] = ['guidance', 'question', 'answer', 'note']
 const offerOpen = ref(false)
+const authoringOpen = ref(false)
 const offerWorker = ref('')
 const offerObjective = ref('')
 const offerScopes = ref('')
@@ -468,6 +483,7 @@ onMounted(async () => {
   try {
     const status = await taskApi.sessionStatus()
     authenticated.value = status.authenticated
+    principal.value = status.authenticated ? status.principal ?? '' : ''
     if (authenticated.value) await refresh()
   } catch (failure) {
     error.value = message(failure)
@@ -487,6 +503,7 @@ async function login() {
   try {
     const status = await taskApi.login(loginToken.value)
     authenticated.value = status.authenticated
+    principal.value = status.authenticated ? status.principal ?? '' : ''
     loginToken.value = ''
     await refresh()
   } catch (failure) {
@@ -499,6 +516,8 @@ async function login() {
 async function logout() {
   selectionGeneration++
   watchController?.abort()
+  authoringOpen.value = false
+  principal.value = ''
   await taskApi.logout()
   authenticated.value = false
   workers.value = []
@@ -520,7 +539,11 @@ async function refresh() {
       await selectTask(tasks.value[0])
     }
   } catch (failure) {
-    if (failure instanceof TaskApiError && failure.status === 401) authenticated.value = false
+    if (failure instanceof TaskApiError && failure.status === 401) {
+      authenticated.value = false
+      principal.value = ''
+      authoringOpen.value = false
+    }
     else error.value = message(failure)
   }
 }
@@ -561,6 +584,8 @@ async function watchTask(taskId: string) {
       if (controller.signal.aborted) return
       if (failure instanceof TaskApiError && failure.status === 401) {
         authenticated.value = false
+        principal.value = ''
+        authoringOpen.value = false
         return
       }
       error.value = message(failure)
@@ -624,6 +649,18 @@ async function offerTask() {
   } finally {
     offering.value = false
   }
+}
+
+async function onAuthoringStarted(taskId: string) {
+  const startedPrincipal = principal.value
+  if (!authenticated.value || !startedPrincipal) return
+  authoringOpen.value = false
+  const selectionBefore = selectionGeneration
+  await refresh()
+  if (!authenticated.value || principal.value !== startedPrincipal) return
+  if (selectionGeneration !== selectionBefore) return
+  const created = tasks.value.find((task) => task.taskId === taskId)
+  if (created) await selectTask(created)
 }
 
 function clearContract() {
