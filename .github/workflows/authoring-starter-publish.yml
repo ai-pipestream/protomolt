@@ -193,6 +193,24 @@ jobs:
             node browser-smoke.mjs | tee browser-result.json
           jq -e '.authoring == "accepted" and .job == "completed" and .liveModel == false' \
             browser-result.json >/dev/null
+      - name: Qualify packaged executor crash recovery
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          AUTHORING_BASE=ghcr.io/${{ github.repository_owner }}/protomolt-authoring
+          REPO_BASE=ghcr.io/${{ github.repository_owner }}/protomolt-repo-service
+          AUTHORING_DIGEST=$(docker buildx imagetools inspect "$AUTHORING_BASE:$VERSION-$ARCH" --format '{{json .}}' | jq -r '.manifest.digest')
+          REPO_DIGEST=$(docker buildx imagetools inspect "$REPO_BASE:$VERSION-$ARCH" --format '{{json .}}' | jq -r '.manifest.digest')
+          export PROTOMOLT_AUTHORING_CRASH_IMAGE="$AUTHORING_BASE@$AUTHORING_DIGEST"
+          export PROTOMOLT_REPO_CRASH_IMAGE="$REPO_BASE@$REPO_DIGEST"
+          docker pull "$PROTOMOLT_AUTHORING_CRASH_IMAGE"
+          docker pull "$PROTOMOLT_REPO_CRASH_IMAGE"
+          ./gradlew :samples:test --tests '*AuthoringComposeCrashTest' --rerun --console=plain
+          REPORT=samples/build/test-results/test/TEST-ai.protomolt.proto.samples.AuthoringComposeCrashTest.xml
+          test -s "$REPORT"
+          grep -Eq 'tests="1".*skipped="0".*failures="0".*errors="0"' "$REPORT"
       - name: Save native browser evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -201,6 +219,7 @@ jobs:
           path: |
             ${{ runner.temp }}/authoring-native-${{ matrix.arch }}/browser-result.json
             ${{ runner.temp }}/authoring-native-${{ matrix.arch }}/browser-smoke.png
+            samples/build/test-results/test/TEST-ai.protomolt.proto.samples.AuthoringComposeCrashTest.xml
           if-no-files-found: warn
           retention-days: 14
 
