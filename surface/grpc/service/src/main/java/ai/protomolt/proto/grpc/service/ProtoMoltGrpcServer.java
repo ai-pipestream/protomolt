@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -74,6 +75,14 @@ public final class ProtoMoltGrpcServer implements AutoCloseable {
     public static ProtoMoltGrpcServer start(String host, int port, ActionCatalog catalog,
                                             String apiToken, CallerResolver resolver,
                                             Collection<ServiceDescriptor> contributed) {
+        return start(host, port, catalog, apiToken, resolver, contributed, Map.of());
+    }
+
+    /** Starts contributed services with complete explicit bindings where contracts overlap. */
+    public static ProtoMoltGrpcServer start(String host, int port, ActionCatalog catalog,
+                                            String apiToken, CallerResolver resolver,
+                                            Collection<ServiceDescriptor> contributed,
+                                            Map<String, Map<String, String>> explicitBindings) {
         Objects.requireNonNull(catalog, "catalog");
         Objects.requireNonNull(contributed, "contributed");
         if (resolver != null && apiToken == null) {
@@ -91,7 +100,8 @@ public final class ProtoMoltGrpcServer implements AutoCloseable {
                     .addService(ProtoMoltGrpcService.definition(catalog))
                     .addService(ProtoReflectionServiceV1.newInstance());
             for (ServiceDescriptor service : contributed) {
-                builder.addService(ProtoMoltGrpcService.contributed(catalog, service));
+                builder.addService(ProtoMoltGrpcService.contributed(
+                        catalog, service, explicitBindings));
             }
             if (apiToken != null) {
                 builder.intercept(new ApiTokenServerInterceptor(apiToken, resolver));
