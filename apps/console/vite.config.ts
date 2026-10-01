@@ -43,6 +43,10 @@ export default defineConfig({
         target: serve,
         changeOrigin: false,
       },
+      '/api/workflow-authoring': {
+        target: serve,
+        changeOrigin: false,
+      },
       '/api/correction': {
         target: serve,
         changeOrigin: true,
