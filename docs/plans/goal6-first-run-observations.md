@@ -1,5 +1,11 @@
 # Goal 6 first-run observations
 
+The [local result summary](../evidence/goal6/2026-10-01-local.json) retains test
+counts, report hashes, protocol results, and timing observations. The
+[browser screenshot](../evidence/goal6/first-workflow.png) shows the accepted task
+and completed job from the first rehearsal. These are automated local results;
+neither artifact is a fresh-user study or clean public-library qualification.
+
 ## Automated rehearsal, 2026-10-01
 
 The published `authoring-starter-d209f0551566` bundle was downloaded anonymously

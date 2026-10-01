@@ -76,6 +76,9 @@ and execution status. The task also shows independently verified contract checks
 and a signed-record download. Signature verification establishes record integrity
 and attribution; it is not proof that arbitrary model output is factually correct.
 
+See the [completed example screen](../evidence/goal6/first-workflow.png) for the
+accepted task, launch status, and contract checks. Your identifiers will differ.
+
 Use a new lowercase UUID as `operationId` for a new logical record. Reusing an operation identity
 with changed content can produce a conflict instead of a second write.
 
