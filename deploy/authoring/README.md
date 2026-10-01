@@ -1,7 +1,10 @@
 # Workflow authoring starter (source template)
 
-This is an unpublished image-only Compose template for the scripted
-NormalizeText → WriteRecord workflow. It is not an installation or release.
+This is the source template for the published image-only Compose starter with a scripted
+NormalizeText → WriteRecord workflow. Download the qualified
+[prerelease bundle](https://github.com/ai-pipestream/protomolt/releases/tag/authoring-starter-d209f0551566)
+for a ready `.env` with pinned images. Native AMD64 and ARM64 qualification is
+recorded in [release evidence](../../docs/plans/goal5-release-qualification.md).
 No image is built by Compose. A release must provide digest-pinned
 `PROTOMOLT_AUTHORING_IMAGE` and `PROTOMOLT_REPO_IMAGE` values, plus digests for
 the external images, in a verified `.env`. The source checkout has no working

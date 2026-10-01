@@ -1,5 +1,9 @@
 # Goal 5 authoring Compose qualification
 
+The published starter passed native and anonymous download qualification on
+AMD64 and ARM64. See [release evidence](goal5-release-qualification.md).
+The local development evidence below predates that release.
+
 Local AMD64 qualification on 2026-10-01 used locally built images from
 `feat/goal5-authoring-compose`, including its uncommitted starter changes.
 This is not published-image, ARM64, anonymous-pull, live-model, or NAS evidence.

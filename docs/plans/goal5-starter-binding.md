@@ -1,4 +1,8 @@
-# Goal 5 starter binding: remaining implementation
+# Goal 5 starter binding: implementation history
+
+Current status: the scripted starter is published and qualified on both native
+architectures. See [release evidence](goal5-release-qualification.md). The
+implementation gaps described below are historical.
 
 This inventory separates landed components from the unfinished starter. The
 launch helper and production authoring module landed in PRs #331 and #332;
