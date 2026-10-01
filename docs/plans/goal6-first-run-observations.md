@@ -50,20 +50,28 @@ are linked from [the release report](goal5-release-qualification.md).
 
 ## Published library consumer rehearsal
 
-The independent build under `examples/protobuf-toolkit` resolved dependencies
-from the public Maven repositories, with no project substitution or mavenLocal
-repository. It also ran after its build files and sources were copied into a
-temporary directory outside the checkout. Both runs passed mapping, selector,
-projection, validation, registry compatibility, and OpenAPI checks. The final
-application additionally checks named validation violations and the OpenAPI CEL
-disclosure, rather than accepting any failure as sufficient.
+The independent build under `examples/protobuf-toolkit` ran locally, including
+after its build files and sources were copied outside the checkout. Both runs
+passed mapping, selector, projection, validation, registry compatibility, and
+OpenAPI checks. The final application additionally checks named validation
+violations and the OpenAPI CEL disclosure. These runs do not establish clean
+public-consumer resolution: the host has Gradle initialization scripts that
+rewrite repositories and prepend mavenLocal, discovered during CI investigation.
 
 The first dependency resolution used stale cached snapshots containing the old
 `ai.pipestream.proto` package names. The current published mapper artifact was
 inspected and contained `ai.protomolt.proto` classes. `--refresh-dependencies`
 resolved the mismatch and the consumer compiled and ran. This limitation is
-documented. The exercise proves use of published artifacts, not an immutable
-library release or a cold dependency-cache timing.
+documented. The exercise proves local application behavior, not public artifact
+provenance, an immutable library release, or cold dependency-cache timing.
+
+The first hosted consumer check failed because `git.rokkon.com` does not resolve
+from GitHub's runner. It resolves to a private address on the developer host.
+The example is being switched to Central's public snapshot repository, whose
+existing snapshot was stale. Current main has a green full CI run; its existing
+manual snapshot publication workflow is being used to publish current libraries.
+A clean Gradle-home run and the hosted consumer job must pass before describing
+the standalone consumer as verified for external users.
 
 Logs: `/tmp/protomolt-goal6-toolkit-consumer.log` (initial failure),
 `/tmp/protomolt-goal6-toolkit-refresh.log`,
@@ -96,11 +104,41 @@ The user has offered to arrange an unfamiliar tester. The
 [tester checklist](../tutorials/adoption-checklist.md) records time, cached
 prerequisites, assistance, and incomplete paths. No human results exist yet.
 
+## Restart, refresh, and correction checks
+
+After stopping and starting the whole first-run Compose project, the task list
+retained the exact accepted task, attempt, revision, and review invocation.
+The global cursor advanced from 7 to 9; reconnect activity can add events without
+changing the accepted task. This check compared task records rather than requiring
+a frozen global cursor. Before/after JSON is retained with the first-run artifacts.
+It did not inspect the completed job through the browser's saved launch intent.
+
+`ServiceWorkspaceActionsTest` passed 13 tests, with no failures or skips. Its new
+schema-change case restarts a reflected endpoint with another service, proves
+inspection retains the old contract before refresh, then checks `changed: true`,
+a new fingerprint, retention of both artifacts, invocation of the newly discovered
+method, and persistence after reopening the profile store. This is an in-process
+test, not a user's network endpoint. Log: `/tmp/protomolt-goal6-schema-refresh.log`.
+
+The timing-enabled MCP/ACP rehearsal passed after restart. On this local host,
+MCP registration took 168.60 ms; valid/invalid invocation took 56.18/4.47 ms.
+ACP valid/invalid invocation took 16.46/6.16 ms. These are single sequential
+observations including protocol overhead with different warm-up states, not
+evidence that one protocol is faster. No model calls were made. Raw result:
+`/tmp/protomolt-goal6-service-timing.log`.
+
+The existing correction command ran in a fresh workspace and returned accepted,
+offline-replay=true, and receipt-verified=true. A separate invocation verified the
+stored correction policy and evidence using the exported public trust snapshot.
+Run: `contact-dc0f8d15-aed3-4629-a677-4cb650abe500`. Logs:
+`/tmp/protomolt-goal6-correction.log` and
+`/tmp/protomolt-goal6-correction-verification.log`. This uses the deterministic
+fixture and demonstration trust, not a live model or independently trusted issuer.
+
 ## Remaining evidence
 
-Cold setup timings; independent human walkthrough; documented-input rehearsal;
-restart observations for this new project; a user's own external endpoint
-and changed-schema rehearsal;
+Clean public-library resolution; cold setup timings; independent human walkthrough;
+documented-input rehearsal; a user's own external endpoint;
 correction/coordination/integration latency and outcome measurements; optional
 Kafka/connector walkthroughs; durable publication of tutorials and evidence.
 Goal 6 is not complete.

@@ -15,15 +15,21 @@ const profile = `tutorial-${randomUUID()}`;
 const method = 'ai.protomolt.proto.samples.authoring.v1.AuthoringFixtureService/NormalizeText';
 const headers = {'content-type': 'application/json', accept: 'application/json, text/event-stream', api_token: token};
 let sequence = 0;
+const timingsMs = {};
+function recordTiming(label, started) {
+  (timingsMs[label] ??= []).push(Math.round((performance.now() - started) * 100) / 100);
+}
 async function mcp(method, params, notification = false) {
+  const started = performance.now();
   const response = await fetch(`${base}/mcp`, {method: 'POST', headers,
     body: JSON.stringify({jsonrpc: '2.0', ...(notification ? {} : {id: ++sequence}), method, params}),
     signal: AbortSignal.timeout(15000)});
   assert(response.ok, `MCP HTTP status ${response.status}`);
   const session = response.headers.get('mcp-session-id');
   if (session) headers['mcp-session-id'] = session;
-  if (notification) return;
+  if (notification) { recordTiming(`mcp/${method}`, started); return; }
   const message = await response.json();
+  recordTiming(`mcp/${method === 'tools/call' ? params.name : method}`, started);
   assert(!message.error, 'MCP returned a protocol error');
   return message.result;
 }
@@ -85,9 +91,11 @@ try {
   await acp('initialize', {protocolVersion: 1, clientCapabilities: {fs: {readTextFile: false, writeTextFile: false}, terminal: false}});
   const session = await acp('session/new', {cwd: process.cwd(), mcpServers: []});
   async function prompt(name, args) {
+    const started = performance.now();
     chunks = '';
     await acp('session/prompt', {sessionId: session.sessionId,
       prompt: [{type: 'text', text: `${name} ${JSON.stringify(args)}`}]});
+    recordTiming(`acp/${name}`, started);
     return chunks;
   }
   const acpInspect = JSON.parse(await prompt('service-inspect', {name: profile}));
@@ -99,7 +107,9 @@ try {
   const acpInvalid = await prompt('service-invoke', input(''));
   assert.match(acpInvalid, /INVALID_ARGUMENT|invalid-input/);
   console.log(JSON.stringify({profile, fingerprint, mcp: 'registered, inspected, invoked, rejected invalid input',
-    acp: 'inspected same profile, invoked, rejected invalid input'}));
+    acp: 'inspected same profile, invoked, rejected invalid input', timingsMs,
+    measurement: 'single local rehearsal; includes protocol overhead; not a throughput benchmark',
+    modelCalls: 0}));
 } finally {
   child?.stdin.end();
   child?.kill();

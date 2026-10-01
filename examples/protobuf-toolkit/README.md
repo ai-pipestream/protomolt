@@ -9,7 +9,7 @@ and OpenAPI generation.
 ## Run
 
 Prerequisites: JDK 25 and network access to Maven Central, the Gradle plugin
-portal, and ProtoMolt's public Forgejo Maven registry. From the repository root:
+portal, and Maven Central's snapshot repository. From the repository root:
 
 ```sh
 ./gradlew -p examples/protobuf-toolkit run --refresh-dependencies
@@ -23,6 +23,18 @@ The current artifacts use `0.1.0-SNAPSHOT`. They are mutable, not an immutable
 release. Refresh dependencies on first use: an existing Gradle cache may contain
 older snapshots with earlier Java package names. A successful source build does
 not prove that your cached published artifacts match it.
+
+Machine-wide Gradle initialization scripts can override a build's repositories,
+including adding `mavenLocal()`. For a clean consumer check on a developer machine,
+run with a new Gradle home:
+
+```sh
+GRADLE_USER_HOME="$(mktemp -d)" ./gradlew -p examples/protobuf-toolkit run
+```
+
+This downloads Gradle and dependencies again, without reading your usual Gradle
+initialization scripts or dependency cache. The hosted consumer check likewise
+uses the example's declared public repositories.
 
 Expected application output:
 
@@ -73,7 +85,7 @@ dependencies are resolved by Gradle, not copied from a running platform.
 - Compilation errors mentioning missing `ai.protomolt` classes after an earlier
   checkout: refresh the mutable snapshots, then inspect the resolved dependencies.
 - Artifact download failure: check the repository URL and network access. This
-  example does not require a Forgejo token and intentionally has no local-cache
+  example does not require a repository token and intentionally has no local-cache
   repository fallback.
 - Invalid candidate: inspect `ValidationResult.violations()` for field paths,
   rule IDs, and messages. `throwIfInvalid()` converts that result into an exception.

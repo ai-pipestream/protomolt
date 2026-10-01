@@ -56,7 +56,7 @@ Follow [Use the protobuf toolkit](../../examples/protobuf-toolkit/README.md).
 This path does not need the Compose stack running.
 
 - Time to the expected output, dependency refresh required, and assistance:
-- Did the published dependencies resolve without a Forgejo login?
+- Did the published dependencies resolve without a repository login?
 - Can you identify the mapping, selector, projection, and validation in the source?
 - Can you change a validation bound and see the program reject an invalid value?
 - Can you find the emitted OpenAPI document and the runtime-only CEL constraint?

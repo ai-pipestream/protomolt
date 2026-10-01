@@ -146,6 +146,8 @@ ACP adapter and checks the same profile and both outcomes. It requires Node 22+
 and an existing starter, plus `PROTOMOLT_API_TOKEN`, `ACP_LAUNCHER`, and optionally
 `HTTP_BASE` and `GRPC_TARGET`. It creates a uniquely named service profile; run it
 against a disposable tutorial workspace. No provider model is called.
+The result includes per-operation elapsed milliseconds, including protocol
+overhead. A single local rehearsal is not a throughput or model-quality benchmark.
 
 The contracts are in
 [protomolt_service.proto](../../surface/grpc/service-contract/src/main/resources/ai/protomolt/proto/grpc/service/v1/protomolt_service.proto).
