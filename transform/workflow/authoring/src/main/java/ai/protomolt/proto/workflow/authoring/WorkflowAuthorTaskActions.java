@@ -37,7 +37,8 @@ public final class WorkflowAuthorTaskActions {
         ACCEPT("accept-workflow-task", AcceptTaskRequest.getDefaultInstance(), AcceptTaskResponse.getDefaultInstance()),
         SUBMIT("submit-workflow-candidate", SubmitCandidateRequest.getDefaultInstance(), SubmitCandidateResponse.getDefaultInstance()),
         CONTEXT("get-workflow-author-context", GetWorkflowAuthorContextRequest.getDefaultInstance(), GetWorkflowAuthorContextResponse.getDefaultInstance()),
-        EVENTS("read-workflow-author-events", ReadWorkflowAuthorEventsRequest.getDefaultInstance(), ReadWorkflowAuthorEventsResponse.getDefaultInstance());
+        EVENTS("read-workflow-author-events", ReadWorkflowAuthorEventsRequest.getDefaultInstance(), ReadWorkflowAuthorEventsResponse.getDefaultInstance()),
+        ASSIGNMENTS("read-workflow-author-assignments", ReadWorkflowAuthorAssignmentsRequest.getDefaultInstance(), ReadWorkflowAuthorAssignmentsResponse.getDefaultInstance());
 
         final String name;
         final Message request;
@@ -91,6 +92,7 @@ public final class WorkflowAuthorTaskActions {
                     case SubmitCandidateRequest value -> backend.submit(value, caller);
                     case GetWorkflowAuthorContextRequest value -> backend.context(value, caller);
                     case ReadWorkflowAuthorEventsRequest value -> backend.events(value, caller);
+                    case ReadWorkflowAuthorAssignmentsRequest value -> backend.assignments(value, caller);
                     default -> throw new IllegalArgumentException("Unsupported task operation");
                 };
             } catch (WorkflowPreparationException failure) {
@@ -110,7 +112,8 @@ public final class WorkflowAuthorTaskActions {
                 throw new ActionException("internal-error", "Workflow author task operation failed");
             }
             try {
-                WorkflowPreparationValidation.validate(response, MAX_BYTES);
+                WorkflowPreparationValidation.validate(response,
+                        request instanceof ReadWorkflowAuthorAssignmentsRequest ? 64 * 1024 : MAX_BYTES);
                 verifyResponse(request, response, caller);
             } catch (Exception invalid) {
                 throw new ActionException("invalid-upstream-response", "Invalid workflow author task response");
@@ -164,6 +167,18 @@ public final class WorkflowAuthorTaskActions {
                     if (event.getEntry().hasWorkerFrame() && event.getEntry().getWorkerFrame().hasCompletion()) {
                         validateDeliverable(event.getEntry().getWorkerFrame().getCompletion().getResult());
                     }
+                }
+            }
+            case ReadWorkflowAuthorAssignmentsRequest value -> {
+                var result = (ReadWorkflowAuthorAssignmentsResponse) response;
+                require(result.getWorkerId().equals(caller.name())
+                        && result.getAfterCursor() == value.getAfterCursor()
+                        && result.getAssignmentsCount() <= value.getMaxAssignments());
+                long previous = value.getAfterCursor();
+                for (WorkflowAuthorAssignment assignment : result.getAssignmentsList()) {
+                    require(assignment.getCursor() > previous
+                            && assignment.getCursor() <= result.getCursor());
+                    previous = assignment.getCursor();
                 }
             }
             default -> throw new IllegalArgumentException("Unsupported request");

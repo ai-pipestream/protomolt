@@ -158,6 +158,92 @@ class WorkflowAuthorTaskActionsTest {
                 "invalid-upstream-response");
     }
 
+    @Test void assignmentDiscoveryUsesAuthenticatedIdentityAndPreservesTypedDynamicAndJsonPages() throws Exception {
+        var calls = new AtomicInteger();
+        var expected = assignments();
+        var catalog = catalog(new Backend() {
+            @Override public ReadWorkflowAuthorAssignmentsResponse assignments(
+                    ReadWorkflowAuthorAssignmentsRequest request, Caller caller) {
+                assertThat(caller).isEqualTo(AUTHOR);
+                assertThat(request).isEqualTo(assignmentRequest());
+                calls.incrementAndGet();
+                return expected;
+            }
+        });
+
+        assertThat(catalog.get("read-workflow-author-assignments").requiredScope())
+                .isEqualTo(Scopes.WORKFLOW_AUTHOR);
+        assertThat(catalog.execute("read-workflow-author-assignments", assignmentRequest(), AUTHOR))
+                .isEqualTo(expected);
+        var dynamic = com.google.protobuf.DynamicMessage.parseFrom(
+                assignmentRequest().getDescriptorForType(), assignmentRequest().toByteArray());
+        assertThat(catalog.execute("read-workflow-author-assignments", dynamic, AUTHOR).toByteArray())
+                .isEqualTo(expected.toByteArray());
+        ObjectNode jsonRequest = (ObjectNode) context.objectMapper().readTree(
+                JsonFormat.printer().print(assignmentRequest()));
+        ObjectNode jsonResponse = catalog.execute("read-workflow-author-assignments", jsonRequest, AUTHOR);
+        assertThat(jsonResponse.path("workerId").asText()).isEqualTo(AUTHOR.name());
+        assertThat(jsonResponse.path("afterCursor").asLong()).isEqualTo(4);
+        assertThat(jsonResponse.path("assignments").size()).isEqualTo(2);
+        assertThat(calls).hasValue(3);
+    }
+
+    @Test void assignmentScopeAndInvalidRequestAreRejectedBeforeBackend() {
+        var calls = new AtomicInteger();
+        var catalog = catalog(new Backend() {
+            @Override public ReadWorkflowAuthorAssignmentsResponse assignments(
+                ReadWorkflowAuthorAssignmentsRequest request, Caller caller) {
+                calls.incrementAndGet();
+                return WorkflowAuthorTaskActionsTest.assignments();
+            }
+        });
+        code(() -> catalog.execute("read-workflow-author-assignments", assignmentRequest(), Caller.scoped("reader", Set.of())),
+                "permission-denied");
+        code(() -> catalog.execute("read-workflow-author-assignments", assignmentRequest(),
+                Caller.scoped("coordinator", Set.of(Scopes.WORKER_COORDINATE))), "permission-denied");
+        code(() -> catalog.execute("read-workflow-author-assignments",
+                assignmentRequest().toBuilder().setMaxAssignments(65).build(), AUTHOR), "invalid-input");
+        code(() -> catalog.execute("read-workflow-author-assignments",
+                assignmentRequest().toBuilder().setAfterCursor(-1).build(), AUTHOR), "invalid-input");
+        assertThat(calls).hasValue(0);
+    }
+
+    @Test void assignmentBackendMustBindPrincipalRequestCursorCountAndOrderedContents() {
+        // Use separate backends to keep every malformed-response case explicit.
+        for (ReadWorkflowAuthorAssignmentsResponse invalid : java.util.List.of(
+                assignments().toBuilder().setWorkerId("another-author").build(),
+                assignments().toBuilder().setAfterCursor(3).build(),
+                assignments().toBuilder().clearAssignments().addAssignments(assignment(5, TASK, 1, "a".repeat(64)))
+                        .addAssignments(assignment(4, TASK, 2, "b".repeat(64))).build(),
+                assignments().toBuilder().setCursor(10)
+                        .addAssignments(assignment(10, TASK, 3, "c".repeat(64))).build(),
+                assignments().toBuilder().setAssignments(0, assignment(5, "bad-id", 1, "A".repeat(64))).build())) {
+            var fake = new Backend() {
+                @Override public ReadWorkflowAuthorAssignmentsResponse assignments(
+                        ReadWorkflowAuthorAssignmentsRequest request, Caller caller) { return invalid; }
+            };
+            code(() -> catalog(fake).execute("read-workflow-author-assignments", assignmentRequest(), AUTHOR),
+                    "invalid-upstream-response");
+        }
+    }
+
+    private static ReadWorkflowAuthorAssignmentsRequest assignmentRequest() {
+        return ReadWorkflowAuthorAssignmentsRequest.newBuilder().setAfterCursor(4).setMaxAssignments(2).build();
+    }
+
+    private static WorkflowAuthorAssignment assignment(long cursor, String task, int attempt, String hash) {
+        return WorkflowAuthorAssignment.newBuilder().setCursor(cursor).setTaskId(task)
+                .setAttempt(attempt).setOfferEntrySha256(hash).build();
+    }
+
+    private static ReadWorkflowAuthorAssignmentsResponse assignments() {
+        return ReadWorkflowAuthorAssignmentsResponse.newBuilder().setWorkerId(AUTHOR.name())
+                .setAfterCursor(4).setCursor(9)
+                .addAssignments(assignment(5, TASK, 1, "a".repeat(64)))
+                .addAssignments(assignment(9, "00000000-0000-4000-8000-000000000002", 2, "b".repeat(64)))
+                .build();
+    }
+
     private ActionCatalog eventCatalog(TranscriptEntry entry) {
         return catalog(new Backend() {
             @Override public ReadWorkflowAuthorEventsResponse events(ReadWorkflowAuthorEventsRequest request, Caller caller) {
@@ -182,6 +268,7 @@ class WorkflowAuthorTaskActionsTest {
                 failure -> assertThat(failure.code()).isEqualTo(expected));
     }
     private static class Backend implements WorkflowAuthorTaskOperations {
+        @Override public ReadWorkflowAuthorAssignmentsResponse assignments(ReadWorkflowAuthorAssignmentsRequest request, Caller caller) throws WorkflowPreparationException { throw new AssertionError("Unexpected backend call"); }
         @Override public RegisterWorkerResponse register(RegisterWorkerRequest request, Caller caller) throws WorkflowPreparationException { throw new AssertionError("Unexpected backend call"); }
         @Override public AcceptTaskResponse accept(AcceptTaskRequest request, Caller caller) throws WorkflowPreparationException { throw new AssertionError("Unexpected backend call"); }
         @Override public SubmitCandidateResponse submit(SubmitCandidateRequest request, Caller caller) throws WorkflowPreparationException { throw new AssertionError("Unexpected backend call"); }

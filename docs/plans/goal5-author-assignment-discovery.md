@@ -2,8 +2,13 @@
 
 Status: contract reviewed by Sol. Complete-import compilation, ten native
 generated/dynamic contract tests, Buf lint and breaking comparison of complete
-schema images against entry-mount commit 2eb1dd38 pass locally. No discovery
-handler or mounted operation exists yet. The browser form is a separate change.
+schema images against entry-mount commit 2eb1dd38 pass locally. The discovery
+reader, actions and optional host binding are now implemented locally. Reader,
+adapter and affected host tests pass, including generic filtering, duplicate
+offers, reassignment, paging, corrupt evidence and storage failure. The installed
+process test returns the same historical assignment over authenticated gRPC and
+MCP, then an empty caught-up page. This is not yet idle-worker restart proof or
+a deployment. The browser form is a separate change.
 
 ## Operation inventory
 
@@ -24,8 +29,9 @@ and the cursor interval. Validate requests and successful responses, reject unkn
 fields and unsupported rules, and enforce a 64 KiB serialized response bound.
 
 The handler requires workflow-author and derives ownership from Caller.name. It
-reads the existing trusted, bounded transcript and scans at most 256 entries per
-call. Return only coordinator offers addressed to that principal with the supported
+validates the entire existing transcript (bounded to 8 MiB), then indexes prior
+offers for duplicate suppression and scans at most 256 new cursor positions per
+page. Return only coordinator offers addressed to that principal with the supported
 WorkflowAuthoringDeliverable contract. Generic offers are filtered; malformed
 authoring evidence fails closed. Original ownership survives reassignment. Hash
 verification of the original entry does not require current policy equality or
@@ -69,3 +75,9 @@ and a new global task-list permission are unnecessary for the initial worker.
 and cursor, reconnect without external task-ID injection, and finish one task
    through independent review. Prove restart and duplicate discovery recovery with
    installed processes before advertising automatic assignment discovery.
+
+The sample currently requires a supplied task ID and uses a random UUID for its
+fixture probe. The idle mode must persist a deterministic probe operation and exact
+preparation/submission intent before external effects, inspect recorded outcomes
+on restart, and wait for pending review without repeating committed work. Keep the
+legacy invocation available while adding a locked, versioned durable state file.

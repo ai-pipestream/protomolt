@@ -46,7 +46,8 @@ message ReadWorkflowAuthorAssignmentsResponse {
   string worker_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}}];
   // Echoes the request's persisted watermark.
   int64 after_cursor = 2 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
-  // Includes filtered entries. Do not advance past an eligible omitted offer.
+  // Includes filtered entries among at most 256 new positions per page after
+  // whole-transcript validation and indexing. Never skip an omitted eligible offer.
   int64 cursor = 3 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
   // Strictly cursor-ordered, unique original offers; handler verifies ownership,
   // contract identity, digest and the requested count against trusted storage.
