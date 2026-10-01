@@ -120,3 +120,28 @@ coordinator to clear the registration would not prove the required recovery.
    probe/preparation/submission replies; check exact recorded intents and fixture
    record counts. Keep this separate from the workflow executor's remote-effect
    checkpoint kill test, which remains required by Goal 5.
+
+### Submission interruption finding (2026-10-01)
+
+The installed author discovery test passes the probe and preparation interruption
+boundaries. The added submission case initially failed. The test repository commits the encrypted transcript with
+one candidate and its matching review-start record, withholds the CAS response,
+and then the test terminates only the author process. Before the fix, the restarted
+author did not become ready against the same coordinator.
+
+The repository CAS inherits cancellation from the author RPC. Its cancelled
+response leaves `RepositoryServiceTranscriptRepository` uncertain and
+`InProcessDelegationCoordinator` publication-failed. Both fences are intentional;
+clearing them without verified storage recovery would be incorrect. The local fix
+isolates repository reads and publication calls from caller cancellation, retaining
+the repository deadline and fail-closed handling of genuinely uncertain writes.
+Do not replace this test with a coordinator restart or remove the submission gate.
+
+Evidence: before the fix, `AuthoringWorkerDiscoveryProcessTest` ran one test with
+one failure and no skips (`/tmp/goal5-submission-recovery-test.log`). After the fix,
+the same test passed with no skips (`/tmp/goal5-cancel-isolation-tests.log`,
+2026-10-01T15:20:38Z). After correcting the repository test harness, the complete
+delegation suite passed 233 tests with no skips, including cancelled-caller
+acknowledgement and genuine repository-timeout fencing
+(`/tmp/goal5-cancel-isolation-suite.log`). This is local evidence only; hosted CI
+and landing remain required, and this change has not been deployed.

@@ -26,6 +26,9 @@ import ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorEventsRequest;
 import ai.protomolt.proto.workflow.authoring.v1.WorkflowAuthorAssignment;
 import ai.protomolt.proto.workflow.authoring.v1.WorkflowAuthorTaskServiceGrpc;
 import ai.protomolt.proto.workflow.authoring.v1.WorkflowPreparationIntent;
+import ai.protomolt.proto.delegation.EncryptedRepositoryStateCodec;
+import ai.protomolt.proto.delegation.storage.v1.EncryptedRepositoryState;
+import ai.protomolt.proto.delegation.v1.Transcript;
 import ai.protomolt.proto.repo.v1.ConditionalBlobKey;
 import ai.protomolt.proto.repo.v1.ConditionalBlobVersion;
 import ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest;
@@ -65,6 +68,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.MessageDigest;
+import java.util.Base64;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HexFormat;
@@ -75,6 +79,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -110,9 +115,11 @@ class AuthoringWorkerDiscoveryProcessTest {
         Server repository = null;
         Server fixture = null;
         ManagedChannel authorChannel = null;
+        TranscriptGate submissionGate = null;
         try {
             postgres.start();
-            repository = ServerBuilder.forPort(0).addService(new FakeDocumentService()).build().start();
+            FakeDocumentService repositoryService = new FakeDocumentService();
+            repository = ServerBuilder.forPort(0).addService(repositoryService).build().start();
 
             var fixtureRecords = new FileSystemFixtureRecordRepository(directory.resolve("fixture-records"));
             var fixtureService = new BlockingFixtureService(fixtureRecords);
@@ -198,13 +205,46 @@ class AuthoringWorkerDiscoveryProcessTest {
             worker = null;
             preparationGate.release().countDown();
 
+            submissionGate = repositoryService.blockCandidateAcknowledgement();
             Path finalLog = directory.resolve("worker-after-preparation-kill.log");
             worker = startWorker(grpcPort, fixture.getPort(), stateDirectory, finalLog);
             awaitOutput(worker, finalLog, "AuthoringWorker ready", Duration.ofSeconds(30), coordinatorLog);
-            awaitOutput(worker, finalLog, "AuthoringWorker accepted task=" + TASK_ID,
+            awaitGate(submissionGate.gate(), Duration.ofSeconds(90),
+                    "candidate and review start committed before repository acknowledgement",
+                    coordinatorLog, finalLog);
+            AuthoringWorkerState atSubmission = readState(stateFile);
+            assertThat(atSubmission.getPendingCount()).isEqualTo(1);
+            var submissionPending = atSubmission.getPending(0);
+            assertThat(submissionPending.hasSubmission()).isTrue();
+            assertThat(submissionPending.getSubmission().getTaskId()).isEqualTo(TASK_ID);
+            assertThat(submissionPending.getSubmission().getCandidate().getAttempt()).isEqualTo(1);
+            Transcript committedSubmission = submissionGate.committed().get();
+            var committedCandidateEntries = committedSubmission.getEntriesList().stream()
+                    .filter(entry -> entry.hasWorkerFrame() && entry.getWorkerFrame().hasCompletion()).toList();
+            assertThat(committedCandidateEntries).hasSize(1);
+            var committedCandidate = committedCandidateEntries.getFirst().getWorkerFrame().getCompletion();
+            assertThat(committedCandidate.getResult().unpack(WorkflowAuthoringDeliverable.class))
+                    .isEqualTo(preparedAuthored(preparations, savedPreparation));
+            assertThat(committedSubmission.getEntriesList().stream().anyMatch(entry -> entry.hasCoordinatorFrame()
+                    && entry.getCoordinatorFrame().hasReviewStarted()
+                    && entry.getCoordinatorFrame().getReviewStarted().getIdentity().getTaskId().equals(TASK_ID)
+                    && entry.getCoordinatorFrame().getReviewStarted().getIdentity().getAttempt() == 1
+                    && entry.getCoordinatorFrame().getReviewStarted().getIdentity().getRevision() == 1)).isTrue();
+            assertThat(submissionPending.getSubmission().getCandidate()).isEqualTo(committedCandidate);
+
+            // The transcript CAS has committed, but its response is withheld. Kill only the
+            // worker, then let the original coordinator finish its response to the dead client.
+            kill(worker);
+            worker = null;
+            submissionGate.gate().release().countDown();
+
+            Path recoveredSubmissionLog = directory.resolve("worker-after-submission-kill.log");
+            worker = startWorker(grpcPort, fixture.getPort(), stateDirectory, recoveredSubmissionLog);
+            awaitOutput(worker, recoveredSubmissionLog, "AuthoringWorker ready", Duration.ofSeconds(30), coordinatorLog);
+            awaitOutput(worker, recoveredSubmissionLog, "AuthoringWorker accepted task=" + TASK_ID,
                     Duration.ofSeconds(120), coordinatorLog);
             WorkflowPreparationIntent committed = awaitCompletedPreparation(preparations, Duration.ofSeconds(30),
-                    coordinatorLog, List.of(workerLog, retryLog, finalLog));
+                    coordinatorLog, List.of(workerLog, retryLog, finalLog, recoveredSubmissionLog));
             assertThat(committed.getRequest()).isEqualTo(savedPreparation);
             AuthoringWorkerState completed = awaitState(stateFile, state -> state.getPendingCount() == 0
                     && state.getDiscoveryCursor() >= assignment.getCursor(), Duration.ofSeconds(20));
@@ -249,6 +289,7 @@ class AuthoringWorkerDiscoveryProcessTest {
                         .isEqualTo(2L);
             }
         } finally {
+            if (submissionGate != null) submissionGate.gate().release().countDown();
             if (worker != null) kill(worker);
             if (coordinator != null) stop(coordinator);
             if (authorChannel != null) authorChannel.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
@@ -334,6 +375,13 @@ class AuthoringWorkerDiscoveryProcessTest {
         var last = repository.find(TASK_ID, 1, 1);
         if (last.isPresent()) evidence.append("\nPreparation record state: ").append(last.get().getStateCase());
         throw new AssertionError(evidence.toString());
+    }
+
+    private static WorkflowAuthoringDeliverable preparedAuthored(Path directory,
+            ai.protomolt.proto.workflow.authoring.v1.PrepareWorkflowCandidateRequest request) throws Exception {
+        return new FileSystemWorkflowPreparationRepository(directory)
+                .find(request.getTaskId(), request.getAttempt(), request.getRevision()).orElseThrow()
+                .getCompleted().getAuthored();
     }
 
     private static void awaitOutput(Process process, Path log, String marker, Duration timeout,
@@ -523,6 +571,7 @@ class AuthoringWorkerDiscoveryProcessTest {
     }
 
     private record Gate(CountDownLatch entered, CountDownLatch release) {}
+    private record TranscriptGate(Gate gate, AtomicReference<Transcript> committed) {}
 
     private static final class BlockingFixtureService extends AuthoringFixtureServiceGrpc.AuthoringFixtureServiceImplBase {
         private final FileSystemFixtureRecordRepository records;
@@ -590,6 +639,16 @@ class AuthoringWorkerDiscoveryProcessTest {
 
     private static final class FakeDocumentService extends DocumentServiceGrpc.DocumentServiceImplBase {
         private final Map<String, StoredObject> objects = new java.util.concurrent.ConcurrentHashMap<>();
+        private final AtomicReference<TranscriptGate> candidateGate = new AtomicReference<>();
+
+        TranscriptGate blockCandidateAcknowledgement() {
+            TranscriptGate gate = new TranscriptGate(
+                    new Gate(new CountDownLatch(1), new CountDownLatch(1)), new AtomicReference<>());
+            if (!candidateGate.compareAndSet(null, gate)) {
+                throw new IllegalStateException("candidate acknowledgement gate already armed");
+            }
+            return gate;
+        }
 
         @Override public void getBlob(GetBlobRequest request, StreamObserver<GetBlobResponse> observer) {
             StoredObject stored = objects.get(key(request.getStorageRef().getDriveName(),
@@ -630,8 +689,47 @@ class AuthoringWorkerDiscoveryProcessTest {
             if (!matches) { observer.onError(Status.ABORTED.asRuntimeException()); return; }
             StoredObject stored = new StoredObject(request.getData(), request.getMimeType());
             objects.put(objectKey, stored);
+            if (objectKey.equals("protomolt/delegation/serve/transcript.pb.enc")) {
+                Transcript saved = decryptTranscript(stored.bytes());
+                boolean hasCandidate = saved.getEntriesList().stream()
+                        .anyMatch(entry -> entry.hasWorkerFrame() && entry.getWorkerFrame().hasCompletion());
+                boolean hasReviewStart = saved.getEntriesList().stream().anyMatch(entry ->
+                        entry.hasCoordinatorFrame() && entry.getCoordinatorFrame().hasReviewStarted());
+                TranscriptGate gate = candidateGate.get();
+                if (gate != null && hasCandidate && hasReviewStart && candidateGate.compareAndSet(gate, null)) {
+                    gate.committed().set(saved);
+                    gate.gate().entered().countDown();
+                    try {
+                        if (!gate.gate().release().await(60, TimeUnit.SECONDS)) {
+                            observer.onError(Status.DEADLINE_EXCEEDED
+                                    .withDescription("test transcript acknowledgement gate timed out")
+                                    .asRuntimeException());
+                            return;
+                        }
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        observer.onError(Status.CANCELLED.asRuntimeException());
+                        return;
+                    }
+                }
+            }
             observer.onNext(CompareAndPutBlobResponse.newBuilder().setVersion(version(request.getKey(), stored)).build());
             observer.onCompleted();
+        }
+
+        private static Transcript decryptTranscript(ByteString stored) {
+            try {
+                EncryptedRepositoryState envelope = EncryptedRepositoryState.parseFrom(stored);
+                byte[] key = Base64.getDecoder().decode("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=");
+                var codec = new EncryptedRepositoryStateCodec(reference ->
+                        new SecretKeySpec(key, "AES"));
+                byte[] plaintext = codec.decrypt(envelope,
+                        "application/vnd.protomolt.delegation-transcript+protobuf",
+                        "protomolt\ndelegation/serve/transcript.pb.enc");
+                return Transcript.parseFrom(plaintext);
+            } catch (Exception failure) {
+                throw new IllegalStateException("test repository could not inspect committed transcript", failure);
+            }
         }
 
         private static ConditionalBlobVersion version(ConditionalBlobKey key, StoredObject stored) {
