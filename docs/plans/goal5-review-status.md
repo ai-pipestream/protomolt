@@ -1,7 +1,8 @@
 # Durable candidate review status and retry
 
-Status: contract proposal for review. No status or retry API described here is
-available yet. This extends the delegation transcript and current reviewer;
+Status: reviewed design with standalone protobuf messages in
+`transform/delegation/src/main/proto/ai/protomolt/proto/delegation/v1/review.proto`.
+No status or retry API described here is available yet. This extends the delegation transcript and current reviewer;
 it does not introduce another task lifecycle or evaluation provider interface.
 
 ## Current gap
@@ -29,9 +30,15 @@ Add three non-transitioning coordinator payloads to DelegateResponse:
 - ReviewStarted: identity, a server-selected deadline, and optional paired
   previous-invocation/retry UUIDs. Both retry fields are absent for initial
   review and present for an explicit retry. Commit the candidate entry and its
-  initial ReviewStarted in one transcript save before invoking a reviewer. A
-  save failure publishes neither entry and schedules no review; recovery cannot
-  see a newly recorded candidate with a missing initial invocation.
+  initial ReviewStarted in one transcript save before invoking a reviewer. The
+  stored snapshot contains both entries or neither. A save exception schedules
+  no review, but a missing remote acknowledgement does not prove no commit.
+  The coordinator must stop publishing from its stale in-memory snapshot until
+  reconciliation establishes the exact committed state; otherwise fail closed.
+  Recovery cannot see a newly recorded candidate with only its start missing.
+  The server owns a configurable whole-second review window, default 300 seconds,
+  limited to 1..3600 seconds. CEL requires a positive interval no greater than
+  one hour; handlers enforce the configured window and matching envelope time.
 - ReviewFailed: exact identity and a bounded failure code. Codes distinguish
   reviewer infrastructure failure, deadline, and interrupted execution. Do not
   persist exception text, stack traces, credentials, or provider responses.
@@ -70,6 +77,10 @@ coordinator action; workflow-author alone cannot retry, decide, or launch.
 The browser must use its explicitly configured coordinator principal, not an
 operator token placed in client JavaScript.
 
+Define messages first. Add the RPC to the existing DelegationService together
+with its catalog action and handler; adding it alone would make the host reject
+the existing partially bound service at startup. No new review service is needed.
+
 Only the latest failed or interrupted invocation of the current CANDIDATE is
 retryable. A deferred manual review is not automatically retryable. The handler
 checks identity and state under the coordinator publication lock, persists one
@@ -100,6 +111,17 @@ remain manually reviewable but are not inferred failed or interrupted, and
 cannot use invocation-bound retry without a recorded invocation. Recovery never
 invents an invocation or executes a legacy candidate automatically.
 
+The current repository-service transcript adapter replaces one blob with an
+unconditional PutBlob. A timed-out request may still finish later. Stopping the
+live writer is necessary but does not fence that request across restart; merely
+reloading the latest snapshot is insufficient. Before automatic recovery and
+retry can meet the no-stale-overwrite guarantee, the durable adapter needs
+conditional/versioned writes or an equivalent fenced publication mechanism.
+Until that capability is established, an uncertain write must remain fail-closed
+and must not be described as recoverable by simply restarting the coordinator.
+This is a storage prerequisite for the runtime implementation, not a restriction
+that the new protobuf annotations can enforce.
+
 ## Validation and compatibility
 
 Annotations cover required identities, UUID/digest/worker formats, attempts and
@@ -114,6 +136,14 @@ CEL. Temporal, transcript, and ownership rules remain handler obligations.
 Unsupported rules fail closed. Compile complete imports and run lint and
 compatibility checks before implementation. Adding payloads also requires every
 frame attempt selector and reducer to understand them before the host emits them.
+
+The current JSON Schema fixture records UUID format and numeric bounds and
+retains cross-field rules as x-protomolt-cel metadata. Digest fields are emitted
+as strings without their full native digest-format restriction; native validator
+fixtures cover that restriction. No OpenAPI RPC is exposed in this message-only
+change, and no generator changes are included. Full service OpenAPI coverage
+belongs with the later RPC binding; callers must not infer complete runtime
+validation from the structural schema alone.
 
 ## Acceptance work
 
@@ -131,6 +161,8 @@ frame attempt selector and reducer to understand them before the host emits them
    Inject persistence failure at initial submission: the durable transcript
    contains both candidate and initial start, or neither. Restart after cancellation
    must not add a review event to the terminal attempt.
+   Include a committed write with a lost acknowledgement: no review is dispatched
+   and no subsequent write may overwrite it from stale in-memory state.
 6. An installed-process test injects one infrastructure failure, observes it,
    retries through an authorized RPC, and reaches independent acceptance and
    launch. An author-only token is denied the same retry operation.
