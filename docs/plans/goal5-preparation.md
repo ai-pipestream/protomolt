@@ -234,3 +234,51 @@ defines the interface only; filesystem implementation and concurrency/failure
 tests follow. Local validation passes all 44 authoring tests without skips,
 including nine state-contract tests, plus Buf lint and full-descriptor
 compatibility against the request/response contract commit `2fea5dc8`.
+
+## Handler integration findings
+
+`DelegationReducer.TaskState` exposes phase, holder, attempt and candidate
+revision, but not lease expiry. A clean reduction alone does not establish an
+unexpired wall-clock lease. The preparation handler must validate and scan the
+selected offer and subsequent renewals for that exact attempt, then compare the
+latest expiry with an injected clock. Test expired-but-not-yet-marked-EXPIRED
+transcripts, valid renewal, stale-attempt renewal and exact expiry. Preserve the
+selected original offer fingerprint when a renewal extends its lease.
+
+`WorkflowAuthoringFixtures.execute` combines static fixture admission and live
+execution. Preparation needs the static portion before reservation, including
+all fixture bytes, native validation and expected output type. Extract a reusable
+admitted-fixtures value rather than validating only the first fixture before
+reserving. The independent reviewer must continue to admit and rerun the same
+caller-pinned fixtures; do not duplicate or weaken its checks.
+
+`RecordSigning` holds a signer with a key ID, not an exposed public key. Before
+live calls, prove the configured signer matches the active trusted key (for
+example with a local signature verification probe) as well as checking issuer,
+subject authorization and time bounds. Matching the key ID alone is insufficient.
+Do not save a probe as workflow evidence or expose signing material.
+
+`WorkflowRunRecorder.record` saves failed immutable evidence before rethrowing
+execution failure. The handler must inspect the run repository after an error,
+including uncertain storage errors, before deciding whether the same preparation
+can retry. Successful evidence recovery must check source-derived workflow,
+pinned input and referenced artifacts, then resume remaining receipt/response
+work without another recording.
+
+## Store implementation evidence
+
+The filesystem implementation now enforces per-tuple execution ownership,
+global UUID reservation, hash-bound policy snapshots, canonical outer records,
+and immutable terminal outcomes. Sessions reject cross-thread and post-callback
+use. Publication forces the temporary file, atomically renames it and forces the
+directory; a read barrier covers a prior interruption after rename. Exact policy
+bytes are preserved even when their valid protobuf encoding is noncanonical.
+
+All 58 authoring tests pass locally with no skips. Thirteen repository tests
+cover reservation conflicts, changed terminal outcomes, corruption and digest
+mismatches, concurrent UUID reservation, session misuse and failures before and
+after rename. A separate process test starts competing JVMs, kills the lock
+holder after reservation, and verifies the contender recovers the same pending
+intent. This proves process recovery with intact storage; it does not prove
+host power-loss recovery, RPC admission, or the workflow-worker checkpoint
+crash window. No preparation RPC is mounted by the store implementation.
