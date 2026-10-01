@@ -14,6 +14,8 @@ import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringPolicy;
 import ai.protomolt.proto.samples.starter.v1.WorkflowPermittedCall;
 import ai.protomolt.proto.workflow.authoring.v1.GetAcceptedWorkflowRequest;
 import ai.protomolt.proto.workflow.authoring.v1.WorkflowAuthoringServiceGrpc;
+import ai.protomolt.proto.workflow.authoring.v1.WorkflowPreparationServiceGrpc;
+import ai.protomolt.proto.workflow.authoring.v1.PrepareWorkflowCandidateRequest;
 import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchRequest;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -125,6 +127,15 @@ class WorkflowAuthoringServeIntegrationTest {
             JsonNode paths = JSON.readTree(openApi.body()).path("paths");
             assertThat(paths.has("/grpc-json/WorkflowAuthoringService/GetAcceptedWorkflow")).isTrue();
             assertThat(paths.has("/grpc-json/WorkflowAuthoringService/LaunchAcceptedWorkflow")).isTrue();
+            assertThat(paths.has(
+                    "/grpc-json/WorkflowPreparationService/PrepareWorkflowCandidate")).isFalse();
+            var preparationStub = WorkflowPreparationServiceGrpc.newBlockingStub(channel);
+            assertThatThrownBy(() -> preparationStub
+                    .withDeadlineAfter(5, TimeUnit.SECONDS)
+                    .prepareWorkflowCandidate(PrepareWorkflowCandidateRequest.getDefaultInstance()))
+                    .isInstanceOf(StatusRuntimeException.class)
+                    .extracting(error -> ((StatusRuntimeException) error).getStatus().getCode())
+                    .isEqualTo(Status.Code.UNIMPLEMENTED);
             var rest = post(httpPort, "/grpc-json/WorkflowAuthoringService/GetAcceptedWorkflow",
                     "{\"taskId\":\"not-a-uuid\"}", TOKEN);
             assertThat(rest.statusCode()).isEqualTo(400);
@@ -153,6 +164,8 @@ class WorkflowAuthoringServeIntegrationTest {
                     .path("paths");
             assertThat(disabledPaths.has(
                     "/grpc-json/WorkflowAuthoringService/GetAcceptedWorkflow")).isFalse();
+            assertThat(disabledPaths.has(
+                    "/grpc-json/WorkflowPreparationService/PrepareWorkflowCandidate")).isFalse();
             assertThat(listMcpTools(disabledHttp, null).findValuesAsText("name"))
                     .doesNotContain("get-accepted-workflow", "launch-accepted-workflow");
             ManagedChannel disabledChannel = ManagedChannelBuilder
