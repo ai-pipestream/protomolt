@@ -1,7 +1,9 @@
 # Bounded remote workflow author
 
-Status: contract design under review. No new operation in this document is
-available yet. Preparation and accepted-workflow launch remain separate services.
+Status: contracts, transport adapters, and task reads are merged. Task mutations
+and the opt-in host mount are under review. The installed remote-author workflow
+has not passed its process-level acceptance test yet. Preparation and
+accepted-workflow launch remain separate services.
 
 ## Purpose and existing behavior
 
@@ -17,7 +19,7 @@ messages and the preparation service. Do not change the legacy coordinator API
 or create a second task state machine. The operator assigns the task ID to the
 author; task discovery across the entire coordinator is not required.
 
-## Proposed operations
+## Operations
 
 A separately mounted `WorkflowAuthorTaskService` requires `workflow-author`:
 
@@ -37,11 +39,9 @@ A separately mounted `WorkflowAuthorTaskService` requires `workflow-author`:
   the configured policy artifact reference, permitted calls, and the pinned
   service descriptor reference and exact descriptor bytes. Use existing messages
   for references and offers; do not introduce another schema source dialect.
-- A bounded task-status read must expose review and terminal outcomes for the
-  same authenticated holder and attempt. Prefer a restricted adapter over the
-  existing transcript response, with required task identity, nonnegative cursor
-  and bounded batch. It must not permit the existing omitted-task global read.
-  Final message names and lifecycle rules require review before definitions.
+- `ReadWorkflowAuthorEvents` exposes persisted review and terminal outcomes for
+  the original assigned worker and attempt. It requires task identity, a
+  nonnegative cursor, and a bounded batch. There is no omitted-task global read.
 
 The descriptor payload is a complete FileDescriptorSet. A client uses those bytes
 with the existing dynamic `SchemaSource.descriptor_set_base64` workflow field.
@@ -86,6 +86,20 @@ The author cannot offer tasks, review candidates, promote or launch workflows,
 impersonate another worker, read unrelated task transcripts or write arbitrary
 artifacts. Those denials require actual authenticated transport tests, including
 existing coordinator operations reached with the same author credential.
+
+## Service binding
+
+The host exposes the author task service only when preparation is configured.
+It shares the existing delegation bridge, transcript repository, artifact store,
+and policy. No additional coordinator or author-owned transcript is created.
+
+Author and coordinator RPCs reuse three request/response pairs. Those types do
+not determine authority. The host supplies a complete, explicit RPC-to-action
+map for the author service to both gRPC and REST. A missing method, missing
+action, incompatible type, or reflected proxy must refuse the mount; it must
+never select a coordinator action as a fallback. Automatic bindings for other
+services exclude actions reserved by explicit maps. MCP uses the same scoped
+catalog actions.
 
 ## Retries and outcomes requiring review
 

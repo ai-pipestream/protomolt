@@ -79,12 +79,20 @@ public final class ProtoMoltRestMount {
                                 ApiTokenRequirement apiToken,
                                 Function<Map<String, String>, Caller> callers,
                                 Collection<ServiceDescriptor> contributed) {
+        register(registry, catalog, apiToken, callers, contributed, Map.of());
+    }
+
+    public static void register(ProtoRestMethodRegistry registry, ActionCatalog catalog,
+                                ApiTokenRequirement apiToken,
+                                Function<Map<String, String>, Caller> callers,
+                                Collection<ServiceDescriptor> contributed,
+                                Map<String, Map<String, String>> explicitBindings) {
         List<ServiceDescriptor> services = new ArrayList<>();
         services.add(ProtoMoltServiceSchema.service());
         services.addAll(contributed);
         for (ServiceDescriptor service : services) {
             for (Map.Entry<MethodDescriptor, String> binding :
-                    ContractActionBindings.mounted(catalog, service).entrySet()) {
+                    ContractActionBindings.mounted(catalog, service, explicitBindings).entrySet()) {
                 MethodDescriptor method = binding.getKey();
                 String verb = binding.getValue();
                 registry.register(service, method,
