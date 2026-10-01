@@ -67,6 +67,12 @@ responses at 16 MiB. Configure clients for that response bound, which accommodat
 the descriptor plus the original offer's deliverable descriptor and metadata.
 Context is a snapshot, not a lease renewal or an
 execution authorization. Mutations recheck current lifecycle at the coordinator.
+New candidate submissions must also fit the existing 1 MiB delegation frame
+limit, including their envelope. The author handler validates a conservative
+maximum-width envelope before dispatch and returns invalid input for violations;
+these are not retryable transport failures. The 16 MiB request bound and 4 MiB
+preparation deliverable bound do not override this submission limit. An exact
+already-committed retry acknowledges history without publishing another frame.
 Do not rely on a read-then-call check as the only protection against cancellation,
 reassignment or a newer attempt. The review must identify which checks are atomic
 in the existing coordinator and which need an explicit guarded entry.
