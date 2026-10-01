@@ -8,6 +8,7 @@ import ai.protomolt.proto.delegation.CandidateReviewer;
 import ai.protomolt.proto.delegation.DelegationReducer;
 import ai.protomolt.proto.delegation.DelegationWorker;
 import ai.protomolt.proto.delegation.InMemoryTranscriptRepository;
+import ai.protomolt.proto.delegation.TranscriptRepository;
 import ai.protomolt.proto.delegation.InProcessDelegationCoordinator;
 import ai.protomolt.proto.delegation.ScriptedWorkerRunner;
 import ai.protomolt.proto.delegation.v1.AgentDelegationServiceGrpc;
@@ -17,10 +18,12 @@ import ai.protomolt.proto.delegation.v1.CheckVerdict;
 import ai.protomolt.proto.delegation.v1.CompletionCandidate;
 import ai.protomolt.proto.delegation.v1.DeliverableContract;
 import ai.protomolt.proto.delegation.v1.TaskSpec;
+import ai.protomolt.proto.delegation.v1.Transcript;
 import ai.protomolt.proto.delegation.v1.WorkerCapability;
 import ai.protomolt.proto.delegation.v1.WorkerHello;
 import ai.protomolt.proto.grpc.invoke.DynamicGrpcCalls;
 import ai.protomolt.proto.grpc.workflow.FileSystemArtifactRepository;
+import ai.protomolt.proto.grpc.workflow.ArtifactRepository;
 import ai.protomolt.proto.grpc.workflow.FileSystemRunEvidenceRepository;
 import ai.protomolt.proto.grpc.workflow.RunEvidenceRepository;
 import ai.protomolt.proto.grpc.workflow.WorkflowVersionRepository;
@@ -38,6 +41,9 @@ import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringDeliverable;
 import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringPolicy;
 import ai.protomolt.proto.samples.starter.v1.WorkflowDeliverable;
 import ai.protomolt.proto.samples.starter.v1.WorkflowPermittedCall;
+import ai.protomolt.proto.workflow.authoring.v1.GetWorkflowLaunchInputContractRequest;
+import ai.protomolt.proto.workflow.authoring.v1.PrepareWorkflowLaunchInputRequest;
+import com.google.protobuf.StringValue;
 import ai.protomolt.proto.sources.CompiledProtos;
 import ai.protomolt.proto.sources.ProtoSourceCompiler;
 import ai.protomolt.proto.sources.ProtoSourceSet;
@@ -324,6 +330,7 @@ class WorkflowAuthoringReviewerTest {
                 assertThat(coordinator.state().clean()).isTrue();
                 assertThat(worker.streamFailure()).isEmpty();
                 assertThat(calls.get()).isEqualTo(before + 1);
+                verifyLaunchInputPreparation(transcriptStore, taskId, reviewer);
             } finally {
                 delegationChannel.shutdownNow();
                 delegationServer.shutdownNow();
@@ -339,6 +346,212 @@ class WorkflowAuthoringReviewerTest {
             assertThat(restored.state().clean()).isTrue();
         }
         exerciseLaunchRecovery(transcriptStore, taskId, reviewer);
+    }
+
+    private void verifyLaunchInputPreparation(InMemoryTranscriptRepository transcripts,
+            String taskId, WorkflowAuthoringReviewer reviewer) throws Exception {
+        var input = new WorkflowLaunchInputPreparer(transcripts, reviewer, artifacts);
+        var accepted = WorkflowLaunchAcceptance.inspect(transcripts, taskId).identity();
+        int before = calls.get();
+        var descriptorContract = input.contract(GetWorkflowLaunchInputContractRequest.newBuilder()
+                .setAcceptance(accepted).build());
+        assertThat(descriptorContract.getAcceptance()).isEqualTo(accepted);
+        assertThat(descriptorContract.getInputType()).isEqualTo(textType.getFullName());
+        assertThat(descriptorContract.getDescriptors()).isEqualTo(authored.getDeliverable().getDescriptors());
+        assertThat(descriptorContract.getDescriptorSet().toByteArray())
+                .isEqualTo(artifacts.find(descriptorContract.getDescriptors().getSha256())
+                        .orElseThrow().content());
+        var request = PrepareWorkflowLaunchInputRequest.newBuilder().setAcceptance(accepted)
+                .setInputJson(ByteString.copyFromUtf8("{\"text\":\"browser input\"}"))
+                .build();
+        var prepared = input.prepare(request);
+        assertThat(prepared.getAcceptance()).isEqualTo(accepted);
+        assertThat(prepared.getInput().getMediaType()).isEqualTo("application/x-protobuf");
+        assertThat(prepared.getInput().getRedacted()).isFalse();
+        assertThat(artifacts.find(prepared.getInput().getSha256()).orElseThrow().content())
+                .isEqualTo(message("browser input").toByteArray());
+        assertThat(input.prepare(request)).isEqualTo(prepared);
+        assertThat(calls.get()).isEqualTo(before);
+
+        var changed = accepted.toBuilder().setCandidateSha256("0".repeat(64)).build();
+        assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> input.contract(
+                GetWorkflowLaunchInputContractRequest.newBuilder().setAcceptance(changed).build())))
+                .isInstanceOfSatisfying(WorkflowLaunchInputException.class,
+                        failure -> assertThat(failure.kind())
+                                .isEqualTo(WorkflowLaunchInputException.Kind.INACTIVE));
+        var absent = new WorkflowLaunchInputPreparer(new InMemoryTranscriptRepository(), reviewer, artifacts);
+        assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> absent.contract(
+                GetWorkflowLaunchInputContractRequest.newBuilder().setAcceptance(accepted).build())))
+                .isInstanceOfSatisfying(WorkflowLaunchInputException.class,
+                        failure -> assertThat(failure.kind())
+                                .isEqualTo(WorkflowLaunchInputException.Kind.INACTIVE));
+        Transcript recorded = transcripts.load().orElseThrow();
+        int candidateIndex = -1;
+        int startIndex = -1;
+        for (int i = 0; i < recorded.getEntriesCount(); i++) {
+            if (recorded.getEntries(i).hasWorkerFrame()
+                    && recorded.getEntries(i).getWorkerFrame().hasCompletion()) candidateIndex = i;
+            if (recorded.getEntries(i).hasCoordinatorFrame()
+                    && recorded.getEntries(i).getCoordinatorFrame().hasReviewStarted()) startIndex = i;
+        }
+        assertThat(candidateIndex).isGreaterThanOrEqualTo(0);
+        assertThat(startIndex).isGreaterThan(candidateIndex);
+        var selected = recorded.getEntries(candidateIndex);
+        var malformedResult = selected.getWorkerFrame().getCompletion().getResult().toBuilder()
+                .setValue(ByteString.copyFrom(new byte[] {(byte) 0xff})).build();
+        var malformedCandidate = selected.toBuilder().setWorkerFrame(selected.getWorkerFrame().toBuilder()
+                .setCompletion(selected.getWorkerFrame().getCompletion().toBuilder()
+                        .setResult(malformedResult))).build();
+        Transcript changedCandidate = recorded.toBuilder().setEntries(candidateIndex, malformedCandidate).build();
+        var start = changedCandidate.getEntries(startIndex);
+        var changedIdentity = start.getCoordinatorFrame().getReviewStarted().getIdentity().toBuilder()
+                .setCandidateEntrySha256(WorkRecords.fingerprint(malformedCandidate));
+        Transcript malformedEvidence = changedCandidate.toBuilder().setEntries(startIndex,
+                start.toBuilder().setCoordinatorFrame(start.getCoordinatorFrame().toBuilder()
+                        .setReviewStarted(start.getCoordinatorFrame().getReviewStarted().toBuilder()
+                                .setIdentity(changedIdentity)))).build();
+        var malformedReduction = new DelegationReducer().reduce(malformedEvidence);
+        assertThat(malformedReduction.clean()).isFalse();
+        assertThat(malformedReduction.findings()).anySatisfy(finding -> {
+            assertThat(finding.kind()).isEqualTo("contract");
+            assertThat(finding.error()).contains("does not parse");
+        });
+        TranscriptRepository corrupt = new TranscriptRepository() {
+            @Override public Optional<Transcript> load() { return Optional.of(malformedEvidence); }
+            @Override public void save(Transcript ignored) { throw new UnsupportedOperationException(); }
+        };
+        var corruptInput = new WorkflowLaunchInputPreparer(corrupt, reviewer, artifacts);
+        assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> corruptInput.contract(
+                GetWorkflowLaunchInputContractRequest.newBuilder().setAcceptance(accepted).build())))
+                .isInstanceOfSatisfying(WorkflowLaunchInputException.class,
+                        failure -> assertThat(failure.kind())
+                                .isEqualTo(WorkflowLaunchInputException.Kind.CORRUPT_EVIDENCE));
+        for (byte[] invalid : List.of(new byte[] {(byte) 0xc3, (byte) 0x28},
+                "{\"unknown\":1}".getBytes(StandardCharsets.UTF_8),
+                "[1]".getBytes(StandardCharsets.UTF_8))) {
+            assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> input.prepare(
+                    request.toBuilder().setInputJson(ByteString.copyFrom(invalid)).build())))
+                    .isInstanceOfSatisfying(WorkflowLaunchInputException.class,
+                            failure -> assertThat(failure.kind())
+                                    .isEqualTo(WorkflowLaunchInputException.Kind.INVALID_INPUT));
+        }
+        for (byte[] bytes : List.of(new byte[0], message("collision").toByteArray())) {
+            artifacts.save(bytes, "text/plain", true);
+            String json = bytes.length == 0 ? "{}" : "{\"text\":\"collision\"}";
+            assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> input.prepare(
+                    request.toBuilder().setInputJson(ByteString.copyFromUtf8(json)).build())))
+                    .isInstanceOfSatisfying(WorkflowLaunchInputException.class,
+                            failure -> assertThat(failure.kind())
+                                    .isEqualTo(WorkflowLaunchInputException.Kind.INCOMPATIBLE_ARTIFACT));
+        }
+        ArtifactRepository wrongReference = new ArtifactRepository() {
+            @Override public ArtifactReference save(byte[] content, String mediaType, boolean redacted)
+                    throws java.io.IOException {
+                return artifacts.save(content, mediaType, redacted).toBuilder()
+                        .setSha256("0".repeat(64)).build();
+            }
+            @Override public Optional<StoredArtifact> find(String sha256) throws java.io.IOException {
+                return artifacts.find(sha256);
+            }
+        };
+        var corruptReference = new WorkflowLaunchInputPreparer(transcripts, reviewer, wrongReference);
+        assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> corruptReference.prepare(request)))
+                .isInstanceOfSatisfying(WorkflowLaunchInputException.class,
+                        failure -> assertThat(failure.kind())
+                                .isEqualTo(WorkflowLaunchInputException.Kind.CORRUPT_EVIDENCE));
+        ArtifactRepository missingAfterSave = new ArtifactRepository() {
+            @Override public ArtifactReference save(byte[] content, String mediaType, boolean redacted)
+                    throws java.io.IOException {
+                return artifacts.save(content, mediaType, redacted);
+            }
+            @Override public Optional<StoredArtifact> find(String sha256) throws java.io.IOException {
+                if (sha256.equals(prepared.getInput().getSha256())) return Optional.empty();
+                return artifacts.find(sha256);
+            }
+        };
+        var corruptLookup = new WorkflowLaunchInputPreparer(transcripts, reviewer, missingAfterSave);
+        assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> corruptLookup.prepare(request)))
+                .isInstanceOfSatisfying(WorkflowLaunchInputException.class,
+                        failure -> assertThat(failure.kind())
+                                .isEqualTo(WorkflowLaunchInputException.Kind.CORRUPT_EVIDENCE));
+        ArtifactRepository timedOut = new ArtifactRepository() {
+            @Override public ArtifactReference save(byte[] content, String mediaType, boolean redacted)
+                    throws java.io.IOException {
+                throw new java.io.IOException("transport failed",
+                        Status.DEADLINE_EXCEEDED.asRuntimeException());
+            }
+            @Override public Optional<StoredArtifact> find(String sha256) throws java.io.IOException {
+                return artifacts.find(sha256);
+            }
+        };
+        var deadlineInput = new WorkflowLaunchInputPreparer(transcripts, reviewer, timedOut);
+        assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> deadlineInput.prepare(request)))
+                .isInstanceOfSatisfying(WorkflowLaunchInputException.class,
+                        failure -> assertThat(failure.kind())
+                                .isEqualTo(WorkflowLaunchInputException.Kind.DEADLINE));
+        assertThat(calls.get()).isEqualTo(before);
+    }
+
+    @Test
+    void embeddedAnyMustUsePinnedTypeAndPassItsOwnNativeRules() throws Exception {
+        var valid = DynamicMessage.parseFrom(com.google.protobuf.Any.getDescriptor(),
+                Any.pack(StringValue.of("pinned")).toByteArray());
+        var registry = com.google.protobuf.util.JsonFormat.TypeRegistry.newBuilder()
+                .add(StringValue.getDescriptor()).build();
+        WorkflowLaunchInputPreparer.validateEmbeddedAny(valid, registry, 0);
+
+        var invalidValue = DynamicMessage.parseFrom(com.google.protobuf.Any.getDescriptor(),
+                Any.pack(GetWorkflowLaunchInputContractRequest.getDefaultInstance()).toByteArray());
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                WorkflowLaunchInputPreparer.validateEmbeddedAny(invalidValue, registry, 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not pinned");
+        var pinned = com.google.protobuf.util.JsonFormat.TypeRegistry.newBuilder()
+                .add(GetWorkflowLaunchInputContractRequest.getDescriptor()).build();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                WorkflowLaunchInputPreparer.validateEmbeddedAny(invalidValue, pinned, 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("invalid");
+    }
+
+    @Test
+    void pinnedDescriptorSetAllowsAnyPayloadFromUnrelatedFileOnlyWhenThatFileIsPinned()
+            throws Exception {
+        var inputFile = com.google.protobuf.DescriptorProtos.FileDescriptorProto.newBuilder()
+                .setName("launch/input.proto").setPackage("launch.input").setSyntax("proto3")
+                .addDependency("google/protobuf/any.proto")
+                .addMessageType(com.google.protobuf.DescriptorProtos.DescriptorProto.newBuilder()
+                        .setName("Input")
+                        .addField(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.newBuilder()
+                                .setName("payload").setNumber(1)
+                                .setType(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".google.protobuf.Any")))
+                .build();
+        var payloadFile = com.google.protobuf.DescriptorProtos.FileDescriptorProto.newBuilder()
+                .setName("launch/payload.proto").setPackage("launch.payload").setSyntax("proto3")
+                .addMessageType(com.google.protobuf.DescriptorProtos.DescriptorProto.newBuilder()
+                        .setName("Payload")
+                        .addField(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.newBuilder()
+                                .setName("text").setNumber(1)
+                                .setType(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.Type.TYPE_STRING)))
+                .build();
+        var base = FileDescriptorSet.newBuilder().addFile(Any.getDescriptor().getFile().toProto())
+                .addFile(inputFile);
+        var pinned = WorkflowLaunchInputPreparer.schema(base.clone().addFile(payloadFile)
+                .build().toByteArray(), "launch.input.Input");
+        String json = "{\"payload\":{\"@type\":\"type.googleapis.com/launch.payload.Payload\","
+                + "\"text\":\"accepted\"}}";
+        var admitted = DynamicMessage.newBuilder(pinned.type());
+        com.google.protobuf.util.JsonFormat.parser().usingTypeRegistry(pinned.registry())
+                .merge(json, admitted);
+        WorkflowLaunchInputPreparer.validateEmbeddedAny(admitted.build(), pinned.registry(), 0);
+
+        var unpinned = WorkflowLaunchInputPreparer.schema(base.build().toByteArray(),
+                "launch.input.Input");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                com.google.protobuf.util.JsonFormat.parser().usingTypeRegistry(unpinned.registry())
+                        .merge(json, DynamicMessage.newBuilder(unpinned.type())))
+                .isInstanceOf(com.google.protobuf.InvalidProtocolBufferException.class);
     }
 
     private void exerciseLaunchRecovery(InMemoryTranscriptRepository transcripts, String taskId,

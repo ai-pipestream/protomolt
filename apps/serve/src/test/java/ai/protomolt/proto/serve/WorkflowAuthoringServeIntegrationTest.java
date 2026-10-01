@@ -132,6 +132,21 @@ class WorkflowAuthoringServeIntegrationTest {
             JsonNode paths = JSON.readTree(openApi.body()).path("paths");
             assertThat(paths.has("/grpc-json/WorkflowAuthoringService/GetAcceptedWorkflow")).isTrue();
             assertThat(paths.has("/grpc-json/WorkflowAuthoringService/LaunchAcceptedWorkflow")).isTrue();
+            assertThat(paths.has("/grpc-json/WorkflowLaunchInputService/GetWorkflowLaunchInputContract")).isTrue();
+            assertThat(paths.has("/grpc-json/WorkflowLaunchInputService/PrepareWorkflowLaunchInput")).isTrue();
+            var inputStub = ai.protomolt.proto.workflow.authoring.v1.WorkflowLaunchInputServiceGrpc
+                    .newBlockingStub(channel).withInterceptors(MetadataUtils.newAttachHeadersInterceptor(credentials));
+            var selector = ai.protomolt.proto.samples.starter.v1.WorkflowAcceptedCandidate.newBuilder()
+                    .setTaskId(TASK_ID).setAttempt(1).setRevision(1)
+                    .setTaskSpecSha256("a".repeat(64)).setCandidateSha256("b".repeat(64))
+                    .setAcceptedEntrySha256("c".repeat(64)).build();
+            assertThatThrownBy(() -> inputStub.withDeadlineAfter(5, TimeUnit.SECONDS)
+                    .prepareWorkflowLaunchInput(ai.protomolt.proto.workflow.authoring.v1.PrepareWorkflowLaunchInputRequest
+                            .newBuilder().setAcceptance(selector)
+                            .setInputJson(com.google.protobuf.ByteString.copyFrom(new byte[4 * 1024 * 1024])).build()))
+                    .isInstanceOf(StatusRuntimeException.class)
+                    .extracting(error -> ((StatusRuntimeException) error).getStatus().getCode())
+                    .isEqualTo(Status.Code.FAILED_PRECONDITION);
             assertThat(paths.has(
                     "/grpc-json/WorkflowPreparationService/PrepareWorkflowCandidate")).isFalse();
             var preparationStub = WorkflowPreparationServiceGrpc.newBlockingStub(channel);
@@ -148,7 +163,8 @@ class WorkflowAuthoringServeIntegrationTest {
 
             JsonNode tools = listMcpTools(httpPort, TOKEN);
             assertThat(tools.findValuesAsText("name")).contains(
-                    "get-accepted-workflow", "launch-accepted-workflow");
+                    "get-accepted-workflow", "launch-accepted-workflow",
+                    "get-workflow-launch-input-contract", "prepare-workflow-launch-input");
 
             if (channel != null) {
                 channel.shutdownNow();
@@ -170,9 +186,12 @@ class WorkflowAuthoringServeIntegrationTest {
             assertThat(disabledPaths.has(
                     "/grpc-json/WorkflowAuthoringService/GetAcceptedWorkflow")).isFalse();
             assertThat(disabledPaths.has(
+                    "/grpc-json/WorkflowLaunchInputService/GetWorkflowLaunchInputContract")).isFalse();
+            assertThat(disabledPaths.has(
                     "/grpc-json/WorkflowPreparationService/PrepareWorkflowCandidate")).isFalse();
             assertThat(listMcpTools(disabledHttp, null).findValuesAsText("name"))
-                    .doesNotContain("get-accepted-workflow", "launch-accepted-workflow");
+                    .doesNotContain("get-accepted-workflow", "launch-accepted-workflow",
+                            "get-workflow-launch-input-contract", "prepare-workflow-launch-input");
             ManagedChannel disabledChannel = ManagedChannelBuilder
                     .forAddress("127.0.0.1", disabledGrpc).usePlaintext().build();
             try {

@@ -1,6 +1,7 @@
 # Accepted-workflow browser launch
 
-Status: proposed contracts; no handlers or public mount. Goal 5 also requires
+Status: contracts, input handlers and opt-in protocol mount implemented on this
+branch; browser session routes and editor remain pending. Goal 5 also requires
 browser authoring, worker-crash recovery, Kafka, Compose, and platform qualification.
 
 ## Existing operations
@@ -63,8 +64,11 @@ existing job operations for execution status.
    with text/plain or redacted metadata; require rejection of that stored reference.
    Contract responses permit 8 MiB, including up to 4 MiB of descriptors; do not
    apply WorkflowLaunchValidation's 4 MiB whole-message cap to that response.
-   Configure transport/proxy limits accordingly. Decode UTF-8 with error reporting,
-   rather than replacement characters. Recheck acceptance at launch after preparation.
+   Configure transport/proxy limits accordingly. Decode UTF-8 with error reporting
+   instead of replacement characters. Configure generated gRPC clients for an
+   8 MiB inbound response limit: a
+   4 MiB descriptor payload plus its envelope exceeds gRPC's default 4 MiB limit.
+   Recheck acceptance at launch after preparation.
    The preparation JSON envelope base64-encodes 4 MiB of input, exceeding 5 MiB.
    Give the scoped cookie route an 8 MiB body limit instead of the task console's
    existing 20 KiB limit. Test near-limit requests and descriptors through HTTP,
