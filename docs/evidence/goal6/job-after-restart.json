@@ -1,0 +1,44 @@
+{
+  "observation": "Authenticated MCP get-job after stopping and starting the published local Compose stack",
+  "release": "authoring-starter-d209f0551566",
+  "job": {
+    "jobId": "1e9a71a1-3393-48bf-bb39-40a1fac899bd",
+    "workflowName": "normalize-record-v1",
+    "status": "COMPLETED",
+    "attempt": 1,
+    "outstandingStep": "",
+    "input": {
+      "content": "  browser\r\n workflow  ",
+      "operationId": "94181e0a-a892-4d68-96db-5a8701d7a72b"
+    },
+    "checkpoints": [
+      {
+        "name": "normalize",
+        "skipped": false,
+        "response": {
+          "text": "browser\n workflow"
+        }
+      },
+      {
+        "name": "write",
+        "skipped": false,
+        "response": {
+          "operationId": "94181e0a-a892-4d68-96db-5a8701d7a72b",
+          "contentSha256": "24455aa93f46390e656095f9e42f90d72e3af72ddb06060999fcbc0445e3361b"
+        }
+      }
+    ],
+    "result": {
+      "operationId": "94181e0a-a892-4d68-96db-5a8701d7a72b",
+      "contentSha256": "24455aa93f46390e656095f9e42f90d72e3af72ddb06060999fcbc0445e3361b"
+    },
+    "error": "",
+    "createdAt": "2026-10-01T20:03:51.791252Z",
+    "updatedAt": "2026-10-01T20:03:52.087109Z",
+    "completedAt": "2026-10-01T20:03:52.087109Z",
+    "verdict": "2 steps, output ai.protomolt.proto.samples.authoring.v1.WriteRecordResponse"
+  },
+  "elapsedMs": 296,
+  "measurement": "Server timestamps rounded to milliseconds; one scripted local run with warm images, not a benchmark or human setup time",
+  "browserRestorationVerified": false
+}

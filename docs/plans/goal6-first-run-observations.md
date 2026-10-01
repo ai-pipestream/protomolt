@@ -118,6 +118,13 @@ The global cursor advanced from 7 to 9; reconnect activity can add events withou
 changing the accepted task. This check compared task records rather than requiring
 a frozen global cursor. Before/after JSON is retained with the first-run artifacts.
 It did not inspect the completed job through the browser's saved launch intent.
+An authenticated MCP `get-job` call after restart separately confirmed the same
+job was `COMPLETED` on attempt 1 with both checkpoints. The normalized text matched
+the documented transformation; recomputing its SHA-256 matched the final response,
+which retained the input operation ID. The
+[retained job observation](../evidence/goal6/job-after-restart.json) includes the
+server timestamps: creation to completion was 296 ms at millisecond precision.
+That is one warm local scripted run, not a latency benchmark or setup measurement.
 Source inspection confirms the launch panel lists requests from browser local
 storage. The first-workflow guide now explains that preserving Compose volumes
 alone does not preserve that browser state across profiles or origins. The human
