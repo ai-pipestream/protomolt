@@ -114,3 +114,32 @@ existing review-binding protections.
 5. Preserve the broader Goal 5 gates: visible review retries, browser flow, worker
    process kill at the remote-effect/checkpoint boundary, Kafka submission,
    image-only Compose and native architecture/public download qualification.
+
+## Review refinements
+
+The bridge gives each call a new frame UUID. Serialize author mutations per
+worker/task around inspection and forwarding. For a matching prior acceptance,
+return the original successful identity without sending another frame. For a
+matching attempt/revision and exact parsed candidate, return the persisted
+submission identity without resubmitting or restarting review. A changed candidate
+for a used revision is a conflict. Replay acknowledges submission; it does not
+renew a lease or establish semantic acceptance. Test concurrent matching and
+conflicting retries, response loss and coordinator restart.
+
+The coordinator locks reducer checks and transcript publication together.
+Prechecks bind to the exact attempt sent to that coordinator. If cancellation
+commits first, a subsequent candidate fails before transcript persistence.
+However, that failure closes the worker stream, and the bridge has advanced an
+in-memory sequence. The adapter must reread durable state to classify the outcome
+and support re-registration from persisted sequence counters. A wrapper lock
+cannot serialize legacy coordinator operations. Tests must prove that denied
+races preserve transcript validity and that stream recovery does not duplicate
+submission or review.
+
+Own-task status uses validated transcript entries for the requested attempt and
+original assigned worker. The reducer's current task snapshot is insufficient
+for attempt history. Return persisted submission/review identities and feedback
+with a bounded cursor, filtering later attempts when the task has been reassigned.
+A candidate with no persisted review is pending. The transient review-failure
+field does not establish a durable outcome. Durable review failures and
+invocation-bound retries remain required Goal 5 work.
