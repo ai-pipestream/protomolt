@@ -3,7 +3,9 @@
 Status: implementation in progress; original source inventory at
 `c5dec4ca812c603e0706e315a3acb86be221265a`. Retry protection, verification helpers
 and the sample reviewer landed in PRs #325, #326 and #327. Strict workflow
-validation is under review in PR #328. Promotion retry and recovery work follows.
+validation and promotion retry protection landed through PR #329, including
+PR #328. Launch contracts are in PR #330; the sample launch binding is implemented
+locally and awaiting review and CI.
 The third starter is not implemented or published yet.
 
 ## Outcome
@@ -259,7 +261,7 @@ then reconstructs a coordinator from a shared in-memory transcript repository.
 This proves accepted attempt/revision restoration in that test; it is not yet a
 process-restart, external-worker, async-job or published-starter qualification.
 
-## Acceptance-to-execution binding under design
+## Acceptance-to-execution binding
 
 Promotion stores `VersionedWorkflow`; jobs currently execute a snapshotted JSON
 definition. The starter must bind both representations rather than submit a
@@ -275,8 +277,8 @@ or job insertion. It must bind the offer and candidate digests, policy, source,
 input, exact promoted envelope and job UUID. Recovery must verify these bindings
 and reuse the authorization instead of repeating live fixture calls after a
 partially completed launch. Changed content at the same identity must conflict.
-The contract and persistence mechanism still require review and implementation;
-this is not an available endpoint.
+The sample implementation below provides this persistence mechanism; it is not
+an available endpoint.
 
 Use the caller's launch UUID as the keyed authorization and job identity. An
 intentional new input needs a new launch UUID. Derive the promotion version from
@@ -358,9 +360,10 @@ Malformed input, unaccepted/stale identity, failed independent checks and identi
 conflicts stop before launch effects. Storage or transport failures propagate and
 cannot produce a success result; retry uses the same UUID. Missing artifacts and
 unsupported validation rules fail closed. A lost response or client disconnect
-does not revoke persisted authorization. Once a job exists, cancellation uses the
-existing job operation; there is no pre-insertion launch-cancellation API in this
-slice. The handler and keyed store remain unimplemented. Their acceptance tests
+does not revoke persisted authorization. Delegation has cancellation, but the
+asynchronous workflow job store currently has no cancellation operation or
+cancelled state. Job and pre-insertion launch cancellation are unsupported in
+this slice and need explicit contracts before implementation. Their acceptance tests
 must prove crash recovery and concurrent same/different UUID payload behavior
 before the starter is described as available.
 
@@ -372,3 +375,48 @@ promoted-workflow equality. Generated launch JSON Schemas expose UUID/required
 constraints and preserve CEL as `x-protomolt-cel`; no endpoint is advertised.
 Fabricated but well-formed hashes deliberately pass annotation fixtures, making
 the remaining trusted-storage verification obligation explicit.
+
+## Sample launch implementation and remaining qualification
+
+`WorkflowAuthoringLauncher` reloads durable acceptance through
+`WorkflowLaunchAcceptance`, checks the exact requested identity, verifies pinned
+artifacts and validates input before live fixtures or launch effects. Initial
+authorization requires independent fixture execution even if the task was
+accepted manually. Recovery checks the stored authorization and evidence again,
+reuses its promotion envelope, and does not call live fixtures. The result is
+validated before promotion and returned only after a matching committed workflow
+version and job are present. This remains a sample helper with no mounted RPC.
+
+`FileSystemWorkflowLaunchAuthorizationRepository` uses an operator-owned directory,
+process and JVM locks, bounded deterministic protobuf records, atomic rename and
+file/directory fsync. Unsupported filesystem durability operations fail the call;
+there is no non-atomic fallback. This is trusted local coordinator storage, not
+authentication against an operator replacing a valid record. Concurrent ledger
+tests use separate instances in one JVM; power-loss and multiple-process behavior
+still need deployment qualification.
+
+Promotion and job insertion are separate operations. An unrelated submitter can
+claim the launch UUID after the launcher's initial lookup. The launcher then
+fails without changing that job, but authorization and promotion can remain.
+Retries reject the different job. No atomic transaction across ledger, Git and
+job storage is promised. Before authorization, competing verifiers may repeat
+fixture calls; external effects still require service-side idempotency.
+
+Local verification passed all 67 sample tests without failures or skips. The
+launch integration uses real delegation and fixture gRPC calls, filesystem
+authorization/artifact storage and a Git workflow registry, with simulated job
+persistence behind the real submitter. It covers failure after promotion before
+insertion, lost response after insertion, reopened stores with fixtures unavailable,
+matching retries, changed intent, unbound jobs and an unrelated insertion race.
+Separate tests cover accepted identity selection and ledger conflicts/corruption.
+This does not qualify PostgreSQL execution, process restart, Kafka or a starter.
+
+A direct-executor in-process acceptance test hung during worker teardown; the
+test now uses ordinary in-process executors and passes. No production runtime fix
+is claimed. Mounted starter qualification must exercise worker disconnect and
+shutdown as well as visible review failure/retry behavior.
+
+Next: finish review and CI for this binding, then qualify the external-service
+authoring task, persistent asynchronous execution and crash-window idempotency,
+Kafka submission, and the image-only starter on native AMD64 and ARM64. Job
+cancellation remains unsupported and must not be presented as available.

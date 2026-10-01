@@ -23,6 +23,11 @@ import ai.protomolt.proto.grpc.invoke.DynamicGrpcCalls;
 import ai.protomolt.proto.grpc.workflow.FileSystemArtifactRepository;
 import ai.protomolt.proto.grpc.workflow.FileSystemRunEvidenceRepository;
 import ai.protomolt.proto.grpc.workflow.RunEvidenceRepository;
+import ai.protomolt.proto.jobs.service.store.WorkflowRunRecord;
+import ai.protomolt.proto.jobs.service.store.WorkflowRunStore;
+import ai.protomolt.proto.registry.GitSchemaRegistryStore;
+import ai.protomolt.proto.registry.RegistryWorkflowVersionRepository;
+import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchRequest;
 import ai.protomolt.proto.grpc.workflow.v1.ArtifactReference;
 import ai.protomolt.proto.grpc.workflow.v1.RunEvidence;
 import ai.protomolt.proto.receipt.*;
@@ -331,6 +336,140 @@ class WorkflowAuthoringReviewerTest {
             assertThat(restored.transcript()).isEqualTo(transcriptStore.load().orElseThrow());
             assertThat(restored.state().clean()).isTrue();
         }
+        exerciseLaunchRecovery(transcriptStore, taskId, reviewer);
+    }
+
+    private void exerciseLaunchRecovery(InMemoryTranscriptRepository transcripts, String taskId,
+            WorkflowAuthoringReviewer reviewer) throws Exception {
+        var ledgerPath = temp.resolve("launch-authorizations");
+        var versionsPath = temp.resolve("promotions");
+        var ledger = new FileSystemWorkflowLaunchAuthorizationRepository(ledgerPath);
+        var storedJobs = new TestLaunchJobs();
+        WorkflowAuthoringLaunchRequest request;
+        int afterAuthorization;
+        try (var git = GitSchemaRegistryStore.builder().repositoryDir(versionsPath).build()) {
+            var versions = new RegistryWorkflowVersionRepository(git);
+            var launcher = new WorkflowAuthoringLauncher(transcripts, reviewer, ledger,
+                    versions, artifacts, storedJobs.store, ActionContext.create(), 3);
+            request = WorkflowAuthoringLaunchRequest.newBuilder().setLaunchId(UUID.randomUUID().toString())
+                    .setAcceptance(launcher.acceptedCandidate(taskId)).setInput(fixture.getInput()).build();
+            serviceUnavailable.set(true);
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> launcher.launch(request))
+                    .isInstanceOf(WorkflowRunner.WorkflowExecutionException.class);
+            assertThat(ledger.find(request.getLaunchId())).isEmpty();
+            assertThat(versions.versions(authored.getDeliverable().getWorkflow().getName())).isEmpty();
+            assertThat(storedJobs.jobs).isEmpty();
+
+            serviceUnavailable.set(false);
+            storedJobs.failBeforeInsert.set(true);
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> launcher.launch(request))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("injected insert failure");
+            assertThat(ledger.find(request.getLaunchId())).isPresent();
+            assertThat(versions.versions(authored.getDeliverable().getWorkflow().getName())).hasSize(1);
+            assertThat(storedJobs.jobs).isEmpty();
+            afterAuthorization = calls.get();
+        }
+
+        // Reopen both durable stores. The fixture service is unavailable during recovery.
+        serviceUnavailable.set(true);
+        try (var git = GitSchemaRegistryStore.builder().repositoryDir(versionsPath).build()) {
+            var versions = new RegistryWorkflowVersionRepository(git);
+            var restoredLedger = new FileSystemWorkflowLaunchAuthorizationRepository(ledgerPath);
+            var launcher = new WorkflowAuthoringLauncher(transcripts, reviewer, restoredLedger,
+                    versions, artifacts, storedJobs.store, ActionContext.create(), 3);
+            var first = launcher.launch(request);
+            assertThat(first.getJobId()).isEqualTo(request.getLaunchId());
+            assertThat(launcher.launch(request)).isEqualTo(first);
+            assertThat(calls.get()).isEqualTo(afterAuthorization);
+            assertThat(storedJobs.jobs).hasSize(1);
+            assertThat(storedJobs.acceptedEvents.get()).isEqualTo(1);
+            assertThat(versions.versions(authored.getDeliverable().getWorkflow().getName())).hasSize(1);
+            var evidence = artifacts.find(first.getAuthorization().getSha256()).orElseThrow();
+            assertThat(evidence.content()).isEqualTo(WorkflowLaunchValidation.deterministicBytes(
+                    restoredLedger.find(request.getLaunchId()).orElseThrow()));
+
+            var changed = request.toBuilder().setInput(artifacts.save(message("changed").toByteArray(),
+                    "application/x-protobuf", false)).build();
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> launcher.launch(changed))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("different intent");
+            assertThat(calls.get()).isEqualTo(afterAuthorization);
+            assertThat(storedJobs.acceptedEvents.get()).isEqualTo(1);
+
+            // A job inserted outside this launch boundary cannot be adopted retrospectively.
+            var unbound = request.toBuilder().setLaunchId(UUID.randomUUID().toString()).build();
+            var unboundJob = new WorkflowRunRecord();
+            unboundJob.jobId = UUID.fromString(unbound.getLaunchId());
+            storedJobs.jobs.put(unboundJob.jobId, unboundJob);
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> launcher.launch(unbound))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("unbound");
+            assertThat(restoredLedger.find(unbound.getLaunchId())).isEmpty();
+            assertThat(calls.get()).isEqualTo(afterAuthorization);
+            storedJobs.jobs.remove(unboundJob.jobId);
+
+            // The job commit can succeed while its response is lost. Retry discovers that row.
+            serviceUnavailable.set(false);
+            var lostResponse = request.toBuilder().setLaunchId(UUID.randomUUID().toString()).build();
+            storedJobs.failAfterInsert.set(true);
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> launcher.launch(lostResponse))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("injected lost response");
+            int afterLostResponse = calls.get();
+            serviceUnavailable.set(true);
+            assertThat(launcher.launch(lostResponse).getJobId()).isEqualTo(lostResponse.getLaunchId());
+            assertThat(calls.get()).isEqualTo(afterLostResponse);
+            assertThat(storedJobs.jobs).hasSize(2);
+            assertThat(storedJobs.acceptedEvents.get()).isEqualTo(2);
+            assertThat(versions.versions(authored.getDeliverable().getWorkflow().getName())).hasSize(1);
+
+            // An unrelated job submitter can race across the separate ledger and
+            // jobs stores. No success is returned, and its row is never replaced.
+            serviceUnavailable.set(false);
+            var raced = request.toBuilder().setLaunchId(UUID.randomUUID().toString()).build();
+            storedJobs.externalClaim.set(true);
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> launcher.launch(raced))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("different workflow");
+            assertThat(restoredLedger.find(raced.getLaunchId())).isPresent();
+            assertThat(storedJobs.jobs.get(UUID.fromString(raced.getLaunchId())).input)
+                    .isEqualTo("{\"text\":\"external\"}");
+            int afterConflict = calls.get();
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> launcher.launch(raced))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("different job");
+            assertThat(calls.get()).isEqualTo(afterConflict);
+        }
+    }
+
+    // Only the job persistence boundary is simulated here. The production submitter,
+    // reviewer, protobuf validation, fixture RPCs, ledger and Git registry are exercised.
+    private static final class TestLaunchJobs {
+        final Map<UUID, WorkflowRunRecord> jobs = new LinkedHashMap<>();
+        final AtomicInteger acceptedEvents = new AtomicInteger();
+        final AtomicBoolean failBeforeInsert = new AtomicBoolean();
+        final AtomicBoolean failAfterInsert = new AtomicBoolean();
+        final AtomicBoolean externalClaim = new AtomicBoolean();
+        final WorkflowRunStore store = (WorkflowRunStore) java.lang.reflect.Proxy.newProxyInstance(
+                WorkflowRunStore.class.getClassLoader(), new Class<?>[] {WorkflowRunStore.class},
+                (proxy, method, args) -> {
+                    if (method.getName().equals("get")) return Optional.ofNullable(jobs.get(args[0]));
+                    if (method.getName().equals("insert")) {
+                        if (failBeforeInsert.getAndSet(false)) throw new IllegalStateException("injected insert failure");
+                        var proposed = (WorkflowRunRecord) args[0];
+                        if (externalClaim.getAndSet(false)) {
+                            var external = new WorkflowRunRecord();
+                            external.jobId = proposed.jobId;
+                            external.workflowName = proposed.workflowName;
+                            external.workflowDefinition = proposed.workflowDefinition;
+                            external.input = "{\"text\":\"external\"}";
+                            jobs.put(external.jobId, external);
+                            acceptedEvents.incrementAndGet();
+                        }
+                        var existing = jobs.putIfAbsent(proposed.jobId, proposed);
+                        if (existing != null) return new WorkflowRunStore.InsertOutcome(existing, false,
+                                !WorkflowRunStore.sameSubmission(existing, proposed));
+                        acceptedEvents.incrementAndGet();
+                        if (failAfterInsert.getAndSet(false)) throw new IllegalStateException("injected lost response");
+                        return new WorkflowRunStore.InsertOutcome(proposed, true, false);
+                    }
+                    throw new UnsupportedOperationException(method.getName());
+                });
     }
 
     private ReviewDecision review(TaskSpec offer, CompletionCandidate completion,

@@ -62,7 +62,15 @@ public final class WorkflowAuthoringReviewer implements CandidateReviewer {
     @Override
     public ReviewDecision review(ReviewContext context) throws Exception {
         try {
-            return verify(context);
+            var prepared = prepare(context);
+            int observed = verifyFixtures(prepared);
+            var candidate = context.candidate();
+            return ReviewDecision.accept("Verified " + observed + " caller fixtures; task="
+                    + context.taskId() + "; attempt=" + candidate.getAttempt() + "; revision=" + candidate.getRevision()
+                    + "; candidate=" + WorkRecords.sha256Hex(candidate.toByteArray())
+                    + "; offer=" + WorkRecords.sha256Hex(context.spec().toByteArray())
+                    + "; policy=" + policyReference.getSha256() + "; run=" + prepared.runId()
+                    + "; manifest=" + prepared.manifest());
         } catch (IllegalArgumentException invalid) {
             return revise(invalid);
         } catch (WorkflowRunner.WorkflowExecutionException failure) {
@@ -78,7 +86,13 @@ public final class WorkflowAuthoringReviewer implements CandidateReviewer {
         return ReviewDecision.revise(message.substring(0, Math.min(message.length(), 2048)), REQUIRED_CHECKS);
     }
 
-    private ReviewDecision verify(ReviewContext context) throws Exception {
+    record PreparedReview(WorkflowAuthoringDeliverable authored, WorkflowAuthoringPolicy policy,
+            ArtifactReference policyReference, WorkflowAuthoringPreflight.Result admitted,
+            String runId, String manifest) {}
+
+    // Read-only verification can be repeated after authorization without invoking
+    // external fixtures again. Only the trusted launch ledger permits that recovery.
+    PreparedReview prepare(ReviewContext context) throws Exception {
         var spec = context.spec();
         var candidate = context.candidate();
         validate(spec);
@@ -152,16 +166,14 @@ public final class WorkflowAuthoringReviewer implements CandidateReviewer {
         }
         var replay = WorkflowReplay.replay(deliverable.getWorkflow(), run, admitted.workflow().files(), artifacts);
         if (!replay.ok()) throw new IllegalArgumentException("stored run replay failed: " + replay.failure());
-        var observed = WorkflowAuthoringFixtures.execute(admitted,
-                authored.getAcceptanceFixturesList().stream().map(WorkflowAuthoringReviewer::fixture).toList(),
-                policy.getFixturesList().stream().map(WorkflowAuthoringReviewer::fixture).toList(), artifacts, runner);
-        // The durable coordinator transcript binds this verdict to the live candidate again.
-        return ReviewDecision.accept("Verified " + observed.size() + " caller fixtures; task="
-                + context.taskId() + "; attempt=" + candidate.getAttempt() + "; revision=" + candidate.getRevision()
-                + "; candidate=" + WorkRecords.sha256Hex(candidate.toByteArray())
-                + "; offer=" + WorkRecords.sha256Hex(spec.toByteArray())
-                + "; policy=" + policyReference.getSha256() + "; run=" + run.getRunId()
-                + "; manifest=" + manifest);
+        return new PreparedReview(authored, policy, policyReference, admitted, run.getRunId(), manifest);
+    }
+
+    int verifyFixtures(PreparedReview prepared) throws Exception {
+        return WorkflowAuthoringFixtures.execute(prepared.admitted(),
+                prepared.authored().getAcceptanceFixturesList().stream().map(WorkflowAuthoringReviewer::fixture).toList(),
+                prepared.policy().getFixturesList().stream().map(WorkflowAuthoringReviewer::fixture).toList(),
+                artifacts, runner).size();
     }
 
     private static WorkflowAuthoringFixtures.Fixture fixture(WorkflowAcceptanceFixture fixture) {
