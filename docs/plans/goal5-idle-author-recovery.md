@@ -7,8 +7,13 @@ with discovery-runtime commit 9ac73251 pass locally. The atomic state store is
 implemented, with seven filesystem and transition tests passing alongside the
 five contract tests. These cover locking, identity binding, corrupt files, failed
 publication recovery and preservation of saved intent when an assignment moves.
-The discovery loop and installed-worker restart proof remain unqualified; this
-document does not claim a running idle mode.
+The discovery loop is implemented. An installed-worker process test passes
+locally against a continuously running coordinator: start idle, discover an offer,
+kill after the probe effect, restart with identical intent, kill during preparation,
+restart and replay the saved request, then observe independent acceptance. The
+fixture ledger contains one record per operation despite repeated deliveries.
+This is local qualification, not deployment or platform qualification. A kill at
+the submission boundary and the workflow-executor crash test remain outstanding.
 
 Add `--discover <coordinator> <fixture> <worker-id> <state-dir>` while retaining
 the explicit-task invocation. Use the existing discovery, context, acceptance,
@@ -57,7 +62,8 @@ The fixture enforces idempotency for its write only, not arbitrary external RPCs
 Source review found that unary `RegisterWorkflowAuthor` creates a server-owned
 `DelegationBridge` stream. Closing or killing its client process does not close
 that stream. The current registration rejects an already connected worker, so
-worker-only restart is not yet supported even when its local snapshot is valid.
+worker-only restart through the original Register RPC is unsupported even when
+its local snapshot is valid. Discovery mode now uses the additive Ensure RPC.
 Missing bridge sessions are reported as generic unavailable errors; that status
 cannot safely identify registration loss after a coordinator restart.
 
