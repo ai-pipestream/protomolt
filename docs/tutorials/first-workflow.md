@@ -8,7 +8,7 @@ No model-provider account, host JDK, or local image build is needed.
 
 This is a fixed example. It demonstrates contract checks and execution, not a
 live model writing an arbitrary workflow. For your own gRPC endpoint, continue
-with [service workspaces](../surface/service-workspace.md).
+with [connecting a gRPC service](connect-grpc-service.md).
 
 ## Download and start
 

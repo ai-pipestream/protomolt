@@ -48,11 +48,59 @@ are linked from [the release report](goal5-release-qualification.md).
   produce both copied and selected `Ada` values. Production CEL behavior was
   unchanged. The mapping guide now gives the command and expected result.
 
+## Published library consumer rehearsal
+
+The independent build under `examples/protobuf-toolkit` resolved dependencies
+from the public Maven repositories, with no project substitution or mavenLocal
+repository. It also ran after its build files and sources were copied into a
+temporary directory outside the checkout. Both runs passed mapping, selector,
+projection, validation, registry compatibility, and OpenAPI checks. The final
+application additionally checks named validation violations and the OpenAPI CEL
+disclosure, rather than accepting any failure as sufficient.
+
+The first dependency resolution used stale cached snapshots containing the old
+`ai.pipestream.proto` package names. The current published mapper artifact was
+inspected and contained `ai.protomolt.proto` classes. `--refresh-dependencies`
+resolved the mismatch and the consumer compiled and ran. This limitation is
+documented. The exercise proves use of published artifacts, not an immutable
+library release or a cold dependency-cache timing.
+
+Logs: `/tmp/protomolt-goal6-toolkit-consumer.log` (initial failure),
+`/tmp/protomolt-goal6-toolkit-refresh.log`,
+`/tmp/protomolt-goal6-toolkit-isolated.log`, and
+`/tmp/protomolt-goal6-toolkit-final.log` (successful runs).
+
+## MCP and remote ACP rehearsal
+
+`scripts/service-workspace-smoke.mjs` passed against the published authoring
+stack. It registered and inspected the separate fixture service through MCP,
+invoked NormalizeText successfully, and refused an empty text request. It then
+started the locally built ACP adapter in remote mode, inspected the same profile
+and descriptor fingerprint, and verified valid and invalid invocations.
+
+Profile: `tutorial-dc0d3d37-b7cd-4316-a892-b6212de9b588`.
+Descriptor fingerprint:
+`ebccb5035e4a8f3281bfbf5c8382a91b5417cd0ec514436803ccc4990e9fd972`.
+Raw log: `/tmp/protomolt-goal6-service-smoke.log`.
+The adapter uses baseline production code; only the acceptance client and guide
+are new. This proves the included unary service path, not an arbitrary user's
+endpoint, a schema-change scenario, or all streaming modes.
+
+The fixture container was then stopped in this disposable project. A valid
+ServiceInvoke request returned HTTP 200 with `ok: false` and `status: UNAVAILABLE`.
+The fixture was restarted immediately afterward. Raw result:
+`/tmp/protomolt-goal6-first-run.VE8zdc/unreachable-result.json`. This reinforces
+why callers must inspect the operation result, not just the HTTP status.
+
+The user has offered to arrange an unfamiliar tester. The
+[tester checklist](../tutorials/adoption-checklist.md) records time, cached
+prerequisites, assistance, and incomplete paths. No human results exist yet.
+
 ## Remaining evidence
 
 Cold setup timings; independent human walkthrough; documented-input rehearsal;
-restart observations for this new project; external-service MCP/ACP tutorial;
-standalone consumer dependency resolution; remaining library examples;
+restart observations for this new project; a user's own external endpoint
+and changed-schema rehearsal;
 correction/coordination/integration latency and outcome measurements; optional
 Kafka/connector walkthroughs; durable publication of tutorials and evidence.
 Goal 6 is not complete.
