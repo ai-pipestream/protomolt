@@ -13,6 +13,10 @@ import ai.protomolt.proto.correction.v1.ContactGrounding;
 import ai.protomolt.proto.correction.v1.CorrectedContact;
 import ai.protomolt.proto.correction.v1.RawContact;
 import ai.protomolt.proto.samples.starter.v1.WorkflowDeliverable;
+import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringDeliverable;
+import ai.protomolt.proto.samples.starter.v1.WorkflowAcceptanceFixture;
+import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringPolicy;
+import ai.protomolt.proto.samples.starter.v1.WorkflowPermittedCall;
 import ai.protomolt.proto.validate.ProtoValidator;
 import ai.protomolt.proto.workflow.CompiledWorkflow;
 import ai.protomolt.proto.workflow.WorkflowCompiler;
@@ -146,6 +150,47 @@ class StarterContractTest {
     }
 
     @Test
+    void authoringRequiresExecutableSourceAndBoundedDistinctFixtures() throws Exception {
+        var fixture = WorkflowAcceptanceFixture.newBuilder().setName("contact-fixture")
+                .setInput(artifact()).setExpectedOutput(artifact()).build();
+        var authored = WorkflowAuthoringDeliverable.newBuilder().setDeliverable(deliverable())
+                .setExecutableSource(artifact().toBuilder().setMediaType("application/json"))
+                .addAcceptanceFixtures(fixture).build();
+        valid(authored);
+        var validator = ProtoValidator.forMessageType(WorkflowAuthoringDeliverable.getDescriptor());
+        assertThat(validator.validate(authored.toBuilder().clearExecutableSource().build()).valid()).isFalse();
+        assertThat(validator.validate(authored.toBuilder().setExecutableSource(artifact()).build()).violations())
+                .anyMatch(v -> v.ruleId().equals("authoring-source-json"));
+        assertThat(validator.validate(authored.toBuilder().clearAcceptanceFixtures().build()).valid()).isFalse();
+        assertThat(validator.validate(authored.toBuilder().addAcceptanceFixtures(fixture).build()).violations())
+                .anyMatch(v -> v.ruleId().equals("authoring-unique-fixtures"));
+        assertThat(validator.validate(authored.toBuilder().setAcceptanceFixtures(0,
+                fixture.toBuilder().clearExpectedOutput()).build()).valid()).isFalse();
+        var tooMany = authored.toBuilder().clearAcceptanceFixtures();
+        for (int i = 0; i < 33; i++) tooMany.addAcceptanceFixtures(fixture.toBuilder().setName("fixture-" + i));
+        assertThat(validator.validate(tooMany.build()).violations())
+                .anyMatch(v -> v.ruleId().equals("repeated.max_items"));
+    }
+
+    @Test
+    void authoringPolicyRequiresPinnedDescriptorsFixturesAndConcreteCalls() {
+        var fixture = WorkflowAcceptanceFixture.newBuilder().setName("contact-fixture")
+                .setInput(artifact()).setExpectedOutput(artifact()).build();
+        var call = WorkflowPermittedCall.newBuilder().setTarget("fixture:9090")
+                .setMethod("example.Correction/Correct").build();
+        var policy = WorkflowAuthoringPolicy.newBuilder().setDescriptors(artifact())
+                .addFixtures(fixture).addPermittedCalls(call).build();
+        valid(policy);
+        var validator = ProtoValidator.forMessageType(WorkflowAuthoringPolicy.getDescriptor());
+        assertThat(validator.validate(policy.toBuilder().clearDescriptors().build()).valid()).isFalse();
+        assertThat(validator.validate(policy.toBuilder().clearPermittedCalls().build()).valid()).isFalse();
+        assertThat(validator.validate(policy.toBuilder().addFixtures(fixture).build()).violations())
+                .anyMatch(v -> v.ruleId().equals("policy-unique-fixtures"));
+        assertThat(validator.validate(policy.toBuilder().setPermittedCalls(0,
+                call.toBuilder().setMethod("example.Correction/*")).build()).valid()).isFalse();
+    }
+
+    @Test
     void workflowDeliverableReusesEvidenceAndRejectsMissingFailedOrDuplicateChecks() throws Exception {
         var deliverable = deliverable();
         valid(deliverable);
@@ -178,6 +223,17 @@ class StarterContractTest {
         assertThat(DeliverableContracts.check(contract, Any.pack(deliverable()))).isEmpty();
         assertThat(DeliverableContracts.check(contract, Any.pack(deliverable().toBuilder().clearChecks().build())))
                 .anyMatch(message -> message.contains("result.checks"));
+        var authoringContract = contract.toBuilder()
+                .setTypeName(WorkflowAuthoringDeliverable.getDescriptor().getFullName()).build();
+        valid(authoringContract);
+        var authored = WorkflowAuthoringDeliverable.newBuilder().setDeliverable(deliverable())
+                .setExecutableSource(artifact().toBuilder().setMediaType("application/json"))
+                .addAcceptanceFixtures(WorkflowAcceptanceFixture.newBuilder().setName("caller-fixture")
+                        .setInput(artifact()).setExpectedOutput(artifact())).build();
+        assertThat(DeliverableContracts.check(authoringContract, Any.pack(authored))).isEmpty();
+        assertThat(DeliverableContracts.check(authoringContract,
+                Any.pack(authored.toBuilder().clearExecutableSource().build())))
+                .anyMatch(message -> message.contains("result.executable_source"));
         var incomplete = FileDescriptorSet.newBuilder().addFile(WorkflowDeliverable.getDescriptor().getFile().toProto());
         assertThatThrownBy(() -> DeliverableContracts.compile(contract.toBuilder()
                 .setDescriptorSet(incomplete.build().toByteString()).build()))

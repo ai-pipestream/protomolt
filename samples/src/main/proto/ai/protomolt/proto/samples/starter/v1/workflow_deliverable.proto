@@ -45,3 +45,74 @@ message WorkflowDeliverable {
   // this reference alone is not proof of signature validity or a passing policy.
   ai.protomolt.proto.grpc.workflow.v1.ArtifactReference receipt = 7 [(ai.protomolt.proto.validate.v1.field).required = true];
 }
+
+// The authoring starter's caller-defined result contract. The existing
+// WorkflowDeliverable remains usable on its own. This wrapper also identifies
+// the executable source: durable Workflow intentionally sanitizes endpoints.
+// It is a contract example, not a mounted authoring RPC.
+message WorkflowAuthoringDeliverable {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "authoring-unique-fixtures"
+    message: "fixture names must be unique"
+    expression: "this.acceptance_fixtures.all(f, this.acceptance_fixtures.filter(other, other.name == f.name).size() == 1)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "authoring-source-json"
+    message: "the executable source must be a JSON artifact"
+    expression: "has(this.executable_source) && this.executable_source.media_type == 'application/json'"
+  };
+  // Existing workflow, artifact, check and signed-run evidence envelope.
+  WorkflowDeliverable deliverable = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Exact UTF-8 proto3 JSON CompiledWorkflow accepted by CheckWorkflow and
+  // SubmitWorkflow. Independent review resolves the full descriptor closure,
+  // permits only caller-approved targets, recompiles this source and matches
+  // the resulting durable Workflow to deliverable.workflow before execution.
+  ai.protomolt.proto.grpc.workflow.v1.ArtifactReference executable_source = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Reviewer policy pins these fixtures independently of the worker. Their
+  // presence alone does not establish that they ran or that expectations are
+  // correct. Required checks can additionally cover compilation and receipts.
+  repeated WorkflowAcceptanceFixture acceptance_fixtures = 3 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 32}];
+}
+
+// One exact input/output pair for independent execution under trusted policy.
+// Input and expected output are serialized protobuf messages of the compiled
+// workflow's declared types. The reviewer validates both before service calls.
+// References pin exact artifact bytes; execution and equality use parsed messages,
+// allowing equivalent protobuf binary encodings. Unknown fields are rejected.
+message WorkflowAcceptanceFixture {
+  // Stable fixture identity within the caller policy.
+  string name = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}}];
+  // Exact serialized input message.
+  ai.protomolt.proto.grpc.workflow.v1.ArtifactReference input = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Exact expected output message supplied by the caller.
+  ai.protomolt.proto.grpc.workflow.v1.ArtifactReference expected_output = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// Caller-owned acceptance policy, serialized as a content-addressed artifact
+// pinned by the immutable task offer's context. The reviewer obtains this ref
+// from the offer or trusted configuration, never from a candidate replacement.
+message WorkflowAuthoringPolicy {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "policy-unique-fixtures"
+    message: "policy fixture names must be unique"
+    expression: "this.fixtures.all(f, this.fixtures.filter(other, other.name == f.name).size() == 1)"
+  };
+  // Complete service descriptor closure authorized for compilation and tests.
+  ai.protomolt.proto.grpc.workflow.v1.ArtifactReference descriptors = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Caller-selected examples the reviewer must execute independently.
+  repeated WorkflowAcceptanceFixture fixtures = 2 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 32}];
+  // Exact target/method pairs; no wildcards. Handler verifies every call before
+  // invoking any fixture. Credentials remain in operator-owned configuration.
+  repeated WorkflowPermittedCall permitted_calls = 3 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 128}];
+}
+
+// One exact service call approved by the caller.
+message WorkflowPermittedCall {
+  // Concrete target matched exactly before execution; not a wildcard.
+  string target = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {min_len: 1, max_len: 512}}];
+  // Fully qualified service name followed by /Method.
+  string method = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 512, pattern: "^[A-Za-z_][A-Za-z_0-9]*(\\.[A-Za-z_][A-Za-z_0-9]*)*/[A-Za-z_][A-Za-z_0-9]*$"}}];
+  // Exact transport requirement. False permits plaintext only for this call;
+  // true requires TLS. The executable source must match this value.
+  bool tls = 3;
+}
