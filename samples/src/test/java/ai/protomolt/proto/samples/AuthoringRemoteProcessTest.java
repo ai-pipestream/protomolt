@@ -91,6 +91,8 @@ class AuthoringRemoteProcessTest {
             .connectTimeout(Duration.ofSeconds(5)).build();
     private static final String OPERATOR_TOKEN = "remote-process-operator-token";
     private static final String AUTHOR_TOKEN = "remote-process-author-token";
+    private static final String BROWSER_TOKEN = "remote-process-browser-launch-token";
+    private static final String CONSOLE_TOKEN = "remote-process-default-console-token";
     private static final String TASK_ID = "00000000-0000-4000-8000-000000000441";
     private static final String POLICY_OPERATION = "00000000-0000-4000-8000-000000000442";
     private static final String JOB_OPERATION = "00000000-0000-4000-8000-000000000443";
@@ -201,9 +203,29 @@ class AuthoringRemoteProcessTest {
             assertThat(input.getSha256()).isEqualTo(sha256(jobInput.toByteArray()));
             WorkflowAuthoringLaunchRequest launchRequest = WorkflowAuthoringLaunchRequest.newBuilder()
                     .setLaunchId(LAUNCH_ID).setAcceptance(accepted).setInput(input).build();
+            String consoleCookie = loginBrowser(httpPort, CONSOLE_TOKEN);
+            assertThat(browserCall(httpPort, "launch", launchRequest, consoleCookie).statusCode()).isEqualTo(403);
+            String launchCookie = loginBrowser(httpPort, BROWSER_TOKEN);
+            var browserContract = browserCall(httpPort, "contract",
+                    ai.protomolt.proto.workflow.authoring.v1.GetWorkflowLaunchInputContractRequest
+                            .newBuilder().setAcceptance(accepted).build(), launchCookie);
+            assertThat(browserContract.statusCode()).isEqualTo(200);
+            var contractBuilder = inputContract.toBuilder().clear();
+            JsonFormat.parser().merge(browserContract.body(), contractBuilder);
+            assertThat(contractBuilder.build()).isEqualTo(inputContract);
+            var browserInput = browserCall(httpPort, "prepare", inputRequest, launchCookie);
+            assertThat(browserInput.statusCode()).isEqualTo(200);
+            var inputBuilder = preparedInput.toBuilder().clear();
+            JsonFormat.parser().merge(browserInput.body(), inputBuilder);
+            assertThat(inputBuilder.build()).isEqualTo(preparedInput);
+            var browserLaunch = browserCall(httpPort, "launch", launchRequest, launchCookie);
+            assertThat(browserLaunch.statusCode()).isEqualTo(200);
             var launched = authoring.withDeadlineAfter(30, TimeUnit.SECONDS)
                     .launchAcceptedWorkflow(launchRequest);
             assertThat(launched.getJobId()).isEqualTo(LAUNCH_ID);
+            var launchBuilder = launched.toBuilder().clear();
+            JsonFormat.parser().merge(browserLaunch.body(), launchBuilder);
+            assertThat(launchBuilder.build()).isEqualTo(launched);
             assertThat(authoring.withDeadlineAfter(30, TimeUnit.SECONDS)
                     .launchAcceptedWorkflow(launchRequest)).isEqualTo(launched);
 
@@ -279,6 +301,7 @@ class AuthoringRemoteProcessTest {
         Map<String, String> env = builder.environment();
         env.keySet().removeIf(name -> name.startsWith("PROTOMOLT_"));
         env.put("PROTOMOLT_TRUST_SNAPSHOT", trustFile.toString());
+        env.put("PROTOMOLT_TASK_CONSOLE_TOKEN", CONSOLE_TOKEN);
         env.put("PROTOMOLT_RECEIPT_KEY_FILE", signingKey.toString());
         env.put("PROTOMOLT_RECEIPT_KEY_ID", KEY_ID);
         env.put("PROTOMOLT_RECEIPT_ISSUER", ISSUER);
@@ -469,9 +492,30 @@ class AuthoringRemoteProcessTest {
     private static String accessPolicyJson() throws Exception {
         return """
                 {"principals":[
-                  {"name":"%s","credentialSha256":["%s"],"scopes":["workflow-author"]}
+                  {"name":"%s","credentialSha256":["%s"],"scopes":["workflow-author"]},
+                  {"name":"browser-launcher","credentialSha256":["%s"],"scopes":["worker-coordinate","workflow-launch"]}
                 ]}
-                """.formatted(PRINCIPAL, sha256(AUTHOR_TOKEN.getBytes(StandardCharsets.UTF_8)));
+                """.formatted(PRINCIPAL, sha256(AUTHOR_TOKEN.getBytes(StandardCharsets.UTF_8)),
+                        sha256(BROWSER_TOKEN.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private static String loginBrowser(int port, String token) throws Exception {
+        var response = HTTP.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/task-session"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(Map.of("token", token))))
+                .build(), HttpResponse.BodyHandlers.ofString());
+        assertThat(response.statusCode()).isEqualTo(200);
+        return response.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+    }
+
+    private static HttpResponse<String> browserCall(int port, String operation,
+            com.google.protobuf.Message request, String cookie) throws Exception {
+        String origin = "http://127.0.0.1:" + port;
+        return HTTP.send(HttpRequest.newBuilder(URI.create(origin + "/api/workflow-launch/" + operation))
+                .timeout(Duration.ofSeconds(30)).header("Origin", origin).header("Cookie", cookie)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(JsonFormat.printer().print(request))).build(),
+                HttpResponse.BodyHandlers.ofString());
     }
 
     private static Metadata bearer(String token) {
