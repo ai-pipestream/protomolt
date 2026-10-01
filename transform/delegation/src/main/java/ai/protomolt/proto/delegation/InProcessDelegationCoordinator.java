@@ -51,6 +51,9 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
+import ai.protomolt.proto.formats.Formats;
 import ai.protomolt.proto.validate.ProtoValidator;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -102,6 +105,16 @@ public final class InProcessDelegationCoordinator
     private long cursor;
     private boolean closed;
     private boolean publicationFailed;
+
+    /** Material for a first offer, supplied only after committed replay has been ruled out. */
+    public record InitialOffer(TaskSpec spec, java.time.Duration leaseDuration,
+            String startBindingSha256) {
+        public InitialOffer {
+            Objects.requireNonNull(spec, "spec");
+            Objects.requireNonNull(leaseDuration, "leaseDuration");
+            Objects.requireNonNull(startBindingSha256, "startBindingSha256");
+        }
+    }
 
     /** Creates a coordinator that admits workers and leaves candidates for manual review. */
     public InProcessDelegationCoordinator() {
@@ -284,31 +297,100 @@ public final class InProcessDelegationCoordinator
                 throw new IllegalStateException("task already has an open attempt");
             }
             int attempt = existing == null ? 1 : existing.attempt + 1;
-            Instant expiry = clock.instant().plus(leaseDuration);
-            TaskOffer.Builder offerBuilder = TaskOffer.newBuilder()
-                    .setAttempt(attempt)
-                    .setSpec(offeredSpec)
-                    .setLeaseDuration(toProtoDuration(leaseDuration))
-                    .setExpiresAt(toTimestamp(expiry));
-            if (resumeFrom != null) {
-                offerBuilder.setResumeFrom(resumeFrom);
-            }
-            TaskOffer offer = offerBuilder.build();
-            DelegationValidation.validate(offer);
-            TaskRuntime task = existing == null ? new TaskRuntime(taskId) : existing;
-            emit(session, taskId, attempt,
-                    DelegateResponse.newBuilder().setOffer(offer), () -> {
-                        task.workerId = workerId;
-                        task.attempt = attempt;
-                        task.offer = offer;
-                        task.phase = DelegationReducer.Phase.OFFERED;
-                        task.expiry = expiry;
-                        task.leaseGeneration++;
-                        tasks.put(taskId, task);
-                    });
-            scheduleExpiry(taskId, attempt, task.leaseGeneration, expiry);
-            return offer;
+            return commitOffer(session, workerId, taskId, existing, attempt,
+                    offeredSpec, leaseDuration, resumeFrom, "", null);
         }
+    }
+
+    /**
+     * Creates exactly one first offer for a caller-persisted task UUID. An exact retry
+     * reads the original committed offer under the publication lock; it never calls
+     * {@code newOffer}, checks current admission, renews the lease or publishes a frame.
+     * The predicate must be pure and verify the domain-separated request/spec/lease
+     * binding. The supplier must be read-only; both run while publication is locked.
+     */
+    public TaskOffer offerOnce(String workerId, String taskId,
+            Predicate<TaskOffer> matchesCommitted, Supplier<InitialOffer> newOffer) {
+        if (workerId == null || workerId.length() > 128 || !Formats.isSlug(workerId)) {
+            throw new IllegalArgumentException("workerId must be a lowercase slug");
+        }
+        if (taskId == null || !Formats.isUuid(taskId) || !taskId.matches("[0-9a-f-]{36}")) {
+            throw new IllegalArgumentException("taskId must be a canonical lowercase UUID");
+        }
+        Objects.requireNonNull(matchesCommitted, "matchesCommitted");
+        Objects.requireNonNull(newOffer, "newOffer");
+        synchronized (lock) {
+            requireOpen();
+            TranscriptEntry firstOffer = null;
+            for (TranscriptEntry entry : entries) {
+                if (entry.hasCoordinatorFrame()
+                        && entry.getCoordinatorFrame().getTaskId().equals(taskId)
+                        && entry.getCoordinatorFrame().hasOffer()) {
+                    firstOffer = entry;
+                    break;
+                }
+            }
+            if (firstOffer != null) {
+                TaskOffer committed = firstOffer.getCoordinatorFrame().getOffer();
+                if (!firstOffer.getWorkerId().equals(workerId) || committed.getAttempt() != 1
+                        || !committed.getStartBindingSha256().matches("[0-9a-f]{64}")
+                        || !matchesCommitted.test(committed)) {
+                    throw new TaskStartConflictException("task UUID already has a different first offer");
+                }
+                return committed;
+            }
+            // A task with no first offer is not an unused UUID. In particular, do
+            // not adopt a generic or otherwise malformed historical task record.
+            if (tasks.containsKey(taskId) || entries.stream().anyMatch(entry ->
+                    (entry.hasCoordinatorFrame() && entry.getCoordinatorFrame().getTaskId().equals(taskId))
+                    || (entry.hasWorkerFrame() && entry.getWorkerFrame().getTaskId().equals(taskId)))) {
+                throw new TaskStartConflictException("task UUID is already in use");
+            }
+            Session session = requireAdmittedSession(workerId);
+            InitialOffer initial = Objects.requireNonNull(newOffer.get(), "newOffer returned null");
+            if (initial.leaseDuration().isZero() || initial.leaseDuration().isNegative()) {
+                throw new IllegalArgumentException("leaseDuration must be positive");
+            }
+            if (!initial.startBindingSha256().matches("[0-9a-f]{64}")) {
+                throw new IllegalArgumentException("start binding must be a lowercase SHA-256 digest");
+            }
+            TaskSpec rendered = DeliverableContracts.rendered(initial.spec());
+            DelegationValidation.validate(rendered);
+            return commitOffer(session, workerId, taskId, null, 1, rendered,
+                    initial.leaseDuration(), null, initial.startBindingSha256(), matchesCommitted);
+        }
+    }
+
+    private TaskOffer commitOffer(Session session, String workerId, String taskId,
+            TaskRuntime existing, int attempt, TaskSpec spec, java.time.Duration leaseDuration,
+            CheckpointReference resumeFrom, String startBindingSha256,
+            Predicate<TaskOffer> matchesStartBinding) {
+        Instant expiry = clock.instant().plus(leaseDuration);
+        TaskOffer.Builder offerBuilder = TaskOffer.newBuilder()
+                .setAttempt(attempt)
+                .setSpec(spec)
+                .setLeaseDuration(toProtoDuration(leaseDuration))
+                .setExpiresAt(toTimestamp(expiry));
+        if (resumeFrom != null) offerBuilder.setResumeFrom(resumeFrom);
+        if (!startBindingSha256.isEmpty()) offerBuilder.setStartBindingSha256(startBindingSha256);
+        TaskOffer offer = offerBuilder.build();
+        DelegationValidation.validate(offer);
+        if (matchesStartBinding != null && !matchesStartBinding.test(offer)) {
+            throw new IllegalArgumentException("new offer does not match its start binding");
+        }
+        TaskRuntime task = existing == null ? new TaskRuntime(taskId) : existing;
+        emit(session, taskId, attempt,
+                DelegateResponse.newBuilder().setOffer(offer), () -> {
+                    task.workerId = workerId;
+                    task.attempt = attempt;
+                    task.offer = offer;
+                    task.phase = DelegationReducer.Phase.OFFERED;
+                    task.expiry = expiry;
+                    task.leaseGeneration++;
+                    tasks.put(taskId, task);
+                });
+        scheduleExpiry(taskId, attempt, task.leaseGeneration, expiry);
+        return offer;
     }
 
     /** Applies an external review decision to its identified completion candidate. */
