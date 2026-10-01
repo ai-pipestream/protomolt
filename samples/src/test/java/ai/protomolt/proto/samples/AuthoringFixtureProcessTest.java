@@ -1,6 +1,7 @@
 package ai.protomolt.proto.samples;
 
 import ai.protomolt.proto.samples.authoring.v1.AuthoringFixtureServiceGrpc;
+import ai.protomolt.proto.samples.authoring.v1.NormalizeTextRequest;
 import ai.protomolt.proto.samples.authoring.v1.WriteRecordRequest;
 import ai.protomolt.proto.samples.authoring.v1.WriteRecordResponse;
 import io.grpc.ManagedChannel;
@@ -40,13 +41,22 @@ class AuthoringFixtureProcessTest {
             rightChannel = channel(awaitPort(right, rightLog));
             var leftStub = AuthoringFixtureServiceGrpc.newBlockingStub(leftChannel);
             var rightStub = AuthoringFixtureServiceGrpc.newBlockingStub(rightChannel);
+            ready(leftStub);
+            ready(rightStub);
             Outcome first;
             Outcome second;
             try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
                 var a = executor.submit(() -> write(leftStub, "from-left"));
                 var b = executor.submit(() -> write(rightStub, "from-right"));
-                first = a.get(10, TimeUnit.SECONDS);
-                second = b.get(10, TimeUnit.SECONDS);
+                first = a.get(45, TimeUnit.SECONDS);
+                second = b.get(45, TimeUnit.SECONDS);
+            }
+            if (first.status() != Status.Code.OK && second.status() != Status.Code.OK
+                    || first.status() != Status.Code.ALREADY_EXISTS
+                    && second.status() != Status.Code.ALREADY_EXISTS) {
+                System.err.println("Fixture race outcomes: " + first + "; " + second);
+                System.err.println("Left fixture: " + Files.readString(leftLog));
+                System.err.println("Right fixture: " + Files.readString(rightLog));
             }
             assertThat(java.util.List.of(first.status(), second.status()))
                     .containsExactlyInAnyOrder(Status.Code.OK, Status.Code.ALREADY_EXISTS);
@@ -63,6 +73,7 @@ class AuthoringFixtureProcessTest {
             restored = start(records, restoredLog);
             restoredChannel = channel(awaitPort(restored, restoredLog));
             var restoredStub = AuthoringFixtureServiceGrpc.newBlockingStub(restoredChannel);
+            ready(restoredStub);
             Outcome retry = write(restoredStub, winner.content());
             assertThat(retry.status()).isEqualTo(Status.Code.OK);
             assertThat(retry.response()).isEqualTo(winner.response());
@@ -107,12 +118,21 @@ class AuthoringFixtureProcessTest {
     private static Outcome write(AuthoringFixtureServiceGrpc.AuthoringFixtureServiceBlockingStub stub,
             String content) {
         try {
-            var response = stub.withDeadlineAfter(5, TimeUnit.SECONDS).writeRecord(
+            var response = stub.withDeadlineAfter(30, TimeUnit.SECONDS).writeRecord(
                     WriteRecordRequest.newBuilder().setOperationId(ID).setContent(content).build());
             return new Outcome(content, response, Status.Code.OK);
         } catch (StatusRuntimeException error) {
             return new Outcome(content, null, error.getStatus().getCode());
         }
+    }
+
+    // A listening socket does not establish that a fresh JVM has initialized its
+    // gRPC connection and validator. Probe a read-only operation before the race;
+    // the test measures record identity and restart recovery, not cold-start latency.
+    private static void ready(AuthoringFixtureServiceGrpc.AuthoringFixtureServiceBlockingStub stub) {
+        assertThat(stub.withWaitForReady().withDeadlineAfter(30, TimeUnit.SECONDS)
+                .normalizeText(NormalizeTextRequest.newBuilder().setText(" ready ").build())
+                .getText()).isEqualTo("ready");
     }
 
     private static void close(ManagedChannel channel) throws InterruptedException {
