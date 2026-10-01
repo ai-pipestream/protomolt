@@ -1,5 +1,6 @@
 package ai.protomolt.proto.jobs.service.store;
 
+import ai.protomolt.proto.jobs.service.events.WorkflowRunEventFactory;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -189,12 +190,37 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
     @Override
     public int requeueExpiredLeases() {
         return database.inTransaction(c -> {
-            String sql = """
+            // Exhausted claims cannot safely be replayed again. The terminal row and
+            // its event share this transaction, just like worker-settled failures.
+            String exhausted = """
+                    UPDATE workflow_run SET status = 'DEAD',
+                           error = 'WORKFLOW: execution lease expired after attempt '
+                                   || attempt || ' of ' || max_attempts
+                                   || '; retry budget exhausted',
+                           lease_owner = NULL, lease_until = NULL,
+                           outstanding_step = NULL,
+                           completed_at = clock_timestamp(), updated_at = clock_timestamp()
+                     WHERE status = 'RUNNING' AND lease_until IS NOT NULL
+                       AND lease_until <= clock_timestamp()
+                       AND attempt >= max_attempts
+                    RETURNING
+                    """ + JOB_COLUMNS;
+            try (PreparedStatement ps = c.prepareStatement(exhausted);
+                 ResultSet rows = ps.executeQuery()) {
+                while (rows.next()) {
+                    WorkflowRunRecord dead = mapJob(rows);
+                    enqueue(c, WorkflowRunEventFactory.dead(dead, dead.error));
+                }
+            } catch (SQLException e) {
+                throw WorkflowRunStoreException.wrap("exhausted lease sweep failed", e);
+            }
+            String retryable = """
                     UPDATE workflow_run SET status = 'QUEUED', lease_owner = NULL,
                            lease_until = NULL, updated_at = clock_timestamp()
                      WHERE status = 'RUNNING' AND lease_until IS NOT NULL
-                       AND lease_until <= clock_timestamp()""";
-            try (PreparedStatement ps = c.prepareStatement(sql)) {
+                       AND lease_until <= clock_timestamp()
+                       AND attempt < max_attempts""";
+            try (PreparedStatement ps = c.prepareStatement(retryable)) {
                 return ps.executeUpdate();
             } catch (SQLException e) {
                 throw WorkflowRunStoreException.wrap("lease sweep failed", e);
