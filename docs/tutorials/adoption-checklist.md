@@ -32,6 +32,8 @@ Follow [Run your first workflow](first-workflow.md).
 - Could you distinguish a submitted job from a completed job?
 - Try an invalid operation ID. Was the refusal understandable and recoverable?
 - Stop and start the stack using the guide. Can you find the prior task and job?
+- Use the same browser profile and URL for that restart check. Record whether
+  the distinction between server state and locally saved launch requests was clear.
 - Download the signed record. Was it clear what that record does and does not prove?
 - Note any copied text, setup decision, or error that the guide did not explain.
 

@@ -106,6 +106,19 @@ docker compose start
 Keep the same Compose project and named volumes. `docker compose down -v` deletes
 the stack's stored state and is not a restart procedure.
 
+Return using the same browser profile and the same URL, including its port.
+Select the previous task and refresh its saved launch status. The server retains
+the task and job, but this launch panel finds its saved requests in the browser's
+local storage. Changing browsers, clearing site data, or changing the URL's
+origin can hide those launch entries without deleting the server's jobs. A new
+launch is not a way to look up the old job. Preserve the job and operation IDs
+when reporting a missing entry.
+
+This behavior is implemented by the
+[launch intent store](../../apps/console/src/services/workflowLaunch.ts).
+The unfamiliar-user checklist includes this restart check; the current automated
+rehearsal has verified retained server task state, not browser launch restoration.
+
 ## Source and evidence
 
 - [Release qualification](../plans/goal5-release-qualification.md): native image,

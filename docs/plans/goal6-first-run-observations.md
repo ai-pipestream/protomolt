@@ -118,6 +118,10 @@ The global cursor advanced from 7 to 9; reconnect activity can add events withou
 changing the accepted task. This check compared task records rather than requiring
 a frozen global cursor. Before/after JSON is retained with the first-run artifacts.
 It did not inspect the completed job through the browser's saved launch intent.
+Source inspection confirms the launch panel lists requests from browser local
+storage. The first-workflow guide now explains that preserving Compose volumes
+alone does not preserve that browser state across profiles or origins. The human
+checklist explicitly records whether this distinction is understandable.
 
 `ServiceWorkspaceActionsTest` passed 13 tests, with no failures or skips. Its new
 schema-change case restarts a reflected endpoint with another service, proves
