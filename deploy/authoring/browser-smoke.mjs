@@ -18,13 +18,17 @@ const browser = spawn(process.env.CHROME_BIN ?? 'google-chrome', [
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let socket;
 try {
-  let pages;
+  let page;
   for (let n = 0; n < 100; n++) {
-    try { pages = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json(); break; }
-    catch { await sleep(100); }
+    try {
+      const pages = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+      page = pages.find(candidate => candidate.type === 'page' && candidate.webSocketDebuggerUrl);
+      if (page) break;
+    } catch { /* The debug endpoint may not be listening yet. */ }
+    await sleep(100);
   }
-  if (!pages) throw new Error('Chromium did not start');
-  socket = new WebSocket(pages.find(page => page.type === 'page').webSocketDebuggerUrl);
+  if (!page) throw new Error('Chromium did not expose a debuggable page');
+  socket = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });
   let sequence = 0;
   const pending = new Map();
