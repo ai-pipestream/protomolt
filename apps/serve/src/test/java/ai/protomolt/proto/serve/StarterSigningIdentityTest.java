@@ -27,6 +27,36 @@ class StarterSigningIdentityTest {
     }
 
     @Test
+    void authoringProfileIsExplicitAndCannotReplaceExistingTrust() throws Exception {
+        StarterSigningIdentity.ensure(directory, "authoring");
+        byte[] seed = Files.readAllBytes(directory.resolve("seed.bin"));
+        byte[] trust = Files.readAllBytes(directory.resolve("trust.binpb"));
+        assertThat(TrustSnapshots.load(directory.resolve("trust.binpb"))
+                .getIssuers(0).getSubjectKindsList())
+                .containsExactly("delegation-task", "workflow-run");
+        StarterSigningIdentity.ensure(directory, "authoring");
+        assertThatThrownBy(() -> StarterSigningIdentity.ensure(directory))
+                .hasMessageContaining("does not match its trust snapshot");
+        assertThat(Files.readAllBytes(directory.resolve("seed.bin"))).isEqualTo(seed);
+        assertThat(Files.readAllBytes(directory.resolve("trust.binpb"))).isEqualTo(trust);
+    }
+
+    @Test
+    void defaultProfileCannotSilentlyGainWorkflowAuthority() throws Exception {
+        StarterSigningIdentity.ensure(directory);
+        byte[] trust = Files.readAllBytes(directory.resolve("trust.binpb"));
+        assertThat(TrustSnapshots.load(directory.resolve("trust.binpb"))
+                .getIssuers(0).getSubjectKindsList()).containsExactly("delegation-task");
+        assertThatThrownBy(() -> StarterSigningIdentity.ensure(directory, "authoring"))
+                .hasMessageContaining("does not match its trust snapshot");
+        assertThat(Files.readAllBytes(directory.resolve("trust.binpb"))).isEqualTo(trust);
+        Path unknown = directory.resolve("unknown");
+        assertThatThrownBy(() -> StarterSigningIdentity.ensure(unknown, "anything"))
+                .hasMessageContaining("unknown starter signing profile");
+        assertThat(unknown).doesNotExist();
+    }
+
+    @Test
     void refusesIncompleteOrMismatchedPersistedIdentity() throws Exception {
         StarterSigningIdentity.ensure(directory);
         byte[] originalSeed = Files.readAllBytes(directory.resolve("seed.bin"));
