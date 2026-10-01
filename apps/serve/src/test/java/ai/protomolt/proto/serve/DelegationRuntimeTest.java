@@ -9,11 +9,12 @@ import ai.protomolt.proto.delegation.v1.TaskSpec;
 import ai.protomolt.proto.delegation.v1.WorkerCapability;
 import ai.protomolt.proto.delegation.v1.WorkerHello;
 import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
-import ai.protomolt.proto.repo.v1.FileStorageReference;
-import ai.protomolt.proto.repo.v1.GetBlobRequest;
-import ai.protomolt.proto.repo.v1.GetBlobResponse;
-import ai.protomolt.proto.repo.v1.PutBlobRequest;
-import ai.protomolt.proto.repo.v1.PutBlobResponse;
+import ai.protomolt.proto.repo.v1.ConditionalBlobKey;
+import ai.protomolt.proto.repo.v1.ConditionalBlobVersion;
+import ai.protomolt.proto.repo.v1.GetBlobForUpdateRequest;
+import ai.protomolt.proto.repo.v1.GetBlobForUpdateResponse;
+import ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest;
+import ai.protomolt.proto.repo.v1.CompareAndPutBlobResponse;
 import com.google.protobuf.ByteString;
 import io.grpc.Server;
 import io.grpc.Status;
@@ -81,7 +82,7 @@ class DelegationRuntimeTest {
             assertThat(bridge.coordinator().state().tasks().get(taskId).phase())
                     .isEqualTo(DelegationReducer.Phase.LEASED);
         }
-        assertThat(documents.lastPut).isNull();
+        assertThat(documents.lastCompare).isNull();
 
         try (DelegationRuntime reopened = DelegationRuntime.open(null, KEYS)) {
             assertThat(reopened.bridge().coordinator().workers()).isEmpty();
@@ -107,10 +108,10 @@ class DelegationRuntimeTest {
         }
 
         // The repository service saw only the encrypted envelope.
-        assertThat(documents.lastPut).isNotNull();
-        assertThat(documents.lastPut.getDriveName())
+        assertThat(documents.lastCompare).isNotNull();
+        assertThat(documents.lastCompare.getKey().getDriveName())
                 .isEqualTo(ProtoMoltServe.DelegationOptions.DEFAULT_DRIVE);
-        assertThat(documents.lastPut.getData().toStringUtf8())
+        assertThat(documents.lastCompare.getData().toStringUtf8())
                 .doesNotContain("prove the bounded change");
 
         try (DelegationRuntime restored = DelegationRuntime.open(options, KEYS)) {
@@ -257,27 +258,14 @@ class DelegationRuntimeTest {
     private static final class FakeDocumentService
             extends DocumentServiceGrpc.DocumentServiceImplBase {
         private ByteString stored;
-        private PutBlobRequest lastPut;
+        private CompareAndPutBlobRequest lastCompare;
+        private String etag;
+        private int generation;
         private boolean hangReads;
 
         @Override
-        public void putBlob(PutBlobRequest request,
-                            StreamObserver<PutBlobResponse> observer) {
-            lastPut = request;
-            stored = request.getData();
-            observer.onNext(PutBlobResponse.newBuilder()
-                    .setStorageRef(FileStorageReference.newBuilder()
-                            .setDriveName(request.getDriveName())
-                            .setObjectKey(request.getObjectKey()))
-                    .setSizeBytes(stored.size())
-                    .setSha256(sha256(stored))
-                    .build());
-            observer.onCompleted();
-        }
-
-        @Override
-        public void getBlob(GetBlobRequest request,
-                            StreamObserver<GetBlobResponse> observer) {
+        public void getBlobForUpdate(GetBlobForUpdateRequest request,
+                                     StreamObserver<GetBlobForUpdateResponse> observer) {
             if (hangReads) {
                 return;
             }
@@ -285,11 +273,31 @@ class DelegationRuntimeTest {
                 observer.onError(Status.NOT_FOUND.asRuntimeException());
                 return;
             }
-            observer.onNext(GetBlobResponse.newBuilder()
+            observer.onNext(GetBlobForUpdateResponse.newBuilder()
+                    .setVersion(ConditionalBlobVersion.newBuilder()
+                            .setKey(request.getKey()).setEtag(etag).setSizeBytes(stored.size())
+                            .setSha256(sha256(stored)))
                     .setData(stored)
-                    .setSizeBytes(stored.size())
                     .setMimeType(RepositoryServiceTranscriptRepository.MIME_TYPE)
                     .build());
+            observer.onCompleted();
+        }
+
+        @Override
+        public void compareAndPutBlob(CompareAndPutBlobRequest request,
+                                      StreamObserver<CompareAndPutBlobResponse> observer) {
+            lastCompare = request;
+            boolean allowed = request.hasIfAbsent() ? stored == null
+                    : stored != null && request.getExpectedEtag().equals(etag);
+            if (!allowed) {
+                observer.onError(Status.ABORTED.asRuntimeException());
+                return;
+            }
+            stored = request.getData();
+            etag = "\"etag-" + (++generation) + "\"";
+            observer.onNext(CompareAndPutBlobResponse.newBuilder().setVersion(
+                    ConditionalBlobVersion.newBuilder().setKey(request.getKey()).setEtag(etag)
+                            .setSizeBytes(stored.size()).setSha256(sha256(stored))).build());
             observer.onCompleted();
         }
 

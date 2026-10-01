@@ -34,6 +34,12 @@ import ai.protomolt.proto.repo.v1.GetBlobRequest;
 import ai.protomolt.proto.repo.v1.GetBlobResponse;
 import ai.protomolt.proto.repo.v1.PutBlobRequest;
 import ai.protomolt.proto.repo.v1.PutBlobResponse;
+import ai.protomolt.proto.repo.v1.ConditionalBlobKey;
+import ai.protomolt.proto.repo.v1.ConditionalBlobVersion;
+import ai.protomolt.proto.repo.v1.GetBlobForUpdateRequest;
+import ai.protomolt.proto.repo.v1.GetBlobForUpdateResponse;
+import ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest;
+import ai.protomolt.proto.repo.v1.CompareAndPutBlobResponse;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.ByteString;
@@ -486,7 +492,7 @@ class AuthoringRemoteProcessTest {
                     .setMimeType(stored.mimeType()).build());
             observer.onCompleted();
         }
-        @Override public void putBlob(PutBlobRequest request, StreamObserver<PutBlobResponse> observer) {
+        @Override public synchronized void putBlob(PutBlobRequest request, StreamObserver<PutBlobResponse> observer) {
             ByteString bytes = request.getData();
             objects.put(key(request.getDriveName(), request.getObjectKey()),
                     new StoredObject(bytes, request.getMimeType()));
@@ -496,7 +502,36 @@ class AuthoringRemoteProcessTest {
                     .setSizeBytes(bytes.size()).setSha256(sha256Unchecked(bytes.toByteArray())).build());
             observer.onCompleted();
         }
-        private record StoredObject(ByteString bytes, String mimeType) {}
+        @Override public synchronized void getBlobForUpdate(GetBlobForUpdateRequest request,
+                StreamObserver<GetBlobForUpdateResponse> observer) {
+            StoredObject stored = objects.get(key(request.getKey().getDriveName(), request.getKey().getObjectKey()));
+            if (stored == null) { observer.onError(Status.NOT_FOUND.asRuntimeException()); return; }
+            observer.onNext(GetBlobForUpdateResponse.newBuilder().setData(stored.bytes())
+                    .setVersion(version(request.getKey(), stored)).setMimeType(stored.mimeType()).build());
+            observer.onCompleted();
+        }
+        @Override public synchronized void compareAndPutBlob(CompareAndPutBlobRequest request,
+                StreamObserver<CompareAndPutBlobResponse> observer) {
+            String objectKey = key(request.getKey().getDriveName(), request.getKey().getObjectKey());
+            StoredObject current = objects.get(objectKey);
+            boolean matches = switch (request.getPreconditionCase()) {
+                case IF_ABSENT -> request.getIfAbsent() && current == null;
+                case EXPECTED_ETAG -> current != null && current.etag().equals(request.getExpectedEtag());
+                default -> false;
+            };
+            if (!matches) { observer.onError(Status.ABORTED.asRuntimeException()); return; }
+            StoredObject stored = new StoredObject(request.getData(), request.getMimeType());
+            objects.put(objectKey, stored);
+            observer.onNext(CompareAndPutBlobResponse.newBuilder().setVersion(version(request.getKey(), stored)).build());
+            observer.onCompleted();
+        }
+        private static ConditionalBlobVersion version(ConditionalBlobKey key, StoredObject stored) {
+            return ConditionalBlobVersion.newBuilder().setKey(key).setEtag(stored.etag())
+                    .setSizeBytes(stored.bytes().size()).setSha256(sha256Unchecked(stored.bytes().toByteArray())).build();
+        }
+        private record StoredObject(ByteString bytes, String mimeType) {
+            String etag() { return "\"" + sha256Unchecked(bytes.toByteArray()) + "\""; }
+        }
         private static String key(String drive, String object) { return drive + "/" + object; }
         private static String sha256Unchecked(byte[] bytes) {
             try { return sha256(bytes); } catch (Exception impossible) { throw new AssertionError(impossible); }

@@ -75,6 +75,10 @@ deletes and external object rollback are outside the fencing guarantee.
   fail closed; providers explicitly implement supported behavior.
 - S3 uses atomic If-None-Match or If-Match PUT, preserving the opaque token.
   Map conditional failures without retrying an unconditional PUT.
+  Conditional operations are disabled by default: S3 API compatibility alone
+  is insufficient. The operator must explicitly enable a qualified backend.
+  LocalStack 3.8 accepted a stale If-Match in the RPC tests, while the pinned
+  RustFS image rejected it. The deployment setting must reflect that distinction.
 - CachingBlobStore bypasses Redis for authoritative reads and delegates writes
   to the backing store. Invalidate cached data after a successful replacement.
 - Redis requires an atomic script for comparison and replacement, or reports
@@ -82,7 +86,10 @@ deletes and external object rollback are outside the fencing guarantee.
 - RepositoryServiceTranscriptRepository remembers the loaded token, creates
   with the absent condition, replaces with its token, and advances the token
   only after a verified successful response. Any uncertain save poisons that
-  repository instance. It must not continue from its old snapshot.
+  repository instance. It must not continue from its old snapshot. A fresh
+  instance must load existing history before replacing it; saving before load
+  can only create an absent object. Reject truncated or divergent histories and
+  unknown transcript/envelope fields before adopting or replacing state.
 
 The installed NAS backend is RustFS. Qualification must exercise its pinned
 image; SDK header support and LocalStack tests alone do not prove deployment
