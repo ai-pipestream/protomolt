@@ -234,3 +234,33 @@ defines the interface only; filesystem implementation and concurrency/failure
 tests follow. Local validation passes all 44 authoring tests without skips,
 including nine state-contract tests, plus Buf lint and full-descriptor
 compatibility against the request/response contract commit `2fea5dc8`.
+
+## Handler integration findings
+
+`DelegationReducer.TaskState` exposes phase, holder, attempt and candidate
+revision, but not lease expiry. A clean reduction alone does not establish an
+unexpired wall-clock lease. The preparation handler must validate and scan the
+selected offer and subsequent renewals for that exact attempt, then compare the
+latest expiry with an injected clock. Test expired-but-not-yet-marked-EXPIRED
+transcripts, valid renewal, stale-attempt renewal and exact expiry. Preserve the
+selected original offer fingerprint when a renewal extends its lease.
+
+`WorkflowAuthoringFixtures.execute` combines static fixture admission and live
+execution. Preparation needs the static portion before reservation, including
+all fixture bytes, native validation and expected output type. Extract a reusable
+admitted-fixtures value rather than validating only the first fixture before
+reserving. The independent reviewer must continue to admit and rerun the same
+caller-pinned fixtures; do not duplicate or weaken its checks.
+
+`RecordSigning` holds a signer with a key ID, not an exposed public key. Before
+live calls, prove the configured signer matches the active trusted key (for
+example with a local signature verification probe) as well as checking issuer,
+subject authorization and time bounds. Matching the key ID alone is insufficient.
+Do not save a probe as workflow evidence or expose signing material.
+
+`WorkflowRunRecorder.record` saves failed immutable evidence before rethrowing
+execution failure. The handler must inspect the run repository after an error,
+including uncertain storage errors, before deciding whether the same preparation
+can retry. Successful evidence recovery must check source-derived workflow,
+pinned input and referenced artifacts, then resume remaining receipt/response
+work without another recording.
