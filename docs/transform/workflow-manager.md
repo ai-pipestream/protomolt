@@ -43,6 +43,16 @@ A typed edge selects `input` or prior step bindings, maps them into a declared
 type, optionally projects the result, and validates it before delivery. When an
 edge is present, it owns the request mapping.
 
+For a gRPC step without fan-out, the edge must produce the RPC request type
+directly and cannot set `projectTo`. Structured-generation grounding supports
+descriptor-declared projection. Do not copy its projected-edge configuration
+onto an ordinary gRPC step: verification rejects it before execution. The
+[edge verifier tests](../../transform/workflow/src/test/java/ai/protomolt/proto/workflow/EdgeVerifierTest.java)
+cover this boundary; the
+[typed-edge execution tests](../../transform/workflow/src/test/java/ai/protomolt/proto/workflow/TypedEdgeTest.java)
+check projected grounding and refusal of invalid projected values before a
+provider is called.
+
 Fan-out runs one gRPC or structured branch for each item in a repeated field.
 It requires explicit item and concurrency limits, stable branch identities,
 ordered collection, and a `FAIL_FAST` or `CONTINUE` failure policy. Branches
