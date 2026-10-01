@@ -94,7 +94,7 @@ message ReviewDeferred {
   CandidateReviewIdentity identity = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
 }
 
-// Future worker-coordinate operation; workflow-author alone cannot invoke it.
+// Worker-coordinate operation; workflow-author alone cannot invoke it.
 // Exact globally committed retry-key replay precedes lifecycle checks. Changed
 // content conflicts; only a current failed/interrupted invocation may start anew.
 message RetryCandidateReviewRequest {

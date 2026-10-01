@@ -1,5 +1,7 @@
 package ai.protomolt.proto.workflow.authoring;
 
+import ai.protomolt.proto.receipt.WorkRecords;
+
 import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.delegation.*;
@@ -180,7 +182,15 @@ class WorkflowAuthorTaskMutationsTest {
 
             fixture.mutations.submit(validRequest, AUTHOR);
             Transcript completed = fixture.coordinator.transcript();
-            assertThat(completed.getEntriesCount()).isEqualTo(before + 1);
+            assertThat(completed.getEntriesCount()).isBetween(before + 2, before + 3);
+            assertThat(completed.getEntries(before).getWorkerFrame().hasCompletion()).isTrue();
+            assertThat(completed.getEntries(before + 1).getCoordinatorFrame().hasReviewStarted()).isTrue();
+            if (completed.getEntriesCount() == before + 3) {
+                assertThat(completed.getEntries(before + 2).getCoordinatorFrame().hasReviewDeferred()).isTrue();
+            }
+            assertThat(completed.getEntries(before + 1).getCoordinatorFrame().getReviewStarted()
+                    .getIdentity().getCandidateEntrySha256())
+                    .isEqualTo(WorkRecords.fingerprint(completed.getEntries(before)));
             assertThat(completed.getEntriesList().stream()
                     .filter(entry -> entry.hasWorkerFrame() && entry.getWorkerFrame().hasCompletion())
                     .mapToLong(entry -> entry.getWorkerFrame().getSeq()).findFirst().orElseThrow())

@@ -47,6 +47,7 @@ class DelegationActionSchemaTest {
                 new DelegationCheckpointAction(bridge),
                 new DelegationCandidateAction(bridge),
                 new DelegationReviewAction(bridge),
+                new DelegationReviewRetryAction(bridge),
                 new DelegationCancelAction(bridge),
                 new DelegationMessageAction(bridge),
                 new DelegationWatchAction(bridge),
@@ -139,7 +140,7 @@ class DelegationActionSchemaTest {
     void taskIdentitiesPublishTheirUuidShape() {
         for (String verb : List.of("delegation-accept", "delegation-cancel",
                 "delegation-candidate", "delegation-checkpoint", "delegation-progress",
-                "delegation-review", "delegation-message")) {
+                "delegation-review", "delegation-review-retry", "delegation-message")) {
             assertThat(property(schemaOf(verb), "taskId").path("format").asText())
                     .as("%s taskId format", verb).isEqualTo("uuid");
         }
@@ -149,7 +150,7 @@ class DelegationActionSchemaTest {
     @Test
     void attemptNumbersCarryTheSameBoundEverywhere() {
         for (String verb : List.of("delegation-accept", "delegation-checkpoint",
-                "delegation-progress", "delegation-review")) {
+                "delegation-progress", "delegation-review", "delegation-review-retry")) {
             JsonNode attempt = property(schemaOf(verb), "attempt");
             assertThat(attempt.path("minimum").asInt()).as("%s attempt minimum", verb)
                     .isEqualTo(1);
@@ -164,6 +165,17 @@ class DelegationActionSchemaTest {
         JsonNode revision = property(schemaOf("delegation-review"), "revision");
         assertThat(revision.path("minimum").asInt()).isEqualTo(1);
         assertThat(revision.path("maximum").asInt()).isEqualTo(1_024);
+    }
+
+    @Test
+    void reviewRetryPublishesItsIdentityAndRevisionBounds() {
+        ObjectNode schema = schemaOf("delegation-review-retry");
+        assertThat(property(schema, "retryId").path("format").asText()).isEqualTo("uuid");
+        assertThat(property(schema, "expectedInvocationId").path("format").asText()).isEqualTo("uuid");
+        assertThat(property(schema, "revision").path("minimum").asInt()).isEqualTo(1);
+        assertThat(property(schema, "revision").path("maximum").asInt()).isEqualTo(1_024);
+        assertThat(root(schema).path("required").toString())
+                .contains("taskId", "retryId", "expectedInvocationId");
     }
 
     /** The review decision is an enum, so its legal values are visible rather than guessed. */

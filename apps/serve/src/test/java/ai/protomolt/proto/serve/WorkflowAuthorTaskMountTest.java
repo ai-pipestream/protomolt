@@ -81,6 +81,9 @@ class WorkflowAuthorTaskMountTest {
             assertThatThrownBy(() -> gateway.invoke("DelegationService", "RegisterWorker",
                     "{\"workerId\":\"author\"}", Map.of("api_token", "author-token"), Map.of()))
                     .isInstanceOf(ForbiddenProtoRestException.class);
+            assertThatThrownBy(() -> gateway.invoke("DelegationService", "RetryCandidateReview",
+                    "{}", Map.of("api_token", "author-token"), Map.of()))
+                    .isInstanceOf(ForbiddenProtoRestException.class);
             var disabledRest = new ProtoRestMethodRegistry();
             ProtoMoltRestMount.register(disabledRest, catalog,
                     ApiTokenRequirement.apiKeyHeader("api_token"),
@@ -112,6 +115,8 @@ class WorkflowAuthorTaskMountTest {
                             .setWorkerId("author").build()));
                     denied(() -> delegation.offerTask(OfferTaskRequest.getDefaultInstance()));
                     denied(() -> delegation.reviewCandidate(ReviewCandidateRequest.getDefaultInstance()));
+                    denied(() -> delegation.retryCandidateReview(
+                            ai.protomolt.proto.delegation.v1.RetryCandidateReviewRequest.getDefaultInstance()));
                     var launch = WorkflowAuthoringServiceGrpc.newBlockingStub(authenticated)
                             .withDeadlineAfter(5, TimeUnit.SECONDS);
                     denied(() -> launch.launchAcceptedWorkflow(

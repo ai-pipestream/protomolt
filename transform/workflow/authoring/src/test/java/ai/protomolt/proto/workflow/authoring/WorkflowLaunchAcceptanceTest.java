@@ -327,15 +327,40 @@ class WorkflowLaunchAcceptanceTest {
                 offerEntry.toBuilder().setCoordinatorFrame(offerEntry.getCoordinatorFrame().toBuilder()
                         .setOffer(offerEntry.getCoordinatorFrame().getOffer().toBuilder()
                                 .setUnknownFields(unknown)))).build();
-        assertThatThrownBy(() -> WorkflowLaunchAcceptance.inspect(repository(unknownOffer), accepted.taskId()))
+        var unknownOfferBound = rebindReviewStart(unknownOffer, offerIndex, true);
+        assertThat(new DelegationReducer().reduce(unknownOfferBound).clean()).isTrue();
+        assertThatThrownBy(() -> WorkflowLaunchAcceptance.inspect(repository(unknownOfferBound), accepted.taskId()))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("unknown fields");
 
         var unknownCandidateEnvelope = accepted.transcript().toBuilder().setEntries(candidateIndex,
                 originalCandidateEntry.toBuilder().setWorkerFrame(
                         originalCandidateEntry.getWorkerFrame().toBuilder().setUnknownFields(unknown))).build();
+        var unknownCandidateBound = rebindReviewStart(unknownCandidateEnvelope, candidateIndex, false);
+        assertThat(new DelegationReducer().reduce(unknownCandidateBound).clean()).isTrue();
         assertThatThrownBy(() -> WorkflowLaunchAcceptance.inspect(
-                repository(unknownCandidateEnvelope), accepted.taskId()))
+                repository(unknownCandidateBound), accepted.taskId()))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("unknown fields");
+    }
+
+    private static Transcript rebindReviewStart(Transcript transcript, int selectedIndex, boolean offer) {
+        int startIndex = -1;
+        for (int i = 0; i < transcript.getEntriesCount(); i++) {
+            if (transcript.getEntries(i).hasCoordinatorFrame()
+                    && transcript.getEntries(i).getCoordinatorFrame().hasReviewStarted()) {
+                startIndex = i;
+                break;
+            }
+        }
+        if (startIndex < 0) throw new AssertionError("accepted transcript lacks review start");
+        TranscriptEntry start = transcript.getEntries(startIndex);
+        var identity = start.getCoordinatorFrame().getReviewStarted().getIdentity().toBuilder();
+        String digest = WorkRecords.fingerprint(transcript.getEntries(selectedIndex));
+        if (offer) identity.setOfferEntrySha256(digest);
+        else identity.setCandidateEntrySha256(digest);
+        return transcript.toBuilder().setEntries(startIndex, start.toBuilder().setCoordinatorFrame(
+                start.getCoordinatorFrame().toBuilder().setReviewStarted(
+                        start.getCoordinatorFrame().getReviewStarted().toBuilder()
+                                .setIdentity(identity)))).build();
     }
 
     @Test void selectedIdentityHashesTrackOnlyTheirSelectedMessages() throws Exception {

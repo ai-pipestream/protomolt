@@ -3,6 +3,7 @@ syntax = "proto3";
 package ai.protomolt.proto.delegation.v1;
 
 import "ai/protomolt/proto/delegation/v1/delegation.proto";
+import "ai/protomolt/proto/delegation/v1/review.proto";
 import "ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto";
 import "ai/protomolt/proto/validate/v1/validate.proto";
 
@@ -696,6 +697,12 @@ service DelegationService {
 
   // Applies the verdict on an open candidate: accept, or revise with feedback.
   rpc ReviewCandidate(ReviewCandidateRequest) returns (ReviewCandidateResponse);
+
+  // Retries the current failed review under worker-coordinate authority. Exact
+  // committed retry-key replay returns its original invocation even after the
+  // task ends. Changed intent conflicts. Deferred/manual reviews cannot retry.
+  // Losing the reply does not cancel review or undo remote fixture effects.
+  rpc RetryCandidateReview(RetryCandidateReviewRequest) returns (RetryCandidateReviewResponse);
 
   // Reads the recorded transcript from a cursor.
   rpc ReadTranscript(ReadTranscriptRequest) returns (ReadTranscriptResponse);

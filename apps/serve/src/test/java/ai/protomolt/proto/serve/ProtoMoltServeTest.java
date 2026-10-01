@@ -127,6 +127,7 @@ class ProtoMoltServeTest {
         JsonNode paths = MAPPER.readTree(get("/openapi.json").body()).path("paths");
         assertThat(paths.has("/grpc-json/DelegationService/AcceptTask")).isTrue();
         assertThat(paths.has("/grpc-json/DelegationService/OfferTask")).isTrue();
+        assertThat(paths.has("/grpc-json/DelegationService/RetryCandidateReview")).isTrue();
     }
 
     /** And it is not only documented: the route dispatches to the verb behind it. */

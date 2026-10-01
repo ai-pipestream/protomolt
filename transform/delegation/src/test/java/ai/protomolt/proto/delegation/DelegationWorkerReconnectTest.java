@@ -112,10 +112,11 @@ class DelegationWorkerReconnectTest {
     @Test
     void aFrameLostWithTheDeadStreamSurfacesAsALoudGapAfterReconnect() throws Exception {
         FailingRepository repository = new FailingRepository();
-        InProcessDelegationCoordinator coordinator = coordinator(repository);
+        AtomicReference<InProcessDelegationCoordinator> target =
+                new AtomicReference<>(coordinator(repository));
         String name = InProcessServerBuilder.generateName();
         Server server = InProcessServerBuilder.forName(name).directExecutor()
-                .addService(coordinator).build().start();
+                .addService(new ForwardingService(target)).build().start();
         ManagedChannel channel = InProcessChannelBuilder.forName(name).directExecutor().build();
         CountDownLatch finish = new CountDownLatch(1);
         DelegationWorker worker = new DelegationWorker(
@@ -127,8 +128,8 @@ class DelegationWorkerReconnectTest {
         try {
             worker.start();
             assertTrue(worker.awaitAdmission(Duration.ofSeconds(5)));
-            coordinator.offer(WORKER, TASK, spec("unit-tests"), Duration.ofMinutes(5));
-            awaitPhase(coordinator, DelegationReducer.Phase.LEASED);
+            target.get().offer(WORKER, TASK, spec("unit-tests"), Duration.ofMinutes(5));
+            awaitPhase(target.get(), DelegationReducer.Phase.LEASED);
 
             // The repository outage kills the stream mid-session; the message's
             // sequence was consumed by the dead stream but never recorded.
@@ -137,24 +138,39 @@ class DelegationWorkerReconnectTest {
                     "is the lease long enough?", "", List.of());
             awaitStreamDown(worker);
             assertTrue(worker.streamFailure().isPresent());
-            int entriesBefore = coordinator.transcript().getEntriesCount();
+            int entriesBefore = repository.current.getEntriesCount();
+            int writesAtFailure = repository.writes;
+            InProcessDelegationCoordinator failedCoordinator = target.get();
+            assertThrows(IllegalStateException.class, failedCoordinator::transcript);
+            assertThrows(IllegalStateException.class, failedCoordinator::state);
+            assertThrows(IllegalStateException.class, () -> failedCoordinator.eventsAfter(TASK, 0));
 
             // The replacement stream re-admits (the session scope is intact), but the
-            // next message skips the sequence the lost frame consumed: the reducer
-            // reports the gap and the stream fails loudly instead of hiding the loss.
+            // client had already consumed sequence one for the lost attempt-zero message.
+            // Reconstruct the coordinator from its last durable snapshot; sequence two
+            // now exposes the gap instead of being accepted or hidden by stale state.
             repository.failWrites = false;
+            failedCoordinator.close();
+            target.set(coordinator(repository));
             worker.start();
             assertTrue(worker.awaitAdmission(Duration.ofSeconds(5)));
             worker.sendMessage(TASK, TaskMessageKind.TASK_MESSAGE_KIND_QUESTION,
                     "asking again", "", List.of());
             awaitStreamDown(worker);
             assertTrue(worker.streamFailure().isPresent());
-            assertEquals(entriesBefore + 2, coordinator.transcript().getEntriesCount());
+            InProcessDelegationCoordinator restored = target.get();
+            assertEquals(entriesBefore + 2, restored.transcript().getEntriesCount());
+            assertEquals(writesAtFailure + 2, repository.writes);
+            assertTrue(restored.transcript().getEntriesList().stream()
+                    .noneMatch(entry -> entry.hasWorkerFrame()
+                            && entry.getWorkerFrame().hasTaskMessage()));
+            assertTrue(restored.state().clean(), restored.state().findings().toString());
         } finally {
             finish.countDown();
             worker.close();
             channel.shutdownNow();
             server.shutdownNow();
+            target.get().close();
         }
     }
 
@@ -248,6 +264,7 @@ class DelegationWorkerReconnectTest {
     private static final class FailingRepository implements TranscriptRepository {
         private Transcript current = Transcript.getDefaultInstance();
         private boolean failWrites;
+        private int writes;
 
         @Override
         public Optional<Transcript> load() {
@@ -256,10 +273,12 @@ class DelegationWorkerReconnectTest {
 
         @Override
         public void save(Transcript transcript) {
+            writes++;
             if (failWrites) {
                 throw new IllegalStateException("repository unavailable");
             }
             current = transcript;
         }
     }
+
 }

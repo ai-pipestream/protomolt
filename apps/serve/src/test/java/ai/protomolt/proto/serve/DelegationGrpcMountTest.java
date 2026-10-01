@@ -88,6 +88,14 @@ class DelegationGrpcMountTest {
                             .setValue(report.toByteString())).build();
             fixture.call("SubmitCandidate", SubmitCandidateRequest.newBuilder()
                     .setWorkerId(WORKER).setTaskId(task).setCandidate(candidate).build(), "operator");
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+            long cursor = 0;
+            while (fixture.coordinator.state().tasks().get(task).review().status()
+                    != ai.protomolt.proto.delegation.DelegationReducer.ReviewStatus.DEFERRED) {
+                assertThat(System.nanoTime()).isLessThan(deadline);
+                var event = fixture.coordinator.waitForEvent(task, cursor, java.time.Duration.ofMillis(100));
+                if (event.isPresent()) cursor = event.get().cursor();
+            }
             int before = fixture.coordinator.transcript().getEntriesCount();
             var stale = catchThrowableOfType(() -> fixture.call("ReviewCandidate",
                     ReviewCandidateRequest.newBuilder().setTaskId(task).setAttempt(1)

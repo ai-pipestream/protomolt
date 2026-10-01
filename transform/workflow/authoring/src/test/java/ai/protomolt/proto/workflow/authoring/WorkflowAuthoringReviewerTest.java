@@ -407,14 +407,30 @@ class WorkflowAuthoringReviewerTest {
             // under an existing authorization, even if the typed result is unchanged.
             var originalTranscript = transcripts.load().orElseThrow();
             var changedTranscript = originalTranscript.toBuilder();
+            int changedCandidateIndex = -1;
             for (int i = 0; i < originalTranscript.getEntriesCount(); i++) {
                 var entry = originalTranscript.getEntries(i);
                 if (entry.hasWorkerFrame() && entry.getWorkerFrame().hasCompletion()
                         && entry.getWorkerFrame().getTaskId().equals(taskId)) {
+                    changedCandidateIndex = i;
                     changedTranscript.setEntries(i, entry.toBuilder().setWorkerFrame(
                             entry.getWorkerFrame().toBuilder().setCompletion(
                                     entry.getWorkerFrame().getCompletion().toBuilder()
                                             .setSummary("changed accepted candidate"))));
+                }
+            }
+            if (changedCandidateIndex < 0) throw new AssertionError("accepted candidate missing");
+            String changedDigest = WorkRecords.fingerprint(changedTranscript.getEntries(changedCandidateIndex));
+            for (int i = 0; i < originalTranscript.getEntriesCount(); i++) {
+                var entry = originalTranscript.getEntries(i);
+                if (entry.hasCoordinatorFrame() && entry.getCoordinatorFrame().hasReviewStarted()
+                        && entry.getCoordinatorFrame().getTaskId().equals(taskId)) {
+                    changedTranscript.setEntries(i, entry.toBuilder().setCoordinatorFrame(
+                            entry.getCoordinatorFrame().toBuilder().setReviewStarted(
+                                    entry.getCoordinatorFrame().getReviewStarted().toBuilder()
+                                            .setIdentity(entry.getCoordinatorFrame().getReviewStarted()
+                                                    .getIdentity().toBuilder()
+                                                    .setCandidateEntrySha256(changedDigest)))));
                 }
             }
             assertThat(new DelegationReducer().reduce(changedTranscript.build()).clean()).isTrue();

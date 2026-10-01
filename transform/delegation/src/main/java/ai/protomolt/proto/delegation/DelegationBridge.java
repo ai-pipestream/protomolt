@@ -249,6 +249,12 @@ public final class DelegationBridge implements AutoCloseable {
         coordinator.review(taskId, attempt, revision, decision);
     }
 
+    /** Retries the identified failed review, preserving committed retry-key replay. */
+    public ai.protomolt.proto.delegation.v1.RetryCandidateReviewResponse retryCandidateReview(
+            ai.protomolt.proto.delegation.v1.RetryCandidateReviewRequest request) {
+        return coordinator.retryCandidateReview(request);
+    }
+
     /** Cancels the current offer or lease; see the coordinator. */
     public void cancel(String taskId, String reason) {
         coordinator.cancel(taskId, reason);

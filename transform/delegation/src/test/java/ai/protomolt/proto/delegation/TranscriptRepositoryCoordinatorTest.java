@@ -236,21 +236,39 @@ class TranscriptRepositoryCoordinatorTest {
             assertThat(responses.values).hasSize(1);
             assertThat(repository.current.getEntriesCount()).isEqualTo(2);
             repository.failWrites = true;
+            int writesBeforeFailure = repository.writes;
 
             assertThatThrownBy(() -> coordinator.offer(WORKER, TASK, spec("build"),
                     Duration.ofMinutes(5)))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("repository unavailable");
-            assertThat(coordinator.transcript().getEntriesCount()).isEqualTo(2);
-            assertThat(coordinator.eventsAfter(TASK, 0)).isEmpty();
-            assertThat(coordinator.state().tasks()).doesNotContainKey(TASK);
+                    .hasMessage("transcript publication is unavailable");
+            assertThat(repository.current.getEntriesCount()).isEqualTo(2);
+            assertThatThrownBy(coordinator::transcript).isInstanceOf(IllegalStateException.class)
+                    .hasMessage("transcript publication is unavailable");
+            assertThatThrownBy(() -> coordinator.eventsAfter(TASK, 0))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("transcript publication is unavailable");
+            assertThatThrownBy(coordinator::state).isInstanceOf(IllegalStateException.class)
+                    .hasMessage("transcript publication is unavailable");
             assertThat(responses.values).hasSize(1);
+            assertThat(repository.writes).isEqualTo(writesBeforeFailure + 1);
+
+            assertThatThrownBy(() -> coordinator.offer(WORKER, TASK, spec("build"), Duration.ofMinutes(5)))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("transcript publication is unavailable");
+            assertThat(repository.writes).isEqualTo(writesBeforeFailure + 1);
 
             repository.failWrites = false;
-            coordinator.offer(WORKER, TASK, spec("build"), Duration.ofMinutes(5));
-            DelegateResponse offer = responses.values.getLast();
-            assertThat(offer.hasOffer()).isTrue();
-            assertThat(offer.getSeq()).isEqualTo(1);
+            coordinator.close();
+            try (InProcessDelegationCoordinator restored = new InProcessDelegationCoordinator(
+                    AdmissionPolicy.allowAll(), CandidateReviewer.manual(), CLOCK, repository)) {
+                CapturingResponses resumed = new CapturingResponses();
+                restored.delegate(resumed).onNext(helloFrame(2, "replacement-hello"));
+                restored.offer(WORKER, TASK, spec("build"), Duration.ofMinutes(5));
+                DelegateResponse offer = resumed.values.getLast();
+                assertThat(offer.hasOffer()).isTrue();
+                assertThat(offer.getSeq()).isEqualTo(1);
+            }
         }
     }
 
@@ -263,14 +281,26 @@ class TranscriptRepositoryCoordinatorTest {
             CapturingResponses firstResponses = new CapturingResponses();
             coordinator.delegate(firstResponses).onNext(helloFrame(1));
             assertThat(firstResponses.error).isNotNull();
-            assertThat(coordinator.transcript().getEntriesCount()).isZero();
+            assertThat(repository.current.getEntriesCount()).isZero();
+            assertThatThrownBy(coordinator::transcript).isInstanceOf(IllegalStateException.class)
+                    .hasMessage("transcript publication is unavailable");
+            int writesAfterFailure = repository.writes;
+            CapturingResponses blocked = new CapturingResponses();
+            coordinator.delegate(blocked).onNext(helloFrame(1, "blocked-old-coordinator"));
+            assertThat(blocked.error).isNotNull();
+            assertThat(repository.writes).isEqualTo(writesAfterFailure);
 
             repository.failWrites = false;
-            CapturingResponses retryResponses = new CapturingResponses();
-            coordinator.delegate(retryResponses).onNext(helloFrame(1));
-            assertThat(retryResponses.error).isNull();
-            assertThat(retryResponses.values).hasSize(1);
-            assertThat(coordinator.transcript().getEntriesCount()).isEqualTo(2);
+            coordinator.close();
+            try (InProcessDelegationCoordinator restored = new InProcessDelegationCoordinator(
+                    AdmissionPolicy.allowAll(), CandidateReviewer.manual(), CLOCK, repository)) {
+                CapturingResponses retryResponses = new CapturingResponses();
+                restored.delegate(retryResponses).onNext(helloFrame(1, "fresh-coordinator-hello"));
+                assertThat(retryResponses.error).isNull();
+                assertThat(retryResponses.values).hasSize(1);
+                assertThat(retryResponses.values.getFirst().getSeq()).isEqualTo(1);
+                assertThat(restored.transcript().getEntriesCount()).isEqualTo(2);
+            }
         }
     }
 
@@ -285,8 +315,9 @@ class TranscriptRepositoryCoordinatorTest {
             assertThat(responses.error).isInstanceOf(StatusRuntimeException.class);
             StatusRuntimeException failure = (StatusRuntimeException) responses.error;
             assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.INTERNAL);
-            assertThat(failure.getStatus().getDescription()).contains("IllegalStateException")
-                    .contains("repository unavailable");
+            assertThat(failure.getStatus().getDescription())
+                    .contains("transcript publication is unavailable")
+                    .doesNotContain("repository unavailable");
         }
     }
 
@@ -352,6 +383,7 @@ class TranscriptRepositoryCoordinatorTest {
     private static final class FailingRepository implements TranscriptRepository {
         private Transcript current = Transcript.getDefaultInstance();
         private boolean failWrites;
+        private int writes;
 
         @Override
         public Optional<Transcript> load() {
@@ -360,6 +392,7 @@ class TranscriptRepositoryCoordinatorTest {
 
         @Override
         public void save(Transcript transcript) {
+            writes++;
             if (failWrites) {
                 throw new IllegalStateException("repository unavailable");
             }

@@ -163,6 +163,7 @@ class DelegationMessagingDurabilityTest {
             worker.onNext(acceptFrame(1));
             long cursorBefore = coordinator.eventsAfter("", 0)
                     .getLast().cursor();
+            int writesBeforeFailure = repository.writes;
 
             repository.failWrites = true;
             assertThrows(IllegalStateException.class,
@@ -170,22 +171,32 @@ class DelegationMessagingDurabilityTest {
                             TaskMessageKind.TASK_MESSAGE_KIND_NOTE, "not durable", "",
                             List.of()));
 
-            // Nothing became visible: no event, no transcript entry, no delivery, and
-            // the sequence was not consumed.
-            assertTrue(coordinator.eventsAfter("", cursorBefore).isEmpty());
-            assertEquals(cursorBefore,
-                    coordinator.eventsAfter("", 0).getLast().cursor());
+            // Nothing became visible: no event, no transcript entry, no delivery. The
+            // coordinator is poisoned because the save result is uncertain.
+            assertEquals(cursorBefore, repository.current.getEntriesCount());
+            assertThrows(IllegalStateException.class, coordinator::transcript);
+            assertThrows(IllegalStateException.class, coordinator::state);
+            assertThrows(IllegalStateException.class, () -> coordinator.eventsAfter("", 0));
             assertTrue(responses.values.stream()
                     .noneMatch(DelegateResponse::hasTaskMessage));
+            assertEquals(writesBeforeFailure + 1, repository.writes);
+            assertThrows(IllegalStateException.class, () -> coordinator.sendMessage(WORKER, TASK,
+                    TaskMessageKind.TASK_MESSAGE_KIND_NOTE, "still unavailable", "", List.of()));
+            assertEquals(writesBeforeFailure + 1, repository.writes);
 
             repository.failWrites = false;
-            coordinator.sendMessage(WORKER, TASK, TaskMessageKind.TASK_MESSAGE_KIND_NOTE,
-                    "durable note", "", List.of());
-            DelegateResponse emitted = responses.values.getLast();
-            assertTrue(emitted.hasTaskMessage());
-            assertEquals(1, emitted.getSeq());
-            assertEquals(cursorBefore + 1,
-                    coordinator.eventsAfter("", cursorBefore).get(0).cursor());
+            coordinator.close();
+            try (InProcessDelegationCoordinator restored = coordinator(repository)) {
+                CapturingResponses resumed = new CapturingResponses();
+                restored.delegate(resumed).onNext(helloFrame(2, "atomic-replacement-hello"));
+                restored.sendMessage(WORKER, TASK, TaskMessageKind.TASK_MESSAGE_KIND_NOTE,
+                        "durable note", "", List.of());
+                DelegateResponse emitted = resumed.values.getLast();
+                assertTrue(emitted.hasTaskMessage());
+                assertEquals(1, emitted.getSeq());
+                assertEquals(cursorBefore + 3,
+                        restored.eventsAfter("", cursorBefore).get(2).cursor());
+            }
         }
     }
 
@@ -204,9 +215,28 @@ class DelegationMessagingDurabilityTest {
             worker.onNext(workerMessageFrame(1, "atomic-q1", "never stored"));
 
             assertNotNull(responses.error);
-            assertEquals(entriesBefore, coordinator.transcript().getEntriesCount());
-            assertTrue(coordinator.eventsAfter(TASK, 0).stream()
-                    .noneMatch(event -> event.entry().getWorkerFrame().hasTaskMessage()));
+            assertEquals(entriesBefore, repository.current.getEntriesCount());
+            int writesAfterFailure = repository.writes;
+            assertThrows(IllegalStateException.class, coordinator::transcript);
+            assertThrows(IllegalStateException.class, () -> coordinator.eventsAfter(TASK, 0));
+            assertThrows(IllegalStateException.class, coordinator::state);
+            assertEquals(writesAfterFailure, repository.writes);
+
+            repository.failWrites = false;
+            coordinator.close();
+            try (InProcessDelegationCoordinator restored = coordinator(repository)) {
+                CapturingResponses resumed = new CapturingResponses();
+                StreamObserver<DelegateRequest> resumedWorker = restored.delegate(resumed);
+                // Reopen a fresh stream with the next session sequence, then reuse sequence
+                // one in the untouched attempt-zero message scope.
+                resumedWorker.onNext(helloFrame(2, "atomic-worker-message-hello"));
+                resumedWorker.onNext(workerMessageFrame(1, "atomic-q1-retry", "durable retry"));
+                assertNull(resumed.error);
+                assertEquals(entriesBefore + 3, repository.current.getEntriesCount());
+                assertTrue(repository.current.getEntriesList().getLast().getWorkerFrame().hasTaskMessage());
+                assertEquals(1, repository.current.getEntriesList().getLast()
+                        .getWorkerFrame().getSeq());
+            }
         }
     }
 
@@ -281,6 +311,7 @@ class DelegationMessagingDurabilityTest {
     private static final class FailingRepository implements TranscriptRepository {
         private Transcript current = Transcript.getDefaultInstance();
         private boolean failWrites;
+        private int writes;
 
         @Override
         public Optional<Transcript> load() {
@@ -289,6 +320,7 @@ class DelegationMessagingDurabilityTest {
 
         @Override
         public void save(Transcript transcript) {
+            writes++;
             if (failWrites) {
                 throw new IllegalStateException("repository unavailable");
             }
