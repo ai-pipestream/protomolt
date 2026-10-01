@@ -241,6 +241,22 @@ compatibility against the request/response contract commit `2fea5dc8`.
 
 ## Handler integration findings
 
+Integration checkpoint (2026-10-01): the lease/offer admission helper and signing
+identity check are implemented and reviewed in PRs #347 and #346, respectively.
+Their separate local authoring suites passed 67 and 61 tests without skips.
+The integration branch combines them with the preparation store and static
+fixture admission; these results do not yet prove the combined handler.
+PR #343's fixture readiness fix landed on both main remotes at `f4440599`.
+
+The next implementation is `WorkflowCandidatePreparer`, with explicit trusted
+repositories, runner, action context, policy reference, current-trust supplier,
+signing identity and clock. An explicit trusted source-template callback checks
+starter restrictions after generic preflight and before intent reservation.
+The production authoring module must not depend on samples. Transport integration
+must preserve distinct invalid-input, inactive-state, conflict, terminal-failure,
+corrupt-evidence and invalid-response outcomes; terminal errors include the
+persisted preparation binding and run ID. No preparation RPC is available yet.
+
 `DelegationReducer.TaskState` exposes phase, holder, attempt and candidate
 revision, but not lease expiry. A clean reduction alone does not establish an
 unexpired wall-clock lease. The preparation handler must validate and scan the

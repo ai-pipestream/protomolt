@@ -68,7 +68,9 @@ class ErrorContractTest {
     void authoringFailuresKeepTheirTypedStatusAndStableCode() {
         var statuses = java.util.Map.of(
                 "workflow-authoring-rejected", Status.Code.FAILED_PRECONDITION,
+                "preparation-attempt-failed", Status.Code.FAILED_PRECONDITION,
                 "workflow-launch-conflict", Status.Code.ALREADY_EXISTS,
+                "workflow-preparation-conflict", Status.Code.ALREADY_EXISTS,
                 "workflow-authoring-unavailable", Status.Code.UNAVAILABLE,
                 "workflow-authoring-deadline", Status.Code.DEADLINE_EXCEEDED,
                 "workflow-authoring-storage-failed", Status.Code.INTERNAL);
