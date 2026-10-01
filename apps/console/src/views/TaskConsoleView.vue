@@ -184,6 +184,8 @@
               <div>{{ recovery.reason }}</div>
               <div class="text-caption mt-1">Responsible: {{ recovery.actor }}. {{ recovery.action }}</div>
               <v-btn v-if="recovery.retry" size="small" class="mt-2" @click="reoffer">Offer a new attempt</v-btn>
+              <v-btn v-if="retryableReview" size="small" class="mt-2" :loading="retryingReview"
+                :disabled="retryingReview" @click="retryReview">Retry review</v-btn>
               <details v-if="recovery.cancel" class="mt-2">
                 <summary>Stop this attempt</summary>
                 <v-text-field v-model="cancelReason" label="Reason to cancel" density="compact" class="mt-2" />
@@ -441,12 +443,17 @@ const reviewVerdict = ref('')
 const reviewFeedback = ref('')
 const failedChecks = ref<string[]>([])
 const reviewing = ref(false)
+const retryingReview = ref(false)
+const reviewRetryIds = new Map<string, string>()
 let watchController: AbortController | null = null
 let selectionGeneration = 0
 
 const contract = computed(() => checkStatuses(events.value))
 const candidate = computed(() => latestCandidate(events.value))
 const recovery = computed(() => selected.value ? taskRecovery(selected.value) : null)
+const retryableReview = computed(() => selected.value?.phase === 'candidate'
+  && selected.value.review?.status === 'failed' && !!selected.value.review.invocationId
+  && !!selected.value.review.attempt && !!selected.value.review.revision)
 const reviewableCandidate = computed(() =>
   candidate.value !== null && candidate.value.attempt > 0 && candidate.value.revision > 0)
 const reviewIdentity = computed(() => {
@@ -741,6 +748,25 @@ async function exportSignedRecord() {
     error.value = message(failure)
   } finally {
     exportingRecord.value = false
+  }
+}
+
+async function retryReview() {
+  const task = selected.value
+  const review = task?.review
+  if (!task || !retryableReview.value || !review?.invocationId || !review.attempt || !review.revision
+      || retryingReview.value) return
+  const key = `${task.taskId}:${review.attempt}:${review.revision}:${review.invocationId}`
+  const retryId = reviewRetryIds.get(key) ?? crypto.randomUUID()
+  reviewRetryIds.set(key, retryId)
+  retryingReview.value = true
+  try {
+    await taskApi.retryReview(task.taskId, review.attempt, review.revision, review.invocationId, retryId)
+    await refreshSummaries()
+  } catch (failure) {
+    error.value = message(failure)
+  } finally {
+    retryingReview.value = false
   }
 }
 
