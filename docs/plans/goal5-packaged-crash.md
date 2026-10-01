@@ -40,3 +40,14 @@ Local AMD64 inputs built from `a4adb706588417356d43343dca50eea02553220c`:
 These local image inputs do not establish publication, anonymous pull, ARM64,
 live-model behavior, or NAS deployment. Native publication jobs must execute
 the same gate against the images they publish before assembling the bundle.
+
+The integrated source `67517e0613e07c32306b677d18174de9a3a40b68` also passed
+this gate locally on AMD64 on 2026-10-01: one test, no skips, failures or errors
+(33.363 seconds). This source includes the expired-lease retry limit and the
+installed-process crash test. Its local image inputs were:
+
+- Authoring: `sha256:b1795737d28dee961bb141ff39801e00a8c0592e35ca838d4694a5cdff90ae4e`
+- Repository: `sha256:0cd1a39f24a601962a2f8e575337f1b9e95e394982fa1afe2b83f3ea82879040`
+
+This is local package evidence only. The native publication gates must run
+again against the exact merged source and published images.
