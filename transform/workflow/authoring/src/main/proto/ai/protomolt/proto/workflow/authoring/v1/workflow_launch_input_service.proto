@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.workflow.authoring.v1;
+
+import "ai/protomolt/proto/workflow/authoring/v1/workflow_launch_input.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.workflow.authoring.v1";
+
+// Proposed opt-in surface; descriptors do not mount handlers. Requires explicit
+// workflow-launch authority. Validate requests and successful responses, reject
+// unknown fields and unsupported rules. Recheck trusted acceptance per call.
+// These methods perform no fixture calls, promotion, authorization or job insertion.
+service WorkflowLaunchInputService {
+  // Read the pinned input contract without external execution or storage writes.
+  // Invalid shape is INVALID_ARGUMENT; denied authority is PERMISSION_DENIED;
+  // stale/non-authored acceptance is FAILED_PRECONDITION. Corrupt trusted data is
+  // DATA_LOSS. Dependency outages are UNAVAILABLE; deadlines are DEADLINE_EXCEEDED.
+  rpc GetWorkflowLaunchInputContract(GetWorkflowLaunchInputContractRequest)
+      returns (GetWorkflowLaunchInputContractResponse);
+
+  // Validate JSON and store the resulting protobuf input. Uses the same status
+  // categories as lookup; invalid input or unsupported rules fail before storage.
+  // Check the returned full reference and resolved bytes after storage. Existing
+  // content with incompatible media/redaction metadata is FAILED_PRECONDITION;
+  // do not return it as prepared input or alter the existing reference.
+  // Same bytes with compatible metadata return the same reference. An
+  // interrupted call may leave an unreferenced artifact; retry can repeat storage.
+  // Cancellation does not undo stored data. Preparation grants no launch rights.
+  rpc PrepareWorkflowLaunchInput(PrepareWorkflowLaunchInputRequest)
+      returns (PrepareWorkflowLaunchInputResponse);
+}
