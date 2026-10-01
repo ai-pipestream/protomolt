@@ -3,8 +3,12 @@
 Status: sample-private state contract reviewed, including the durable submission
 observation needed after restart. Complete-import compilation, five generated and
 dynamic validation tests, Buf lint and full schema-image compatibility comparison
-with discovery-runtime commit 9ac73251 pass locally. The remote sample still needs
-an explicit task ID; this document does not claim a running idle mode.
+with discovery-runtime commit 9ac73251 pass locally. The atomic state store is
+implemented, with seven filesystem and transition tests passing alongside the
+five contract tests. These cover locking, identity binding, corrupt files, failed
+publication recovery and preservation of saved intent when an assignment moves.
+The discovery loop and installed-worker restart proof remain unqualified; this
+document does not claim a running idle mode.
 
 Add `--discover <coordinator> <fixture> <worker-id> <state-dir>` while retaining
 the explicit-task invocation. Use the existing discovery, context, acceptance,
