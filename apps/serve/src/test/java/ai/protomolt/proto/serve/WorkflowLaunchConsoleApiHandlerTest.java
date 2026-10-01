@@ -39,7 +39,7 @@ class WorkflowLaunchConsoleApiHandlerTest {
     private static final String TOKEN = "console-token-with-at-least-32-characters";
     private static final String[] ACTIONS = {
             "get-accepted-workflow", "get-workflow-launch-input-contract",
-            "prepare-workflow-launch-input", "launch-accepted-workflow"
+            "prepare-workflow-launch-input", "launch-accepted-workflow", "get-workflow-launch-status"
     };
     private final HttpClient client = HttpClient.newHttpClient();
     private final List<Call> calls = new CopyOnWriteArrayList<>();
@@ -79,7 +79,7 @@ class WorkflowLaunchConsoleApiHandlerTest {
     @Test void fixedRoutesUseTheUnchangedSessionCaller() throws Exception {
         String cookie = cookie(Caller.scoped("browser-launcher",
                 Set.of(Scopes.WORKER_COORDINATE, Scopes.WORKFLOW_LAUNCH)));
-        for (String route : List.of("accepted", "contract", "prepare", "launch")) {
+        for (String route : List.of("accepted", "contract", "prepare", "launch", "status")) {
             assertThat(post("/" + route, route.equals("prepare") ? smallPrepare() : "{}",
                     cookie, base, null).statusCode()).isEqualTo(200);
         }
@@ -93,7 +93,7 @@ class WorkflowLaunchConsoleApiHandlerTest {
         assertThat(post("/arbitrary", "{}", cookie, base, null).statusCode()).isEqualTo(404);
         assertThat(post("/accepted/more", "{}", cookie, base, null).statusCode()).isEqualTo(404);
         assertThat(get("/accepted", cookie).statusCode()).isEqualTo(405);
-        assertThat(calls).hasSize(4);
+        assertThat(calls).hasSize(5);
     }
 
     @Test void rejectsCrossSiteMetadataWithoutTrustingForwardedHost() throws Exception {

@@ -45,6 +45,29 @@ export interface SavedLaunch {
   result?: LaunchResult
 }
 
+export type WorkflowLaunchJobState =
+  | 'WORKFLOW_LAUNCH_JOB_STATE_QUEUED'
+  | 'WORKFLOW_LAUNCH_JOB_STATE_RUNNING'
+  | 'WORKFLOW_LAUNCH_JOB_STATE_WAITING'
+  | 'WORKFLOW_LAUNCH_JOB_STATE_COMPLETED'
+  | 'WORKFLOW_LAUNCH_JOB_STATE_FAILED'
+  | 'WORKFLOW_LAUNCH_JOB_STATE_DEAD'
+
+export interface WorkflowLaunchJobStatus {
+  jobId: string
+  state: WorkflowLaunchJobState
+  attempt: number
+  maxAttempts: number
+  createdAt: string
+  updatedAt: string
+  completedAt?: string
+}
+
+export type WorkflowLaunchStatus =
+  | { request: LaunchIntent; notAuthorized: true }
+  | { request: LaunchIntent; authorizedNotQueued: true }
+  | { request: LaunchIntent; job: WorkflowLaunchJobStatus }
+
 export class WorkflowLaunchApiError extends Error {
   constructor(public readonly status: number, code: string) {
     super(code)
@@ -57,6 +80,11 @@ type StorageLike = Pick<Storage, 'length' | 'key' | 'getItem' | 'setItem'>
 
 const PREFIX = 'protomolt.workflow-launch.intent.v1.'
 const MAX_INPUT_BYTES = 4 * 1024 * 1024
+const JOB_STATES = new Set<WorkflowLaunchJobState>([
+  'WORKFLOW_LAUNCH_JOB_STATE_QUEUED', 'WORKFLOW_LAUNCH_JOB_STATE_RUNNING',
+  'WORKFLOW_LAUNCH_JOB_STATE_WAITING', 'WORKFLOW_LAUNCH_JOB_STATE_COMPLETED',
+  'WORKFLOW_LAUNCH_JOB_STATE_FAILED', 'WORKFLOW_LAUNCH_JOB_STATE_DEAD',
+])
 
 export function newLaunchId(): string {
   if (typeof crypto.randomUUID === 'function') return crypto.randomUUID()
@@ -111,6 +139,40 @@ function isIntent(value: unknown): value is LaunchIntent {
   const intent = value as Partial<LaunchIntent>
   return typeof intent.launchId === 'string' && isAcceptance(intent.acceptance)
     && isReference(intent.input)
+}
+
+function canonicalLaunchId(value: string): string { return value.toLowerCase() }
+
+function isJobStatus(value: unknown, launchId: string): value is WorkflowLaunchJobStatus {
+  if (!value || typeof value !== 'object') return false
+  const job = value as Partial<WorkflowLaunchJobStatus>
+  if (job.jobId !== launchId || !JOB_STATES.has(job.state as WorkflowLaunchJobState)
+      || !Number.isInteger(job.attempt) || job.attempt! < 0
+      || !Number.isInteger(job.maxAttempts) || job.maxAttempts! < 1
+      || typeof job.createdAt !== 'string' || !Number.isFinite(Date.parse(job.createdAt))
+      || typeof job.updatedAt !== 'string' || !Number.isFinite(Date.parse(job.updatedAt))) return false
+  const terminal = job.state === 'WORKFLOW_LAUNCH_JOB_STATE_COMPLETED'
+    || job.state === 'WORKFLOW_LAUNCH_JOB_STATE_FAILED'
+    || job.state === 'WORKFLOW_LAUNCH_JOB_STATE_DEAD'
+  return terminal ? typeof job.completedAt === 'string' && Number.isFinite(Date.parse(job.completedAt))
+    : job.completedAt === undefined
+}
+
+function isStatus(value: unknown, intent: LaunchIntent): value is WorkflowLaunchStatus {
+  if (!value || typeof value !== 'object') return false
+  const status = value as Partial<WorkflowLaunchStatus>
+  const request = status.request
+  if (!request || !isIntent(request)
+      || request.launchId !== canonicalLaunchId(intent.launchId)
+      || !sameAcceptance(request.acceptance, intent.acceptance)
+      || !sameArtifact(request.input, intent.input)) return false
+  const raw = value as Record<string, unknown>
+  const outcomes = ['notAuthorized', 'authorizedNotQueued', 'job']
+    .filter((field) => Object.prototype.hasOwnProperty.call(raw, field))
+  if (outcomes.length !== 1) return false
+  if (outcomes[0] === 'notAuthorized') return raw.notAuthorized === true
+  if (outcomes[0] === 'authorizedNotQueued') return raw.authorizedNotQueued === true
+  return isJobStatus(raw.job, request.launchId)
 }
 
 function key(intent: LaunchIntent): string {
@@ -205,6 +267,16 @@ export class WorkflowLaunchApi {
       throw new Error('Launch response does not match the saved request.')
     }
     this.intents.recordResult(intent, result)
+    return result
+  }
+
+  /** Read only the job bound to this exact saved intent; never submit on refresh. */
+  async status(intent: LaunchIntent, signal?: AbortSignal): Promise<WorkflowLaunchStatus> {
+    if (!isIntent(intent)) throw new Error('Launch intent is incomplete.')
+    const result = await this.post<unknown>('status', { request: intent }, signal)
+    if (!isStatus(result, intent)) {
+      throw new Error('Launch status does not match the saved request.')
+    }
     return result
   }
 

@@ -145,6 +145,13 @@ final class WorkflowAuthoringMount {
             };
         }
 
+        ai.protomolt.proto.workflow.authoring.WorkflowLaunchStatusOperations statusOperations(
+                TranscriptRepository transcripts) {
+            Objects.requireNonNull(transcripts, "transcripts");
+            return request -> new ai.protomolt.proto.workflow.authoring.WorkflowLaunchStatusReader(
+                    ledger, transcripts, reviewer(), artifacts, jobs, actions).get(request);
+        }
+
         WorkflowAuthoringOperations operations(TranscriptRepository transcripts) {
             Objects.requireNonNull(transcripts, "transcripts");
             return new WorkflowAuthoringOperations() {

@@ -118,4 +118,57 @@ describe('WorkflowLaunchApi', () => {
       inputJson: Buffer.from('{"text":"é"}', 'utf8').toString('base64') })
     expect(String(init.body)).not.toContain('api_token')
   })
+
+  it.each([
+    [{ request: intent, notAuthorized: true }, 'notAuthorized'],
+    [{ request: intent, authorizedNotQueued: true }, 'authorizedNotQueued'],
+    [{ request: intent, job: {
+      jobId: intent.launchId, state: 'WORKFLOW_LAUNCH_JOB_STATE_QUEUED',
+      attempt: 0, maxAttempts: 3, createdAt: '2026-10-01T12:00:00Z',
+      updatedAt: '2026-10-01T12:00:00Z',
+    } }, 'job'],
+    ...(['RUNNING', 'WAITING'] as const).map((name) => [{ request: intent, job: {
+      jobId: intent.launchId, state: `WORKFLOW_LAUNCH_JOB_STATE_${name}`,
+      attempt: 1, maxAttempts: 3, createdAt: '2026-10-01T12:00:00Z',
+      updatedAt: '2026-10-01T12:01:00Z',
+    } }, 'job'] as const),
+    [{ request: intent, job: {
+      jobId: intent.launchId, state: 'WORKFLOW_LAUNCH_JOB_STATE_COMPLETED',
+      attempt: 1, maxAttempts: 3, createdAt: '2026-10-01T12:00:00Z',
+      updatedAt: '2026-10-01T12:02:00Z', completedAt: '2026-10-01T12:02:00Z',
+    } }, 'job'],
+    ...(['FAILED', 'DEAD'] as const).map((name) => [{ request: intent, job: {
+      jobId: intent.launchId, state: `WORKFLOW_LAUNCH_JOB_STATE_${name}`,
+      attempt: 1, maxAttempts: 3, createdAt: '2026-10-01T12:00:00Z',
+      updatedAt: '2026-10-01T12:02:00Z', completedAt: '2026-10-01T12:02:00Z',
+    } }, 'job'] as const),
+  ].map(([status, label]) => ({ status, label })))('reads a bound status without launching or changing the saved intent', async ({ status }) => {
+    intents.persist(intent)
+    const fetchFn = vi.fn().mockResolvedValue(response(status))
+    const api = new WorkflowLaunchApi(fetchFn, intents)
+    await expect(api.status(intent)).resolves.toEqual(status)
+    expect(fetchFn).toHaveBeenCalledTimes(1)
+    expect(fetchFn.mock.calls[0]?.[0]).toBe('/api/workflow-launch/status')
+    expect(JSON.parse(String(fetchFn.mock.calls[0]?.[1]?.body))).toEqual({ request: intent })
+    expect(intents.list(acceptance.taskId)[0]?.intent).toEqual(intent)
+    expect(intents.list(acceptance.taskId)[0]?.result).toBeUndefined()
+  })
+
+  it.each([
+    { request: { ...intent, input: { ...intent.input, sha256: '0'.repeat(64) } }, notAuthorized: true },
+    { request: { ...intent, acceptance: { ...acceptance, revision: 2 } }, notAuthorized: true },
+    { request: intent, notAuthorized: true, authorizedNotQueued: true },
+    { request: intent, job: { jobId: '00000000-0000-4000-8000-000000000099',
+      state: 'WORKFLOW_LAUNCH_JOB_STATE_RUNNING', attempt: 1, maxAttempts: 3,
+      createdAt: '2026-10-01T12:00:00Z', updatedAt: '2026-10-01T12:01:00Z' } },
+    { request: intent, job: { jobId: intent.launchId,
+      state: 'WORKFLOW_LAUNCH_JOB_STATE_COMPLETED', attempt: 1, maxAttempts: 3,
+      createdAt: '2026-10-01T12:00:00Z', updatedAt: '2026-10-01T12:01:00Z' } },
+    { request: intent, job: { jobId: intent.launchId,
+      state: 'WORKFLOW_LAUNCH_JOB_STATE_UNSPECIFIED', attempt: 1, maxAttempts: 3,
+      createdAt: '2026-10-01T12:00:00Z', updatedAt: '2026-10-01T12:01:00Z' } },
+  ])('refuses malformed or mismatched status before displaying success: %s', async (status) => {
+    const api = new WorkflowLaunchApi(vi.fn().mockResolvedValue(response(status)), intents)
+    await expect(api.status(intent)).rejects.toThrow('does not match')
+  })
 })

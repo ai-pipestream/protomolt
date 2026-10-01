@@ -206,6 +206,14 @@ class AuthoringRemoteProcessTest {
             String consoleCookie = loginBrowser(httpPort, CONSOLE_TOKEN);
             assertThat(browserCall(httpPort, "launch", launchRequest, consoleCookie).statusCode()).isEqualTo(403);
             String launchCookie = loginBrowser(httpPort, BROWSER_TOKEN);
+            var statusRequest = ai.protomolt.proto.workflow.authoring.v1.GetWorkflowLaunchStatusRequest
+                    .newBuilder().setRequest(launchRequest).build();
+            var statusService = ai.protomolt.proto.workflow.authoring.v1.WorkflowLaunchStatusServiceGrpc
+                    .newBlockingStub(channel)
+                    .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(operatorHeaders));
+            assertThat(statusService.withDeadlineAfter(10, TimeUnit.SECONDS)
+                    .getWorkflowLaunchStatus(statusRequest).getNotAuthorized()).isTrue();
+            assertThat(browserCall(httpPort, "status", statusRequest, consoleCookie).statusCode()).isEqualTo(403);
             var browserContract = browserCall(httpPort, "contract",
                     ai.protomolt.proto.workflow.authoring.v1.GetWorkflowLaunchInputContractRequest
                             .newBuilder().setAcceptance(accepted).build(), launchCookie);
@@ -231,6 +239,18 @@ class AuthoringRemoteProcessTest {
 
             JsonNode job = awaitCompletedJob(mcp, LAUNCH_ID, Duration.ofSeconds(90));
             assertThat(job.path("status").asText()).isEqualTo("COMPLETED");
+            var launchStatus = statusService.withDeadlineAfter(10, TimeUnit.SECONDS)
+                    .getWorkflowLaunchStatus(statusRequest);
+            assertThat(launchStatus.getRequest()).isEqualTo(launchRequest);
+            assertThat(launchStatus.getJob().getJobId()).isEqualTo(LAUNCH_ID);
+            assertThat(launchStatus.getJob().getState()).isEqualTo(
+                    ai.protomolt.proto.workflow.authoring.v1.WorkflowLaunchJobState
+                            .WORKFLOW_LAUNCH_JOB_STATE_COMPLETED);
+            var browserStatus = browserCall(httpPort, "status", statusRequest, launchCookie);
+            assertThat(browserStatus.statusCode()).isEqualTo(200);
+            var statusBuilder = launchStatus.toBuilder().clear();
+            JsonFormat.parser().merge(browserStatus.body(), statusBuilder);
+            assertThat(statusBuilder.build()).isEqualTo(launchStatus);
             assertThat(job.path("result").path("operationId").asText()).isEqualTo(JOB_OPERATION);
             assertThat(job.path("result").path("contentSha256").asText())
                     .isEqualTo(sha256("process-input\n value".getBytes(StandardCharsets.UTF_8)));

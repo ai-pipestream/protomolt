@@ -1,6 +1,8 @@
 # Accepted workflow launch status
 
-Status: reviewed contract draft; no handler, browser route or public mount.
+Status: contract and runtime implemented in the working branch; local validation
+passed. Not merged or deployed. Rendered-browser verification against the installed
+server remains outstanding; fixture-backed browser verification passed.
 
 ## Operations
 
@@ -8,7 +10,7 @@ Status: reviewed contract draft; no handler, browser route or public mount.
 - New: GetWorkflowLaunchStatus, scoped to workflow-launch. Its request wraps the
   existing complete launch intent; no launch response or authorization receipt is
   needed to recover from a lost reply.
-- Extended after implementation: the browser bridge gets one fixed status route.
+- Extended: the browser bridge has one fixed status route.
   The session keeps worker-coordinate plus workflow-launch. Do not grant
   service-invoke or call get-job with a substituted identity.
 
@@ -47,13 +49,25 @@ No generator changes are included.
 
 ## Implementation and acceptance backlog
 
-1. Scoped status action and optional gRPC/REST/MCP mount. Prove denied scopes have
-   no store reads; absent authorization never reads an unrelated job; altered intent
-   conflicts; corrupt authorization or mismatched job is DATA_LOSS; storage outages
-   and deadlines remain distinct. Cover all six job states and pending insertion.
-2. Fixed authenticated browser route and saved-request status display. Prove local
-   pending launch recovery, stale selection rejection, bounded errors, and no broad
-   job access. Verify HTTP plus rendered browser behavior against installed services.
+Local evidence for the runtime slice:
+
+- Native contract, action, generated gRPC, reviewer and HTTP route tests pass.
+  Coverage includes all six job states, absent authorization without job reads,
+  conflicting intent, corrupt ledger bytes, storage failure and job binding.
+- The installed AuthoringRemoteProcessTest reads not_authorized before launch,
+  then COMPLETED through generated gRPC and the authenticated HTTP status route.
+  The ordinary console session is denied; the named scoped session succeeds.
+- Console tests and the production build pass. Saved-intent status tests
+  cover stale replies, retries and invalid response bindings.
+- The rendered console, using a local HTTP fixture, displays Execution completed,
+  attempt count and completion time after Refresh status on a saved request.
+  This is UI evidence; installed-server transport evidence is the test above.
+
+Remaining acceptance work:
+
+1. Review and land the scoped status action, mount and fixed browser route after CI.
+2. Verify rendered browser behavior against installed services, combining the
+   separately tested browser display and authenticated HTTP transport.
 3. Worker retry-ceiling regression: the current JDBC lease sweeper requeues expired
    RUNNING rows without checking max_attempts, and claim increments unconditionally.
    Decide and implement crash recovery at the final attempt with PostgreSQL tests.

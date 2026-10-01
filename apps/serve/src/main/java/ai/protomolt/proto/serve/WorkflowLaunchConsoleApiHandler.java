@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 
-/** Four fixed workflow-launch verbs over the authenticated task-console cookie. */
+/** Fixed workflow-launch verbs over the authenticated task-console cookie. */
 final class WorkflowLaunchConsoleApiHandler implements HttpHandler {
     private static final String PREFIX = "/api/workflow-launch";
     private static final int MAX_BODY_BYTES = 8 * 1024 * 1024;
@@ -42,6 +42,7 @@ final class WorkflowLaunchConsoleApiHandler implements HttpHandler {
                 case PREFIX + "/contract" -> "get-workflow-launch-input-contract";
                 case PREFIX + "/prepare" -> "prepare-workflow-launch-input";
                 case PREFIX + "/launch" -> "launch-accepted-workflow";
+                case PREFIX + "/status" -> "get-workflow-launch-status";
                 default -> null;
             };
             if (action == null) { error(exchange, 404, "not-found"); return; }
