@@ -147,7 +147,7 @@ class WorkflowPreparationContractTest {
                 .setOfferEntrySha256(offerHash).setSourceSha256(sourceHash).build();
     }
 
-    private static WorkflowAuthoringDeliverable authored(String sourceHash) {
+    static WorkflowAuthoringDeliverable authored(String sourceHash) {
         ArtifactReference evidence = artifact(HASH_A, "application/x-protobuf");
         Workflow workflow = Workflow.newBuilder().setName("prepared-workflow")
                 .setInputType("example.v1.Input").setValidateContract(true)
