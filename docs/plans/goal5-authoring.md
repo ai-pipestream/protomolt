@@ -310,3 +310,65 @@ submission; exact retry producing one version and one job acceptance event;
 changed source/input under a reused launch identity; and durable evidence tying
 the job source snapshot to the promoted workflow. These tests precede the full
 PostgreSQL, Kafka, remote-effect and published-starter qualification.
+
+## Launch contract slice
+
+`samples/.../starter/v1/workflow_launch.proto` adds four sample messages, with
+no new service or mounted endpoint. `WorkflowAcceptedCandidate` identifies the
+accepted task, attempt and revision and pins deterministic digests of its
+TaskSpec, CompletionCandidate and accepted TranscriptEntry.
+`WorkflowAuthoringLaunchRequest` requires a caller UUID and an input artifact.
+`WorkflowAuthoringLaunchAuthorization` reuses that request, the policy reference,
+the existing authored deliverable and VersionedWorkflow. The result names the job
+UUID and authorization artifact; it asserts job existence, not execution success.
+
+Sol reviewed the identity, validation and retry design before runtime fixtures.
+Request/response validation covers required fields, UUIDs, digests, attempt and
+revision bounds, artifact media/redaction/size rules and promoted-workflow equality.
+JSON Schema can expose field constraints; CEL relationships remain runtime rules.
+No OpenAPI endpoint or generator change belongs to this sample contract slice.
+
+The handler must perform the following checks beyond annotation validation:
+
+- Reload and reduce the trusted transcript; require terminal acceptance of the
+  selected attempt/revision and matching worker, offer and candidate. Reject
+  unknown fields in the selected messages, including the decoded typed result.
+- Compute identity digests with deterministic protobuf serialization of those
+  parsed messages. These server identities are not cross-language canonical
+  protobuf hashes. Check the full referenced artifact metadata and bytes.
+- Before first authorization, independently verify the accepted deliverable,
+  pinned policy, fixtures, run and receipt. Parse and validate launch input under
+  the pinned descriptor before live fixture calls or launch side effects.
+- Derive the version as `accepted-` plus the accepted-identity message digest;
+  copy the accepted coordinator frame's validated `sent_at` into `created_at`.
+  Validate the promoted workflow fingerprint and exact compiled bytes.
+- Atomically create or compare authorization under the launch UUID. Reject a
+  changed intent without promotion or insertion. A crash or competing verifier
+  before this write may repeat fixture calls; fixture services need their own
+  idempotency where calls have effects.
+- On recovery, validate the stored authorization, current acceptance and pinned
+  artifacts without rerunning live fixtures. Reuse its promotion envelope and
+  submit the exact admitted inline JSON/input with the launch UUID as job UUID.
+  Confirm a matching job and committed version before returning the result.
+- Resolve the result artifact back to the exact keyed authorization and check
+  `job_id == request.launch_id`. The caller must not supply its own authorization
+  as a substitute for the trusted keyed record.
+
+Malformed input, unaccepted/stale identity, failed independent checks and identity
+conflicts stop before launch effects. Storage or transport failures propagate and
+cannot produce a success result; retry uses the same UUID. Missing artifacts and
+unsupported validation rules fail closed. A lost response or client disconnect
+does not revoke persisted authorization. Once a job exists, cancellation uses the
+existing job operation; there is no pre-insertion launch-cancellation API in this
+slice. The handler and keyed store remain unimplemented. Their acceptance tests
+must prove crash recovery and concurrent same/different UUID payload behavior
+before the starter is described as available.
+
+Local contract checks passed: complete-import Java generation/compilation, Buf
+lint and compatibility, and all 55 sample tests with no skips. Six new runtime
+fixture tests cover valid requests/results, missing fields, UUID/hash formats,
+attempt/revision bounds, inclusive 4 MiB limits, redaction/media rules and
+promoted-workflow equality. Generated launch JSON Schemas expose UUID/required
+constraints and preserve CEL as `x-protomolt-cel`; no endpoint is advertised.
+Fabricated but well-formed hashes deliberately pass annotation fixtures, making
+the remaining trusted-storage verification obligation explicit.
