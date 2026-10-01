@@ -20,6 +20,9 @@ import ai.protomolt.proto.workflow.authoring.WorkflowAuthoringLauncher;
 import ai.protomolt.proto.workflow.authoring.WorkflowAuthoringOperations;
 import ai.protomolt.proto.workflow.authoring.WorkflowAuthoringReviewer;
 import ai.protomolt.proto.workflow.authoring.WorkflowLaunchAuthorizationRepository;
+import ai.protomolt.proto.workflow.authoring.WorkflowLaunchInputOperations;
+import ai.protomolt.proto.workflow.authoring.WorkflowLaunchInputPreparer;
+import ai.protomolt.proto.workflow.authoring.WorkflowLaunchInputException;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Message;
 import java.io.IOException;
@@ -116,6 +119,29 @@ final class WorkflowAuthoringMount {
                     return CandidateReviewer.ReviewDecision.pending();
                 }
                 return reviewer().review(context);
+            };
+        }
+
+        WorkflowLaunchInputOperations inputOperations(TranscriptRepository transcripts) {
+            Objects.requireNonNull(transcripts, "transcripts");
+            return new WorkflowLaunchInputOperations() {
+                private WorkflowLaunchInputPreparer preparer() {
+                    return new WorkflowLaunchInputPreparer(transcripts, reviewer(), artifacts);
+                }
+
+                @Override
+                public ai.protomolt.proto.workflow.authoring.v1.GetWorkflowLaunchInputContractResponse contract(
+                        ai.protomolt.proto.workflow.authoring.v1.GetWorkflowLaunchInputContractRequest request)
+                        throws WorkflowLaunchInputException {
+                    return preparer().contract(request);
+                }
+
+                @Override
+                public ai.protomolt.proto.workflow.authoring.v1.PrepareWorkflowLaunchInputResponse prepare(
+                        ai.protomolt.proto.workflow.authoring.v1.PrepareWorkflowLaunchInputRequest request)
+                        throws WorkflowLaunchInputException {
+                    return preparer().prepare(request);
+                }
             };
         }
 

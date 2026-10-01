@@ -20,6 +20,7 @@ vi.mock('../services/tasks', async (importOriginal) => {
       sendMessage: vi.fn(),
       reviewAccept: vi.fn(),
       reviewRevise: vi.fn(),
+      retryReview: vi.fn(),
       offerTask: vi.fn(),
       exportRecord: vi.fn(),
       cancelTask: vi.fn(),
@@ -108,6 +109,7 @@ beforeEach(() => {
   api.watchEvents.mockImplementation(() => new Promise(() => {}))
   api.reviewAccept.mockResolvedValue({ decision: 'accept', phase: 'accepted' })
   api.reviewRevise.mockResolvedValue({ decision: 'revise', phase: 'working' })
+  api.retryReview.mockResolvedValue({})
 })
 
 describe('TaskConsoleView', () => {
@@ -147,6 +149,58 @@ describe('TaskConsoleView', () => {
       .trigger('click')
     await flushPromises()
     expect(api.reviewRevise).toHaveBeenCalledWith('task-1', 1, 1, 'lint still complains', ['lint-clean'])
+  })
+
+  it('offers retry review only for a failed invocation, never for running or deferred review', async () => {
+    const review = { status: 'failed', invocationId: '11111111-1111-4111-8111-111111111111',
+      attempt: 1, revision: 1, failureCode: 'infrastructure' }
+    for (const status of ['running', 'deferred', 'failed'] as const) {
+      const selected = { ...task, review: { ...review, status } }
+      api.listTasks.mockResolvedValue({ tasks: [selected], cursor: 2, findings: [] })
+      api.task.mockResolvedValue({ task: selected, events: [offerEvent, completionEvent], cursor: 2, findings: [] })
+      const wrapper = await mountView()
+      const retry = wrapper.findAll('button').find((button) => button.text().includes('Retry review'))
+      expect(Boolean(retry)).toBe(status === 'failed')
+      expect(wrapper.findAll('button').some((button) => button.text().includes('Offer a new attempt')))
+        .toBe(false)
+      wrapper.unmount()
+    }
+    expect(api.retryReview).not.toHaveBeenCalled()
+  })
+
+  it('reuses the same retry id after a lost retry response', async () => {
+    const failed = { ...task, review: {
+      status: 'failed' as const,
+      invocationId: '11111111-1111-4111-8111-111111111111',
+      attempt: 1,
+      revision: 1,
+      failureCode: 'infrastructure' as const,
+    } }
+    api.listTasks.mockResolvedValue({ tasks: [failed], cursor: 2, findings: [] })
+    api.task.mockResolvedValue({ task: failed, events: [offerEvent, completionEvent], cursor: 2, findings: [] })
+    api.retryReview.mockRejectedValueOnce(new Error('connection lost'))
+      .mockResolvedValueOnce({ request: {}, identity: {} })
+    const randomUuid = vi.spyOn(globalThis.crypto, 'randomUUID')
+      .mockReturnValue('22222222-2222-4222-8222-222222222222')
+    try {
+      const wrapper = await mountView()
+      const retry = wrapper.findAll('button').find((button) => button.text().includes('Retry review'))!
+      await retry.trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('connection lost')
+      await wrapper.findAll('button').find((button) => button.text().includes('Retry review'))!
+        .trigger('click')
+      await flushPromises()
+
+      expect(api.retryReview).toHaveBeenNthCalledWith(1, 'task-1', 1, 1,
+        '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222')
+      expect(api.retryReview).toHaveBeenNthCalledWith(2, 'task-1', 1, 1,
+        '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222')
+      expect(api.offerTask).not.toHaveBeenCalled()
+      wrapper.unmount()
+    } finally {
+      randomUuid.mockRestore()
+    }
   })
 
   it('clears a review draft when a newer candidate arrives', async () => {
