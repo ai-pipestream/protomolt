@@ -34,6 +34,7 @@ import ai.protomolt.proto.samples.starter.v1.WorkflowPermittedCall;
 import ai.protomolt.proto.workflow.authoring.v1.GetWorkflowAuthorContextRequest;
 import ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorEventsRequest;
 import ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorEventsResponse;
+import ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorAssignmentsRequest;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.Descriptors.FileDescriptor;
@@ -77,6 +78,65 @@ class WorkflowAuthorTaskReaderAdversarialTest {
     private static final TaskSpec SPEC = authorSpec();
 
     @TempDir Path temp;
+
+    @Test
+    void discoveryPagesKeepHistoricalOwnershipAndDoNotReadPolicyArtifacts() throws Exception {
+        try (Fixture fixture = new Fixture(AUTHOR, SECOND, 4)) {
+            fixture.offer(AUTHOR, TASK);
+            fixture.awaitPhase(TASK, DelegationReducer.Phase.LEASED, 1);
+            fixture.coordinator.cancel(TASK, "reassign");
+            fixture.awaitPhase(TASK, DelegationReducer.Phase.CANCELLED, 1);
+            fixture.offer(SECOND, TASK);
+            fixture.awaitPhase(TASK, DelegationReducer.Phase.LEASED, 2);
+            String nextTask = UUID.randomUUID().toString();
+            fixture.offer(SECOND, nextTask);
+            var snapshot = fixture.transcript();
+            var request = ReadWorkflowAuthorAssignmentsRequest.newBuilder().setMaxAssignments(1).build();
+            var reader = reader(readOnly(snapshot));
+            var first = reader.assignments(request, author(SECOND));
+            assertThat(first.getWorkerId()).isEqualTo(SECOND);
+            assertThat(first.getAssignmentsCount()).isEqualTo(1);
+            assertThat(first.getAssignments(0).getTaskId()).isEqualTo(TASK);
+            assertThat(first.getAssignments(0).getAttempt()).isEqualTo(2);
+            assertThat(first.getTruncated()).isTrue();
+            var original = snapshot.getEntries((int) first.getAssignments(0).getCursor() - 1);
+            assertThat(first.getAssignments(0).getOfferEntrySha256())
+                    .isEqualTo(WorkflowLaunchValidation.sha256(original));
+            assertThat(reader.assignments(request, author(SECOND))).isEqualTo(first);
+            var second = reader.assignments(request.toBuilder().setAfterCursor(first.getCursor()).build(), author(SECOND));
+            assertThat(second.getAssignmentsList()).extracting(value -> value.getTaskId()).containsExactly(nextTask);
+            var other = reader.assignments(request, author(AUTHOR));
+            assertThat(other.getAssignmentsCount()).isEqualTo(1);
+            assertThat(other.getAssignments(0).getTaskId()).isEqualTo(TASK);
+            assertThat(other.getAssignments(0).getAttempt()).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void discoveryRejectsFutureCursorAndMissingIdentityWithoutChangingTranscript() throws Exception {
+        try (Fixture fixture = new Fixture(AUTHOR, null, 2)) {
+            fixture.offer(AUTHOR, TASK);
+            fixture.awaitPhase(TASK, DelegationReducer.Phase.LEASED, 1);
+            var before = fixture.transcript();
+            var reader = reader(readOnly(before));
+            var request = ReadWorkflowAuthorAssignmentsRequest.newBuilder().setMaxAssignments(64).build();
+            assertThat(reader.assignments(request, author(SECOND)).getAssignmentsList()).isEmpty();
+            assertThatThrownBy(() -> reader.assignments(request.toBuilder()
+                    .setAfterCursor(before.getEntriesCount() + 1L).build(), author(AUTHOR)))
+                    .isInstanceOfSatisfying(WorkflowPreparationException.class, error ->
+                            assertThat(error.kind()).isEqualTo(WorkflowPreparationException.Kind.INVALID_INPUT));
+            assertThatThrownBy(() -> reader.assignments(request, null))
+                    .isInstanceOfSatisfying(WorkflowPreparationException.class, error ->
+                            assertThat(error.kind()).isEqualTo(WorkflowPreparationException.Kind.PERMISSION_DENIED));
+        }
+    }
+
+    private static TranscriptRepository readOnly(Transcript snapshot) {
+        return new TranscriptRepository() {
+            public Optional<Transcript> load() { return Optional.of(snapshot); }
+            public void save(Transcript value) { throw new AssertionError("discovery must not write"); }
+        };
+    }
 
     @Test
     void oldHolderCanReadOriginalAttemptAfterReassignmentButNewHolderCannotReadIt() throws Exception {

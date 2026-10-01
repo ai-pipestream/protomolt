@@ -28,7 +28,8 @@ final class WorkflowAuthorTaskMount {
                 "AcceptWorkflowTask", "accept-workflow-task",
                 "SubmitWorkflowCandidate", "submit-workflow-candidate",
                 "GetWorkflowAuthorContext", "get-workflow-author-context",
-                "ReadWorkflowAuthorEvents", "read-workflow-author-events"));
+                "ReadWorkflowAuthorEvents", "read-workflow-author-events",
+                "ReadWorkflowAuthorAssignments", "read-workflow-author-assignments"));
     }
 
     static WorkflowAuthorTaskOperations operations(DelegationBridge bridge,
@@ -49,6 +50,9 @@ final class WorkflowAuthorTaskMount {
                     throws WorkflowPreparationException { return reader.context(request, caller); }
             @Override public ReadWorkflowAuthorEventsResponse events(ReadWorkflowAuthorEventsRequest request, Caller caller)
                     throws WorkflowPreparationException { return reader.events(request, caller); }
+            @Override public ReadWorkflowAuthorAssignmentsResponse assignments(
+                    ReadWorkflowAuthorAssignmentsRequest request, Caller caller)
+                    throws WorkflowPreparationException { return reader.assignments(request, caller); }
         };
     }
 }

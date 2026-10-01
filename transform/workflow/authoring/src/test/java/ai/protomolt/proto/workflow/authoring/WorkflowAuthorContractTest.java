@@ -103,7 +103,7 @@ class WorkflowAuthorContractTest {
                 .isEqualTo(SubmitCandidateRequest.getDescriptor());
         assertThat(service.getMethods()).extracting(method -> method.getName()).containsExactly(
                 "RegisterWorkflowAuthor", "AcceptWorkflowTask", "SubmitWorkflowCandidate",
-                "GetWorkflowAuthorContext", "ReadWorkflowAuthorEvents");
+                "GetWorkflowAuthorContext", "ReadWorkflowAuthorEvents", "ReadWorkflowAuthorAssignments");
     }
 
     private static GetWorkflowAuthorContextResponse context() {

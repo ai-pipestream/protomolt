@@ -230,6 +230,29 @@ class AuthoringRemoteProcessTest {
             var originalStart = replayedStart.toBuilder().clear();
             JsonFormat.parser().merge(offered.toString(), originalStart);
             assertThat(replayedStart).isEqualTo(originalStart.build());
+            var authorTasks = ai.protomolt.proto.workflow.authoring.v1.WorkflowAuthorTaskServiceGrpc
+                    .newBlockingStub(channel)
+                    .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(bearer(AUTHOR_TOKEN)));
+            var assignmentRequest = ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorAssignmentsRequest
+                    .newBuilder().setMaxAssignments(64).build();
+            var assignments = authorTasks.withDeadlineAfter(10, TimeUnit.SECONDS)
+                    .readWorkflowAuthorAssignments(assignmentRequest);
+            assertThat(assignments.getWorkerId()).isEqualTo(PRINCIPAL);
+            assertThat(assignments.getAssignmentsList()).singleElement().satisfies(assignment -> {
+                assertThat(assignment.getTaskId()).isEqualTo(TASK_ID);
+                assertThat(assignment.getAttempt()).isEqualTo(1);
+                assertThat(assignment.getOfferEntrySha256()).matches("[0-9a-f]{64}");
+            });
+            var authorMcp = initializeMcp(httpPort, AUTHOR_TOKEN);
+            var assignmentJson = authorMcp.call("read-workflow-author-assignments",
+                    JSON.readTree(JsonFormat.printer().print(assignmentRequest)));
+            var mcpAssignments = assignments.toBuilder().clear();
+            JsonFormat.parser().merge(assignmentJson.toString(), mcpAssignments);
+            assertThat(mcpAssignments.build()).isEqualTo(assignments);
+            var caughtUp = authorTasks.withDeadlineAfter(10, TimeUnit.SECONDS)
+                    .readWorkflowAuthorAssignments(assignmentRequest.toBuilder()
+                            .setAfterCursor(assignments.getCursor()).build());
+            assertThat(caughtUp.getAssignmentsList()).isEmpty();
             var authoring = WorkflowAuthoringServiceGrpc.newBlockingStub(channel)
                     .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(operatorHeaders));
             WorkflowAcceptedCandidate accepted = authoring.withDeadlineAfter(10, TimeUnit.SECONDS)
@@ -542,7 +565,12 @@ class AuthoringRemoteProcessTest {
     private static McpSession initializeMcp(int port, String token) throws Exception {
         McpSession session = new McpSession(port, token);
         session = session.initialize();
-        assertThat(session.tools()).contains("delegation-offer", "get-job");
+        if (AUTHOR_TOKEN.equals(token)) {
+            assertThat(session.tools()).contains("read-workflow-author-assignments")
+                    .doesNotContain("delegation-offer", "get-job", "start-workflow-authoring");
+        } else {
+            assertThat(session.tools()).contains("delegation-offer", "get-job");
+        }
         return session;
     }
 

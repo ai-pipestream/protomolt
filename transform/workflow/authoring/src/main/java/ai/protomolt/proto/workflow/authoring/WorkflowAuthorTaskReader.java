@@ -6,6 +6,7 @@ import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.actions.CatalogContract;
 import ai.protomolt.proto.actions.SchemaResolver;
 import ai.protomolt.proto.delegation.DelegationReducer;
+import ai.protomolt.proto.delegation.DeliverableContracts;
 import ai.protomolt.proto.delegation.DelegationValidation;
 import ai.protomolt.proto.delegation.TranscriptRepository;
 import ai.protomolt.proto.delegation.v1.DelegateRequest;
@@ -24,6 +25,9 @@ import ai.protomolt.proto.workflow.authoring.v1.GetWorkflowAuthorContextRequest;
 import ai.protomolt.proto.workflow.authoring.v1.GetWorkflowAuthorContextResponse;
 import ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorEventsRequest;
 import ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorEventsResponse;
+import ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorAssignmentsRequest;
+import ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorAssignmentsResponse;
+import ai.protomolt.proto.workflow.authoring.v1.WorkflowAuthorAssignment;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.DynamicMessage;
@@ -45,6 +49,7 @@ public final class WorkflowAuthorTaskReader {
     private static final int ARTIFACT_MAX = 4 * 1024 * 1024;
     private static final int RESPONSE_MAX = 16 * 1024 * 1024;
     private static final int SCAN_MAX = 256;
+    private static final int ASSIGNMENTS_MAX = 64 * 1024;
 
     private final TranscriptRepository transcripts;
     private final ArtifactRepository artifacts;
@@ -162,15 +167,95 @@ public final class WorkflowAuthorTaskReader {
         return result;
     }
 
+    /** Historical, caller-owned offers; no current lease or policy lookup is involved. */
+    public ReadWorkflowAuthorAssignmentsResponse assignments(
+            ReadWorkflowAuthorAssignmentsRequest request, Caller caller) throws WorkflowPreparationException {
+        validateRequest(request);
+        requireCaller(caller);
+        Transcript transcript = trustedTranscript(true);
+        List<TranscriptEntry> entries = transcript.getEntriesList();
+        long after = request.getAfterCursor();
+        if (after > entries.size()) {
+            throw failure(WorkflowPreparationException.Kind.INVALID_INPUT,
+                    "author assignment cursor is ahead of transcript");
+        }
+        var response = ReadWorkflowAuthorAssignmentsResponse.newBuilder()
+                .setWorkerId(caller.name()).setAfterCursor(after).setCursor(after);
+        Set<TranscriptEntry> seenOffers = new HashSet<>();
+        // Whole-transcript validation is bounded separately (8 MiB). Index prior
+        // offers so a duplicate identical frame after this cursor is not another
+        // assignment; SCAN_MAX limits only new cursor positions in this page.
+        for (int index = 0; index < after; index++) {
+            TranscriptEntry entry = entries.get(index);
+            if (entry.hasCoordinatorFrame() && entry.getCoordinatorFrame().hasOffer()) seenOffers.add(entry);
+        }
+        int examined = 0;
+        for (long position = after; position < entries.size() && examined < SCAN_MAX; position++) {
+            TranscriptEntry entry = entries.get((int) position);
+            long cursor = position + 1;
+            if (entry.hasCoordinatorFrame() && entry.getCoordinatorFrame().hasOffer()
+                    && seenOffers.add(entry) && entry.getWorkerId().equals(caller.name())
+                    && supportedAssignment(entry)) {
+                var assignment = WorkflowAuthorAssignment.newBuilder().setCursor(cursor)
+                        .setTaskId(entry.getCoordinatorFrame().getTaskId())
+                        .setAttempt(entry.getCoordinatorFrame().getOffer().getAttempt())
+                        .setOfferEntrySha256(WorkflowLaunchValidation.sha256(entry)).build();
+                var candidate = response.clone().setCursor(cursor).addAssignments(assignment).build();
+                if (response.getAssignmentsCount() == request.getMaxAssignments()
+                        || candidate.getSerializedSize() > ASSIGNMENTS_MAX) {
+                    break; // Never advance over an eligible offer omitted from this page.
+                }
+                response.addAssignments(assignment);
+            }
+            response.setCursor(cursor);
+            examined++;
+        }
+        response.setTruncated(response.getCursor() < entries.size());
+        var result = response.build();
+        try {
+            validate(result, ASSIGNMENTS_MAX);
+        } catch (IllegalArgumentException invalid) {
+            throw failure(WorkflowPreparationException.Kind.CORRUPT_EVIDENCE,
+                    "author assignment projection is invalid", invalid);
+        }
+        return result;
+    }
+
+    private static boolean supportedAssignment(TranscriptEntry entry) throws WorkflowPreparationException {
+        var spec = entry.getCoordinatorFrame().getOffer().getSpec();
+        if (!spec.hasContract() || !spec.getContract().getTypeName().equals(
+                WorkflowAuthoringDeliverable.getDescriptor().getFullName())) return false;
+        Set<String> checks = new HashSet<>();
+        spec.getRequiredChecksList().forEach(check -> checks.add(check.getName()));
+        if (spec.getRequiredChecksCount() != WorkflowAuthoringReviewer.REQUIRED_CHECKS.size()
+                || !checks.equals(Set.copyOf(WorkflowAuthoringReviewer.REQUIRED_CHECKS))
+                || spec.getContextCount() == 0) {
+            throw failure(WorkflowPreparationException.Kind.CORRUPT_EVIDENCE,
+                    "historical authoring offer has invalid checks or policy context");
+        }
+        try {
+            DeliverableContracts.compile(spec.getContract());
+            requireCompleteImports(spec.getContract().getDescriptorSet().toByteArray());
+        } catch (IOException | IllegalArgumentException invalid) {
+            throw failure(WorkflowPreparationException.Kind.CORRUPT_EVIDENCE,
+                    "historical authoring offer has invalid result descriptors", invalid);
+        }
+        return true;
+    }
+
     private Transcript trustedTranscript() throws WorkflowPreparationException {
+        return trustedTranscript(false);
+    }
+
+    private Transcript trustedTranscript(boolean allowMissing) throws WorkflowPreparationException {
         Transcript transcript;
         try {
             var loaded = transcripts.load();
-            if (loaded.isEmpty()) {
+            if (loaded.isEmpty() && !allowMissing) {
                 throw failure(WorkflowPreparationException.Kind.INACTIVE,
                         "author task has no transcript");
             }
-            transcript = loaded.orElseThrow();
+            transcript = loaded.orElse(Transcript.getDefaultInstance());
             validate(transcript, TRANSCRIPT_MAX);
             DelegationValidation.validate(transcript);
             if (!new DelegationReducer().reduce(transcript).clean()) {

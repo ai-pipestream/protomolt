@@ -75,6 +75,8 @@ class WorkflowAuthorTaskMountTest {
                     "/grpc-json/WorkflowAuthorTaskService/RegisterWorkflowAuthor")).isTrue();
             assertThat(paths.containsKey(
                     "/grpc-json/WorkflowAuthorTaskService/ReadWorkflowAuthorEvents")).isTrue();
+            assertThat(paths.containsKey(
+                    "/grpc-json/WorkflowAuthorTaskService/ReadWorkflowAuthorAssignments")).isTrue();
             var gateway = new ProtoRestGateway(rest, ActionContext.create().transcoder(),
                     (requirement, headers, query) -> "author-token".equals(headers.get("api_token"))
                             ? Optional.empty() : Optional.of("Invalid API token"));
@@ -93,6 +95,8 @@ class WorkflowAuthorTaskMountTest {
                     .generate(disabledRest).get("paths");
             assertThat(disabledPaths.containsKey(
                     "/grpc-json/WorkflowAuthorTaskService/RegisterWorkflowAuthor")).isFalse();
+            assertThat(disabledPaths.containsKey(
+                    "/grpc-json/WorkflowAuthorTaskService/ReadWorkflowAuthorAssignments")).isFalse();
             try (var server = ProtoMoltGrpcServer.start("127.0.0.1", 0, catalog,
                     "operator-token", callers, services,
                     WorkflowAuthorTaskMount.bindings())) {

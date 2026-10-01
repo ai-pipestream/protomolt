@@ -45,4 +45,16 @@ service WorkflowAuthorTaskService {
   // closed. Transport failures may be retried with the same cursor and identity.
   rpc ReadWorkflowAuthorEvents(ReadWorkflowAuthorEventsRequest)
       returns (ReadWorkflowAuthorEventsResponse);
+
+  // Read only this caller's persisted workflow-authoring offers. No registration
+  // or active connection is required for discovery. After validating the entire
+  // bounded transcript and indexing prior offers, scan at most 256 new cursor
+  // positions per page. Return at most 64 assignments and cap the response at 64 KiB.
+  // A cursor ahead of storage is INVALID_ARGUMENT; ownership/scope denial is
+  // PERMISSION_DENIED; corrupt evidence or unsupported rules fail closed.
+  // This read has no effects. Retry the same cursor after transport failure;
+  // persist discovered identities before advancing the consumer's saved cursor.
+  // Poll with bounded backoff when caught up; this RPC does not long-poll.
+  rpc ReadWorkflowAuthorAssignments(ReadWorkflowAuthorAssignmentsRequest)
+      returns (ReadWorkflowAuthorAssignmentsResponse);
 }
