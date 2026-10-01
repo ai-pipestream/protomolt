@@ -65,6 +65,21 @@ class ErrorContractTest {
     }
 
     @Test
+    void authoringFailuresKeepTheirTypedStatusAndStableCode() {
+        var statuses = java.util.Map.of(
+                "workflow-authoring-rejected", Status.Code.FAILED_PRECONDITION,
+                "workflow-launch-conflict", Status.Code.ALREADY_EXISTS,
+                "workflow-authoring-unavailable", Status.Code.UNAVAILABLE,
+                "workflow-authoring-deadline", Status.Code.DEADLINE_EXCEEDED,
+                "workflow-authoring-storage-failed", Status.Code.INTERNAL);
+        statuses.forEach((code, status) -> {
+            var error = CatalogBridge.toStatus(new ActionException(code, "Operation failed"));
+            assertThat(error.getStatus().getCode()).isEqualTo(status);
+            assertThat(error.getTrailers().get(CatalogBridge.ERROR_CODE_KEY)).isEqualTo(code);
+        });
+    }
+
+    @Test
     void permissionDeniedMapsToPermissionDenied() {
         StatusRuntimeException e = CatalogBridge.toStatus(
                 new ActionException("permission-denied",

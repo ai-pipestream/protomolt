@@ -1,7 +1,13 @@
 # Goal 5 starter binding: remaining implementation
 
-This is a design inventory, not an available API. Source examined:
-`f8b6382469502537f95fc6dcd03750ad8adfcb8b`. The launch helper is in PR #331.
+This is a design inventory, not a mounted API. The launch helper and production
+authoring module landed in PRs #331 and #332. The service contracts are in PR #334.
+The action adapters now validate requests and successful replies with the native
+engine, bind reply task/job identity to the request, and sanitize typed failures.
+Catalog tests cover generated, dynamic and JSON input; in-process gRPC tests cover
+operator authentication, scoped denial, validation and status/trailer mapping.
+The real launcher is also exercised through the catalog without repeating fixtures
+on a matching retry. These tests do not qualify a deployed MCP/ACP or browser path.
 
 ## Reuse and ownership
 

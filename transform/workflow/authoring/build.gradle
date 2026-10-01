@@ -20,6 +20,8 @@ dependencies {
     testImplementation project(':protomolt-sources')
     testImplementation project(':protomolt-registry')
     testImplementation libs.grpc.inprocess
+    testImplementation project(':protomolt-grpc-service')
+    testImplementation project(':protomolt-authz-grpc')
 }
 
 protobuf {
