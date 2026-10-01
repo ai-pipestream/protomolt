@@ -200,8 +200,8 @@ class TaskConsoleHttpTest {
         bridge.submitCandidate("console-worker", reviewed, candidate(1));
 
         JsonNode pending = body(get("/api/tasks/" + reviewed, cookie)).path("task").path("review");
-        assertThat(pending.path("status").asText()).isEqualTo("legacy_pending");
-        assertThat(pending.has("invocationId")).isFalse();
+        assertThat(pending.path("status").asText()).isIn("running", "deferred");
+        assertThat(pending.path("invocationId").asText()).isNotBlank();
 
         // A judgement without a reason is refused by name.
         HttpResponse<String> unreasoned = post("/api/tasks/" + reviewed + "/review",

@@ -105,12 +105,28 @@ class CoordinatorDeliveryFailureTest {
             assertThatThrownBy(() -> coordinator.review(TASK, 1, 1,
                     CandidateReviewer.ReviewDecision.accept("verified")))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("repository unavailable");
-            assertThat(coordinator.transcript()).isEqualTo(before);
-            assertThat(coordinator.state().tasks().get(TASK).phase())
-                    .isEqualTo(DelegationReducer.Phase.CANDIDATE);
-            assertThat(coordinator.workers().getFirst().connected()).isTrue();
+                    .hasMessage("transcript publication is unavailable");
+            assertThat(repository.current).isEqualTo(before);
+            int writesAfterFailure = repository.writes;
+            assertThatThrownBy(coordinator::transcript).isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(coordinator::state).isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(coordinator::workers).isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(() -> coordinator.review(TASK, 1, 1,
+                    CandidateReviewer.ReviewDecision.accept("retry on stale writer")))
+                    .isInstanceOf(IllegalStateException.class);
+            assertThat(repository.writes).isEqualTo(writesAfterFailure);
             assertThat(responses.values).hasSize(1);
+            coordinator.close();
+            repository.failWrites = false;
+            try (var recovered = coordinator(repository)) {
+                assertThat(recovered.transcript()).isEqualTo(before);
+                assertThat(recovered.state().tasks().get(TASK).phase())
+                        .isEqualTo(DelegationReducer.Phase.CANDIDATE);
+                recovered.review(TASK, 1, 1, CandidateReviewer.ReviewDecision.accept("verified"));
+                assertThat(recovered.state().tasks().get(TASK).phase())
+                        .isEqualTo(DelegationReducer.Phase.ACCEPTED);
+                assertThat(recovered.state().clean()).isTrue();
+            }
         }
     }
 
@@ -144,12 +160,14 @@ class CoordinatorDeliveryFailureTest {
     private static final class Repository implements TranscriptRepository {
         private Transcript current;
         private boolean failWrites;
+        private int writes;
 
         Repository(Transcript current) { this.current = current; }
 
         @Override public Optional<Transcript> load() { return Optional.of(current); }
 
         @Override public void save(Transcript transcript) {
+            writes++;
             if (failWrites) throw new IllegalStateException("repository unavailable");
             current = transcript;
         }

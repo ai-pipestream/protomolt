@@ -30,6 +30,7 @@ public final class DelegationActions {
                 .register(new DelegationCheckpointAction(bridge))
                 .register(new DelegationCandidateAction(bridge))
                 .register(new DelegationReviewAction(bridge))
+                .register(new DelegationReviewRetryAction(bridge))
                 .register(new DelegationCancelAction(bridge))
                 .register(new DelegationMessageAction(bridge))
                 .register(new DelegationWatchAction(bridge))

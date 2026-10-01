@@ -194,7 +194,9 @@ class DelegationBridgeTest {
         java.time.Instant deadline = java.time.Instant.now().plusSeconds(5);
         while (java.time.Instant.now().isBefore(deadline)) {
             DelegationReducer.TaskState state = coordinator.state().tasks().get(taskId);
-            if (state != null && state.phase() == phase) {
+            if (state != null && state.phase() == phase
+                    && (phase != DelegationReducer.Phase.CANDIDATE
+                        || state.review().status() == DelegationReducer.ReviewStatus.DEFERRED)) {
                 return;
             }
             InProcessDelegationCoordinator.Event event = coordinator.waitForEvent(

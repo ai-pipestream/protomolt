@@ -64,6 +64,18 @@ class DelegationActionContractTest {
         return MAPPER.createObjectNode();
     }
 
+    private void awaitManualReview(String taskId) throws Exception {
+        long end = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        long cursor = 0;
+        while (System.nanoTime() < end) {
+            if (coordinator.state().tasks().get(taskId).review().status()
+                    == DelegationReducer.ReviewStatus.DEFERRED) return;
+            var event = coordinator.waitForEvent(taskId, cursor, java.time.Duration.ofMillis(100));
+            if (event.isPresent()) cursor = event.get().cursor();
+        }
+        throw new AssertionError("manual review was not recorded");
+    }
+
     /** An offer with no lease still runs on the coordinator's default, not on zero seconds. */
     @Test
     void anOmittedLeaseKeepsMeaningTheDefaultRatherThanZero() throws Exception {
@@ -187,6 +199,7 @@ class DelegationActionContractTest {
                 .addEvidence(DelegationFixtures.evidence("unit-tests"))
                 .addCommits(DelegationFixtures.commit("contract-output"))
                 .build());
+        awaitManualReview(taskId);
         int entriesBefore = coordinator.transcript().getEntriesCount();
 
         ActionException refusal = catchThrowableOfType(

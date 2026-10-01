@@ -92,8 +92,9 @@ class DelegationStreamReplacementTest {
     void reRegistrationAfterStreamFailureRecoversFromTheTranscript() {
         FailingRepository repository = new FailingRepository();
         String taskId = UUID.randomUUID().toString();
-        try (InProcessDelegationCoordinator coordinator = coordinator(repository)) {
-            DelegationBridge bridge = new DelegationBridge(coordinator);
+        InProcessDelegationCoordinator coordinator = coordinator(repository);
+        DelegationBridge bridge = new DelegationBridge(coordinator);
+        try (coordinator) {
             assertTrue(register(bridge).admitted());
             bridge.offer(WORKER, taskId, spec("unit-tests"), Duration.ofMinutes(5), null);
             bridge.accept(WORKER, taskId, 1);
@@ -104,55 +105,75 @@ class DelegationStreamReplacementTest {
             // the coordinator, but the durable append fails: nothing is recorded,
             // nothing becomes visible, and the stream goes down.
             repository.failWrites = true;
+            int writesBeforeFailure = repository.writes;
             assertThrows(IllegalStateException.class,
                     () -> bridge.sendWorkerMessage(WORKER, taskId,
                             TaskMessageKind.TASK_MESSAGE_KIND_NOTE,
                             "never durable", "", List.of()));
             assertThrows(IllegalStateException.class,
                     () -> bridge.progress(WORKER, taskId, 1, "stream is down"));
-            assertEquals(entriesBefore, coordinator.transcript().getEntriesCount());
-            assertTrue(coordinator.eventsAfter(taskId, 0).stream()
-                    .noneMatch(event -> event.entry().getWorkerFrame().hasTaskMessage()));
+            assertEquals(entriesBefore, repository.current.getEntriesCount());
+            assertThrows(IllegalStateException.class, coordinator::transcript);
+            assertThrows(IllegalStateException.class, () -> coordinator.eventsAfter(taskId, 0));
+            assertThrows(IllegalStateException.class, coordinator::state);
+            assertEquals(writesBeforeFailure + 1, repository.writes);
+            assertThrows(IllegalStateException.class, () -> coordinator.sendMessage(WORKER, taskId,
+                    TaskMessageKind.TASK_MESSAGE_KIND_NOTE, "blocked after uncertainty", "", List.of()));
+            assertEquals(writesBeforeFailure + 1, repository.writes);
 
-            // The repository heals. The replacement registration resumes from the
-            // transcript: the lost message's sequence is legitimately free again,
-            // because the frame was never recorded anywhere.
+            // A fresh coordinator reconciles the unchanged stored snapshot. It seeds
+            // worker counters from that snapshot, so the unstored attempt-zero message
+            // sequence is available to a new bridge instance.
             repository.failWrites = false;
-            assertTrue(register(bridge).admitted());
-            bridge.sendWorkerMessage(WORKER, taskId, TaskMessageKind.TASK_MESSAGE_KIND_NOTE,
-                    "durable this time", "", List.of());
-            assertEquals(2, bridge.progress(WORKER, taskId, 1, "resumed cleanly"));
-
-            assertTrue(coordinator.state().clean(), coordinator.state().findings().toString());
-            assertEquals(entriesBefore + 4, coordinator.transcript().getEntriesCount());
-            assertEquals(DelegationReducer.Phase.LEASED,
-                    coordinator.state().tasks().get(taskId).phase());
             bridge.close();
+            coordinator.close();
+            try (InProcessDelegationCoordinator restored = coordinator(repository)) {
+                DelegationBridge replacement = new DelegationBridge(restored);
+                assertTrue(register(replacement).admitted());
+                replacement.sendWorkerMessage(WORKER, taskId, TaskMessageKind.TASK_MESSAGE_KIND_NOTE,
+                        "durable this time", "", List.of());
+                assertEquals(2, replacement.progress(WORKER, taskId, 1, "resumed cleanly"));
+
+                assertTrue(restored.state().clean(), restored.state().findings().toString());
+                assertEquals(entriesBefore + 4, restored.transcript().getEntriesCount());
+                assertEquals(DelegationReducer.Phase.LEASED,
+                        restored.state().tasks().get(taskId).phase());
+                replacement.close();
+            }
         }
     }
 
     @Test
     void failedRegistrationDuringOutageLeavesNoPartialState() {
         FailingRepository repository = new FailingRepository();
-        try (InProcessDelegationCoordinator coordinator = coordinator(repository)) {
-            DelegationBridge bridge = new DelegationBridge(coordinator);
+        InProcessDelegationCoordinator coordinator = coordinator(repository);
+        DelegationBridge bridge = new DelegationBridge(coordinator);
+        try (coordinator) {
             repository.failWrites = true;
 
             // The hello cannot be persisted, so admission never happens and nothing
             // becomes visible: no transcript entry, no event, no cursor movement.
             assertThrows(IllegalStateException.class, () -> register(bridge));
-            assertEquals(0, coordinator.transcript().getEntriesCount());
-            assertTrue(coordinator.eventsAfter("", 0).isEmpty());
-            assertTrue(coordinator.state().clean(), coordinator.state().findings().toString());
+            assertEquals(0, repository.current.getEntriesCount());
+            assertThrows(IllegalStateException.class, coordinator::transcript);
+            assertThrows(IllegalStateException.class, () -> coordinator.eventsAfter("", 0));
+            assertThrows(IllegalStateException.class, coordinator::state);
+            int writesAfterFailure = repository.writes;
+            assertThrows(IllegalStateException.class, () -> register(bridge));
+            assertEquals(writesAfterFailure, repository.writes);
 
-            // After the outage the same worker registers from scratch: the failed
-            // attempt consumed no sequence, so the hello is seq 1.
+            // The same worker starts from the durable empty snapshot on a new
+            // coordinator; the failed hello consumed no sequence, so it is seq 1.
             repository.failWrites = false;
-            assertTrue(register(bridge).admitted());
-            assertEquals(1, coordinator.eventsAfter("", 0).get(0)
-                    .entry().getWorkerFrame().getSeq());
-            assertTrue(coordinator.state().clean(), coordinator.state().findings().toString());
             bridge.close();
+            try (InProcessDelegationCoordinator restored = coordinator(repository)) {
+                DelegationBridge replacement = new DelegationBridge(restored);
+                assertTrue(register(replacement).admitted());
+                assertEquals(1, restored.eventsAfter("", 0).get(0)
+                        .entry().getWorkerFrame().getSeq());
+                assertTrue(restored.state().clean(), restored.state().findings().toString());
+                replacement.close();
+            }
         }
     }
 
@@ -174,6 +195,7 @@ class DelegationStreamReplacementTest {
     private static final class FailingRepository implements TranscriptRepository {
         private Transcript current = Transcript.getDefaultInstance();
         private boolean failWrites;
+        private int writes;
 
         @Override
         public Optional<Transcript> load() {
@@ -182,6 +204,7 @@ class DelegationStreamReplacementTest {
 
         @Override
         public void save(Transcript transcript) {
+            writes++;
             if (failWrites) {
                 throw new IllegalStateException("repository unavailable");
             }

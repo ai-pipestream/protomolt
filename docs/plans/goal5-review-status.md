@@ -2,18 +2,19 @@
 
 Status: review messages, transcript payloads, reducer rules, author-event readers,
 and console projections are implemented in the current development branch.
-Coordinator emission, recovery, and the retry RPC remain unimplemented. Existing
-candidates therefore still project as legacy pending; the new statuses are not
-yet an available end-to-end feature. This extends the delegation transcript and current reviewer;
+Coordinator emission, recovery, and the retry RPC are implemented in this branch
+and undergoing integration qualification. The installed-process failure/retry
+proof and browser retry action remain outstanding. Legacy candidates still
+project as legacy pending. This extends the delegation transcript and current reviewer;
 it does not introduce another task lifecycle or evaluation provider interface.
 
 ## Current gap
 
-`InProcessDelegationCoordinator.handleCandidate` runs the reviewer asynchronously.
-An exception is assigned to private `TaskRuntime.reviewFailure` without a
-transcript entry. Recovery restores the candidate but does not restart review.
-The console and author event reader therefore cannot distinguish a running
-review from a failed or interrupted one. `ReviewDecision.Pending` intentionally
+Previously, `InProcessDelegationCoordinator.handleCandidate` ran the reviewer
+asynchronously and assigned exceptions to private `TaskRuntime.reviewFailure`
+without a transcript entry. Recovery restored the candidate without recording
+interruption. The console and author event reader could not distinguish a
+running review from a failed or interrupted one. `ReviewDecision.Pending` intentionally
 waits for manual review and must remain distinguishable from infrastructure
 failure and semantic rejection.
 
@@ -120,9 +121,10 @@ writes fence a delayed old request against a newer committed version. The
 repository service must support the new RPCs and explicitly enable a qualified
 backend; there is no fallback to unconditional PutBlob. Stop old unconditional
 coordinators before rollout. These changes are not evidence of a live deployment.
-Coordinator publication must also fail closed after an uncertain save, so it
-cannot expose stale in-memory state. That runtime obligation remains to be
-implemented; protobuf annotations cannot enforce it.
+Coordinator publication now also fails closed after an uncertain save, including
+reads and subsequent mutations, so it cannot expose stale in-memory state.
+Fault-injection tests exercise this with a reusable repository; protobuf
+annotations cannot enforce it.
 
 ## Validation and compatibility
 
@@ -142,9 +144,11 @@ frame attempt selector and reducer to understand them before the host emits them
 The current JSON Schema fixture records UUID format and numeric bounds and
 retains cross-field rules as x-protomolt-cel metadata. Digest fields are emitted
 as strings without their full native digest-format restriction; native validator
-fixtures cover that restriction. No OpenAPI RPC is exposed in this message-only
-change, and no generator changes are included. Full service OpenAPI coverage
-belongs with the later RPC binding; callers must not infer complete runtime
+fixtures cover that restriction. The retry RPC is now registered with the catalog
+and REST/gRPC mounts. Tests check its OpenAPI path, published UUID and numeric
+bounds, and denial of author-only callers. Cross-message transcript identity,
+ownership, lifecycle, and retry-key checks remain runtime obligations. No
+generator changes are included; callers must not infer complete runtime
 validation from the structural schema alone.
 
 ## Acceptance work

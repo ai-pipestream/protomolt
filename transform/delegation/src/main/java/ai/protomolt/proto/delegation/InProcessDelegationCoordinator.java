@@ -13,6 +13,12 @@ import ai.protomolt.proto.delegation.v1.Lane;
 import ai.protomolt.proto.delegation.v1.LeaseExpired;
 import ai.protomolt.proto.delegation.v1.LeaseRenewal;
 import ai.protomolt.proto.delegation.v1.RevisionRequested;
+import ai.protomolt.proto.delegation.v1.ReviewStarted;
+import ai.protomolt.proto.delegation.v1.ReviewFailed;
+import ai.protomolt.proto.delegation.v1.ReviewDeferred;
+import ai.protomolt.proto.delegation.v1.ReviewFailureCode;
+import ai.protomolt.proto.delegation.v1.RetryCandidateReviewRequest;
+import ai.protomolt.proto.delegation.v1.RetryCandidateReviewResponse;
 import ai.protomolt.proto.delegation.v1.TaskOffer;
 import ai.protomolt.proto.delegation.v1.TaskMessage;
 import ai.protomolt.proto.delegation.v1.TaskMessageKind;
@@ -22,6 +28,8 @@ import ai.protomolt.proto.delegation.v1.TranscriptEntry;
 import ai.protomolt.proto.delegation.v1.WorkerHello;
 import ai.protomolt.proto.grpc.workflow.v1.ArtifactReference;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.Message;
+import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Duration;
 import com.google.protobuf.Timestamp;
@@ -43,6 +51,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import ai.protomolt.proto.validate.ProtoValidator;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -80,6 +89,9 @@ public final class InProcessDelegationCoordinator
     private final Clock clock;
     private final TranscriptRepository transcripts;
     private final boolean scheduleLeaseExpiries;
+    private final boolean scheduleReviewDeadlines;
+    private final java.time.Duration reviewWindow;
+    private static final ProtoValidator VALIDATOR = ProtoValidator.create();
     private final ExecutorService runtimeTasks = Executors.newVirtualThreadPerTaskExecutor();
     private final DelegationReducer reducer = new DelegationReducer();
     private final Map<String, Session> sessions = new LinkedHashMap<>();
@@ -89,6 +101,7 @@ public final class InProcessDelegationCoordinator
     private final List<Event> events = new ArrayList<>();
     private long cursor;
     private boolean closed;
+    private boolean publicationFailed;
 
     /** Creates a coordinator that admits workers and leaves candidates for manual review. */
     public InProcessDelegationCoordinator() {
@@ -116,7 +129,14 @@ public final class InProcessDelegationCoordinator
     public InProcessDelegationCoordinator(AdmissionPolicy admissionPolicy,
                                           CandidateReviewer reviewer, Clock clock,
                                           TranscriptRepository transcripts) {
-        this(admissionPolicy, reviewer, clock, transcripts, true);
+        this(admissionPolicy, reviewer, clock, transcripts,
+                java.time.Duration.ofSeconds(300), true, true);
+    }
+
+    public InProcessDelegationCoordinator(AdmissionPolicy admissionPolicy,
+            CandidateReviewer reviewer, Clock clock, TranscriptRepository transcripts,
+            java.time.Duration reviewWindow) {
+        this(admissionPolicy, reviewer, clock, transcripts, reviewWindow, true, true);
     }
 
     // Allows tests to hold the expiry timer idle while advancing the injected clock.
@@ -124,12 +144,29 @@ public final class InProcessDelegationCoordinator
                                    CandidateReviewer reviewer, Clock clock,
                                    TranscriptRepository transcripts,
                                    boolean scheduleLeaseExpiries) {
+        this(admissionPolicy, reviewer, clock, transcripts,
+                java.time.Duration.ofSeconds(300), scheduleLeaseExpiries, true);
+    }
+
+    InProcessDelegationCoordinator(AdmissionPolicy admissionPolicy,
+            CandidateReviewer reviewer, Clock clock, TranscriptRepository transcripts,
+            java.time.Duration reviewWindow, boolean scheduleLeaseExpiries,
+            boolean scheduleReviewDeadlines) {
         this.admissionPolicy = Objects.requireNonNull(admissionPolicy, "admissionPolicy");
         this.reviewer = Objects.requireNonNull(reviewer, "reviewer");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.transcripts = Objects.requireNonNull(transcripts, "transcripts");
         this.scheduleLeaseExpiries = scheduleLeaseExpiries;
-        transcripts.load().ifPresent(this::restore);
+        this.scheduleReviewDeadlines = scheduleReviewDeadlines;
+        this.reviewWindow = Objects.requireNonNull(reviewWindow, "reviewWindow");
+        if (reviewWindow.getNano() != 0 || reviewWindow.getSeconds() < 1
+                || reviewWindow.getSeconds() > 3600) {
+            throw new IllegalArgumentException("review window must be whole seconds in 1..3600");
+        }
+        synchronized (lock) {
+            transcripts.load().ifPresent(this::restore);
+            recordInterruptedReviews();
+        }
     }
 
     @Override
@@ -146,6 +183,7 @@ public final class InProcessDelegationCoordinator
                     return;
                 }
                 try {
+                    ReviewDispatch dispatch = null;
                     synchronized (lock) {
                         requireOpen();
                         DelegationValidation.validate(frame);
@@ -160,9 +198,10 @@ public final class InProcessDelegationCoordinator
                                     "hello may only be the first frame on a stream");
                         }
                         if (recordWorkerFrame(session.workerId, frame)) {
-                            handleWorkerFrame(session, frame);
+                            dispatch = handleWorkerFrame(session, frame);
                         }
                     }
+                    if (dispatch != null) dispatchReview(dispatch);
                 } catch (IllegalArgumentException e) {
                     ended = true;
                     markDisconnected(session);
@@ -278,6 +317,7 @@ public final class InProcessDelegationCoordinator
             throw new IllegalArgumentException("review attempt and revision must be positive");
         }
         synchronized (lock) {
+            requireOpen();
             TaskRuntime task = requireTask(taskId);
             if (task.phase != DelegationReducer.Phase.CANDIDATE) {
                 throw new IllegalStateException("task has no candidate under review");
@@ -285,8 +325,76 @@ public final class InProcessDelegationCoordinator
             if (task.attempt != attempt || task.candidate.getRevision() != revision) {
                 throw new IllegalStateException("review does not match the open candidate");
             }
-            applyReview(task, Objects.requireNonNull(decision, "decision"));
+            settleExpiredReview(task);
+            String invocation = currentReview(task).status()
+                    == DelegationReducer.ReviewStatus.RUNNING
+                    ? currentReview(task).started().getIdentity().getInvocationId() : "";
+            applyReview(task, Objects.requireNonNull(decision, "decision"), invocation);
         }
+    }
+
+    /** Retries only the latest failed invocation of the current candidate. */
+    public RetryCandidateReviewResponse retryCandidateReview(RetryCandidateReviewRequest request) {
+        requireNative(request, "invalid review retry request");
+        ReviewDispatch dispatch;
+        RetryCandidateReviewResponse response;
+        synchronized (lock) {
+            requireOpen();
+            for (TranscriptEntry entry : entries) {
+                if (!entry.hasCoordinatorFrame()
+                        || !entry.getCoordinatorFrame().hasReviewStarted()) continue;
+                ReviewStarted existing = entry.getCoordinatorFrame().getReviewStarted();
+                if (!existing.getRetryId().equals(request.getRetryId())) continue;
+                var identity = existing.getIdentity();
+                if (!identity.getTaskId().equals(request.getTaskId())
+                        || identity.getAttempt() != request.getAttempt()
+                        || identity.getRevision() != request.getRevision()
+                        || !existing.getPreviousInvocationId().equals(
+                                request.getExpectedInvocationId())) {
+                    throw new IllegalArgumentException("review retry id was used for another request");
+                }
+                return retryResponse(request, identity);
+            }
+            TaskRuntime task = requireTask(request.getTaskId());
+            if (task.phase == DelegationReducer.Phase.CANDIDATE) settleExpiredReview(task);
+            DelegationReducer.ReviewState review = currentReview(task);
+            if (task.phase != DelegationReducer.Phase.CANDIDATE
+                    || task.attempt != request.getAttempt()
+                    || task.candidate.getRevision() != request.getRevision()
+                    || review.status() != DelegationReducer.ReviewStatus.FAILED
+                    || !review.started().getIdentity().getInvocationId().equals(
+                            request.getExpectedInvocationId())) {
+                throw new IllegalArgumentException("review retry does not match the latest failed candidate");
+            }
+            var previous = review.started().getIdentity();
+            var identity = DelegationReviewBindings.identity(selectedOfferEntry(task),
+                    selectedCandidateEntry(task), UUID.randomUUID().toString());
+            if (!identity.toBuilder().setInvocationId(previous.getInvocationId()).build()
+                    .equals(previous)) {
+                throw new IllegalStateException("current review identity is inconsistent");
+            }
+            ReviewStarted started = newReviewStart(identity,
+                    request.getExpectedInvocationId(), request.getRetryId());
+            Session session = requireAdmittedWorker(task.workerId);
+            long seq = session.peekNextCoordinatorSeq(task.taskId, task.attempt);
+            DelegateResponse frame = reviewStartFrame(task, seq, started);
+            append(TranscriptEntry.newBuilder().setWorkerId(task.workerId)
+                    .setLane(Lane.LANE_COORDINATOR).setCoordinatorFrame(frame).build());
+            session.commitCoordinatorSeq(task.taskId, task.attempt, seq);
+            deliver(session, frame);
+            response = retryResponse(request, identity);
+            dispatch = new ReviewDispatch(task.taskId, started);
+        }
+        dispatchReview(dispatch);
+        return response;
+    }
+
+    private static RetryCandidateReviewResponse retryResponse(RetryCandidateReviewRequest request,
+            ai.protomolt.proto.delegation.v1.CandidateReviewIdentity identity) {
+        RetryCandidateReviewResponse response = RetryCandidateReviewResponse.newBuilder()
+                .setRequest(request).setIdentity(identity).build();
+        requireNative(response, "invalid review retry response");
+        return response;
     }
 
     /**
@@ -391,6 +499,7 @@ public final class InProcessDelegationCoordinator
     public WorkerResumption workerResumption(String workerId) {
         Objects.requireNonNull(workerId, "workerId");
         synchronized (lock) {
+            requireOpen();
             Map<Scope, Long> sequences = new HashMap<>();
             Map<Scope, Integer> progress = new HashMap<>();
             Map<Scope, Integer> checkpoints = new HashMap<>();
@@ -417,6 +526,7 @@ public final class InProcessDelegationCoordinator
     /** Returns the current worker registrations, in first-seen order. */
     public List<WorkerView> workers() {
         synchronized (lock) {
+            requireOpen();
             return sessions.values().stream()
                     .map(session -> new WorkerView(session.workerId, session.admitted,
                             session.connected, session.hello))
@@ -427,6 +537,7 @@ public final class InProcessDelegationCoordinator
     /** Cancels the current offer or lease. */
     public void cancel(String taskId, String reason) {
         synchronized (lock) {
+            requireOpen();
             TaskRuntime task = requireTask(taskId);
             if (task.phase != DelegationReducer.Phase.OFFERED
                     && task.phase != DelegationReducer.Phase.LEASED
@@ -454,6 +565,7 @@ public final class InProcessDelegationCoordinator
     public int expireLeases(Instant now) {
         Objects.requireNonNull(now, "now");
         synchronized (lock) {
+            requireOpen();
             int expired = 0;
             for (TaskRuntime task : tasks.values()) {
                 if (task.phase == DelegationReducer.Phase.LEASED
@@ -480,6 +592,7 @@ public final class InProcessDelegationCoordinator
         List<Descriptor> types = new ArrayList<>();
         Set<String> named = new HashSet<>();
         synchronized (lock) {
+            requireOpen();
             for (TaskRuntime task : tasks.values()) {
                 if (task.offer == null || !task.offer.getSpec().hasContract()) {
                     continue;
@@ -502,6 +615,7 @@ public final class InProcessDelegationCoordinator
     public Optional<ai.protomolt.proto.delegation.v1.DeliverableContract> deliverableContract(
             String taskId) {
         synchronized (lock) {
+            requireOpen();
             TaskRuntime task = tasks.get(taskId);
             if (task == null || task.offer == null || !task.offer.getSpec().hasContract()) {
                 return Optional.empty();
@@ -513,6 +627,7 @@ public final class InProcessDelegationCoordinator
     /** Returns the current replayable transcript. */
     public Transcript transcript() {
         synchronized (lock) {
+            requireOpen();
             return Transcript.newBuilder().addAllEntries(entries).build();
         }
     }
@@ -520,6 +635,7 @@ public final class InProcessDelegationCoordinator
     /** Returns all events after a cursor, optionally restricted to one task. */
     public List<Event> eventsAfter(String taskId, long afterCursor) {
         synchronized (lock) {
+            requireOpen();
             return events.stream()
                     .filter(event -> event.cursor > afterCursor)
                     .filter(event -> taskId == null || taskId.isEmpty()
@@ -544,8 +660,9 @@ public final class InProcessDelegationCoordinator
         long deadline = System.nanoTime() + remaining;
         synchronized (lock) {
             while (true) {
+                requireOpen();
                 Optional<Event> event = firstEvent(taskId, afterCursor);
-                if (event.isPresent() || remaining <= 0 || closed) {
+                if (event.isPresent() || remaining <= 0) {
                     return event;
                 }
                 long millis = remaining / 1_000_000L;
@@ -559,6 +676,7 @@ public final class InProcessDelegationCoordinator
     /** Reduces the current transcript for diagnostics or persistence gates. */
     public DelegationReducer.Result state() {
         synchronized (lock) {
+            requireOpen();
             return reducer.reduce(Transcript.newBuilder().addAllEntries(entries).build());
         }
     }
@@ -622,22 +740,44 @@ public final class InProcessDelegationCoordinator
                         && frame.getCompletion().getAttempt() == task.attempt))) {
             throw new IllegalArgumentException("task lease has expired");
         }
-        append(TranscriptEntry.newBuilder()
+        TranscriptEntry workerEntry = TranscriptEntry.newBuilder()
                 .setWorkerId(workerId)
                 .setLane(Lane.LANE_WORKER)
                 .setWorkerFrame(frame)
-                .build());
+                .build();
+        if (frame.hasCompletion()) {
+            if (task == null) throw new IllegalArgumentException("completion names no task");
+            Session session = requireAdmittedWorker(workerId);
+            TranscriptEntry offerEntry = selectedOfferEntry(task);
+            var identity = DelegationReviewBindings.identity(offerEntry, workerEntry,
+                    UUID.randomUUID().toString());
+            ReviewStarted started = newReviewStart(identity, "", "");
+            long seq = session.peekNextCoordinatorSeq(task.taskId, task.attempt);
+            DelegateResponse startFrame = reviewStartFrame(task, seq, started);
+            TranscriptEntry startEntry = TranscriptEntry.newBuilder()
+                    .setWorkerId(workerId).setLane(Lane.LANE_COORDINATOR)
+                    .setCoordinatorFrame(startFrame).build();
+            appendAll(List.of(workerEntry, startEntry));
+            session.commitCoordinatorSeq(task.taskId, task.attempt, seq);
+            workerFrames.put(frame.getFrameId(), bytes);
+            task.phase = DelegationReducer.Phase.CANDIDATE;
+            task.candidate = frame.getCompletion();
+            deliver(session, startFrame);
+            return true;
+        } else {
+            append(workerEntry);
+        }
         workerFrames.put(frame.getFrameId(), bytes);
         return true;
     }
 
-    private void handleWorkerFrame(Session session, DelegateRequest frame) {
+    private ReviewDispatch handleWorkerFrame(Session session, DelegateRequest frame) {
         if (frame.hasHello()) {
             emit(session, "", 0, DelegateResponse.newBuilder()
                     .setAdmission(session.pendingAdmission));
             session.pendingAdmission = null;
             resumeRestoredLeases(session);
-            return;
+            return null;
         }
         if (!session.admitted) {
             throw new IllegalArgumentException("worker was not admitted");
@@ -672,39 +812,16 @@ public final class InProcessDelegationCoordinator
                 // message; the lifecycle does not move. Sender authenticity is
                 // a reducer finding, so a forged frame never lands here.
             }
-            case COMPLETION -> handleCandidate(task, frame.getCompletion());
+            case COMPLETION -> {
+                return new ReviewDispatch(task.taskId,
+                        currentReview(task).started());
+            }
             default -> throw new IllegalArgumentException("unexpected worker payload");
         }
+        return null;
     }
 
-    private void handleCandidate(TaskRuntime task, CompletionCandidate candidate) {
-        task.phase = DelegationReducer.Phase.CANDIDATE;
-        task.candidate = candidate;
-        CandidateReviewer.ReviewContext context = new CandidateReviewer.ReviewContext(
-                task.taskId, task.workerId, task.offer.getSpec(), candidate);
-        runtimeTasks.submit(() -> {
-            ReviewDecision decision;
-            try {
-                decision = reviewer.review(context);
-            } catch (Exception e) {
-                synchronized (lock) {
-                    if (task.phase == DelegationReducer.Phase.CANDIDATE
-                            && task.candidate.equals(candidate)) {
-                        task.reviewFailure = e;
-                    }
-                }
-                return;
-            }
-            synchronized (lock) {
-                if (!closed && task.phase == DelegationReducer.Phase.CANDIDATE
-                        && task.candidate.equals(candidate)) {
-                    applyReview(task, decision);
-                }
-            }
-        });
-    }
-
-    private void applyReview(TaskRuntime task, ReviewDecision decision) {
+    private void applyReview(TaskRuntime task, ReviewDecision decision, String invocationId) {
         Session session = requireAdmittedWorker(task.workerId);
         switch (decision) {
             case ReviewDecision.Accept(String verdict) -> {
@@ -712,6 +829,7 @@ public final class InProcessDelegationCoordinator
                         .setAttempt(task.attempt)
                         .setRevision(task.candidate.getRevision())
                         .setVerdict(verdict)
+                        .setReviewInvocationId(invocationId)
                         .build();
                 emit(session, task.taskId, task.attempt,
                         DelegateResponse.newBuilder().setAccepted(payload), () -> {
@@ -725,6 +843,7 @@ public final class InProcessDelegationCoordinator
                         .setRevision(task.candidate.getRevision())
                         .setFeedback(feedback)
                         .addAllFailedChecks(failedChecks)
+                        .setReviewInvocationId(invocationId)
                         .build();
                 emit(session, task.taskId, task.attempt,
                         DelegateResponse.newBuilder().setRevisionRequested(payload),
@@ -734,6 +853,198 @@ public final class InProcessDelegationCoordinator
             // The candidate stays open for an explicit review action; the
             // lifecycle does not move.
             case ReviewDecision.Pending _ -> {
+            }
+        }
+    }
+
+    private record ReviewDispatch(String taskId, ReviewStarted started) {
+    }
+
+    private ReviewStarted newReviewStart(
+            ai.protomolt.proto.delegation.v1.CandidateReviewIdentity identity,
+            String previousInvocation, String retryId) {
+        Timestamp startedAt = nowTimestamp();
+        ReviewStarted.Builder started = ReviewStarted.newBuilder()
+                .setIdentity(identity).setStartedAt(startedAt)
+                .setDeadline(toTimestamp(toInstant(startedAt).plus(reviewWindow)));
+        if (!previousInvocation.isEmpty()) started.setPreviousInvocationId(previousInvocation);
+        if (!retryId.isEmpty()) started.setRetryId(retryId);
+        return started.build();
+    }
+
+    private DelegateResponse reviewStartFrame(TaskRuntime task, long seq, ReviewStarted started) {
+        DelegateResponse frame = DelegateResponse.newBuilder()
+                .setFrameId(UUID.randomUUID().toString()).setTaskId(task.taskId)
+                .setSeq(seq).setSentAt(started.getStartedAt())
+                .setReviewStarted(started).build();
+        DelegationValidation.validate(frame);
+        return frame;
+    }
+
+    private TranscriptEntry selectedOfferEntry(TaskRuntime task) {
+        for (int i = entries.size() - 1; i >= 0; i--) {
+            TranscriptEntry entry = entries.get(i);
+            if (entry.hasCoordinatorFrame() && entry.getCoordinatorFrame().hasOffer()
+                    && entry.getCoordinatorFrame().getTaskId().equals(task.taskId)
+                    && entry.getCoordinatorFrame().getOffer().getAttempt() == task.attempt
+                    && entry.getWorkerId().equals(task.workerId)) return entry;
+        }
+        throw new IllegalStateException("current task offer is missing");
+    }
+
+    private TranscriptEntry selectedCandidateEntry(TaskRuntime task) {
+        for (int i = entries.size() - 1; i >= 0; i--) {
+            TranscriptEntry entry = entries.get(i);
+            if (entry.hasWorkerFrame() && entry.getWorkerFrame().hasCompletion()
+                    && entry.getWorkerFrame().getTaskId().equals(task.taskId)
+                    && entry.getWorkerFrame().getCompletion().getAttempt() == task.attempt
+                    && entry.getWorkerFrame().getCompletion().getRevision()
+                            == task.candidate.getRevision()
+                    && entry.getWorkerId().equals(task.workerId)) return entry;
+        }
+        throw new IllegalStateException("current task candidate is missing");
+    }
+
+    private static void requireNative(Message value, String description) {
+        if (value == null || !nativeValid(value)) throw new IllegalArgumentException(description);
+    }
+
+    private static boolean nativeValid(Message value) {
+        if (!value.getUnknownFields().asMap().isEmpty()
+                || !VALIDATOR.validate(value).valid()) return false;
+        for (var field : value.getAllFields().entrySet()) {
+            if (field.getKey().getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
+            if (field.getKey().isRepeated()) {
+                for (Object nested : (List<?>) field.getValue()) {
+                    if (!nativeValid((Message) nested)) return false;
+                }
+            } else if (!nativeValid((Message) field.getValue())) return false;
+        }
+        return true;
+    }
+
+    private DelegationReducer.ReviewState currentReview(TaskRuntime task) {
+        DelegationReducer.Result state = reducer.reduce(
+                Transcript.newBuilder().addAllEntries(entries).build());
+        if (!state.clean() || !state.tasks().containsKey(task.taskId)) {
+            throw new IllegalStateException("current review projection is unavailable");
+        }
+        return state.tasks().get(task.taskId).review();
+    }
+
+    private void dispatchReview(ReviewDispatch dispatch) {
+        scheduleReviewDeadline(dispatch);
+        try {
+            runtimeTasks.submit(() -> {
+                CandidateReviewer.ReviewContext context;
+                synchronized (lock) {
+                    TaskRuntime task = tasks.get(dispatch.taskId());
+                    if (!isCurrentReview(task, dispatch.started())) return;
+                    if (settleExpiredReview(task)) return;
+                    context = new CandidateReviewer.ReviewContext(task.taskId, task.workerId,
+                            task.offer.getSpec(), task.candidate);
+                }
+                ReviewDecision decision;
+                try {
+                    decision = reviewer.review(context);
+                } catch (Exception failure) {
+                    synchronized (lock) {
+                        TaskRuntime task = tasks.get(dispatch.taskId());
+                        if (isCurrentReview(task, dispatch.started())) {
+                            if (!settleExpiredReview(task)) {
+                                recordReviewFailure(task, dispatch.started(),
+                                        ReviewFailureCode.REVIEW_FAILURE_CODE_INFRASTRUCTURE);
+                            }
+                        }
+                    }
+                    return;
+                }
+                synchronized (lock) {
+                    TaskRuntime task = tasks.get(dispatch.taskId());
+                    if (!isCurrentReview(task, dispatch.started())) return;
+                    if (settleExpiredReview(task)) return;
+                    if (decision == null) {
+                        recordReviewFailure(task, dispatch.started(),
+                                ReviewFailureCode.REVIEW_FAILURE_CODE_INFRASTRUCTURE);
+                    } else if (decision instanceof ReviewDecision.Pending) {
+                        emit(requireAdmittedWorker(task.workerId), task.taskId, task.attempt,
+                                DelegateResponse.newBuilder().setReviewDeferred(
+                                        ReviewDeferred.newBuilder()
+                                                .setIdentity(dispatch.started().getIdentity())));
+                    } else {
+                        try {
+                            applyReview(task, decision,
+                                    dispatch.started().getIdentity().getInvocationId());
+                        } catch (IllegalArgumentException invalidDecision) {
+                            if (isCurrentReview(task, dispatch.started())) {
+                                recordReviewFailure(task, dispatch.started(),
+                                        ReviewFailureCode.REVIEW_FAILURE_CODE_INFRASTRUCTURE);
+                            }
+                        }
+                    }
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException rejected) {
+            synchronized (lock) {
+                TaskRuntime task = tasks.get(dispatch.taskId());
+                if (isCurrentReview(task, dispatch.started())) {
+                    recordReviewFailure(task, dispatch.started(),
+                            ReviewFailureCode.REVIEW_FAILURE_CODE_INFRASTRUCTURE);
+                }
+            }
+        }
+    }
+
+    private boolean isCurrentReview(TaskRuntime task, ReviewStarted started) {
+        if (closed || publicationFailed || task == null
+                || task.phase != DelegationReducer.Phase.CANDIDATE) return false;
+        DelegationReducer.ReviewState review = currentReview(task);
+        return review.status() == DelegationReducer.ReviewStatus.RUNNING
+                && review.started().getIdentity().equals(started.getIdentity());
+    }
+
+    private boolean settleExpiredReview(TaskRuntime task) {
+        DelegationReducer.ReviewState review = currentReview(task);
+        if (review.status() != DelegationReducer.ReviewStatus.RUNNING
+                || toInstant(review.started().getDeadline()).isAfter(clock.instant())) return false;
+        recordReviewFailure(task, review.started(),
+                ReviewFailureCode.REVIEW_FAILURE_CODE_DEADLINE);
+        return true;
+    }
+
+    private void recordReviewFailure(TaskRuntime task, ReviewStarted started,
+            ReviewFailureCode code) {
+        emit(requireAdmittedWorker(task.workerId), task.taskId, task.attempt,
+                DelegateResponse.newBuilder().setReviewFailed(
+                        ReviewFailed.newBuilder().setIdentity(started.getIdentity()).setCode(code)));
+    }
+
+    private void scheduleReviewDeadline(ReviewDispatch dispatch) {
+        if (!scheduleReviewDeadlines) return;
+        try {
+            runtimeTasks.submit(() -> {
+                try {
+                    while (true) {
+                        java.time.Duration delay = java.time.Duration.between(clock.instant(),
+                                toInstant(dispatch.started().getDeadline()));
+                        if (!delay.isNegative() && !delay.isZero()) Thread.sleep(delay);
+                        synchronized (lock) {
+                            TaskRuntime task = tasks.get(dispatch.taskId());
+                            if (!isCurrentReview(task, dispatch.started())) return;
+                            if (settleExpiredReview(task)) return;
+                        }
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException rejected) {
+            synchronized (lock) {
+                TaskRuntime task = tasks.get(dispatch.taskId());
+                if (isCurrentReview(task, dispatch.started())) {
+                    recordReviewFailure(task, dispatch.started(),
+                            ReviewFailureCode.REVIEW_FAILURE_CODE_INFRASTRUCTURE);
+                }
             }
         }
     }
@@ -837,6 +1148,10 @@ public final class InProcessDelegationCoordinator
                 .build());
         session.commitCoordinatorSeq(taskId, attempt, seq);
         afterPersist.run();
+        deliver(session, response);
+    }
+
+    private void deliver(Session session, DelegateResponse response) {
         if (session.connected) {
             try {
                 session.responses.onNext(response);
@@ -854,19 +1169,34 @@ public final class InProcessDelegationCoordinator
     }
 
     private void append(TranscriptEntry entry) {
+        appendAll(List.of(entry));
+    }
+
+    private void appendAll(List<TranscriptEntry> batch) {
+        requireOpen();
         Transcript candidate = Transcript.newBuilder()
                 .addAllEntries(entries)
-                .addEntries(entry)
+                .addAllEntries(batch)
                 .build();
         DelegationReducer.Result result = reducer.reduce(
                 candidate);
         if (!result.clean()) {
-            DelegationReducer.Finding finding = result.findings().getLast();
+            DelegationReducer.Finding finding = result.findings().getFirst();
             throw new IllegalArgumentException(finding.kind() + ": " + finding.error());
         }
-        transcripts.save(candidate);
-        entries.add(entry);
-        events.add(new Event(++cursor, entry));
+        try {
+            transcripts.save(candidate);
+        } catch (RuntimeException uncertain) {
+            publicationFailed = true;
+            throw new IllegalStateException("transcript publication is unavailable", uncertain);
+        } catch (Error uncertain) {
+            publicationFailed = true;
+            throw uncertain;
+        }
+        for (TranscriptEntry entry : batch) {
+            entries.add(entry);
+            events.add(new Event(++cursor, entry));
+        }
         lock.notifyAll();
     }
 
@@ -891,6 +1221,18 @@ public final class InProcessDelegationCoordinator
         // cancellation or message recorded before the worker reconnects continues
         // the scope instead of rewinding it.
         sessions.values().forEach(this::restoreCoordinatorSequences);
+    }
+
+    private void recordInterruptedReviews() {
+        DelegationReducer.Result state = reducer.reduce(
+                Transcript.newBuilder().addAllEntries(entries).build());
+        for (var snapshot : state.tasks().values()) {
+            if (snapshot.phase() != DelegationReducer.Phase.CANDIDATE
+                    || snapshot.review().status() != DelegationReducer.ReviewStatus.RUNNING) continue;
+            TaskRuntime task = tasks.get(snapshot.taskId());
+            recordReviewFailure(task, snapshot.review().started(),
+                    ReviewFailureCode.REVIEW_FAILURE_CODE_INTERRUPTED);
+        }
     }
 
     private void restoreRuntime(TranscriptEntry entry) {
@@ -971,7 +1313,7 @@ public final class InProcessDelegationCoordinator
                 task.phase = DelegationReducer.Phase.ACCEPTED;
                 task.leaseGeneration++;
             }
-            case TASK_MESSAGE -> {
+            case REVIEW_STARTED, REVIEW_FAILED, REVIEW_DEFERRED, TASK_MESSAGE -> {
                 // Non-transitioning on the live path, so nothing to reconstruct:
                 // the restored entry is already in the transcript and event feed.
             }
@@ -1094,6 +1436,9 @@ public final class InProcessDelegationCoordinator
         if (closed) {
             throw new IllegalStateException("coordinator is closed");
         }
+        if (publicationFailed) {
+            throw new IllegalStateException("transcript publication is unavailable");
+        }
     }
 
     private void markDisconnected(Session session) {
@@ -1180,7 +1525,6 @@ public final class InProcessDelegationCoordinator
         private Instant expiry;
         private long leaseGeneration;
         private CompletionCandidate candidate;
-        private Exception reviewFailure;
 
         private TaskRuntime(String taskId) {
             this.taskId = taskId;
