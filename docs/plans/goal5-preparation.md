@@ -257,6 +257,14 @@ must preserve distinct invalid-input, inactive-state, conflict, terminal-failure
 corrupt-evidence and invalid-response outcomes; terminal errors include the
 persisted preparation binding and run ID. No preparation RPC is available yet.
 
+The initial handler compiles but remains under review. Before mount, prove that
+request validation precedes ledger access, source schema pinning precedes any
+schema resolution, and artifact reads check actual size and content digest.
+Fixture success alone does not certify the later recorded invocation: compare
+its output with the first pinned expectation, including on recovery. Verify the
+generated receipt before persisting a successful response. Regression tests for
+these boundaries belong to handler acceptance, not a post-release follow-up.
+
 `DelegationReducer.TaskState` exposes phase, holder, attempt and candidate
 revision, but not lease expiry. A clean reduction alone does not establish an
 unexpired wall-clock lease. The preparation handler must validate and scan the
