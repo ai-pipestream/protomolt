@@ -108,6 +108,9 @@ import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
  *        ({@code DOCUMENT_PLATFORM_KAFKA_PURGE_TOPIC}, default
  *        {@code "document-purges"}); used only when {@code purgeQueue} is
  *        {@code "kafka"}
+ * @param s3ConditionalWrites explicitly enable conditional S3 writes only for a
+ *        qualified backing endpoint ({@code DOCUMENT_PLATFORM_S3_CONDITIONAL_WRITES},
+ *        default false)
  */
 public record RepoServiceConfig(
         int grpcPort,
@@ -135,12 +138,15 @@ public record RepoServiceConfig(
         String schemaRegistryUrl,
         String seedAccountId,
         String purgeQueue,
-        String kafkaPurgeTopic) {
+        String kafkaPurgeTopic,
+        boolean s3ConditionalWrites) {
 
     /** Environment variable for the gRPC listen port. */
     public static final String ENV_GRPC_PORT = "DOCUMENT_PLATFORM_GRPC_PORT";
     /** Environment variable for the S3 endpoint override. */
     public static final String ENV_S3_ENDPOINT = "DOCUMENT_PLATFORM_S3_ENDPOINT";
+    /** Explicit opt-in for a backing S3 endpoint qualified for conditional writes. */
+    public static final String ENV_S3_CONDITIONAL_WRITES = "DOCUMENT_PLATFORM_S3_CONDITIONAL_WRITES";
     /** Environment variable for the S3 region. */
     public static final String ENV_S3_REGION = "DOCUMENT_PLATFORM_S3_REGION";
     /** Environment variable for the static S3 access key. */
@@ -245,6 +251,35 @@ public record RepoServiceConfig(
                 redisMaxObjectBytes, DEFAULT_LIFECYCLE_ENABLED, DEFAULT_PURGE_INTERVAL_MS,
                 DEFAULT_SWEEP_INTERVAL_MS, DEFAULT_RECONCILE_ENABLED, DEFAULT_RECONCILE_DRY_RUN,
                 DEFAULT_RECONCILE_MIN_AGE_MS);
+    }
+
+    /** Embedding constructor for a specifically qualified conditional S3 endpoint. */
+    public RepoServiceConfig(int grpcPort, LedgerConfig ledger, String s3Endpoint, String s3Region,
+            String s3AccessKey, String s3SecretKey, String defaultBucketBase, int httpPort,
+            String blobStore, String repoTarget, String repoDrive, String redisUri,
+            int redisTtlSeconds, long redisMaxObjectBytes, boolean s3ConditionalWrites) {
+        this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase,
+                httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds,
+                redisMaxObjectBytes, DEFAULT_LIFECYCLE_ENABLED, DEFAULT_PURGE_INTERVAL_MS,
+                DEFAULT_SWEEP_INTERVAL_MS, DEFAULT_RECONCILE_ENABLED, DEFAULT_RECONCILE_DRY_RUN,
+                DEFAULT_RECONCILE_MIN_AGE_MS, null, DEFAULT_KAFKA_TOPIC, null, null,
+                PURGE_QUEUE_JDBC, DEFAULT_KAFKA_PURGE_TOPIC, s3ConditionalWrites);
+    }
+
+    /** Compatibility constructor: conditional S3 writes remain off by default. */
+    public RepoServiceConfig(int grpcPort, LedgerConfig ledger, String s3Endpoint, String s3Region,
+            String s3AccessKey, String s3SecretKey, String defaultBucketBase, int httpPort,
+            String blobStore, String repoTarget, String repoDrive, String redisUri,
+            int redisTtlSeconds, long redisMaxObjectBytes, boolean lifecycleEnabled,
+            long purgeIntervalMs, long sweepIntervalMs, boolean reconcileEnabled,
+            boolean reconcileDryRun, long reconcileMinAgeMs, String kafkaBootstrapServers,
+            String kafkaTopic, String schemaRegistryUrl, String seedAccountId,
+            String purgeQueue, String kafkaPurgeTopic) {
+        this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase,
+                httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds,
+                redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs,
+                reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers,
+                kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, false);
     }
 
     /**
@@ -355,6 +390,11 @@ public record RepoServiceConfig(
                     + " must be one of s3|repo|repo-inprocess|redis|s3-redis-cache"
                     + " (got \"" + blobStore + "\")");
         }
+        if (s3ConditionalWrites && !blobStore.equals(BLOB_STORE_S3)
+                && !blobStore.equals(BLOB_STORE_S3_REDIS_CACHE)) {
+            throw new IllegalArgumentException(ENV_S3_CONDITIONAL_WRITES
+                    + " requires s3 or s3-redis-cache backing storage");
+        }
         repoTarget = blankToNull(repoTarget);
         if ((blobStore.equals(BLOB_STORE_REPO) || blobStore.equals(BLOB_STORE_REPO_INPROCESS))
                 && repoTarget == null) {
@@ -460,7 +500,8 @@ public record RepoServiceConfig(
                 System.getenv(ENV_SCHEMA_REGISTRY_URL),
                 System.getenv(ENV_SEED_ACCOUNT_ID),
                 envOrDefault(ENV_PURGE_QUEUE, PURGE_QUEUE_JDBC),
-                envOrDefault(ENV_KAFKA_PURGE_TOPIC, DEFAULT_KAFKA_PURGE_TOPIC));
+                envOrDefault(ENV_KAFKA_PURGE_TOPIC, DEFAULT_KAFKA_PURGE_TOPIC),
+                parseBoolOrDefault(System.getenv(ENV_S3_CONDITIONAL_WRITES), false));
     }
 
     /** HTTP port parse: {@code "off"} (and {@code "0"}) disables the HTTP server. */

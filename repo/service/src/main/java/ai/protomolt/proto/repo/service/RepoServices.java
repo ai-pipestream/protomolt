@@ -163,7 +163,7 @@ public final class RepoServices implements AutoCloseable {
         // read-through/write-through cache in front of the S3 store of truth.
         switch (config.blobStore()) {
             case RepoServiceConfig.BLOB_STORE_S3 -> {
-                this.blobStore = new S3BlobStore(s3Client);
+                this.blobStore = new S3BlobStore(s3Client, config.s3ConditionalWrites());
                 this.remoteChannel = null;
             }
             case RepoServiceConfig.BLOB_STORE_REDIS -> {
@@ -171,7 +171,8 @@ public final class RepoServices implements AutoCloseable {
                 this.remoteChannel = null;
             }
             case RepoServiceConfig.BLOB_STORE_S3_REDIS_CACHE -> {
-                this.blobStore = new CachingBlobStore(new S3BlobStore(s3Client),
+                this.blobStore = new CachingBlobStore(new S3BlobStore(s3Client,
+                        config.s3ConditionalWrites()),
                         new RedisBlobStore(redisConfig(config)),
                         config.redisTtlSeconds(), config.redisMaxObjectBytes());
                 this.remoteChannel = null;
@@ -257,6 +258,7 @@ public final class RepoServices implements AutoCloseable {
     public Server startInProcess(String name) {
         try {
             return registerAndStart(InProcessServerBuilder.forName(name)
+                    .maxInboundMessageSize(10 * 1024 * 1024)
                     // Virtual threads: every handler body is blocking JDBC/S3 —
                     // exactly what virtual threads are for.
                     .executor(Executors.newVirtualThreadPerTaskExecutor()));
@@ -308,6 +310,7 @@ public final class RepoServices implements AutoCloseable {
         try {
             HealthStatusManager health = new HealthStatusManager();
             var builder = NettyServerBuilder.forPort(port)
+                    .maxInboundMessageSize(10 * 1024 * 1024)
                     .executor(Executors.newVirtualThreadPerTaskExecutor())
                     .addService(health.getHealthService())
                     .addService(ProtoReflectionService.newInstance());
