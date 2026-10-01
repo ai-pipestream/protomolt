@@ -32,6 +32,8 @@ dependencies {
     testImplementation project(':protomolt-http-openapi')
     testImplementation project(':protomolt-sources')
     testImplementation libs.grpc.inprocess
+    testImplementation libs.testcontainers.postgresql
+    testImplementation libs.testcontainers.junit.jupiter
     implementation project(':protomolt-mapper-cel')
     implementation project(':protomolt-server-jdk')
     // Live SharePoint read -> infer-schema sample.
@@ -191,7 +193,7 @@ tasks.register('installAuthoringCoordinator', Sync) {
 }
 
 tasks.named('test') {
-    dependsOn tasks.named('installAuthoringFixture')
+    dependsOn tasks.named('installAuthoringFixture'), tasks.named('installAuthoringCoordinator')
 }
 
 tasks.register('runAcpStreamingDemo', JavaExec) {
