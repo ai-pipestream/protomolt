@@ -175,17 +175,19 @@ accepted-workflow coordinator were tested together in one deployment.
 
 ## Remaining evidence
 
-The combined projection-to-service walkthrough remains open. The authoring
-starter maps fields directly into gRPC requests; correction projects grounding
-for a structured-generation step. `WorkflowVerifier` deliberately rejects
-`projectTo` on a gRPC edge without fan-out. These separate examples must not be
-described as one tested projected gRPC execution. The workflow guide now states
-the restriction. A combined walkthrough must compose supported operations and
-verify the whole path without changing that contract merely to fit the demo.
+The [projected-workflow walkthrough](../tutorials/projected-workflow.md) now
+composes caller-side projection and validation with the published starter's
+prepared input and asynchronous gRPC execution. Its typed-RPC rehearsal verified
+the complete output hash, exact launch retry, and retained completion after
+restarting the coordinator and fixture. Invalid projected contacts produced no
+output file. The new input still needs the documented browser rehearsal and an
+unfamiliar reader. This does not change the workflow contract: `WorkflowVerifier`
+rejects `projectTo` on a gRPC edge without fan-out, so projection happens before
+launch in the caller. Correction's projected grounding is a separate example.
 The focused check passed `EdgeVerifierTest` (10 tests) and `TypedEdgeTest`
 (8 tests), with zero failures or skips on 2026-10-01. Raw output:
 `/tmp/protomolt-goal6-typed-edge.log`. This is in-process execution evidence,
-not the missing deployed combined walkthrough.
+not a replacement for the deployed rehearsal above.
 
 Cold setup timings; independent human walkthrough;
 documented-input rehearsal; a user's own external endpoint;

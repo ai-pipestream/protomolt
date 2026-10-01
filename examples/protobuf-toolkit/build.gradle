@@ -24,3 +24,12 @@ dependencies {
 
 protobuf { protoc { artifact = 'com.google.protobuf:protoc:4.36.2' } }
 application { mainClass = 'example.ToolkitExample' }
+
+tasks.register('workflowInput', JavaExec) {
+    description = 'Project and validate a source contact, then write input for the authoring starter'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'example.WorkflowInputExample'
+    args providers.gradleProperty('source').getOrElse('contact.json'),
+            providers.gradleProperty('operation').getOrElse(''),
+            providers.gradleProperty('output').getOrElse('workflow-input.json')
+}
