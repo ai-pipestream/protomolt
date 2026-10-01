@@ -96,6 +96,34 @@ class WorkflowLaunchConsoleApiHandlerTest {
         assertThat(calls).hasSize(5);
     }
 
+    @Test void authoringEntryUsesCoordinatorPermissionAndKeepsAFixedRouteAllowlist() throws Exception {
+        var catalog = ActionCatalog.defaults(ActionContext.create());
+        catalog.register(new FakeAction("get-workflow-authoring-template"));
+        catalog.register(new FakeAction("start-workflow-authoring"));
+        server.createContext("/api/workflow-authoring",
+                WorkflowLaunchConsoleApiHandler.authoringEntry(catalog, sessions));
+        String coordinator = cookie(TaskConsoleSessions.CONSOLE);
+        assertThat(entryPost("/template", coordinator, base).statusCode()).isEqualTo(200);
+        assertThat(entryPost("/start", coordinator, base).statusCode()).isEqualTo(200);
+        assertThat(calls).allSatisfy(call -> {
+            assertThat(call.caller()).isEqualTo(TaskConsoleSessions.CONSOLE);
+            assertThat(call.caller().holds(Scopes.WORKFLOW_LAUNCH)).isFalse();
+        });
+        calls.clear();
+        String author = cookie(Caller.scoped("author", Set.of(Scopes.WORKFLOW_AUTHOR)));
+        assertThat(entryPost("/start", author, base).statusCode()).isEqualTo(403);
+        assertThat(entryPost("/start", coordinator, "https://elsewhere.example").statusCode()).isEqualTo(403);
+        assertThat(entryPost("/launch", coordinator, base).statusCode()).isEqualTo(404);
+        assertThat(post("/start", "{}", coordinator, base, null).statusCode()).isEqualTo(404);
+        assertThat(calls).isEmpty();
+    }
+
+    private HttpResponse<String> entryPost(String path, String cookie, String origin) throws Exception {
+        return client.send(HttpRequest.newBuilder(URI.create(base + "/api/workflow-authoring" + path))
+                .header("Content-Type", "application/json").header("Cookie", cookie).header("Origin", origin)
+                .POST(HttpRequest.BodyPublishers.ofString("{}")).build(), HttpResponse.BodyHandlers.ofString());
+    }
+
     @Test void rejectsCrossSiteMetadataWithoutTrustingForwardedHost() throws Exception {
         String cookie = launcher();
         assertThat(post("/launch", "{}", cookie, "https://evil.example", null).statusCode())
@@ -214,7 +242,10 @@ class WorkflowLaunchConsoleApiHandlerTest {
 
         @Override public String name() { return action; }
         @Override public String description() { return "test workflow launch bridge"; }
-        @Override public String requiredScope() { return Scopes.WORKFLOW_LAUNCH; }
+        @Override public String requiredScope() {
+            return action.equals("get-workflow-authoring-template") || action.equals("start-workflow-authoring")
+                    ? Scopes.WORKER_COORDINATE : Scopes.WORKFLOW_LAUNCH;
+        }
         @Override public Descriptor requestType() {
             return action.equals("prepare-workflow-launch-input")
                     ? PrepareWorkflowLaunchInputRequest.getDescriptor() : Struct.getDescriptor();

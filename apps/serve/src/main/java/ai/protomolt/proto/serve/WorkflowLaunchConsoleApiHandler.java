@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 
-/** Fixed workflow-launch verbs over the authenticated task-console cookie. */
+/** Fixed workflow entry and launch verbs over the authenticated task-console cookie. */
 final class WorkflowLaunchConsoleApiHandler implements HttpHandler {
     private static final String PREFIX = "/api/workflow-launch";
     private static final int MAX_BODY_BYTES = 8 * 1024 * 1024;
@@ -24,10 +24,20 @@ final class WorkflowLaunchConsoleApiHandler implements HttpHandler {
 
     private final ActionCatalog catalog;
     private final ConsoleSessions sessions;
+    private final boolean authoringEntry;
 
     WorkflowLaunchConsoleApiHandler(ActionCatalog catalog, ConsoleSessions sessions) {
+        this(catalog, sessions, false);
+    }
+
+    static WorkflowLaunchConsoleApiHandler authoringEntry(ActionCatalog catalog, ConsoleSessions sessions) {
+        return new WorkflowLaunchConsoleApiHandler(catalog, sessions, true);
+    }
+
+    private WorkflowLaunchConsoleApiHandler(ActionCatalog catalog, ConsoleSessions sessions, boolean authoringEntry) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.sessions = Objects.requireNonNull(sessions, "sessions");
+        this.authoringEntry = authoringEntry;
         if (!sessions.requiresLogin()) {
             throw new IllegalArgumentException("workflow launch requires authenticated console sessions");
         }
@@ -37,7 +47,11 @@ final class WorkflowLaunchConsoleApiHandler implements HttpHandler {
         try (exchange) {
             exchange.getResponseHeaders().set("Cache-Control", "no-store");
             String path = exchange.getRequestURI().getPath();
-            String action = switch (path) {
+            String action = authoringEntry ? switch (path) {
+                case "/api/workflow-authoring/template" -> "get-workflow-authoring-template";
+                case "/api/workflow-authoring/start" -> "start-workflow-authoring";
+                default -> null;
+            } : switch (path) {
                 case PREFIX + "/accepted" -> "get-accepted-workflow";
                 case PREFIX + "/contract" -> "get-workflow-launch-input-contract";
                 case PREFIX + "/prepare" -> "prepare-workflow-launch-input";
@@ -52,7 +66,7 @@ final class WorkflowLaunchConsoleApiHandler implements HttpHandler {
             Caller caller = sessions.caller(exchange).orElse(null);
             if (caller == null) { error(exchange, 401, "authentication-required"); return; }
             if (caller.unrestricted() || !caller.holds(Scopes.WORKER_COORDINATE)
-                    || !caller.holds(Scopes.WORKFLOW_LAUNCH)) {
+                    || !authoringEntry && !caller.holds(Scopes.WORKFLOW_LAUNCH)) {
                 error(exchange, 403, "permission-denied"); return;
             }
             if (!sameOrigin(exchange)) { error(exchange, 403, "origin-denied"); return; }

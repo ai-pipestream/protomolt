@@ -49,6 +49,13 @@ console session. The default console credential only grants `worker-coordinate`;
 grant both scopes to a named principal in the access policy when launch is needed.
 The console never receives the operator API token.
 
+The configured authoring host also mounts two fixed POST routes under
+`/api/workflow-authoring`: `/template` and `/start`. They require the authenticated
+console session's `worker-coordinate` scope. The template comes from the server's
+pinned policy; start accepts a task UUID, worker, template hash and objective.
+Retry the same request to recover its original offer. This authority does not
+grant workflow launch. The routes exist; a browser authoring form is still pending.
+
 When the authoring host and authenticated console are enabled, four fixed POST
 routes are mounted under `/api/workflow-launch`: `/accepted`, `/contract`,
 `/prepare`, and `/launch`. They accept the existing protobuf JSON requests and

@@ -143,6 +143,8 @@ class WorkflowAuthoringServeIntegrationTest {
             assertThat(paths.has("/grpc-json/WorkflowAuthoringService/GetAcceptedWorkflow")).isTrue();
             assertThat(paths.has("/grpc-json/WorkflowAuthoringService/LaunchAcceptedWorkflow")).isTrue();
             assertThat(paths.has("/grpc-json/WorkflowLaunchInputService/GetWorkflowLaunchInputContract")).isTrue();
+            assertThat(paths.has("/grpc-json/WorkflowAuthoringEntryService/GetWorkflowAuthoringTemplate")).isTrue();
+            assertThat(paths.has("/grpc-json/WorkflowAuthoringEntryService/StartWorkflowAuthoring")).isTrue();
             assertThat(paths.has("/grpc-json/WorkflowLaunchInputService/PrepareWorkflowLaunchInput")).isTrue();
             var inputStub = ai.protomolt.proto.workflow.authoring.v1.WorkflowLaunchInputServiceGrpc
                     .newBlockingStub(channel).withInterceptors(MetadataUtils.newAttachHeadersInterceptor(credentials));
@@ -199,10 +201,15 @@ class WorkflowAuthoringServeIntegrationTest {
             assertThat(disabledPaths.has(
                     "/grpc-json/WorkflowLaunchInputService/GetWorkflowLaunchInputContract")).isFalse();
             assertThat(disabledPaths.has(
+                    "/grpc-json/WorkflowAuthoringEntryService/GetWorkflowAuthoringTemplate")).isFalse();
+            assertThat(disabledPaths.has(
+                    "/grpc-json/WorkflowAuthoringEntryService/StartWorkflowAuthoring")).isFalse();
+            assertThat(disabledPaths.has(
                     "/grpc-json/WorkflowPreparationService/PrepareWorkflowCandidate")).isFalse();
             assertThat(listMcpTools(disabledHttp, null).findValuesAsText("name"))
                     .doesNotContain("get-accepted-workflow", "launch-accepted-workflow",
-                            "get-workflow-launch-input-contract", "prepare-workflow-launch-input");
+                            "get-workflow-launch-input-contract", "prepare-workflow-launch-input",
+                            "get-workflow-authoring-template", "start-workflow-authoring");
             ManagedChannel disabledChannel = ManagedChannelBuilder
                     .forAddress("127.0.0.1", disabledGrpc).usePlaintext().build();
             try {
