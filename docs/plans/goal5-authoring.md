@@ -409,6 +409,10 @@ persistence behind the real submitter. It covers failure after promotion before
 insertion, lost response after insertion, reopened stores with fixtures unavailable,
 matching retries, changed intent, unbound jobs and an unrelated insertion race.
 Separate tests cover accepted identity selection and ledger conflicts/corruption.
+Additional recovery checks cover authorization persisted before a failed promotion
+and refusal of a lifecycle-clean changed candidate under an existing authorization.
+Selected offer and candidate envelopes also reject unknown protobuf fields; that
+regression failed before the boundary fix and passes with it.
 This does not qualify PostgreSQL execution, process restart, Kafka or a starter.
 
 A direct-executor in-process acceptance test hung during worker teardown; the

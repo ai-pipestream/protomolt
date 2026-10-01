@@ -23,6 +23,8 @@ import ai.protomolt.proto.grpc.invoke.DynamicGrpcCalls;
 import ai.protomolt.proto.grpc.workflow.FileSystemArtifactRepository;
 import ai.protomolt.proto.grpc.workflow.FileSystemRunEvidenceRepository;
 import ai.protomolt.proto.grpc.workflow.RunEvidenceRepository;
+import ai.protomolt.proto.grpc.workflow.WorkflowVersionRepository;
+import ai.protomolt.proto.grpc.workflow.v1.VersionedWorkflow;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunRecord;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunStore;
 import ai.protomolt.proto.registry.GitSchemaRegistryStore;
@@ -361,9 +363,33 @@ class WorkflowAuthoringReviewerTest {
             assertThat(storedJobs.jobs).isEmpty();
 
             serviceUnavailable.set(false);
+            var failingPromotion = new WorkflowVersionRepository() {
+                public Optional<VersionedWorkflow> find(String name, String version) throws java.io.IOException {
+                    return versions.find(name, version);
+                }
+                public List<VersionedWorkflow> versions(String name) throws java.io.IOException {
+                    return versions.versions(name);
+                }
+                public void save(VersionedWorkflow workflow) throws java.io.IOException {
+                    throw new java.io.IOException("injected promotion failure");
+                }
+            };
+            var beforePromotion = new WorkflowAuthoringLauncher(transcripts, reviewer, ledger,
+                    failingPromotion, artifacts, storedJobs.store, ActionContext.create(), 3);
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> beforePromotion.launch(request))
+                    .isInstanceOf(java.io.IOException.class).hasMessageContaining("injected promotion failure");
+            assertThat(ledger.find(request.getLaunchId())).isPresent();
+            assertThat(versions.versions(authored.getDeliverable().getWorkflow().getName())).isEmpty();
+            assertThat(storedJobs.jobs).isEmpty();
+            int beforeRecovery = calls.get();
+            serviceUnavailable.set(true);
+            var afterPromotionFailure = new WorkflowAuthoringLauncher(transcripts, reviewer,
+                    new FileSystemWorkflowLaunchAuthorizationRepository(ledgerPath),
+                    versions, artifacts, storedJobs.store, ActionContext.create(), 3);
             storedJobs.failBeforeInsert.set(true);
-            org.assertj.core.api.Assertions.assertThatThrownBy(() -> launcher.launch(request))
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> afterPromotionFailure.launch(request))
                     .isInstanceOf(IllegalStateException.class).hasMessageContaining("injected insert failure");
+            assertThat(calls.get()).isEqualTo(beforeRecovery);
             assertThat(ledger.find(request.getLaunchId())).isPresent();
             assertThat(versions.versions(authored.getDeliverable().getWorkflow().getName())).hasSize(1);
             assertThat(storedJobs.jobs).isEmpty();
@@ -377,6 +403,31 @@ class WorkflowAuthoringReviewerTest {
             var restoredLedger = new FileSystemWorkflowLaunchAuthorizationRepository(ledgerPath);
             var launcher = new WorkflowAuthoringLauncher(transcripts, reviewer, restoredLedger,
                     versions, artifacts, storedJobs.store, ActionContext.create(), 3);
+            // A lifecycle-clean replacement still cannot change the accepted candidate
+            // under an existing authorization, even if the typed result is unchanged.
+            var originalTranscript = transcripts.load().orElseThrow();
+            var changedTranscript = originalTranscript.toBuilder();
+            for (int i = 0; i < originalTranscript.getEntriesCount(); i++) {
+                var entry = originalTranscript.getEntries(i);
+                if (entry.hasWorkerFrame() && entry.getWorkerFrame().hasCompletion()
+                        && entry.getWorkerFrame().getTaskId().equals(taskId)) {
+                    changedTranscript.setEntries(i, entry.toBuilder().setWorkerFrame(
+                            entry.getWorkerFrame().toBuilder().setCompletion(
+                                    entry.getWorkerFrame().getCompletion().toBuilder()
+                                            .setSummary("changed accepted candidate"))));
+                }
+            }
+            assertThat(new DelegationReducer().reduce(changedTranscript.build()).clean()).isTrue();
+            transcripts.save(changedTranscript.build());
+            try {
+                org.assertj.core.api.Assertions.assertThatThrownBy(() -> launcher.launch(request))
+                        .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("durable candidate");
+                assertThat(storedJobs.jobs).isEmpty();
+                assertThat(calls.get()).isEqualTo(afterAuthorization);
+                assertThat(versions.versions(authored.getDeliverable().getWorkflow().getName())).hasSize(1);
+            } finally {
+                transcripts.save(originalTranscript);
+            }
             var first = launcher.launch(request);
             assertThat(first.getJobId()).isEqualTo(request.getLaunchId());
             assertThat(launcher.launch(request)).isEqualTo(first);
