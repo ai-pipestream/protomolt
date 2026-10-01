@@ -27,6 +27,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -232,6 +234,13 @@ public final class DelegationBridge implements AutoCloseable {
     public TaskOffer offer(String workerId, String taskId, TaskSpec spec,
                            Duration leaseDuration, CheckpointReference resumeFrom) {
         return coordinator.offer(workerId, taskId, spec, leaseDuration, resumeFrom);
+    }
+
+    /** Atomically create or replay the first bound offer for a task UUID. */
+    public TaskOffer offerOnce(String workerId, String taskId,
+            Predicate<TaskOffer> matchesCommitted,
+            Supplier<InProcessDelegationCoordinator.InitialOffer> newOffer) {
+        return coordinator.offerOnce(workerId, taskId, matchesCommitted, newOffer);
     }
 
     /**

@@ -3,6 +3,19 @@
 Status: reviewed contract-only slice. Native generated/dynamic fixtures and schema
 projection checks pass locally. No handler or new operation is available yet.
 
+Coordinator implementation follow-up: `offerOnce` and the authoring binding
+function are implemented and locally tested. No entry action or host mount exists
+yet. The coordinator checks the final rendered offer binding before publication,
+and uses the original transcript offer for replay. Existing generic offer behavior
+is preserved.
+
+Local tests cover concurrent identical starts, changed worker/binding, generic
+UUID collision, cancellation, lease expiry, later reassignment, serialized
+transcript restoration without a connected worker, and a lost save acknowledgement
+after commit. The last case proves fail-closed behavior until restoration and one
+recovered offer afterward. The delegation suite and binding tests pass. This is
+coordinator-level evidence, not a deployed browser or process-kill qualification.
+
 ## Existing operations and missing behavior
 
 The task console already lists workers, offers generic tasks, displays durable
