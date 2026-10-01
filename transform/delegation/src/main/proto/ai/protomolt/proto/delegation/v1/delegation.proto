@@ -3,6 +3,7 @@ syntax = "proto3";
 package ai.protomolt.proto.delegation.v1;
 
 import "ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto";
+import "ai/protomolt/proto/delegation/v1/review.proto";
 import "ai/protomolt/proto/meta/v1/metadata.proto";
 import "ai/protomolt/proto/validate/v1/validate.proto";
 import "google/protobuf/any.proto";
@@ -150,6 +151,11 @@ message DelegateResponse {
       expression: "has(this.admission) ? size(this.task_id) == 0 : size(this.task_id) > 0"
     }
     cel: {
+      id: "review-event-matches-envelope"
+      message: "review identity must name the envelope task and start must match its time"
+      expression: "(!has(this.review_started) || (this.review_started.identity.task_id == this.task_id && this.review_started.started_at == this.sent_at)) && (!has(this.review_failed) || this.review_failed.identity.task_id == this.task_id) && (!has(this.review_deferred) || this.review_deferred.identity.task_id == this.task_id)"
+    }
+    cel: {
       id: "task-message-matches-envelope"
       message: "a task message must name the envelope's task"
       expression: "has(this.task_message) ? this.task_message.task_id == this.task_id : true"
@@ -199,6 +205,12 @@ message DelegateResponse {
     // A non-transitioning structured message: guidance, an answer, or a note.
     // It is recorded and sequenced but never moves the task lifecycle.
     TaskMessage task_message = 17 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // Durable invocation start; recorded with the initial candidate before review.
+    ReviewStarted review_started = 18 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // Sanitized infrastructure outcome; the candidate remains undecided.
+    ReviewFailed review_failed = 19 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+    // Explicit manual-review wait; not a retryable infrastructure failure.
+    ReviewDeferred review_deferred = 20 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
   }
 }
 
@@ -1140,6 +1152,15 @@ message RevisionRequested {
     },
     (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
   ];
+  // Invocation closed by this verdict. Empty for legacy review and manual
+  // verdicts after an invocation already failed or deferred. If review is still
+  // running, manual and automatic verdicts must name its exact invocation.
+  string review_invocation_id = 5 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      ignore_if_zero: true, string: {uuid: true, pattern: "^[0-9a-f-]{36}$"}
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
 }
 
 // The candidate revision is accepted. Terminal for the task: nothing about
@@ -1172,6 +1193,15 @@ message CompletionAccepted {
     (ai.protomolt.proto.validate.v1.field).int32 = {
       gte: 1
       lte: 1024
+    },
+    (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
+  ];
+  // Invocation closed by this verdict, with the same manual/legacy semantics
+  // as RevisionRequested.review_invocation_id. The reducer binds it to the
+  // current candidate, attempt and revision before accepting the transition.
+  string review_invocation_id = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      ignore_if_zero: true, string: {uuid: true, pattern: "^[0-9a-f-]{36}$"}
     },
     (ai.protomolt.proto.meta.v1.field).sensitivity = "internal"
   ];
