@@ -15,6 +15,7 @@ dependencies {
     implementation project(':protomolt-delegation')
     implementation project(':protomolt-projection')
     implementation project(':protomolt-workflow')
+    implementation project(':protomolt-workflow-authoring')
     implementation project(':protomolt-jobs-service')
     implementation project(':protomolt-protobuf-llm')
     implementation project(':protomolt-inference-service')

@@ -146,6 +146,8 @@ project(':protomolt-receipt').projectDir = file('transform/receipt')
 
 include 'protomolt-workflow'
 project(':protomolt-workflow').projectDir = file('transform/workflow')
+include 'protomolt-workflow-authoring'
+project(':protomolt-workflow-authoring').projectDir = file('transform/workflow/authoring')
 
 // mesh/: the PipeStream protobuf mesh profile: core entity contracts and
 // processing annotations for the entity vocabulary every mesh node shares.

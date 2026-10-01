@@ -315,7 +315,8 @@ PostgreSQL, Kafka, remote-effect and published-starter qualification.
 
 ## Launch contract slice
 
-`samples/.../starter/v1/workflow_launch.proto` adds four sample messages, with
+`transform/workflow/authoring/src/main/proto/ai/protomolt/proto/samples/starter/v1/workflow_launch.proto`
+owns the four launch messages, with
 no new service or mounted endpoint. `WorkflowAcceptedCandidate` identifies the
 accepted task, attempt and revision and pins deterministic digests of its
 TaskSpec, CompletionCandidate and accepted TranscriptEntry.
@@ -424,3 +425,12 @@ Next: finish review and CI for this binding, then qualify the external-service
 authoring task, persistent asynchronous execution and crash-window idempotency,
 Kafka submission, and the image-only starter on native AMD64 and ARM64. Job
 cancellation remains unsupported and must not be presented as available.
+
+The reviewed helpers and two contract files have been extracted locally to
+`protomolt-workflow-authoring` so production hosts need not depend on samples.
+The protobuf files are unchanged, including their import paths, descriptor names
+and generated Java package. Handwritten Java uses the module's ADR-002 package.
+All 67 authoring/sample tests pass after extraction, and complete descriptor-set
+bytes match the pre-extraction baseline. Compatibility CI compares complete
+descriptor sets with Buf FILE rules; a deliberately removed launch file fails
+that check. No service is mounted by this extraction.

@@ -1,4 +1,4 @@
-package ai.protomolt.proto.samples;
+package ai.protomolt.proto.workflow.authoring;
 
 import ai.protomolt.proto.delegation.v1.CheckEvidence;
 import ai.protomolt.proto.delegation.v1.CheckVerdict;

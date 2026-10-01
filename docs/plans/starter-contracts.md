@@ -168,7 +168,7 @@ remain separate decisions. A valid incomplete result goes to review.
 ## Agent workflow deliverable
 
 The caller can set `TaskSpec.contract` to the descriptor closure and full name of
-[`WorkflowDeliverable`](../../samples/src/main/proto/ai/protomolt/proto/samples/starter/v1/workflow_deliverable.proto).
+[`WorkflowDeliverable`](../../transform/workflow/authoring/src/main/proto/ai/protomolt/proto/samples/starter/v1/workflow_deliverable.proto).
 The worker packs it into existing `CompletionCandidate.result`, retaining the
 existing attempt, revision, check evidence, and output-reference envelope.
 

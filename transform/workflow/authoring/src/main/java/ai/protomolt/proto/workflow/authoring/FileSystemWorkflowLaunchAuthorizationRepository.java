@@ -1,4 +1,4 @@
-package ai.protomolt.proto.samples;
+package ai.protomolt.proto.workflow.authoring;
 
 import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchAuthorization;
 import com.google.protobuf.InvalidProtocolBufferException;
