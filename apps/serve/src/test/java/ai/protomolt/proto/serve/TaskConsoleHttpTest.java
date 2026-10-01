@@ -260,7 +260,21 @@ class TaskConsoleHttpTest {
                  "feedback":"Add the missing edge case","failedChecks":["unit-tests"]}
                 """, cookie).statusCode()).isEqualTo(200);
         bridge.submitCandidate("console-worker", reviewed, candidate(2));
-        JsonNode before = body(get("/api/tasks/" + reviewed, cookie));
+        // The manual reviewer records ReviewDeferred asynchronously after the
+        // candidate and ReviewStarted. Observe that legitimate frame before
+        // asserting the stale approval cannot append anything.
+        JsonNode before;
+        long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+        while (true) {
+            before = body(get("/api/tasks/" + reviewed, cookie));
+            JsonNode review = before.path("task").path("review");
+            if ("deferred".equals(review.path("status").asText())
+                    && review.path("revision").asInt() == 2) break;
+            long remaining = deadline - System.nanoTime();
+            assertThat(remaining).as("revision two manual review deferred").isPositive();
+            bridge.coordinator().waitForEvent(reviewed, before.path("cursor").asLong(),
+                    Duration.ofNanos(remaining));
+        }
 
         HttpResponse<String> stale = post(route, delayedApproval, cookie);
         assertThat(stale.statusCode()).isEqualTo(409);
