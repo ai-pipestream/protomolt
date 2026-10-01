@@ -1,0 +1,93 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v1;
+
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.v1";
+
+// Explicit current-object coordinates. No generated key or historical version.
+message ConditionalBlobKey {
+  // Existing drive, resolved by the repository handler.
+  string drive_name = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true, string: {max_len: 1024, pattern: ".*\\S.*"}
+  }];
+  // Exact backing object key; the handler never trims or normalizes it.
+  string object_key = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true, string: {max_len: 1024, pattern: ".*\\S.*"}
+  }];
+}
+
+// Read current bytes and their backing-store equality token without a cache.
+// Standalone contract; no RPC is mounted by this definition.
+message GetBlobForUpdateRequest {
+  // Object to read. Absence is NOT_FOUND, not a successful empty response.
+  ConditionalBlobKey key = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// Identity and integrity facts about the same successful read or write.
+message ConditionalBlobVersion {
+  // Exact object coordinates, checked against the request by the client.
+  ConditionalBlobKey key = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Single strong quoted backing ETag. Preserve spelling; never derive from data.
+  // Equality does not imply a unique historical generation (ABA is possible).
+  string etag = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true, string: {max_len: 1024, pattern: "^\"[!#-~]+\"$"}
+  }];
+  // Actual persisted length, bounded for this unary snapshot API.
+  int64 size_bytes = 3 [(ai.protomolt.proto.validate.v1.field).int64 = {gte: 0, lte: 9437184}];
+  // Actual bytes' digest; handlers and clients verify against those bytes.
+  string sha256 = 4 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true, string: {sha256_hex: true}
+  }];
+}
+
+// Bytes and token must come from the same authoritative backing read.
+message GetBlobForUpdateResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "conditional-blob-read-size"
+    message: "version size must equal the returned byte length"
+    expression: "has(this.version) && this.version.size_bytes == size(this.data)"
+  };
+  // Integrity metadata, including the token for a subsequent conditional write.
+  ConditionalBlobVersion version = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Empty objects are valid. Oversize objects cannot use this API.
+  bytes data = 2 [(ai.protomolt.proto.validate.v1.field).bytes.max_len = 9437184];
+  // Stored MIME type, absent when the backing object has none.
+  optional string mime_type = 3 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 1024}];
+}
+
+// Atomically create or replace only when the explicit precondition holds.
+// Not an idempotency-key API: retry after a lost acknowledgement may conflict.
+// Standalone contract; add a new RPC with its handler, never extend PutBlob
+// with a precondition that an older server could silently ignore.
+message CompareAndPutBlobRequest {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "conditional-blob-precondition"
+    message: "one explicit write precondition is required"
+    expression: "has(this.if_absent) || has(this.expected_etag)"
+  };
+  // Explicit destination; no content-derived key generation.
+  ConditionalBlobKey key = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Complete replacement bytes, including valid zero-length objects.
+  bytes data = 2 [(ai.protomolt.proto.validate.v1.field).bytes.max_len = 9437184];
+  // Stored MIME type; absence selects application/octet-stream.
+  optional string mime_type = 3 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 1024}];
+  // Exactly one atomic condition; omission fails message validation.
+  oneof precondition {
+    // True means create only when absent. False is invalid.
+    bool if_absent = 4 [(ai.protomolt.proto.validate.v1.field).bool.const = true];
+    // Exact token from an authoritative read or confirmed write for this key.
+    string expected_etag = 5 [(ai.protomolt.proto.validate.v1.field).string = {
+      min_len: 1, max_len: 1024, pattern: "^\"[!#-~]+\"$"
+    }];
+  }
+}
+
+// Confirmed conditional write; condition failure is ABORTED, not success.
+// Unsupported atomic storage is UNIMPLEMENTED, never unconditional fallback.
+message CompareAndPutBlobResponse {
+  // New backing token and actual bytes' integrity; verify against the request.
+  ConditionalBlobVersion version = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
