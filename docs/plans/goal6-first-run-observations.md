@@ -73,11 +73,18 @@ provenance, an immutable library release, or cold dependency-cache timing.
 
 The first hosted consumer check failed because `git.rokkon.com` does not resolve
 from GitHub's runner. It resolves to a private address on the developer host.
-The example is being switched to Central's public snapshot repository, whose
-existing snapshot was stale. Current main has a green full CI run; its existing
-manual snapshot publication workflow is being used to publish current libraries.
-A clean Gradle-home run and the hosted consumer job must pass before describing
-the standalone consumer as verified for external users.
+The example now uses Central's public snapshot repository. Publication from
+`fd068852514771cf93c59822ecc320c1eab94d30` passed its full build and upload in
+[run 36920811815](https://github.com/ai-pipestream/protomolt/actions/runs/36920811815).
+A consumer check during upload encountered an incomplete dependency set; after
+publication finished, both the separate Gradle-home run and
+[hosted consumer run 36924290429](https://github.com/ai-pipestream/protomolt/actions/runs/36924290429)
+passed. The hosted run used tutorial revision
+`e83ac1b79c995ebb6bb5b868b8c4a08f548c6211` and uploaded its generated OpenAPI.
+This establishes public dependency resolution and the example's assertions,
+not an immutable release or a cold-machine timing measurement. The local build
+directory was reused; the hosted job supplies the independent compilation check.
+Local public-consumer output: `/tmp/protomolt-goal6-clean-consumer.log`.
 
 Logs: `/tmp/protomolt-goal6-toolkit-consumer.log` (initial failure),
 `/tmp/protomolt-goal6-toolkit-refresh.log`,
@@ -180,7 +187,7 @@ The focused check passed `EdgeVerifierTest` (10 tests) and `TypedEdgeTest`
 `/tmp/protomolt-goal6-typed-edge.log`. This is in-process execution evidence,
 not the missing deployed combined walkthrough.
 
-Clean public-library resolution; cold setup timings; independent human walkthrough;
+Cold setup timings; independent human walkthrough;
 documented-input rehearsal; a user's own external endpoint;
 correction/coordination/integration latency and outcome measurements;
 deployed optional-extension walkthroughs; durable publication of tutorials and evidence.
