@@ -83,3 +83,7 @@ Logs: `/tmp/goal5-kafka-real-launch-tests.log` and
 the integration test invokes the bridge class with a real gRPC client rather than
 launching that bridge executable. Image publication and Compose qualification are
 still outstanding.
+
+After integrating the current author-recovery branch, both installed-coordinator
+cases pass with no skips, including independent review failure and retry before
+Kafka launch (`/tmp/goal5-kafka-launch-stack-tests.log`).
