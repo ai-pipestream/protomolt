@@ -79,6 +79,8 @@ built-in action exposed by the standalone and full catalogs.
 
 ## Tutorials
 
+- [Run your first workflow](tutorials/first-workflow.md): published Compose bundle,
+  browser launch, expected results, and failure diagnosis
 - [OpenVINO from an AI agent](tutorials/openvino.md)
 - [Python clients without protoc](tutorials/python.md)
 - [Streaming through the ACP agent](tutorials/streaming.md)

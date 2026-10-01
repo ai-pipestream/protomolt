@@ -51,6 +51,19 @@ Maven artifact ids carry the `protomolt-` prefix; Java packages use the
 
 ## Getting started
 
+For a published, image-only workflow walkthrough, use the
+[first-workflow walkthrough](docs/tutorials/first-workflow.md). Its qualified
+AMD64/ARM64 prerelease includes pinned images and persistent storage; no host
+JDK or image build is required. The example author is scripted and requires
+no model-provider account.
+
+To connect an existing gRPC endpoint, start with
+[service workspaces](docs/surface/service-workspace.md). To use individual
+libraries in your own Java process, see the dependency example below and the
+[library guides](docs/README.md#core-and-schema).
+
+### Single-process demo and source builds
+
 Run one process that gives you gRPC with reflection, the same verbs over
 JSON/REST, OpenAPI, Swagger UI, MCP, a task console and a git-backed registry:
 
