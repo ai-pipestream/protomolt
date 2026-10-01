@@ -31,11 +31,12 @@ import java.util.UUID;
  * The {@code complete-step} verb: supply the response for a parked
  * external-completion step — the human-in-the-loop lane. The job's state is
  * gated first (only a WAITING job parked on exactly this step accepts a
- * response; a response for an already-checkpointed step is an idempotent
- * redelivery), then the response is parsed against the step's output type
+ * response; an identical response for an already-checkpointed step is an
+ * idempotent redelivery), then the response is parsed against the step's output type
  * and, when the step declares {@code validate}, checked against its declared
- * rules — a rejection fails the job with the violations (a verdict, not an
- * error). Accepted, the checkpoint appends and the job requeues in one
+ * rules — a rejection fails only the still-waiting step with the violations.
+ * Both rejection and acceptance recheck state under the store's row lock.
+ * Accepted, the checkpoint appends and the job requeues in one
  * transaction; the worker fleet runs the next segment.
  * <p>
  * A null store means workflow runs are not configured on this server; every
@@ -68,7 +69,8 @@ public final class CompleteStepAction implements ProtoAction {
                 + "response against the step's output type (and its declared validation "
                 + "rules — a rejection fails the job as a verdict), checkpoints it, and "
                 + "requeues the job for its next segment. Idempotent: redelivering a "
-                + "completed step answers the current status.";
+                + "completed step with the same response answers the current status; "
+                + "different content conflicts without changing the job.";
     }
 
     @Override
@@ -105,10 +107,9 @@ public final class CompleteStepAction implements ProtoAction {
         // appended, so a race between the two answers the same way.
         if (!WorkflowRunRecord.STATUS_WAITING.equals(job.status)
                 || !stepName.equals(job.outstandingStep)) {
-            if (alreadyCheckpointed(job, stepName)) {
-                return ok(job.status);
+            if (!alreadyCheckpointed(job, stepName)) {
+                return wrongState(job.status, job.outstandingStep, stepName, jobId);
             }
-            return wrongState(job.status, job.outstandingStep, stepName, jobId);
         }
 
         // Build the checkpoint entry: the response parsed against the step's
@@ -123,34 +124,39 @@ public final class CompleteStepAction implements ProtoAction {
             throw ActionSupport.invalidInput("'response' is not valid proto3 JSON for "
                     + step.method().getOutputType().getFullName() + ": " + e.getMessage());
         }
+        String validationError = null;
         if (step.validate()) {
             ValidationResult validation = ProtoValidator
                     .forMessageType(step.method().getOutputType())
                     .validate(parsed);
             if (!validation.valid()) {
                 String violations = violations(validation);
-                String detail = "VALIDATION: complete-step response failed validation: "
+                validationError = "VALIDATION: complete-step response failed validation: "
                         + violations;
-                store.markFailed(jobId, detail,
-                        WorkflowRunEventFactory.failed(job, stepName, detail));
-                return Reply.of(responseType())
-                        .set("ok", false)
-                        .set("status", WorkflowRunRecord.STATUS_FAILED)
-                        .set("error", violations)
-                        .build();
             }
         }
 
         ObjectNode entry = JsonNodeFactory.instance.objectNode();
         entry.put("name", stepName);
         entry.put("skipped", false);
+        // Preserve the submitted JSON after parsing/validation. Older checkpoints
+        // used this representation, so normalizing only new requests would turn
+        // identical retries (quoted numbers, explicit defaults) into conflicts.
         entry.set("response", response);
         // ParkedCompletion is sealed: the switch is exhaustive, so the last
         // verdict needs no cast and a new one would not compile.
         return switch (store.completeParkedStep(jobId, stepName, entry.toString(),
-                WorkflowRunEventFactory.stepCheckpoint(job, stepName))) {
+                validationError == null ? WorkflowRunEventFactory.stepCheckpoint(job, stepName)
+                        : WorkflowRunEventFactory.failed(job, stepName, validationError), validationError)) {
             case ParkedCompletion.Completed _ -> ok(WorkflowRunRecord.STATUS_QUEUED);
             case ParkedCompletion.AlreadyDone(String currentStatus) -> ok(currentStatus);
+            case ParkedCompletion.Conflict(String currentStatus) -> Reply.of(responseType())
+                    .set("ok", false).set("status", currentStatus)
+                    .set("error", "completion conflict: step '" + stepName
+                            + "' already has a different response").build();
+            case ParkedCompletion.Rejected(String error) -> Reply.of(responseType())
+                    .set("ok", false).set("status", WorkflowRunRecord.STATUS_FAILED)
+                    .set("error", error).build();
             case ParkedCompletion.WrongState(String currentStatus, String outstandingStep) ->
                     wrongState(currentStatus, outstandingStep, stepName, jobId);
         };

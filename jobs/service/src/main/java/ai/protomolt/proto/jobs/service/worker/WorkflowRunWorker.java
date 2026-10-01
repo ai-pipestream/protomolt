@@ -466,7 +466,7 @@ public final class WorkflowRunWorker implements AutoCloseable {
         }
     }
 
-    private void submitRequest(Message value) {
+    void submitRequest(Message value) {
         WorkflowRunRequest request;
         try {
             request = value instanceof WorkflowRunRequest typed
@@ -503,6 +503,10 @@ public final class WorkflowRunWorker implements AutoCloseable {
                     + " failed", e);
         }
         if (!outcome.ok()) {
+            if (outcome.conflict()) {
+                throw new IllegalStateException("conflicting WorkflowRunRequest for job "
+                        + jobId + ": " + outcome.error());
+            }
             // No caller to answer: the failure lands on the row, loudly.
             ObjectNode resolved = repository == null
                     ? null
@@ -529,8 +533,14 @@ public final class WorkflowRunWorker implements AutoCloseable {
         record.maxAttempts = config.maxAttemptsDefault();
         record.runAfter = java.time.Instant.now();
         record.completedAt = java.time.Instant.now();
-        store.insert(record, WorkflowRunEventFactory.failed(record, "", error));
-        LOG.warn("workflow run {} FAILED at birth: {}", jobId, error);
+        WorkflowRunStore.InsertOutcome inserted =
+                store.insert(record, WorkflowRunEventFactory.failed(record, "", error));
+        if (inserted.conflict()) {
+            throw new IllegalStateException("conflicting failed WorkflowRunRequest for job "
+                    + jobId + ": " + error);
+        } else if (inserted.created()) {
+            LOG.warn("workflow run {} FAILED at birth: {}", jobId, error);
+        }
     }
 
     /** Stop every loop; the store's lifecycle stays with the caller. */

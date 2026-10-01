@@ -192,7 +192,9 @@ message WorkflowRunRequest {
   };
 
   // Client-generated uuid. This is the idempotency key: a redelivered or
-  // republished request inserts nothing new, it returns the existing job.
+  // republished request with the same resolved workflow and input inserts
+  // nothing new. Different content under an existing id conflicts. The request
+  // consumer leaves that offset uncommitted and stops for operator intervention.
   string job_id = 1 [
     (ai.protomolt.proto.validate.v1.field) = {
       required: true

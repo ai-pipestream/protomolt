@@ -110,6 +110,24 @@ class WorkflowRunSubmitterTest {
     }
 
     @Test
+    void aChangedNamedWorkflowCannotReuseTheOriginalSubmissionIdentity() {
+        var definition = new java.util.concurrent.atomic.AtomicReference<>(
+                workflows.twoStepWorkflow("in-process", null));
+        var named = new WorkflowRunSubmitter(store, name -> Optional.of(definition.get()), 3);
+        String id = UUID.randomUUID().toString();
+        var input = json("{\"text\":\"hi\"}");
+        assertThat(named.submit(null, "saved-workflow", input, id, context).ok()).isTrue();
+        String original = store.get(UUID.fromString(id)).orElseThrow().workflowDefinition;
+        definition.set(workflows.threeStepWorkflow("in-process"));
+
+        var changed = named.submit(null, "saved-workflow", input, id, context);
+        assertThat(changed.ok()).isFalse();
+        assertThat(changed.conflict()).isTrue();
+        assertThat(store.get(UUID.fromString(id)).orElseThrow().workflowDefinition).isEqualTo(original);
+        assertThat(store.events()).hasSize(1);
+    }
+
+    @Test
     void aNonUuidJobIdFails() {
         WorkflowRunSubmitter.Outcome outcome = submitter.submit(
                 workflows.twoStepWorkflow("in-process", null), null, json("{\"text\": \"hi\"}"),

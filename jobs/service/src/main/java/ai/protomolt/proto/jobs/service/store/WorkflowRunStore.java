@@ -4,6 +4,9 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.Objects;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * The workflow-runs persistence SPI: the worker, the relay, and the verbs see
@@ -21,18 +24,38 @@ public interface WorkflowRunStore {
      * call created it.
      *
      * @param job the stored row (the pre-existing one on a conflict)
-     * @param created true when this call inserted the row (and its event);
-     *        false on an idempotent resubmit, where neither row nor event
-     *        was written
+     * @param created true when this call inserted the row (and its event)
+     * @param conflict true when the id already belongs to a different submitted
+     *        workflow or input; neither row nor event was written
      */
-    record InsertOutcome(WorkflowRunRecord job, boolean created) {
+    record InsertOutcome(WorkflowRunRecord job, boolean created, boolean conflict) {
+    }
+
+    /** Compare only the immutable submission, not execution state or retry settings. */
+    static boolean sameSubmission(WorkflowRunRecord left, WorkflowRunRecord right) {
+        return Objects.equals(left.workflowName, right.workflowName)
+                && Objects.equals(left.inputRef, right.inputRef)
+                && sameJson(left.workflowDefinition, right.workflowDefinition)
+                && sameJson(left.input, right.input);
+    }
+
+    private static boolean sameJson(String left, String right) {
+        try {
+            ObjectMapper json = new ObjectMapper();
+            JsonNode a = json.readTree(left);
+            JsonNode b = json.readTree(right);
+            return Objects.equals(a, b);
+        } catch (Exception e) {
+            throw new IllegalStateException("stored workflow submission JSON is unreadable", e);
+        }
     }
 
     /**
      * Insert a new job and its first outbox event (ACCEPTED, or FAILED for a
      * broker-native submit of an unknown workflow) in one transaction.
-     * Idempotent on {@code job_id}: a conflict writes nothing and returns
-     * the existing row with {@code created == false}.
+     * A repeated {@code job_id} writes nothing. It is an idempotent retry only
+     * when the workflow name, resolved workflow snapshot, input, and input
+     * reference match; otherwise the outcome reports a payload conflict.
      *
      * @param job the job row to insert
      * @param event the outbox event for the insert commit point
@@ -153,8 +176,8 @@ public interface WorkflowRunStore {
      * the job's state: only a WAITING job whose outstanding_step is exactly
      * {@code stepName} takes the checkpoint (appended), requeues, and writes
      * the STEP_CHECKPOINT event — one transaction. A step already present in
-     * the checkpoints is an idempotent redelivery; anything else is a wrong
-     * state. See {@link ParkedCompletion}.
+     * the checkpoints is an idempotent redelivery only when its response
+     * matches; different content conflicts. See {@link ParkedCompletion}.
      *
      * @param jobId the job
      * @param stepName the step being completed
@@ -163,9 +186,20 @@ public interface WorkflowRunStore {
      * @param stepEvent the STEP_CHECKPOINT outbox event
      * @return the gate's verdict
      */
-    ParkedCompletion completeParkedStep(UUID jobId, String stepName,
+    default ParkedCompletion completeParkedStep(UUID jobId, String stepName,
                                         String checkpointEntryJson,
-                                        WorkflowRunEventRecord stepEvent);
+                                        WorkflowRunEventRecord stepEvent) {
+        return completeParkedStep(jobId, stepName, checkpointEntryJson, stepEvent, null);
+    }
+
+    /**
+     * Atomically accepts or rejects a response. An existing checkpoint returns
+     * success only for the same response; different content conflicts. A non-null
+     * validationError fails only a job still waiting on this step, using the
+     * supplied FAILED event. Neither stale rejection nor conflict mutates state.
+     */
+    ParkedCompletion completeParkedStep(UUID jobId, String stepName,
+            String checkpointEntryJson, WorkflowRunEventRecord event, String validationError);
 
     /**
      * Claim up to {@code limit} PENDING outbox rows, oldest first

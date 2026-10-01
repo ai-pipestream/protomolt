@@ -2090,8 +2090,9 @@ message SubmitWorkflowRequest {
     (ai.protomolt.proto.validate.v1.field) = {required: true}
   ];
   // Client-generated job id. Supplying one makes submit idempotent: a second
-  // submit with the same id returns the existing job rather than starting a
-  // second one. The server mints one when empty.
+  // submit with the same id and resolved workflow/input returns the existing
+  // job. Different content conflicts without mutation. The server mints one
+  // when empty.
   string job_id = 4 [
     (ai.protomolt.proto.validate.v1.field) = {
       ignore_if_zero: true
@@ -2102,7 +2103,7 @@ message SubmitWorkflowRequest {
 
 // The outcome of submit-workflow.
 message SubmitWorkflowResponse {
-  // True when the job was accepted (or already existed under 'job_id').
+  // True when the job was accepted (or the same submission existed under 'job_id').
   bool ok = 1;
   // The job id, for get-job / complete-step / topic correlation.
   string job_id = 2;
@@ -2110,7 +2111,7 @@ message SubmitWorkflowResponse {
   // on an idempotent resubmit.
   string status = 3;
   // Why submission failed, when ok=false (workflow does not parse or verify,
-  // jobs not configured, malformed input).
+  // jobs not configured, malformed input, or job id reused for different content).
   string error = 4;
   // The step the run was refused at, when a definition failed to compile or
   // validate. Set only when ok=false and the refusal names a step.
@@ -2265,7 +2266,9 @@ message CompleteStepRequest {
   ];
   // The step's response, as proto3 JSON of the step's output type. When the
   // step declares 'validate', the response is checked against its declared
-  // rules before the workflow resumes — a rejection fails the job as a verdict.
+  // rules before the workflow resumes. A rejection fails only a job still
+  // waiting on this step. A completed step accepts only the same response;
+  // different content conflicts without changing the stored outcome.
   google.protobuf.Struct response = 3 [
     (ai.protomolt.proto.validate.v1.field) = {required: true}
   ];
@@ -2274,12 +2277,12 @@ message CompleteStepRequest {
 // The outcome of complete-step.
 message CompleteStepResponse {
   // True when the response was accepted and the job requeued (or the step
-  // was already completed — idempotent redelivery).
+  // was already completed with the same response — idempotent redelivery).
   bool ok = 1;
   // The job's status after the call.
   string status = 2;
   // Why completion failed, when ok=false (job not WAITING, step mismatch,
-  // response does not parse or failed validation).
+  // response does not parse, failed validation, or conflicts with a checkpoint).
   string error = 3;
   // The step the run is actually parked on, when it is not the one supplied.
   // Set only when ok=false, and only while the run is still waiting.

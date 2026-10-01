@@ -23,7 +23,8 @@ import com.google.protobuf.Message;
  * name) is parsed, verified, and its input validated before anything is
  * persisted; the job row (status QUEUED) and its ACCEPTED event insert in
  * one transaction. {@code jobId} is the idempotency key: resubmitting an
- * existing id returns the existing row untouched.
+ * existing id with identical workflow/input returns the existing row untouched;
+ * changed content reports a conflict.
  * <p>
  * A null store means workflow runs are not configured on this server; every
  * call then answers {@code unavailable}.

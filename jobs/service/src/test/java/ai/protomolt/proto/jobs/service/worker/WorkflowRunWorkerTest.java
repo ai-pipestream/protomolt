@@ -9,8 +9,12 @@ import ai.protomolt.proto.jobs.service.events.WorkflowRunEventFactory;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunEventRecord;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunRecord;
 import ai.protomolt.proto.jobs.service.store.InMemoryWorkflowRunStore;
+import ai.protomolt.proto.jobs.v1.WorkflowRunRequest;
+import ai.protomolt.proto.workflow.WorkflowRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.protobuf.Struct;
+import com.google.protobuf.Value;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,9 +22,11 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The worker's execute loop end to end against live in-process gRPC
@@ -84,6 +90,35 @@ class WorkflowRunWorkerTest {
 
     private static List<String> eventTypes(InMemoryWorkflowRunStore store) {
         return store.events().stream().map(event -> event.eventType).toList();
+    }
+
+    @Test
+    void brokerSubmissionRefusesConflictingPayloadWithoutChangingTheFirstJob() {
+        WorkflowRunsConfig config = new WorkflowRunsConfig("test-worker", 1,
+                Duration.ofSeconds(30), Duration.ofMillis(50), 1, 2, 4,
+                null, "workflow-run-events", null, null);
+        WorkflowRepository repository = name -> "embed-text".equals(name)
+                ? Optional.of(workflows.twoStepWorkflow(inProcessName, null))
+                : Optional.empty();
+        WorkflowRunWorker brokerWorker = new WorkflowRunWorker(store, context, repository,
+                runner, config);
+        String id = UUID.randomUUID().toString();
+        brokerWorker.submitRequest(brokerRequest(id, "hi"));
+
+        assertThatThrownBy(() -> brokerWorker.submitRequest(brokerRequest(id, "different")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("conflicting WorkflowRunRequest");
+        assertThat(store.get(UUID.fromString(id)).orElseThrow().input).contains("hi");
+        assertThat(eventTypes(store)).containsExactly(WorkflowRunEventRecord.TYPE_ACCEPTED);
+    }
+
+    private static WorkflowRunRequest brokerRequest(String id, String text) {
+        return WorkflowRunRequest.newBuilder()
+                .setJobId(id)
+                .setWorkflowName("embed-text")
+                .setInput(Struct.newBuilder().putFields("text",
+                        Value.newBuilder().setStringValue(text).build()))
+                .build();
     }
 
     @Test

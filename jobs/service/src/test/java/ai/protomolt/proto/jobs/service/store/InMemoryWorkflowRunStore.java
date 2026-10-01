@@ -40,7 +40,8 @@ public final class InMemoryWorkflowRunStore implements WorkflowRunStore {
     public synchronized InsertOutcome insert(WorkflowRunRecord job, WorkflowRunEventRecord event) {
         WorkflowRunRecord existing = jobs.get(job.jobId);
         if (existing != null) {
-            return new InsertOutcome(existing, false);
+            return new InsertOutcome(existing, false,
+                    !WorkflowRunStore.sameSubmission(existing, job));
         }
         Instant now = Instant.now();
         job.createdAt = now;
@@ -50,7 +51,7 @@ public final class InMemoryWorkflowRunStore implements WorkflowRunStore {
         }
         jobs.put(job.jobId, job);
         events.add(event);
-        return new InsertOutcome(job, true);
+        return new InsertOutcome(job, true, false);
     }
 
     @Override
@@ -181,19 +182,25 @@ public final class InMemoryWorkflowRunStore implements WorkflowRunStore {
 
     @Override
     public synchronized ParkedCompletion completeParkedStep(UUID jobId, String stepName,
-            String checkpointEntryJson, WorkflowRunEventRecord stepEvent) {
+            String checkpointEntryJson, WorkflowRunEventRecord stepEvent, String validationError) {
         WorkflowRunRecord job = require(jobId);
         try {
             ArrayNode checkpoints = (ArrayNode) JSON.readTree(
                     job.checkpoints == null ? "[]" : job.checkpoints);
             for (JsonNode entry : checkpoints) {
                 if (stepName.equals(entry.path("name").asText())) {
-                    return new ParkedCompletion.AlreadyDone(job.status);
+                    return entry.path("response").equals(JSON.readTree(checkpointEntryJson).path("response"))
+                            ? new ParkedCompletion.AlreadyDone(job.status)
+                            : new ParkedCompletion.Conflict(job.status);
                 }
             }
             if (!WorkflowRunRecord.STATUS_WAITING.equals(job.status)
                     || !stepName.equals(job.outstandingStep)) {
                 return new ParkedCompletion.WrongState(job.status, job.outstandingStep);
+            }
+            if (validationError != null) {
+                markFailed(jobId, validationError, stepEvent);
+                return new ParkedCompletion.Rejected(validationError);
             }
             checkpoints.add(JSON.readTree(checkpointEntryJson));
             job.checkpoints = checkpoints.toString();

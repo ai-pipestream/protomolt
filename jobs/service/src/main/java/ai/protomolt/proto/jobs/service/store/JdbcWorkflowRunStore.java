@@ -96,9 +96,10 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
                 // describes — the outbox pattern's whole point.
                 enqueue(c, event);
             }
-            return new InsertOutcome(get(c, job.jobId)
-                    .orElseThrow(() -> WorkflowRunStoreException.notFound(job.jobId)),
-                    inserted == 1);
+            WorkflowRunRecord stored = get(c, job.jobId)
+                    .orElseThrow(() -> WorkflowRunStoreException.notFound(job.jobId));
+            return new InsertOutcome(stored, inserted == 1,
+                    inserted == 0 && !WorkflowRunStore.sameSubmission(stored, job));
         });
     }
 
@@ -292,8 +293,14 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
 
     @Override
     public ParkedCompletion completeParkedStep(UUID jobId, String stepName,
-            String checkpointEntryJson, WorkflowRunEventRecord stepEvent) {
+            String checkpointEntryJson, WorkflowRunEventRecord stepEvent, String validationError) {
         return database.inTransaction(c -> {
+            JsonNode candidate;
+            try {
+                candidate = JSON.readTree(checkpointEntryJson);
+            } catch (Exception e) {
+                throw WorkflowRunStoreException.wrap("checkpoint entry is not valid JSON", e);
+            }
             String select = """
                     SELECT status, outstanding_step, checkpoints FROM workflow_run
                      WHERE job_id = ? FOR UPDATE""";
@@ -316,20 +323,28 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
             // Idempotent redelivery: the step's checkpoint already persisted.
             for (JsonNode entry : checkpoints) {
                 if (stepName.equals(entry.path("name").asText())) {
-                    return new ParkedCompletion.AlreadyDone(status);
+                    return entry.path("response").equals(candidate.path("response"))
+                            ? new ParkedCompletion.AlreadyDone(status)
+                            : new ParkedCompletion.Conflict(status);
                 }
             }
             if (!WorkflowRunRecord.STATUS_WAITING.equals(status)
                     || !stepName.equals(outstanding)) {
                 return new ParkedCompletion.WrongState(status, outstanding);
             }
-            JsonNode entry;
-            try {
-                entry = JSON.readTree(checkpointEntryJson);
-            } catch (Exception e) {
-                throw WorkflowRunStoreException.wrap("checkpoint entry is not valid JSON", e);
+            if (validationError != null) {
+                update(c, """
+                        UPDATE workflow_run SET status = 'FAILED', error = ?,
+                               lease_owner = NULL, lease_until = NULL, outstanding_step = NULL,
+                               completed_at = now(), updated_at = now()
+                         WHERE job_id = ?""", ps -> {
+                    ps.setString(1, validationError);
+                    ps.setObject(2, jobId);
+                }, jobId);
+                enqueue(c, stepEvent);
+                return new ParkedCompletion.Rejected(validationError);
             }
-            checkpoints.add(entry);
+            checkpoints.add(candidate);
             update(c, """
                     UPDATE workflow_run SET status = 'QUEUED', outstanding_step = NULL,
                            checkpoints = ?::jsonb, run_after = now(), updated_at = now()
