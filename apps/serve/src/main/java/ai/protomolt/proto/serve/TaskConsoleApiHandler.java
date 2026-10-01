@@ -162,6 +162,10 @@ final class TaskConsoleApiHandler implements HttpHandler {
             review(exchange, taskId);
             return;
         }
+        if (parts.length == 3 && "review-retry".equals(parts[2]) && "POST".equals(method)) {
+            retryReview(exchange, taskId);
+            return;
+        }
         if (parts.length == 3 && "record".equals(parts[2]) && "POST".equals(method)) {
             exportRecord(exchange, taskId);
             return;
@@ -460,6 +464,26 @@ final class TaskConsoleApiHandler implements HttpHandler {
         response.put("phase", state == null ? ""
                 : state.phase().name().toLowerCase(Locale.ROOT));
         respondJson(exchange, 200, response);
+    }
+
+    private void retryReview(HttpExchange exchange, String taskId) throws IOException {
+        byte[] body = BoundedBodies.read(exchange.getRequestBody(), MAX_BODY_BYTES);
+        if (body == null) {
+            exchange.sendResponseHeaders(413, -1);
+            return;
+        }
+        var request = ai.protomolt.proto.delegation.v1.RetryCandidateReviewRequest.newBuilder();
+        try {
+            JsonFormat.parser().merge(new String(body, java.nio.charset.StandardCharsets.UTF_8), request);
+        } catch (com.google.protobuf.InvalidProtocolBufferException invalid) {
+            throw new IllegalArgumentException("invalid review retry request");
+        }
+        if (!request.getTaskId().isEmpty() && !request.getTaskId().equals(taskId)) {
+            throw new IllegalArgumentException("retry task identity differs from route");
+        }
+        request.setTaskId(taskId);
+        var response = bridge.retryCandidateReview(request.build());
+        respondJson(exchange, 200, JSON.readTree(PROTO_JSON.print(response)));
     }
 
     private static int requiredPositiveInt(JsonNode parsed, String name) {
