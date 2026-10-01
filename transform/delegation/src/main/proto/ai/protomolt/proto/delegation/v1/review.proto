@@ -1,0 +1,130 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.delegation.v1;
+
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.delegation.v1";
+
+// Server-derived review binding. These messages alone do not mount operations
+// or add transcript payloads. Digests use deterministic complete TranscriptEntry
+// bytes, binding the caller contract, policy references, candidate and evidence.
+// The handler recomputes digests; supplied hashes never establish authority.
+message CandidateReviewIdentity {
+  // Exact existing task key, preserving its spelling.
+  string task_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  // Original assigned worker for this candidate.
+  string worker_id = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}}];
+  // Current task attempt at review creation.
+  int32 attempt = 3 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 1024}];
+  // Exact submitted candidate revision.
+  int32 revision = 4 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 1024}];
+  // Server-generated canonical UUID for one reviewer invocation.
+  string invocation_id = 5 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true, string: {uuid: true, pattern: "^[0-9a-f-]{36}$"}
+  }];
+  // Digest of the selected original offer entry, including its contract/context.
+  string offer_entry_sha256 = 6 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}}];
+  // Digest of the exact candidate entry, including result and evidence.
+  string candidate_entry_sha256 = 7 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}}];
+}
+
+// Initial start is committed atomically with the candidate before dispatch.
+// A retry start requires the latest failed/interrupted invocation and a globally
+// deduplicated retry key. Identity, chronology and publication are handler checks.
+message ReviewStarted {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "review-deadline-order"
+    message: "review deadline must follow start by at most one hour"
+    expression: "has(this.started_at) && has(this.deadline) && this.deadline > this.started_at && this.deadline - this.started_at <= duration('3600s')"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "review-retry-pair"
+    message: "retry key and previous invocation must occur together"
+    expression: "(size(this.retry_id) == 0) == (size(this.previous_invocation_id) == 0)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "review-new-invocation"
+    message: "a retry must create a different invocation"
+    expression: "has(this.identity) && this.previous_invocation_id != this.identity.invocation_id"
+  };
+  // Full server-derived binding for this invocation.
+  CandidateReviewIdentity identity = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Server clock at durable start; must match the transcript envelope time.
+  google.protobuf.Timestamp started_at = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Server-owned deadline, at most one hour after start. Also checked under the
+  // publication lock on completion; the default configured window is 300 seconds.
+  google.protobuf.Timestamp deadline = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Empty on initial start; otherwise the exact invocation targeted by retry.
+  string previous_invocation_id = 4 [(ai.protomolt.proto.validate.v1.field) = {
+    ignore_if_zero: true, string: {uuid: true, pattern: "^[0-9a-f-]{36}$"}
+  }];
+  // Empty on initial start; otherwise the caller's canonical idempotency UUID.
+  string retry_id = 5 [(ai.protomolt.proto.validate.v1.field) = {
+    ignore_if_zero: true, string: {uuid: true, pattern: "^[0-9a-f-]{36}$"}
+  }];
+}
+
+// Bounded infrastructure outcomes; never semantic rejection or raw exception text.
+enum ReviewFailureCode {
+  // Invalid: every failure must identify a supported category.
+  REVIEW_FAILURE_CODE_UNSPECIFIED = 0;
+  // Reviewer execution or its required infrastructure failed.
+  REVIEW_FAILURE_CODE_INFRASTRUCTURE = 1;
+  // Server deadline elapsed; a late callback cannot change the outcome.
+  REVIEW_FAILURE_CODE_DEADLINE = 2;
+  // Recovery found a current started invocation without a committed outcome.
+  REVIEW_FAILURE_CODE_INTERRUPTED = 3;
+}
+
+// Ends an invocation without deciding the candidate. Task phase stays CANDIDATE.
+message ReviewFailed {
+  // Must equal the latest started invocation of the same current candidate.
+  CandidateReviewIdentity identity = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Sanitized category; details belong in protected server diagnostics.
+  ReviewFailureCode code = 2 [(ai.protomolt.proto.validate.v1.field).enum = {defined_only: true, not_in: [0]}];
+}
+
+// Ends automatic review in an explicit manual-review wait, not a retryable error.
+message ReviewDeferred {
+  // Must equal the latest started invocation; later manual verdicts do not
+  // terminate this closed invocation a second time.
+  CandidateReviewIdentity identity = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// Future worker-coordinate operation; workflow-author alone cannot invoke it.
+// Exact globally committed retry-key replay precedes lifecycle checks. Changed
+// content conflicts; only a current failed/interrupted invocation may start anew.
+message RetryCandidateReviewRequest {
+  // Exact existing task key.
+  string task_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  // Candidate attempt reviewed by the failed or interrupted invocation.
+  int32 attempt = 2 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 1024}];
+  // Candidate revision; retry cannot select a newer or different candidate.
+  int32 revision = 3 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 1024}];
+  // Latest failed/interrupted invocation, checked atomically before dispatch.
+  string expected_invocation_id = 4 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true, string: {uuid: true, pattern: "^[0-9a-f-]{36}$"}
+  }];
+  // Stable canonical UUID for this exact retry request, including lost replies.
+  string retry_id = 5 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true, string: {uuid: true, pattern: "^[0-9a-f-]{36}$"}
+  }];
+}
+
+// Confirms a durable new invocation, not semantic acceptance or completion.
+// Validate before return; the handler also checks exact request equality and
+// persisted identity. Historical replay neither reruns review nor renews a lease.
+message RetryCandidateReviewResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "review-retry-response-binding"
+    message: "the new invocation must match the request and differ from the previous one"
+    expression: "has(this.request) && has(this.identity) && this.identity.task_id == this.request.task_id && this.identity.attempt == this.request.attempt && this.identity.revision == this.request.revision && this.identity.invocation_id != this.request.expected_invocation_id"
+  };
+  // Echoed request identity, including retry key and expected prior invocation.
+  RetryCandidateReviewRequest request = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Derived from the committed retry start, never from caller-supplied hashes.
+  CandidateReviewIdentity identity = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
