@@ -197,6 +197,14 @@ public final class InProcessDelegationCoordinator
                             throw new IllegalArgumentException(
                                     "hello may only be the first frame on a stream");
                         }
+                        // A later hello can replace this stream's session. Reject an
+                        // old sender before recording even a valid next-sequence frame;
+                        // closing the old stream must not disconnect its replacement.
+                        if (!frame.hasHello() && (sessions.get(session.workerId) != session
+                                || !session.connected || !session.admitted)) {
+                            throw new IllegalArgumentException(
+                                    "worker stream is superseded or not admitted");
+                        }
                         if (recordWorkerFrame(session.workerId, frame)) {
                             dispatch = handleWorkerFrame(session, frame);
                         }
