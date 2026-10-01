@@ -18,6 +18,10 @@ dependencies {
     // SearchMetadata.body declares the screened sensitivity class.
     api project(':protomolt-protobuf-metadata')
 
+    // Contract fixtures exercise validate.v1 on generated and dynamic messages and
+    // verify the OpenAPI-facing JSON Schema projection.
+    testImplementation project(':protomolt-http-jsonschema')
+
     // grpc-java's generated stubs annotate with @javax.annotation.Generated.
     compileOnly libs.javax.annotation.api
 }
