@@ -21,10 +21,12 @@ import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.protobuf.services.HealthStatusManager;
 import io.grpc.protobuf.services.ProtoReflectionServiceV1;
+import io.grpc.protobuf.services.ChannelzService;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.UUID;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -116,6 +118,43 @@ class ServiceWorkspaceActionsTest {
                 .extracting(profile -> profile.getSchemaSource().getDescriptorFingerprint())
                 .isEqualTo(fingerprint);
         assertThat(reopened.findDescriptorArtifact(fingerprint)).isPresent();
+    }
+
+    @Test
+    void explicitRefreshDiscoversChangedEndpointAndRetainsPreviousArtifact() throws Exception {
+        ObjectNode registered = catalog.execute("service-register", registerInput(false));
+        String before = registered.path("profile").path("schemaSource")
+                .path("descriptorFingerprint").asText();
+        server.shutdownNow();
+        assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+        server = InProcessServerBuilder.forName(serverName)
+                .addService(new HealthStatusManager().getHealthService())
+                .addService(ChannelzService.newInstance(10))
+                .addService(ProtoReflectionServiceV1.newInstance()).build().start();
+
+        ObjectNode name = MAPPER.createObjectNode().put("name", "health-local");
+        ObjectNode stored = catalog.execute("service-inspect", name);
+        assertThat(stored.path("profile").path("schemaSource")
+                .path("descriptorFingerprint").asText()).isEqualTo(before);
+        assertThat(stored.path("services").findValuesAsText("name"))
+                .doesNotContain("grpc.channelz.v1.Channelz");
+
+        ObjectNode refreshed = catalog.execute("service-refresh", name);
+        assertThat(refreshed.path("ok").asBoolean()).isTrue();
+        assertThat(refreshed.path("changed").asBoolean()).isTrue();
+        String after = repository.find("health-local").orElseThrow()
+                .getSchemaSource().getDescriptorFingerprint();
+        assertThat(after).isNotEqualTo(before);
+        assertThat(repository.findDescriptorArtifact(before)).isPresent();
+        assertThat(repository.findDescriptorArtifact(after)).isPresent();
+        assertThat(catalog.execute("service-inspect", name).path("services").findValuesAsText("name"))
+                .contains("grpc.channelz.v1.Channelz");
+
+        ObjectNode invoke = name.deepCopy().put("method", "grpc.channelz.v1.Channelz/GetTopChannels");
+        invoke.putObject("request");
+        assertThat(catalog.execute("service-invoke", invoke).path("ok").asBoolean()).isTrue();
+        assertThat(new FileSystemServiceProfileRepository(directory).find("health-local")
+                .orElseThrow().getSchemaSource().getDescriptorFingerprint()).isEqualTo(after);
     }
 
     @Test
