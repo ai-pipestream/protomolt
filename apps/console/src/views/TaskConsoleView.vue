@@ -197,6 +197,8 @@
               <div class="text-subtitle-2">Typed result · attempt {{ candidate.attempt }} · revision {{ candidate.revision }}</div>
               <pre class="typed-result text-caption">{{ JSON.stringify(candidate.result, null, 2) }}</pre>
             </div>
+            <WorkflowLaunchPanel v-if="selected.phase === 'accepted'"
+                                 :key="selected.taskId" :task-id="selected.taskId" />
             <div v-if="contract.length" class="px-4 pb-3 d-flex flex-wrap align-center ga-2">
               <span class="text-caption text-medium-emphasis">Contract of done</span>
               <v-tooltip v-for="check in contract" :key="check.name" location="bottom">
@@ -378,6 +380,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import WorkflowLaunchPanel from '../components/WorkflowLaunchPanel.vue'
 import {
   checkStatuses,
   frameFacts,

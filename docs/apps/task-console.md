@@ -43,9 +43,28 @@ workflow-authoring reviewer; only offers naming its deliverable contract then
 receive automatic review. Other tasks still wait for manual review. Nothing
 in the delegation contract lets a worker mark its own task done.
 
-The authoring lookup and launch actions are operator-only and are not available
-to the normal `worker-coordinate` console session. The console never receives
-the operator API token.
+Accepted-workflow lookup, input preparation and launch require `workflow-launch`.
+The browser bridge additionally requires `worker-coordinate` and an authenticated
+console session. The default console credential only grants `worker-coordinate`;
+grant both scopes to a named principal in the access policy when launch is needed.
+The console never receives the operator API token.
+
+When the authoring host and authenticated console are enabled, four fixed POST
+routes are mounted under `/api/workflow-launch`: `/accepted`, `/contract`,
+`/prepare`, and `/launch`. They accept the existing protobuf JSON requests and
+dispatch through the catalog with the session principal. Requests are bounded
+to 8 MiB, including the base64 representation of input bytes. This bridge does
+not expose arbitrary catalog actions or general artifact writes. A successful
+launch response identifies a job; it does not establish that execution succeeded.
+
+For accepted authored tasks, the launch panel displays the pinned input message
+and descriptor hash. Enter protobuf JSON and prepare it before launching. The
+browser saves the complete launch request and UUID locally before sending it;
+after a lost reply or reload, retry the saved request. Preparing the same input
+while that request is unresolved reuses its UUID. Changed input must be prepared
+again and gets a new launch identity. A local storage failure prevents a new
+launch from being sent. The panel shows the returned job and authorization
+reference; job execution status is not yet displayed there.
 
 The same coordinator is reachable as MCP tools on the same process, so a human
 in the console and an agent on the wire steer one shared transcript rather than

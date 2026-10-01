@@ -1,7 +1,8 @@
 # Accepted-workflow browser launch
 
 Status: contracts, input handlers and opt-in protocol mount implemented on this
-branch; browser session routes and editor remain pending. Goal 5 also requires
+branch, with scoped browser routes and an input editor. Browser verification
+against the real installed service and job-status display remain pending. Goal 5 also requires
 browser authoring, worker-crash recovery, Kafka, Compose, and platform qualification.
 
 ## Existing operations
