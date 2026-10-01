@@ -69,6 +69,15 @@ retrying external calls indefinitely. Job cancellation remains unsupported.
 
 ## Qualification sequence
 
+Release prerequisite found during recovery review: worker mutations in
+`JdbcWorkflowRunStore` currently update by job UUID alone. A PostgreSQL regression
+reproduced an expired attempt completing again after its replacement completed.
+Before restart qualification, bind worker writes to an immutable job/owner/attempt
+claim and check RUNNING state and lease validity atomically with the mutation and
+outbox insertion. A rejected stale write must not trigger another stale failure
+or requeue. External parked completion retains its separate row-lock contract.
+This guard is not implemented yet; see the local `feat/goal5-claim-fencing` work.
+
 1. Real PostgreSQL worker/store reconstruction preserves completed checkpoints.
    Fail after the second RPC's remote effect but before its checkpoint; retry
    must repeat the same operation key and produce one durable external effect.
