@@ -171,7 +171,8 @@ class AuthoringWorkerDiscoveryProcessTest {
             assertThat(assignment.getTaskId()).isEqualTo(TASK_ID);
             assertThat(idle.getDiscoveryCursor()).isLessThan(assignment.getCursor());
 
-            awaitGate(probeGate, Duration.ofSeconds(45), "probe committed before reply", coordinatorLog, workerLog);
+            awaitGate(probeGate, Duration.ofSeconds(45), "probe committed before reply", coordinatorLog, workerLog,
+                    stateFile, preparations);
             AuthoringWorkerState atProbe = readState(stateFile);
             assertThat(atProbe.getPendingCount()).isEqualTo(1);
             var probePending = atProbe.getPending(0);
@@ -190,7 +191,7 @@ class AuthoringWorkerDiscoveryProcessTest {
             worker = startWorker(grpcPort, fixture.getPort(), stateDirectory, retryLog);
             awaitOutput(worker, retryLog, "AuthoringWorker ready", Duration.ofSeconds(30), coordinatorLog);
             awaitGate(preparationGate, Duration.ofSeconds(60), "preparation reached a committed fixture effect",
-                    coordinatorLog, retryLog);
+                    coordinatorLog, retryLog, stateFile, preparations);
             AuthoringWorkerState atPreparation = readState(stateFile);
             assertThat(atPreparation.getPendingCount()).isEqualTo(1);
             var preparationPending = atPreparation.getPending(0);
@@ -211,7 +212,7 @@ class AuthoringWorkerDiscoveryProcessTest {
             awaitOutput(worker, finalLog, "AuthoringWorker ready", Duration.ofSeconds(30), coordinatorLog);
             awaitGate(submissionGate.gate(), Duration.ofSeconds(90),
                     "candidate and review start committed before repository acknowledgement",
-                    coordinatorLog, finalLog);
+                    coordinatorLog, finalLog, stateFile, preparations);
             AuthoringWorkerState atSubmission = readState(stateFile);
             assertThat(atSubmission.getPendingCount()).isEqualTo(1);
             var submissionPending = atSubmission.getPending(0);
@@ -398,11 +399,48 @@ class AuthoringWorkerDiscoveryProcessTest {
     }
 
     private static void awaitGate(Gate gate, Duration timeout, String description,
-            Path coordinatorLog, Path workerLog) throws Exception {
+            Path coordinatorLog, Path workerLog, Path stateFile, Path preparations) throws Exception {
         if (gate.entered().await(timeout.toNanos(), TimeUnit.NANOSECONDS)) return;
-        throw new AssertionError(description + " was not reached\nCoordinator log:\n"
+        StringBuilder evidence = new StringBuilder(description + " was not reached\nCoordinator log:\n"
                 + (Files.exists(coordinatorLog) ? Files.readString(coordinatorLog) : "")
                 + "\nWorker log:\n" + (Files.exists(workerLog) ? Files.readString(workerLog) : ""));
+        evidence.append("\nSaved worker state: ");
+        try {
+            if (Files.isRegularFile(stateFile)) {
+                AuthoringWorkerState state = readState(stateFile);
+                evidence.append("discovery_cursor=").append(state.getDiscoveryCursor())
+                        .append(" pending_count=").append(state.getPendingCount());
+                for (var pending : state.getPendingList()) {
+                    evidence.append(" [task=").append(pending.getAssignment().getTaskId())
+                            .append(" attempt=").append(pending.getAssignment().getAttempt())
+                            .append(" cursor=").append(pending.getAssignment().getCursor())
+                            .append(" probe=").append(pending.hasProbe())
+                            .append(" preparation=").append(pending.hasPreparation())
+                            .append(" submission=").append(pending.hasSubmission())
+                            .append(" review_cursor=").append(pending.getReviewCursor())
+                            .append(" submission_cursor=").append(pending.getSubmissionCursor()).append(']');
+                }
+            } else {
+                evidence.append("absent");
+            }
+        } catch (Exception e) {
+            evidence.append("unreadable (").append(e.getClass().getSimpleName()).append(')');
+        }
+        evidence.append("\nPreparation record: ");
+        try {
+            var record = new FileSystemWorkflowPreparationRepository(preparations).find(TASK_ID, 1, 1);
+            if (record.isPresent()) {
+                evidence.append(record.get().getStateCase());
+                if (record.get().hasFailed()) {
+                    evidence.append(" reason=").append(record.get().getFailed().getReason());
+                }
+            } else {
+                evidence.append("absent");
+            }
+        } catch (Exception e) {
+            evidence.append("unreadable (").append(e.getClass().getSimpleName()).append(')');
+        }
+        throw new AssertionError(evidence.toString());
     }
 
     private static void awaitHealth(Process process, int port, Path log) throws Exception {
