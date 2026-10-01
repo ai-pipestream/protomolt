@@ -43,6 +43,7 @@ import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
+import io.grpc.Context;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -126,6 +127,7 @@ public final class WorkflowCandidatePreparer {
 
     private PrepareWorkflowCandidateResponse prepareLocked(PrepareWorkflowCandidateRequest request,
             Caller caller, WorkflowPreparationRepository.Session session) throws Exception {
+        requireActiveCaller();
         WorkflowPreparationRecord existing = session.current().orElse(null);
         var mode = existing != null && existing.hasCompleted()
                 ? WorkflowPreparationAdmission.Mode.REPLAY_COMPLETED
@@ -221,6 +223,7 @@ public final class WorkflowCandidatePreparer {
                 .setSelectedOffer(admitted.selectedOffer()).setPolicy(policyReference)
                 .setPolicyProto(ByteString.copyFrom(policyBytes)).setRunId(runId).build();
         WorkflowPreparationValidation.validateIntent(intent);
+        requireActiveCaller();
         if (existing == null) existing = session.reserveOrMatch(intent);
         else if (!existing.getIntent().equals(intent)) {
             throw error(WorkflowPreparationException.Kind.CONFLICT, "workflow-preparation-conflict", null);
@@ -233,53 +236,14 @@ public final class WorkflowCandidatePreparer {
         }
         if (!existing.hasPending()) throw terminal(existing.getFailed(), null);
 
-        RunEvidence run = runs.find(runId).orElse(null);
-        if (run != null) {
-            verifyRunIdentity(run, intent, durable, preflight, firstInput);
-            if (run.getStatus() != RunStatus.RUN_STATUS_SUCCEEDED) {
-                if (run.getStatus() != RunStatus.RUN_STATUS_FAILED) {
-                    throw error(WorkflowPreparationException.Kind.CORRUPT_EVIDENCE,
-                            "workflow-preparation-run-status-invalid", null);
-                }
-                throw terminal(session.fail(failure(intent,
-                        WorkflowPreparationFailureReason.WORKFLOW_PREPARATION_FAILURE_REASON_RECORDED_RUN_FAILED))
-                        .getFailed(), null);
-            }
-            verifyRun(run, intent, durable, preflight, firstInput);
-        }
-
-        if (run == null) {
-            inspectSame(request, caller, WorkflowPreparationAdmission.Mode.EXECUTE, admitted);
-            try {
-                WorkflowAuthoringFixtures.execute(checkedFixtures, artifacts, runner);
-            } catch (WorkflowRunner.WorkflowExecutionException failure) {
-                if (failure.kind() == WorkflowRunner.FailureKind.GRPC
-                        || failure.kind() == WorkflowRunner.FailureKind.DEADLINE) {
-                    throw transport(failure);
-                }
-                throw terminal(session.fail(failure(intent,
-                        WorkflowPreparationFailureReason.WORKFLOW_PREPARATION_FAILURE_REASON_FIXTURE_REJECTED))
-                        .getFailed(), failure);
-            } catch (IllegalArgumentException rejected) {
-                throw terminal(session.fail(failure(intent,
-                        WorkflowPreparationFailureReason.WORKFLOW_PREPARATION_FAILURE_REASON_FIXTURE_REJECTED))
-                        .getFailed(), rejected);
-            }
-        }
-        if (run == null) {
-            inspectSame(request, caller, WorkflowPreparationAdmission.Mode.EXECUTE, admitted);
-            try {
-                run = new WorkflowRunRecorder(runner, artifacts, runs)
-                        .record(runId, null, preflight.workflow(), firstInput);
-            } catch (WorkflowRunner.WorkflowExecutionException | IOException recordingFailure) {
-                run = runs.find(runId).orElse(null);
-                if (run == null) {
-                    if (recordingFailure instanceof WorkflowRunner.WorkflowExecutionException execution) {
-                        throw transport(execution);
-                    }
-                    throw error(WorkflowPreparationException.Kind.UNAVAILABLE,
-                            "workflow-preparation-recording-uncertain", recordingFailure);
-                }
+        // A reserved intent must finish or remain retryable when its caller disappears.
+        // Keep context values but let the runner's own call and workflow budgets govern
+        // fixture and recorded-run RPCs. Reassignment is still checked by inspectSame.
+        Context detachedContext = Context.current().fork();
+        Context previous = detachedContext.attach();
+        try {
+            RunEvidence run = runs.find(runId).orElse(null);
+            if (run != null) {
                 verifyRunIdentity(run, intent, durable, preflight, firstInput);
                 if (run.getStatus() != RunStatus.RUN_STATUS_SUCCEEDED) {
                     if (run.getStatus() != RunStatus.RUN_STATUS_FAILED) {
@@ -288,35 +252,92 @@ public final class WorkflowCandidatePreparer {
                     }
                     throw terminal(session.fail(failure(intent,
                             WorkflowPreparationFailureReason.WORKFLOW_PREPARATION_FAILURE_REASON_RECORDED_RUN_FAILED))
-                            .getFailed(), recordingFailure);
+                            .getFailed(), null);
+                }
+                verifyRun(run, intent, durable, preflight, firstInput);
+            }
+
+            if (run == null) {
+                inspectSame(request, caller, WorkflowPreparationAdmission.Mode.EXECUTE, admitted);
+                try {
+                    WorkflowAuthoringFixtures.execute(checkedFixtures, artifacts, runner);
+                } catch (WorkflowRunner.WorkflowExecutionException failure) {
+                    if (failure.kind() == WorkflowRunner.FailureKind.GRPC
+                            || failure.kind() == WorkflowRunner.FailureKind.DEADLINE) {
+                        throw transport(failure);
+                    }
+                    throw terminal(session.fail(failure(intent,
+                            WorkflowPreparationFailureReason.WORKFLOW_PREPARATION_FAILURE_REASON_FIXTURE_REJECTED))
+                            .getFailed(), failure);
+                } catch (IllegalArgumentException rejected) {
+                    throw terminal(session.fail(failure(intent,
+                            WorkflowPreparationFailureReason.WORKFLOW_PREPARATION_FAILURE_REASON_FIXTURE_REJECTED))
+                            .getFailed(), rejected);
                 }
             }
+            if (run == null) {
+                inspectSame(request, caller, WorkflowPreparationAdmission.Mode.EXECUTE, admitted);
+                try {
+                    run = new WorkflowRunRecorder(runner, artifacts, runs)
+                            .record(runId, null, preflight.workflow(), firstInput);
+                } catch (WorkflowRunner.WorkflowExecutionException | IOException recordingFailure) {
+                    run = runs.find(runId).orElse(null);
+                    if (run == null) {
+                        if (recordingFailure instanceof WorkflowRunner.WorkflowExecutionException execution) {
+                            throw transport(execution);
+                        }
+                        throw error(WorkflowPreparationException.Kind.UNAVAILABLE,
+                                "workflow-preparation-recording-uncertain", recordingFailure);
+                    }
+                    verifyRunIdentity(run, intent, durable, preflight, firstInput);
+                    if (run.getStatus() != RunStatus.RUN_STATUS_SUCCEEDED) {
+                        if (run.getStatus() != RunStatus.RUN_STATUS_FAILED) {
+                            throw error(WorkflowPreparationException.Kind.CORRUPT_EVIDENCE,
+                                    "workflow-preparation-run-status-invalid", null);
+                        }
+                        throw terminal(session.fail(failure(intent,
+                                WorkflowPreparationFailureReason.WORKFLOW_PREPARATION_FAILURE_REASON_RECORDED_RUN_FAILED))
+                                .getFailed(), recordingFailure);
+                    }
+                }
+            }
+            verifyRun(run, intent, durable, preflight, firstInput);
+            try {
+                verifyRecordedOutput(run, policy, preflight.workflow());
+            } catch (WorkflowPreparationException mismatch) {
+                if (mismatch.kind() != WorkflowPreparationException.Kind.INVALID_UPSTREAM) throw mismatch;
+                throw terminal(session.fail(failure(intent,
+                        WorkflowPreparationFailureReason.WORKFLOW_PREPARATION_FAILURE_REASON_FIXTURE_REJECTED))
+                        .getFailed(), mismatch);
+            }
+            inspectSame(request, caller, WorkflowPreparationAdmission.Mode.EXECUTE, admitted);
+            WorkflowPreparationSigning.verify(signing, requiredTrust(), clock);
+            var receipt = sign(run);
+            var response = response(intent, policy, durable, workflowRef, sourceRef, receipt, run);
+            WorkflowAuthoringReceipt.verify(receipt, run, WorkflowValidation.fingerprint(durable),
+                    requiredTrust(), artifacts);
+            try {
+                WorkflowPreparationValidation.validateResponse(response);
+            } catch (IllegalArgumentException invalid) {
+                throw error(WorkflowPreparationException.Kind.INVALID_UPSTREAM,
+                        "invalid-workflow-preparation-response", invalid);
+            }
+            inspectSame(request, caller, WorkflowPreparationAdmission.Mode.EXECUTE, admitted);
+            var completed = session.complete(response);
+            inspectSame(request, caller, WorkflowPreparationAdmission.Mode.REPLAY_COMPLETED, admitted);
+            return completed.getCompleted();
+        } finally {
+            detachedContext.detach(previous);
         }
-        verifyRun(run, intent, durable, preflight, firstInput);
-        try {
-            verifyRecordedOutput(run, policy, preflight.workflow());
-        } catch (WorkflowPreparationException mismatch) {
-            if (mismatch.kind() != WorkflowPreparationException.Kind.INVALID_UPSTREAM) throw mismatch;
-            throw terminal(session.fail(failure(intent,
-                    WorkflowPreparationFailureReason.WORKFLOW_PREPARATION_FAILURE_REASON_FIXTURE_REJECTED))
-                    .getFailed(), mismatch);
-        }
-        inspectSame(request, caller, WorkflowPreparationAdmission.Mode.EXECUTE, admitted);
-        WorkflowPreparationSigning.verify(signing, requiredTrust(), clock);
-        var receipt = sign(run);
-        var response = response(intent, policy, durable, workflowRef, sourceRef, receipt, run);
-        WorkflowAuthoringReceipt.verify(receipt, run, WorkflowValidation.fingerprint(durable),
-                requiredTrust(), artifacts);
-        try {
-            WorkflowPreparationValidation.validateResponse(response);
-        } catch (IllegalArgumentException invalid) {
-            throw error(WorkflowPreparationException.Kind.INVALID_UPSTREAM,
-                    "invalid-workflow-preparation-response", invalid);
-        }
-        inspectSame(request, caller, WorkflowPreparationAdmission.Mode.EXECUTE, admitted);
-        var completed = session.complete(response);
-        inspectSame(request, caller, WorkflowPreparationAdmission.Mode.REPLAY_COMPLETED, admitted);
-        return completed.getCompleted();
+    }
+
+    private static void requireActiveCaller() throws WorkflowPreparationException {
+        Context caller = Context.current();
+        if (!caller.isCancelled()) return;
+        boolean deadline = caller.getDeadline() != null && caller.getDeadline().isExpired();
+        throw error(deadline ? WorkflowPreparationException.Kind.DEADLINE
+                        : WorkflowPreparationException.Kind.UNAVAILABLE,
+                deadline ? "workflow-preparation-deadline" : "workflow-preparation-unavailable", null);
     }
 
     private WorkflowPreparationAdmission.Snapshot inspect(PrepareWorkflowCandidateRequest request,

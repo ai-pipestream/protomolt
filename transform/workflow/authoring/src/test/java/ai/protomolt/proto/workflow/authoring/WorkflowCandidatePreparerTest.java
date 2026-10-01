@@ -44,6 +44,8 @@ import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Timestamp;
+import io.grpc.Context;
+import io.grpc.Deadline;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.ServerServiceDefinition;
@@ -65,6 +67,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
@@ -77,6 +80,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Integration boundaries for coordinator-owned candidate preparation. */
 class WorkflowCandidatePreparerTest {
+    private static final Context.Key<String> CALLER_MARKER = Context.key("preparer-test-caller-marker");
     private static final String TASK_ID = "00000000-0000-4000-8000-000000000321";
     private static final String HOLDER = "author-worker";
     private static final String PREPARATION_ID = "00000000-0000-4000-8000-000000000987";
@@ -363,6 +367,111 @@ class WorkflowCandidatePreparerTest {
         assertThat(calls).hasValue(1);
         assertThat(ledger.find(TASK_ID, 1, 1)).isPresent();
         assertThat(ledger.find(TASK_ID, 1, 1).orElseThrow().hasCompleted()).isFalse();
+    }
+
+    @Test
+    void callerCancellationAfterReservationDoesNotFailRecordedRun() throws Exception {
+        var source = SOURCE.formatted(Base64.getEncoder().encodeToString(protos.descriptorSet().toByteArray()));
+        var request = request(source);
+        Context.CancellableContext callerContext = Context.current().withValue(CALLER_MARKER, "caller-value")
+                .withCancellation();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        AtomicReference<ai.protomolt.proto.workflow.authoring.v1.PrepareWorkflowCandidateResponse> result =
+                new AtomicReference<>();
+        WorkflowRunner cancelBeforeRecordedRun = new WorkflowRunner(step -> {
+            assertThat(CALLER_MARKER.get()).isEqualTo("caller-value");
+            int open = opens.incrementAndGet();
+            // The first channel belongs to the pinned fixture. Cancel only after it
+            // has completed, immediately before the recorded run's RPC is created.
+            if (open == 2) callerContext.cancel(new java.util.concurrent.CancellationException("caller left"));
+            return InProcessChannelBuilder.forName(serviceName).build();
+        });
+        WorkflowCandidatePreparer isolated = new WorkflowCandidatePreparer(transcripts, ledger, artifacts, runs,
+                cancelBeforeRecordedRun, ActionContext.create(), policyRef, () -> trust, signing, CLOCK,
+                (workflow, json, p) -> {});
+        try {
+            callerContext.run(() -> {
+                Context attachedCaller = Context.current();
+                try {
+                    result.set(isolated.prepare(request, holder()));
+                } catch (Throwable thrown) {
+                    failure.set(thrown);
+                } finally {
+                    assertThat(Context.current()).isSameAs(attachedCaller);
+                }
+            });
+
+            assertThat(CALLER_MARKER.get()).isNull();
+            assertThat(failure.get()).isNull();
+            assertThat(result.get()).isNotNull();
+            assertThat(calls).hasValue(2);
+            RunEvidence run = runs.find("prepare-" + PREPARATION_ID).orElseThrow();
+            assertThat(run.getStatus()).isEqualTo(RunStatus.RUN_STATUS_SUCCEEDED);
+            assertThat(ledger.find(TASK_ID, 1, 1).orElseThrow().hasCompleted()).isTrue();
+            assertThat(isolated.prepare(request, holder())).isEqualTo(result.get());
+            assertThat(calls).hasValue(2);
+        } finally {
+            callerContext.cancel(null);
+        }
+    }
+
+    @Test
+    void alreadyCancelledCallerCannotReserveOrStartFixtureWork() throws Exception {
+        var request = request(SOURCE.formatted(Base64.getEncoder().encodeToString(protos.descriptorSet().toByteArray())));
+        Context.CancellableContext callerContext = Context.current().withValue(CALLER_MARKER, "caller-value")
+                .withCancellation();
+        callerContext.cancel(new java.util.concurrent.CancellationException("caller already left"));
+        try {
+            callerContext.run(() -> assertThatThrownBy(() -> preparer.prepare(request, holder()))
+                    .isInstanceOf(WorkflowPreparationException.class)
+                    .extracting("kind").isEqualTo(WorkflowPreparationException.Kind.UNAVAILABLE));
+        } finally {
+            callerContext.cancel(null);
+        }
+        assertThat(CALLER_MARKER.get()).isNull();
+        assertThat(ledger.find(TASK_ID, 1, 1)).isEmpty();
+        assertThat(runs.find("prepare-" + PREPARATION_ID)).isEmpty();
+        assertThat(calls).hasValue(0);
+        assertThat(opens).hasValue(0);
+    }
+
+    @Test
+    void callerCancellationDuringPreflightIsRejectedBeforeReservation() throws Exception {
+        var request = request(SOURCE.formatted(Base64.getEncoder().encodeToString(protos.descriptorSet().toByteArray())));
+        Context.CancellableContext callerContext = Context.current().withCancellation();
+        WorkflowCandidatePreparer cancelsDuringPreflight = new WorkflowCandidatePreparer(transcripts, ledger,
+                artifacts, runs, runner, ActionContext.create(), policyRef, () -> trust, signing, CLOCK,
+                (workflow, json, p) -> callerContext.cancel(new java.util.concurrent.CancellationException(
+                        "caller left during source verification")));
+        try {
+            callerContext.run(() -> assertThatThrownBy(() -> cancelsDuringPreflight.prepare(request, holder()))
+                    .isInstanceOf(WorkflowPreparationException.class)
+                    .extracting("kind").isEqualTo(WorkflowPreparationException.Kind.UNAVAILABLE));
+        } finally {
+            callerContext.cancel(null);
+        }
+        assertThat(ledger.find(TASK_ID, 1, 1)).isEmpty();
+        assertThat(runs.find("prepare-" + PREPARATION_ID)).isEmpty();
+        assertThat(calls).hasValue(0);
+        assertThat(opens).hasValue(0);
+    }
+
+    @Test
+    void expiredCallerDeadlineIsRejectedBeforeReservation() throws Exception {
+        var request = request(SOURCE.formatted(Base64.getEncoder().encodeToString(protos.descriptorSet().toByteArray())));
+        var scheduler = Executors.newSingleThreadScheduledExecutor();
+        Context deadlineContext = Context.current().withDeadline(Deadline.after(-1, TimeUnit.SECONDS), scheduler);
+        try {
+            deadlineContext.run(() -> assertThatThrownBy(() -> preparer.prepare(request, holder()))
+                    .isInstanceOf(WorkflowPreparationException.class)
+                    .extracting("kind").isEqualTo(WorkflowPreparationException.Kind.DEADLINE));
+        } finally {
+            scheduler.shutdownNow();
+        }
+        assertThat(ledger.find(TASK_ID, 1, 1)).isEmpty();
+        assertThat(runs.find("prepare-" + PREPARATION_ID)).isEmpty();
+        assertThat(calls).hasValue(0);
+        assertThat(opens).hasValue(0);
     }
 
     private WorkflowCandidatePreparer newPreparer(TranscriptRepository transcriptRepository,

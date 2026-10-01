@@ -323,3 +323,23 @@ holder after reservation, and verifies the contender recovers the same pending
 intent. This proves process recovery with intact storage; it does not prove
 host power-loss recovery, RPC admission, or the workflow-worker checkpoint
 crash window. No preparation RPC is mounted by the store implementation.
+
+## RPC cancellation after reservation
+
+Preparation rejects cancelled requests before reserving an intent and checks
+again after preflight. An expired deadline maps to DEADLINE; other cancellation
+maps to UNAVAILABLE. These requests start no fixture work. After reservation,
+execution preserves gRPC context values while detaching cancellation and the
+RPC deadline. Workflow and step budgets still limit calls; task ownership,
+reassignment and lease checks still govern completion.
+
+A deterministic regression cancelled the RPC between fixture validation and
+the recorded-run RPC. Before the fix, this produced terminal failed run evidence;
+an already cancelled request also reserved an intent. Both regressions failed
+before the fix. The final authoring suite passed 192 tests without skips, and
+the installed worker discovery/recovery process test passed without skips.
+Tests also check context restoration, cancellation during preflight, deadline
+classification, successful evidence and exact replay without more fixture calls.
+Buf lint and compatibility with origin/main passed. This race is not established
+as the cause of the earlier CI discovery timeout; those reports were unavailable.
+CI now retains failure reports and reports durable gate state.
