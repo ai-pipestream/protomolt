@@ -16,6 +16,7 @@ import com.google.protobuf.Message;
 import com.google.protobuf.Descriptors;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import io.grpc.Context;
 
 import java.security.SecureRandom;
 import java.time.Clock;
@@ -24,6 +25,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 /**
@@ -124,7 +126,7 @@ public final class RepositoryServiceTranscriptRepository implements TranscriptRe
         validateWire(request);
         GetBlobForUpdateResponse response;
         try {
-            response = callStub().getBlobForUpdate(request);
+            response = callInRepositoryContext(() -> callStub().getBlobForUpdate(request));
         } catch (StatusRuntimeException e) {
             if (e.getStatus().getCode() == Status.Code.NOT_FOUND) {
                 if (etag != null) throw corrupt("confirmed transcript disappeared from storage");
@@ -183,7 +185,8 @@ public final class RepositoryServiceTranscriptRepository implements TranscriptRe
         // Mark uncertain before dispatch. Only a fully verified acknowledgement
         // makes this instance writable again, even if dispatch exits abnormally.
         failed = true;
-        CompareAndPutBlobResponse response = callStub().compareAndPutBlob(write);
+        CompareAndPutBlobResponse response = callInRepositoryContext(
+                () -> callStub().compareAndPutBlob(write));
         validateWire(response);
         verifyVersion(response.getVersion(), stored);
         confirmed = transcript;
@@ -259,6 +262,17 @@ public final class RepositoryServiceTranscriptRepository implements TranscriptRe
     private DocumentServiceGrpc.DocumentServiceBlockingStub callStub() {
         return documents.withMaxInboundMessageSize(16 * 1024 * 1024)
                 .withDeadlineAfter(rpcTimeout.toNanos(), TimeUnit.NANOSECONDS);
+    }
+
+    /** Repository state belongs to this process, even when an initiating caller disconnects. */
+    private static <T> T callInRepositoryContext(Supplier<T> call) {
+        Context detached = Context.current().fork();
+        Context previous = detached.attach();
+        try {
+            return call.get();
+        } finally {
+            detached.detach(previous);
+        }
     }
 
     private static Duration requireRpcTimeout(Duration timeout) {

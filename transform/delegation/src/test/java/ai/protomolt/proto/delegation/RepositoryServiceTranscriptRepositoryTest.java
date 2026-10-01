@@ -13,6 +13,7 @@ import ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest;
 import ai.protomolt.proto.repo.v1.CompareAndPutBlobResponse;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.UnknownFieldSet;
+import io.grpc.Context;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.Status;
@@ -50,6 +51,7 @@ class RepositoryServiceTranscriptRepositoryTest {
     private static final String KEY_REF = "env:PROTOMOLT_TRANSCRIPT_KEY";
     private static final byte[] KEY = "0123456789abcdef0123456789abcdef"
             .getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+    private static final Context.Key<String> TEST_CONTEXT = Context.key("repository-test-context");
 
     private FakeDocumentService service;
     private Server server;
@@ -326,6 +328,93 @@ class RepositoryServiceTranscriptRepositoryTest {
     }
 
     @Test
+    void callerCancellationAfterCommittedWriteDoesNotCancelRepositoryAcknowledgement() throws Exception {
+        RepositoryServiceTranscriptRepository writer = repository(keyResolver(), 1024 * 1024,
+                Duration.ofSeconds(10));
+        Transcript transcript = acceptedTranscript("caller canceled after durable commit");
+        Gate gate = service.blockNextCompareAfterCommit();
+        Context.CancellableContext caller = Context.current().withValue(TEST_CONTEXT, "caller-marker")
+                .withCancellation();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        AtomicReference<Transcript> loadedUnderCancelledContext = new AtomicReference<>();
+        AtomicReference<Context> attachedContext = new AtomicReference<>();
+        AtomicReference<Context> originalContext = new AtomicReference<>();
+        AtomicReference<Context> restoredContext = new AtomicReference<>();
+        Thread save = new Thread(() -> {
+            Context prior = caller.attach();
+            originalContext.set(prior);
+            attachedContext.set(Context.current());
+            try {
+                writer.save(transcript);
+                assertThat(Context.current()).isSameAs(attachedContext.get());
+                assertThat(TEST_CONTEXT.get()).isEqualTo("caller-marker");
+                loadedUnderCancelledContext.set(writer.load().orElseThrow());
+                assertThat(Context.current()).isSameAs(attachedContext.get());
+            } catch (Throwable error) {
+                failure.set(error);
+            } finally {
+                caller.detach(prior);
+                restoredContext.set(Context.current());
+            }
+        }, "cancelled-caller-transcript-write");
+        try {
+            save.start();
+            assertThat(gate.entered().await(5, TimeUnit.SECONDS))
+                    .as("repository bytes committed before caller cancellation").isTrue();
+            assertThat(parseStoredTranscript()).isEqualTo(transcript);
+            caller.cancel(null);
+            gate.release().countDown();
+            save.join(5_000);
+
+            assertThat(save.isAlive()).isFalse();
+            assertThat(failure.get()).isNull();
+            assertThat(loadedUnderCancelledContext.get()).isEqualTo(transcript);
+            assertThat(restoredContext.get()).isSameAs(originalContext.get());
+            int writes = service.compareCalls;
+            writer.save(transcript);
+            assertThat(service.compareCalls).isEqualTo(writes + 1);
+        } finally {
+            gate.release().countDown();
+            caller.cancel(null);
+            save.join(5_000);
+        }
+    }
+
+    @Test
+    void repositoryDeadlineStillPoisonsInstanceWhenCommitAcknowledgementIsLate() throws Exception {
+        RepositoryServiceTranscriptRepository writer = repository(keyResolver(), 1024 * 1024,
+                Duration.ofMillis(500));
+        Transcript transcript = acceptedTranscript("repository call exceeded its own deadline");
+        Gate gate = service.blockNextCompareAfterCommit();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread save = new Thread(() -> {
+            try {
+                writer.save(transcript);
+            } catch (Throwable error) {
+                failure.set(error);
+            }
+        }, "timed-out-transcript-write");
+        try {
+            save.start();
+            assertThat(gate.entered().await(5, TimeUnit.SECONDS))
+                    .as("server committed before repository deadline").isTrue();
+            save.join(5_000);
+            assertThat(save.isAlive()).isFalse();
+            assertThat(failure.get()).isInstanceOf(StatusRuntimeException.class);
+            assertThat(((StatusRuntimeException) failure.get()).getStatus().getCode())
+                    .isEqualTo(Status.Code.DEADLINE_EXCEEDED);
+            assertThatThrownBy(writer::load).isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("requires recovery");
+            assertThatThrownBy(() -> writer.save(transcript)).isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("requires recovery");
+        } finally {
+            gate.release().countDown();
+            save.join(5_000);
+        }
+        assertThat(repository().load()).contains(transcript);
+    }
+
+    @Test
     void unsupportedConditionalRpcNeverFallsBackToUnconditionalPut() {
         service.conditionalWriteUnimplemented = true;
         RepositoryServiceTranscriptRepository writer = repository();
@@ -400,11 +489,21 @@ class RepositoryServiceTranscriptRepositoryTest {
 
     private RepositoryServiceTranscriptRepository repository(
             RepositoryStateKeyResolver resolver, int maxBytes) {
+        return repository(resolver, maxBytes, RepositoryServiceTranscriptRepository.DEFAULT_RPC_TIMEOUT);
+    }
+
+    private RepositoryServiceTranscriptRepository repository(
+            RepositoryStateKeyResolver resolver, int maxBytes, Duration rpcTimeout) {
+        if (rpcTimeout.equals(RepositoryServiceTranscriptRepository.DEFAULT_RPC_TIMEOUT)) {
+            return new RepositoryServiceTranscriptRepository(
+                    DocumentServiceGrpc.newBlockingStub(channel), DRIVE, OBJECT_KEY,
+                    KEY_REF, resolver,
+                    Clock.fixed(Instant.parse("2026-08-11T12:00:00Z"), ZoneOffset.UTC),
+                    new SecureRandom(), maxBytes);
+        }
         return new RepositoryServiceTranscriptRepository(
                 DocumentServiceGrpc.newBlockingStub(channel), DRIVE, OBJECT_KEY,
-                KEY_REF, resolver,
-                Clock.fixed(Instant.parse("2026-08-11T12:00:00Z"), ZoneOffset.UTC),
-                new SecureRandom(), maxBytes);
+                KEY_REF, resolver, rpcTimeout);
     }
 
     private static RepositoryStateKeyResolver keyResolver() {
@@ -418,6 +517,15 @@ class RepositoryServiceTranscriptRepositoryTest {
             throw new AssertionError(e);
         }
     }
+
+    private Transcript parseStoredTranscript() throws Exception {
+        return Transcript.parseFrom(new EncryptedRepositoryStateCodec(keyResolver(),
+                Clock.fixed(Instant.parse("2026-08-11T12:00:00Z"), ZoneOffset.UTC),
+                new SecureRandom(), 1024 * 1024).decrypt(parseEnvelope(),
+                RepositoryServiceTranscriptRepository.CONTENT_TYPE, DRIVE + "\n" + OBJECT_KEY));
+    }
+
+    private record Gate(CountDownLatch entered, CountDownLatch release) {}
 
     private static EncryptedRepositoryState envelopeFor(byte[] plaintext) {
         return new EncryptedRepositoryStateCodec(keyResolver(),
@@ -506,11 +614,20 @@ class RepositoryServiceTranscriptRepositoryTest {
         private volatile boolean conditionalWriteUnimplemented;
         private volatile boolean loseAcknowledgementAfterCommit;
         private volatile boolean pauseNextCompare;
+        private final AtomicReference<Gate> afterCommitGate = new AtomicReference<>();
         private volatile int compareCalls;
         private volatile int putCalls;
         private long generation;
         private CountDownLatch compareEntered = new CountDownLatch(1);
         private CountDownLatch resumeCompare = new CountDownLatch(1);
+
+        private Gate blockNextCompareAfterCommit() {
+            Gate gate = new Gate(new CountDownLatch(1), new CountDownLatch(1));
+            if (!afterCommitGate.compareAndSet(null, gate)) {
+                throw new IllegalStateException("post-commit gate is already armed");
+            }
+            return gate;
+        }
 
         @Override
         public synchronized void getBlobForUpdate(GetBlobForUpdateRequest request,
@@ -567,6 +684,7 @@ class RepositoryServiceTranscriptRepositoryTest {
                 }
             }
             CompareAndPutBlobResponse writeResponse;
+            Gate committedGate;
             synchronized (this) {
                 boolean mayWrite = request.hasIfAbsent()
                         ? stored == null
@@ -590,6 +708,29 @@ class RepositoryServiceTranscriptRepositoryTest {
                 if (writeFault != WriteFault.MISSING_VERSION) response.setVersion(version);
                 if (writeFault == WriteFault.UNKNOWN_FIELD) response.setUnknownFields(unknownFields());
                 writeResponse = response.build();
+                committedGate = afterCommitGate.getAndSet(null);
+            }
+            if (committedGate != null) {
+                committedGate.entered().countDown();
+                Thread acknowledgement = new Thread(() -> {
+                    try {
+                        if (!committedGate.release().await(5, TimeUnit.SECONDS)) {
+                            observer.onError(Status.DEADLINE_EXCEEDED.asRuntimeException());
+                        } else if (loseAcknowledgementAfterCommit) {
+                            observer.onError(Status.UNAVAILABLE.withDescription(
+                                    "simulated lost acknowledgement").asRuntimeException());
+                        } else {
+                            observer.onNext(writeResponse);
+                            observer.onCompleted();
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        observer.onError(Status.CANCELLED.withCause(e).asRuntimeException());
+                    }
+                }, "repository-test-delayed-ack");
+                acknowledgement.setDaemon(true);
+                acknowledgement.start();
+                return;
             }
             if (loseAcknowledgementAfterCommit) {
                 observer.onError(Status.UNAVAILABLE.withDescription("simulated lost acknowledgement").asRuntimeException());
