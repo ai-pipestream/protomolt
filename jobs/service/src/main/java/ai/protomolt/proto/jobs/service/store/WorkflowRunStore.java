@@ -16,6 +16,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * <p>
  * Everything fails loud: SQL failures propagate as
  * {@link WorkflowRunStoreException}, never swallowed, never defaulted.
+ * Worker mutations require the original immutable {@link WorkerClaim}. The
+ * store checks RUNNING state, owner, attempt and an unexpired lease using the
+ * database clock in the mutation transaction. Failure of that gate throws
+ * {@link ClaimLostException} without changing the row or adding an event.
+ * Callers must stop that attempt; they must not reload a newer claim or settle
+ * its failure using another worker's authority. Parked completion has its own
+ * WAITING-state transaction and does not use a worker claim.
  */
 public interface WorkflowRunStore {
 
@@ -107,23 +114,23 @@ public interface WorkflowRunStore {
      * Persist the checkpoint array after a step landed, and the
      * STEP_CHECKPOINT event, in one transaction.
      *
-     * @param jobId the job
+     * @param claim original worker claim; lost or expired claims throw ClaimLostException
      * @param checkpointsJson the FULL checkpoint array so far (raw JSON)
      * @param stepEvent the STEP_CHECKPOINT outbox event
      */
-    void saveCheckpoint(UUID jobId, String checkpointsJson, WorkflowRunEventRecord stepEvent);
+    void saveCheckpoint(WorkerClaim claim, String checkpointsJson, WorkflowRunEventRecord stepEvent);
 
     /**
      * Park the job on an external-completion step: status WAITING,
      * outstanding_step set, lease cleared, checkpoints replaced, and the
      * WAITING event — one transaction.
      *
-     * @param jobId the job
+     * @param claim original worker claim; lost or expired claims throw ClaimLostException
      * @param stepName the external step the job is parked on
      * @param checkpointsJson the full checkpoint array so far (raw JSON)
      * @param event the WAITING outbox event
      */
-    void markWaiting(UUID jobId, String stepName, String checkpointsJson,
+    void markWaiting(WorkerClaim claim, String stepName, String checkpointsJson,
                      WorkflowRunEventRecord event);
 
     /**
@@ -131,12 +138,12 @@ public interface WorkflowRunStore {
      * and verdict, lease and outstanding step cleared, completed_at stamped,
      * and the COMPLETED event — one transaction.
      *
-     * @param jobId the job
+     * @param claim original worker claim; lost or expired claims throw ClaimLostException
      * @param resultJson the workflow's composed output (raw proto3 JSON)
      * @param verdict the one-line completion summary
      * @param event the COMPLETED outbox event
      */
-    void markCompleted(UUID jobId, String resultJson, String verdict,
+    void markCompleted(WorkerClaim claim, String resultJson, String verdict,
                        WorkflowRunEventRecord event);
 
     /**
@@ -144,32 +151,32 @@ public interface WorkflowRunStore {
      * error. The error is stored verbatim (the court's review queue consumes
      * these), completed_at stamped, and the FAILED event — one transaction.
      *
-     * @param jobId the job
+     * @param claim original worker claim; lost or expired claims throw ClaimLostException
      * @param error the verbatim failure detail
      * @param event the FAILED outbox event
      */
-    void markFailed(UUID jobId, String error, WorkflowRunEventRecord event);
+    void markFailed(WorkerClaim claim, String error, WorkflowRunEventRecord event);
 
     /**
      * Dead-letter the job: retries exhausted. The last error is stored
      * verbatim and the DEAD event written — one transaction. Operator
      * territory: nothing re-enqueues a DEAD job.
      *
-     * @param jobId the job
+     * @param claim original worker claim; lost or expired claims throw ClaimLostException
      * @param error the verbatim last error
      * @param event the DEAD outbox event
      */
-    void markDead(UUID jobId, String error, WorkflowRunEventRecord event);
+    void markDead(WorkerClaim claim, String error, WorkflowRunEventRecord event);
 
     /**
      * Back off a failed attempt: status QUEUED with {@code run_after} pushed
      * {@code delay} into the future, lease cleared. No event — a requeue is
      * not a lifecycle commit point.
      *
-     * @param jobId the job
+     * @param claim original worker claim; lost or expired claims throw ClaimLostException
      * @param delay how long until the job is claimable again
      */
-    void requeue(UUID jobId, Duration delay);
+    void requeue(WorkerClaim claim, Duration delay);
 
     /**
      * Accept the response for a parked external step, atomically gated on

@@ -35,6 +35,9 @@ public final class InMemoryWorkflowRunStore implements WorkflowRunStore {
 
     /** When true, the next saveCheckpoint throws once (a store hiccup). */
     public volatile boolean failNextCheckpoint;
+    /** Test hook: replace a live claim at this 1-based saveCheckpoint call, then reject it. */
+    public volatile int stealClaimAtCheckpoint;
+    private int checkpointWrites;
 
     @Override
     public synchronized InsertOutcome insert(WorkflowRunRecord job, WorkflowRunEventRecord event) {
@@ -106,23 +109,31 @@ public final class InMemoryWorkflowRunStore implements WorkflowRunStore {
     }
 
     @Override
-    public synchronized void saveCheckpoint(UUID jobId, String checkpointsJson,
+    public synchronized void saveCheckpoint(WorkerClaim claim, String checkpointsJson,
             WorkflowRunEventRecord stepEvent) {
+        WorkflowRunRecord job = requireClaim(claim);
+        checkpointWrites++;
+        if (stealClaimAtCheckpoint == checkpointWrites) {
+            stealClaimAtCheckpoint = 0;
+            job.leaseUntil = Instant.now().minusMillis(1);
+            requeueExpiredLeases();
+            claim("replacement-worker", Duration.ofMinutes(1)).orElseThrow();
+            throw new ClaimLostException(claim);
+        }
         if (failNextCheckpoint) {
             failNextCheckpoint = false;
             throw WorkflowRunStoreException.wrap("simulated store hiccup",
                     new java.sql.SQLException("connection reset"));
         }
-        WorkflowRunRecord job = require(jobId);
         job.checkpoints = checkpointsJson;
         job.updatedAt = Instant.now();
         events.add(stepEvent);
     }
 
     @Override
-    public synchronized void markWaiting(UUID jobId, String stepName, String checkpointsJson,
+    public synchronized void markWaiting(WorkerClaim claim, String stepName, String checkpointsJson,
             WorkflowRunEventRecord event) {
-        WorkflowRunRecord job = require(jobId);
+        WorkflowRunRecord job = requireClaim(claim);
         job.status = WorkflowRunRecord.STATUS_WAITING;
         job.outstandingStep = stepName;
         job.checkpoints = checkpointsJson;
@@ -133,9 +144,9 @@ public final class InMemoryWorkflowRunStore implements WorkflowRunStore {
     }
 
     @Override
-    public synchronized void markCompleted(UUID jobId, String resultJson, String verdict,
+    public synchronized void markCompleted(WorkerClaim claim, String resultJson, String verdict,
             WorkflowRunEventRecord event) {
-        WorkflowRunRecord job = require(jobId);
+        WorkflowRunRecord job = requireClaim(claim);
         job.status = WorkflowRunRecord.STATUS_COMPLETED;
         job.result = resultJson;
         job.verdict = verdict;
@@ -148,18 +159,18 @@ public final class InMemoryWorkflowRunStore implements WorkflowRunStore {
     }
 
     @Override
-    public synchronized void markFailed(UUID jobId, String error, WorkflowRunEventRecord event) {
-        markTerminal(jobId, WorkflowRunRecord.STATUS_FAILED, error, event);
+    public synchronized void markFailed(WorkerClaim claim, String error, WorkflowRunEventRecord event) {
+        markTerminal(claim, WorkflowRunRecord.STATUS_FAILED, error, event);
     }
 
     @Override
-    public synchronized void markDead(UUID jobId, String error, WorkflowRunEventRecord event) {
-        markTerminal(jobId, WorkflowRunRecord.STATUS_DEAD, error, event);
+    public synchronized void markDead(WorkerClaim claim, String error, WorkflowRunEventRecord event) {
+        markTerminal(claim, WorkflowRunRecord.STATUS_DEAD, error, event);
     }
 
-    private void markTerminal(UUID jobId, String status, String error,
+    private void markTerminal(WorkerClaim claim, String status, String error,
             WorkflowRunEventRecord event) {
-        WorkflowRunRecord job = require(jobId);
+        WorkflowRunRecord job = requireClaim(claim);
         job.status = status;
         job.error = error;
         job.leaseOwner = null;
@@ -171,8 +182,8 @@ public final class InMemoryWorkflowRunStore implements WorkflowRunStore {
     }
 
     @Override
-    public synchronized void requeue(UUID jobId, Duration delay) {
-        WorkflowRunRecord job = require(jobId);
+    public synchronized void requeue(WorkerClaim claim, Duration delay) {
+        WorkflowRunRecord job = requireClaim(claim);
         job.status = WorkflowRunRecord.STATUS_QUEUED;
         job.runAfter = Instant.now().plus(delay);
         job.leaseOwner = null;
@@ -199,7 +210,14 @@ public final class InMemoryWorkflowRunStore implements WorkflowRunStore {
                 return new ParkedCompletion.WrongState(job.status, job.outstandingStep);
             }
             if (validationError != null) {
-                markFailed(jobId, validationError, stepEvent);
+                job.status = WorkflowRunRecord.STATUS_FAILED;
+                job.error = validationError;
+                job.leaseOwner = null;
+                job.leaseUntil = null;
+                job.outstandingStep = null;
+                job.completedAt = Instant.now();
+                job.updatedAt = job.completedAt;
+                events.add(stepEvent);
                 return new ParkedCompletion.Rejected(validationError);
             }
             checkpoints.add(JSON.readTree(checkpointEntryJson));
@@ -263,6 +281,17 @@ public final class InMemoryWorkflowRunStore implements WorkflowRunStore {
         WorkflowRunRecord job = jobs.get(jobId);
         if (job == null) {
             throw WorkflowRunStoreException.notFound(jobId);
+        }
+        return job;
+    }
+
+    private WorkflowRunRecord requireClaim(WorkerClaim claim) {
+        WorkflowRunRecord job = require(claim.jobId());
+        if (!WorkflowRunRecord.STATUS_RUNNING.equals(job.status)
+                || !claim.leaseOwner().equals(job.leaseOwner)
+                || claim.attempt() != job.attempt
+                || job.leaseUntil == null || !job.leaseUntil.isAfter(Instant.now())) {
+            throw new ClaimLostException(claim);
         }
         return job;
     }

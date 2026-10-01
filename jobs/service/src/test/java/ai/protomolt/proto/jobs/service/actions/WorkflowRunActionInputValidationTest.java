@@ -5,6 +5,8 @@ import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.jobs.service.TestWorkflows;
 import ai.protomolt.proto.jobs.service.store.InMemoryWorkflowRunStore;
+import ai.protomolt.proto.jobs.service.store.WorkerClaim;
+import ai.protomolt.proto.jobs.service.store.WorkflowRunRecord;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.BeforeAll;
@@ -191,8 +193,11 @@ class WorkflowRunActionInputValidationTest {
         String jobId = dispatch("submit-workflow", request).get("jobId").asText();
         java.util.UUID id = java.util.UUID.fromString(jobId);
         ai.protomolt.proto.jobs.service.store.WorkflowRunRecord job = store.get(id).orElseThrow();
-        store.markWaiting(id, "ghost", job.checkpoints,
-                ai.protomolt.proto.jobs.service.events.WorkflowRunEventFactory.waiting(job, "ghost"));
+        WorkflowRunRecord claimed = store.claim("test-fence", java.time.Duration.ofMinutes(1))
+                .orElseThrow();
+        store.markWaiting(WorkerClaim.from(claimed), "ghost", job.checkpoints,
+                ai.protomolt.proto.jobs.service.events.WorkflowRunEventFactory.waiting(
+                        claimed, "ghost"));
 
         Throwable thrown = catchThrowable(() -> dispatch("complete-step", envelope(
                 "{\"jobId\": \"" + jobId + "\", \"stepName\": \"ghost\","

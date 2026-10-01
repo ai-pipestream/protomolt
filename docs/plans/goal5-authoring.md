@@ -4,7 +4,7 @@ Status: implementation in progress; original source inventory at
 `c5dec4ca812c603e0706e315a3acb86be221265a`. Retry protection, verification helpers
 and the sample reviewer landed in PRs #325, #326 and #327. Strict workflow
 validation and promotion retry protection landed through PR #329, including
-PR #328. Launch contracts are in PR #330; the sample launch binding is implemented
+PR #328. Launch contracts landed in PR #330; the sample launch binding is implemented
 locally and awaiting review and CI.
 The third starter is not implemented or published yet.
 
@@ -426,6 +426,32 @@ authoring task, persistent asynchronous execution and crash-window idempotency,
 Kafka submission, and the image-only starter on native AMD64 and ARM64. Job
 cancellation remains unsupported and must not be presented as available.
 
+## Worker claim protection
+
+Recovery testing reproduced a stale worker completing again after an expired
+lease had been reassigned and the replacement attempt completed. Worker writes
+now require the original immutable `WorkerClaim` (job UUID, owner and positive
+attempt). JDBC checks RUNNING state, owner, attempt and an unexpired lease in the
+same update transaction as its outbox event. Lease and retry timing use the
+database clock. Rejected writes throw `ClaimLostException` without mutation;
+the worker stops without failing or requeueing the replacement attempt, including
+when the checkpoint observer wraps that exception. External parked completion
+keeps its separate WAITING-state row-lock gate.
+
+The six worker mutation signatures intentionally no longer accept a bare UUID.
+Internal store implementers must enforce the claim rather than reload a newer
+claim for an old caller. Remote effects already performed cannot be undone by
+this guard; retried external services still need idempotency keys. This does not
+add lease renewal or change configured workflow deadlines.
+
+Local jobs validation passes 117 tests with no skips, including PostgreSQL and
+Kafka. Tests reject stale owners, old attempts and expired leases across all six
+worker writes without row/event changes; a checkpoint observer losing its claim
+does not settle the replacement. A separate PostgreSQL test reconstructs the
+store and worker after remote success but failed checkpoint persistence, preserves
+the prior checkpoint and deduplicates the repeated request in its fixture service.
+That fixture's deduplication is in memory and the gRPC transport is in-process;
+external-service durability and process-kill qualification remain required.
 The reviewed helpers and two contract files have been extracted locally to
 `protomolt-workflow-authoring` so production hosts need not depend on samples.
 The protobuf files are unchanged, including their import paths, descriptor names

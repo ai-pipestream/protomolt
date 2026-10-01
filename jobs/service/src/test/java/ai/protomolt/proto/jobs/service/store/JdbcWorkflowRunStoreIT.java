@@ -18,8 +18,10 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The Postgres default {@link WorkflowRunStore} against a real testcontainers
@@ -195,7 +197,9 @@ class JdbcWorkflowRunStoreIT {
     @Test
     void claimRespectsRunAfter() {
         WorkflowRunRecord job = insert("embed-text");
-        store.requeue(job.jobId, Duration.ofMinutes(5));
+        WorkerClaim claim = WorkerClaim.from(
+                store.claim("worker-1", Duration.ofMinutes(1)).orElseThrow());
+        store.requeue(claim, Duration.ofMinutes(5));
 
         assertThat(store.claim("worker-1", Duration.ofMinutes(1))).isEmpty();
         WorkflowRunRecord row = store.get(job.jobId).orElseThrow();
@@ -255,12 +259,105 @@ class JdbcWorkflowRunStoreIT {
     }
 
     @Test
+    void anExpiredAttemptCannotOverwriteItsReplacementCompletion() {
+        WorkflowRunRecord job = insert("claim-recovery");
+        var stale = store.claim("old-worker", Duration.ofMinutes(1)).orElseThrow();
+        database.inTransaction(c -> {
+            try (var statement = c.prepareStatement(
+                    "UPDATE workflow_run SET lease_until = now() - interval '1 second' WHERE job_id = ?")) {
+                statement.setObject(1, job.jobId);
+                statement.executeUpdate();
+            } catch (java.sql.SQLException e) {
+                throw new RuntimeException(e);
+            }
+            return null;
+        });
+        assertThat(store.requeueExpiredLeases()).isEqualTo(1);
+        var current = store.claim("new-worker", Duration.ofMinutes(1)).orElseThrow();
+        assertThat(current.attempt).isEqualTo(stale.attempt + 1);
+        WorkerClaim currentClaim = WorkerClaim.from(current);
+        WorkerClaim staleClaim = WorkerClaim.from(stale);
+        store.markCompleted(currentClaim, "{\"text\":\"current\"}", "current result",
+                WorkflowRunEventFactory.completed(current, "current result"));
+        int events = store.pollPendingEvents(100).size();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> store.markCompleted(
+                staleClaim, "{\"text\":\"stale\"}", "stale result",
+                WorkflowRunEventFactory.completed(stale, "stale result")))
+                .isInstanceOf(ClaimLostException.class);
+        assertThat(store.get(job.jobId).orElseThrow().verdict).isEqualTo("current result");
+        assertThat(store.pollPendingEvents(100)).hasSize(events);
+    }
+
+    @Test
+    void everyWorkerMutationRejectsStaleOwnerAttemptAndExpiredLeaseWithoutWrites() {
+        List<Consumer<WorkerClaim>> mutations = List.of(
+                claim -> store.saveCheckpoint(claim, "[{\"name\":\"late\"}]",
+                        WorkflowRunEventFactory.stepCheckpoint(
+                                claimedRecord(claim), "late")),
+                claim -> store.markWaiting(claim, "late", "[]",
+                        WorkflowRunEventFactory.waiting(claimedRecord(claim), "late")),
+                claim -> store.markCompleted(claim, "{\"late\":true}", "late",
+                        WorkflowRunEventFactory.completed(claimedRecord(claim), "late")),
+                claim -> store.markFailed(claim, "late failure",
+                        WorkflowRunEventFactory.failed(claimedRecord(claim), "late", "late failure")),
+                claim -> store.markDead(claim, "late dead",
+                        WorkflowRunEventFactory.dead(claimedRecord(claim), "late dead")),
+                claim -> store.requeue(claim, Duration.ofMinutes(1)));
+        List<String> invalidations = List.of("owner", "attempt", "expired");
+
+        for (String invalidation : invalidations) {
+            for (int i = 0; i < mutations.size(); i++) {
+                WorkflowRunRecord job = insert("fenced-" + invalidation + "-" + i);
+                WorkflowRunRecord claimed = store.claim("owner-original", Duration.ofMinutes(2))
+                        .orElseThrow();
+                WorkerClaim claim = WorkerClaim.from(claimed);
+                invalidate(claimed.jobId, invalidation);
+                WorkflowRunRecord before = store.get(claimed.jobId).orElseThrow();
+                int eventCount = store.pollPendingEvents(100).size();
+                int mutationIndex = i;
+
+                assertThatThrownBy(() -> mutations.get(mutationIndex).accept(claim))
+                        .as("mutation %s must reject %s claim", mutationIndex, invalidation)
+                        .isInstanceOf(ClaimLostException.class);
+
+                WorkflowRunRecord after = store.get(job.jobId).orElseThrow();
+                assertThat(after).usingRecursiveComparison().isEqualTo(before);
+                assertThat(store.pollPendingEvents(100)).hasSize(eventCount);
+            }
+        }
+    }
+
+    private static WorkflowRunRecord claimedRecord(WorkerClaim claim) {
+        return store.get(claim.jobId()).orElseThrow();
+    }
+
+    private void invalidate(UUID jobId, String kind) {
+        String sql = switch (kind) {
+            case "owner" -> "UPDATE workflow_run SET lease_owner = 'replacement-worker' "
+                    + "WHERE job_id = ?";
+            case "attempt" -> "UPDATE workflow_run SET attempt = attempt + 1 WHERE job_id = ?";
+            case "expired" -> "UPDATE workflow_run SET lease_until = now() - interval '1 second' "
+                    + "WHERE job_id = ?";
+            default -> throw new IllegalArgumentException("unknown invalidation: " + kind);
+        };
+        database.inTransaction(c -> {
+            try (var statement = c.prepareStatement(sql)) {
+                statement.setObject(1, jobId);
+                statement.executeUpdate();
+            } catch (java.sql.SQLException e) {
+                throw new RuntimeException(e);
+            }
+            return null;
+        });
+    }
+
+    @Test
     void saveCheckpointIsAtomicWithItsStepEvent() throws Exception {
         WorkflowRunRecord job = insert("embed-text");
         WorkflowRunRecord claimed = store.claim("worker-1", Duration.ofMinutes(1)).orElseThrow();
         String checkpoints = "[{\"name\": \"tokenize\", \"skipped\": false,"
                 + " \"response\": {\"ids\": [\"104\"]}}]";
-        store.saveCheckpoint(job.jobId, checkpoints,
+        store.saveCheckpoint(WorkerClaim.from(claimed), checkpoints,
                 WorkflowRunEventFactory.stepCheckpoint(claimed, "tokenize"));
 
         WorkflowRunRecord row = store.get(job.jobId).orElseThrow();
@@ -278,9 +375,11 @@ class JdbcWorkflowRunStoreIT {
     @Test
     void theTerminalTransitionsCarryTheirPayloads() throws Exception {
         WorkflowRunRecord completed = insert("workflow-done");
-        store.claim("worker-1", Duration.ofMinutes(1));
-        store.markCompleted(completed.jobId, "{\"ok\": true}", "2 steps, output t.T",
-                WorkflowRunEventFactory.completed(completed, "2 steps, output t.T"));
+        WorkflowRunRecord completedClaimed = store.claim("worker-1", Duration.ofMinutes(1))
+                .orElseThrow();
+        store.markCompleted(WorkerClaim.from(completedClaimed), "{\"ok\": true}",
+                "2 steps, output t.T",
+                WorkflowRunEventFactory.completed(completedClaimed, "2 steps, output t.T"));
         WorkflowRunRecord doneRow = store.get(completed.jobId).orElseThrow();
         assertThat(doneRow.status).isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
         assertThat(doneRow.verdict).isEqualTo("2 steps, output t.T");
@@ -289,18 +388,20 @@ class JdbcWorkflowRunStoreIT {
         assertThat(doneRow.leaseOwner).isNull();
 
         WorkflowRunRecord failed = insert("workflow-fail");
-        store.claim("worker-1", Duration.ofMinutes(1));
-        store.markFailed(failed.jobId, "VALIDATION: nope",
-                WorkflowRunEventFactory.failed(failed, "embed", "VALIDATION: nope"));
+        WorkflowRunRecord failedClaimed = store.claim("worker-1", Duration.ofMinutes(1))
+                .orElseThrow();
+        store.markFailed(WorkerClaim.from(failedClaimed), "VALIDATION: nope",
+                WorkflowRunEventFactory.failed(failedClaimed, "embed", "VALIDATION: nope"));
         WorkflowRunRecord failedRow = store.get(failed.jobId).orElseThrow();
         assertThat(failedRow.status).isEqualTo(WorkflowRunRecord.STATUS_FAILED);
         assertThat(failedRow.error).isEqualTo("VALIDATION: nope");
         assertThat(failedRow.completedAt).isNotNull();
 
         WorkflowRunRecord dead = insert("workflow-dead");
-        store.claim("worker-1", Duration.ofMinutes(1));
-        store.markDead(dead.jobId, "GRPC: UNAVAILABLE",
-                WorkflowRunEventFactory.dead(dead, "GRPC: UNAVAILABLE"));
+        WorkflowRunRecord deadClaimed = store.claim("worker-1", Duration.ofMinutes(1))
+                .orElseThrow();
+        store.markDead(WorkerClaim.from(deadClaimed), "GRPC: UNAVAILABLE",
+                WorkflowRunEventFactory.dead(deadClaimed, "GRPC: UNAVAILABLE"));
         WorkflowRunRecord deadRow = store.get(dead.jobId).orElseThrow();
         assertThat(deadRow.status).isEqualTo(WorkflowRunRecord.STATUS_DEAD);
         assertThat(deadRow.error).isEqualTo("GRPC: UNAVAILABLE");
@@ -322,11 +423,11 @@ class JdbcWorkflowRunStoreIT {
     @Test
     void markWaitingParksAndCompleteParkedStepGatesTheResume() {
         WorkflowRunRecord job = insert("embed-text");
-        store.claim("worker-1", Duration.ofMinutes(1));
+        WorkflowRunRecord claimed = store.claim("worker-1", Duration.ofMinutes(1)).orElseThrow();
         String prefix = "[{\"name\": \"tokenize\", \"skipped\": false,"
                 + " \"response\": {\"ids\": [\"104\"]}}]";
-        store.markWaiting(job.jobId, "review", prefix,
-                WorkflowRunEventFactory.waiting(job, "review"));
+        store.markWaiting(WorkerClaim.from(claimed), "review", prefix,
+                WorkflowRunEventFactory.waiting(claimed, "review"));
         WorkflowRunRecord parked = store.get(job.jobId).orElseThrow();
         assertThat(parked.status).isEqualTo(WorkflowRunRecord.STATUS_WAITING);
         assertThat(parked.outstandingStep).isEqualTo("review");
@@ -400,8 +501,10 @@ class JdbcWorkflowRunStoreIT {
         assertThat(store.pollPendingEvents(100)).hasSize(3); // accepted, waiting, one checkpoint
 
         // A new store instance sees the same durable identity, including after settlement.
-        store.markCompleted(job.jobId, "{}", "accepted",
-                WorkflowRunEventFactory.completed(stored, "accepted"));
+        WorkflowRunRecord completedClaim = store.claim("worker-1", Duration.ofMinutes(1))
+                .orElseThrow();
+        store.markCompleted(WorkerClaim.from(completedClaim), "{}", "accepted",
+                WorkflowRunEventFactory.completed(completedClaim, "accepted"));
         var restarted = new JdbcWorkflowRunStore(database);
         String response = stored.checkpoints.contains("first") ? "first" : "second";
         assertThat(restarted.completeParkedStep(job.jobId, "review", completion(response),
@@ -448,7 +551,9 @@ class JdbcWorkflowRunStoreIT {
 
     private WorkflowRunRecord parkedReview() {
         WorkflowRunRecord job = insert("review-workflow");
-        store.markWaiting(job.jobId, "review", "[]", WorkflowRunEventFactory.waiting(job, "review"));
+        WorkflowRunRecord claimed = store.claim("worker-1", Duration.ofMinutes(1)).orElseThrow();
+        store.markWaiting(WorkerClaim.from(claimed), "review", "[]",
+                WorkflowRunEventFactory.waiting(claimed, "review"));
         return store.get(job.jobId).orElseThrow();
     }
 

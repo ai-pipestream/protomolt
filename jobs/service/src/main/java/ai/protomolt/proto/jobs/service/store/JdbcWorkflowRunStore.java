@@ -47,6 +47,9 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
             published_at, last_error
             """;
 
+    private static final String CLAIM_GUARD = " AND status = 'RUNNING'"
+            + " AND lease_owner = ? AND attempt = ? AND lease_until > clock_timestamp()";
+
     private final WorkflowRunDatabase database;
 
     /**
@@ -164,15 +167,16 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
             // the same row), the update flips it RUNNING under that lock.
             String sql = """
                     UPDATE workflow_run SET status = 'RUNNING', lease_owner = ?,
-                           lease_until = ?, attempt = attempt + 1, updated_at = now()
+                           lease_until = clock_timestamp() + (? * interval '1 millisecond'),
+                           attempt = attempt + 1, updated_at = clock_timestamp()
                      WHERE job_id = (SELECT job_id FROM workflow_run
-                                      WHERE status = 'QUEUED' AND run_after <= now()
+                                      WHERE status = 'QUEUED' AND run_after <= clock_timestamp()
                                       ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
                     RETURNING
                     """ + JOB_COLUMNS;
             try (PreparedStatement ps = c.prepareStatement(sql)) {
                 ps.setString(1, workerId);
-                ps.setObject(2, Instant.now().plus(leaseDuration).atOffset(ZoneOffset.UTC));
+                ps.setLong(2, leaseDuration.toMillis());
                 try (ResultSet rs = ps.executeQuery()) {
                     return rs.next() ? Optional.of(mapJob(rs)) : Optional.empty();
                 }
@@ -187,9 +191,9 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
         return database.inTransaction(c -> {
             String sql = """
                     UPDATE workflow_run SET status = 'QUEUED', lease_owner = NULL,
-                           lease_until = NULL, updated_at = now()
+                           lease_until = NULL, updated_at = clock_timestamp()
                      WHERE status = 'RUNNING' AND lease_until IS NOT NULL
-                       AND lease_until < now()""";
+                       AND lease_until <= clock_timestamp()""";
             try (PreparedStatement ps = c.prepareStatement(sql)) {
                 return ps.executeUpdate();
             } catch (SQLException e) {
@@ -199,94 +203,98 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
     }
 
     @Override
-    public void saveCheckpoint(UUID jobId, String checkpointsJson,
+    public void saveCheckpoint(WorkerClaim claim, String checkpointsJson,
             WorkflowRunEventRecord stepEvent) {
         database.inTransaction(c -> {
-            update(c, """
-                    UPDATE workflow_run SET checkpoints = ?::jsonb, updated_at = now()
-                     WHERE job_id = ?""", ps -> {
+            updateClaimed(c, """
+                    UPDATE workflow_run SET checkpoints = ?::jsonb,
+                           updated_at = clock_timestamp()
+                     WHERE job_id = ? """ + CLAIM_GUARD, ps -> {
                 ps.setObject(1, checkpointsJson, Types.OTHER);
-                ps.setObject(2, jobId);
-            }, jobId);
+                bindClaim(ps, 2, claim);
+            }, claim);
             enqueue(c, stepEvent);
             return null;
         });
     }
 
     @Override
-    public void markWaiting(UUID jobId, String stepName, String checkpointsJson,
+    public void markWaiting(WorkerClaim claim, String stepName, String checkpointsJson,
             WorkflowRunEventRecord event) {
         database.inTransaction(c -> {
-            update(c, """
+            updateClaimed(c, """
                     UPDATE workflow_run SET status = 'WAITING', outstanding_step = ?,
                            checkpoints = ?::jsonb, lease_owner = NULL, lease_until = NULL,
-                           updated_at = now()
-                     WHERE job_id = ?""", ps -> {
+                           updated_at = clock_timestamp()
+                     WHERE job_id = ? """ + CLAIM_GUARD, ps -> {
                 ps.setString(1, stepName);
                 ps.setObject(2, checkpointsJson, Types.OTHER);
-                ps.setObject(3, jobId);
-            }, jobId);
+                bindClaim(ps, 3, claim);
+            }, claim);
             enqueue(c, event);
             return null;
         });
     }
 
     @Override
-    public void markCompleted(UUID jobId, String resultJson, String verdict,
+    public void markCompleted(WorkerClaim claim, String resultJson, String verdict,
             WorkflowRunEventRecord event) {
         database.inTransaction(c -> {
-            update(c, """
+            updateClaimed(c, """
                     UPDATE workflow_run SET status = 'COMPLETED', result = ?::jsonb,
                            verdict = ?, lease_owner = NULL, lease_until = NULL,
-                           outstanding_step = NULL, completed_at = now(), updated_at = now()
-                     WHERE job_id = ?""", ps -> {
+                           outstanding_step = NULL, completed_at = clock_timestamp(),
+                           updated_at = clock_timestamp()
+                     WHERE job_id = ? """ + CLAIM_GUARD, ps -> {
                 ps.setObject(1, resultJson, Types.OTHER);
                 ps.setString(2, verdict);
-                ps.setObject(3, jobId);
-            }, jobId);
+                bindClaim(ps, 3, claim);
+            }, claim);
             enqueue(c, event);
             return null;
         });
     }
 
     @Override
-    public void markFailed(UUID jobId, String error, WorkflowRunEventRecord event) {
-        markTerminal("FAILED", jobId, error, event);
+    public void markFailed(WorkerClaim claim, String error, WorkflowRunEventRecord event) {
+        markTerminal("FAILED", claim, error, event);
     }
 
     @Override
-    public void markDead(UUID jobId, String error, WorkflowRunEventRecord event) {
-        markTerminal("DEAD", jobId, error, event);
+    public void markDead(WorkerClaim claim, String error, WorkflowRunEventRecord event) {
+        markTerminal("DEAD", claim, error, event);
     }
 
     /** FAILED and DEAD share their shape: status, verbatim error, lease cleared. */
-    private void markTerminal(String status, UUID jobId, String error,
+    private void markTerminal(String status, WorkerClaim claim, String error,
             WorkflowRunEventRecord event) {
         database.inTransaction(c -> {
-            update(c, """
+            updateClaimed(c, """
                     UPDATE workflow_run SET status = ?, error = ?,
                            lease_owner = NULL, lease_until = NULL, outstanding_step = NULL,
-                           completed_at = now(), updated_at = now()
-                     WHERE job_id = ?""", ps -> {
+                           completed_at = clock_timestamp(), updated_at = clock_timestamp()
+                     WHERE job_id = ? """ + CLAIM_GUARD, ps -> {
                 ps.setString(1, status);
                 ps.setString(2, error);
-                ps.setObject(3, jobId);
-            }, jobId);
+                bindClaim(ps, 3, claim);
+            }, claim);
             enqueue(c, event);
             return null;
         });
     }
 
     @Override
-    public void requeue(UUID jobId, Duration delay) {
+    public void requeue(WorkerClaim claim, Duration delay) {
         database.inTransaction(c -> {
-            update(c, """
-                    UPDATE workflow_run SET status = 'QUEUED', run_after = ?,
-                           lease_owner = NULL, lease_until = NULL, updated_at = now()
-                     WHERE job_id = ?""", ps -> {
-                ps.setObject(1, Instant.now().plus(delay).atOffset(ZoneOffset.UTC));
-                ps.setObject(2, jobId);
-            }, jobId);
+            updateClaimed(c, """
+                    UPDATE workflow_run SET status = 'QUEUED',
+                           run_after = clock_timestamp() + (? * interval '1 millisecond'),
+                           lease_owner = NULL, lease_until = NULL,
+                           updated_at = clock_timestamp()
+                     WHERE job_id = ? """ + CLAIM_GUARD, ps -> {
+                ps.setLong(1, delay.toMillis());
+                bindClaim(ps, 2, claim);
+            }, claim);
             return null;
         });
     }
@@ -477,6 +485,26 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
         } catch (SQLException e) {
             throw WorkflowRunStoreException.wrap("update workflow run failed", e);
         }
+    }
+
+    /** The row update and lease check are one statement under PostgreSQL's row lock. */
+    private static void updateClaimed(Connection c, String sql, SqlBinder binder,
+            WorkerClaim claim) {
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            binder.bind(ps);
+            if (ps.executeUpdate() != 1) {
+                throw new ClaimLostException(claim);
+            }
+        } catch (SQLException e) {
+            throw WorkflowRunStoreException.wrap("update claimed workflow run failed", e);
+        }
+    }
+
+    private static void bindClaim(PreparedStatement ps, int firstIndex, WorkerClaim claim)
+            throws SQLException {
+        ps.setObject(firstIndex, claim.jobId());
+        ps.setString(firstIndex + 1, claim.leaseOwner());
+        ps.setInt(firstIndex + 2, claim.attempt());
     }
 
     @FunctionalInterface
