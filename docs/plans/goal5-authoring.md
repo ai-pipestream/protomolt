@@ -1,6 +1,9 @@
 # Goal 5: contract-driven pipeline authoring
 
-Status: implementation in progress; original source inventory at
+Status: scripted authoring starter published and qualified on native AMD64 and
+ARM64 on 2026-10-01. See [release evidence](goal5-release-qualification.md).
+
+Historical implementation inventory follows; original source inventory at
 `c5dec4ca812c603e0706e315a3acb86be221265a`. Retry protection, verification helpers
 and the sample reviewer landed in PRs #325, #326 and #327. Strict workflow
 validation and promotion retry protection landed through PR #329, including
@@ -9,7 +12,7 @@ PRs #330–#332. Worker claim protection landed in #333; lookup/launch contracts
 action adapters and the opt-in coordinator mount landed in #334, #335 and #337.
 External fixture contracts landed in #336; their service implementation is in
 PR #338. See `goal5-starter-binding.md` for current evidence and remaining gates.
-The third starter is not implemented or published yet.
+The remaining sections preserve the original requirements and design history.
 
 ## Outcome
 
