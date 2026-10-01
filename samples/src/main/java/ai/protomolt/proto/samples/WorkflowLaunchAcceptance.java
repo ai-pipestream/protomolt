@@ -47,12 +47,15 @@ final class WorkflowLaunchAcceptance {
         }
         TaskSpec spec = null;
         CompletionCandidate candidate = null;
+        TranscriptEntry offerEntry = null;
+        TranscriptEntry candidateEntry = null;
         TranscriptEntry accepted = null;
         for (var entry : transcript.getEntriesList()) {
             if (entry.hasCoordinatorFrame() && entry.getCoordinatorFrame().getTaskId().equals(taskId)) {
                 var frame = entry.getCoordinatorFrame();
                 if (frame.hasOffer() && frame.getOffer().getAttempt() == task.attempt()) {
                     spec = frame.getOffer().getSpec();
+                    offerEntry = entry;
                 }
                 if (frame.hasAccepted() && frame.getAccepted().getAttempt() == task.attempt()
                         && frame.getAccepted().getRevision() == task.candidateRevision()) {
@@ -64,6 +67,7 @@ final class WorkflowLaunchAcceptance {
                 var value = entry.getWorkerFrame().getCompletion();
                 if (value.getAttempt() == task.attempt() && value.getRevision() == task.candidateRevision()) {
                     candidate = value;
+                    candidateEntry = entry;
                 }
             }
         }
@@ -71,8 +75,10 @@ final class WorkflowLaunchAcceptance {
                 || !accepted.getWorkerId().equals(task.holder())) {
             throw invalid("accepted offer, worker candidate and coordinator entry do not match");
         }
-        WorkflowLaunchValidation.validate(spec);
-        WorkflowLaunchValidation.validate(candidate);
+        // Validate the selected envelopes too: unknown protocol fields must not
+        // disappear when extracting the offered contract or candidate payload.
+        WorkflowLaunchValidation.validate(offerEntry);
+        WorkflowLaunchValidation.validate(candidateEntry);
         WorkflowLaunchValidation.validate(accepted);
         if (!spec.hasContract() || !spec.getContract().getTypeName().equals(
                 WorkflowAuthoringDeliverable.getDescriptor().getFullName())) {

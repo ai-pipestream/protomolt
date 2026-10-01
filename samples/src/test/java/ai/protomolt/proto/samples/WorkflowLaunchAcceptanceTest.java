@@ -289,10 +289,12 @@ class WorkflowLaunchAcceptanceTest {
     @Test void unknownTypedResultAndSelectedUnknownTranscriptFieldsAreRejected() throws Exception {
         AcceptedRun accepted = acceptedTranscript(CandidateReviewer.acceptAll(), candidate);
         int candidateIndex = -1;
+        int offerIndex = -1;
         int acceptedIndex = -1;
         for (int i = 0; i < accepted.transcript().getEntriesCount(); i++) {
             var entry = accepted.transcript().getEntries(i);
             if (entry.hasWorkerFrame() && entry.getWorkerFrame().hasCompletion()) candidateIndex = i;
+            if (entry.hasCoordinatorFrame() && entry.getCoordinatorFrame().hasOffer()) offerIndex = i;
             if (entry.hasCoordinatorFrame() && entry.getCoordinatorFrame().hasAccepted()) acceptedIndex = i;
         }
         var originalCandidateEntry = accepted.transcript().getEntries(candidateIndex);
@@ -317,6 +319,23 @@ class WorkflowLaunchAcceptanceTest {
         assertThatThrownBy(() -> WorkflowLaunchAcceptance.inspect(
                 repository(unknownSelectedEntry), accepted.taskId()))
                 .isInstanceOf(IllegalArgumentException.class);
+
+        var unknown = UnknownFieldSet.newBuilder().addField(99,
+                UnknownFieldSet.Field.newBuilder().addVarint(1).build()).build();
+        var offerEntry = accepted.transcript().getEntries(offerIndex);
+        var unknownOffer = accepted.transcript().toBuilder().setEntries(offerIndex,
+                offerEntry.toBuilder().setCoordinatorFrame(offerEntry.getCoordinatorFrame().toBuilder()
+                        .setOffer(offerEntry.getCoordinatorFrame().getOffer().toBuilder()
+                                .setUnknownFields(unknown)))).build();
+        assertThatThrownBy(() -> WorkflowLaunchAcceptance.inspect(repository(unknownOffer), accepted.taskId()))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("unknown fields");
+
+        var unknownCandidateEnvelope = accepted.transcript().toBuilder().setEntries(candidateIndex,
+                originalCandidateEntry.toBuilder().setWorkerFrame(
+                        originalCandidateEntry.getWorkerFrame().toBuilder().setUnknownFields(unknown))).build();
+        assertThatThrownBy(() -> WorkflowLaunchAcceptance.inspect(
+                repository(unknownCandidateEnvelope), accepted.taskId()))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("unknown fields");
     }
 
     @Test void selectedIdentityHashesTrackOnlyTheirSelectedMessages() throws Exception {
