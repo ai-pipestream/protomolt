@@ -72,6 +72,16 @@ from a conflict. Reads of registration state and creation must be atomic with
 respect to other registrations; a check followed by an unlocked register is not
 sufficient. Unknown fields, invalid metadata and unsupported rules fail closed.
 
+Review identified two coordinator prerequisites. A bridge stream must retain the
+complete validated hello and prove that its response observer still identifies
+the coordinator's current session. The coordinator must conditionally open a
+bridge session under its own lock, refusing an already connected foreign stream;
+the bridge lock alone cannot exclude direct delegation connections. Before any
+non-hello worker frame is recorded, that same coordinator lock must verify that
+the sending session is still current. Superseded streams must not append frames
+or disconnect their replacements. Tests must exercise a direct-stream race and
+a stale stream sending the next otherwise valid sequence number.
+
 This operation would ensure one server-owned sequence writer, not assert exclusive
 ownership of a remote client process. Existing author mutations authenticate the
 principal rather than a client session. Distributed process fencing would need a
