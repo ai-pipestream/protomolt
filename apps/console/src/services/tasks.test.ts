@@ -96,6 +96,34 @@ describe('TaskApi', () => {
     })
   })
 
+  it('retries the exact failed review invocation with a stable retry key', async () => {
+    fetchMock.mockResolvedValue(json({
+      request: {
+        taskId: 't1', attempt: 4, revision: 7,
+        expectedInvocationId: '11111111-1111-4111-8111-111111111111',
+        retryId: '22222222-2222-4222-8222-222222222222',
+      },
+      identity: {
+        taskId: 't1', attempt: 4, revision: 7,
+        invocationId: '33333333-3333-4333-8333-333333333333',
+      },
+    }))
+
+    await api.retryReview('t1', 4, 7,
+      '11111111-1111-4111-8111-111111111111',
+      '22222222-2222-4222-8222-222222222222')
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/tasks/t1/review-retry')
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: 'POST', credentials: 'same-origin',
+      body: JSON.stringify({
+        attempt: 4, revision: 7,
+        expectedInvocationId: '11111111-1111-4111-8111-111111111111',
+        retryId: '22222222-2222-4222-8222-222222222222',
+      }),
+    })
+  })
+
   it('surfaces bounded server errors with their status', async () => {
     fetchMock.mockResolvedValue(json({ error: 'authentication required' }, 401))
     const failure = await api.listTasks().catch((error) => error)
