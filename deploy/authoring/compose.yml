@@ -1,0 +1,370 @@
+name: protomolt-authoring-starter
+
+# A future release bundle supplies digest-pinned image references. Compose builds nothing.
+services:
+  bootstrap:
+    image: ${PROTOMOLT_ALPINE_IMAGE:-alpine:3.21}
+    user: "0:0"
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        umask 077
+        mkdir -p /operator /console /launch-browser /coordination /author \
+          /database /jobs-database /s3 /transcript /authz /identity \
+          /serve-data /author-state /fixture-records /rustfs-data
+        if [ -e /authz/ready ]; then
+          for path in /operator/token /console/token /launch-browser/token \
+            /coordination/token /author/token /database/password \
+            /jobs-database/password /s3/access-key /s3/secret-key \
+            /transcript/key /authz/policy.json; do
+            test -s "$$path" || { echo "starter secrets are incomplete; restore the original volumes" >&2; exit 1; }
+          done
+        else
+          for path in /operator/token /console/token /launch-browser/token \
+            /coordination/token /author/token /database/password \
+            /jobs-database/password /s3/access-key /s3/secret-key \
+            /transcript/key /authz/policy.json; do
+            test ! -e "$$path" || { echo "incomplete starter bootstrap; restore the original volumes" >&2; exit 1; }
+          done
+          for path in /operator/token /console/token /launch-browser/token \
+            /coordination/token /author/token /database/password \
+            /jobs-database/password /s3/access-key /s3/secret-key; do
+            if [ ! -s "$$path" ]; then
+              od -An -tx1 -N32 /dev/urandom | tr -d ' \n' > "$$path"
+            fi
+          done
+          if [ ! -s /transcript/key ]; then
+            head -c 32 /dev/urandom | base64 | tr -d '\n' > /transcript/key
+          fi
+          coordinate_digest="$$(sha256sum /coordination/token | cut -d ' ' -f1)"
+          author_digest="$$(sha256sum /author/token | cut -d ' ' -f1)"
+          launch_digest="$$(sha256sum /launch-browser/token | cut -d ' ' -f1)"
+          printf '{"principals":[{"name":"review-coordinator","credentialSha256":["%s"],"scopes":["worker-coordinate"]},{"name":"scripted-author","credentialSha256":["%s"],"scopes":["workflow-author"]},{"name":"browser-launcher","credentialSha256":["%s"],"scopes":["worker-coordinate","workflow-launch"]}]}' \
+            "$$coordinate_digest" "$$author_digest" "$$launch_digest" > /authz/policy.json
+          touch /authz/ready
+        fi
+        coordinate_digest="$$(sha256sum /coordination/token | cut -d ' ' -f1)"
+        author_digest="$$(sha256sum /author/token | cut -d ' ' -f1)"
+        launch_digest="$$(sha256sum /launch-browser/token | cut -d ' ' -f1)"
+        expected="$$(printf '{"principals":[{"name":"review-coordinator","credentialSha256":["%s"],"scopes":["worker-coordinate"]},{"name":"scripted-author","credentialSha256":["%s"],"scopes":["workflow-author"]},{"name":"browser-launcher","credentialSha256":["%s"],"scopes":["worker-coordinate","workflow-launch"]}]}' \
+          "$$coordinate_digest" "$$author_digest" "$$launch_digest")"
+        test "$$(cat /authz/policy.json)" = "$$expected" || { echo 'starter credentials and access policy differ' >&2; exit 1; }
+        chown 10001:10001 /operator /console /launch-browser /coordination \
+          /author /database /jobs-database /s3 /transcript /authz /identity \
+          /serve-data /author-state /fixture-records /rustfs-data
+        chown 10001:10001 /operator/token /console/token /launch-browser/token \
+          /coordination/token /author/token /database/password \
+          /jobs-database/password /s3/access-key /s3/secret-key /transcript/key \
+          /authz/policy.json /authz/ready
+        chmod 0700 /operator /console /launch-browser /coordination /author \
+          /database /jobs-database /s3 /transcript /authz /identity \
+          /serve-data /author-state /fixture-records
+        chmod 0400 /operator/token /console/token /launch-browser/token \
+          /coordination/token /author/token /database/password \
+          /jobs-database/password /s3/access-key /s3/secret-key /transcript/key \
+          /authz/policy.json /authz/ready
+        chmod 0440 /coordination/token
+    volumes:
+      - operator-secret:/operator
+      - console-secret:/console
+      - launch-browser-secret:/launch-browser
+      - coordination-secret:/coordination
+      - author-secret:/author
+      - database-secret:/database
+      - jobs-database-secret:/jobs-database
+      - s3-secret:/s3
+      - transcript-secret:/transcript
+      - authz-data:/authz
+      - signing-identity:/identity
+      - serve-data:/serve-data
+      - author-state:/author-state
+      - fixture-records:/fixture-records
+      - rustfs-data:/rustfs-data
+
+  signing-init:
+    image: ${PROTOMOLT_AUTHORING_IMAGE:?Use a verified authoring image digest}
+    user: "10001:10001"
+    restart: "no"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        umask 077
+        exec java -cp '/opt/protomolt-authoring/lib/*' \
+          ai.protomolt.proto.serve.StarterSigningIdentity /identity authoring
+    volumes:
+      - signing-identity:/identity
+
+  rustfs:
+    image: ${PROTOMOLT_RUSTFS_IMAGE:-rustfs/rustfs:1.0.0-beta.11-preview.1}
+    command: ["/data"]
+    environment:
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: :9000
+      RUSTFS_CONSOLE_ENABLE: "false"
+      RUSTFS_ACCESS_KEY_FILE: /run/s3/access-key
+      RUSTFS_SECRET_KEY_FILE: /run/s3/secret-key
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    volumes:
+      - rustfs-data:/data
+      - s3-secret:/run/s3:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  rustfs-init:
+    image: ${PROTOMOLT_CURL_IMAGE:-curlimages/curl:8.22.0}
+    user: "10001:10001"
+    restart: "no"
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        access="$$(cat /run/s3/access-key)"
+        secret="$$(cat /run/s3/secret-key)"
+        curl --fail --silent --show-error --output /dev/null \
+          --aws-sigv4 aws:amz:us-east-1:s3 --user "$$access:$$secret" \
+          -X PUT http://rustfs:9000/agent-starter
+    volumes:
+      - s3-secret:/run/s3:ro
+
+  repo-postgres:
+    image: ${PROTOMOLT_POSTGRES_IMAGE:-postgres:18.6-alpine}
+    environment:
+      POSTGRES_USER: starter
+      POSTGRES_DB: documents
+      POSTGRES_PASSWORD_FILE: /run/database/password
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    volumes:
+      - repo-postgres-data:/var/lib/postgresql
+      - database-secret:/run/database:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  repo-service:
+    image: ${PROTOMOLT_REPO_IMAGE:?Use a verified repository-service image digest}
+    environment:
+      DOCUMENT_PLATFORM_GRPC_PORT: "9090"
+      DOCUMENT_PLATFORM_HTTP_PORT: "off"
+      DOCUMENT_PLATFORM_JDBC_URL: jdbc:postgresql://repo-postgres:5432/documents
+      DOCUMENT_PLATFORM_USERNAME: starter
+      DOCUMENT_PLATFORM_S3_ENDPOINT: http://rustfs:9000
+      DOCUMENT_PLATFORM_S3_REGION: us-east-1
+      # Conditional transcript writes are qualified only against this pinned RustFS.
+      DOCUMENT_PLATFORM_S3_CONDITIONAL_WRITES: "true"
+    depends_on:
+      repo-postgres:
+        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export DOCUMENT_PLATFORM_PASSWORD="$$(cat /run/database/password)"
+        export DOCUMENT_PLATFORM_S3_ACCESS_KEY="$$(cat /run/s3/access-key)"
+        export DOCUMENT_PLATFORM_S3_SECRET_KEY="$$(cat /run/s3/secret-key)"
+        exec /opt/protomolt-repo-service/bin/protomolt-repo-service
+    volumes:
+      - database-secret:/run/database:ro
+      - s3-secret:/run/s3:ro
+    restart: unless-stopped
+
+  repo-init:
+    image: ${PROTOMOLT_GRPCURL_IMAGE:-fullstorydev/grpcurl:v1.9.3-alpine}
+    restart: "no"
+    depends_on:
+      repo-service:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        for attempt in $$(seq 1 30); do
+          if grpcurl -plaintext -max-time 5 \
+            -d '{"name":"agent-starter","account_id":"agent-starter","drive_type":"DRIVE_TYPE_CUSTOM","bucket":"agent-starter"}' \
+            repo-service:9090 ai.protomolt.proto.repo.v1.DriveService/CreateDrive \
+            >/dev/null 2>/tmp/create-error; then
+            exit 0
+          fi
+          grep -Eqi 'AlreadyExists|already exists' /tmp/create-error && exit 0
+          grep -Eqi 'Unavailable|DeadlineExceeded|Failed to dial|connection refused' /tmp/create-error || {
+            cat /tmp/create-error >&2; exit 1;
+          }
+          sleep 2
+        done
+        cat /tmp/create-error >&2
+        exit 1
+
+  jobs-postgres:
+    image: ${PROTOMOLT_POSTGRES_IMAGE:-postgres:18.6-alpine}
+    environment:
+      POSTGRES_USER: starter
+      POSTGRES_DB: jobs
+      POSTGRES_PASSWORD_FILE: /run/jobs-database/password
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    volumes:
+      - jobs-postgres-data:/var/lib/postgresql
+      - jobs-database-secret:/run/jobs-database:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  fixture:
+    image: ${PROTOMOLT_AUTHORING_IMAGE:?Use a verified authoring image digest}
+    user: "10001:10001"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    entrypoint: ["/opt/protomolt-authoring/bin/authoring-fixture"]
+    command: ["9778", "/records"]
+    volumes:
+      - fixture-records:/records
+    restart: unless-stopped
+
+  policy-seed:
+    image: ${PROTOMOLT_AUTHORING_IMAGE:?Use a verified authoring image digest}
+    user: "10001:10001"
+    restart: "no"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+      fixture:
+        condition: service_started
+    entrypoint: ["/opt/protomolt-authoring/bin/authoring-policy-seed"]
+    command:
+      - /data/serve/workflows
+      - /data/serve/workflows/artifacts
+      - fixture:9778
+      - /data/serve/workflows/policy.sha256
+    volumes:
+      - serve-data:/data/serve
+
+  serve:
+    image: ${PROTOMOLT_AUTHORING_IMAGE:?Use a verified authoring image digest}
+    user: "10001:10001"
+    environment:
+      PROTOMOLT_ACCESS_POLICY: /run/authz/policy.json
+      PROTOMOLT_TRUST_SNAPSHOT: /run/identity/trust.binpb
+      PROTOMOLT_JOBS_JDBC: jdbc:postgresql://jobs-postgres:5432/jobs
+      PROTOMOLT_JOBS_USER: starter
+      PROTOMOLT_WORKFLOW_AUTHORING_AUTHORIZATION_DIR: /data/serve/launch-authorizations
+      PROTOMOLT_WORKFLOW_PREPARATION_INTENT_DIR: /data/serve/preparation-intents
+      PROTOMOLT_WORKFLOW_PREPARATION_TEMPLATE_PROVIDER: normalize-record-v1
+      PROTOMOLT_GRPC_ALLOWED_SCHEMES: dns
+      PROTOMOLT_GRPC_ALLOWED_HOSTS: fixture
+      PROTOMOLT_GRPC_ALLOWED_PORTS: "9778"
+      PROTOMOLT_GRPC_ALLOW_TLS: "false"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+      signing-init:
+        condition: service_completed_successfully
+      repo-init:
+        condition: service_completed_successfully
+      jobs-postgres:
+        condition: service_healthy
+      policy-seed:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export PROTOMOLT_API_TOKEN="$$(cat /run/operator/token)"
+        export PROTOMOLT_TASK_CONSOLE_TOKEN="$$(cat /run/console/token)"
+        export PROTOMOLT_TRANSCRIPT_KEY="$$(cat /run/transcript/key)"
+        export PROTOMOLT_RECEIPT_KEY_FILE=/run/identity/seed.bin
+        export PROTOMOLT_RECEIPT_KEY_ID="$$(cat /run/identity/key-id)"
+        export PROTOMOLT_RECEIPT_ISSUER="$$(cat /run/identity/issuer)"
+        export PROTOMOLT_JOBS_PASSWORD="$$(cat /run/jobs-database/password)"
+        export PROTOMOLT_WORKFLOW_AUTHORING_POLICY_SHA256="$$(cat /data/serve/workflows/policy.sha256)"
+        case "$$PROTOMOLT_WORKFLOW_AUTHORING_POLICY_SHA256" in
+          *[!0-9a-f]*|'') echo 'invalid seeded policy digest' >&2; exit 1;;
+        esac
+        test "$${#PROTOMOLT_WORKFLOW_AUTHORING_POLICY_SHA256}" -eq 64 || { echo 'invalid seeded policy digest' >&2; exit 1; }
+        exec /opt/protomolt-authoring/bin/authoring-coordinator \
+          --host 0.0.0.0 --http-port 8080 --grpc-port 9090 \
+          --registry-git /data/serve/registry \
+          --service-workspace /data/serve/services \
+          --workflow-workspace /data/serve/workflows \
+          --delegation-repo-endpoint repo-service:9090 \
+          --delegation-repo-drive agent-starter \
+          --delegation-state-key-ref env:PROTOMOLT_TRANSCRIPT_KEY
+    ports:
+      - "127.0.0.1:${PROTOMOLT_HTTP_PORT:-8080}:8080"
+      - "127.0.0.1:${PROTOMOLT_GRPC_PORT:-9090}:9090"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 20s
+    volumes:
+      - operator-secret:/run/operator:ro
+      - console-secret:/run/console:ro
+      - launch-browser-secret:/run/browser:ro
+      - jobs-database-secret:/run/jobs-database:ro
+      - transcript-secret:/run/transcript:ro
+      - authz-data:/run/authz:ro
+      - signing-identity:/run/identity:ro
+      - serve-data:/data/serve
+    restart: unless-stopped
+
+  author:
+    image: ${PROTOMOLT_AUTHORING_IMAGE:?Use a verified authoring image digest}
+    user: "10001:10001"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+      serve:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export PROTOMOLT_AUTHOR_TOKEN="$$(cat /run/author/token)"
+        exec /opt/protomolt-authoring/bin/authoring-worker \
+          --discover serve:9090 fixture:9778 scripted-author /state
+    volumes:
+      - author-secret:/run/author:ro
+      - author-state:/state
+    restart: unless-stopped
+
+volumes:
+  operator-secret:
+  console-secret:
+  launch-browser-secret:
+  coordination-secret:
+  author-secret:
+  database-secret:
+  jobs-database-secret:
+  s3-secret:
+  transcript-secret:
+  authz-data:
+  signing-identity:
+  serve-data:
+  author-state:
+  fixture-records:
+  rustfs-data:
+  repo-postgres-data:
+  jobs-postgres-data:
