@@ -79,6 +79,7 @@ public final class InProcessDelegationCoordinator
     private final CandidateReviewer reviewer;
     private final Clock clock;
     private final TranscriptRepository transcripts;
+    private final boolean scheduleLeaseExpiries;
     private final ExecutorService runtimeTasks = Executors.newVirtualThreadPerTaskExecutor();
     private final DelegationReducer reducer = new DelegationReducer();
     private final Map<String, Session> sessions = new LinkedHashMap<>();
@@ -115,10 +116,19 @@ public final class InProcessDelegationCoordinator
     public InProcessDelegationCoordinator(AdmissionPolicy admissionPolicy,
                                           CandidateReviewer reviewer, Clock clock,
                                           TranscriptRepository transcripts) {
+        this(admissionPolicy, reviewer, clock, transcripts, true);
+    }
+
+    // Allows tests to hold the expiry timer idle while advancing the injected clock.
+    InProcessDelegationCoordinator(AdmissionPolicy admissionPolicy,
+                                   CandidateReviewer reviewer, Clock clock,
+                                   TranscriptRepository transcripts,
+                                   boolean scheduleLeaseExpiries) {
         this.admissionPolicy = Objects.requireNonNull(admissionPolicy, "admissionPolicy");
         this.reviewer = Objects.requireNonNull(reviewer, "reviewer");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.transcripts = Objects.requireNonNull(transcripts, "transcripts");
+        this.scheduleLeaseExpiries = scheduleLeaseExpiries;
         transcripts.load().ifPresent(this::restore);
     }
 
@@ -601,6 +611,17 @@ public final class InProcessDelegationCoordinator
             }
             return false;
         }
+        // The timer can wake late. Check a new acceptance or candidate against the
+        // current clock while holding the same lock that publishes the frame.
+        // A committed identical retry returned above must remain replayable.
+        TaskRuntime task = tasks.get(frame.getTaskId());
+        if (task != null && !task.expiry.isAfter(clock.instant())
+                && ((frame.hasAccept() && task.phase == DelegationReducer.Phase.OFFERED
+                        && frame.getAccept().getAttempt() == task.attempt)
+                    || (frame.hasCompletion() && task.phase == DelegationReducer.Phase.LEASED
+                        && frame.getCompletion().getAttempt() == task.attempt))) {
+            throw new IllegalArgumentException("task lease has expired");
+        }
         append(TranscriptEntry.newBuilder()
                 .setWorkerId(workerId)
                 .setLane(Lane.LANE_WORKER)
@@ -759,6 +780,7 @@ public final class InProcessDelegationCoordinator
 
     private void scheduleExpiry(String taskId, int attempt, long generation,
                                 Instant expiry) {
+        if (!scheduleLeaseExpiries) return;
         runtimeTasks.submit(() -> {
             try {
                 java.time.Duration delay = java.time.Duration.between(
