@@ -179,6 +179,10 @@ class WorkflowWorkbenchMcpTest {
                     .isTrue();
             assertThat(promoted.path("versionedWorkflow").path("workflowFingerprint").asText())
                     .isEqualTo(fingerprint);
+            JsonNode promotedAgain = mcp.tool("promote-workflow", promote);
+            assertThat(promotedAgain.path("versionedWorkflow"))
+                    .as("identical promotion preserves the immutable registry envelope")
+                    .isEqualTo(promoted.path("versionedWorkflow"));
         }
 
         try (GitSchemaRegistryStore store = GitSchemaRegistryStore.builder()

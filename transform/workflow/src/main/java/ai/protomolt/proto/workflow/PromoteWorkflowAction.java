@@ -17,6 +17,7 @@ import com.google.protobuf.Timestamp;
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Arrays;
 
 /** Promotes validated workflow content as one immutable registry version. */
 final class PromoteWorkflowAction implements ProtoAction {
@@ -79,7 +80,7 @@ final class PromoteWorkflowAction implements ProtoAction {
                 .build();
         try {
             WorkflowValidation.validate(promoted);
-            workflows.save(promoted);
+            promoted = saveOrReuse(promoted);
         } catch (IllegalArgumentException e) {
             throw WorkflowRequests.invalid(e.getMessage(), "/workflow");
         } catch (IOException e) {
@@ -88,7 +89,35 @@ final class PromoteWorkflowAction implements ProtoAction {
         }
         return Reply.of(responseType())
                 .set("promoted", true)
-                .set("versionedWorkflow", promoted)
+                .set("versionedWorkflow", context.transcoder().toJson(promoted))
                 .build();
+    }
+
+    private VersionedWorkflow saveOrReuse(VersionedWorkflow proposed) throws IOException {
+        String name = proposed.getWorkflow().getName();
+        String version = proposed.getVersion();
+        var existing = workflows.find(name, version);
+        if (existing.isPresent()) return matching(proposed, existing.get());
+        try {
+            workflows.save(proposed);
+            return proposed;
+        } catch (IOException | IllegalArgumentException failure) {
+            // A concurrent promotion or an uncertain write may already have stored
+            // this content. Only a validated matching envelope proves success.
+            var winner = workflows.find(name, version);
+            if (winner.isPresent()) return matching(proposed, winner.get());
+            throw failure;
+        }
+    }
+
+    private static VersionedWorkflow matching(VersionedWorkflow proposed, VersionedWorkflow stored) {
+        WorkflowValidation.validate(stored);
+        if (!proposed.getVersion().equals(stored.getVersion())
+                || !proposed.getWorkflowFingerprint().equals(stored.getWorkflowFingerprint())
+                || !Arrays.equals(proposed.getWorkflow().toByteArray(), stored.getWorkflow().toByteArray())) {
+            throw new IllegalArgumentException("workflow " + proposed.getWorkflow().getName()
+                    + " version " + proposed.getVersion() + " is immutable: the stored content differs");
+        }
+        return stored;
     }
 }

@@ -1,6 +1,9 @@
 # Goal 5: contract-driven pipeline authoring
 
-Status: implementation plan and source inventory at `c5dec4ca812c603e0706e315a3acb86be221265a`.
+Status: implementation in progress; original source inventory at
+`c5dec4ca812c603e0706e315a3acb86be221265a`. Retry protection, verification helpers
+and the sample reviewer landed in PRs #325, #326 and #327. Strict workflow
+validation is under review in PR #328. Promotion retry and recovery work follows.
 The third starter is not implemented or published yet.
 
 ## Outcome
@@ -161,8 +164,8 @@ compiles the source, compares the durable workflow, and checks every call agains
 policy before any execution. Its first fixture path supports synchronous unary
 gRPC steps; structured-generation, external-completion and fan-out steps are
 explicitly refused. The existing runtimes continue to support their own modes.
-Every admitted step must enable response validation in the retained executable
-source so subsequent execution preserves that boundary.
+The retained executable source and durable workflow must enable workflow-level
+contract validation so subsequent execution preserves that boundary.
 All descriptor imports, including built-in option definitions, must be present
 in the pinned artifact; general schema-resolver fallbacks are not admitted here.
 Only successful preflight can construct the result accepted by fixture execution.
@@ -182,11 +185,9 @@ all referenced artifact bytes and metadata. It does not establish fixture succes
 or authorize a worker to supply its own run evidence. Callers must obtain that
 evidence from the configured run repository.
 
-Remaining bindings: compare checks in the enclosing candidate, resolve the caller
-policy from the offered task, load the authoritative run and replay it against
-the admitted workflow, and connect the reviewed result to promotion and
-asynchronous submission. Tests of these helpers alone do not qualify the third
-starter. Local verification currently covers 163 workflow tests and eight starter
+The sample reviewer below supplies candidate/check/policy/run binding. Promotion
+and asynchronous submission remain separate work. Tests of these helpers alone
+do not qualify the third starter. The helper slice passed 163 workflow tests and eight starter
 contract tests with no failures or skips, plus Buf lint and compatibility against
 main. The wrapper also passes the existing dynamic deliverable-contract boundary
 with its complete descriptor/import closure.
@@ -210,14 +211,36 @@ durable acceptance of that exact candidate. Transport/deadline and storage error
 cannot produce acceptance. Deterministic contract, mapping and fixture failures
 request revision. This remains a sample adapter, not a mounted endpoint.
 
-The next integration must explicitly address validation parity: fixture execution
-checks workflow input and mapped requests through its observer, whereas ordinary
-jobs submission currently parses input JSON and the general runner only validates
-requests on edges whose `validate` flag is enabled. Response validation is already
-required by authoring preflight. Qualify the async template with input admission
-and validated request edges (or a reviewed runtime change) before claiming the
-same request boundary after promotion; passing reviewer fixtures alone does not
-prove that behavior for subsequent inputs.
+Validation parity uses the reviewed optional `validate_contract` workflow field.
+False or omission retains legacy per-step/per-edge settings and serialized
+fingerprints. Authoring preflight requires true, and the sample deliverable's CEL
+rule checks the same durable flag before review. The jobs submitter validates
+strict inputs before insertion. The shared runner validates strict inputs, mapped
+requests, successful responses, resumed checkpoint values and final output;
+external completion also validates before checkpointing. Replay applies the same
+declared rules. The setting is retained in the executable source and durable
+workflow fingerprint, so promotion cannot silently remove it.
+
+Strict checkpoint inputs are parsed with pinned descriptors, including Java
+callers that provide another descriptor with the same type name. Skipped resumed
+steps preserve the last successful response. For strict fan-out, FAIL_FAST rejects
+invalid projected inputs before any channel opens; CONTINUE retains only valid
+successful branches under the existing policy. Workflow execution violations use
+the existing nonretryable VALIDATION category. A preinsert input refusal creates
+no job or event; the existing Kafka consumer may record a failed-at-birth envelope
+through its separate failure path. Strict replay also checks derived final output
+without an output artifact and refuses to certify an absent final output.
+
+Local checks cover 174 workflow tests, 113 jobs tests and 48 sample tests, all
+passing without skips, plus Buf lint, compatibility and refreshed browser
+descriptor generation. This is not yet the async starter's restart, Kafka,
+remote-effect idempotency or published-download qualification.
+The full Gradle build also passed; the added schema-coverage assertions passed
+in a separate targeted test after that build.
+JSON Schema exposes `validateContract` as a boolean; the sample's requirement
+that the nested durable flag be true remains runtime CEL, recorded in
+`x-protomolt-cel`. No generator behavior changed. Artifact identity, policy
+authority, endpoint permissions and lifecycle checks remain handler obligations.
 
 Also qualify review infrastructure failure handling in the mounted starter. The
 current coordinator keeps a thrown reviewer exception in `reviewFailure` and
@@ -235,3 +258,55 @@ delegation service, observes the independent fixture rerun and accepted frame,
 then reconstructs a coordinator from a shared in-memory transcript repository.
 This proves accepted attempt/revision restoration in that test; it is not yet a
 process-restart, external-worker, async-job or published-starter qualification.
+
+## Acceptance-to-execution binding under design
+
+Promotion stores `VersionedWorkflow`; jobs currently execute a snapshotted JSON
+definition. The starter must bind both representations rather than submit a
+mutable registry name. Load acceptance from the trusted `TranscriptRepository`,
+reduce the complete transcript without findings, and select the matching offer,
+candidate and terminal acceptance by task, attempt and revision. A reviewer's
+return value or display verdict is not a durable acceptance record.
+
+Before the first promotion, independently verify the accepted candidate under
+the pinned policy and validate the launch input. Persist a structured launch
+authorization at a recoverable, write-once launch identity before any promotion
+or job insertion. It must bind the offer and candidate digests, policy, source,
+input, exact promoted envelope and job UUID. Recovery must verify these bindings
+and reuse the authorization instead of repeating live fixture calls after a
+partially completed launch. Changed content at the same identity must conflict.
+The contract and persistence mechanism still require review and implementation;
+this is not an available endpoint.
+
+Use the caller's launch UUID as the keyed authorization and job identity. An
+intentional new input needs a new launch UUID. Derive the promotion version from
+the accepted task/attempt/revision and offer/candidate identity, and use the
+accepted frame's timestamp in its envelope, so separate launches of the same
+accepted workflow agree on promotion bytes. The authorization store needs atomic
+create-if-absent with exact-content conflict detection; content-addressed artifact
+storage alone does not provide that keyed guarantee. Bind the accepted frame or
+prefix rather than the whole transcript, which can grow with unrelated tasks.
+
+The promotion prerequisite now returns the stored envelope and original timestamp
+for identical retries, including a concurrent identical winner. Previously each
+call generated a fresh timestamp, which conflicted with whole-envelope immutable
+storage. Different workflow bytes under the same name/version remain a conflict.
+The action now also renders the envelope into its declared `Struct` response
+instead of placing a different message type into that field. The real MCP/Git
+registry regression failed on the old retry behavior and passed with the fix;
+focused tests cover changed content, race winners and storage failures.
+Registry visibility now requires matching committed HEAD bytes. A failed Git
+commit leaves its file and index untouched; that file is not a promoted version
+until committed. Existing registry commits still include the whole index, so a
+later registry write can include a previously staged path. This change does not
+promise one dedicated commit per promotion. Registry failures are mapped through
+the repository's declared I/O boundary. Local affected suites passed: 180 workflow
+tests, 101 registry tests and 129 server tests (one opt-in live-provider test skipped).
+
+Acceptance tests for the binding must cover absent, revised, cancelled and stale
+acceptance with no side effects; a manual acceptance that fails independent
+verification; restart after authorization and after promotion but before job
+submission; exact retry producing one version and one job acceptance event;
+changed source/input under a reused launch identity; and durable evidence tying
+the job source snapshot to the promoted workflow. These tests precede the full
+PostgreSQL, Kafka, remote-effect and published-starter qualification.

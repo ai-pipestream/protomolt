@@ -9,6 +9,7 @@ import ai.protomolt.proto.jobs.service.events.WorkflowRunEventFactory;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunRecord;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunStore;
 import ai.protomolt.proto.http.json.MalformedProtobufJsonException;
+import ai.protomolt.proto.validate.ProtoValidator;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
@@ -18,7 +19,8 @@ import java.util.UUID;
 /**
  * The submit path shared by the {@code submit-workflow} verb and the
  * request-topic consumer: resolve the workflow (inline object or stored name),
- * parse it, verify it, validate the input parses as the workflow's inputType,
+ * parse it, verify it, parse the input as the workflow's inputType, and enforce
+ * declared input rules when the workflow opts into contract validation,
  * then insert the QUEUED row and its ACCEPTED event in one transaction.
  * <p>
  * Submission never executes anything — the worker fleet picks the row up.
@@ -100,7 +102,15 @@ public final class WorkflowRunSubmitter {
                     + first.error());
         }
         try {
-            context.transcoder().fromJsonDynamic(input.toString(), definition.inputType());
+            var parsedInput = context.transcoder().fromJsonDynamic(input.toString(), definition.inputType());
+            if (definition.validateContract()) {
+                var validation = ProtoValidator.forMessageType(definition.inputType())
+                        .validate(parsedInput);
+                if (!validation.valid()) {
+                    return fail("", "'input' failed declared validation rules: "
+                            + validation.violations());
+                }
+            }
         } catch (MalformedProtobufJsonException e) {
             return fail("", "'input' is not valid proto3 JSON for "
                     + definition.inputType().getFullName() + ": " + e.getMessage());

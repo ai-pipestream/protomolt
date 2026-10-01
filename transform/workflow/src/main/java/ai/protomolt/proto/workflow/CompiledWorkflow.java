@@ -19,7 +19,14 @@ import java.util.Objects;
  * @param output the output mapping, or null to return the last step's response
  */
 public record CompiledWorkflow(String name, List<FileDescriptor> files, Descriptor inputType,
-                              long deadlineMs, List<Step> steps, Output output) {
+                              long deadlineMs, List<Step> steps, Output output,
+                              boolean validateContract) {
+
+    /** Existing definitions retain their per-step and per-edge validation behavior. */
+    public CompiledWorkflow(String name, List<FileDescriptor> files, Descriptor inputType,
+            long deadlineMs, List<Step> steps, Output output) {
+        this(name, files, inputType, deadlineMs, steps, output, false);
+    }
 
     public CompiledWorkflow {
         Objects.requireNonNull(inputType, "inputType");

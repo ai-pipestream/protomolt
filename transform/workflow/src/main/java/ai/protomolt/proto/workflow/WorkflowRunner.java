@@ -164,7 +164,7 @@ public final class WorkflowRunner {
         /** A typed edge could not map, project, or bound the step input. Not
          *  retryable (deterministic). */
         EDGE,
-        /** The response failed its declared validation rules. A verdict, not an error. */
+        /** A message failed declared validation rules. A verdict, not a transport error. */
         VALIDATION,
         /** The workflow (segment) deadline was exhausted. Retryable: resume continues. */
         DEADLINE,
@@ -334,6 +334,9 @@ public final class WorkflowRunner {
                               ExecutionObserver observer)
             throws WorkflowExecutionException {
         Objects.requireNonNull(observer, "observer");
+        if (workflow.validateContract()) {
+            input = contractValue(input, workflow.inputType(), "input");
+        }
         long deadlineNanos = nanoClock.getAsLong()
                 + TimeUnit.MILLISECONDS.toNanos(workflow.deadlineMs());
         DescriptorRegistry registry = DescriptorRegistry.create();
@@ -363,9 +366,12 @@ public final class WorkflowRunner {
                     Message replayed = done.skipped()
                             ? DynamicMessage.getDefaultInstance(outputTypeOf(step))
                             : done.response();
+                    if (workflow.validateContract() && !done.skipped()) {
+                        replayed = contractValue(replayed, outputTypeOf(step), step.name());
+                    }
                     values.put(step.name(), replayed);
                     outcomes.add(new StepOutcome(step.name(), done.skipped()));
-                    last = replayed;
+                    if (!done.skipped()) last = replayed;
                     index++;
                     continue;
                 }
@@ -407,7 +413,7 @@ public final class WorkflowRunner {
                 }
                 if (step.edge() != null) {
                     last = runEdgeStep(step, values, mapper, registry, open, outcomes,
-                            checkpoints, onCheckpoint, observer, deadlineNanos);
+                            checkpoints, onCheckpoint, observer, deadlineNanos, workflow.validateContract());
                     index++;
                     continue;
                 }
@@ -422,6 +428,7 @@ public final class WorkflowRunner {
                         evaluator(values, step.method().getInputType()), values,
                         step.method().getInputType(), step.rules(), step.celRules(),
                         step.name());
+                if (workflow.validateContract()) validateContractMessage(request, step.name());
                 long remainingMs = TimeUnit.NANOSECONDS.toMillis(
                         deadlineNanos - nanoClock.getAsLong());
                 if (remainingMs <= 0) {
@@ -461,7 +468,7 @@ public final class WorkflowRunner {
                             "gRPC " + e.getStatus().getCode() + " from " + step.target()
                                     + ": " + e.getStatus().getDescription(), e);
                 }
-                if (step.validate()) {
+                if (step.validate() || workflow.validateContract()) {
                     ValidationResult result = ProtoValidator
                             .forMessageType(step.method().getOutputType())
                             .validate(response);
@@ -483,6 +490,7 @@ public final class WorkflowRunner {
                     : buildMessage(mapper, evaluator(values, workflow.output().type()), values,
                             workflow.output().type(), workflow.output().rules(),
                             workflow.output().celRules(), "output");
+            if (workflow.validateContract()) validateContractMessage(output, "output");
             return new Segment.Completed(new Result(output, List.copyOf(outcomes)),
                     List.copyOf(checkpoints));
         } finally {
@@ -585,7 +593,7 @@ public final class WorkflowRunner {
                                 Map<String, ManagedChannel> open,
                                 List<StepOutcome> outcomes, List<Checkpoint> checkpoints,
                                 Consumer<Checkpoint> onCheckpoint,
-                                ExecutionObserver observer, long deadlineNanos)
+                                ExecutionObserver observer, long deadlineNanos, boolean validateContract)
             throws WorkflowExecutionException {
         CompiledWorkflow.EdgeSpec edge = step.edge();
         Map<String, Message> restricted = new LinkedHashMap<>();
@@ -603,14 +611,14 @@ public final class WorkflowRunner {
                 edge.rules(), edge.celRules(), step.name());
         if (step.fanOut() != null) {
             return runFanOut(step, produced, restricted.size(), values, registry, open,
-                    outcomes, checkpoints, onCheckpoint, observer, deadlineNanos);
+                    outcomes, checkpoints, onCheckpoint, observer, deadlineNanos, validateContract);
         }
 
         Message delivered = produced;
         if (edge.projectTo() != null) {
             delivered = projectValue(step, edge.projectTo(), produced, registry);
         }
-        if (edge.validate()) {
+        if (edge.validate() || validateContract) {
             ValidationResult result = ProtoValidator
                     .forMessageType(delivered.getDescriptorForType()).validate(delivered);
             if (!result.valid()) {
@@ -644,7 +652,7 @@ public final class WorkflowRunner {
         Instant stepStarted = Instant.now();
         observer.stepStarted(step, request, stepStarted);
         DynamicMessage response = call(step, channel, request, callMs);
-        validateResponse(step, response);
+        validateResponse(step, response, validateContract);
         values.put(step.name(), response);
         outcomes.add(new StepOutcome(step.name(), false));
         observer.stepCompleted(step, request, response, false, stepStarted, Instant.now());
@@ -668,7 +676,7 @@ public final class WorkflowRunner {
                               Map<String, ManagedChannel> open,
                               List<StepOutcome> outcomes, List<Checkpoint> checkpoints,
                               Consumer<Checkpoint> onCheckpoint,
-                              ExecutionObserver observer, long deadlineNanos)
+                              ExecutionObserver observer, long deadlineNanos, boolean validateContract)
             throws WorkflowExecutionException {
         CompiledWorkflow.EdgeSpec edge = step.edge();
         CompiledWorkflow.FanOutSpec fanOut = step.fanOut();
@@ -703,7 +711,7 @@ public final class WorkflowRunner {
                     continue;
                 }
             }
-            if (edge.validate()) {
+            if (edge.validate() || validateContract) {
                 ValidationResult result = ProtoValidator
                         .forMessageType(value.getDescriptorForType()).validate(value);
                 if (!result.valid()) {
@@ -717,6 +725,18 @@ public final class WorkflowRunner {
             branchValues[i] = value;
         }
         observer.edgeEvaluated(step, produced, allValid, sourceCount, items.size());
+        if (validateContract && !allValid
+                && fanOut.failurePolicy() == CompiledWorkflow.BranchFailurePolicy.FAIL_FAST) {
+            BranchOutcome rejected = null;
+            for (int i = 0; i < slots.length; i++) {
+                var outcome = slots[i];
+                observer.branchCompleted(step, step.name() + "#" + i, i, null,
+                        outcome == null ? "abandoned after input validation failed" : outcome.summary());
+                if (rejected == null && outcome != null) rejected = outcome;
+            }
+            throw new WorkflowExecutionException(step.name(), rejected.kind(), rejected.grpcCode(),
+                    "fan-out input failed before any invocation: " + rejected.summary(), null);
+        }
 
         // gRPC branches share one channel, opened before any task starts: the channel
         // map is confined to this thread.
@@ -766,7 +786,7 @@ public final class WorkflowRunner {
                             return;
                         }
                         slots[index] = executeBranch(step, branchValues[index], index,
-                                branchChannel, branchCallMs, deadlineNanos);
+                                branchChannel, branchCallMs, deadlineNanos, validateContract);
                     } catch (BranchFailure failure) {
                         slots[index] = failure.outcome();
                         if (fanOut.failurePolicy()
@@ -833,6 +853,7 @@ public final class WorkflowRunner {
             throw new WorkflowExecutionException(step.name(), FailureKind.EDGE, null,
                     "fan-out collect rejected: " + e.getMessage(), e);
         }
+        if (validateContract) validateContractMessage(collected, step.name());
         values.put(step.name(), collected);
         outcomes.add(new StepOutcome(step.name(), false));
         observer.stepCompleted(step, produced, collected, false, stepStarted,
@@ -872,7 +893,7 @@ public final class WorkflowRunner {
      */
     private BranchOutcome executeBranch(CompiledWorkflow.Step step, Message value,
                                         int index, ManagedChannel channel, long callMs,
-                                        long deadlineNanos) throws BranchFailure {
+                                        long deadlineNanos, boolean validateContract) throws BranchFailure {
         if (step.structured() != null) {
             GenerateStructuredRequest request = structuredRequest(step, Any.pack(value));
             GenerateStructuredResponse generated;
@@ -900,7 +921,7 @@ public final class WorkflowRunner {
             throw new BranchFailure(new BranchOutcome(null, e.getMessage(), e.kind(),
                     e.grpcCode()));
         }
-        if (step.validate()) {
+        if (step.validate() || validateContract) {
             ValidationResult result = ProtoValidator
                     .forMessageType(step.method().getOutputType()).validate(response);
             if (!result.valid()) {
@@ -982,9 +1003,10 @@ public final class WorkflowRunner {
     }
 
     /** Runs the response's declared validation rules when the step asks for them. */
-    private static void validateResponse(CompiledWorkflow.Step step, DynamicMessage response)
+    private static void validateResponse(CompiledWorkflow.Step step, DynamicMessage response,
+            boolean validateContract)
             throws WorkflowExecutionException {
-        if (step.validate()) {
+        if (step.validate() || validateContract) {
             ValidationResult result = ProtoValidator
                     .forMessageType(step.method().getOutputType())
                     .validate(response);
@@ -992,6 +1014,32 @@ public final class WorkflowRunner {
                 throw new WorkflowExecutionException(step.name(), FailureKind.VALIDATION,
                         null, "response failed validation: " + summary(result), null);
             }
+        }
+    }
+
+    private static DynamicMessage contractValue(Message message,
+            com.google.protobuf.Descriptors.Descriptor type, String where) throws WorkflowExecutionException {
+        if (!message.getDescriptorForType().getFullName().equals(type.getFullName())) {
+            throw new WorkflowExecutionException(where, FailureKind.VALIDATION, null,
+                    where + " does not name the workflow's declared type", null);
+        }
+        try {
+            // Java callers cannot replace the pinned rules with a weaker descriptor.
+            DynamicMessage pinned = DynamicMessage.parseFrom(type, message.toByteArray());
+            validateContractMessage(pinned, where);
+            return pinned;
+        } catch (com.google.protobuf.InvalidProtocolBufferException invalid) {
+            throw new WorkflowExecutionException(where, FailureKind.VALIDATION, null,
+                    where + " does not parse as the workflow's declared type", invalid);
+        }
+    }
+
+    private static void validateContractMessage(Message message, String where)
+            throws WorkflowExecutionException {
+        ValidationResult result = ProtoValidator.forMessageType(message.getDescriptorForType()).validate(message);
+        if (!result.valid()) {
+            throw new WorkflowExecutionException(where, FailureKind.VALIDATION, null,
+                    where + " contract validation failed: " + summary(result), null);
         }
     }
 

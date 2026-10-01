@@ -134,12 +134,11 @@ public final class WorkflowAuthoringPreflight {
         if (!findings.isEmpty()) {
             throw new IllegalArgumentException("executable source does not verify: " + findings);
         }
+        if (!parsed.validateContract()) {
+            throw new IllegalArgumentException("authored workflow must enable contract validation for subsequent execution");
+        }
         Set<PermittedCall> permitted = new HashSet<>(policy.permittedCalls());
         for (CompiledWorkflow.Step step : parsed.steps()) {
-            if (!step.validate()) {
-                throw new IllegalArgumentException("step '" + step.name()
-                        + "' must enable response validation for subsequent execution");
-            }
             if (step.structured() != null || step.external() || step.fanOut() != null) {
                 throw new IllegalArgumentException("unsupported authoring fixture step '"
                         + step.name() + "': structured, external and fan-out steps are not admitted");

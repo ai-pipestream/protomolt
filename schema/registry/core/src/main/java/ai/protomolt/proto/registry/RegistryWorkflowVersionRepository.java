@@ -6,6 +6,7 @@ import ai.protomolt.proto.grpc.workflow.v1.VersionedWorkflow;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.io.IOException;
 
 /**
  * The workflow promotion contract backed by the registry's git repository: every promoted
@@ -27,17 +28,29 @@ public final class RegistryWorkflowVersionRepository implements WorkflowVersionR
     }
 
     @Override
-    public Optional<VersionedWorkflow> find(String name, String version) {
-        return store.workflow(name, version);
+    public Optional<VersionedWorkflow> find(String name, String version) throws IOException {
+        try {
+            return store.workflow(name, version);
+        } catch (RegistryStoreException e) {
+            throw new IOException("Failed to read workflow " + name + " version " + version, e);
+        }
     }
 
     @Override
-    public List<VersionedWorkflow> versions(String name) {
-        return store.workflowVersions(name);
+    public List<VersionedWorkflow> versions(String name) throws IOException {
+        try {
+            return store.workflowVersions(name);
+        } catch (RegistryStoreException e) {
+            throw new IOException("Failed to list workflow versions for " + name, e);
+        }
     }
 
     @Override
-    public void save(VersionedWorkflow workflow) {
-        store.putWorkflow(workflow);
+    public void save(VersionedWorkflow workflow) throws IOException {
+        try {
+            store.putWorkflow(workflow);
+        } catch (RegistryStoreException e) {
+            throw new IOException("Failed to save workflow version", e);
+        }
     }
 }

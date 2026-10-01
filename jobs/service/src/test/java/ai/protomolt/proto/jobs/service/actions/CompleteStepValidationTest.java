@@ -66,9 +66,22 @@ class CompleteStepValidationTest {
 
     /** Submit the external-review workflow and park it on the review step. */
     private String parkOnReview() throws Exception {
+        return parkOnReview(false, true);
+    }
+
+    private String parkOnReview(boolean strictContract) throws Exception {
+        return parkOnReview(strictContract, !strictContract);
+    }
+
+    private String parkOnReview(boolean strictContract, boolean stepValidate) throws Exception {
         ObjectNode request = MAPPER.createObjectNode();
-        request.set("workflow", workflows.externalReviewWorkflow("in-process"));
-        request.putObject("input").put("text", "hi");
+        ObjectNode workflow = workflows.externalReviewWorkflow("in-process");
+        if (strictContract) {
+            workflow.put("validateContract", true);
+        }
+        ((ObjectNode) workflow.withArray("steps").get(0)).put("validate", stepValidate);
+        request.set("workflow", workflow);
+        request.putObject("input").put("text", strictContract ? "hello" : "hi");
         String jobId = dispatch(submit, request).get("jobId").asText();
         assertThat(worker.workOnce()).isTrue();
         assertThat(store.get(UUID.fromString(jobId)).orElseThrow().status)
@@ -99,6 +112,36 @@ class CompleteStepValidationTest {
         assertThat(MAPPER.readTree(job.checkpoints)).isEmpty();
         assertThat(store.events().stream().map(e -> e.eventType))
                 .contains(WorkflowRunEventRecord.TYPE_FAILED);
+    }
+
+    @Test
+    void strictContractValidatesParkedResponseEvenWhenStepFlagIsFalse() throws Exception {
+        String jobId = parkOnReview(true);
+        ObjectNode rejected = dispatch(completeStep, envelope(
+                "{\"jobId\": \"" + jobId + "\", \"stepName\": \"review\","
+                        + " \"response\": {\"notes\": \"no\"}}"));
+
+        assertThat(rejected.path("ok").asBoolean()).isFalse();
+        assertThat(rejected.path("status").asText()).isEqualTo(WorkflowRunRecord.STATUS_FAILED);
+        assertThat(rejected.path("error").asText()).contains("VALIDATION", "notes");
+        var failed = store.get(UUID.fromString(jobId)).orElseThrow();
+        assertThat(failed.status).isEqualTo(WorkflowRunRecord.STATUS_FAILED);
+        assertThat(MAPPER.readTree(failed.checkpoints)).isEmpty();
+        assertThat(store.events().stream().map(event -> event.eventType))
+                .contains(WorkflowRunEventRecord.TYPE_FAILED);
+    }
+
+    @Test
+    void legacyWorkflowWithStepValidationOffKeepsParkedResponseOptIn() throws Exception {
+        String jobId = parkOnReview(false, false);
+        ObjectNode accepted = dispatch(completeStep, envelope(
+                "{\"jobId\": \"" + jobId + "\", \"stepName\": \"review\","
+                        + " \"response\": {\"notes\": \"no\"}}"));
+
+        assertThat(accepted.path("ok").asBoolean()).isTrue();
+        assertThat(accepted.path("status").asText()).isEqualTo(WorkflowRunRecord.STATUS_QUEUED);
+        assertThat(store.get(UUID.fromString(jobId)).orElseThrow().status)
+                .isEqualTo(WorkflowRunRecord.STATUS_QUEUED);
     }
 
     @Test

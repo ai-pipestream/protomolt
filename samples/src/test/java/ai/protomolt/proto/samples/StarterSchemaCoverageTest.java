@@ -7,6 +7,8 @@ import ai.protomolt.proto.http.rest.ProtoRestMethodRegistry;
 import ai.protomolt.proto.inference.v1.EvaluateRequest;
 import ai.protomolt.proto.inference.v1.EvaluateResponse;
 import ai.protomolt.proto.correction.v1.CorrectedContact;
+import ai.protomolt.proto.actions.CatalogContract;
+import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringDeliverable;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -28,6 +30,12 @@ class StarterSchemaCoverageTest {
         assertThat(contact.at("/properties/displayName/minLength").asInt()).isEqualTo(2);
         assertThat(contact.at("/properties/displayName/maxLength").asInt()).isEqualTo(120);
         assertThat(contact.path("x-protomolt-cel").toString()).contains("deliverable-contact-method");
+
+        JsonNode executable = JSON.valueToTree(generator.generateRooted(CatalogContract.request("CompiledWorkflow")));
+        assertThat(executable.at("/properties/validateContract/type").asText()).isEqualTo("boolean");
+        JsonNode authored = JSON.valueToTree(generator.generateRooted(WorkflowAuthoringDeliverable.getDescriptor()));
+        // Nested contract enforcement is runtime CEL, not a JSON Schema assertion.
+        assertThat(authored.path("x-protomolt-cel").toString()).contains("authoring-contract-validation");
 
         JsonNode request = JSON.valueToTree(generator.generateRooted(EvaluateRequest.getDescriptor()));
         JsonNode response = JSON.valueToTree(generator.generateRooted(EvaluateResponse.getDescriptor()));
@@ -52,5 +60,7 @@ class StarterSchemaCoverageTest {
         JSON.writerWithDefaultPrettyPrinter().writeValue(directory.resolve("evaluate-request.schema.json").toFile(), request);
         JSON.writerWithDefaultPrettyPrinter().writeValue(directory.resolve("evaluate-response.schema.json").toFile(), response);
         JSON.writerWithDefaultPrettyPrinter().writeValue(directory.resolve("evaluation.openapi.json").toFile(), openapi);
+        JSON.writerWithDefaultPrettyPrinter().writeValue(directory.resolve("compiled-workflow.schema.json").toFile(), executable);
+        JSON.writerWithDefaultPrettyPrinter().writeValue(directory.resolve("authoring-deliverable.schema.json").toFile(), authored);
     }
 }

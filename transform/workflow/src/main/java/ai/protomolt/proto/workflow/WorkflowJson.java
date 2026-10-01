@@ -146,7 +146,8 @@ public final class WorkflowJson {
         }
         try {
             return new CompiledWorkflow(text(workflow, "name"), schema.files(), inputType,
-                    Fields.integer(workflow, "deadlineMs"), steps, output);
+                    Fields.integer(workflow, "deadlineMs"), steps, output,
+                    Fields.flag(workflow, "validateContract"));
         } catch (IllegalArgumentException e) {
             throw new WorkflowParseException("", e.getMessage());
         }

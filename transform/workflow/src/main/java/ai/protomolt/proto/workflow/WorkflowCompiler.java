@@ -91,6 +91,7 @@ public final class WorkflowCompiler {
         Workflow.Builder builder = Workflow.newBuilder()
                 .setName(workflow.name())
                 .setInputType(workflow.inputType().getFullName())
+                .setValidateContract(workflow.validateContract())
                 .setDeadline(millis(workflow.deadlineMs()))
                 .addAllDependencies(dependencies.values())
                 .addAllSteps(steps);

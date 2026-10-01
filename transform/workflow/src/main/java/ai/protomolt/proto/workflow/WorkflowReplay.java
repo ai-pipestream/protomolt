@@ -118,6 +118,9 @@ public final class WorkflowReplay {
         Map<String, Message> scope = new LinkedHashMap<>();
         scope.put("input", parse(artifacts, evidence.getInputArtifact(), inputType,
                 "run input"));
+        if (workflow.getValidateContract() && !valid(scope.get("input"))) {
+            return ReplayResult.failed("recorded input fails contract validation", steps);
+        }
         // Mirrors the live runner: a gate-skipped step binds its name but never becomes
         // the result the workflow returns.
         Message last = scope.get("input");
@@ -192,6 +195,11 @@ public final class WorkflowReplay {
                 return fail(steps, step.getName(), recorded.getStatus(),
                         "request mapping could not be re-derived: " + e.getMessage());
             }
+            if (workflow.getValidateContract()
+                    && step.getCompletion() == ai.protomolt.proto.grpc.workflow.v1.StepCompletion.STEP_COMPLETION_LIVE
+                    && !valid(expected)) {
+                return fail(steps, step.getName(), recorded.getStatus(), "mapped request fails contract validation");
+            }
             if (recorded.hasRequestArtifact()) {
                 Message request = parse(artifacts, recorded.getRequestArtifact(),
                         method.getInputType(), "request of step " + step.getName());
@@ -212,7 +220,7 @@ public final class WorkflowReplay {
             }
             Message response = parse(artifacts, recorded.getResponseArtifact(),
                     method.getOutputType(), "response of step " + step.getName());
-            if (step.getValidateResponse()) {
+            if (step.getValidateResponse() || workflow.getValidateContract()) {
                 ValidationResult result = ProtoValidator
                         .forMessageType(method.getOutputType()).validate(response);
                 if (!result.valid()) {
@@ -228,7 +236,7 @@ public final class WorkflowReplay {
         if (evidence.getStepsCount() > workflow.getStepsCount()) {
             return ReplayResult.failed("evidence records more steps than the workflow", steps);
         }
-        if (evidence.hasOutputArtifact()) {
+        if (evidence.hasOutputArtifact() || workflow.getValidateContract()) {
             Message expected;
             try {
                 expected = workflow.hasOutput()
@@ -240,11 +248,20 @@ public final class WorkflowReplay {
                 return ReplayResult.failed(
                         "output mapping could not be re-derived: " + e.getMessage(), steps);
             }
+            if (workflow.getValidateContract() && !valid(expected)) {
+                return ReplayResult.failed("derived output fails contract validation", steps);
+            }
+            if (!evidence.hasOutputArtifact()) {
+                return ReplayResult.failed("strict run records no output artifact", steps);
+            }
             Descriptor outputDescriptor = workflow.hasOutput()
                     ? outputType(schema, workflow)
                     : last.getDescriptorForType();
             Message output = parse(artifacts, evidence.getOutputArtifact(),
                     outputDescriptor, "run output");
+            if (workflow.getValidateContract() && !valid(output)) {
+                return ReplayResult.failed("recorded output fails contract validation", steps);
+            }
             if (!output.equals(expected)) {
                 return ReplayResult.failed(
                         "recorded output differs from what the workflow derives", steps);
@@ -473,7 +490,7 @@ public final class WorkflowReplay {
                         "edge projection could not be re-run: " + e.getMessage());
             }
         }
-        boolean valid = !edge.getValidate()
+        boolean valid = !(edge.getValidate() || workflow.getValidateContract())
                 || ProtoValidator.forMessageType(delivered.getDescriptorForType())
                         .validate(delivered).valid();
         if (valid != edgeEvidence.getValidationPassed()) {
@@ -486,6 +503,7 @@ public final class WorkflowReplay {
             steps.add(new StepReplay(name, recorded.getStatus(), true, ""));
             return terminalTail(workflow, evidence, index, steps);
         }
+        if (!valid) return fail(steps, name, recorded.getStatus(), "succeeded edge fails contract validation");
         if (recorded.getGrpcStatusCode() != 0) {
             return fail(steps, name, recorded.getStatus(),
                     "succeeded step records gRPC status " + recorded.getGrpcStatusCode());
@@ -501,7 +519,7 @@ public final class WorkflowReplay {
         MethodDescriptor method = CompiledWorkflow.resolveMethod(schema, step.getMethod());
         Message response = parse(artifacts, recorded.getResponseArtifact(),
                 method.getOutputType(), "response of step " + name);
-        if (step.getValidateResponse()) {
+        if (step.getValidateResponse() || workflow.getValidateContract()) {
             ValidationResult result = ProtoValidator
                     .forMessageType(method.getOutputType()).validate(response);
             if (!result.valid()) {
@@ -650,7 +668,7 @@ public final class WorkflowReplay {
                     itemValid = false;
                 }
             }
-            if (itemValid && step.getEdge().getValidate()) {
+            if (itemValid && (step.getEdge().getValidate() || workflow.getValidateContract())) {
                 itemValid = ProtoValidator.forMessageType(value.getDescriptorForType())
                         .validate(value).valid();
             }
@@ -670,7 +688,7 @@ public final class WorkflowReplay {
                 }
                 Message output = parse(artifacts, branch.getResponseArtifact(),
                         branchOutputType, "response of branch " + branch.getBranchId());
-                if (step.hasStructured() || step.getValidateResponse()) {
+                if (step.hasStructured() || step.getValidateResponse() || workflow.getValidateContract()) {
                     ValidationResult result = ProtoValidator
                             .forMessageType(branchOutputType).validate(output);
                     if (!result.valid()) {
@@ -703,6 +721,9 @@ public final class WorkflowReplay {
         }
         Message collected = parse(artifacts, recorded.getResponseArtifact(), collectType,
                 "collected message of step " + name);
+        if (workflow.getValidateContract() && !valid(collected)) {
+            return fail(steps, name, recorded.getStatus(), "collected response fails contract validation");
+        }
         Message expected;
         try {
             expected = mask(EdgeFlow.collect(collectType, fanOut.getCollectInto(),
@@ -824,6 +845,10 @@ public final class WorkflowReplay {
                 factory.addMessageVar(name, message.getDescriptorForType()));
         factory.addMessageVar("target", targetType);
         return new CelEvaluator(factory.build());
+    }
+
+    private static boolean valid(Message message) {
+        return ProtoValidator.forMessageType(message.getDescriptorForType()).validate(message).valid();
     }
 
     /** Loads one fixture; the store has already re-hashed it, so bytes are authentic. */

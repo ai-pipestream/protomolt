@@ -51,6 +51,7 @@ class WorkflowAuthoringPreflightTest {
         descriptors = compiled.descriptorSet().toByteArray();
         source = JSON.createObjectNode();
         source.put("name", "echo-text");
+        source.put("validateContract", true);
         source.putObject("schema").put("descriptorSetBase64",
                 Base64.getEncoder().encodeToString(descriptors));
         source.put("inputType", "workflow.test.Text");
@@ -102,14 +103,14 @@ class WorkflowAuthoringPreflightTest {
     }
 
     @Test
-    void refusesSourceThatDisablesResponseValidationEvenWithMatchingDurableWorkflow() throws Exception {
-        ((ObjectNode) source.withArray("steps").get(0)).put("validate", false);
+    void refusesSourceThatDisablesContractValidationEvenWithMatchingDurableWorkflow() throws Exception {
+        source.put("validateContract", false);
         durable = WorkflowCompiler.compile(WorkflowJson.parse(source, context));
         workflowRef = artifacts.save(durable.toByteArray(), "application/x-protobuf", false);
         sourceRef = artifacts.save(source.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8),
                 "application/json", false);
         assertThatThrownBy(this::verify).isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("must enable response validation");
+                .hasMessageContaining("must enable contract validation");
     }
 
     @Test

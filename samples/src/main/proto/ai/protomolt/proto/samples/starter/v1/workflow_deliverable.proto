@@ -52,6 +52,11 @@ message WorkflowDeliverable {
 // It is a contract example, not a mounted authoring RPC.
 message WorkflowAuthoringDeliverable {
   option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "authoring-contract-validation"
+    message: "authored workflows must enable contract validation for subsequent execution"
+    expression: "has(this.deliverable) && has(this.deliverable.workflow) && this.deliverable.workflow.validate_contract"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "authoring-unique-fixtures"
     message: "fixture names must be unique"
     expression: "this.acceptance_fixtures.all(f, this.acceptance_fixtures.filter(other, other.name == f.name).size() == 1)"

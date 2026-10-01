@@ -115,7 +115,8 @@ public final class CompleteStepAction implements ProtoAction {
         // Build the checkpoint entry: the response parsed against the step's
         // output type from the job's snapshotted definition. A parse failure
         // is the caller's error; the job is untouched.
-        CompiledWorkflow.Step step = resolveStep(job, stepName, context);
+        ResolvedStep resolved = resolveStep(job, stepName, context);
+        CompiledWorkflow.Step step = resolved.step();
         DynamicMessage parsed;
         try {
             parsed = context.transcoder().fromJsonDynamic(response.toString(),
@@ -125,7 +126,7 @@ public final class CompleteStepAction implements ProtoAction {
                     + step.method().getOutputType().getFullName() + ": " + e.getMessage());
         }
         String validationError = null;
-        if (step.validate()) {
+        if (resolved.validateContract() || step.validate()) {
             ValidationResult validation = ProtoValidator
                     .forMessageType(step.method().getOutputType())
                     .validate(parsed);
@@ -163,7 +164,9 @@ public final class CompleteStepAction implements ProtoAction {
     }
 
     /** The step's definition from the job's snapshotted workflow. */
-    private CompiledWorkflow.Step resolveStep(WorkflowRunRecord job, String stepName,
+    private record ResolvedStep(CompiledWorkflow.Step step, boolean validateContract) { }
+
+    private ResolvedStep resolveStep(WorkflowRunRecord job, String stepName,
             ActionContext context) throws ActionException {
         JsonNode tree;
         try {
@@ -181,7 +184,7 @@ public final class CompleteStepAction implements ProtoAction {
         }
         for (CompiledWorkflow.Step step : definition.steps()) {
             if (step.name().equals(stepName)) {
-                return step;
+                return new ResolvedStep(step, definition.validateContract());
             }
         }
         throw ActionSupport.invalidInput("the workflow has no step named '" + stepName + "'");

@@ -42,7 +42,12 @@ public final class ValidatingWorkflows {
             syntax = "proto3";
             package jobs.guard;
             import "ai/protomolt/proto/validate/v1/validate.proto";
-            message Text { string text = 1; }
+            message Text {
+              string text = 1 [(ai.protomolt.proto.validate.v1.field) = {
+                required: true
+                string: {min_len: 3}
+              }];
+            }
             message Tokens {
               string tag = 1 [(ai.protomolt.proto.validate.v1.field) = {
                 required: true
