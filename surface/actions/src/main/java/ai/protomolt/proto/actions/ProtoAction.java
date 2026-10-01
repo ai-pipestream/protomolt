@@ -101,4 +101,14 @@ public interface ProtoAction {
      * @throws ActionException with a stable code on any failure
      */
     Message execute(Message request, ActionContext context) throws ActionException;
+
+    /**
+     * Executes with the caller authenticated by the transport and authorized by the catalog.
+     * Existing actions keep their behavior through the legacy overload. Actions that bind
+     * effects to a principal may override this method and fail closed in the legacy one.
+     */
+    default Message execute(Message request, ActionContext context, Caller caller)
+            throws ActionException {
+        return execute(request, context);
+    }
 }
