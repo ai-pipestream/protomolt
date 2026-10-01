@@ -17,12 +17,17 @@ This is a design inventory, not an available API. Source examined:
   stores. The launch authorization directory needs its own persistent volume.
   A signed receipt is evidence for a recorded run, not a substitute for acceptance
   or a claim that a later asynchronous run completed.
-- Production cannot depend on `samples`. Before mounting, extract the reviewed
-  authoring contracts and helpers to a production module, preserving the existing
-  wire identities and import paths or recording an explicit migration. Decide
-  ownership before adding a serve dependency; do not copy implementations into
-  the server. Sample scripted-worker and fixture code can remain demonstration
-  code, packaged separately from the coordinator.
+- Production cannot depend on `samples`. Extract the reviewer, launcher,
+  acceptance/validation helpers and keyed store to `transform/workflow/authoring`
+  (`protomolt-workflow-authoring`), using Java package
+  `ai.protomolt.proto.workflow.authoring`. Keep generic preflight, fixture and
+  receipt helpers in workflow core. Move the two sample authoring/launch proto
+  files without changing import paths, descriptor names, generated Java names or
+  Any type URLs. Record their frozen generated-package exception in AGENTS;
+  handwritten implementation follows ADR-002. Both samples and serve can depend
+  on authoring without a cycle through jobs-service or workflow core. Add the
+  production module to the BOM. The scripted author and external fixture remain
+  separately packaged demonstration code.
 
 ## External service and scripted author
 
@@ -51,11 +56,13 @@ separate result.
 
 ## Protocol and browser entry
 
-Retain the existing delegation and workbench operations. Mount a narrowly scoped
-accepted-workflow launch operation only after its production contract is reviewed;
-reuse the reviewed request/result and bind the coordinator-owned authorization
-store. Expose it through the existing action/gRPC bridge so MCP and ACP use the
-same validation and handler. Do not present a generic named SubmitWorkflow call
+Retain the existing delegation and workbench operations. Add a contributed
+`ai.protomolt.proto.workflow.authoring.v1` service with one
+`LaunchAcceptedWorkflow` RPC, reusing the reviewed request/result and binding the
+coordinator-owned authorization store. Review that contract before its handler.
+Register its action and descriptor through the existing catalog/contributed-service
+bridge, so gRPC, MCP and ACP use the same validation and handler. This avoids the
+dependency cycle a central service-contract RPC would introduce. Do not present a generic named SubmitWorkflow call
 as enforcing independent acceptance: it has a different authority boundary.
 
 The browser path should be: start the scripted authoring task, inspect observed
