@@ -23,4 +23,10 @@ public interface StreamingAction extends ProtoAction {
      */
     void executeStreaming(Message request, ActionContext context, StreamEmitter emitter)
             throws ActionException;
+
+    /** Streams with the catalog-authenticated caller; legacy actions retain their behavior. */
+    default void executeStreaming(Message request, ActionContext context, Caller caller,
+            StreamEmitter emitter) throws ActionException {
+        executeStreaming(request, context, emitter);
+    }
 }

@@ -1,21 +1,25 @@
 # Goal 5 starter binding: remaining implementation
 
-This is a design inventory, not a mounted API. The launch helper and production
-authoring module landed in PRs #331 and #332. The service contracts are in PR #334.
+This inventory separates landed components from the unfinished starter. The
+launch helper and production authoring module landed in PRs #331 and #332;
+contracts, actions and opt-in coordinator mounting landed in #334, #335 and #337.
 The action adapters now validate requests and successful replies with the native
 engine, bind reply task/job identity to the request, and sanitize typed failures.
 Catalog tests cover generated, dynamic and JSON input; in-process gRPC tests cover
 operator authentication, scoped denial, validation and status/trailer mapping.
 The real launcher is also exercised through the catalog without repeating fixtures
-on a matching retry. These tests do not qualify a deployed MCP/ACP or browser path.
+on a matching retry. The installed-server test in #337 exercised authenticated
+gRPC, REST/OpenAPI and MCP exposure against PostgreSQL and a TCP repository
+fixture, including opt-out behavior. It did not execute an accepted authored
+workflow or qualify a deployed ACP/browser path.
 
 ## Reuse and ownership
 
 - Keep delegation offers, candidates, acceptance and transcript storage in the
-  existing coordinator. `apps/serve/DelegationRuntime` currently constructs a
-  manual reviewer even with persistent repository storage. Add explicit trusted
-  authoring-reviewer configuration rather than assuming sample acceptance is
-  mounted or changing the default review policy for unrelated tasks.
+  existing coordinator. `apps/serve/DelegationRuntime` retains manual review by
+  default. The opt-in `WorkflowAuthoringMount` routes authoring contracts to the
+  independent reviewer and shares the coordinator's transcript repository with
+  the launcher. Unrelated tasks keep their existing manual review policy.
 - Keep workflow jobs in `JdbcWorkflowRunStore` and `WorkflowRunWorker`.
   `ProtoMoltServe` already opens the jobs database, mounts its operations and runs
   the worker and optional Kafka relay. Do not add a second queue or job language.
@@ -37,6 +41,27 @@ on a matching retry. These tests do not qualify a deployed MCP/ACP or browser pa
 
 ## External service and scripted author
 
+### Remote authoring boundary found during integration
+
+`worker-coordinate` permits candidate submission, but the existing remote
+workbench has separate permissions: reflection/invocation use `service-invoke`,
+compilation uses `schema-read`, and checking, recording and receipt export use
+`workflow-run`. That last permission also permits promotion. There is no mounted
+general upload/read operation over the coordinator's `ArtifactRepository` for
+source, descriptors, workflow bytes and signed receipts.
+
+A trusted local Java harness can reuse `ReflectionClient`, `DynamicGrpcCalls`,
+`WorkflowJson`, `WorkflowCompiler`, `WorkflowRunRecorder`, `WorkRecordProjector`
+and `RecordSigner`, then submit through `DelegationWorker`. That is useful
+integration evidence, but does not establish the planned remote worker entry
+point. Do not substitute an operator token or shared writable coordinator
+workspace for that missing boundary. The next contract review must choose
+bounded artifact transport with narrow authoring authority or a typed
+candidate-preparation operation over the same libraries, preserving caller-owned
+policy, independent review and separate operator launch authorization. Record
+its requests, successful responses, identity checks and negative authorization
+tests before implementing the remote scripted author.
+
 The reviewed example contract is
 `samples/src/main/proto/ai/protomolt/proto/samples/authoring/v1/authoring_fixture.proto`.
 It declares `NormalizeText` and `WriteRecord`, plus the sample-private durable
@@ -46,10 +71,30 @@ request/response identity. Valid shape alone does not establish normalization,
 matching content digest or persistence; those require handler tests. The 8192
 code-point bound also limits valid UTF-8 content to 32768 bytes. Unicode fixtures
 cover this boundary. Buf lint and complete descriptor-set compatibility pass.
-The file currently provides contracts only; the service is not implemented or
-packaged. Ordinary scalar constraints can be rendered by existing schema
+The sample now has a TCP service with reflection and a standalone launcher built
+by `./gradlew :samples:installAuthoringFixture`. Start it with
+`samples/build/install/authoring-fixture/bin/authoring-fixture 9778 /path/to/records`.
+Port zero selects an ephemeral port printed at startup. No image or published
+starter is provided by this implementation. Ordinary scalar constraints can be rendered by existing schema
 generators, while stored-record identity CEL and handler durability checks remain
 runtime obligations. No generator changes are included.
+
+The ledger stores the exact request and response under a canonical UUID. It
+validates and checks content integrity on every read, compares exact content
+bytes on retry, and uses a JVM lock plus an OS file lock around atomic publication.
+File and directory sync complete before success. A read completes the sync
+barrier after an interrupted publication; temporary files are never records.
+Storage faults and corruption produce sanitized INTERNAL errors, while content
+conflicts are ALREADY_EXISTS. Native validation precedes writes and successful
+responses, including rejection of unknown fields.
+
+Local sample validation passed 59 tests with no skips or failures. Real TCP tests
+cover normalization, invalid requests, concurrent retries/conflicts, corrupted
+records and injected failures before and after atomic publication. An installed
+launcher test runs competing processes over the same ledger, force-kills them
+after a successful write, starts a fresh process, and compares the response and
+record bytes. This is fixture-process recovery, not the required workflow-worker
+remote-effect/checkpoint crash-window proof or native-platform release evidence.
 
 Use a small separate TCP gRPC service with reflection and two unary operations:
 a pure text normalization followed by a durable write. The write request carries
@@ -164,7 +209,9 @@ Before restart qualification, bind worker writes to an immutable job/owner/attem
 claim and check RUNNING state and lease validity atomically with the mutation and
 outbox insertion. A rejected stale write must not trigger another stale failure
 or requeue. External parked completion retains its separate row-lock contract.
-This guard is not implemented yet; see the local `feat/goal5-claim-fencing` work.
+This guard landed in PR #333. Its PostgreSQL and worker-reconstruction tests
+passed, including stale-write refusal without mutation. The external-process
+crash-window and published starter qualification below remain unfinished.
 
 1. Real PostgreSQL worker/store reconstruction preserves completed checkpoints.
    Fail after the second RPC's remote effect but before its checkpoint; retry
