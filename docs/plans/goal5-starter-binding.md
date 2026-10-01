@@ -57,13 +57,40 @@ separate result.
 ## Protocol and browser entry
 
 Retain the existing delegation and workbench operations. Add a contributed
-`ai.protomolt.proto.workflow.authoring.v1` service with one
-`LaunchAcceptedWorkflow` RPC, reusing the reviewed request/result and binding the
+`ai.protomolt.proto.workflow.authoring.v1` service with
+`LaunchAcceptedWorkflow`, reusing the reviewed request/result and binding the
 coordinator-owned authorization store. Review that contract before its handler.
 Register its action and descriptor through the existing catalog/contributed-service
 bridge, so gRPC, MCP and ACP use the same validation and handler. This avoids the
 dependency cycle a central service-contract RPC would introduce. Do not present a generic named SubmitWorkflow call
 as enforcing independent acceptance: it has a different authority boundary.
+
+`GetAcceptedWorkflow` takes a validated task UUID and returns the existing
+`WorkflowAcceptedCandidate` selector computed by the server. It performs no
+fixture calls or launch effects and does not certify semantic correctness. Both
+methods preserve the exact task ID spelling returned by delegation: existing
+task IDs are string keys, not UUID aliases. Only the launch/job UUID is normalized.
+The caller must not reconstruct server-computed protobuf hashes in another
+language. Both operations initially require the trusted operator caller boundary;
+the coordination worker token alone must not grant either operation. Authorization
+must precede transcript lookup, including the read-only selector query.
+
+Before mounting, add typed handler failures and adapter tests for these mappings:
+
+- Invalid request annotations or unsupported rules: INVALID_ARGUMENT.
+- Missing, nonaccepted or stale selected task: FAILED_PRECONDITION, with no effects.
+- Reused launch UUID with different intent or a conflicting job: ALREADY_EXISTS.
+- Unavailable or timed-out fixture/repository transport: UNAVAILABLE or
+  DEADLINE_EXCEEDED, retaining the original launch UUID for a retry.
+- Storage corruption or an unclassified storage error: INTERNAL; do not label it
+  as a successful launch or infer that no partial commit occurred.
+- An invalid successful response: the existing catalog boundary rejects it as
+  DATA_LOSS before exposing success.
+
+MCP/ACP must preserve the corresponding stable action error code and must not
+convert infrastructure failure into acceptance. Add error categories explicitly;
+do not classify failures by matching exception prose. No handler or mount is
+provided by the service descriptor alone.
 
 The browser path should be: start the scripted authoring task, inspect observed
 checks and any requested revision, launch the accepted workflow with input, then
