@@ -29,3 +29,7 @@ protobuf {
     plugins { grpc { artifact = "io.grpc:protoc-gen-grpc-java:${libs.versions.grpc.get()}" } }
     generateProtoTasks { all().configureEach { plugins { grpc {} } } }
 }
+
+tasks.withType(Test).configureEach {
+    systemProperty 'protomolt.authoring.test.classpath', sourceSets.test.runtimeClasspath.asPath
+}
