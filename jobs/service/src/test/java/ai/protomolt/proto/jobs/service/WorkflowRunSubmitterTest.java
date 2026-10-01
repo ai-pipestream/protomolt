@@ -226,6 +226,47 @@ class WorkflowRunSubmitterTest {
     }
 
     @Test
+    void strictContractRejectsInvalidInputBeforeJobOrAcceptedEvent() {
+        ObjectNode workflow = new ValidatingWorkflows()
+                .validatingTokenizeWorkflow("in-process");
+        workflow.put("validateContract", true);
+        String id = UUID.randomUUID().toString();
+
+        WorkflowRunSubmitter.Outcome invalid = submitter.submit(workflow, null,
+                json("{\"text\":\"hi\"}"), id, context);
+
+        assertThat(invalid.ok()).isFalse();
+        assertThat(invalid.conflict()).isFalse();
+        assertThat(invalid.jobId()).isNull();
+        assertThat(invalid.failedStep()).isEmpty();
+        assertThat(invalid.error()).contains("input", "validation", "text");
+        assertThat(store.get(UUID.fromString(id))).isEmpty();
+        assertThat(store.list(null, null, 10, 0)).isEmpty();
+        assertThat(store.events()).isEmpty();
+
+        WorkflowRunSubmitter.Outcome valid = submitter.submit(workflow, null,
+                json("{\"text\":\"hello\"}"), id, context);
+        assertThat(valid.ok()).isTrue();
+        assertThat(store.get(UUID.fromString(id))).isPresent();
+        assertThat(store.events()).hasSize(1);
+    }
+
+    @Test
+    void defaultAndExplicitFalseKeepLegacyInputSemantics() {
+        ObjectNode workflow = new ValidatingWorkflows()
+                .validatingTokenizeWorkflow("in-process");
+        var legacy = submitter.submit(workflow, null, json("{\"text\":\"hi\"}"),
+                null, context);
+        assertThat(legacy.ok()).as(legacy.error()).isTrue();
+
+        workflow.put("validateContract", false);
+        var explicitFalse = submitter.submit(workflow, null, json("{\"text\":\"hi\"}"),
+                null, context);
+        assertThat(explicitFalse.ok()).as(explicitFalse.error()).isTrue();
+        assertThat(store.events()).hasSize(2);
+    }
+
+    @Test
     void anUnnamedInlineWorkflowIsStampedInline() {
         ObjectNode workflow = workflows.twoStepWorkflow("in-process", null);
         workflow.remove("name");

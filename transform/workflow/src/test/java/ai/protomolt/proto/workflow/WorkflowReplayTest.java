@@ -170,6 +170,45 @@ class WorkflowReplayTest {
     }
 
     @Test
+    void strictReplayChecksInputRequestsResponsesAndFinalOutput(@TempDir Path dir) throws Exception {
+        ArtifactRepository artifacts = new FileSystemArtifactRepository(dir);
+        Workflow strict = workflow().setValidateContract(true).setSteps(1,
+                workflow().getSteps(1).toBuilder().clearWhen()).build();
+        var invalidInput = golden(strict, artifacts);
+        assertThat(WorkflowReplay.replay(strict, invalidInput, List.of(file), artifacts).failure())
+                .contains("input fails contract validation");
+
+        var validInput = save(artifacts, text("begin"));
+        var good = invalidInput.toBuilder().setInputArtifact(validInput)
+                .setSteps(0, invalidInput.getSteps(0).toBuilder().setRequestArtifact(validInput)).build();
+        assertThat(WorkflowReplay.replay(strict, good, List.of(file), artifacts).ok()).isTrue();
+
+        var emptyMapping = strict.toBuilder().setSteps(0, strict.getSteps(0).toBuilder().clearRules()).build();
+        var invalidRequest = good.toBuilder().setWorkflowFingerprint(WorkflowValidation.fingerprint(emptyMapping))
+                .setSteps(0, good.getSteps(0).toBuilder().setRequestArtifact(save(artifacts, text("")))).build();
+        assertThat(WorkflowReplay.replay(emptyMapping, invalidRequest, List.of(file), artifacts).failure())
+                .contains("request fails contract validation");
+
+        var invalidResponse = good.toBuilder().setSteps(1, good.getSteps(1).toBuilder()
+                .setResponseArtifact(save(artifacts, text("ab")))).build();
+        assertThat(WorkflowReplay.replay(strict, invalidResponse, List.of(file), artifacts).failure())
+                .contains("response fails validation");
+
+        var badOutputWorkflow = strict.toBuilder().setOutput(
+                ai.protomolt.proto.grpc.workflow.v1.WorkflowOutput.newBuilder().setType(text.getFullName())).build();
+        var badOutput = good.toBuilder().setWorkflowFingerprint(WorkflowValidation.fingerprint(badOutputWorkflow))
+                .setOutputArtifact(save(artifacts, text(""))).build();
+        assertThat(WorkflowReplay.replay(badOutputWorkflow, badOutput, List.of(file), artifacts).failure())
+                .contains("output fails contract validation");
+        assertThat(WorkflowReplay.replay(badOutputWorkflow, badOutput.toBuilder()
+                .setStatus(RunStatus.RUN_STATUS_FAILED).setFailureSummary("output validation failed")
+                .clearOutputArtifact().build(), List.of(file), artifacts).failure())
+                .contains("output fails contract validation");
+        assertThat(WorkflowReplay.replay(strict, good.toBuilder().clearOutputArtifact().build(),
+                List.of(file), artifacts).failure()).contains("no output artifact");
+    }
+
+    @Test
     void goldenRecordingReplaysClean(@TempDir Path dir) throws Exception {
         ArtifactRepository artifacts = new FileSystemArtifactRepository(dir);
         Workflow workflow = workflow().build();

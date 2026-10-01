@@ -141,7 +141,8 @@ class StarterContractTest {
     }
 
     private static WorkflowDeliverable deliverable() throws Exception {
-        return WorkflowDeliverable.newBuilder().setWorkflow(WorkflowCompiler.compile(workflow()))
+        return WorkflowDeliverable.newBuilder().setWorkflow(WorkflowCompiler.compile(workflow()).toBuilder()
+                        .setValidateContract(true))
                 .setWorkflowArtifact(artifact()).setDescriptors(artifact()).addFixtures(artifact())
                 .addChecks(CheckEvidence.newBuilder().setCheckName("contract-tests")
                         .setVerdict(CheckVerdict.CHECK_VERDICT_PASSED)
@@ -158,6 +159,9 @@ class StarterContractTest {
                 .addAcceptanceFixtures(fixture).build();
         valid(authored);
         var validator = ProtoValidator.forMessageType(WorkflowAuthoringDeliverable.getDescriptor());
+        assertThat(validator.validate(authored.toBuilder().setDeliverable(authored.getDeliverable().toBuilder()
+                .setWorkflow(authored.getDeliverable().getWorkflow().toBuilder().setValidateContract(false)))
+                .build()).violations()).anyMatch(v -> v.ruleId().equals("authoring-contract-validation"));
         assertThat(validator.validate(authored.toBuilder().clearExecutableSource().build()).valid()).isFalse();
         assertThat(validator.validate(authored.toBuilder().setExecutableSource(artifact()).build()).violations())
                 .anyMatch(v -> v.ruleId().equals("authoring-source-json"));

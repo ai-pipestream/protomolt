@@ -5,6 +5,7 @@ import ai.protomolt.proto.workflow.WorkflowRunner;
 import ai.protomolt.proto.jobs.service.WorkflowRunSubmitter;
 import ai.protomolt.proto.jobs.service.WorkflowRunsConfig;
 import ai.protomolt.proto.jobs.service.ValidatingWorkflows;
+import ai.protomolt.proto.jobs.service.events.WorkflowRunEventFactory;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunEventRecord;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunRecord;
 import ai.protomolt.proto.jobs.service.store.InMemoryWorkflowRunStore;
@@ -111,6 +112,31 @@ class WorkflowRunWorkerValidationTest {
                 WorkflowRunEventRecord.TYPE_ACCEPTED, WorkflowRunEventRecord.TYPE_FAILED);
 
         // A verdict never requeues: nothing is claimable.
+        assertThat(worker.workOnce()).isFalse();
+    }
+
+    @Test
+    void strictInputViolationInAlreadyPersistedRowIsTerminal() {
+        // Simulates a row written before strict admission or by another producer:
+        // the worker must still enforce the snapshot's contract at execution.
+        var strict = workflows.validatingTokenizeWorkflow("in-process");
+        strict.put("validateContract", true);
+        WorkflowRunRecord record = new WorkflowRunRecord();
+        record.jobId = UUID.randomUUID();
+        record.workflowName = "guarded-tokenize";
+        record.workflowDefinition = strict.toString();
+        record.input = "{\"text\":\"hi\"}";
+        record.status = WorkflowRunRecord.STATUS_QUEUED;
+        store.insert(record, WorkflowRunEventFactory.accepted(record));
+        worker = workerTo("unreachable-fixture");
+
+        assertThat(worker.workOnce()).isTrue();
+        WorkflowRunRecord failed = store.get(record.jobId).orElseThrow();
+        assertThat(failed.status).isEqualTo(WorkflowRunRecord.STATUS_FAILED);
+        assertThat(failed.error).contains("VALIDATION", "text");
+        assertThat(failed.attempt).isEqualTo(1);
+        assertThat(eventTypes()).containsExactly(
+                WorkflowRunEventRecord.TYPE_ACCEPTED, WorkflowRunEventRecord.TYPE_FAILED);
         assertThat(worker.workOnce()).isFalse();
     }
 

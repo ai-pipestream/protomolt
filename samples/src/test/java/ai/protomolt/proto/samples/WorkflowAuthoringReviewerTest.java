@@ -134,6 +134,7 @@ class WorkflowAuthoringReviewerTest {
         byte[] descriptors = compiled.descriptorSet().toByteArray();
         var source = new ObjectMapper().createObjectNode();
         source.put("name", "echo-text");
+        source.put("validateContract", true);
         source.putObject("schema").put("descriptorSetBase64",
                 Base64.getEncoder().encodeToString(descriptors));
         source.put("inputType", "workflow.test.Text");

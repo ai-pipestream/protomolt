@@ -161,8 +161,8 @@ compiles the source, compares the durable workflow, and checks every call agains
 policy before any execution. Its first fixture path supports synchronous unary
 gRPC steps; structured-generation, external-completion and fan-out steps are
 explicitly refused. The existing runtimes continue to support their own modes.
-Every admitted step must enable response validation in the retained executable
-source so subsequent execution preserves that boundary.
+The retained executable source and durable workflow must enable workflow-level
+contract validation so subsequent execution preserves that boundary.
 All descriptor imports, including built-in option definitions, must be present
 in the pinned artifact; general schema-resolver fallbacks are not admitted here.
 Only successful preflight can construct the result accepted by fixture execution.
@@ -182,11 +182,9 @@ all referenced artifact bytes and metadata. It does not establish fixture succes
 or authorize a worker to supply its own run evidence. Callers must obtain that
 evidence from the configured run repository.
 
-Remaining bindings: compare checks in the enclosing candidate, resolve the caller
-policy from the offered task, load the authoritative run and replay it against
-the admitted workflow, and connect the reviewed result to promotion and
-asynchronous submission. Tests of these helpers alone do not qualify the third
-starter. Local verification currently covers 163 workflow tests and eight starter
+The sample reviewer below supplies candidate/check/policy/run binding. Promotion
+and asynchronous submission remain separate work. Tests of these helpers alone
+do not qualify the third starter. The helper slice passed 163 workflow tests and eight starter
 contract tests with no failures or skips, plus Buf lint and compatibility against
 main. The wrapper also passes the existing dynamic deliverable-contract boundary
 with its complete descriptor/import closure.
@@ -210,14 +208,36 @@ durable acceptance of that exact candidate. Transport/deadline and storage error
 cannot produce acceptance. Deterministic contract, mapping and fixture failures
 request revision. This remains a sample adapter, not a mounted endpoint.
 
-The next integration must explicitly address validation parity: fixture execution
-checks workflow input and mapped requests through its observer, whereas ordinary
-jobs submission currently parses input JSON and the general runner only validates
-requests on edges whose `validate` flag is enabled. Response validation is already
-required by authoring preflight. Qualify the async template with input admission
-and validated request edges (or a reviewed runtime change) before claiming the
-same request boundary after promotion; passing reviewer fixtures alone does not
-prove that behavior for subsequent inputs.
+Validation parity uses the reviewed optional `validate_contract` workflow field.
+False or omission retains legacy per-step/per-edge settings and serialized
+fingerprints. Authoring preflight requires true, and the sample deliverable's CEL
+rule checks the same durable flag before review. The jobs submitter validates
+strict inputs before insertion. The shared runner validates strict inputs, mapped
+requests, successful responses, resumed checkpoint values and final output;
+external completion also validates before checkpointing. Replay applies the same
+declared rules. The setting is retained in the executable source and durable
+workflow fingerprint, so promotion cannot silently remove it.
+
+Strict checkpoint inputs are parsed with pinned descriptors, including Java
+callers that provide another descriptor with the same type name. Skipped resumed
+steps preserve the last successful response. For strict fan-out, FAIL_FAST rejects
+invalid projected inputs before any channel opens; CONTINUE retains only valid
+successful branches under the existing policy. Workflow execution violations use
+the existing nonretryable VALIDATION category. A preinsert input refusal creates
+no job or event; the existing Kafka consumer may record a failed-at-birth envelope
+through its separate failure path. Strict replay also checks derived final output
+without an output artifact and refuses to certify an absent final output.
+
+Local checks cover 174 workflow tests, 113 jobs tests and 48 sample tests, all
+passing without skips, plus Buf lint, compatibility and refreshed browser
+descriptor generation. This is not yet the async starter's restart, Kafka,
+remote-effect idempotency or published-download qualification.
+The full Gradle build also passed; the added schema-coverage assertions passed
+in a separate targeted test after that build.
+JSON Schema exposes `validateContract` as a boolean; the sample's requirement
+that the nested durable flag be true remains runtime CEL, recorded in
+`x-protomolt-cel`. No generator behavior changed. Artifact identity, policy
+authority, endpoint permissions and lifecycle checks remain handler obligations.
 
 Also qualify review infrastructure failure handling in the mounted starter. The
 current coordinator keeps a thrown reviewer exception in `reviewFailure` and

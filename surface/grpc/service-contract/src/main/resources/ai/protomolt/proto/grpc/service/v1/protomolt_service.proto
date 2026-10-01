@@ -1661,6 +1661,10 @@ message CompiledWorkflow {
   repeated WorkflowStep steps = 5;
   // Optional output mapping; without it the last step's response returns.
   WorkflowOutput output = 6;
+  // Enforce declared validation rules on workflow input, mapped requests,
+  // successful responses and final output, including resumed async execution.
+  // False preserves the existing per-step and per-edge validation settings.
+  bool validate_contract = 7;
 }
 
 // The input of run-workflow: an inline workflow or the name of a stored one.

@@ -31,6 +31,9 @@ message Workflow {
   WorkflowOutput output = 6;
   // Whole-workflow deadline. Step deadlines are nested inside this budget.
   google.protobuf.Duration deadline = 7;
+  // Enforce input, request, successful response and output validation in live
+  // execution and replay. False retains the existing step/edge settings.
+  bool validate_contract = 8;
 }
 
 // One named and fingerprinted service dependency used by a workflow.
