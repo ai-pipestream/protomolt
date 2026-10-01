@@ -11,6 +11,50 @@ import "ai/protomolt/proto/validate/v1/validate.proto";
 option java_multiple_files = true;
 option java_package = "ai.protomolt.proto.workflow.authoring.v1";
 
+// Discover historical offers owned by the authenticated author, without a known
+// task ID. No worker selector is accepted: ownership comes from Caller.name.
+message ReadWorkflowAuthorAssignmentsRequest {
+  // Return assignments strictly after this persisted scan watermark; zero starts.
+  int64 after_cursor = 1 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // Required upper bound for this page.
+  int32 max_assignments = 2 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 64}];
+}
+
+// Immutable offer identity, not a current lease or permission to execute.
+// Fetch context and accept the matching current attempt before doing work.
+message WorkflowAuthorAssignment {
+  // One-based position of the original offer in trusted transcript storage.
+  int64 cursor = 1 [(ai.protomolt.proto.validate.v1.field).int64.gte = 1];
+  // Exact task key, preserving the spelling stored in the offer.
+  string task_id = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  // Original assigned attempt; may no longer be current.
+  int32 attempt = 3 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 1024}];
+  // SHA-256 of deterministic serialization of the trusted original offer entry;
+  // compare with context.offer_entry_sha256 while context remains available.
+  string offer_entry_sha256 = 4 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {pattern: "^[0-9a-f]{64}$"}}];
+}
+
+// Bounded projection of trusted transcript offers, including expired/terminal
+// attempts so later lifecycle changes cannot silently remove queued assignments.
+message ReadWorkflowAuthorAssignmentsResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "author-assignments-cursor"
+    message: "assignments must be inside the scan cursor interval"
+    expression: "this.cursor >= this.after_cursor && this.assignments.all(a, a.cursor > this.after_cursor && a.cursor <= this.cursor)"
+  };
+  // Authenticated principal, not a request-selected worker.
+  string worker_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}}];
+  // Echoes the request's persisted watermark.
+  int64 after_cursor = 2 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // Includes filtered entries. Do not advance past an eligible omitted offer.
+  int64 cursor = 3 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // Strictly cursor-ordered, unique original offers; handler verifies ownership,
+  // contract identity, digest and the requested count against trusted storage.
+  repeated WorkflowAuthorAssignment assignments = 4 [(ai.protomolt.proto.validate.v1.field).repeated.max_items = 64];
+  // The snapshot has unscanned entries; continue from cursor even on empty pages.
+  bool truncated = 5;
+}
+
 // Read context for one current task attempt assigned to the authenticated author.
 // Read before acceptance is allowed; this operation does not acquire a lease.
 message GetWorkflowAuthorContextRequest {
