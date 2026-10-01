@@ -9,6 +9,17 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AuthoringStarterTemplateTest {
+    @Test void starterDistributionDiscoversItsExplicitProvider() {
+        var matches = java.util.ServiceLoader.load(
+                ai.protomolt.proto.workflow.authoring.WorkflowSourceTemplateProvider.class).stream()
+                .map(java.util.ServiceLoader.Provider::get)
+                .filter(provider -> provider.id().equals(AuthoringStarterTemplateProvider.ID)).toList();
+        org.assertj.core.api.Assertions.assertThat(matches).hasSize(1);
+        assertThatCode(() -> matches.getFirst().template().verify(workflow(normalize(), write(
+                List.of("operation_id = input.operation_id", "content = normalize.text")), true), "", null))
+                .doesNotThrowAnyException();
+    }
+
     @Test void acceptsTheInputPreservingTemplate() {
         assertThatCode(() -> AuthoringStarterTemplate.verify(workflow(normalize(), write(
                 List.of("operation_id = input.operation_id", "content = normalize.text")), true)))
