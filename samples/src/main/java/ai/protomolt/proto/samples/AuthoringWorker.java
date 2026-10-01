@@ -14,18 +14,24 @@ import ai.protomolt.proto.samples.authoring.v1.NormalizeTextRequest;
 import ai.protomolt.proto.samples.authoring.v1.NormalizeTextResponse;
 import ai.protomolt.proto.samples.authoring.v1.WriteRecordRequest;
 import ai.protomolt.proto.samples.authoring.v1.WriteRecordResponse;
+import ai.protomolt.proto.samples.authoring.v1.AuthoringWorkerPending;
+import ai.protomolt.proto.samples.authoring.v1.AuthoringWorkerState;
 import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringDeliverable;
 import ai.protomolt.proto.workflow.authoring.v1.GetWorkflowAuthorContextRequest;
 import ai.protomolt.proto.workflow.authoring.v1.GetWorkflowAuthorContextResponse;
 import ai.protomolt.proto.workflow.authoring.v1.PrepareWorkflowCandidateRequest;
 import ai.protomolt.proto.workflow.authoring.v1.PrepareWorkflowCandidateResponse;
 import ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorEventsRequest;
+import ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorAssignmentsRequest;
+import ai.protomolt.proto.workflow.authoring.v1.WorkflowAuthorAssignment;
 import ai.protomolt.proto.workflow.authoring.v1.WorkflowAuthorTaskServiceGrpc;
+import ai.protomolt.proto.workflow.authoring.v1.EnsureWorkflowAuthorRegistrationRequest;
 import ai.protomolt.proto.workflow.authoring.v1.WorkflowPreparationServiceGrpc;
 import ai.protomolt.proto.validate.ProtoValidator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.CodedOutputStream;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import com.google.protobuf.Descriptors;
@@ -40,6 +46,7 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.MetadataUtils;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.Base64;
@@ -64,11 +71,376 @@ public final class AuthoringWorker {
     public static void main(String[] args) throws Exception {
         if (args.length != 5) {
             throw new IllegalArgumentException("usage: AuthoringWorker <coordinator-host:port> "
-                    + "<fixture-host:port> <task-uuid> <attempt> <worker-id>");
+                    + "<fixture-host:port> <task-uuid> <attempt> <worker-id> OR "
+                    + "--discover <coordinator-host:port> <fixture-host:port> <worker-id> <state-dir>");
         }
         String token = System.getenv("PROTOMOLT_AUTHOR_TOKEN");
         if (token == null || token.isBlank()) throw new IllegalArgumentException("author token is required");
-        new AuthoringWorkerRun(args[0], args[1], args[2], Integer.parseInt(args[3]), args[4], token).run();
+        if (args[0].equals("--discover")) {
+            new IdleAuthoringWorkerRun(args[1], args[2], args[3], Path.of(args[4]), token).run();
+        } else {
+            new AuthoringWorkerRun(args[0], args[1], args[2], Integer.parseInt(args[3]), args[4], token).run();
+        }
+    }
+
+    /** Persistent discovery mode; all authority still comes from the author token. */
+    private record IdleAuthoringWorkerRun(String coordinator, String fixture, String workerId,
+            Path stateDirectory, String token) {
+        void run() throws Exception {
+            try (var store = AuthoringWorkerStateStore.open(stateDirectory, coordinator, fixture, workerId)) {
+                ManagedChannel control = ManagedChannelBuilder.forTarget(coordinator)
+                        .usePlaintext().maxInboundMessageSize(16 * 1024 * 1024).build();
+                ManagedChannel external = ManagedChannelBuilder.forTarget(fixture)
+                        .usePlaintext().maxInboundMessageSize(4 * 1024 * 1024).build();
+                try {
+                    Metadata headers = new Metadata();
+                    headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), token);
+                    var tasks = WorkflowAuthorTaskServiceGrpc.newBlockingStub(control)
+                            .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(headers));
+                    var preparation = WorkflowPreparationServiceGrpc.newBlockingStub(control)
+                            .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(headers));
+                    boolean registrationNeedsEnsure = true;
+                    boolean ready = false;
+                    while (!Thread.currentThread().isInterrupted()) {
+                        boolean changed = false;
+                        try {
+                            if (registrationNeedsEnsure) {
+                                register(tasks);
+                                registrationNeedsEnsure = false;
+                                if (!ready) {
+                                    System.out.println("AuthoringWorker ready");
+                                    System.out.flush();
+                                    ready = true;
+                                }
+                            }
+                            for (int index = 0; index < store.state().getPendingCount();) {
+                                WorkflowAuthorAssignment assignment = store.state().getPending(index).getAssignment();
+                                if (process(tasks, preparation, external, store, assignment)) changed = true;
+                                if (index < store.state().getPendingCount()
+                                        && store.state().getPending(index).getAssignment().equals(assignment)) index++;
+                            }
+                            changed |= discover(tasks, store);
+                        } catch (Exception failure) {
+                            if (!retryable(failure)) throw failure;
+                            registrationNeedsEnsure = true;
+                        }
+                        if (!changed) Thread.sleep(150);
+                    }
+                } finally {
+                    external.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
+                    control.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
+                }
+            }
+        }
+
+        private void register(WorkflowAuthorTaskServiceGrpc.WorkflowAuthorTaskServiceBlockingStub tasks) {
+            var response = tasks.withDeadlineAfter(RPC_SECONDS, TimeUnit.SECONDS)
+                    .ensureWorkflowAuthorRegistration(EnsureWorkflowAuthorRegistrationRequest.newBuilder()
+                            .setRegistration(RegisterWorkerRequest.newBuilder()
+                            .setWorkerId(workerId).setProvider("scripted")
+                            .setModel("authoring-worker").setModelVersion("1")
+                            .addCapabilities(WorkerCapability.newBuilder().setName("workflow-authoring"))
+                            .build()).build());
+            validate(response);
+            require(response.getRegistration().getOk() && response.getRegistration().getAdmitted()
+                    && response.getRegistration().getWorkerId().equals(workerId), "author registration refused");
+        }
+
+        private boolean discover(WorkflowAuthorTaskServiceGrpc.WorkflowAuthorTaskServiceBlockingStub tasks,
+                AuthoringWorkerStateStore store) throws Exception {
+            AuthoringWorkerState before = store.state();
+            int capacity = 64 - before.getPendingCount();
+            if (capacity == 0) return false;
+            var response = tasks.withDeadlineAfter(RPC_SECONDS, TimeUnit.SECONDS)
+                    .readWorkflowAuthorAssignments(ReadWorkflowAuthorAssignmentsRequest.newBuilder()
+                            .setAfterCursor(before.getDiscoveryCursor()).setMaxAssignments(capacity).build());
+            validate(response);
+            require(response.getWorkerId().equals(workerId)
+                    && response.getAfterCursor() == before.getDiscoveryCursor()
+                    && response.getCursor() >= before.getDiscoveryCursor()
+                    && response.getCursor() - before.getDiscoveryCursor() <= 256
+                    && response.getAssignmentsCount() <= capacity,
+                    "author assignment page identity or bound differs");
+            require(!response.getTruncated() || response.getCursor() > before.getDiscoveryCursor(),
+                    "author assignment page made no progress");
+            var next = before.toBuilder().setDiscoveryCursor(response.getCursor());
+            long previous = before.getDiscoveryCursor();
+            for (WorkflowAuthorAssignment assignment : response.getAssignmentsList()) {
+                require(assignment.getCursor() > previous && assignment.getCursor() <= response.getCursor(),
+                        "author assignments are not in cursor order");
+                previous = assignment.getCursor();
+                boolean duplicate = false;
+                for (AuthoringWorkerPending existing : next.getPendingList()) {
+                    if (existing.getAssignment().getTaskId().equals(assignment.getTaskId())
+                            && existing.getAssignment().getAttempt() == assignment.getAttempt()) {
+                        require(existing.getAssignment().getOfferEntrySha256()
+                                        .equals(assignment.getOfferEntrySha256()),
+                                "discovered assignment conflicts with saved original offer");
+                        duplicate = true;
+                    }
+                }
+                if (!duplicate) {
+                    next.addPending(AuthoringWorkerPending.newBuilder().setAssignment(assignment));
+                }
+            }
+            if (response.getCursor() == before.getDiscoveryCursor() && response.getAssignmentsCount() == 0) return false;
+            store.commit(next.build());
+            return true;
+        }
+
+        private boolean process(WorkflowAuthorTaskServiceGrpc.WorkflowAuthorTaskServiceBlockingStub tasks,
+                WorkflowPreparationServiceGrpc.WorkflowPreparationServiceBlockingStub preparation,
+                ManagedChannel external, AuthoringWorkerStateStore store,
+                WorkflowAuthorAssignment assignment) throws Exception {
+            EventResult events = readEvents(tasks, store, assignment);
+            if (events == EventResult.RETIRED) return true;
+            if (events == EventResult.BLOCKED) return false;
+            AuthoringWorkerPending pending = pending(store.state(), assignment);
+            if (pending.hasSubmission()) {
+                if (pending.getSubmissionCursor() != 0) return false;
+                var request = pending.getSubmission();
+                var reply = tasks.withDeadlineAfter(RPC_SECONDS, TimeUnit.SECONDS)
+                        .submitWorkflowCandidate(request);
+                validate(reply);
+                require(reply.getOk() && reply.getTaskId().equals(assignment.getTaskId())
+                        && reply.getAttempt() == assignment.getAttempt() && reply.getRevision() == 1,
+                        "candidate submission retry differs");
+                return true;
+            }
+            GetWorkflowAuthorContextResponse context;
+            try {
+                context = tasks.withDeadlineAfter(RPC_SECONDS, TimeUnit.SECONDS)
+                        .getWorkflowAuthorContext(GetWorkflowAuthorContextRequest.newBuilder()
+                                .setTaskId(assignment.getTaskId()).setAttempt(assignment.getAttempt()).build());
+            } catch (StatusRuntimeException inactive) {
+                if (inactive.getStatus().getCode() == Status.Code.FAILED_PRECONDITION) return false;
+                throw inactive;
+            }
+            validate(context);
+            require(context.getTaskId().equals(assignment.getTaskId())
+                            && context.getAttempt() == assignment.getAttempt()
+                            && context.getOfferEntry().getWorkerId().equals(workerId)
+                            && context.getOfferEntrySha256().equals(assignment.getOfferEntrySha256())
+                            && deterministicSha(context.getOfferEntry()).equals(assignment.getOfferEntrySha256()),
+                    "author context differs from discovered original offer");
+            var accepted = tasks.withDeadlineAfter(RPC_SECONDS, TimeUnit.SECONDS)
+                    .acceptWorkflowTask(AcceptTaskRequest.newBuilder().setWorkerId(workerId)
+                            .setTaskId(assignment.getTaskId()).setAttempt(assignment.getAttempt()).build());
+            validate(accepted);
+            require(accepted.getOk() && accepted.getTaskId().equals(assignment.getTaskId())
+                    && accepted.getAttempt() == assignment.getAttempt(), "task acceptance differs");
+
+            var reflected = ReflectionClient.discover(external, 10_000);
+            Methods methods = methods(context, reflected.descriptorSet(), fixture);
+            if (!pending.hasProbe()) {
+                String normalized = normalize(external, methods);
+                require(normalized.equals(AuthoringWorkerStateStore.PROBE_CONTENT),
+                        "fixture normalization differs");
+                var probe = WriteRecordRequest.newBuilder()
+                        .setOperationId(AuthoringWorkerStateStore.probeOperationId(assignment, workerId))
+                        .setContent(normalized).build();
+                store.commit(replace(store.state(), assignment,
+                        pending.toBuilder().setProbe(probe).build()));
+                pending = pending(store.state(), assignment);
+            }
+            writeProbe(external, methods, pending.getProbe());
+            if (!pending.hasPreparation()) {
+                byte[] source = new AuthoringWorkerRun(coordinator, fixture, assignment.getTaskId(),
+                        assignment.getAttempt(), workerId, token).source(context, methods)
+                        .getBytes(StandardCharsets.UTF_8);
+                var request = PrepareWorkflowCandidateRequest.newBuilder()
+                        .setTaskId(assignment.getTaskId()).setAttempt(assignment.getAttempt())
+                        .setRevision(1)
+                        .setPreparationId(AuthoringWorkerStateStore.preparationId(assignment, workerId))
+                        .setExecutableSourceJson(ByteString.copyFrom(source)).build();
+                store.commit(replace(store.state(), assignment,
+                        pending.toBuilder().setPreparation(request).build()));
+                pending = pending(store.state(), assignment);
+            }
+            PrepareWorkflowCandidateRequest intent = pending.getPreparation();
+            var prepared = preparation.withDeadlineAfter(60, TimeUnit.SECONDS)
+                    .prepareWorkflowCandidate(intent);
+            verifyPrepared(prepared, context, intent.getPreparationId(),
+                    intent.getExecutableSourceJson().toByteArray());
+            var authored = prepared.getAuthored();
+            var deliverable = authored.getDeliverable();
+            var candidate = CompletionCandidate.newBuilder().setAttempt(assignment.getAttempt()).setRevision(1)
+                    .setSummary("Scripted fixture probe and coordinator-observed preparation completed")
+                    .addAllEvidence(deliverable.getChecksList())
+                    .addArtifacts(deliverable.getWorkflowArtifact())
+                    .addArtifacts(authored.getExecutableSource())
+                    .addArtifacts(deliverable.getReceipt())
+                    .setResult(Any.pack(authored)).build();
+            var submission = SubmitCandidateRequest.newBuilder().setWorkerId(workerId)
+                    .setTaskId(assignment.getTaskId()).setCandidate(candidate).build();
+            store.commit(replace(store.state(), assignment,
+                    pending.toBuilder().setSubmission(submission).build()));
+            var submitted = tasks.withDeadlineAfter(RPC_SECONDS, TimeUnit.SECONDS)
+                    .submitWorkflowCandidate(submission);
+            validate(submitted);
+            require(submitted.getOk() && submitted.getTaskId().equals(assignment.getTaskId())
+                    && submitted.getAttempt() == assignment.getAttempt() && submitted.getRevision() == 1,
+                    "candidate submission differs");
+            return true;
+        }
+
+        private EventResult readEvents(WorkflowAuthorTaskServiceGrpc.WorkflowAuthorTaskServiceBlockingStub tasks,
+                AuthoringWorkerStateStore store, WorkflowAuthorAssignment assignment) throws Exception {
+            AuthoringWorkerPending original = pending(store.state(), assignment);
+            // Without an exact local submission intent, a prior candidate must
+            // remain visible even if an earlier page advanced the saved cursor.
+            long cursor = original.hasSubmission() ? original.getReviewCursor() : 0;
+            long observedSubmission = original.getSubmissionCursor();
+            boolean blocked = false;
+            boolean sawUnknownCandidate = false;
+            while (true) {
+                var response = tasks.withDeadlineAfter(RPC_SECONDS, TimeUnit.SECONDS)
+                        .readWorkflowAuthorEvents(ReadWorkflowAuthorEventsRequest.newBuilder()
+                                .setTaskId(assignment.getTaskId()).setAttempt(assignment.getAttempt())
+                                .setAfterCursor(cursor).setMaxEvents(32).build());
+                validate(response);
+                require(response.getTaskId().equals(assignment.getTaskId())
+                                && response.getAttempt() == assignment.getAttempt()
+                                && response.getAfterCursor() == cursor && response.getCursor() >= cursor
+                                && response.getCursor() - cursor <= 256,
+                        "author event page identity or bound differs");
+                long previous = cursor;
+                for (var observed : response.getEventsList()) {
+                    require(observed.getCursor() > previous && observed.getCursor() <= response.getCursor(),
+                            "author events are not in cursor order");
+                    previous = observed.getCursor();
+                    var entry = observed.getEntry();
+                    require(entry.getWorkerId().equals(workerId), "author event belongs to another worker");
+                    if (entry.hasWorkerFrame()) {
+                        var frame = entry.getWorkerFrame();
+                        require(frame.getTaskId().equals(assignment.getTaskId()),
+                                "author event belongs to another task");
+                        if (frame.hasCompletion() && frame.getCompletion().getAttempt() == assignment.getAttempt()) {
+                            if (!original.hasSubmission()) {
+                                sawUnknownCandidate = true;
+                            } else if (frame.getCompletion().equals(original.getSubmission().getCandidate())) {
+                                observedSubmission = observed.getCursor();
+                            } else {
+                                throw new IllegalStateException("recorded candidate differs from saved submission");
+                            }
+                        }
+                        if (frame.hasCancelled() && frame.getCancelled().getAttempt() == assignment.getAttempt()) {
+                            store.commit(remove(store.state(), assignment));
+                            return EventResult.RETIRED;
+                        }
+                    } else if (entry.hasCoordinatorFrame()) {
+                        var frame = entry.getCoordinatorFrame();
+                        require(frame.getTaskId().equals(assignment.getTaskId()),
+                                "author event belongs to another task");
+                        if (frame.hasAccepted() && frame.getAccepted().getAttempt() == assignment.getAttempt()) {
+                            require(!original.hasSubmission() || (observedSubmission != 0
+                                            && frame.getAccepted().getRevision() == 1),
+                                    "accepted review lacks exact saved candidate");
+                            store.commit(remove(store.state(), assignment));
+                            System.out.println("AuthoringWorker accepted task=" + assignment.getTaskId()
+                                    + " attempt=" + assignment.getAttempt());
+                            System.out.flush();
+                            return EventResult.RETIRED;
+                        }
+                        if ((frame.hasCancellation() && frame.getCancellation().getAttempt() == assignment.getAttempt())
+                                || (frame.hasExpired() && frame.getExpired().getAttempt() == assignment.getAttempt())) {
+                            store.commit(remove(store.state(), assignment));
+                            return EventResult.RETIRED;
+                        }
+                        if (frame.hasRevisionRequested()
+                                && frame.getRevisionRequested().getAttempt() == assignment.getAttempt()) {
+                            blocked = true;
+                        }
+                    }
+                }
+                if (!blocked && !sawUnknownCandidate
+                        && response.getCursor() > pending(store.state(), assignment).getReviewCursor()) {
+                    var current = pending(store.state(), assignment);
+                    store.commit(replace(store.state(), assignment,
+                            current.toBuilder().setReviewCursor(response.getCursor())
+                                    .setSubmissionCursor(observedSubmission).build()));
+                }
+                if (!response.getTruncated()) {
+                    if (blocked) {
+                        System.err.println("AuthoringWorker revision requested task="
+                                + assignment.getTaskId() + " attempt=" + assignment.getAttempt());
+                    }
+                    return blocked || sawUnknownCandidate ? EventResult.BLOCKED : EventResult.CURRENT;
+                }
+                require(response.getCursor() > cursor, "author event page made no progress");
+                cursor = response.getCursor();
+            }
+        }
+
+        private String normalize(ManagedChannel external, Methods methods) throws Exception {
+            DynamicMessage input = DynamicMessage.newBuilder(methods.normalize().getInputType())
+                    .setField(methods.normalize().getInputType().findFieldByName("text"),
+                            " \tHello\r\nworld\t ").build();
+            var output = DynamicGrpcCalls.call(external, methods.normalize(), input,
+                    CallOptions.DEFAULT.withDeadlineAfter(RPC_SECONDS, TimeUnit.SECONDS),
+                    new Metadata(), 1).getFirst();
+            validate(output);
+            return (String) output.getField(output.getDescriptorForType().findFieldByName("text"));
+        }
+
+        private void writeProbe(ManagedChannel external, Methods methods, WriteRecordRequest intent)
+                throws Exception {
+            DynamicMessage input = DynamicMessage.newBuilder(methods.write().getInputType())
+                    .setField(methods.write().getInputType().findFieldByName("operation_id"),
+                            intent.getOperationId())
+                    .setField(methods.write().getInputType().findFieldByName("content"),
+                            intent.getContent()).build();
+            var output = DynamicGrpcCalls.call(external, methods.write(), input,
+                    CallOptions.DEFAULT.withDeadlineAfter(RPC_SECONDS, TimeUnit.SECONDS),
+                    new Metadata(), 1).getFirst();
+            validate(output);
+            require(intent.getOperationId().equals(output.getField(
+                            output.getDescriptorForType().findFieldByName("operation_id")))
+                            && sha(intent.getContentBytes().toByteArray()).equals(output.getField(
+                            output.getDescriptorForType().findFieldByName("content_sha256"))),
+                    "fixture record identity or digest differs");
+        }
+
+        private static AuthoringWorkerPending pending(AuthoringWorkerState state,
+                WorkflowAuthorAssignment assignment) {
+            return state.getPendingList().stream().filter(item -> item.getAssignment().equals(assignment))
+                    .findFirst().orElseThrow(() -> new IllegalStateException("saved assignment disappeared"));
+        }
+
+        private static AuthoringWorkerState replace(AuthoringWorkerState state,
+                WorkflowAuthorAssignment assignment, AuthoringWorkerPending replacement) {
+            var updated = state.toBuilder();
+            for (int index = 0; index < state.getPendingCount(); index++) {
+                if (state.getPending(index).getAssignment().equals(assignment)) {
+                    return updated.setPending(index, replacement).build();
+                }
+            }
+            throw new IllegalStateException("saved assignment disappeared");
+        }
+
+        private static AuthoringWorkerState remove(AuthoringWorkerState state,
+                WorkflowAuthorAssignment assignment) {
+            var updated = state.toBuilder();
+            for (int index = 0; index < state.getPendingCount(); index++) {
+                if (state.getPending(index).getAssignment().equals(assignment)) {
+                    return updated.removePending(index).build();
+                }
+            }
+            throw new IllegalStateException("saved assignment disappeared");
+        }
+
+        private static boolean retryable(Throwable failure) {
+            for (Throwable current = failure; current != null; current = current.getCause()) {
+                if (current instanceof StatusRuntimeException transport) {
+                    var code = transport.getStatus().getCode();
+                    return code == Status.Code.UNAVAILABLE || code == Status.Code.DEADLINE_EXCEEDED
+                            || code == Status.Code.ABORTED;
+                }
+            }
+            return false;
+        }
+
+        private enum EventResult { CURRENT, BLOCKED, RETIRED }
     }
 
     private record AuthoringWorkerRun(String coordinator, String fixture, String taskId,
@@ -394,6 +766,19 @@ public final class AuthoringWorker {
         } catch (Exception impossible) {
             throw new IllegalStateException(impossible);
         }
+    }
+
+    private static String deterministicSha(Message message) {
+        byte[] bytes = new byte[message.getSerializedSize()];
+        CodedOutputStream output = CodedOutputStream.newInstance(bytes);
+        output.useDeterministicSerialization();
+        try {
+            message.writeTo(output);
+            output.checkNoSpaceLeft();
+        } catch (java.io.IOException failure) {
+            throw new IllegalStateException("could not serialize author offer", failure);
+        }
+        return sha(bytes);
     }
 
     private static void require(boolean condition, String message) {

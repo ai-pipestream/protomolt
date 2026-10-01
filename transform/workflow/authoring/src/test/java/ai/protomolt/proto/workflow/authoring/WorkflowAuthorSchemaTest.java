@@ -37,7 +37,7 @@ class WorkflowAuthorSchemaTest {
             throw new AssertionError("Contract schema generation must not invoke a handler");
         }, ApiTokenRequirement.bearer()));
         JsonNode openapi = json.valueToTree(new ProtoOpenApiGenerator().generate(methods));
-        assertThat(openapi.path("paths").size()).isEqualTo(6);
+        assertThat(openapi.path("paths").size()).isEqualTo(7);
         assertThat(openapi.path("components").path("schemas").toString())
                 .contains("x-protomolt-cel", "author-context-offer", "author-events-cursor", "author-assignments-cursor");
     }

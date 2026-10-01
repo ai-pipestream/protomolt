@@ -18,6 +18,7 @@ import ai.protomolt.proto.grpc.workflow.v1.ArtifactReference;
 import com.google.protobuf.Timestamp;
 import com.google.protobuf.util.Timestamps;
 import io.grpc.stub.StreamObserver;
+import io.grpc.Status;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -92,7 +93,6 @@ public final class DelegationBridge implements AutoCloseable {
     public WorkerRegistration registerWorker(WorkerHello hello) {
         Objects.requireNonNull(hello, "hello");
         DelegationValidation.validate(hello);
-        WorkerStream stream = new WorkerStream(hello.getWorkerId());
         synchronized (lock) {
             requireOpen();
             WorkerStream previous = streams.get(hello.getWorkerId());
@@ -103,9 +103,37 @@ public final class DelegationBridge implements AutoCloseable {
             if (previous != null) {
                 previous.complete();
             }
-            stream.seed(coordinator.workerResumption(hello.getWorkerId()));
-            streams.put(hello.getWorkerId(), stream);
+            streams.remove(hello.getWorkerId());
+            return openWorker(hello, false);
         }
+    }
+
+    /** Replays only this bridge's exact, admitted current stream; otherwise opens conditionally. */
+    public WorkerRegistration ensureWorker(WorkerHello hello) {
+        Objects.requireNonNull(hello, "hello");
+        DelegationValidation.validate(hello);
+        synchronized (lock) {
+            requireOpen();
+            WorkerStream previous = streams.get(hello.getWorkerId());
+            if (previous != null && previous.open && previous.failure == null
+                    && !previous.hello.equals(hello)) {
+                throw new WorkerRegistrationConflictException();
+            }
+            if (previous != null && previous.open && previous.failure == null
+                    && previous.admitted && coordinator.ownsCurrentSession(
+                            hello.getWorkerId(), previous.responses)) {
+                return registration(previous);
+            }
+            if (previous != null) previous.complete();
+            streams.remove(hello.getWorkerId());
+            return openWorker(hello, true);
+        }
+    }
+
+    /** Caller holds the bridge lock through the admission decision. */
+    private WorkerRegistration openWorker(WorkerHello hello, boolean conditional) {
+        WorkerStream stream = new WorkerStream(hello);
+        stream.seed(coordinator.workerResumption(hello.getWorkerId()));
         CountDownLatch admission = new CountDownLatch(1);
         stream.responses = new StreamObserver<>() {
             @Override
@@ -134,24 +162,53 @@ public final class DelegationBridge implements AutoCloseable {
                 admission.countDown();
             }
         };
-        stream.requests = coordinator.delegate(stream.responses);
-        stream.send("", 0, DelegateRequest.newBuilder().setHello(hello));
+        stream.requests = conditional
+                ? coordinator.delegateIfNoConnectedSession(stream.responses)
+                : coordinator.delegate(stream.responses);
         try {
-            if (!admission.await(10, TimeUnit.SECONDS)) {
-                throw new IllegalStateException(
-                        "admission did not arrive for worker " + hello.getWorkerId());
+            try {
+                stream.send("", 0, DelegateRequest.newBuilder().setHello(hello));
+            } catch (RuntimeException failure) {
+                if (stream.failure != null
+                        && Status.fromThrowable(stream.failure).getCode() == Status.Code.ALREADY_EXISTS) {
+                    throw new WorkerRegistrationConflictException();
+                }
+                throw failure;
             }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException(
-                    "interrupted awaiting admission for worker " + hello.getWorkerId(), e);
+            try {
+                if (!admission.await(10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException(
+                            "admission did not arrive for worker " + hello.getWorkerId());
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(
+                        "interrupted awaiting admission for worker " + hello.getWorkerId(), e);
+            }
+            if (stream.failure != null) {
+                if (Status.fromThrowable(stream.failure).getCode() == Status.Code.ALREADY_EXISTS) {
+                    throw new WorkerRegistrationConflictException();
+                }
+                throw new IllegalStateException(
+                        "worker stream failed during admission: " + failureMessage(stream.failure));
+            }
+            streams.put(hello.getWorkerId(), stream);
+            return registration(stream);
+        } catch (RuntimeException | Error failure) {
+            // A failed or ambiguous admission must not strand a connected session
+            // that this bridge cannot subsequently recognize as its own.
+            try {
+                stream.complete();
+            } catch (RuntimeException | Error cleanup) {
+                failure.addSuppressed(cleanup);
+            }
+            throw failure;
         }
-        if (stream.failure != null) {
-            throw new IllegalStateException(
-                    "worker stream failed during admission: " + failureMessage(stream.failure));
-        }
-        return new WorkerRegistration(stream.workerId, stream.admitted, stream.sessionId,
-                stream.admissionReason);
+    }
+
+    private static WorkerRegistration registration(WorkerStream stream) {
+        return new WorkerRegistration(stream.workerId, stream.admitted,
+                stream.sessionId, stream.admissionReason);
     }
 
     /** The worker takes the open offer for the task's current attempt. */
@@ -319,6 +376,7 @@ public final class DelegationBridge implements AutoCloseable {
     /** One open worker stream plus its per-scope sequence counters. */
     private static final class WorkerStream {
         private final String workerId;
+        private final WorkerHello hello;
         private final Map<String, Long> sequences = new HashMap<>();
         private final Map<String, Integer> progressSequences = new HashMap<>();
         private final Map<String, Integer> checkpointSequences = new HashMap<>();
@@ -330,8 +388,9 @@ public final class DelegationBridge implements AutoCloseable {
         private volatile Throwable failure;
         private volatile boolean open = true;
 
-        private WorkerStream(String workerId) {
-            this.workerId = workerId;
+        private WorkerStream(WorkerHello hello) {
+            this.workerId = hello.getWorkerId();
+            this.hello = hello;
         }
 
         /**

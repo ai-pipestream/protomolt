@@ -7,8 +7,13 @@ with discovery-runtime commit 9ac73251 pass locally. The atomic state store is
 implemented, with seven filesystem and transition tests passing alongside the
 five contract tests. These cover locking, identity binding, corrupt files, failed
 publication recovery and preservation of saved intent when an assignment moves.
-The discovery loop and installed-worker restart proof remain unqualified; this
-document does not claim a running idle mode.
+The discovery loop is implemented. An installed-worker process test passes
+locally against a continuously running coordinator: start idle, discover an offer,
+kill after the probe effect, restart with identical intent, kill during preparation,
+restart and replay the saved request, then observe independent acceptance. The
+fixture ledger contains one record per operation despite repeated deliveries.
+This is local qualification, not deployment or platform qualification. A kill at
+the submission boundary and the workflow-executor crash test remain outstanding.
 
 Add `--discover <coordinator> <fixture> <worker-id> <state-dir>` while retaining
 the explicit-task invocation. Use the existing discovery, context, acceptance,
@@ -57,13 +62,18 @@ The fixture enforces idempotency for its write only, not arbitrary external RPCs
 Source review found that unary `RegisterWorkflowAuthor` creates a server-owned
 `DelegationBridge` stream. Closing or killing its client process does not close
 that stream. The current registration rejects an already connected worker, so
-worker-only restart is not yet supported even when its local snapshot is valid.
+worker-only restart through the original Register RPC is unsupported even when
+its local snapshot is valid. Discovery mode now uses the additive Ensure RPC.
 Missing bridge sessions are reported as generic unavailable errors; that status
 cannot safely identify registration loss after a coordinator restart.
 
 Keep the existing registration's conflict semantics. Review an additive
-`EnsureWorkflowAuthorRegistration` operation that reuses the registration request
-and response shapes and requires the same authenticated author identity. Under
+`EnsureWorkflowAuthorRegistration` operation with distinct request/response
+wrappers around the existing registration metadata and result. The catalog
+requires a unique request/response pair; reusing both top-level shapes is
+ambiguous. Both wrappers require their registration field, and the response
+requires acknowledgement, worker identity and a session exactly when admitted.
+The operation requires the same authenticated author identity. Under
 the bridge's registration lock, it would return the current healthy bridge-owned
 registration only when the complete validated hello metadata matches; changed
 metadata conflicts. Otherwise it would use the existing registration/resumption
@@ -71,6 +81,16 @@ path. It must not replace an unrelated direct delegation stream or infer success
 from a conflict. Reads of registration state and creation must be atomic with
 respect to other registrations; a check followed by an unlocked register is not
 sufficient. Unknown fields, invalid metadata and unsupported rules fail closed.
+
+Review identified two coordinator prerequisites. A bridge stream must retain the
+complete validated hello and prove that its response observer still identifies
+the coordinator's current session. The coordinator must conditionally open a
+bridge session under its own lock, refusing an already connected foreign stream;
+the bridge lock alone cannot exclude direct delegation connections. Before any
+non-hello worker frame is recorded, that same coordinator lock must verify that
+the sending session is still current. Superseded streams must not append frames
+or disconnect their replacements. Tests must exercise a direct-stream race and
+a stale stream sending the next otherwise valid sequence number.
 
 This operation would ensure one server-owned sequence writer, not assert exclusive
 ownership of a remote client process. Existing author mutations authenticate the
@@ -100,3 +120,28 @@ coordinator to clear the registration would not prove the required recovery.
    probe/preparation/submission replies; check exact recorded intents and fixture
    record counts. Keep this separate from the workflow executor's remote-effect
    checkpoint kill test, which remains required by Goal 5.
+
+### Submission interruption finding (2026-10-01)
+
+The installed author discovery test passes the probe and preparation interruption
+boundaries. The added submission case initially failed. The test repository commits the encrypted transcript with
+one candidate and its matching review-start record, withholds the CAS response,
+and then the test terminates only the author process. Before the fix, the restarted
+author did not become ready against the same coordinator.
+
+The repository CAS inherits cancellation from the author RPC. Its cancelled
+response leaves `RepositoryServiceTranscriptRepository` uncertain and
+`InProcessDelegationCoordinator` publication-failed. Both fences are intentional;
+clearing them without verified storage recovery would be incorrect. The local fix
+isolates repository reads and publication calls from caller cancellation, retaining
+the repository deadline and fail-closed handling of genuinely uncertain writes.
+Do not replace this test with a coordinator restart or remove the submission gate.
+
+Evidence: before the fix, `AuthoringWorkerDiscoveryProcessTest` ran one test with
+one failure and no skips (`/tmp/goal5-submission-recovery-test.log`). After the fix,
+the same test passed with no skips (`/tmp/goal5-cancel-isolation-tests.log`,
+2026-10-01T15:20:38Z). After correcting the repository test harness, the complete
+delegation suite passed 233 tests with no skips, including cancelled-caller
+acknowledgement and genuine repository-timeout fencing
+(`/tmp/goal5-cancel-isolation-suite.log`). This is local evidence only; hosted CI
+and landing remain required, and this change has not been deployed.

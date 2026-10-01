@@ -185,6 +185,27 @@ public final class InProcessDelegationCoordinator
     @Override
     public StreamObserver<DelegateRequest> delegate(
             StreamObserver<DelegateResponse> responseObserver) {
+        return delegateInternal(responseObserver, false);
+    }
+
+    /** Opens a bridge-owned worker only if no connected session owns its identity. */
+    StreamObserver<DelegateRequest> delegateIfNoConnectedSession(
+            StreamObserver<DelegateResponse> responseObserver) {
+        return delegateInternal(responseObserver, true);
+    }
+
+    /** Exact live observer identity, not merely a matching worker hello. */
+    boolean ownsCurrentSession(String workerId, StreamObserver<DelegateResponse> observer) {
+        synchronized (lock) {
+            requireOpen();
+            Session current = sessions.get(workerId);
+            return current != null && current.connected && current.admitted
+                    && current.responses == observer;
+        }
+    }
+
+    private StreamObserver<DelegateRequest> delegateInternal(
+            StreamObserver<DelegateResponse> responseObserver, boolean conditionalOpen) {
         Objects.requireNonNull(responseObserver, "responseObserver");
         return new StreamObserver<>() {
             private Session session;
@@ -205,7 +226,7 @@ public final class InProcessDelegationCoordinator
                                 throw new IllegalArgumentException(
                                         "the first worker frame must be hello");
                             }
-                            session = openSession(frame.getHello(), responseObserver);
+                            session = openSession(frame.getHello(), responseObserver, conditionalOpen);
                         } else if (frame.hasHello()) {
                             throw new IllegalArgumentException(
                                     "hello may only be the first frame on a stream");
@@ -223,6 +244,10 @@ public final class InProcessDelegationCoordinator
                         }
                     }
                     if (dispatch != null) dispatchReview(dispatch);
+                } catch (WorkerRegistrationConflictException e) {
+                    ended = true;
+                    responseObserver.onError(Status.ALREADY_EXISTS
+                            .withDescription("worker already has a connected session").asRuntimeException());
                 } catch (IllegalArgumentException e) {
                     ended = true;
                     markDisconnected(session);
@@ -792,7 +817,12 @@ public final class InProcessDelegationCoordinator
     }
 
     private Session openSession(WorkerHello hello,
-                                StreamObserver<DelegateResponse> responses) {
+                                StreamObserver<DelegateResponse> responses,
+                                boolean conditionalOpen) {
+        Session current = sessions.get(hello.getWorkerId());
+        if (conditionalOpen && current != null && current.connected) {
+            throw new WorkerRegistrationConflictException();
+        }
         AdmissionPolicy.Decision decision = admissionPolicy.admit(hello);
         Session session = new Session(hello, responses);
         session.admitted = decision.admitted();

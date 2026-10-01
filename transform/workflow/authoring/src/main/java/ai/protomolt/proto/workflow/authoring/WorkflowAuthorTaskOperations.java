@@ -13,10 +13,16 @@ import ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorEventsRequest;
 import ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorEventsResponse;
 import ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorAssignmentsRequest;
 import ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorAssignmentsResponse;
+import ai.protomolt.proto.workflow.authoring.v1.EnsureWorkflowAuthorRegistrationRequest;
+import ai.protomolt.proto.workflow.authoring.v1.EnsureWorkflowAuthorRegistrationResponse;
 
 /** Trusted task operations; implementations enforce transcript and artifact authority. */
 public interface WorkflowAuthorTaskOperations {
     RegisterWorkerResponse register(RegisterWorkerRequest request, Caller caller) throws WorkflowPreparationException;
+    default EnsureWorkflowAuthorRegistrationResponse ensureRegistration(EnsureWorkflowAuthorRegistrationRequest request, Caller caller)
+            throws WorkflowPreparationException {
+        throw new UnsupportedOperationException("Ensure registration is not implemented");
+    }
     AcceptTaskResponse accept(AcceptTaskRequest request, Caller caller) throws WorkflowPreparationException;
     SubmitCandidateResponse submit(SubmitCandidateRequest request, Caller caller) throws WorkflowPreparationException;
     GetWorkflowAuthorContextResponse context(GetWorkflowAuthorContextRequest request, Caller caller) throws WorkflowPreparationException;

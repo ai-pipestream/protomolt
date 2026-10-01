@@ -25,6 +25,7 @@ final class WorkflowAuthorTaskMount {
     static Map<String, Map<String, String>> bindings() {
         return Map.of(service().getFullName(), Map.of(
                 "RegisterWorkflowAuthor", "register-workflow-author",
+                "EnsureWorkflowAuthorRegistration", "ensure-workflow-author-registration",
                 "AcceptWorkflowTask", "accept-workflow-task",
                 "SubmitWorkflowCandidate", "submit-workflow-candidate",
                 "GetWorkflowAuthorContext", "get-workflow-author-context",
@@ -42,6 +43,8 @@ final class WorkflowAuthorTaskMount {
         return new WorkflowAuthorTaskOperations() {
             @Override public RegisterWorkerResponse register(RegisterWorkerRequest request, Caller caller)
                     throws WorkflowPreparationException { return mutations.register(request, caller); }
+            @Override public EnsureWorkflowAuthorRegistrationResponse ensureRegistration(EnsureWorkflowAuthorRegistrationRequest request, Caller caller)
+                    throws WorkflowPreparationException { return mutations.ensureRegistration(request, caller); }
             @Override public AcceptTaskResponse accept(AcceptTaskRequest request, Caller caller)
                     throws WorkflowPreparationException { return mutations.accept(request, caller); }
             @Override public SubmitCandidateResponse submit(SubmitCandidateRequest request, Caller caller)
