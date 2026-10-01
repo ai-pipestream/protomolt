@@ -92,7 +92,7 @@ class FileSystemWorkflowLaunchAuthorizationRepositoryTest {
         assertThat(reopened.find(LAUNCH_ID)).contains(original);
         assertThat(reopened.createOrMatch(original)).isEqualTo(original);
         assertThatThrownBy(() -> reopened.createOrMatch(authorization(LAUNCH_ID, "e")))
-                .isInstanceOf(IOException.class).hasMessageContaining("conflict");
+                .isInstanceOf(WorkflowLaunchConflictException.class).hasMessageContaining("conflict");
         assertThat(first.find(LAUNCH_ID)).contains(original);
     }
 
@@ -139,7 +139,7 @@ class FileSystemWorkflowLaunchAuthorizationRepositoryTest {
         try {
             repository.createOrMatch(authorization);
             return true;
-        } catch (IOException e) {
+        } catch (WorkflowLaunchConflictException e) {
             assertThat(e).hasMessageContaining("conflict");
             return false;
         }
@@ -170,7 +170,7 @@ class FileSystemWorkflowLaunchAuthorizationRepositoryTest {
         repository.createOrMatch(original);
         byte[] bytes = Files.readAllBytes(directory.resolve(LAUNCH_ID + ".pb"));
         assertThatThrownBy(() -> repository.createOrMatch(authorization(LAUNCH_ID, "e")))
-                .isInstanceOf(IOException.class);
+                .isInstanceOf(WorkflowLaunchConflictException.class);
         assertThat(Files.readAllBytes(directory.resolve(LAUNCH_ID + ".pb"))).isEqualTo(bytes);
     }
 
@@ -182,7 +182,7 @@ class FileSystemWorkflowLaunchAuthorizationRepositoryTest {
 
         assertThat(repository.find(alias)).contains(original);
         assertThatThrownBy(() -> repository.createOrMatch(authorization(alias, "d")))
-                .isInstanceOf(IOException.class).hasMessageContaining("conflict");
+                .isInstanceOf(WorkflowLaunchConflictException.class).hasMessageContaining("conflict");
         try (var files = Files.list(directory)) {
             assertThat(files.filter(path -> path.getFileName().toString().endsWith(".pb")).count())
                     .isEqualTo(1);

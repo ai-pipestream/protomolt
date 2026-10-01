@@ -21,8 +21,8 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
 
-/** Sample accepted-workflow launch binding; no public endpoint is mounted. */
-public final class WorkflowAuthoringLauncher {
+/** Accepted-workflow launch binding; no public endpoint is mounted. */
+public final class WorkflowAuthoringLauncher implements WorkflowAuthoringOperations {
     private final TranscriptRepository transcripts;
     private final WorkflowAuthoringReviewer reviewer;
     private final WorkflowLaunchAuthorizationRepository authorizations;
@@ -60,7 +60,7 @@ public final class WorkflowAuthoringLauncher {
         var request = supplied.toBuilder().setLaunchId(UUID.fromString(supplied.getLaunchId()).toString()).build();
         var existing = authorizations.find(request.getLaunchId());
         if (existing.isPresent() && !existing.get().getRequest().equals(request)) {
-            throw new IllegalArgumentException("launch UUID already belongs to a different intent");
+            throw new WorkflowLaunchConflictException("launch UUID already belongs to a different intent");
         }
         var accepted = WorkflowLaunchAcceptance.inspect(transcripts, request.getAcceptance().getTaskId());
         if (!accepted.identity().equals(request.getAcceptance())) {
@@ -83,7 +83,7 @@ public final class WorkflowAuthoringLauncher {
             if (existing.isEmpty()) existing = authorizations.find(request.getLaunchId());
             if (existing.isEmpty() || !existing.get().getRequest().equals(request)
                     || !WorkflowRunStore.sameSubmission(expected, presentJob.get())) {
-                throw new IllegalArgumentException("launch UUID belongs to an unbound or different job");
+                throw new WorkflowLaunchConflictException("launch UUID belongs to an unbound or different job");
             }
         }
 
@@ -93,13 +93,13 @@ public final class WorkflowAuthoringLauncher {
             WorkflowLaunchValidation.validate(authorization);
             if (!authorization.getPolicy().equals(prepared.policyReference())
                     || !Arrays.equals(authorization.getAuthored().toByteArray(), accepted.authored().toByteArray())) {
-                throw new IllegalArgumentException("stored authorization differs from accepted policy or deliverable");
+                throw new IOException("stored authorization differs from accepted policy or deliverable");
             }
             WorkflowValidation.validate(authorization.getPromoted());
             if (!Arrays.equals(authorization.getPromoted().getWorkflow().toByteArray(),
                     accepted.authored().getDeliverable().getWorkflow().toByteArray())
                     || !authorization.getPromoted().getCreatedAt().equals(accepted.acceptedAt())) {
-                throw new IllegalArgumentException("stored promotion envelope differs from acceptance");
+                throw new IOException("stored promotion envelope differs from acceptance");
             }
         } else {
             reviewer.verifyFixtures(prepared);
@@ -142,6 +142,9 @@ public final class WorkflowAuthoringLauncher {
             throw new IOException("stored workflow version differs from authorized promotion");
         }
         var outcome = submitter.submit(source, null, inputJson, request.getLaunchId(), actions);
+        if (outcome.conflict()) {
+            throw new WorkflowLaunchConflictException("launch UUID belongs to a different workflow submission");
+        }
         if (!outcome.ok()) throw new IllegalArgumentException("workflow submission failed: " + outcome.error());
         var job = jobs.get(UUID.fromString(request.getLaunchId())).orElseThrow(() ->
                 new IOException("submitted job is absent"));
