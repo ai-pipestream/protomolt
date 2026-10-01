@@ -99,6 +99,17 @@ class RemoteBlobStoreIT {
     }
 
     @Test
+    void conditionalOperationsRejectUnqualifiedLocalStack() {
+        byte[] first = "first".getBytes(StandardCharsets.UTF_8);
+        var spec = new BlobStore.PutSpec("ignored-bucket", "rt/conditional.bin",
+                "text/plain", null, null);
+        assertThatThrownBy(() -> store.conditionalPut(spec, first, BlobStore.WriteCondition.absent()))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> store.getForUpdate("ignored-bucket", spec.key()))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
     void streamingPutVariantReadsTheStream() {
         byte[] data = "streamed-via-port".getBytes(StandardCharsets.UTF_8);
         store.put(new BlobStore.PutSpec("ignored-bucket", "rt/streamed.bin",

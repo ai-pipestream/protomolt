@@ -5,6 +5,8 @@ import ai.protomolt.proto.repo.v1.AccessRule;
 import ai.protomolt.proto.repo.v1.Blob;
 import ai.protomolt.proto.repo.v1.BlobBag;
 import ai.protomolt.proto.repo.v1.CreateDriveRequest;
+import ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest;
+import ai.protomolt.proto.repo.v1.ConditionalBlobKey;
 import ai.protomolt.proto.repo.v1.DeleteBlobRequest;
 import ai.protomolt.proto.repo.v1.DeleteBlobResponse;
 import ai.protomolt.proto.repo.v1.DeleteDocumentByReferenceCommand;
@@ -24,6 +26,7 @@ import ai.protomolt.proto.repo.v1.DriveType;
 import ai.protomolt.proto.repo.v1.RedisDriveConfig;
 import ai.protomolt.proto.repo.v1.FileStorageReference;
 import ai.protomolt.proto.repo.v1.GetBlobRequest;
+import ai.protomolt.proto.repo.v1.GetBlobForUpdateRequest;
 import ai.protomolt.proto.repo.v1.GetDocumentByReferenceRequest;
 import ai.protomolt.proto.repo.v1.GetDocumentManifestRequest;
 import ai.protomolt.proto.repo.v1.GetDocumentManifestResponse;
@@ -709,6 +712,42 @@ class RepoServiceIT {
                 .setStorageRef(put.getStorageRef())
                 .build());
         assertThat(again.getDeleted()).isFalse();
+    }
+
+    @Test
+    void conditionalBlobRpcFailsClosedOnUnqualifiedLocalStack() {
+        createDrive("conditional", "acct-conditional");
+        var key = ConditionalBlobKey.newBuilder().setDriveName("conditional")
+                .setObjectKey("state/current").build();
+        var read = GetBlobForUpdateRequest.newBuilder().setKey(key).build();
+        assertThatThrownBy(() -> documents.getBlobForUpdate(read))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, error ->
+                        assertThat(error.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
+        assertThatThrownBy(() -> documents.compareAndPutBlob(CompareAndPutBlobRequest.newBuilder()
+                .setKey(key).setIfAbsent(true).setData(ByteString.copyFromUtf8("first")).build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, error ->
+                        assertThat(error.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
+        assertThatThrownBy(() -> documents.getBlob(GetBlobRequest.newBuilder()
+                .setStorageRef(FileStorageReference.newBuilder().setDriveName("conditional")
+                        .setObjectKey("state/current")).build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, error ->
+                        assertThat(error.getStatus().getCode()).isEqualTo(Status.Code.NOT_FOUND));
+
+        for (var invalid : List.of(
+                CompareAndPutBlobRequest.newBuilder().setKey(key).setIfAbsent(false).build(),
+                CompareAndPutBlobRequest.newBuilder().setKey(key).setExpectedEtag("*").build(),
+                CompareAndPutBlobRequest.newBuilder().setKey(key).build())) {
+            assertThatThrownBy(() -> documents.compareAndPutBlob(invalid))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class, error ->
+                            assertThat(error.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT));
+        }
+        var unknownKey = key.toBuilder().setUnknownFields(com.google.protobuf.UnknownFieldSet.newBuilder()
+                .addField(99, com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                .build()).build();
+        assertThatThrownBy(() -> documents.getBlobForUpdate(
+                GetBlobForUpdateRequest.newBuilder().setKey(unknownKey).build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, error ->
+                        assertThat(error.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT));
     }
 
     @Test
