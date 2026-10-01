@@ -180,12 +180,32 @@ class AuthoringRemoteProcessTest {
 
             WriteRecordRequest jobInput = WriteRecordRequest.newBuilder().setOperationId(JOB_OPERATION)
                     .setContent(" \tprocess-input\r\n value\t ").build();
-            ArtifactReference input = artifacts.save(jobInput.toByteArray(), "application/x-protobuf", false);
+            var inputService = ai.protomolt.proto.workflow.authoring.v1.WorkflowLaunchInputServiceGrpc
+                    .newBlockingStub(channel)
+                    .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(operatorHeaders))
+                    .withDeadlineAfter(10, TimeUnit.SECONDS);
+            var inputContract = inputService.getWorkflowLaunchInputContract(
+                    ai.protomolt.proto.workflow.authoring.v1.GetWorkflowLaunchInputContractRequest
+                            .newBuilder().setAcceptance(accepted).build());
+            assertThat(inputContract.getAcceptance()).isEqualTo(accepted);
+            assertThat(inputContract.getInputType()).isEqualTo(WriteRecordRequest.getDescriptor().getFullName());
+            assertThat(inputContract.getDescriptors().getSha256())
+                    .isEqualTo(sha256(inputContract.getDescriptorSet().toByteArray()));
+            var inputRequest = ai.protomolt.proto.workflow.authoring.v1.PrepareWorkflowLaunchInputRequest
+                    .newBuilder().setAcceptance(accepted)
+                    .setInputJson(ByteString.copyFromUtf8(JsonFormat.printer().print(jobInput))).build();
+            var preparedInput = inputService.prepareWorkflowLaunchInput(inputRequest);
+            assertThat(preparedInput.getAcceptance()).isEqualTo(accepted);
+            assertThat(inputService.prepareWorkflowLaunchInput(inputRequest)).isEqualTo(preparedInput);
+            ArtifactReference input = preparedInput.getInput();
+            assertThat(input.getSha256()).isEqualTo(sha256(jobInput.toByteArray()));
             WorkflowAuthoringLaunchRequest launchRequest = WorkflowAuthoringLaunchRequest.newBuilder()
                     .setLaunchId(LAUNCH_ID).setAcceptance(accepted).setInput(input).build();
             var launched = authoring.withDeadlineAfter(30, TimeUnit.SECONDS)
                     .launchAcceptedWorkflow(launchRequest);
             assertThat(launched.getJobId()).isEqualTo(LAUNCH_ID);
+            assertThat(authoring.withDeadlineAfter(30, TimeUnit.SECONDS)
+                    .launchAcceptedWorkflow(launchRequest)).isEqualTo(launched);
 
             JsonNode job = awaitCompletedJob(mcp, LAUNCH_ID, Duration.ofSeconds(90));
             assertThat(job.path("status").asText()).isEqualTo("COMPLETED");
