@@ -329,6 +329,23 @@ Both options are required together; an explicit workflow workspace supplies
 the existing artifact and run repositories. The launch ledger should live on
 the same persistent server volume, outside the artifact content directory.
 
+Candidate preparation is a separate opt-in mount. Set
+`--workflow-preparation-intent-dir` (or
+`PROTOMOLT_WORKFLOW_PREPARATION_INTENT_DIR`) to a persistent directory and
+`--workflow-preparation-template-provider` (or
+`PROTOMOLT_WORKFLOW_PREPARATION_TEMPLATE_PROVIDER`) to the ID of exactly one
+trusted `WorkflowSourceTemplateProvider` installed on the server classpath.
+Both are required, along with workflow authoring, durable delegation transcripts,
+receipt signing (`PROTOMOLT_RECEIPT_KEY_FILE`, `PROTOMOLT_RECEIPT_KEY_ID`, and
+`PROTOMOLT_RECEIPT_ISSUER`), and a trust snapshot that accepts that signer.
+Serve checks these prerequisites before opening listeners. Preparation uses
+the same pinned policy, artifacts, run evidence, runner, and current trust
+source as authoring; its intent ledger belongs on a persistent server volume.
+The `prepare-workflow-candidate` action requires `workflow-author` scope and
+uses the authenticated worker identity as the task holder. The normal task
+console does not grant that scope. Preparation does not accept, promote, or
+launch the workflow; those remain separate authority transitions.
+
 A reviewer infrastructure exception currently leaves the candidate pending;
 the in-process `reviewFailure` is transient and a restored candidate is not
 automatically reviewed again. Recovery needs a separate, attempt/revision-bound
