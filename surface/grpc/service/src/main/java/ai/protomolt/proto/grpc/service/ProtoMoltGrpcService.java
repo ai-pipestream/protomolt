@@ -48,9 +48,15 @@ public final class ProtoMoltGrpcService {
     /** Binds an already-declared contributed service through the same catalog and caller context. */
     public static ServerServiceDefinition contributed(ActionCatalog catalog,
                                                       ServiceDescriptor service) {
+        return contributed(catalog, service, Map.of());
+    }
+
+    public static ServerServiceDefinition contributed(ActionCatalog catalog,
+            ServiceDescriptor service, Map<String, Map<String, String>> explicitBindings) {
         Objects.requireNonNull(catalog, "catalog");
         Objects.requireNonNull(service, "service");
-        Map<MethodDescriptor, String> bindings = ContractActionBindings.mounted(catalog, service);
+        Map<MethodDescriptor, String> bindings = ContractActionBindings.mounted(
+                catalog, service, explicitBindings);
         if (bindings.size() != service.getMethods().size()) {
             throw new IllegalStateException("Cannot mount partial gRPC service "
                     + service.getFullName());

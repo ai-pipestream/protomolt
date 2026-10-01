@@ -63,6 +63,7 @@ import ai.protomolt.proto.workflow.RecordSigning;
 import ai.protomolt.proto.workflow.WorkflowRepository;
 import ai.protomolt.proto.workflow.WorkflowRunner;
 import ai.protomolt.proto.workflow.authoring.WorkflowAuthoringActions;
+import ai.protomolt.proto.workflow.authoring.WorkflowAuthorTaskActions;
 import ai.protomolt.proto.workflow.authoring.WorkflowPreparationActions;
 import ai.protomolt.proto.workflow.authoring.v1.GetAcceptedWorkflowRequest;
 import ai.protomolt.proto.workflow.authoring.v1.WorkflowPreparationServiceOuterClass;
@@ -73,6 +74,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashSet;
@@ -1173,7 +1175,11 @@ public final class ProtoMoltServe implements AutoCloseable {
             if (preparation != null) {
                 WorkflowPreparationActions.register(catalog,
                         preparation.operations(delegation.transcripts()));
+                WorkflowAuthorTaskActions.register(catalog, WorkflowAuthorTaskMount.operations(
+                        bridge, delegation.transcripts(), authoring, Clock.systemUTC()));
             }
+            var authorTaskBindings = preparation == null ? Map.<String, Map<String, String>>of()
+                    : WorkflowAuthorTaskMount.bindings();
             meshCluster = MeshClusterRuntime.open(options.meshCluster(), options.delegation());
             if (meshCluster != null) {
                 ClusterActions.register(catalog, meshCluster.directory());
@@ -1210,7 +1216,7 @@ public final class ProtoMoltServe implements AutoCloseable {
             grpc = ProtoMoltGrpcServer.start(options.host(), options.grpcPort(), catalog,
                     options.apiToken(), callers,
                     contributedServices(meshCluster != null, authoring != null,
-                            preparation != null));
+                            preparation != null), authorTaskBindings);
             if (options.demo() && store != null) {
                 // The demo workflow composes this server's own verbs, so it needs the bound
                 // gRPC port - seeded here rather than with the schemas.
@@ -1251,7 +1257,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                     ? null
                     : ApiTokenRequirement.apiKeyHeader("api_token"), restCallers,
                     contributedServices(meshCluster != null, authoring != null,
-                            preparation != null));
+                            preparation != null), authorTaskBindings);
             ProtoToolsServerConfig config = ProtoToolsServerConfig.defaults()
                     .withHost(options.host())
                     .withPort(options.httpPort());
@@ -1408,6 +1414,7 @@ public final class ProtoMoltServe implements AutoCloseable {
         if (workflowPreparation) {
             services.add(WorkflowPreparationServiceOuterClass.getDescriptor()
                     .findServiceByName("WorkflowPreparationService"));
+            services.add(WorkflowAuthorTaskMount.service());
         }
         return services;
     }
