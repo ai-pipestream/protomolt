@@ -357,6 +357,14 @@ message TaskOffer {
   // continues interrupted work. The reference must name a checkpoint the
   // worker actually recorded for this task.
   CheckpointReference resume_from = 5 [(ai.protomolt.proto.meta.v1.field).sensitivity = "internal"];
+  // Optional admission binding for a create-once entry. Empty for legacy and
+  // generic offers. The entry handler defines a domain-separated digest over
+  // its request, rendered spec and lease duration and checks the original offer
+  // on replay. This digest alone grants no authority or semantic acceptance.
+  string start_binding_sha256 = 6 [(ai.protomolt.proto.validate.v1.field) = {
+    ignore_if_zero: true
+    string: {pattern: "^[0-9a-f]{64}$"}
+  }];
 }
 
 // The bounded definition of one delegated task: what to achieve, where the

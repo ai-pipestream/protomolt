@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.workflow.authoring.v1;
+
+import "ai/protomolt/proto/workflow/authoring/v1/workflow_authoring_entry.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.workflow.authoring.v1";
+
+// Proposed opt-in coordinator entry. Definitions do not mount an implementation.
+// Requires worker-coordinate; author-only principals cannot assign tasks.
+service WorkflowAuthoringEntryService {
+  // Returns one trusted configured template with complete result descriptors.
+  // Validate descriptor/type closure and policy custody without executing fixtures.
+  rpc GetWorkflowAuthoringTemplate(GetWorkflowAuthoringTemplateRequest)
+      returns (GetWorkflowAuthoringTemplateResponse);
+
+  // Atomically create the first offer or acknowledge the exact persisted start.
+  // Replays do not renew leases, reassign work or create later attempts. Check
+  // committed replay before current worker availability or template rotation.
+  // Persist the start binding with the existing offer, under the coordinator lock.
+  // UUID reuse with changed intent or a generic existing task is ALREADY_EXISTS.
+  // A new start with a stale template or unavailable worker is FAILED_PRECONDITION.
+  // Invalid shape is INVALID_ARGUMENT; denied scope is PERMISSION_DENIED;
+  // corrupt evidence is DATA_LOSS; dependency outage is UNAVAILABLE and timeout
+  // is DEADLINE_EXCEEDED. Cancellation cannot undo a committed offer.
+  // Native-validate requests and successful responses; reject unknown fields and
+  // unsupported rules. Require canonical task UUID spelling. Cap messages at 4 MiB
+  // and independently enforce the existing delegation frame-size bound.
+  rpc StartWorkflowAuthoring(StartWorkflowAuthoringRequest)
+      returns (StartWorkflowAuthoringResponse);
+}
