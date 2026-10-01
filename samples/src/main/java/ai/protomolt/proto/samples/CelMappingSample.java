@@ -28,7 +28,8 @@ public final class CelMappingSample {
                 .addVar("input")
                 .build());
         new CelProtoMapper(fieldMapper, evaluator).map(message, List.of(
-                new CelMappingRule("input.fields['enabled'].bool_value", "input.fields['name'].string_value", "selectedName")));
+                // CEL adapts Struct and Value to native maps and scalar values.
+                new CelMappingRule("input.enabled", "input.name", "selectedName")));
         System.out.println(message.build());
     }
 }
