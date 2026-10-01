@@ -22,6 +22,8 @@ dependencies {
     testImplementation project(':protomolt-grpc-service-contract')
     testImplementation project(':protomolt-http-jsonschema')
     testImplementation project(':protomolt-http-openapi')
+    testImplementation project(':protomolt-sources')
+    testImplementation libs.grpc.inprocess
     implementation project(':protomolt-mapper-cel')
     implementation project(':protomolt-server-jdk')
     // Live SharePoint read -> infer-schema sample.

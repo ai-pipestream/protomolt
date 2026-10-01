@@ -190,3 +190,48 @@ starter. Local verification currently covers 163 workflow tests and eight starte
 contract tests with no failures or skips, plus Buf lint and compatibility against
 main. The wrapper also passes the existing dynamic deliverable-contract boundary
 with its complete descriptor/import closure.
+
+## Candidate review binding in progress
+
+The sample `WorkflowAuthoringReviewer` implements the existing reviewer interface.
+Its operator-selected policy reference must also occur in the immutable offered
+task context. It validates the offered result contract and local sample shape,
+requires the three supported authoring checks, and compares inner and enclosing
+evidence by check name. It resolves reported artifacts without treating their
+PASS text as proof, loads run evidence from the coordinator repository, verifies
+the signed receipt and recorded fixture references, replays the run, then executes
+the caller's acceptance fixtures independently. Unknown required checks are refused.
+
+The acceptance verdict includes task, attempt, revision, exact candidate and offer
+digests, policy digest, recorded run ID and verified manifest digest. The existing
+coordinator rechecks the live candidate under its lock before applying that
+decision. This review does not promote or submit work; those effects must follow
+durable acceptance of that exact candidate. Transport/deadline and storage errors
+cannot produce acceptance. Deterministic contract, mapping and fixture failures
+request revision. This remains a sample adapter, not a mounted endpoint.
+
+The next integration must explicitly address validation parity: fixture execution
+checks workflow input and mapped requests through its observer, whereas ordinary
+jobs submission currently parses input JSON and the general runner only validates
+requests on edges whose `validate` flag is enabled. Response validation is already
+required by authoring preflight. Qualify the async template with input admission
+and validated request edges (or a reviewed runtime change) before claiming the
+same request boundary after promotion; passing reviewer fixtures alone does not
+prove that behavior for subsequent inputs.
+
+Also qualify review infrastructure failure handling in the mounted starter. The
+current coordinator keeps a thrown reviewer exception in `reviewFailure` and
+leaves the candidate pending; that field is not currently exposed by its public
+views. The sample correctly refuses acceptance on an unavailable fixture service,
+but a usable starter still needs visible failure/retry handling rather than a
+candidate that silently lingers. Cancellation and stale-review protection remain
+owned by the existing coordinator.
+
+Local acceptance-adapter verification: all 48 sample tests passed with no failures
+or skips, including eight authoring-review tests. The delegation suite's 179
+passing tests were restored from the Gradle cache for unchanged delegation code.
+The new integration submits a scripted worker's candidate through the gRPC
+delegation service, observes the independent fixture rerun and accepted frame,
+then reconstructs a coordinator from a shared in-memory transcript repository.
+This proves accepted attempt/revision restoration in that test; it is not yet a
+process-restart, external-worker, async-job or published-starter qualification.
