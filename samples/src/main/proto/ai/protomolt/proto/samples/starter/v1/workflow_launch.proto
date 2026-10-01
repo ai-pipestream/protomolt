@@ -1,0 +1,103 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.samples.starter.v1;
+
+import "ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto";
+import "ai/protomolt/proto/samples/starter/v1/workflow_deliverable.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.samples.starter.v1";
+
+// Expected identity of a terminal accepted candidate. These fields are selectors,
+// not proof: the handler reloads the trusted transcript, checks the complete
+// lifecycle, and matches the offer, candidate and accepted entry before effects.
+// Hashes use deterministic protobuf serialization of the named parsed messages
+// loaded from the trusted transcript. They are server-computed identities, not
+// a promise of canonical serialization across protobuf languages or versions.
+// The selected messages must contain no unknown fields; decode and validate the
+// candidate's Any result against its offered contract before computing identity.
+message WorkflowAcceptedCandidate {
+  // Existing delegation task identity.
+  string task_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  // Accepted lease attempt and candidate revision, using delegation's bounds.
+  int32 attempt = 2 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 1024}];
+  // Accepted candidate revision within that attempt.
+  int32 revision = 3 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 1024}];
+  // SHA-256 of TaskSpec from the accepted offer, including its deliverable contract.
+  string task_spec_sha256 = 4 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}}];
+  // SHA-256 of CompletionCandidate, including evidence.
+  string candidate_sha256 = 5 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}}];
+  // SHA-256 of the accepted TranscriptEntry, including worker and coordinator
+  // envelope. Do not hash the growing transcript or parse the display verdict.
+  string accepted_entry_sha256 = 6 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}}];
+}
+
+// Sample launch intent. This is not a mounted RPC. The binding will reuse the
+// existing promotion and job submission operations after durable authorization.
+message WorkflowAuthoringLaunchRequest {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "launch-input-protobuf"
+    message: "launch input must be an unredacted protobuf artifact of at most 4 MiB"
+    expression: "has(this.input) && this.input.media_type == 'application/x-protobuf' && !this.input.redacted && this.input.size_bytes <= 4194304u"
+  };
+  // Required caller-selected idempotency key. The same UUID is the job ID.
+  // Reuse with changed acceptance or input conflicts before any side effect.
+  // A deliberate new input requires a new UUID; the server never mints one.
+  string launch_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  // Expected terminal candidate identity, checked against trusted storage.
+  WorkflowAcceptedCandidate acceptance = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Serialized input under the accepted workflow's pinned input descriptor.
+  // The handler resolves full reference metadata and validates the message.
+  ai.protomolt.proto.grpc.workflow.v1.ArtifactReference input = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// Trusted, write-once launch record. The handler persists this under launch_id
+// only after durable acceptance, independent verification and input validation,
+// and before promotion or job insertion. A supplied message is not authorization.
+// The keyed store must atomically create or return an exact matching record;
+// content-addressed artifact storage by itself is not a keyed retry ledger.
+// The handler rejects unknown fields and records exceeding 4 MiB. On retry it
+// checks the stored binding and reuses its envelope without live fixture calls
+// or applying a newer version-derivation algorithm to existing authorization.
+message WorkflowAuthoringLaunchAuthorization {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "launch-policy-protobuf"
+    message: "launch policy must be an unredacted protobuf artifact of at most 4 MiB"
+    expression: "has(this.policy) && this.policy.media_type == 'application/x-protobuf' && !this.policy.redacted && this.policy.size_bytes <= 4194304u"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "launch-promoted-content"
+    message: "the promoted workflow must match the accepted authored workflow"
+    expression: "has(this.authored) && has(this.authored.deliverable) && has(this.promoted) && has(this.promoted.workflow) && this.promoted.workflow == this.authored.deliverable.workflow"
+  };
+  // Exact launch intent associated with the keyed record.
+  WorkflowAuthoringLaunchRequest request = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Trusted policy pinned by the accepted TaskSpec, never replaced by the worker.
+  ai.protomolt.proto.grpc.workflow.v1.ArtifactReference policy = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Reuses the checked source, descriptor, fixtures, recorded run and receipt.
+  // Handler checks exact bytes against the accepted candidate's typed result.
+  WorkflowAuthoringDeliverable authored = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Reproducible promotion envelope. Version is "accepted-" plus SHA-256 of the
+  // deterministically serialized acceptance identity. Creation time is the
+  // accepted coordinator frame's validated sent_at, copied exactly. The handler checks
+  // the workflow fingerprint and exact compiled bytes, not just CEL equality.
+  ai.protomolt.proto.grpc.workflow.v1.VersionedWorkflow promoted = 4 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// A successful launch means a matching job row exists, not that its work passed.
+// The handler confirms the stored source/input and promoted version before
+// returning this message. Existing job status/events report subsequent execution.
+message WorkflowAuthoringLaunchResult {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "launch-authorization-protobuf"
+    message: "authorization evidence must be an unredacted protobuf artifact of at most 4 MiB"
+    expression: "has(this.authorization) && this.authorization.media_type == 'application/x-protobuf' && !this.authorization.redacted && this.authorization.size_bytes <= 4194304u"
+  };
+  // Must equal authorization.request.launch_id; checking referenced bytes is a
+  // handler obligation. Exact retry returns the same job and authorization ref.
+  string job_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  // Serialized WorkflowAuthoringLaunchAuthorization, stored as evidence in
+  // addition to the authoritative keyed record. Recoverable from that record.
+  ai.protomolt.proto.grpc.workflow.v1.ArtifactReference authorization = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+}

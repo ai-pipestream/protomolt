@@ -9,6 +9,9 @@ import ai.protomolt.proto.inference.v1.EvaluateResponse;
 import ai.protomolt.proto.correction.v1.CorrectedContact;
 import ai.protomolt.proto.actions.CatalogContract;
 import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringDeliverable;
+import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchRequest;
+import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchAuthorization;
+import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -21,6 +24,26 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** Records generated schemas without asserting that OpenAPI already has rule parity. */
 class StarterSchemaCoverageTest {
     private static final ObjectMapper JSON = new ObjectMapper();
+
+    @Test
+    void launchSchemasExposeIdentityAndKeepEvidenceRulesAsRuntimeMetadata() throws Exception {
+        var generator = ProtoJsonSchemaGenerator.create();
+        JsonNode request = JSON.valueToTree(generator.generateRooted(WorkflowAuthoringLaunchRequest.getDescriptor()));
+        JsonNode authorization = JSON.valueToTree(generator.generateRooted(WorkflowAuthoringLaunchAuthorization.getDescriptor()));
+        JsonNode result = JSON.valueToTree(generator.generateRooted(WorkflowAuthoringLaunchResult.getDescriptor()));
+        assertThat(request.path("required").toString()).contains("launchId", "acceptance", "input");
+        assertThat(request.at("/properties/launchId/format").asText()).isEqualTo("uuid");
+        assertThat(request.path("x-protomolt-cel").toString()).contains("launch-input-protobuf");
+        assertThat(authorization.path("required").toString()).contains("request", "policy", "authored", "promoted");
+        assertThat(authorization.path("x-protomolt-cel").toString()).contains("launch-promoted-content");
+        assertThat(result.at("/properties/jobId/format").asText()).isEqualTo("uuid");
+        assertThat(result.path("x-protomolt-cel").toString()).contains("launch-authorization-protobuf");
+        Path directory = Path.of("build", "starter-contracts");
+        Files.createDirectories(directory);
+        JSON.writerWithDefaultPrettyPrinter().writeValue(directory.resolve("launch-request.schema.json").toFile(), request);
+        JSON.writerWithDefaultPrettyPrinter().writeValue(directory.resolve("launch-authorization.schema.json").toFile(), authorization);
+        JSON.writerWithDefaultPrettyPrinter().writeValue(directory.resolve("launch-result.schema.json").toFile(), result);
+    }
 
     @Test
     void generatedSchemasExposeAvailableConstraintsAndRecordRuntimeOnlyRules() throws Exception {
