@@ -78,6 +78,10 @@ complete. Completed retries return the stored response without rerunning calls,
 after authorization and binding checks. Permit replay in LEASED only for the
 currently expected revision, and in CANDIDATE only for that submitted revision.
 Require the same holder, attempt and persisted offer binding in both cases.
+LEASED replay also requires an unexpired lease. CANDIDATE replay may return the
+stored response after wall-clock expiry: it performs no new calls, and the
+existing review lifecycle retains pending candidates independently of lease
+timers. It still requires the submitted revision and current holder/attempt.
 Refuse replay in ACCEPTED or other terminal phases, after supersession, or once
 a revision request advances the expected revision. Never execute in CANDIDATE.
 
