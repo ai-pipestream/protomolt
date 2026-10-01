@@ -4,12 +4,12 @@ Status: proposed contract design, not an available operation. Builds on main
 `70c7ae91f22d0e8a460074a12050279d4bcdb133`. The coordinator owns the protobuf
 definitions; implementation follows contract fixtures and design review.
 Land message definitions first. The current contributed-service adapter refuses
-partial service mounts, so add the RPC to the service descriptor only with its
-handler. Adding it earlier would break the existing lookup/launch mount.
+partial service mounts. Preparation therefore uses its own opt-in service;
+existing lookup/launch mounts retain their current configuration requirements.
 
 ## Operation and authority
 
-Add `PrepareWorkflowCandidate` to `WorkflowAuthoringService`. A remote worker
+Add `PrepareWorkflowCandidate` to `WorkflowPreparationService`. A remote worker
 supplies executable workflow source; the coordinator derives policy, fixtures,
 recording and signed evidence. Preparation does not submit a candidate, accept
 it, promote a workflow or insert a job. Reuse `WorkflowAuthoringDeliverable` and
@@ -111,6 +111,10 @@ does not introduce multiple preparation generations inside one task revision.
 Incorrect output from a live fixture also persists a terminal rejected intent,
 even if no run evidence exists yet, and requires the same new-attempt recovery.
 It must not repeatedly execute a known failing source on same-ID retries.
+Current transcript authority is checked before any stored outcome is returned.
+After delegation expires, terminates or supersedes the attempt, retries are
+inactive rather than revealing the stored failure. Stable terminal detail applies
+while the same holder, attempt and revision remain authorized.
 The first response after a failed run is stored must also be terminal, carrying
 the bound run ID as structured error detail. A stored successful run is verified
 against the intent, source and fixture input and reused while remaining phases
@@ -240,6 +244,39 @@ including nine state-contract tests, plus Buf lint and full-descriptor
 compatibility against the request/response contract commit `2fea5dc8`.
 
 ## Handler integration findings
+
+Integration checkpoint (2026-10-01): the lease/offer admission helper and signing
+identity check are implemented and reviewed in PRs #347 and #346, respectively.
+Their separate local authoring suites passed 67 and 61 tests without skips.
+The integration branch combines them with the preparation store and static
+fixture admission; these results do not yet prove the combined handler.
+PR #343's fixture readiness fix landed on both main remotes at `f4440599`.
+
+The next implementation is `WorkflowCandidatePreparer`, with explicit trusted
+repositories, runner, action context, policy reference, current-trust supplier,
+signing identity and clock. An explicit trusted source-template callback checks
+starter restrictions after generic preflight and before intent reservation.
+The production authoring module must not depend on samples. Transport integration
+must preserve distinct invalid-input, inactive-state, conflict, terminal-failure,
+corrupt-evidence and invalid-response outcomes; terminal errors include the
+persisted preparation binding and run ID. No preparation RPC is available yet.
+
+The initial handler compiles but remains under review. Before mount, prove that
+request validation precedes ledger access, source schema pinning precedes any
+schema resolution, and artifact reads check actual size and content digest.
+Fixture success alone does not certify the later recorded invocation: compare
+its output with the first pinned expectation, including on recovery. Verify the
+generated receipt before persisting a successful response. Regression tests for
+these boundaries belong to handler acceptance, not a post-release follow-up.
+
+The host mount will select a trusted source-template provider by an explicit
+operator-configured ID. Load providers from the runtime classpath and require
+exactly one match; missing or duplicate providers fail startup. There is no
+allow-all default. The sample starter supplies its own provider, while the
+production serve module retains no dependency on samples. Preparation also
+requires its own durable intent directory and signing configuration, checked
+before listeners start and again during operations. Existing authoring
+lookup/launch configuration remains usable without preparation enabled.
 
 `DelegationReducer.TaskState` exposes phase, holder, attempt and candidate
 revision, but not lease expiry. A clean reduction alone does not establish an

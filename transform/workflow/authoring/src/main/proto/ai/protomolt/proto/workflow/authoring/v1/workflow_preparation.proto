@@ -8,7 +8,8 @@ import "ai/protomolt/proto/validate/v1/validate.proto";
 option java_multiple_files = true;
 option java_package = "ai.protomolt.proto.workflow.authoring.v1";
 
-// Bounded remote author input. These messages do not mount an RPC yet.
+// Bounded remote author input. The optional preparation service requires an
+// explicitly configured host mount; message definitions alone expose no RPC.
 // The handler must authenticate the current lease holder and resolve the pinned
 // offer, policy, descriptors and fixtures before executing any external calls.
 // Shape validity establishes neither authorization nor semantic correctness.

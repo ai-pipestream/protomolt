@@ -22,6 +22,9 @@ public final class Scopes {
     /** Workflow and pipeline execution and their evidence verbs. */
     public static final String WORKFLOW_RUN = "workflow-run";
 
+    /** Preparing a candidate under the principal's current delegation lease. */
+    public static final String WORKFLOW_AUTHOR = "workflow-author";
+
     /** Artifact reads and writes outside a workflow run's own recording. */
     public static final String ARTIFACT_ACCESS = "artifact-access";
 
@@ -42,7 +45,7 @@ public final class Scopes {
 
     /** The whole vocabulary; membership here is what "a known scope" means. */
     public static final Set<String> VOCABULARY = Set.of(
-            SCHEMA_READ, SCHEMA_WRITE, SERVICE_INVOKE, WORKFLOW_RUN, ARTIFACT_ACCESS,
+            SCHEMA_READ, SCHEMA_WRITE, SERVICE_INVOKE, WORKFLOW_RUN, WORKFLOW_AUTHOR, ARTIFACT_ACCESS,
             WORKER_COORDINATE, SEARCH_QUERY, SEARCH_INDEX, METRICS_QUERY, METRICS_REBUILD);
 
     private Scopes() {
