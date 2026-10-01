@@ -1,16 +1,21 @@
 # ProtoMolt
 
-ProtoMolt is a Java toolkit that treats a protobuf descriptor as the semantic
-layer. A message declares its validation rules, index mapping, vector lane,
+ProtoMolt is a gRPC integration platform and a set of reusable protobuf libraries.
+Its Java engine coordinates services and agents through protocol interfaces;
+those services and agents do not have to be Java applications. You can also use
+the libraries directly in a Java application without running the platform.
+
+A protobuf descriptor supplies the shared schema and rules. A message declares
+its validation rules, index mapping, vector lane,
 projection provenance, metric membership, prompt shape, descriptive metadata,
 quality dimensions and processing roles once, as descriptor options, and every
 subsystem reads those declarations instead of restating them in a parallel
 config model.
 
-Everything operates on descriptors (`Descriptor` / `FileDescriptor`), never on
-generated classes. The same code paths serve a `DynamicMessage` resolved from a
-registry at runtime and a compiled-in type, and no module is coupled to any
-particular message type.
+The shared libraries operate on descriptors (`Descriptor` / `FileDescriptor`).
+They support both `DynamicMessage` values resolved from a registry at runtime
+and generated protobuf messages, without requiring application-specific types
+in the library implementation.
 
 On top of that layer sits one integration primitive. `ProtoAction`
 (`surface/actions/src/main/java/ai/protomolt/proto/actions/ProtoAction.java`)
