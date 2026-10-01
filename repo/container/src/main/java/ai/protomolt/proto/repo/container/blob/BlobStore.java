@@ -2,6 +2,8 @@ package ai.protomolt.proto.repo.container.blob;
 
 import java.io.InputStream;
 import java.util.Map;
+import java.util.Objects;
+import java.util.regex.Pattern;
 
 /**
  * Object-storage port: the ONLY surface business code and transport handlers use to touch
@@ -22,6 +24,40 @@ import java.util.Map;
  * implementations convert to whatever their provider's integrity mechanism wants.
  */
 public interface BlobStore {
+
+    /** Maximum byte count of the bounded authoritative snapshot operation. */
+    int MAX_CONDITIONAL_BYTES = 9 * 1024 * 1024;
+
+    /** A single strong quoted backing ETag, suitable for an exact If-Match condition. */
+    Pattern STRONG_ETAG = Pattern.compile("\"[!#-~]+\"");
+
+    static String requireStrongEtag(String etag) {
+        if (etag == null || etag.length() > 1024 || !STRONG_ETAG.matcher(etag).matches()) {
+            throw new IllegalArgumentException("one strong quoted ETag is required");
+        }
+        return etag;
+    }
+
+    /** Explicit atomic write condition; exactly one alternative is required. */
+    record WriteCondition(boolean ifAbsent, String expectedEtag) {
+        public WriteCondition {
+            if (ifAbsent == (expectedEtag != null)) {
+                throw new IllegalArgumentException("exactly one conditional write alternative is required");
+            }
+            if (expectedEtag != null) requireStrongEtag(expectedEtag);
+        }
+
+        public static WriteCondition absent() { return new WriteCondition(true, null); }
+        public static WriteCondition matching(String etag) {
+            return new WriteCondition(false, requireStrongEtag(etag));
+        }
+    }
+
+    /** The backing store rejected an atomic condition without replacing the object. */
+    class BlobConflictException extends RuntimeException {
+        public BlobConflictException(String message, Throwable cause) { super(message, cause); }
+        public BlobConflictException(String message) { super(message); }
+    }
 
     /**
      * What to write and where — everything about a put except the body bytes.
@@ -55,6 +91,27 @@ public interface BlobStore {
      * @param versionId the fetched version id, or {@code null}
      */
     record GetResult(byte[] data, String contentType, String eTag, String versionId) {
+    }
+
+    /**
+     * Reads current bytes and their backing ETag from the same authoritative operation.
+     * Cache decorators must bypass their cache. Unsupported stores fail closed;
+     * RedisBlobStore intentionally inherits this default until it has an atomic
+     * comparison-and-replacement implementation.
+     */
+    default GetResult getForUpdate(String bucket, String key) {
+        throw new UnsupportedOperationException("authoritative conditional read is unsupported");
+    }
+
+    /**
+     * Atomically replaces or creates one bounded object under an explicit condition.
+     * No implementation may replace this with read-then-unconditional-put.
+     */
+    default PutResult conditionalPut(PutSpec spec, byte[] body, WriteCondition condition) {
+        Objects.requireNonNull(spec);
+        Objects.requireNonNull(body);
+        Objects.requireNonNull(condition);
+        throw new UnsupportedOperationException("conditional write is unsupported");
     }
 
     /** Failure completing a {@link #get}: the key (or requested version) does not exist. */

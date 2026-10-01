@@ -15,7 +15,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@link BlobNotFoundException}, delete-of-absent reports {@code false}, and
  * batch delete treats missing keys as success.
  */
-final class InMemoryBlobStore implements BlobStore {
+class InMemoryBlobStore implements BlobStore {
 
     private record Stored(byte[] data, String contentType, Map<String, String> metadata) {
     }

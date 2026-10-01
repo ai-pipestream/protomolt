@@ -86,6 +86,20 @@ public final class CachingBlobStore implements BlobStore, AutoCloseable {
     }
 
     @Override
+    public GetResult getForUpdate(String bucket, String key) {
+        return backing.getForUpdate(bucket, key);
+    }
+
+    @Override
+    public PutResult conditionalPut(PutSpec spec, byte[] body, WriteCondition condition) {
+        PutResult result = backing.conditionalPut(spec, body, condition);
+        // A successful replacement makes any current-version cache entry stale.
+        // The conditional API itself always reads the authoritative backing store.
+        evict(spec.bucket(), spec.key());
+        return result;
+    }
+
+    @Override
     public GetResult get(String bucket, String key, String versionId) {
         if (versionId == null || versionId.isEmpty()) {
             try {
