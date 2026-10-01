@@ -135,10 +135,24 @@ Run: `contact-dc0f8d15-aed3-4629-a677-4cb650abe500`. Logs:
 `/tmp/protomolt-goal6-correction-verification.log`. This uses the deterministic
 fixture and demonstration trust, not a live model or independently trusted issuer.
 
+## Optional integration checks
+
+The commands in [Optional Kafka and JDBC inputs](../tutorials/optional-inputs.md)
+passed on 2026-10-01: `WorkflowRunKafkaIT` 2 tests, `JdbcPullIT` 6 tests, and
+`AcceptedWorkflowKafkaBridgeTest` 3 tests, all with zero skips and failures.
+Raw log: `/tmp/protomolt-goal6-optional-integrations.log`. JUnit reports reside
+under the corresponding module's `build/test-results/test/`.
+
+The first uses a real broker, database, worker, event relay, and TCP gRPC fixture.
+The JDBC test uses real PostgreSQL and LocalStack with in-process intake/repository
+gRPC. The accepted-launch bridge uses a real broker but a test-owned launch ledger.
+These results must not be combined into a claim that the Kafka bridge and production
+accepted-workflow coordinator were tested together in one deployment.
+
 ## Remaining evidence
 
 Clean public-library resolution; cold setup timings; independent human walkthrough;
 documented-input rehearsal; a user's own external endpoint;
-correction/coordination/integration latency and outcome measurements; optional
-Kafka/connector walkthroughs; durable publication of tutorials and evidence.
+correction/coordination/integration latency and outcome measurements;
+deployed optional-extension walkthroughs; durable publication of tutorials and evidence.
 Goal 6 is not complete.
