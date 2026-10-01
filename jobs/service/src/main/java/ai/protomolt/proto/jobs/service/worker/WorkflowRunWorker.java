@@ -12,6 +12,8 @@ import ai.protomolt.proto.jobs.service.events.WorkflowRunEventFactory;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunRecord;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunStore;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunStoreException;
+import ai.protomolt.proto.jobs.service.store.ClaimLostException;
+import ai.protomolt.proto.jobs.service.store.WorkerClaim;
 import ai.protomolt.proto.jobs.v1.WorkflowRunRequest;
 import ai.protomolt.proto.http.json.MalformedProtobufJsonException;
 import ai.protomolt.proto.kafka.serde.ProtoMoltProtobufDeserializer;
@@ -184,7 +186,19 @@ public final class WorkflowRunWorker implements AutoCloseable {
      * park, and settle the row.
      */
     private void execute(WorkflowRunRecord job) {
-        CompiledWorkflow definition = parseAndVerify(job);
+        WorkerClaim claim = WorkerClaim.from(job);
+        try {
+            executeClaimed(job, claim);
+        } catch (ClaimLostException lost) {
+            // A replacement attempt owns this row now. Do not settle or
+            // requeue work performed under the expired claim.
+            LOG.info("workflow run {} lost claim for attempt {} (owner {}); stopping",
+                    claim.jobId(), claim.attempt(), claim.leaseOwner());
+        }
+    }
+
+    private void executeClaimed(WorkflowRunRecord job, WorkerClaim claim) {
+        CompiledWorkflow definition = parseAndVerify(job, claim);
         if (definition == null) {
             return;
         }
@@ -192,7 +206,7 @@ public final class WorkflowRunWorker implements AutoCloseable {
         try {
             input = context.transcoder().fromJsonDynamic(job.input, definition.inputType());
         } catch (MalformedProtobufJsonException e) {
-            fail(job, "", "MAPPING: stored input is not valid proto3 JSON for "
+            fail(job, claim, "", "MAPPING: stored input is not valid proto3 JSON for "
                     + definition.inputType().getFullName() + ": " + e.getMessage());
             return;
         }
@@ -200,7 +214,7 @@ public final class WorkflowRunWorker implements AutoCloseable {
         try {
             prior = rebuildCheckpoints(job, definition);
         } catch (CorruptJobException e) {
-            fail(job, "", "WORKFLOW: " + e.getMessage());
+            fail(job, claim, "", "WORKFLOW: " + e.getMessage());
             return;
         }
         List<WorkflowRunner.Checkpoint> accumulated = new ArrayList<>(prior);
@@ -212,7 +226,7 @@ public final class WorkflowRunWorker implements AutoCloseable {
                         // The FULL array so far, in the same transaction as
                         // the event — a crash never leaves a checkpoint
                         // without its event or vice versa.
-                        store.saveCheckpoint(job.jobId, checkpointsJson(accumulated),
+                        store.saveCheckpoint(claim, checkpointsJson(accumulated),
                                 WorkflowRunEventFactory.stepCheckpoint(job, checkpoint.name()));
                     });
             // Segment is sealed: the switch is exhaustive, so a third outcome
@@ -222,19 +236,22 @@ public final class WorkflowRunWorker implements AutoCloseable {
                     String resultJson = context.transcoder().toJson(completed.result().output());
                     String verdict = completed.result().steps().size() + " steps, output "
                             + completed.result().output().getDescriptorForType().getFullName();
-                    store.markCompleted(job.jobId, resultJson, verdict,
+                    store.markCompleted(claim, resultJson, verdict,
                             WorkflowRunEventFactory.completed(job, verdict));
                     LOG.info("workflow run {} completed: {}", job.jobId, verdict);
                 }
                 case WorkflowRunner.Segment.Parked parked -> {
-                    store.markWaiting(job.jobId, parked.step(), checkpointsJson(accumulated),
+                    store.markWaiting(claim, parked.step(), checkpointsJson(accumulated),
                             WorkflowRunEventFactory.waiting(job, parked.step()));
                     LOG.info("workflow run {} parked on external step '{}'",
                             job.jobId, parked.step());
                 }
             }
         } catch (WorkflowRunner.WorkflowExecutionException e) {
-            handleFailure(job, e);
+            if (e.getCause() instanceof ClaimLostException lost) {
+                throw lost;
+            }
+            handleFailure(job, claim, e);
         } finally {
             if (permit != null) {
                 permit.release();
@@ -243,24 +260,24 @@ public final class WorkflowRunWorker implements AutoCloseable {
     }
 
     /** Parse + verify the snapshotted definition; null means the job was failed. */
-    private CompiledWorkflow parseAndVerify(WorkflowRunRecord job) {
+    private CompiledWorkflow parseAndVerify(WorkflowRunRecord job, WorkerClaim claim) {
         JsonNode tree;
         try {
             tree = context.objectMapper().readTree(job.workflowDefinition);
         } catch (Exception e) {
-            fail(job, "", "WORKFLOW: stored workflow definition is not readable JSON: "
+            fail(job, claim, "", "WORKFLOW: stored workflow definition is not readable JSON: "
                     + e.getMessage());
             return null;
         }
         if (!(tree instanceof ObjectNode workflowNode)) {
-            fail(job, "", "WORKFLOW: stored workflow definition is not a JSON object");
+            fail(job, claim, "", "WORKFLOW: stored workflow definition is not a JSON object");
             return null;
         }
         CompiledWorkflow definition;
         try {
             definition = WorkflowJson.parse(workflowNode, context);
         } catch (WorkflowJson.WorkflowParseException e) {
-            fail(job, e.step, "WORKFLOW: stored workflow does not parse"
+            fail(job, claim, e.step, "WORKFLOW: stored workflow does not parse"
                     + (e.step == null || e.step.isEmpty() ? "" : " (step '" + e.step + "')")
                     + ": " + e.getMessage());
             return null;
@@ -274,7 +291,7 @@ public final class WorkflowRunWorker implements AutoCloseable {
                 detail.append("; [").append(finding.kind()).append("] ")
                         .append(finding.step()).append(": ").append(finding.error());
             }
-            fail(job, findings.getFirst().step(), detail.toString());
+            fail(job, claim, findings.getFirst().step(), detail.toString());
             return null;
         }
         return definition;
@@ -337,20 +354,21 @@ public final class WorkflowRunWorker implements AutoCloseable {
      * exponential backoff; retryable-exhausted lands DEAD; everything else
      * FAILS — VALIDATION being the verdict path, its violations the error.
      */
-    private void handleFailure(WorkflowRunRecord job, WorkflowRunner.WorkflowExecutionException e) {
+    private void handleFailure(WorkflowRunRecord job, WorkerClaim claim,
+            WorkflowRunner.WorkflowExecutionException e) {
         boolean retryable = isRetryable(e);
         String detail = e.kind() + ": " + e.getMessage();
         if (retryable && job.attempt < job.maxAttempts) {
             Duration backoff = backoff(job.attempt);
-            store.requeue(job.jobId, backoff);
+            store.requeue(claim, backoff);
             LOG.info("workflow run {} attempt {}/{} failed retryably ({}); requeued in {}s",
                     job.jobId, job.attempt, job.maxAttempts, detail, backoff.toSeconds());
         } else if (retryable) {
-            store.markDead(job.jobId, detail, WorkflowRunEventFactory.dead(job, detail));
+            store.markDead(claim, detail, WorkflowRunEventFactory.dead(job, detail));
             LOG.warn("workflow run {} is DEAD after {} attempt(s): {}",
                     job.jobId, job.attempt, detail);
         } else {
-            fail(job, e.step(), detail);
+            fail(job, claim, e.step(), detail);
         }
     }
 
@@ -379,8 +397,8 @@ public final class WorkflowRunWorker implements AutoCloseable {
         return Duration.ofSeconds(config.backoffBaseSeconds() * (1L << shift));
     }
 
-    private void fail(WorkflowRunRecord job, String step, String detail) {
-        store.markFailed(job.jobId, detail, WorkflowRunEventFactory.failed(job, step, detail));
+    private void fail(WorkflowRunRecord job, WorkerClaim claim, String step, String detail) {
+        store.markFailed(claim, detail, WorkflowRunEventFactory.failed(job, step, detail));
         LOG.warn("workflow run {} FAILED: {}", job.jobId, detail);
     }
 

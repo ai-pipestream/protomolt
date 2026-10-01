@@ -151,7 +151,16 @@ class WorkflowRunWorkerPostgresRecoveryIT {
         dropBoundaryFailure();
         // Backoff is production behavior; move only the durable eligibility timestamp forward so
         // this recovery assertion does not sleep for a real second.
-        restartedStore.requeue(jobId, Duration.ZERO);
+        database.inTransaction(c -> {
+            try (var update = c.prepareStatement(
+                    "UPDATE workflow_run SET run_after = now() WHERE job_id = ?")) {
+                update.setObject(1, jobId);
+                update.executeUpdate();
+            } catch (java.sql.SQLException e) {
+                throw new RuntimeException(e);
+            }
+            return null;
+        });
         WorkflowRunWorker restartedWorker = worker(restartedStore, "worker-after-restart");
         assertThat(restartedWorker.workOnce()).isTrue();
 

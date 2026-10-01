@@ -277,4 +277,33 @@ class WorkflowRunWorkerTest {
         assertThat(done.attempt).isEqualTo(2);
         assertThat(MAPPER.readTree(done.checkpoints)).hasSize(2);
     }
+
+    @Test
+    void aLostClaimInsideTheCheckpointObserverDoesNotSettleTheReplacementAttempt()
+            throws Exception {
+        UUID jobId = submit(workflows.twoStepWorkflow("in-process", null), input("hi", false));
+        store.stealClaimAtCheckpoint = 2;
+
+        assertThat(worker.workOnce()).isTrue();
+
+        WorkflowRunRecord replacement = store.get(jobId).orElseThrow();
+        assertThat(replacement.status).isEqualTo(WorkflowRunRecord.STATUS_RUNNING);
+        assertThat(replacement.leaseOwner).isEqualTo("replacement-worker");
+        assertThat(replacement.attempt).isEqualTo(2);
+        assertThat(MAPPER.readTree(replacement.checkpoints)).hasSize(1);
+        assertThat(MAPPER.readTree(replacement.checkpoints).get(0).get("name").asText())
+                .isEqualTo("tokenize");
+        assertThat(eventTypes(store)).containsExactly(
+                WorkflowRunEventRecord.TYPE_ACCEPTED,
+                WorkflowRunEventRecord.TYPE_STEP_CHECKPOINT);
+
+        // The stale attempt stopped after its observer lost the lease. It neither failed nor
+        // requeued the replacement claim, and no second job is eligible for this one-shot run.
+        assertThat(worker.workOnce()).isFalse();
+        assertThat(store.get(jobId).orElseThrow().status)
+                .isEqualTo(WorkflowRunRecord.STATUS_RUNNING);
+        assertThat(eventTypes(store)).containsExactly(
+                WorkflowRunEventRecord.TYPE_ACCEPTED,
+                WorkflowRunEventRecord.TYPE_STEP_CHECKPOINT);
+    }
 }
