@@ -52,6 +52,41 @@ The fixture enforces idempotency for its write only, not arbitrary external RPCs
 
 ## Acceptance backlog
 
+### Registration recovery prerequisite
+
+Source review found that unary `RegisterWorkflowAuthor` creates a server-owned
+`DelegationBridge` stream. Closing or killing its client process does not close
+that stream. The current registration rejects an already connected worker, so
+worker-only restart is not yet supported even when its local snapshot is valid.
+Missing bridge sessions are reported as generic unavailable errors; that status
+cannot safely identify registration loss after a coordinator restart.
+
+Keep the existing registration's conflict semantics. Review an additive
+`EnsureWorkflowAuthorRegistration` operation that reuses the registration request
+and response shapes and requires the same authenticated author identity. Under
+the bridge's registration lock, it would return the current healthy bridge-owned
+registration only when the complete validated hello metadata matches; changed
+metadata conflicts. Otherwise it would use the existing registration/resumption
+path. It must not replace an unrelated direct delegation stream or infer success
+from a conflict. Reads of registration state and creation must be atomic with
+respect to other registrations; a check followed by an unlocked register is not
+sufficient. Unknown fields, invalid metadata and unsupported rules fail closed.
+
+This operation would ensure one server-owned sequence writer, not assert exclusive
+ownership of a remote client process. Existing author mutations authenticate the
+principal rather than a client session. Distributed process fencing would need a
+separate lease/generation contract enforced on every mutation; this proposal must
+not advertise that guarantee. The sample retains its exclusive local state lock.
+
+Before implementation, review this behavior and add contract/handler tests for
+exact repeated calls, changed metadata, foreign principals, concurrent calls,
+direct-stream conflicts, lost registration replies and coordinator restart.
+The installed-process test must kill only the author at its recorded effect
+boundary and restart against the still-running coordinator. Restarting the
+coordinator to clear the registration would not prove the required recovery.
+
+### Remaining implementation and proof
+
 1. Compile and validate the sample-private state contract, including invalid
    version/queue/cursor/identity/order fixtures. Review scalar projection coverage
    and record runtime-only obligations without expanding the generators.
