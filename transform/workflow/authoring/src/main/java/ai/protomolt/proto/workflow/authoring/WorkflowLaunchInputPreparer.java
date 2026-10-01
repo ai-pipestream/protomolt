@@ -196,8 +196,10 @@ public final class WorkflowLaunchInputPreparer implements WorkflowLaunchInputOpe
         PinnedSchema schema;
         try {
             schema = schema(bytes, prepared.admitted().workflow().inputType().getFullName());
-            if (!schema.type().getFile().toProto().equals(
-                    prepared.admitted().workflow().inputType().getFile().toProto())) {
+            // Extension-aware and unknown-option parses can hold identical wire
+            // descriptors while protobuf object equality reports a difference.
+            if (!schema.type().getFile().toProto().toByteString().equals(
+                    prepared.admitted().workflow().inputType().getFile().toProto().toByteString())) {
                 throw new IllegalArgumentException("input type does not match pinned descriptor file");
             }
         } catch (Exception invalid) {
