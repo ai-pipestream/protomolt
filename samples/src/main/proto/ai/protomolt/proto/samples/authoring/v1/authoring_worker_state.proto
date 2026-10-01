@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.samples.authoring.v1;
+
+import "ai/protomolt/proto/delegation/v1/delegation_actions.proto";
+import "ai/protomolt/proto/samples/authoring/v1/authoring_fixture.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "ai/protomolt/proto/workflow/authoring/v1/workflow_author.proto";
+import "ai/protomolt/proto/workflow/authoring/v1/workflow_preparation.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.samples.authoring.v1";
+
+// Sample-private recovery state, not a new coordinator API. Validate every read
+// and write, reject unknown fields and unsupported versions, cap at 16 MiB, and
+// hold an exclusive process lock. Commit with atomic replace plus file/directory
+// fsync; an unsuccessful commit prevents any dependent network operation.
+message AuthoringWorkerState {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "worker-state-assignment-cursor"
+    message: "queued assignments must be covered by the saved discovery cursor"
+    expression: "this.pending.all(p, p.assignment.cursor <= this.discovery_cursor)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "worker-state-submission-owner"
+    message: "saved submissions must use this worker identity"
+    expression: "this.pending.all(p, !has(p.submission) || p.submission.worker_id == this.worker_id)"
+  };
+  // Unsupported state versions fail closed rather than resetting the cursor.
+  int32 format_version = 1 [(ai.protomolt.proto.validate.v1.field).int32.const = 1];
+  // Exact configured coordinator target; opening under another target fails.
+  string coordinator = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 2048}}];
+  // Exact fixture target; a restart cannot redirect a persisted probe intent.
+  string fixture = 3 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 2048}}];
+  // Named authenticated author. Credentials are supplied separately at runtime.
+  string worker_id = 4 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {slug: true, max_len: 128}}];
+  // Persist the discovered queue and this watermark in the same atomic commit.
+  int64 discovery_cursor = 5 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // Unique original task/attempt identities, ordered by discovery cursor. Request
+  // no more new assignments than available capacity; draining removes only an
+  // attempt whose terminal outcome was verified from trusted protocol events.
+  repeated AuthoringWorkerPending pending = 6 [(ai.protomolt.proto.validate.v1.field).repeated.max_items = 64];
+}
+
+// Persist each intent before sending it. Presence means a call may have happened;
+// absence of a reply does not mean the server failed to commit its effect.
+message AuthoringWorkerPending {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "worker-pending-intent-order"
+    message: "preparation requires a saved probe and submission requires preparation"
+    expression: "(!has(this.preparation) || has(this.probe)) && (!has(this.submission) || has(this.preparation))"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "worker-pending-preparation-identity"
+    message: "preparation must match the assigned task and attempt at revision one"
+    expression: "!has(this.preparation) || (this.preparation.task_id == this.assignment.task_id && this.preparation.attempt == this.assignment.attempt && this.preparation.revision == 1)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "worker-pending-submission-identity"
+    message: "submission must match the assigned task and attempt at revision one"
+    expression: "!has(this.submission) || (this.submission.task_id == this.assignment.task_id && this.submission.candidate.attempt == this.assignment.attempt && this.submission.candidate.revision == 1)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "worker-pending-observed-submission"
+    message: "an observed submission requires its exact saved intent and consumed cursor"
+    expression: "this.submission_cursor == 0 || (has(this.submission) && this.submission_cursor <= this.review_cursor)"
+  };
+  // Original offer digest must equal current context before accepting or probing.
+  ai.protomolt.proto.workflow.authoring.v1.WorkflowAuthorAssignment assignment = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Deterministic operation UUID and exact normalized content, saved before write.
+  WriteRecordRequest probe = 2;
+  // Exact source bytes and stable preparation UUID, saved before preparation.
+  ai.protomolt.proto.workflow.authoring.v1.PrepareWorkflowCandidateRequest preparation = 3;
+  // Exact candidate bytes, saved before submission. Validate nested Any with the
+  // frozen deliverable descriptor and compare recorded candidate before review.
+  ai.protomolt.proto.delegation.v1.SubmitCandidateRequest submission = 4;
+  // Cursor through this assigned attempt's events. Persist only after handling
+  // every returned event; do not skip an unprocessed candidate or terminal result.
+  int64 review_cursor = 5 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // Zero until a trusted completion event exactly matches submission.candidate.
+  // Commit this observation with review_cursor before accepting a later review.
+  int64 submission_cursor = 6 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+}
