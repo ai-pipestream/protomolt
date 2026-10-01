@@ -54,7 +54,16 @@ The configured authoring host also mounts two fixed POST routes under
 console session's `worker-coordinate` scope. The template comes from the server's
 pinned policy; start accepts a task UUID, worker, template hash and objective.
 Retry the same request to recover its original offer. This authority does not
-grant workflow launch. The routes exist; a browser authoring form is still pending.
+grant workflow launch.
+
+For an authenticated named principal, `Author a workflow` opens the configured
+authoring form. The server supplies the contract and required checks; the operator
+chooses an admitted connected worker and enters the objective. The browser saves
+the complete request before sending it. After an uncertain response, use the saved
+start to retry the same task UUID, including after a page reload. Saved starts are
+separated by principal in browser local storage. They are not encrypted, and they
+are not moved between accounts. A recorded original offer is an acknowledgement;
+the task view reports current progress and acceptance.
 
 When the authoring host and authenticated console are enabled, four fixed POST
 routes are mounted under `/api/workflow-launch`: `/accepted`, `/contract`,
