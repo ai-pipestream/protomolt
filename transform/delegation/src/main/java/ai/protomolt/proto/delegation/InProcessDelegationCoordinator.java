@@ -1041,6 +1041,9 @@ public final class InProcessDelegationCoordinator
             case CANCELLATION -> frame.getCancellation().getAttempt();
             case REVISION_REQUESTED -> frame.getRevisionRequested().getAttempt();
             case ACCEPTED -> frame.getAccepted().getAttempt();
+            case REVIEW_STARTED -> frame.getReviewStarted().getIdentity().getAttempt();
+            case REVIEW_FAILED -> frame.getReviewFailed().getIdentity().getAttempt();
+            case REVIEW_DEFERRED -> frame.getReviewDeferred().getIdentity().getAttempt();
             // Task messages carry no attempt; they sequence in the task's
             // attempt-0 scope, exactly as on the live path.
             case TASK_MESSAGE -> 0;

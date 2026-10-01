@@ -156,6 +156,11 @@ public final class DelegationRecordProjector {
                                 CompletenessStatus.COMPLETENESS_STATUS_PARTIAL,
                                 "the lease expired before acceptance");
                     }
+                    case REVIEW_STARTED, REVIEW_FAILED, REVIEW_DEFERRED -> {
+                        // Review infrastructure status does not certify or reject
+                        // the deliverable. Its full identity remains in the
+                        // transcript artifact; only a verdict changes acceptance.
+                    }
                     default -> {
                         // Admissions, renewals, and messages are recorded
                         // context, not milestones; the transcript artifact

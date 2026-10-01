@@ -1,8 +1,10 @@
 # Durable candidate review status and retry
 
-Status: reviewed design with standalone protobuf messages in
-`transform/delegation/src/main/proto/ai/protomolt/proto/delegation/v1/review.proto`.
-No status or retry API described here is available yet. This extends the delegation transcript and current reviewer;
+Status: review messages, transcript payloads, reducer rules, author-event readers,
+and console projections are implemented in the current development branch.
+Coordinator emission, recovery, and the retry RPC remain unimplemented. Existing
+candidates therefore still project as legacy pending; the new statuses are not
+yet an available end-to-end feature. This extends the delegation transcript and current reviewer;
 it does not introduce another task lifecycle or evaluation provider interface.
 
 ## Current gap
@@ -111,16 +113,16 @@ remain manually reviewable but are not inferred failed or interrupted, and
 cannot use invocation-bound retry without a recorded invocation. Recovery never
 invents an invocation or executes a legacy candidate automatically.
 
-The current repository-service transcript adapter replaces one blob with an
-unconditional PutBlob. A timed-out request may still finish later. Stopping the
-live writer is necessary but does not fence that request across restart; merely
-reloading the latest snapshot is insufficient. Before automatic recovery and
-retry can meet the no-stale-overwrite guarantee, the durable adapter needs
-conditional/versioned writes or an equivalent fenced publication mechanism.
-Until that capability is established, an uncertain write must remain fail-closed
-and must not be described as recoverable by simply restarting the coordinator.
-This is a storage prerequisite for the runtime implementation, not a restriction
-that the new protobuf annotations can enforce.
+The prerequisite storage changes in this branch use conditional repository writes
+and retain the confirmed blob version. An uncertain write poisons that adapter
+instance; recovery requires a fresh instance and a verified read. Conditional
+writes fence a delayed old request against a newer committed version. The
+repository service must support the new RPCs and explicitly enable a qualified
+backend; there is no fallback to unconditional PutBlob. Stop old unconditional
+coordinators before rollout. These changes are not evidence of a live deployment.
+Coordinator publication must also fail closed after an uncertain save, so it
+cannot expose stale in-memory state. That runtime obligation remains to be
+implemented; protobuf annotations cannot enforce it.
 
 ## Validation and compatibility
 

@@ -24,6 +24,16 @@ export interface TaskSummary {
   lastProgressSeq: number
   lastCheckpointSeq: number
   lastCursor: number
+  review?: {
+    status: 'none' | 'legacy_pending' | 'running' | 'failed' | 'deferred' |
+      'accepted' | 'revision_requested' | 'superseded'
+    invocationId?: string
+    attempt?: number
+    revision?: number
+    startedAt?: string
+    deadline?: string
+    failureCode?: 'infrastructure' | 'deadline' | 'interrupted'
+  }
 }
 
 export interface TaskEvent {
@@ -298,6 +308,7 @@ const FRAME_KINDS = [
   'hello', 'accept', 'reject', 'heartbeat', 'progress', 'checkpoint', 'blocked',
   'failed', 'cancelled', 'completion', 'admission', 'offer', 'renewal', 'expired',
   'cancellation', 'revisionRequested', 'accepted', 'taskMessage',
+  'reviewStarted', 'reviewFailed', 'reviewDeferred',
 ] as const
 
 /** Which protocol arm a recorded frame carries; 'frame' when none is recognized. */
@@ -308,8 +319,19 @@ export function frameKind(event: TaskEvent): string {
 
 /** The frame's human line: its message, reason, feedback, or objective. */
 export function frameText(event: TaskEvent): string {
-  const value = frame(event)[frameKind(event)] as Frame | undefined
+  const kind = frameKind(event)
+  const value = frame(event)[kind] as Frame | undefined
   if (!value) return 'Recorded protocol frame'
+  if (kind === 'reviewStarted') return 'Independent review started'
+  if (kind === 'reviewDeferred') return 'Review is waiting for a manual decision'
+  if (kind === 'reviewFailed') {
+    const reasons: Record<string, string> = {
+      REVIEW_FAILURE_CODE_INFRASTRUCTURE: 'Review could not finish because its infrastructure failed',
+      REVIEW_FAILURE_CODE_DEADLINE: 'Review exceeded its deadline',
+      REVIEW_FAILURE_CODE_INTERRUPTED: 'Review was interrupted by coordinator recovery',
+    }
+    return reasons[value.code] ?? 'Review could not finish'
+  }
   return (
     value.text ??
     value.message ??
@@ -410,6 +432,18 @@ export function latestCandidate(events: TaskEvent[]): CandidateView | null {
 
 /** State and recovery are derived from the protocol; no speculative agent status. */
 export function taskRecovery(task: TaskSummary): { reason: string; actor: string; action: string; retry: boolean; cancel: boolean } {
+  if (task.phase === 'candidate' && task.review?.status === 'running') return {
+    reason: 'Independent review is running.', actor: 'Reviewer',
+    action: 'Wait for the review result, or inspect the evidence for a manual decision.', retry: false, cancel: true,
+  }
+  if (task.phase === 'candidate' && task.review?.status === 'failed') return {
+    reason: `Review could not finish (${task.review.failureCode ?? 'unknown cause'}).`, actor: 'Coordinator',
+    action: 'Inspect the recorded review status and the candidate evidence before a manual decision.', retry: false, cancel: true,
+  }
+  if (task.phase === 'candidate' && task.review?.status === 'deferred') return {
+    reason: 'Automatic review is waiting for a manual decision.', actor: 'Reviewer',
+    action: 'Inspect the result and evidence, then accept or request a revision.', retry: false, cancel: true,
+  }
   if (task.phase === 'candidate') return {
     reason: 'A validated candidate is waiting for review.', actor: 'Reviewer',
     action: 'Inspect the result and evidence, then accept or request a revision.', retry: false, cancel: true,

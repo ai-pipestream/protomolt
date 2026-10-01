@@ -16,8 +16,14 @@ import ai.protomolt.proto.delegation.v1.AcceptanceCheck;
 import ai.protomolt.proto.delegation.v1.CheckEvidence;
 import ai.protomolt.proto.delegation.v1.CheckVerdict;
 import ai.protomolt.proto.delegation.v1.CompletionCandidate;
+import ai.protomolt.proto.delegation.v1.CandidateReviewIdentity;
 import ai.protomolt.proto.delegation.v1.DelegateRequest;
+import ai.protomolt.proto.delegation.v1.DelegateResponse;
 import ai.protomolt.proto.delegation.v1.DeliverableContract;
+import ai.protomolt.proto.delegation.v1.Lane;
+import ai.protomolt.proto.delegation.v1.ReviewFailed;
+import ai.protomolt.proto.delegation.v1.ReviewFailureCode;
+import ai.protomolt.proto.delegation.v1.ReviewStarted;
 import ai.protomolt.proto.delegation.v1.TaskSpec;
 import ai.protomolt.proto.delegation.v1.Transcript;
 import ai.protomolt.proto.delegation.v1.TranscriptEntry;
@@ -95,6 +101,44 @@ class WorkflowAuthorTaskReaderAdversarialTest {
                 assertThat(event.getTaskId()).isEqualTo(TASK);
                 assertThat(attempt(event.getEntry())).isEqualTo(1);
             });
+            assertThatThrownBy(() -> reader(fixture.repo).events(request(TASK, 1, 0, 64), author(SECOND)))
+                    .isInstanceOfSatisfying(WorkflowPreparationException.class, error ->
+                            assertThat(error.kind()).isEqualTo(WorkflowPreparationException.Kind.PERMISSION_DENIED));
+            assertThatThrownBy(() -> reader(fixture.repo).events(request(TASK, 2, 0, 64), author(AUTHOR)))
+                    .isInstanceOfSatisfying(WorkflowPreparationException.class, error ->
+                            assertThat(error.kind()).isEqualTo(WorkflowPreparationException.Kind.PERMISSION_DENIED));
+        }
+    }
+
+    @Test
+    void reviewEventsAreScopedToAssignedWorkerAndAttempt() throws Exception {
+        try (Fixture fixture = new Fixture(AUTHOR, SECOND, 4)) {
+            fixture.offer(AUTHOR, TASK);
+            fixture.awaitPhase(TASK, DelegationReducer.Phase.LEASED, 1);
+            fixture.coordinator.cancel(TASK, "reassign author task");
+            fixture.awaitPhase(TASK, DelegationReducer.Phase.CANCELLED, 1);
+            fixture.offer(SECOND, TASK);
+            fixture.awaitPhase(TASK, DelegationReducer.Phase.LEASED, 2);
+            Transcript withReview = withReviewAttemptOne(fixture.transcript());
+            fixture.repo.replace(withReview);
+            assertThat(new DelegationReducer().reduce(withReview).clean()).isTrue();
+
+            var attemptOne = reader(fixture.repo).events(request(TASK, 1, 0, 64), author(AUTHOR));
+            assertThat(attemptOne.getEventsList()).anySatisfy(event ->
+                    assertThat(event.getEntry().getCoordinatorFrame().hasReviewStarted()).isTrue());
+            assertThat(attemptOne.getEventsList()).anySatisfy(event ->
+                    assertThat(event.getEntry().getCoordinatorFrame().hasReviewFailed()).isTrue());
+            assertThat(attemptOne.getEventsList()).filteredOn(event ->
+                    event.getEntry().hasCoordinatorFrame()
+                            && (event.getEntry().getCoordinatorFrame().hasReviewStarted()
+                                    || event.getEntry().getCoordinatorFrame().hasReviewFailed()))
+                    .allSatisfy(event -> assertThat(attempt(event.getEntry())).isEqualTo(1));
+
+            var attemptTwo = reader(fixture.repo).events(request(TASK, 2, 0, 64), author(SECOND));
+            assertThat(attemptTwo.getEventsList()).noneMatch(event ->
+                    event.getEntry().hasCoordinatorFrame()
+                            && (event.getEntry().getCoordinatorFrame().hasReviewStarted()
+                                    || event.getEntry().getCoordinatorFrame().hasReviewFailed()));
             assertThatThrownBy(() -> reader(fixture.repo).events(request(TASK, 1, 0, 64), author(SECOND)))
                     .isInstanceOfSatisfying(WorkflowPreparationException.class, error ->
                             assertThat(error.kind()).isEqualTo(WorkflowPreparationException.Kind.PERMISSION_DENIED));
@@ -337,8 +381,80 @@ class WorkflowAuthorTaskReaderAdversarialTest {
             case EXPIRED -> frame.getExpired().getAttempt();
             case REVISION_REQUESTED -> frame.getRevisionRequested().getAttempt();
             case ACCEPTED -> frame.getAccepted().getAttempt();
+            case REVIEW_STARTED -> frame.getReviewStarted().getIdentity().getAttempt();
+            case REVIEW_FAILED -> frame.getReviewFailed().getIdentity().getAttempt();
+            case REVIEW_DEFERRED -> frame.getReviewDeferred().getIdentity().getAttempt();
             default -> 0;
         };
+    }
+
+    private static Transcript withReviewAttemptOne(Transcript transcript) {
+        WorkflowAuthoringDeliverable authored = WorkflowPreparationContractTest.authored("a".repeat(64));
+        CompletionCandidate.Builder candidate = CompletionCandidate.newBuilder().setAttempt(1).setRevision(1)
+                .setSummary("candidate for review events").setResult(Any.pack(authored))
+                .addArtifacts(POLICY);
+        for (String check : WorkflowAuthoringReviewer.REQUIRED_CHECKS) {
+            candidate.addEvidence(CheckEvidence.newBuilder().setCheckName(check)
+                    .setVerdict(CheckVerdict.CHECK_VERDICT_PASSED)
+                    .setRanAt(Timestamp.newBuilder().setSeconds(NOW.getEpochSecond()))
+                    .addArtifacts(POLICY));
+        }
+        long workerSeq = transcript.getEntriesList().stream().filter(TranscriptEntry::hasWorkerFrame)
+                .filter(entry -> entry.getWorkerId().equals(AUTHOR)
+                        && entry.getWorkerFrame().getTaskId().equals(TASK))
+                .mapToLong(entry -> entry.getWorkerFrame().getSeq()).max().orElse(0) + 1;
+        DelegateRequest candidateFrame = DelegateRequest.newBuilder().setFrameId(UUID.randomUUID().toString())
+                .setTaskId(TASK).setSeq(workerSeq)
+                .setSentAt(Timestamp.newBuilder().setSeconds(NOW.getEpochSecond()))
+                .setCompletion(candidate).build();
+        TranscriptEntry candidateEntry = TranscriptEntry.newBuilder().setWorkerId(AUTHOR)
+                .setLane(Lane.LANE_WORKER).setWorkerFrame(candidateFrame).build();
+        Transcript withCandidate = transcript.toBuilder().addEntries(candidateEntry).build();
+        TranscriptEntry offer = withCandidate.getEntriesList().stream()
+                .filter(entry -> entry.hasCoordinatorFrame() && entry.getCoordinatorFrame().hasOffer()
+                        && entry.getCoordinatorFrame().getTaskId().equals(TASK)).findFirst().orElseThrow();
+        String invocation = "11111111-1111-4111-8111-111111111111";
+        CandidateReviewIdentity identity = ai.protomolt.proto.delegation.DelegationReviewBindings
+                .identity(offer, candidateEntry, invocation);
+        long coordinatorSeq = withCandidate.getEntriesList().stream().filter(TranscriptEntry::hasCoordinatorFrame)
+                .filter(entry -> entry.getWorkerId().equals(AUTHOR)
+                        && entry.getCoordinatorFrame().getTaskId().equals(TASK)
+                        && !entry.getCoordinatorFrame().hasCancellation()
+                        && attempt(entry) == 1)
+                .mapToLong(entry -> entry.getCoordinatorFrame().getSeq()).max().orElse(0) + 1;
+        Timestamp startedAt = Timestamp.newBuilder().setSeconds(NOW.getEpochSecond()).build();
+        DelegateResponse startFrame = DelegateResponse.newBuilder().setFrameId(UUID.randomUUID().toString())
+                .setTaskId(TASK).setSeq(coordinatorSeq).setSentAt(startedAt)
+                .setReviewStarted(ReviewStarted.newBuilder().setIdentity(identity).setStartedAt(startedAt)
+                        .setDeadline(Timestamp.newBuilder().setSeconds(NOW.getEpochSecond() + 300))).build();
+        TranscriptEntry startEntry = TranscriptEntry.newBuilder().setWorkerId(AUTHOR)
+                .setLane(Lane.LANE_COORDINATOR).setCoordinatorFrame(startFrame).build();
+        DelegateResponse failedFrame = DelegateResponse.newBuilder().setFrameId(UUID.randomUUID().toString())
+                .setTaskId(TASK).setSeq(coordinatorSeq + 1)
+                .setSentAt(startedAt)
+                .setReviewFailed(ReviewFailed.newBuilder().setIdentity(identity)
+                        .setCode(ReviewFailureCode.REVIEW_FAILURE_CODE_INFRASTRUCTURE)).build();
+        TranscriptEntry failedEntry = TranscriptEntry.newBuilder().setWorkerId(AUTHOR)
+                .setLane(Lane.LANE_COORDINATOR).setCoordinatorFrame(failedFrame).build();
+        List<TranscriptEntry> entries = new java.util.ArrayList<>(withCandidate.getEntriesList());
+        if (!entries.remove(candidateEntry)) throw new AssertionError("candidate entry is missing");
+        int cancelPosition = -1;
+        for (int i = 0; i < entries.size(); i++) {
+            TranscriptEntry entry = entries.get(i);
+            if (entry.hasCoordinatorFrame() && entry.getCoordinatorFrame().hasCancellation()
+                    && entry.getCoordinatorFrame().getTaskId().equals(TASK)
+                    && entry.getCoordinatorFrame().getCancellation().getAttempt() == 1) {
+                cancelPosition = i;
+                entries.set(i, entry.toBuilder().setCoordinatorFrame(entry.getCoordinatorFrame().toBuilder()
+                        .setSeq(coordinatorSeq + 2)).build());
+                break;
+            }
+        }
+        if (cancelPosition < 0) throw new AssertionError("attempt-one cancellation is missing");
+        entries.add(cancelPosition, candidateEntry);
+        entries.add(cancelPosition + 1, startEntry);
+        entries.add(cancelPosition + 2, failedEntry);
+        return withCandidate.toBuilder().clearEntries().addAllEntries(entries).build();
     }
 
     private static TaskSpec authorSpec() {

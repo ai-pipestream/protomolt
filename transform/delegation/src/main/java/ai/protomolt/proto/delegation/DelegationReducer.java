@@ -5,10 +5,13 @@ import ai.protomolt.proto.delegation.v1.CheckVerdict;
 import ai.protomolt.proto.delegation.v1.Checkpoint;
 import ai.protomolt.proto.delegation.v1.CheckpointReference;
 import ai.protomolt.proto.delegation.v1.CompletionCandidate;
+import ai.protomolt.proto.delegation.v1.CandidateReviewIdentity;
 import ai.protomolt.proto.delegation.v1.DelegateRequest;
 import ai.protomolt.proto.delegation.v1.DelegateResponse;
 import ai.protomolt.proto.delegation.v1.DeliverableContract;
 import ai.protomolt.proto.delegation.v1.Lane;
+import ai.protomolt.proto.delegation.v1.ReviewFailureCode;
+import ai.protomolt.proto.delegation.v1.ReviewStarted;
 import ai.protomolt.proto.delegation.v1.TaskOffer;
 import ai.protomolt.proto.delegation.v1.TaskSpec;
 import ai.protomolt.proto.delegation.v1.Transcript;
@@ -106,7 +109,32 @@ public final class DelegationReducer {
     /** An immutable snapshot of one task's reduced state. */
     public record TaskState(String taskId, Phase phase, int attempt, String holder,
                             int candidateRevision, int lastProgressSeq,
-                            int lastCheckpointSeq) {
+                            int lastCheckpointSeq, ReviewState review) {
+        public TaskState(String taskId, Phase phase, int attempt, String holder,
+                int candidateRevision, int lastProgressSeq, int lastCheckpointSeq) {
+            this(taskId, phase, attempt, holder, candidateRevision, lastProgressSeq,
+                    lastCheckpointSeq, ReviewState.none());
+        }
+    }
+
+    /** Status of the latest candidate review, independent of task phase. */
+    public enum ReviewStatus {
+        NONE, LEGACY_PENDING, RUNNING, FAILED, DEFERRED, ACCEPTED,
+        REVISION_REQUESTED, SUPERSEDED
+    }
+
+    public record ReviewState(ReviewStatus status, ReviewStarted started,
+            ReviewFailureCode failureCode) {
+        public ReviewState {
+            Objects.requireNonNull(status, "status");
+            Objects.requireNonNull(started, "started");
+            Objects.requireNonNull(failureCode, "failureCode");
+        }
+
+        public static ReviewState none() {
+            return new ReviewState(ReviewStatus.NONE, ReviewStarted.getDefaultInstance(),
+                    ReviewFailureCode.REVIEW_FAILURE_CODE_UNSPECIFIED);
+        }
     }
 
     /** The reduction outcome: every finding, plus the final state of every task. */
@@ -131,12 +159,15 @@ public final class DelegationReducer {
         private String offeree = "";
         private String holder = "";
         private TaskSpec spec;
+        private TranscriptEntry offerEntry;
+        private TranscriptEntry candidateEntry;
         private Timestamp leaseExpiry;
         private int candidateRevision;
         private int expectedRevision = 1;
         private int lastProgressSeq;
         private int lastCheckpointSeq;
         private final Map<String, String> checkpoints = new HashMap<>();
+        private ReviewState review = ReviewState.none();
 
         private TaskTrack(String taskId) {
             this.taskId = taskId;
@@ -150,7 +181,7 @@ public final class DelegationReducer {
 
         private TaskState snapshot() {
             return new TaskState(taskId, phase, attempt, holder, candidateRevision,
-                    lastProgressSeq, lastCheckpointSeq);
+                    lastProgressSeq, lastCheckpointSeq, review);
         }
     }
 
@@ -172,18 +203,25 @@ public final class DelegationReducer {
         Map<String, TaskTrack> tasks = new LinkedHashMap<>();
         Map<String, ByteString> seen = new HashMap<>();
         Map<String, Long> expectedSeq = new HashMap<>();
+        Set<String> invocationIds = new LinkedHashSet<>();
+        Set<String> retryIds = new LinkedHashSet<>();
+        TranscriptEntry previous = null;
         for (TranscriptEntry entry : transcript.getEntriesList()) {
-            reduce(entry, sessions, tasks, seen, expectedSeq, findings);
+            reduce(entry, previous, sessions, tasks, seen, expectedSeq,
+                    invocationIds, retryIds, findings);
+            previous = entry;
         }
         Map<String, TaskState> states = new LinkedHashMap<>();
         tasks.forEach((taskId, track) -> states.put(taskId, track.snapshot()));
         return new Result(List.copyOf(findings), Map.copyOf(states));
     }
 
-    private static void reduce(TranscriptEntry entry, Map<String, Session> sessions,
+    private static void reduce(TranscriptEntry entry, TranscriptEntry previous,
+                               Map<String, Session> sessions,
                                Map<String, TaskTrack> tasks,
                                Map<String, ByteString> seen,
-                               Map<String, Long> expectedSeq, List<Finding> findings) {
+                               Map<String, Long> expectedSeq, Set<String> invocationIds,
+                               Set<String> retryIds, List<Finding> findings) {
         // Structural validation first: a malformed frame cannot drive state.
         try {
             DelegationValidation.validate(entry);
@@ -198,9 +236,9 @@ public final class DelegationReducer {
         // Idempotent redelivery: identical bytes under a known frame id replay
         // silently; changed bytes under a known id are a conflicting duplicate and
         // never drive state.
-        ByteString previous = seen.get(frameId);
-        if (previous != null) {
-            if (!previous.equals(bytes)) {
+        ByteString priorFrame = seen.get(frameId);
+        if (priorFrame != null) {
+            if (!priorFrame.equals(bytes)) {
                 findings.add(new Finding(frameTaskId(entry), frameId, "duplicate",
                         "frame id was already recorded with a different payload; the"
                                 + " conflicting duplicate is ignored"));
@@ -232,12 +270,29 @@ public final class DelegationReducer {
         }
         expectedSeq.put(seqKey, Math.max(expected, seq) + 1);
 
+        int transitionFindingsBefore = findings.size();
         if (workerLane) {
             reduceWorker(entry.getWorkerId(), request, task, sessions, tasks,
                     findings);
         } else {
             reduceCoordinator(entry.getWorkerId(), response, task, sessions, tasks,
-                    findings);
+                    previous, invocationIds, retryIds, findings);
+        }
+        if (findings.size() == transitionFindingsBefore && workerLane && request.hasCompletion()) {
+            TaskTrack current = tasks.get(taskId);
+            if (current != null && current.phase == Phase.CANDIDATE) {
+                current.candidateEntry = entry;
+                current.review = new ReviewState(ReviewStatus.LEGACY_PENDING,
+                        ReviewStarted.getDefaultInstance(),
+                        ReviewFailureCode.REVIEW_FAILURE_CODE_UNSPECIFIED);
+            }
+        }
+        if (findings.size() == transitionFindingsBefore && !workerLane && response.hasOffer()) {
+            tasks.get(taskId).offerEntry = entry;
+        }
+        if (findings.size() == transitionFindingsBefore && workerLane
+                && task != null && task.attemptTerminal()) {
+            supersedeReview(task);
         }
     }
 
@@ -570,6 +625,8 @@ public final class DelegationReducer {
                                           TaskTrack task,
                                           Map<String, Session> sessions,
                                           Map<String, TaskTrack> tasks,
+                                          TranscriptEntry previous,
+                                          Set<String> invocationIds, Set<String> retryIds,
                                           List<Finding> findings) {
         String taskId = frame.getTaskId();
         String frameId = frame.getFrameId();
@@ -598,7 +655,8 @@ public final class DelegationReducer {
                             "the task is accepted; no coordinator frame may follow"));
                     return;
                 }
-                reduceCoordinatorTask(workerId, frame, task, findings);
+                reduceCoordinatorTask(workerId, frame, task, previous,
+                        invocationIds, retryIds, findings);
             }
         }
     }
@@ -651,6 +709,8 @@ public final class DelegationReducer {
         task.holder = "";
         task.spec = offer.getSpec();
         task.leaseExpiry = offer.getExpiresAt();
+        task.candidateEntry = null;
+        supersedeReview(task);
     }
 
     private static boolean resolvesTo(TaskTrack task, CheckpointReference reference,
@@ -683,7 +743,9 @@ public final class DelegationReducer {
     }
 
     private static void reduceCoordinatorTask(String workerId, DelegateResponse frame,
-                                              TaskTrack task, List<Finding> findings) {
+                                              TaskTrack task, TranscriptEntry previous,
+                                              Set<String> invocationIds,
+                                              Set<String> retryIds, List<Finding> findings) {
         String taskId = frame.getTaskId();
         String frameId = frame.getFrameId();
         switch (frame.getPayloadCase()) {
@@ -718,6 +780,7 @@ public final class DelegationReducer {
                     return;
                 }
                 task.phase = Phase.EXPIRED;
+                supersedeReview(task);
             }
             case CANCELLATION -> {
                 int attempt = frame.getCancellation().getAttempt();
@@ -735,6 +798,7 @@ public final class DelegationReducer {
                     return;
                 }
                 task.phase = Phase.CANCELLED;
+                supersedeReview(task);
             }
             case REVISION_REQUESTED -> {
                 int attempt = frame.getRevisionRequested().getAttempt();
@@ -750,8 +814,12 @@ public final class DelegationReducer {
                                     + task.candidateRevision));
                     return;
                 }
+                if (!validVerdictInvocation(task, frame.getRevisionRequested().getReviewInvocationId(),
+                        frameId, frame.getSentAt(), findings)) return;
                 task.phase = Phase.LEASED;
                 task.expectedRevision = revision + 1;
+                task.review = new ReviewState(ReviewStatus.REVISION_REQUESTED,
+                        task.review.started(), ReviewFailureCode.REVIEW_FAILURE_CODE_UNSPECIFIED);
             }
             case ACCEPTED -> {
                 int attempt = frame.getAccepted().getAttempt();
@@ -765,7 +833,41 @@ public final class DelegationReducer {
                                     + " with open candidate revision " + task.candidateRevision));
                     return;
                 }
+                if (!validVerdictInvocation(task, frame.getAccepted().getReviewInvocationId(),
+                        frameId, frame.getSentAt(), findings)) return;
                 task.phase = Phase.ACCEPTED;
+                task.review = new ReviewState(ReviewStatus.ACCEPTED, task.review.started(),
+                        ReviewFailureCode.REVIEW_FAILURE_CODE_UNSPECIFIED);
+            }
+            case REVIEW_STARTED -> reviewStarted(workerId, frame, task, previous, invocationIds,
+                    retryIds, findings);
+            case REVIEW_FAILED -> {
+                if (validTerminalReview(workerId, frame, task,
+                        frame.getReviewFailed().getIdentity(), findings)) {
+                    if (frame.getReviewFailed().getCode()
+                            == ReviewFailureCode.REVIEW_FAILURE_CODE_DEADLINE
+                            && Timestamps.compare(frame.getSentAt(),
+                                    task.review.started().getDeadline()) < 0) {
+                        findings.add(new Finding(taskId, frameId, "review",
+                                "deadline failure precedes the review deadline"));
+                        return;
+                    }
+                    task.review = new ReviewState(ReviewStatus.FAILED, task.review.started(),
+                            frame.getReviewFailed().getCode());
+                }
+            }
+            case REVIEW_DEFERRED -> {
+                if (validTerminalReview(workerId, frame, task,
+                        frame.getReviewDeferred().getIdentity(), findings)) {
+                    if (Timestamps.compare(frame.getSentAt(),
+                            task.review.started().getDeadline()) >= 0) {
+                        findings.add(new Finding(taskId, frameId, "review",
+                                "deferred review reached the deadline and must fail instead"));
+                        return;
+                    }
+                    task.review = new ReviewState(ReviewStatus.DEFERRED, task.review.started(),
+                            ReviewFailureCode.REVIEW_FAILURE_CODE_UNSPECIFIED);
+                }
             }
             case TASK_MESSAGE -> {
                 // Non-transitioning by contract: recorded and sequenced like any
@@ -781,6 +883,94 @@ public final class DelegationReducer {
             }
             default -> findings.add(new Finding(taskId, frameId, "transition",
                     "unexpected coordinator payload " + frame.getPayloadCase()));
+        }
+    }
+
+    private static void reviewStarted(String workerId, DelegateResponse frame, TaskTrack task,
+            TranscriptEntry previous,
+            Set<String> invocationIds, Set<String> retryIds, List<Finding> findings) {
+        ReviewStarted started = frame.getReviewStarted();
+        CandidateReviewIdentity identity = started.getIdentity();
+        if (task.phase != Phase.CANDIDATE || task.offerEntry == null
+                || task.candidateEntry == null || !workerId.equals(task.holder)) {
+            findings.add(new Finding(task.taskId, frame.getFrameId(), "review",
+                    "review start has no current candidate and selected offer"));
+            return;
+        }
+        CandidateReviewIdentity expected = DelegationReviewBindings.identity(
+                task.offerEntry, task.candidateEntry, identity.getInvocationId());
+        if (!identity.equals(expected)) {
+            findings.add(new Finding(task.taskId, frame.getFrameId(), "review",
+                    "review identity differs from the current offer or candidate entry"));
+            return;
+        }
+        if (invocationIds.contains(identity.getInvocationId())) {
+            findings.add(new Finding(task.taskId, frame.getFrameId(), "duplicate",
+                    "review invocation id was already recorded"));
+            return;
+        }
+        if (started.getRetryId().isEmpty()) {
+            if (task.review.status() != ReviewStatus.LEGACY_PENDING
+                    || !task.candidateEntry.equals(previous)) {
+                findings.add(new Finding(task.taskId, frame.getFrameId(), "review",
+                        "initial review must immediately follow a new candidate"));
+                return;
+            }
+        } else {
+            if (retryIds.contains(started.getRetryId())) {
+                findings.add(new Finding(task.taskId, frame.getFrameId(), "duplicate",
+                        "review retry id was already recorded"));
+                return;
+            }
+            if (task.review.status() != ReviewStatus.FAILED
+                    || !started.getPreviousInvocationId().equals(
+                            task.review.started().getIdentity().getInvocationId())) {
+                findings.add(new Finding(task.taskId, frame.getFrameId(), "review",
+                        "retry must name the latest failed invocation"));
+                return;
+            }
+        }
+        invocationIds.add(identity.getInvocationId());
+        if (!started.getRetryId().isEmpty()) retryIds.add(started.getRetryId());
+        task.review = new ReviewState(ReviewStatus.RUNNING, started,
+                ReviewFailureCode.REVIEW_FAILURE_CODE_UNSPECIFIED);
+    }
+
+    private static boolean validTerminalReview(String workerId, DelegateResponse frame,
+            TaskTrack task, CandidateReviewIdentity identity, List<Finding> findings) {
+        if (task.phase == Phase.CANDIDATE && workerId.equals(task.holder)
+                && task.review.status() == ReviewStatus.RUNNING
+                && identity.equals(task.review.started().getIdentity())
+                && Timestamps.compare(frame.getSentAt(), task.review.started().getStartedAt()) >= 0) {
+            return true;
+        }
+        findings.add(new Finding(task.taskId, frame.getFrameId(), "review",
+                "review outcome does not end the current started invocation"));
+        return false;
+    }
+
+    private static boolean validVerdictInvocation(TaskTrack task, String invocationId,
+            String frameId, Timestamp sentAt, List<Finding> findings) {
+        boolean valid = switch (task.review.status()) {
+            case RUNNING -> invocationId.equals(task.review.started().getIdentity().getInvocationId());
+            case LEGACY_PENDING, FAILED, DEFERRED -> invocationId.isEmpty();
+            default -> false;
+        };
+        if (valid && task.review.status() == ReviewStatus.RUNNING) {
+            ReviewStarted started = task.review.started();
+            valid = Timestamps.compare(sentAt, started.getStartedAt()) >= 0
+                    && Timestamps.compare(sentAt, started.getDeadline()) < 0;
+        }
+        if (!valid) findings.add(new Finding(task.taskId, frameId, "review",
+                "verdict invocation or time does not match the open review"));
+        return valid;
+    }
+
+    private static void supersedeReview(TaskTrack task) {
+        if (task.review.status() != ReviewStatus.NONE
+                && task.review.status() != ReviewStatus.SUPERSEDED) {
+            task.review = new ReviewState(ReviewStatus.SUPERSEDED, task.review.started(),
+                    task.review.failureCode());
         }
     }
 
@@ -850,6 +1040,9 @@ public final class DelegationReducer {
             case CANCELLATION -> response.getCancellation().getAttempt();
             case REVISION_REQUESTED -> response.getRevisionRequested().getAttempt();
             case ACCEPTED -> response.getAccepted().getAttempt();
+            case REVIEW_STARTED -> response.getReviewStarted().getIdentity().getAttempt();
+            case REVIEW_FAILED -> response.getReviewFailed().getIdentity().getAttempt();
+            case REVIEW_DEFERRED -> response.getReviewDeferred().getIdentity().getAttempt();
             case TASK_MESSAGE -> 0;
             default -> 0;
         };

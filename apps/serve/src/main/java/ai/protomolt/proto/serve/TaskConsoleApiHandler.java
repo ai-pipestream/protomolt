@@ -527,6 +527,21 @@ final class TaskConsoleApiHandler implements HttpHandler {
         node.put("lastProgressSeq", state.lastProgressSeq());
         node.put("lastCheckpointSeq", state.lastCheckpointSeq());
         node.put("lastCursor", lastCursor);
+        var review = state.review();
+        ObjectNode reviewJson = node.putObject("review");
+        reviewJson.put("status", review.status().name().toLowerCase(Locale.ROOT));
+        if (review.started().hasIdentity()) {
+            var identity = review.started().getIdentity();
+            reviewJson.put("invocationId", identity.getInvocationId());
+            reviewJson.put("attempt", identity.getAttempt());
+            reviewJson.put("revision", identity.getRevision());
+            reviewJson.put("startedAt", Timestamps.toString(review.started().getStartedAt()));
+            reviewJson.put("deadline", Timestamps.toString(review.started().getDeadline()));
+        }
+        if (review.failureCode().getNumber() != 0) {
+            reviewJson.put("failureCode", review.failureCode().name()
+                    .replace("REVIEW_FAILURE_CODE_", "").toLowerCase(Locale.ROOT));
+        }
         return node;
     }
 
