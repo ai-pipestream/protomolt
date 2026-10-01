@@ -218,7 +218,7 @@ public final class ActionCatalog {
         requireScope(action, caller);
         requireBudget(action, caller, request);
         CatalogContract.validate(request, action.requestType(), name);
-        return action.execute(request, context);
+        return action.execute(request, context, caller);
     }
 
     /**
@@ -239,9 +239,9 @@ public final class ActionCatalog {
         requireBudget(action, caller, request);
         CatalogContract.validate(request, action.requestType(), name);
         if (action instanceof StreamingAction streaming) {
-            streaming.executeStreaming(request, context, emitter);
+            streaming.executeStreaming(request, context, caller, emitter);
         } else {
-            emitter.emit(action.execute(request, context));
+            emitter.emit(action.execute(request, context, caller));
         }
     }
 
