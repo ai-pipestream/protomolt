@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.workflow.authoring.v1;
+
+import "ai/protomolt/proto/delegation/v1/delegation_actions.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.workflow.authoring.v1";
+
+// Distinct catalog contract for idempotent registration; reuse the worker metadata.
+message EnsureWorkflowAuthorRegistrationRequest {
+  // Worker identity must match the authenticated author. Full hello equality,
+  // current stream ownership and conditional opening are handler obligations.
+  ai.protomolt.proto.delegation.v1.RegisterWorkerRequest registration = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// Admission observation, not a remote-process lease or fencing credential.
+message EnsureWorkflowAuthorRegistrationResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "author-registration-result"
+    message: "registration must be acknowledged with an identity and an admitted session only"
+    expression: "has(this.registration) && this.registration.ok && this.registration.worker_id != '' && (this.registration.admitted == (this.registration.session_id != ''))"
+  };
+  // Handler verifies exact caller/request identity and validates the reused result.
+  ai.protomolt.proto.delegation.v1.RegisterWorkerResponse registration = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+}

@@ -74,6 +74,8 @@ class WorkflowAuthorTaskMountTest {
             assertThat(paths.containsKey(
                     "/grpc-json/WorkflowAuthorTaskService/RegisterWorkflowAuthor")).isTrue();
             assertThat(paths.containsKey(
+                    "/grpc-json/WorkflowAuthorTaskService/EnsureWorkflowAuthorRegistration")).isTrue();
+            assertThat(paths.containsKey(
                     "/grpc-json/WorkflowAuthorTaskService/ReadWorkflowAuthorEvents")).isTrue();
             assertThat(paths.containsKey(
                     "/grpc-json/WorkflowAuthorTaskService/ReadWorkflowAuthorAssignments")).isTrue();
@@ -96,6 +98,8 @@ class WorkflowAuthorTaskMountTest {
             assertThat(disabledPaths.containsKey(
                     "/grpc-json/WorkflowAuthorTaskService/RegisterWorkflowAuthor")).isFalse();
             assertThat(disabledPaths.containsKey(
+                    "/grpc-json/WorkflowAuthorTaskService/EnsureWorkflowAuthorRegistration")).isFalse();
+            assertThat(disabledPaths.containsKey(
                     "/grpc-json/WorkflowAuthorTaskService/ReadWorkflowAuthorAssignments")).isFalse();
             try (var server = ProtoMoltGrpcServer.start("127.0.0.1", 0, catalog,
                     "operator-token", callers, services,
@@ -110,9 +114,16 @@ class WorkflowAuthorTaskMountTest {
                             MetadataUtils.newAttachHeadersInterceptor(headers));
                     var task = WorkflowAuthorTaskServiceGrpc.newBlockingStub(authenticated)
                             .withDeadlineAfter(5, TimeUnit.SECONDS);
-                    assertThat(task.registerWorkflowAuthor(RegisterWorkerRequest.newBuilder()
-                            .setWorkerId("author").build()).getAdmitted()).isTrue();
+                    var registrationRequest = RegisterWorkerRequest.newBuilder()
+                            .setWorkerId("author").build();
+                    var registration = task.registerWorkflowAuthor(registrationRequest);
+                    assertThat(registration.getAdmitted()).isTrue();
                     int before = coordinator.transcript().getEntriesCount();
+                    var ensureRequest = EnsureWorkflowAuthorRegistrationRequest.newBuilder()
+                            .setRegistration(registrationRequest).build();
+                    assertThat(task.ensureWorkflowAuthorRegistration(ensureRequest).getRegistration())
+                            .isEqualTo(registration);
+                    assertThat(coordinator.transcript().getEntriesCount()).isEqualTo(before);
                     var delegation = DelegationServiceGrpc.newBlockingStub(authenticated)
                             .withDeadlineAfter(5, TimeUnit.SECONDS);
                     denied(() -> delegation.registerWorker(RegisterWorkerRequest.newBuilder()
@@ -127,8 +138,7 @@ class WorkflowAuthorTaskMountTest {
                             WorkflowAuthoringLaunchRequest.getDefaultInstance()));
                     assertThatThrownBy(() -> WorkflowAuthorTaskServiceGrpc.newBlockingStub(channel)
                             .withDeadlineAfter(5, TimeUnit.SECONDS)
-                            .registerWorkflowAuthor(RegisterWorkerRequest.newBuilder()
-                                    .setWorkerId("author").build()))
+                            .ensureWorkflowAuthorRegistration(ensureRequest))
                             .isInstanceOfSatisfying(StatusRuntimeException.class,
                                     failure -> assertThat(failure.getStatus().getCode())
                                             .isEqualTo(Status.Code.UNAUTHENTICATED));
@@ -139,8 +149,7 @@ class WorkflowAuthorTaskMountTest {
                             MetadataUtils.newAttachHeadersInterceptor(unknownHeaders));
                     assertThatThrownBy(() -> WorkflowAuthorTaskServiceGrpc.newBlockingStub(unknown)
                             .withDeadlineAfter(5, TimeUnit.SECONDS)
-                            .registerWorkflowAuthor(RegisterWorkerRequest.newBuilder()
-                                    .setWorkerId("author").build()))
+                            .ensureWorkflowAuthorRegistration(ensureRequest))
                             .isInstanceOfSatisfying(StatusRuntimeException.class,
                                     failure -> assertThat(failure.getStatus().getCode())
                                             .isEqualTo(Status.Code.UNAUTHENTICATED));

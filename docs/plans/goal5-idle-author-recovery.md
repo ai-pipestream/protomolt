@@ -62,8 +62,12 @@ Missing bridge sessions are reported as generic unavailable errors; that status
 cannot safely identify registration loss after a coordinator restart.
 
 Keep the existing registration's conflict semantics. Review an additive
-`EnsureWorkflowAuthorRegistration` operation that reuses the registration request
-and response shapes and requires the same authenticated author identity. Under
+`EnsureWorkflowAuthorRegistration` operation with distinct request/response
+wrappers around the existing registration metadata and result. The catalog
+requires a unique request/response pair; reusing both top-level shapes is
+ambiguous. Both wrappers require their registration field, and the response
+requires acknowledgement, worker identity and a session exactly when admitted.
+The operation requires the same authenticated author identity. Under
 the bridge's registration lock, it would return the current healthy bridge-owned
 registration only when the complete validated hello metadata matches; changed
 metadata conflicts. Otherwise it would use the existing registration/resumption

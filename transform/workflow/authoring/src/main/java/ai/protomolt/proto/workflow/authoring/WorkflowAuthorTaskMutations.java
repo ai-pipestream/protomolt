@@ -3,6 +3,7 @@ package ai.protomolt.proto.workflow.authoring;
 import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.delegation.DelegationBridge;
+import ai.protomolt.proto.delegation.WorkerRegistrationConflictException;
 import ai.protomolt.proto.delegation.DelegationReducer;
 import ai.protomolt.proto.delegation.DelegationValidation;
 import ai.protomolt.proto.delegation.DeliverableContracts;
@@ -11,6 +12,8 @@ import ai.protomolt.proto.delegation.v1.*;
 import ai.protomolt.proto.grpc.workflow.v1.ArtifactReference;
 import ai.protomolt.proto.grpc.workflow.ArtifactRepository;
 import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringDeliverable;
+import ai.protomolt.proto.workflow.authoring.v1.EnsureWorkflowAuthorRegistrationRequest;
+import ai.protomolt.proto.workflow.authoring.v1.EnsureWorkflowAuthorRegistrationResponse;
 import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
 import com.google.protobuf.util.Timestamps;
@@ -62,6 +65,35 @@ public final class WorkflowAuthorTaskMutations {
                         .setReason(registration.reason()).build();
             } catch (RuntimeException unavailable) {
                 throw new WorkflowPreparationException(Kind.UNAVAILABLE, "Worker registration failed", unavailable);
+            }
+        }
+    }
+
+    /** Exact bridge-owned registration replay, or conditional creation after restart. */
+    public EnsureWorkflowAuthorRegistrationResponse ensureRegistration(EnsureWorkflowAuthorRegistrationRequest wrapped, Caller caller)
+            throws WorkflowPreparationException {
+        input(wrapped);
+        var request = wrapped.getRegistration();
+        identity(request.getWorkerId(), caller);
+        synchronized (bridge) {
+            try {
+                var registration = bridge.ensureWorker(WorkerHello.newBuilder()
+                        .setWorkerId(caller.name()).setProtocolVersion(1)
+                        .setProvider(request.getProvider()).setModel(request.getModel())
+                        .setModelVersion(request.getModelVersion())
+                        .addAllCapabilities(request.getCapabilitiesList()).build());
+                var result = RegisterWorkerResponse.newBuilder().setOk(true)
+                        .setWorkerId(registration.workerId())
+                        .setAdmitted(registration.admitted())
+                        .setSessionId(registration.sessionId())
+                        .setReason(registration.reason()).build();
+                return EnsureWorkflowAuthorRegistrationResponse.newBuilder().setRegistration(result).build();
+            } catch (WorkerRegistrationConflictException conflict) {
+                throw new WorkflowPreparationException(Kind.CONFLICT,
+                        "Worker identity is already connected", conflict);
+            } catch (RuntimeException unavailable) {
+                throw new WorkflowPreparationException(Kind.UNAVAILABLE,
+                        "Worker registration is unavailable", unavailable);
             }
         }
     }

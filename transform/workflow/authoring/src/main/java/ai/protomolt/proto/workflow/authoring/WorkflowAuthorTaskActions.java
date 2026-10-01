@@ -34,6 +34,7 @@ public final class WorkflowAuthorTaskActions {
 
     private enum Operation {
         REGISTER("register-workflow-author", RegisterWorkerRequest.getDefaultInstance(), RegisterWorkerResponse.getDefaultInstance()),
+        ENSURE_REGISTRATION("ensure-workflow-author-registration", EnsureWorkflowAuthorRegistrationRequest.getDefaultInstance(), EnsureWorkflowAuthorRegistrationResponse.getDefaultInstance()),
         ACCEPT("accept-workflow-task", AcceptTaskRequest.getDefaultInstance(), AcceptTaskResponse.getDefaultInstance()),
         SUBMIT("submit-workflow-candidate", SubmitCandidateRequest.getDefaultInstance(), SubmitCandidateResponse.getDefaultInstance()),
         CONTEXT("get-workflow-author-context", GetWorkflowAuthorContextRequest.getDefaultInstance(), GetWorkflowAuthorContextResponse.getDefaultInstance()),
@@ -77,6 +78,7 @@ public final class WorkflowAuthorTaskActions {
             }
             String worker = switch (request) {
                 case RegisterWorkerRequest value -> value.getWorkerId();
+                case EnsureWorkflowAuthorRegistrationRequest value -> value.getRegistration().getWorkerId();
                 case AcceptTaskRequest value -> value.getWorkerId();
                 case SubmitCandidateRequest value -> value.getWorkerId();
                 default -> caller.name();
@@ -86,7 +88,9 @@ public final class WorkflowAuthorTaskActions {
             }
             Message response;
             try {
-                response = switch (request) {
+                response = operation == Operation.ENSURE_REGISTRATION
+                        ? backend.ensureRegistration((EnsureWorkflowAuthorRegistrationRequest) request, caller)
+                        : switch (request) {
                     case RegisterWorkerRequest value -> backend.register(value, caller);
                     case AcceptTaskRequest value -> backend.accept(value, caller);
                     case SubmitCandidateRequest value -> backend.submit(value, caller);
@@ -124,14 +128,13 @@ public final class WorkflowAuthorTaskActions {
 
     private static void verifyResponse(Message request, Message response, Caller caller) throws Exception {
         switch (request) {
+            case EnsureWorkflowAuthorRegistrationRequest value -> {
+                var result = (EnsureWorkflowAuthorRegistrationResponse) response;
+                verifyRegistration(value.getRegistration(), result.getRegistration());
+            }
             case RegisterWorkerRequest value -> {
                 var result = (RegisterWorkerResponse) response;
-                require(result.getOk() && result.getWorkerId().equals(value.getWorkerId()));
-                require(result.getAdmitted() ? !result.getSessionId().isBlank() && result.getReason().isEmpty()
-                        : result.getSessionId().isEmpty() && !result.getReason().isBlank());
-                WorkflowPreparationValidation.validate(AdmissionDecision.newBuilder()
-                        .setAdmitted(result.getAdmitted()).setSessionId(result.getSessionId())
-                        .setReason(result.getReason()).build(), MAX_BYTES);
+                verifyRegistration(value, result);
             }
             case AcceptTaskRequest value -> {
                 var result = (AcceptTaskResponse) response;
@@ -183,6 +186,15 @@ public final class WorkflowAuthorTaskActions {
             }
             default -> throw new IllegalArgumentException("Unsupported request");
         }
+    }
+
+    private static void verifyRegistration(RegisterWorkerRequest value, RegisterWorkerResponse result) throws Exception {
+        require(result.getOk() && result.getWorkerId().equals(value.getWorkerId()));
+        require(result.getAdmitted() ? !result.getSessionId().isBlank() && result.getReason().isEmpty()
+                : result.getSessionId().isEmpty() && !result.getReason().isBlank());
+        WorkflowPreparationValidation.validate(AdmissionDecision.newBuilder()
+                .setAdmitted(result.getAdmitted()).setSessionId(result.getSessionId())
+                .setReason(result.getReason()).build(), MAX_BYTES);
     }
 
     private static void validateDeliverable(Any result) throws Exception {

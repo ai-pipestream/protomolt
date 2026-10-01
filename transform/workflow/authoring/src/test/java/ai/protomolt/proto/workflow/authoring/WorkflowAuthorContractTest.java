@@ -97,12 +97,14 @@ class WorkflowAuthorContractTest {
         var service = WorkflowAuthorTaskServiceOuterClass.getDescriptor().findServiceByName("WorkflowAuthorTaskService");
         assertThat(service.findMethodByName("RegisterWorkflowAuthor").getInputType())
                 .isEqualTo(RegisterWorkerRequest.getDescriptor());
+        assertThat(service.findMethodByName("EnsureWorkflowAuthorRegistration").getInputType())
+                .isEqualTo(EnsureWorkflowAuthorRegistrationRequest.getDescriptor());
         assertThat(service.findMethodByName("AcceptWorkflowTask").getInputType())
                 .isEqualTo(AcceptTaskRequest.getDescriptor());
         assertThat(service.findMethodByName("SubmitWorkflowCandidate").getInputType())
                 .isEqualTo(SubmitCandidateRequest.getDescriptor());
         assertThat(service.getMethods()).extracting(method -> method.getName()).containsExactly(
-                "RegisterWorkflowAuthor", "AcceptWorkflowTask", "SubmitWorkflowCandidate",
+                "RegisterWorkflowAuthor", "EnsureWorkflowAuthorRegistration", "AcceptWorkflowTask", "SubmitWorkflowCandidate",
                 "GetWorkflowAuthorContext", "ReadWorkflowAuthorEvents", "ReadWorkflowAuthorAssignments");
     }
 

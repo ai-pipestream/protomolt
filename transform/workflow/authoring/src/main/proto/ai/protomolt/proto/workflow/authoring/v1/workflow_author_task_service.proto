@@ -4,6 +4,7 @@ package ai.protomolt.proto.workflow.authoring.v1;
 
 import "ai/protomolt/proto/delegation/v1/delegation_actions.proto";
 import "ai/protomolt/proto/workflow/authoring/v1/workflow_author.proto";
+import "ai/protomolt/proto/workflow/authoring/v1/workflow_author_registration.proto";
 
 option java_multiple_files = true;
 option java_package = "ai.protomolt.proto.workflow.authoring.v1";
@@ -19,6 +20,26 @@ service WorkflowAuthorTaskService {
   // Metadata does not establish authority or change task ownership.
   rpc RegisterWorkflowAuthor(ai.protomolt.proto.delegation.v1.RegisterWorkerRequest)
       returns (ai.protomolt.proto.delegation.v1.RegisterWorkerResponse);
+
+  // Ensures this authenticated principal has one current bridge-owned stream.
+  // Exact validated hello metadata reuses that stream and its admission result;
+  // it does not emit another hello, reset counters, or renew task leases.
+  // Changed metadata or a connected stream owned outside this bridge conflicts
+  // with ALREADY_EXISTS. The coordinator checks ownership and conditional opening
+  // under its publication lock; an apparently healthy but superseded bridge
+  // stream is never returned as current. A disconnected registration uses the
+  // existing durable-counter resumption path and rechecks admission.
+  //
+  // Same-request retry after a lost reply is safe. Coordinator restart may yield
+  // a new session ID; this ID is descriptive, not a client fencing credential.
+  // This operation does not grant exclusive ownership to a remote process.
+  // Successful responses must echo worker identity, set ok, and carry a nonempty
+  // session ID exactly when admitted. Invalid input is INVALID_ARGUMENT, denied
+  // scope/identity is PERMISSION_DENIED, and unavailable registration is
+  // UNAVAILABLE. Cancellation cannot undo a committed registration. Requests and
+  // successful responses use runtime validation and reject unknown fields.
+  rpc EnsureWorkflowAuthorRegistration(EnsureWorkflowAuthorRegistrationRequest)
+      returns (EnsureWorkflowAuthorRegistrationResponse);
 
   // Accepts the current unexpired offer addressed to this principal. An exact
   // committed retry returns the prior identity without renewing the lease.
