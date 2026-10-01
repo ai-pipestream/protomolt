@@ -87,6 +87,7 @@ class TaskConsoleHttpTest {
     @Test
     void loginCreatesOnlyAScopedSecureBrowserSession() throws Exception {
         assertThat(get("/api/task-session", null).statusCode()).isEqualTo(401);
+        assertThat(JSON.readTree(get("/api/task-session", null).body()).has("principal")).isFalse();
         assertThat(get("/api/tasks", null).statusCode()).isEqualTo(401);
         assertThat(get("/api/task-session-other", null).statusCode()).isEqualTo(404);
         assertThat(get("/api/tasks-other", cookie).statusCode()).isEqualTo(404);
@@ -100,6 +101,8 @@ class TaskConsoleHttpTest {
         HttpResponse<String> good = post("/api/task-session",
                 "{\"token\":\"" + CONSOLE_TOKEN + "\"}", null);
         assertThat(good.statusCode()).isEqualTo(200);
+        assertThat(body(good).path("principal").asText()).isEqualTo("task-console");
+        assertThat(good.body()).doesNotContain(CONSOLE_TOKEN).doesNotContain(API_TOKEN);
         assertThat(good.headers().firstValue("set-cookie").orElseThrow())
                 .contains("HttpOnly")
                 .contains("Secure")
@@ -107,6 +110,8 @@ class TaskConsoleHttpTest {
                 .doesNotContain(CONSOLE_TOKEN)
                 .doesNotContain(API_TOKEN);
         assertThat(get("/api/task-session", cookie).statusCode()).isEqualTo(200);
+        assertThat(body(get("/api/task-session", cookie)).path("principal").asText())
+                .isEqualTo("task-console");
     }
 
     @Test
