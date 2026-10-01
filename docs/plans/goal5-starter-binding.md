@@ -46,10 +46,30 @@ request/response identity. Valid shape alone does not establish normalization,
 matching content digest or persistence; those require handler tests. The 8192
 code-point bound also limits valid UTF-8 content to 32768 bytes. Unicode fixtures
 cover this boundary. Buf lint and complete descriptor-set compatibility pass.
-The file currently provides contracts only; the service is not implemented or
-packaged. Ordinary scalar constraints can be rendered by existing schema
+The sample now has a TCP service with reflection and a standalone launcher built
+by `./gradlew :samples:installAuthoringFixture`. Start it with
+`samples/build/install/authoring-fixture/bin/authoring-fixture 9778 /path/to/records`.
+Port zero selects an ephemeral port printed at startup. No image or published
+starter is provided by this implementation. Ordinary scalar constraints can be rendered by existing schema
 generators, while stored-record identity CEL and handler durability checks remain
 runtime obligations. No generator changes are included.
+
+The ledger stores the exact request and response under a canonical UUID. It
+validates and checks content integrity on every read, compares exact content
+bytes on retry, and uses a JVM lock plus an OS file lock around atomic publication.
+File and directory sync complete before success. A read completes the sync
+barrier after an interrupted publication; temporary files are never records.
+Storage faults and corruption produce sanitized INTERNAL errors, while content
+conflicts are ALREADY_EXISTS. Native validation precedes writes and successful
+responses, including rejection of unknown fields.
+
+Local sample validation passed 59 tests with no skips or failures. Real TCP tests
+cover normalization, invalid requests, concurrent retries/conflicts, corrupted
+records and injected failures before and after atomic publication. An installed
+launcher test runs competing processes over the same ledger, force-kills them
+after a successful write, starts a fresh process, and compares the response and
+record bytes. This is fixture-process recovery, not the required workflow-worker
+remote-effect/checkpoint crash-window proof or native-platform release evidence.
 
 Use a small separate TCP gRPC service with reflection and two unary operations:
 a pure text normalization followed by a durable write. The write request carries

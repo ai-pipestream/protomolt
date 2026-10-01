@@ -1,3 +1,5 @@
+import org.gradle.jvm.application.tasks.CreateStartScripts
+
 plugins {
     alias(libs.plugins.protobuf)
 }
@@ -16,6 +18,7 @@ dependencies {
     implementation project(':protomolt-projection')
     implementation project(':protomolt-workflow')
     implementation project(':protomolt-workflow-authoring')
+    implementation project(':protomolt-protobuf-validation')
     implementation project(':protomolt-jobs-service')
     implementation project(':protomolt-protobuf-llm')
     implementation project(':protomolt-inference-service')
@@ -51,6 +54,7 @@ dependencies {
     implementation project(':protomolt-acp')
     implementation libs.grpc.stub
     implementation libs.grpc.protobuf
+    implementation libs.grpc.services
     implementation libs.grpc.netty.shaded
     compileOnly 'org.apache.tomcat:annotations-api:6.0.53'
 }
@@ -128,6 +132,42 @@ tasks.register('runDemoSearch', JavaExec) {
     description = 'Run the server-streaming demo search on localhost:9777'
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'ai.protomolt.proto.samples.DemoSearchServer'
+}
+
+tasks.register('runAuthoringFixture', JavaExec) {
+    group = 'application'
+    description = 'Run the external gRPC authoring fixture with durable records and reflection'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'ai.protomolt.proto.samples.AuthoringFixtureServer'
+    doFirst {
+        args (findProperty('fixturePort') ?: '9778').toString(),
+                (findProperty('fixtureRecords') ?: layout.buildDirectory.dir('authoring-fixture-records').get().asFile).toString()
+    }
+}
+
+tasks.register('authoringFixtureStartScripts', CreateStartScripts) {
+    applicationName = 'authoring-fixture'
+    mainClass = 'ai.protomolt.proto.samples.AuthoringFixtureServer'
+    classpath = files(tasks.named('jar'), configurations.runtimeClasspath)
+    outputDir = layout.buildDirectory.dir('generated/authoring-fixture-scripts').get().asFile
+}
+
+tasks.register('installAuthoringFixture', Sync) {
+    group = 'application'
+    description = 'Install the standalone authoring fixture launcher and runtime jars'
+    dependsOn tasks.named('jar'), tasks.named('authoringFixtureStartScripts')
+    into layout.buildDirectory.dir('install/authoring-fixture')
+    from(tasks.named('authoringFixtureStartScripts')) {
+        into 'bin'
+        filePermissions { unix('rwxr-xr-x') }
+    }
+    from(files(tasks.named('jar'), configurations.runtimeClasspath)) {
+        into 'lib'
+    }
+}
+
+tasks.named('test') {
+    dependsOn tasks.named('installAuthoringFixture')
 }
 
 tasks.register('runAcpStreamingDemo', JavaExec) {
