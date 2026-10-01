@@ -5,6 +5,8 @@ import ai.protomolt.proto.repo.v1.DeleteDocumentRequest;
 import ai.protomolt.proto.repo.v1.DeleteDocumentResponse;
 import ai.protomolt.proto.repo.v1.DeleteBlobRequest;
 import ai.protomolt.proto.repo.v1.DeleteBlobResponse;
+import ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest;
+import ai.protomolt.proto.repo.v1.CompareAndPutBlobResponse;
 import ai.protomolt.proto.repo.v1.DeleteLogicalDocumentCommand;
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.DocumentManifest;
@@ -13,6 +15,8 @@ import ai.protomolt.proto.repo.v1.DocumentPart;
 import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v1.GetBlobRequest;
 import ai.protomolt.proto.repo.v1.GetBlobResponse;
+import ai.protomolt.proto.repo.v1.GetBlobForUpdateRequest;
+import ai.protomolt.proto.repo.v1.GetBlobForUpdateResponse;
 import ai.protomolt.proto.repo.v1.GetDocumentByReferenceRequest;
 import ai.protomolt.proto.repo.v1.GetDocumentManifestRequest;
 import ai.protomolt.proto.repo.v1.GetDocumentManifestResponse;
@@ -858,6 +862,18 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
     @Override
     public void putBlob(PutBlobRequest request, StreamObserver<PutBlobResponse> observer) {
         GrpcErrors.run(observer, () -> blobs.put(request));
+    }
+
+    @Override
+    public void getBlobForUpdate(GetBlobForUpdateRequest request,
+            StreamObserver<GetBlobForUpdateResponse> observer) {
+        GrpcErrors.run(observer, () -> blobs.getForUpdate(request));
+    }
+
+    @Override
+    public void compareAndPutBlob(CompareAndPutBlobRequest request,
+            StreamObserver<CompareAndPutBlobResponse> observer) {
+        GrpcErrors.run(observer, () -> blobs.compareAndPut(request));
     }
 
     @Override

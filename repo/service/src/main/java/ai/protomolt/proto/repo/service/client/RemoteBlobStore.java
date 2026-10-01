@@ -1,14 +1,21 @@
 package ai.protomolt.proto.repo.service.client;
 
 import ai.protomolt.proto.repo.container.blob.BlobStore;
+import ai.protomolt.proto.repo.container.codec.DocumentPartCodec;
+import ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest;
+import ai.protomolt.proto.repo.v1.ConditionalBlobKey;
 import ai.protomolt.proto.repo.v1.DeleteBlobRequest;
 import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v1.FileStorageReference;
 import ai.protomolt.proto.repo.v1.GetBlobRequest;
 import ai.protomolt.proto.repo.v1.GetBlobResponse;
+import ai.protomolt.proto.repo.v1.GetBlobForUpdateRequest;
 import ai.protomolt.proto.repo.v1.PutBlobRequest;
 import ai.protomolt.proto.repo.v1.PutBlobResponse;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.Descriptors.FieldDescriptor;
+import com.google.protobuf.Message;
+import ai.protomolt.proto.validate.ProtoValidator;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 
@@ -37,7 +44,7 @@ import java.util.Objects;
  * belong on the repo-service's streaming HTTP upload route
  * ({@code POST /v1/documents:upload}), which never buffers.
  *
- * <p>Deliberate gaps (the repo blob API exposes get/put/delete only):
+ * <p>Deliberate gaps in the repo blob API:
  * <ul>
  *   <li>{@link #headObject} is a full {@code GetBlob} whose bytes are
  *   discarded — there is no cheap existence probe across the v1 API, and
@@ -51,8 +58,10 @@ import java.util.Objects;
  */
 public final class RemoteBlobStore implements BlobStore {
 
+    private static final ProtoValidator VALIDATOR = ProtoValidator.create();
+
     private static final String UNSUPPORTED =
-            "not supported by the repo-backed store: the repo blob API exposes get/put/delete only";
+            "not supported by the repo-backed store: the repo blob API has no operation for this";
 
     private final DocumentServiceGrpc.DocumentServiceBlockingStub documents;
     private final String driveName;
@@ -110,6 +119,108 @@ public final class RemoteBlobStore implements BlobStore {
         } catch (StatusRuntimeException e) {
             throw mapNotFound(e, key);
         }
+    }
+
+    @Override
+    public GetResult getForUpdate(String bucket, String key) {
+        ConditionalBlobKey address = conditionalKey(key);
+        var request = GetBlobForUpdateRequest.newBuilder().setKey(address).build();
+        if (!valid(request)) {
+            throw new IllegalArgumentException("authoritative blob read request is invalid");
+        }
+        try {
+            var response = documents.withMaxInboundMessageSize(10 * 1024 * 1024)
+                    .getBlobForUpdate(request);
+            requireResponse(response);
+            var version = response.getVersion();
+            byte[] data = response.getData().toByteArray();
+            if (!version.getKey().equals(address) || version.getSizeBytes() != data.length
+                    || !version.getSha256().equals(DocumentPartCodec.sha256Hex(data))) {
+                throw new IllegalStateException("authoritative blob response differs from requested bytes");
+            }
+            return new GetResult(data, response.hasMimeType() ? response.getMimeType() : null,
+                    BlobStore.requireStrongEtag(version.getEtag()), null);
+        } catch (StatusRuntimeException failure) {
+            if (failure.getStatus().getCode() == Status.Code.UNIMPLEMENTED) {
+                throw new UnsupportedOperationException("authoritative blob read is unsupported", failure);
+            }
+            throw mapNotFound(failure, key);
+        }
+    }
+
+    @Override
+    public PutResult conditionalPut(PutSpec spec, byte[] body, WriteCondition condition) {
+        Objects.requireNonNull(spec, "spec");
+        Objects.requireNonNull(body, "body");
+        Objects.requireNonNull(condition, "condition");
+        if (body.length > MAX_CONDITIONAL_BYTES) {
+            throw new IllegalArgumentException("conditional blob exceeds 9 MiB");
+        }
+        if (spec.sha256Hex() != null
+                && !spec.sha256Hex().equals(DocumentPartCodec.sha256Hex(body))) {
+            throw new IllegalArgumentException("conditional blob digest differs from body");
+        }
+        ConditionalBlobKey address = conditionalKey(spec.key());
+        var request = CompareAndPutBlobRequest.newBuilder().setKey(address)
+                .setData(ByteString.copyFrom(body));
+        if (spec.contentType() != null && !spec.contentType().isBlank()) {
+            request.setMimeType(spec.contentType());
+        }
+        if (condition.ifAbsent()) request.setIfAbsent(true);
+        else request.setExpectedEtag(BlobStore.requireStrongEtag(condition.expectedEtag()));
+        var outgoing = request.build();
+        if (!valid(outgoing)) {
+            throw new IllegalArgumentException("conditional blob request is invalid");
+        }
+        try {
+            var response = documents.withMaxInboundMessageSize(10 * 1024 * 1024)
+                    .compareAndPutBlob(outgoing);
+            requireResponse(response);
+            var version = response.getVersion();
+            if (!version.getKey().equals(address) || version.getSizeBytes() != body.length
+                    || !version.getSha256().equals(DocumentPartCodec.sha256Hex(body))) {
+                throw new IllegalStateException("conditional blob response differs from submitted bytes");
+            }
+            return new PutResult(BlobStore.requireStrongEtag(version.getEtag()), null);
+        } catch (StatusRuntimeException failure) {
+            if (failure.getStatus().getCode() == Status.Code.ABORTED) {
+                throw new BlobConflictException("conditional blob precondition failed", failure);
+            }
+            if (failure.getStatus().getCode() == Status.Code.UNIMPLEMENTED) {
+                throw new UnsupportedOperationException("conditional blob write is unsupported", failure);
+            }
+            throw failure;
+        }
+    }
+
+    private ConditionalBlobKey conditionalKey(String key) {
+        var address = ConditionalBlobKey.newBuilder().setDriveName(driveName)
+                .setObjectKey(Objects.requireNonNull(key, "key")).build();
+        if (!VALIDATOR.validate(address).valid()) {
+            throw new IllegalArgumentException("conditional blob key is invalid");
+        }
+        return address;
+    }
+
+    private static void requireResponse(Message value) {
+        if (!valid(value)) {
+            throw new IllegalStateException("conditional blob response is invalid");
+        }
+    }
+
+    private static boolean valid(Message value) {
+        if (!value.getUnknownFields().asMap().isEmpty() || !VALIDATOR.validate(value).valid()) {
+            return false;
+        }
+        for (var field : value.getAllFields().entrySet()) {
+            if (field.getKey().getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
+            if (field.getKey().isRepeated()) {
+                for (Object nested : (List<?>) field.getValue()) {
+                    if (!valid((Message) nested)) return false;
+                }
+            } else if (!valid((Message) field.getValue())) return false;
+        }
+        return true;
     }
 
     /**

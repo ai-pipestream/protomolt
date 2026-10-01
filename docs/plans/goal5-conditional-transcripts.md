@@ -87,6 +87,13 @@ deletes and external object rollback are outside the fencing guarantee.
 The installed NAS backend is RustFS. Qualification must exercise its pinned
 image; SDK header support and LocalStack tests alone do not prove deployment
 support. No deployment or availability claim follows from these definitions.
+The repository service keeps conditional S3 operations disabled by default;
+`DOCUMENT_PLATFORM_S3_CONDITIONAL_WRITES=true` is set only in the checked-in
+Portainer configurations for the pinned, qualified RustFS image. Upgrade the
+repository service before switching the coordinator to conditional transcript
+RPCs, and stop all old coordinators that still issue unconditional PutBlob
+writes to the active transcript key before that switch. This is a deployment
+order requirement, not evidence that deployment has happened.
 
 ## Acceptance backlog
 

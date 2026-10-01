@@ -4,8 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ai.protomolt.proto.repo.v1.DeleteBlobRequest;
+import ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest;
+import ai.protomolt.proto.repo.v1.ConditionalBlobKey;
 import ai.protomolt.proto.repo.v1.FileStorageReference;
 import ai.protomolt.proto.repo.v1.GetBlobRequest;
+import ai.protomolt.proto.repo.v1.GetBlobForUpdateRequest;
 import ai.protomolt.proto.repo.v1.PutBlobRequest;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -25,6 +28,30 @@ import org.junit.jupiter.api.Test;
 class BlobOperationsTest {
 
     private final BlobOperations blobs = new BlobOperations(null, null);
+
+    @Test
+    void conditionalRequestsRejectInvalidContractsBeforeAccessingStorage() {
+        var key = ConditionalBlobKey.newBuilder().setDriveName("primary")
+                .setObjectKey("state/current").build();
+        assertRefusesNaming(() -> blobs.getForUpdate(GetBlobForUpdateRequest.getDefaultInstance()),
+                "invalid conditional blob request");
+        assertRefusesNaming(() -> blobs.getForUpdate(GetBlobForUpdateRequest.newBuilder()
+                .setKey(key.toBuilder().setObjectKey(" ")).build()), "invalid conditional blob request");
+        assertRefusesNaming(() -> blobs.compareAndPut(CompareAndPutBlobRequest.newBuilder()
+                .setKey(key).build()), "invalid conditional blob request");
+        assertRefusesNaming(() -> blobs.compareAndPut(CompareAndPutBlobRequest.newBuilder()
+                .setKey(key).setIfAbsent(false).build()), "invalid conditional blob request");
+        for (String unsafeTag : new String[] {"*", "W/\"tag\"", "\"one\",\"two\""}) {
+            assertRefusesNaming(() -> blobs.compareAndPut(CompareAndPutBlobRequest.newBuilder()
+                    .setKey(key).setExpectedEtag(unsafeTag).build()),
+                    "invalid conditional blob request");
+        }
+        var unknown = key.toBuilder().setUnknownFields(com.google.protobuf.UnknownFieldSet.newBuilder()
+                .addField(99, com.google.protobuf.UnknownFieldSet.Field.newBuilder()
+                        .addVarint(1).build()).build()).build();
+        assertRefusesNaming(() -> blobs.compareAndPut(CompareAndPutBlobRequest.newBuilder()
+                .setKey(unknown).setIfAbsent(true).build()), "invalid conditional blob request");
+    }
 
     private static void assertRefusesNaming(ThrowingCallable call, String... fragments) {
         assertThatThrownBy(call)
