@@ -36,7 +36,6 @@ import ai.protomolt.proto.workflow.authoring.v1.GetAcceptedWorkflowRequest;
 import ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorEventsRequest;
 import ai.protomolt.proto.workflow.authoring.v1.WorkflowAuthorTaskServiceGrpc;
 import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringDeliverable;
-import ai.protomolt.proto.workflow.authoring.WorkflowAuthoringReviewer;
 import ai.protomolt.proto.workflow.authoring.v1.WorkflowPreparationIntent;
 import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v1.FileStorageReference;
@@ -106,6 +105,8 @@ class AuthoringRemoteProcessTest {
             .connectTimeout(Duration.ofSeconds(5)).build();
     private static final String OPERATOR_TOKEN = "remote-process-operator-token";
     private static final String AUTHOR_TOKEN = "remote-process-author-token";
+    private static final String BROWSER_TOKEN = "remote-process-browser-launch-token";
+    private static final String CONSOLE_TOKEN = "remote-process-default-console-token";
     private static final String COORDINATE_TOKEN = "remote-process-coordinate-token";
     private static final String TRANSCRIPT_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
     private static final String TASK_ID = "00000000-0000-4000-8000-000000000441";
@@ -171,7 +172,8 @@ class AuthoringRemoteProcessTest {
             worker = startWorker(grpcPort, fixturePort, workerLog);
             awaitOutput(worker, workerLog, "AuthoringWorker ready", Duration.ofSeconds(30));
             var offered = offerTask(mcp, policy);
-            assertThat(offered.path("taskId").asText()).isEqualTo(TASK_ID);
+            assertThat(offered.path("request").path("taskId").asText()).isEqualTo(TASK_ID);
+            assertThat(offered.path("offer").path("attempt").asInt()).isEqualTo(1);
             channel = ManagedChannelBuilder.forAddress("127.0.0.1", grpcPort).usePlaintext()
                     .maxInboundMessageSize(16 * 1024 * 1024).build();
             if (failFirstReview) {
@@ -217,7 +219,17 @@ class AuthoringRemoteProcessTest {
             }
             assertThat(worker.waitFor(10, TimeUnit.SECONDS)).isTrue();
             assertThat(worker.exitValue()).as(Files.readString(workerLog)).isZero();
+            assertThat(mcp.call("start-workflow-authoring", offered.path("request"))).isEqualTo(offered);
             Metadata operatorHeaders = bearer(OPERATOR_TOKEN);
+            var startRequest = ai.protomolt.proto.workflow.authoring.v1.StartWorkflowAuthoringRequest.newBuilder();
+            JsonFormat.parser().merge(offered.path("request").toString(), startRequest);
+            var replayedStart = ai.protomolt.proto.workflow.authoring.v1.WorkflowAuthoringEntryServiceGrpc
+                    .newBlockingStub(channel)
+                    .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(operatorHeaders))
+                    .withDeadlineAfter(10, TimeUnit.SECONDS).startWorkflowAuthoring(startRequest.build());
+            var originalStart = replayedStart.toBuilder().clear();
+            JsonFormat.parser().merge(offered.toString(), originalStart);
+            assertThat(replayedStart).isEqualTo(originalStart.build());
             var authoring = WorkflowAuthoringServiceGrpc.newBlockingStub(channel)
                     .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(operatorHeaders));
             WorkflowAcceptedCandidate accepted = authoring.withDeadlineAfter(10, TimeUnit.SECONDS)
@@ -257,14 +269,65 @@ class AuthoringRemoteProcessTest {
             assertThat(input.getSha256()).isEqualTo(sha256(jobInput.toByteArray()));
             WorkflowAuthoringLaunchRequest launchRequest = WorkflowAuthoringLaunchRequest.newBuilder()
                     .setLaunchId(LAUNCH_ID).setAcceptance(accepted).setInput(input).build();
+            String consoleCookie = loginBrowser(httpPort, CONSOLE_TOKEN);
+            var browserStart = browserRequest(httpPort, "/api/workflow-authoring/start", startRequest.build(), consoleCookie);
+            assertThat(browserStart.statusCode()).isEqualTo(200);
+            var browserStartResult = replayedStart.toBuilder().clear();
+            JsonFormat.parser().merge(browserStart.body(), browserStartResult);
+            assertThat(browserStartResult.build()).isEqualTo(replayedStart);
+            var browserTemplate = browserRequest(httpPort, "/api/workflow-authoring/template",
+                    ai.protomolt.proto.workflow.authoring.v1.GetWorkflowAuthoringTemplateRequest.getDefaultInstance(),
+                    consoleCookie);
+            assertThat(browserTemplate.statusCode()).isEqualTo(200);
+            assertThat(JSON.readTree(browserTemplate.body()).path("templateSha256").asText())
+                    .isEqualTo(startRequest.getTemplateSha256());
+            assertThat(browserCall(httpPort, "launch", launchRequest, consoleCookie).statusCode()).isEqualTo(403);
+            String launchCookie = loginBrowser(httpPort, BROWSER_TOKEN);
+            var statusRequest = ai.protomolt.proto.workflow.authoring.v1.GetWorkflowLaunchStatusRequest
+                    .newBuilder().setRequest(launchRequest).build();
+            var statusService = ai.protomolt.proto.workflow.authoring.v1.WorkflowLaunchStatusServiceGrpc
+                    .newBlockingStub(channel)
+                    .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(operatorHeaders));
+            assertThat(statusService.withDeadlineAfter(10, TimeUnit.SECONDS)
+                    .getWorkflowLaunchStatus(statusRequest).getNotAuthorized()).isTrue();
+            assertThat(browserCall(httpPort, "status", statusRequest, consoleCookie).statusCode()).isEqualTo(403);
+            var browserContract = browserCall(httpPort, "contract",
+                    ai.protomolt.proto.workflow.authoring.v1.GetWorkflowLaunchInputContractRequest
+                            .newBuilder().setAcceptance(accepted).build(), launchCookie);
+            assertThat(browserContract.statusCode()).isEqualTo(200);
+            var contractBuilder = inputContract.toBuilder().clear();
+            JsonFormat.parser().merge(browserContract.body(), contractBuilder);
+            assertThat(contractBuilder.build()).isEqualTo(inputContract);
+            var browserInput = browserCall(httpPort, "prepare", inputRequest, launchCookie);
+            assertThat(browserInput.statusCode()).isEqualTo(200);
+            var inputBuilder = preparedInput.toBuilder().clear();
+            JsonFormat.parser().merge(browserInput.body(), inputBuilder);
+            assertThat(inputBuilder.build()).isEqualTo(preparedInput);
+            var browserLaunch = browserCall(httpPort, "launch", launchRequest, launchCookie);
+            assertThat(browserLaunch.statusCode()).isEqualTo(200);
             var launched = authoring.withDeadlineAfter(30, TimeUnit.SECONDS)
                     .launchAcceptedWorkflow(launchRequest);
             assertThat(launched.getJobId()).isEqualTo(LAUNCH_ID);
+            var launchBuilder = launched.toBuilder().clear();
+            JsonFormat.parser().merge(browserLaunch.body(), launchBuilder);
+            assertThat(launchBuilder.build()).isEqualTo(launched);
             assertThat(authoring.withDeadlineAfter(30, TimeUnit.SECONDS)
                     .launchAcceptedWorkflow(launchRequest)).isEqualTo(launched);
 
             JsonNode job = awaitCompletedJob(mcp, LAUNCH_ID, Duration.ofSeconds(90));
             assertThat(job.path("status").asText()).isEqualTo("COMPLETED");
+            var launchStatus = statusService.withDeadlineAfter(10, TimeUnit.SECONDS)
+                    .getWorkflowLaunchStatus(statusRequest);
+            assertThat(launchStatus.getRequest()).isEqualTo(launchRequest);
+            assertThat(launchStatus.getJob().getJobId()).isEqualTo(LAUNCH_ID);
+            assertThat(launchStatus.getJob().getState()).isEqualTo(
+                    ai.protomolt.proto.workflow.authoring.v1.WorkflowLaunchJobState
+                            .WORKFLOW_LAUNCH_JOB_STATE_COMPLETED);
+            var browserStatus = browserCall(httpPort, "status", statusRequest, launchCookie);
+            assertThat(browserStatus.statusCode()).isEqualTo(200);
+            var statusBuilder = launchStatus.toBuilder().clear();
+            JsonFormat.parser().merge(browserStatus.body(), statusBuilder);
+            assertThat(statusBuilder.build()).isEqualTo(launchStatus);
             assertThat(job.path("result").path("operationId").asText()).isEqualTo(JOB_OPERATION);
             assertThat(job.path("result").path("contentSha256").asText())
                     .isEqualTo(sha256("process-input\n value".getBytes(StandardCharsets.UTF_8)));
@@ -335,6 +398,7 @@ class AuthoringRemoteProcessTest {
         Map<String, String> env = builder.environment();
         env.keySet().removeIf(name -> name.startsWith("PROTOMOLT_"));
         env.put("PROTOMOLT_TRUST_SNAPSHOT", trustFile.toString());
+        env.put("PROTOMOLT_TASK_CONSOLE_TOKEN", CONSOLE_TOKEN);
         env.put("PROTOMOLT_RECEIPT_KEY_FILE", signingKey.toString());
         env.put("PROTOMOLT_RECEIPT_KEY_ID", KEY_ID);
         env.put("PROTOMOLT_RECEIPT_ISSUER", ISSUER);
@@ -380,21 +444,6 @@ class AuthoringRemoteProcessTest {
         return artifacts.save(policy.toByteArray(), "application/x-protobuf", false);
     }
 
-    private static TaskSpec taskSpec(ArtifactReference policy) throws Exception {
-        FileDescriptorSet.Builder descriptorSet = FileDescriptorSet.newBuilder();
-        Map<String, FileDescriptor> files = new LinkedHashMap<>();
-        collect(WorkflowAuthoringDeliverable.getDescriptor().getFile(), files);
-        files.values().forEach(file -> descriptorSet.addFile(file.toProto()));
-        var spec = TaskSpec.newBuilder().setObjective("Author and independently verify the pinned normalize-record workflow")
-                .addContext(policy)
-                .setContract(DeliverableContract.newBuilder()
-                        .setTypeName(WorkflowAuthoringDeliverable.getDescriptor().getFullName())
-                        .setDescriptorSet(ByteString.copyFrom(descriptorSet.build().toByteArray())));
-        WorkflowAuthoringReviewer.REQUIRED_CHECKS.forEach(check -> spec.addRequiredChecks(
-                AcceptanceCheck.newBuilder().setName(check).setDescription("Run required check: " + check)));
-        return spec.build();
-    }
-
     private static void collect(FileDescriptor file, Map<String, FileDescriptor> files) {
         if (files.containsKey(file.getName())) return;
         file.getDependencies().forEach(dependency -> collect(dependency, files));
@@ -402,10 +451,17 @@ class AuthoringRemoteProcessTest {
     }
 
     private JsonNode offerTask(McpSession session, ArtifactReference policy) throws Exception {
-        OfferTaskRequest offer = OfferTaskRequest.newBuilder().setTaskId(TASK_ID)
-                .setWorkerId(PRINCIPAL).setLeaseSeconds(240).setSpec(taskSpec(policy)).build();
-        JsonNode args = JSON.readTree(JsonFormat.printer().omittingInsignificantWhitespace().print(offer));
-        return session.call("delegation-offer", args);
+        var configured = session.call("get-workflow-authoring-template", JSON.createObjectNode());
+        var template = ai.protomolt.proto.workflow.authoring.v1.GetWorkflowAuthoringTemplateResponse.newBuilder();
+        JsonFormat.parser().merge(configured.toString(), template);
+        assertThat(template.getTemplate().getSpec().getContextList()).contains(policy);
+        assertThat(template.getTemplate().getSpec().getContract().getTypeName())
+                .isEqualTo(WorkflowAuthoringDeliverable.getDescriptor().getFullName());
+        var request = ai.protomolt.proto.workflow.authoring.v1.StartWorkflowAuthoringRequest.newBuilder()
+                .setTaskId(TASK_ID).setWorkerId(PRINCIPAL).setTemplateSha256(template.getTemplateSha256())
+                .setObjective("Author and independently verify the pinned normalize-record workflow").build();
+        return session.call("start-workflow-authoring",
+                JSON.readTree(JsonFormat.printer().omittingInsignificantWhitespace().print(request)));
     }
 
     private static JsonNode awaitCompletedJob(McpSession session, String jobId,
@@ -585,10 +641,36 @@ class AuthoringRemoteProcessTest {
         return """
                 {"principals":[
                   {"name":"%s","credentialSha256":["%s"],"scopes":["workflow-author"]},
+                  {"name":"browser-launcher","credentialSha256":["%s"],"scopes":["worker-coordinate","workflow-launch"]},
                   {"name":"review-coordinator","credentialSha256":["%s"],"scopes":["worker-coordinate"]}
                 ]}
                 """.formatted(PRINCIPAL, sha256(AUTHOR_TOKEN.getBytes(StandardCharsets.UTF_8)),
+                        sha256(BROWSER_TOKEN.getBytes(StandardCharsets.UTF_8)),
                         sha256(COORDINATE_TOKEN.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private static String loginBrowser(int port, String token) throws Exception {
+        var response = HTTP.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/task-session"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(Map.of("token", token))))
+                .build(), HttpResponse.BodyHandlers.ofString());
+        assertThat(response.statusCode()).isEqualTo(200);
+        return response.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+    }
+
+    private static HttpResponse<String> browserCall(int port, String operation,
+            com.google.protobuf.Message request, String cookie) throws Exception {
+        return browserRequest(port, "/api/workflow-launch/" + operation, request, cookie);
+    }
+
+    private static HttpResponse<String> browserRequest(int port, String path,
+            com.google.protobuf.Message request, String cookie) throws Exception {
+        String origin = "http://127.0.0.1:" + port;
+        return HTTP.send(HttpRequest.newBuilder(URI.create(origin + path))
+                .timeout(Duration.ofSeconds(30)).header("Origin", origin).header("Cookie", cookie)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(JsonFormat.printer().print(request))).build(),
+                HttpResponse.BodyHandlers.ofString());
     }
 
     private static Metadata bearer(String token) {

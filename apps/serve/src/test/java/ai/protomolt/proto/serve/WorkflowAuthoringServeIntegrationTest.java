@@ -104,6 +104,16 @@ class WorkflowAuthoringServeIntegrationTest {
                     postgres.getMappedPort(5432), directory.resolve("enabled.log"));
             awaitHealth(enabled, httpPort, directory.resolve("enabled.log"));
 
+            // The browser route uses scoped sessions, never the API operator token.
+            String acceptedJson = "{\"taskId\":\"" + TASK_ID + "\"}";
+            assertThat(browserPost(httpPort, acceptedJson, null).statusCode()).isEqualTo(401);
+            String defaultSession = loginSession(httpPort, "console-test-token-for-installed-browser-test");
+            assertThat(browserPost(httpPort, acceptedJson, defaultSession).statusCode()).isEqualTo(403);
+            String launchSession = loginSession(httpPort, "browser-launch-test-token");
+            var noAcceptance = browserPost(httpPort, acceptedJson, launchSession);
+            assertThat(noAcceptance.statusCode()).isEqualTo(412);
+            assertThat(noAcceptance.body()).contains("workflow-authoring-rejected");
+
             channel = ManagedChannelBuilder.forAddress("127.0.0.1", grpcPort)
                     .usePlaintext().build();
             var raw = WorkflowAuthoringServiceGrpc.newBlockingStub(channel);
@@ -133,6 +143,8 @@ class WorkflowAuthoringServeIntegrationTest {
             assertThat(paths.has("/grpc-json/WorkflowAuthoringService/GetAcceptedWorkflow")).isTrue();
             assertThat(paths.has("/grpc-json/WorkflowAuthoringService/LaunchAcceptedWorkflow")).isTrue();
             assertThat(paths.has("/grpc-json/WorkflowLaunchInputService/GetWorkflowLaunchInputContract")).isTrue();
+            assertThat(paths.has("/grpc-json/WorkflowAuthoringEntryService/GetWorkflowAuthoringTemplate")).isTrue();
+            assertThat(paths.has("/grpc-json/WorkflowAuthoringEntryService/StartWorkflowAuthoring")).isTrue();
             assertThat(paths.has("/grpc-json/WorkflowLaunchInputService/PrepareWorkflowLaunchInput")).isTrue();
             var inputStub = ai.protomolt.proto.workflow.authoring.v1.WorkflowLaunchInputServiceGrpc
                     .newBlockingStub(channel).withInterceptors(MetadataUtils.newAttachHeadersInterceptor(credentials));
@@ -181,6 +193,7 @@ class WorkflowAuthoringServeIntegrationTest {
                     null, null, null, trustFile, null, null, 0,
                     directory.resolve("disabled.log"));
             awaitHealth(disabled, disabledHttp, directory.resolve("disabled.log"));
+            assertThat(browserPost(disabledHttp, "{}", null).statusCode()).isEqualTo(404);
             JsonNode disabledPaths = JSON.readTree(get(disabledHttp, "/openapi.json", null).body())
                     .path("paths");
             assertThat(disabledPaths.has(
@@ -188,10 +201,15 @@ class WorkflowAuthoringServeIntegrationTest {
             assertThat(disabledPaths.has(
                     "/grpc-json/WorkflowLaunchInputService/GetWorkflowLaunchInputContract")).isFalse();
             assertThat(disabledPaths.has(
+                    "/grpc-json/WorkflowAuthoringEntryService/GetWorkflowAuthoringTemplate")).isFalse();
+            assertThat(disabledPaths.has(
+                    "/grpc-json/WorkflowAuthoringEntryService/StartWorkflowAuthoring")).isFalse();
+            assertThat(disabledPaths.has(
                     "/grpc-json/WorkflowPreparationService/PrepareWorkflowCandidate")).isFalse();
             assertThat(listMcpTools(disabledHttp, null).findValuesAsText("name"))
                     .doesNotContain("get-accepted-workflow", "launch-accepted-workflow",
-                            "get-workflow-launch-input-contract", "prepare-workflow-launch-input");
+                            "get-workflow-launch-input-contract", "prepare-workflow-launch-input",
+                            "get-workflow-authoring-template", "start-workflow-authoring");
             ManagedChannel disabledChannel = ManagedChannelBuilder
                     .forAddress("127.0.0.1", disabledGrpc).usePlaintext().build();
             try {
@@ -231,6 +249,15 @@ class WorkflowAuthoringServeIntegrationTest {
                 Integer.toString(grpcPort), "--http-port", Integer.toString(httpPort),
                 "--registry-port", "0"));
         if (authoring) {
+            Path accessPolicy = directory.resolve("browser-access.binpb");
+            Files.write(accessPolicy, ai.protomolt.proto.authz.AccessPolicy.newBuilder()
+                    .addPrincipals(ai.protomolt.proto.authz.Principal.newBuilder()
+                            .setName("browser-launcher")
+                            .addCredentialSha256(ai.protomolt.proto.authz.AccessPolicyCallers
+                                    .sha256Hex("browser-launch-test-token"))
+                            .addScopes("worker-coordinate").addScopes("workflow-launch"))
+                    .build().toByteArray());
+            command.addAll(java.util.List.of("--access-policy", accessPolicy.toString()));
             command.addAll(java.util.List.of("--registry-git", registry.toString(),
                     "--workflow-workspace", workflowWorkspace.toString(),
                     "--delegation-repo-endpoint", repositoryEndpoint,
@@ -246,6 +273,7 @@ class WorkflowAuthoringServeIntegrationTest {
                 .redirectOutput(log.toFile());
         Map<String, String> env = builder.environment();
         env.keySet().removeIf(name -> name.startsWith("PROTOMOLT_"));
+        if (authoring) env.put("PROTOMOLT_TASK_CONSOLE_TOKEN", "console-test-token-for-installed-browser-test");
         env.put("PROTOMOLT_TRUST_SNAPSHOT", trustFile.toString());
         env.put("PROTOMOLT_TRANSCRIPT_KEY", Base64.getEncoder().encodeToString(TRANSCRIPT_KEY));
         return builder.start();
@@ -312,6 +340,21 @@ class WorkflowAuthoringServeIntegrationTest {
         HttpRequest.Builder request = HttpRequest.newBuilder(
                 URI.create("http://127.0.0.1:" + port + path)).GET();
         if (token != null) request.header("api_token", token);
+        return HTTP.send(request.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static String loginSession(int port, String token) throws Exception {
+        var response = post(port, "/api/task-session", "{\"token\":\"" + token + "\"}", TOKEN);
+        assertThat(response.statusCode()).isEqualTo(200);
+        return response.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+    }
+
+    private static HttpResponse<String> browserPost(int port, String body, String cookie) throws Exception {
+        String origin = "http://127.0.0.1:" + port;
+        var request = HttpRequest.newBuilder(URI.create(origin + "/api/workflow-launch/accepted"))
+                .header("Content-Type", "application/json").header("Origin", origin)
+                .POST(HttpRequest.BodyPublishers.ofString(body));
+        if (cookie != null) request.header("Cookie", cookie);
         return HTTP.send(request.build(), HttpResponse.BodyHandlers.ofString());
     }
 

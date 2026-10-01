@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.workflow.authoring.v1;
+
+import "ai/protomolt/proto/workflow/authoring/v1/workflow_launch_status.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.workflow.authoring.v1";
+
+// Proposed optional projection. Descriptors alone do not mount handlers.
+// Requires workflow-launch; the browser also requires worker-coordinate.
+service WorkflowLaunchStatusService {
+  // Reuses the saved immutable launch request, including after a lost reply.
+  // Validate requests and successful responses with the native runtime, reject
+  // unknown fields and unsupported rules, and cap serialized messages at 4 MiB.
+  // Read the keyed authorization first. A missing authorization returns only
+  // not_authorized, without reading any job. A different intent under the UUID
+  // is ALREADY_EXISTS. Verify persisted authorization integrity and exact job
+  // source/input binding before projecting the job; corruption is DATA_LOSS.
+  // Never invoke fixtures, promote a workflow, authorize, insert or mutate jobs.
+  // Invalid shape is INVALID_ARGUMENT; denied scope is PERMISSION_DENIED;
+  // dependency outage is UNAVAILABLE and timeout is DEADLINE_EXCEEDED.
+  // Retries are read-only observations and may show newer job progress.
+  // Cancellation stops this read and cannot cancel an authorized job.
+  rpc GetWorkflowLaunchStatus(GetWorkflowLaunchStatusRequest)
+      returns (GetWorkflowLaunchStatusResponse);
+}

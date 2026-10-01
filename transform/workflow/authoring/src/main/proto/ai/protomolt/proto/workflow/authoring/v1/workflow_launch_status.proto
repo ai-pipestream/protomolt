@@ -1,0 +1,87 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.workflow.authoring.v1;
+
+import "ai/protomolt/proto/samples/starter/v1/workflow_launch.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.workflow.authoring.v1";
+
+// Bounded projection of the existing workflow_run states, not a new lifecycle.
+enum WorkflowLaunchJobState {
+  // Missing or unsupported state; never returned as a successful projection.
+  WORKFLOW_LAUNCH_JOB_STATE_UNSPECIFIED = 0;
+  // Waiting for a worker, including retry backoff.
+  WORKFLOW_LAUNCH_JOB_STATE_QUEUED = 1;
+  // A worker holds the execution lease.
+  WORKFLOW_LAUNCH_JOB_STATE_RUNNING = 2;
+  // Parked for an external step completion.
+  WORKFLOW_LAUNCH_JOB_STATE_WAITING = 3;
+  // Execution completed; this does not establish independent semantic truth.
+  WORKFLOW_LAUNCH_JOB_STATE_COMPLETED = 4;
+  // Terminal validation or non-retryable failure in the current worker.
+  WORKFLOW_LAUNCH_JOB_STATE_FAILED = 5;
+  // Terminal failure after the retry budget was exhausted.
+  WORKFLOW_LAUNCH_JOB_STATE_DEAD = 6;
+}
+
+// Contains no raw input, output, checkpoint, error text or worker credentials.
+message WorkflowLaunchJobStatus {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "launch-job-terminal-time"
+    message: "terminal jobs must have a completion timestamp; active jobs must not"
+    expression: "has(this.completed_at) == (this.state == 4 || this.state == 5 || this.state == 6)"
+  };
+  // Must equal the launch UUID after binding to the keyed authorization.
+  string job_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  // Exact projection of the persisted job state.
+  WorkflowLaunchJobState state = 2 [(ai.protomolt.proto.validate.v1.field).enum = {defined_only: true, not_in: [0]}];
+  // Existing worker claim count; zero is valid before the first claim.
+  int32 attempt = 3 [(ai.protomolt.proto.validate.v1.field).int32.gte = 0];
+  // Configured retry ceiling, not proof the claim count stayed below it.
+  // Existing lease-expiry recovery can exceed this value; expose that fact.
+  int32 max_attempts = 4 [(ai.protomolt.proto.validate.v1.field).int32.gte = 1];
+  // Insertion timestamp from the job row.
+  google.protobuf.Timestamp created_at = 5 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Timestamp of the latest persisted mutation.
+  google.protobuf.Timestamp updated_at = 6 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Present exactly for terminal states.
+  google.protobuf.Timestamp completed_at = 7;
+}
+
+// The saved intent is required even after a lost launch reply.
+message GetWorkflowLaunchStatusRequest {
+  // Reuse the immutable existing launch contract without weakening its rules.
+  ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchRequest request = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// A read-only observation, not permission to create a job or execute a step.
+// The handler echoes the validated intent with canonical launch UUID spelling
+// and rejects unknown fields. Other string identities retain exact spelling.
+message GetWorkflowLaunchStatusResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "launch-status-outcome-required"
+    message: "one launch observation must be present"
+    expression: "has(this.not_authorized) || has(this.authorized_not_queued) || has(this.job)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "launch-status-job-binding"
+    message: "the projected job must match the saved launch UUID"
+    expression: "!has(this.job) || (has(this.request) && this.job.job_id == this.request.launch_id)"
+  };
+  // Saved intent with canonical launch UUID spelling, matched by the handler.
+  ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchRequest request = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Exactly one observation; the oneof excludes simultaneous alternatives.
+  oneof outcome {
+    // No keyed authorization exists. Never inspect or reveal an unrelated job.
+    // This does not prove a concurrent launch cannot subsequently authorize.
+    bool not_authorized = 2 [(ai.protomolt.proto.validate.v1.field).bool.const = true];
+    // Exact authorization exists but no job was observed. Retry the same launch
+    // intent to recover; this read must not promote or insert a job itself.
+    bool authorized_not_queued = 3 [(ai.protomolt.proto.validate.v1.field).bool.const = true];
+    // Job source/input were verified against the matching authorization.
+    WorkflowLaunchJobStatus job = 4;
+  }
+}

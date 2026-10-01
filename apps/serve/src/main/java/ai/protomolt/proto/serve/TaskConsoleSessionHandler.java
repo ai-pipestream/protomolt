@@ -39,10 +39,15 @@ final class TaskConsoleSessionHandler implements HttpHandler {
     }
 
     private void status(HttpExchange exchange) throws IOException {
-        boolean authenticated = sessions.authorized(exchange);
-        respondJson(exchange, authenticated ? 200 : 401,
-                "{\"authenticated\":" + authenticated
-                        + ",\"loginRequired\":" + sessions.requiresLogin() + "}");
+        Caller caller = sessions.caller(exchange).orElse(null);
+        respondSession(exchange, caller);
+    }
+
+    private void respondSession(HttpExchange exchange, Caller caller) throws IOException {
+        var body = JSON.createObjectNode().put("authenticated", caller != null)
+                .put("loginRequired", sessions.requiresLogin());
+        if (caller != null && !caller.unrestricted()) body.put("principal", caller.name());
+        respondJson(exchange, caller == null ? 401 : 200, JSON.writeValueAsString(body));
     }
 
     private void login(HttpExchange exchange) throws IOException {
@@ -73,8 +78,7 @@ final class TaskConsoleSessionHandler implements HttpHandler {
         exchange.getResponseHeaders().add("Set-Cookie", TaskConsoleSessions.COOKIE + "="
                 + session + "; Path=/; Max-Age=" + sessions.maxAgeSeconds()
                 + "; HttpOnly; Secure; SameSite=Strict");
-        respondJson(exchange, 200,
-                "{\"authenticated\":true,\"loginRequired\":true}");
+        respondSession(exchange, caller);
     }
 
     private void logout(HttpExchange exchange) throws IOException {
