@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.workflow.authoring.v1;
+
+import "ai/protomolt/proto/delegation/v1/delegation_actions.proto";
+import "ai/protomolt/proto/workflow/authoring/v1/workflow_author.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.workflow.authoring.v1";
+
+// Optional restricted author surface; definitions do not mount a service.
+// Requires workflow-author and server-side Caller.name ownership checks on every
+// operation. No coordinator review, offer, promotion or launch authority is granted.
+// All requests and successful responses pass runtime validation; handler checks
+// supplement reused delegation responses with identity and outcome verification.
+service WorkflowAuthorTaskService {
+  // Registers only the authenticated worker identity. A second live registration
+  // is a conflict; after stream failure, re-registration resumes durable counters.
+  // Metadata does not establish authority or change task ownership.
+  rpc RegisterWorkflowAuthor(ai.protomolt.proto.delegation.v1.RegisterWorkerRequest)
+      returns (ai.protomolt.proto.delegation.v1.RegisterWorkerResponse);
+
+  // Accepts the current unexpired offer addressed to this principal. An exact
+  // committed retry returns the prior identity without renewing the lease.
+  // A changed or inactive attempt fails before further transcript writes.
+  rpc AcceptWorkflowTask(ai.protomolt.proto.delegation.v1.AcceptTaskRequest)
+      returns (ai.protomolt.proto.delegation.v1.AcceptTaskResponse);
+
+  // Submits a validated deliverable for independent review. Matching committed
+  // retries do not resubmit or restart review. Changed same-revision content is
+  // ALREADY_EXISTS. Successful submission does not mean semantic acceptance.
+  // Cancellation can stop new work but cannot undo committed remote effects.
+  rpc SubmitWorkflowCandidate(ai.protomolt.proto.delegation.v1.SubmitCandidateRequest)
+      returns (ai.protomolt.proto.delegation.v1.SubmitCandidateResponse);
+
+  // Reads verified context for the current unexpired offered or leased attempt.
+  // Permission, lifecycle, policy integrity and descriptor closure are checked
+  // before returning data. No fixture execution or mutation occurs.
+  rpc GetWorkflowAuthorContext(GetWorkflowAuthorContextRequest)
+      returns (GetWorkflowAuthorContextResponse);
+
+  // Reads this principal's assigned attempt through completion or cancellation,
+  // including after a later reassignment. Uses persisted facts and bounded pages.
+  // Invalid input, denied ownership, corrupt evidence and unsupported rules fail
+  // closed. Transport failures may be retried with the same cursor and identity.
+  rpc ReadWorkflowAuthorEvents(ReadWorkflowAuthorEventsRequest)
+      returns (ReadWorkflowAuthorEventsResponse);
+}

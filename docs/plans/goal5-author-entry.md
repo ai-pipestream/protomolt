@@ -19,7 +19,7 @@ author; task discovery across the entire coordinator is not required.
 
 ## Proposed operations
 
-A separately mounted `WorkflowAuthorService` requires `workflow-author`:
+A separately mounted `WorkflowAuthorTaskService` requires `workflow-author`:
 
 - `RegisterWorkflowAuthor` reuses `RegisterWorkerRequest` and
   `RegisterWorkerResponse`. Require `worker_id == Caller.name()` before invoking
@@ -62,8 +62,10 @@ Handler checks independently load and validate trusted transcript state, bind
 principal to offeree or holder as the operation requires, select the matching
 offer, require the supported authoring contract
 and configured policy, and verify referenced bytes against full metadata and
-hashes. The descriptor is capped at 4 MiB; bound permitted calls and reject oversized
-responses before transport. Context is a snapshot, not a lease renewal or an
+hashes. The descriptor is capped at 4 MiB, the trusted transcript at 8 MiB and
+responses at 16 MiB. Configure clients for that response bound, which accommodates
+the descriptor plus the original offer's deliverable descriptor and metadata.
+Context is a snapshot, not a lease renewal or an
 execution authorization. Mutations recheck current lifecycle at the coordinator.
 Do not rely on a read-then-call check as the only protection against cancellation,
 reassignment or a newer attempt. The review must identify which checks are atomic
@@ -144,3 +146,23 @@ with a bounded cursor, filtering later attempts when the task has been reassigne
 A candidate with no persisted review is pending. The transient review-failure
 field does not establish a durable outcome. Durable review failures and
 invocation-bound retries remain required Goal 5 work.
+
+Event cursors are scan watermarks and may advance over filtered entries on empty
+pages. Scan at most 256 entries per call, return at most the requested batch and
+do not advance beyond an authorized event deferred by the batch limit. Report
+truncation if the bounded snapshot has unscanned entries. Filter using the
+original worker and frame-derived attempt; exclude attempt-0 task messages.
+Context reads allow only the current unexpired OFFERED or LEASED attempt;
+historical and terminal outcomes use the event read.
+
+## Schema coverage
+
+Field annotations describe required task IDs, UUID formats, attempt/count/byte
+bounds and cursor minima. Context CEL binds the task and attempt to the offer
+and descriptor length to artifact metadata. Event CEL binds task identity and
+cursor intervals. Generated JSON Schema/OpenAPI must retain these CEL rules as
+runtime constraints; they do not replace checks in the runtime validator.
+Hash verification, serialized response caps, principal ownership, ordered unique
+cursors, attempt attribution, lifecycle and trusted policy remain handler checks.
+Reused delegation response messages also require explicit handler checks for
+success and echoed identity. Generator changes remain outside this contract work.

@@ -1,0 +1,97 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.workflow.authoring.v1;
+
+import "ai/protomolt/proto/delegation/v1/delegation.proto";
+import "ai/protomolt/proto/delegation/v1/delegation_actions.proto";
+import "ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto";
+import "ai/protomolt/proto/samples/starter/v1/workflow_deliverable.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.workflow.authoring.v1";
+
+// Read context for one current task attempt assigned to the authenticated author.
+// Read before acceptance is allowed; this operation does not acquire a lease.
+message GetWorkflowAuthorContextRequest {
+  // Exact delegation task key, preserving UUID spelling.
+  string task_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  // Must match the current attempt and original offeree in trusted storage.
+  int32 attempt = 2 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 1024}];
+}
+
+// Server-verified context snapshot, not permission to execute or accept work.
+// Hash verification, full import closure and authenticated ownership are handler
+// obligations. Successful responses are validated and capped at 16 MiB serialized.
+// Transport clients must permit this response size; descriptor payloads retain
+// the existing 4 MiB limit and trusted transcript reads retain the 8 MiB limit.
+message GetWorkflowAuthorContextResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "author-context-offer"
+    message: "context must contain the matching coordinator offer"
+    expression: "has(this.offer_entry) && has(this.offer_entry.coordinator_frame) && has(this.offer_entry.coordinator_frame.offer) && this.offer_entry.coordinator_frame.task_id == this.task_id && this.offer_entry.coordinator_frame.offer.attempt == this.attempt"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "author-context-descriptor-size"
+    message: "descriptor metadata must match the payload size"
+    expression: "has(this.descriptors) && this.descriptors.size_bytes == uint(size(this.descriptor_set)) && !this.descriptors.redacted && this.descriptors.media_type == 'application/x-protobuf'"
+  };
+  // Echoes the validated request task key.
+  string task_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  // Echoes the validated request attempt.
+  int32 attempt = 2 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 1024}];
+  // Original immutable offer; latest renewal and status come from the event read.
+  ai.protomolt.proto.delegation.v1.TranscriptEntry offer_entry = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Digest of deterministic protobuf serialization of offer_entry.
+  string offer_entry_sha256 = 4 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {sha256_hex: true}}];
+  // Exact configured policy reference; policy and fixture bytes remain server-side.
+  ai.protomolt.proto.grpc.workflow.v1.ArtifactReference policy = 5 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Exact descriptor reference from the verified policy.
+  ai.protomolt.proto.grpc.workflow.v1.ArtifactReference descriptors = 6 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Complete FileDescriptorSet bytes for SchemaSource.descriptor_set_base64.
+  bytes descriptor_set = 7 [(ai.protomolt.proto.validate.v1.field).bytes = {min_len: 1, max_len: 4194304}];
+  // Exact caller-approved calls; credentials are not included.
+  repeated ai.protomolt.proto.samples.starter.v1.WorkflowPermittedCall permitted_calls = 8 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 128}];
+}
+
+// Bounded read of one assigned attempt, including terminal review outcomes.
+// There is no omitted-task global feed. Original ownership is checked from the
+// trusted offer even after reassignment; later attempts are excluded.
+message ReadWorkflowAuthorEventsRequest {
+  // Exact delegation task key.
+  string task_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  // Original assigned attempt to inspect.
+  int32 attempt = 2 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 1024}];
+  // Return events strictly after this coordinator cursor; zero starts the read.
+  int64 after_cursor = 3 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // Required batch bound, also subject to a 16 MiB serialized response cap.
+  int32 max_events = 4 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 64}];
+}
+
+// Persisted protocol facts. A submitted candidate without a review is pending;
+// this response does not infer acceptance or durable failure from transient state.
+message ReadWorkflowAuthorEventsResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "author-events-cursor"
+    message: "events must match the task and cursor interval"
+    expression: "this.cursor >= this.after_cursor && this.events.all(e, e.task_id == this.task_id && e.cursor > this.after_cursor && e.cursor <= this.cursor)"
+  };
+  // Echoes the request task key.
+  string task_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  // Echoes the request attempt; handler verifies every returned frame belongs to it.
+  int32 attempt = 2 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 1, lte: 1024}];
+  // Echoes the request cursor.
+  int64 after_cursor = 3 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // Scan watermark, including filtered entries. May advance on an empty batch;
+  // must not advance beyond an authorized event omitted due to the batch limit.
+  // Handler scans at most 256 entries per call in the bounded trusted transcript.
+  int64 cursor = 4 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // Ordered unique cursor events, restricted to the authenticated original worker.
+  // Handler validates nested frames and Any payloads and enforces request limits.
+  // Filter by original offer worker and frame-derived attempt. Exclude task
+  // messages and other attempt-0 frames; these do not identify an attempt.
+  repeated ai.protomolt.proto.delegation.v1.ObservedEvent events = 5 [(ai.protomolt.proto.validate.v1.field).repeated.max_items = 64];
+  // True when the snapshot has unscanned entries or another authorized event.
+  // Continue at cursor; the next page can be empty after ownership filtering.
+  bool truncated = 6;
+}
