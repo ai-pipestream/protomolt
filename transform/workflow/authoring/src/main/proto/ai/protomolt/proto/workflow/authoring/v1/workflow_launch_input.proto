@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.workflow.authoring.v1;
+
+import "ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto";
+import "ai/protomolt/proto/samples/starter/v1/workflow_launch.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.workflow.authoring.v1";
+
+// Selector equality with trusted acceptance is a handler obligation.
+message GetWorkflowLaunchInputContractRequest {
+  // Exact accepted candidate selector, checked with trusted storage.
+  ai.protomolt.proto.samples.starter.v1.WorkflowAcceptedCandidate acceptance = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// Pinned input descriptor closure; does not authorize execution.
+// The handler checks hash, imports, and the accepted workflow input type.
+// Serialized responses are limited to 8 MiB; reject unknown fields.
+message GetWorkflowLaunchInputContractResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "launch-input-descriptor-metadata"
+    message: "descriptor metadata must match the unredacted protobuf payload"
+    expression: "has(this.descriptors) && this.descriptors.size_bytes == uint(size(this.descriptor_set)) && !this.descriptors.redacted && this.descriptors.media_type == 'application/x-protobuf'"
+  };
+  // Exact accepted candidate selector, checked with trusted storage.
+  ai.protomolt.proto.samples.starter.v1.WorkflowAcceptedCandidate acceptance = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Fully qualified input message name from the accepted workflow.
+  string input_type = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {max_len: 512, protobuf_fqn: true}}];
+  // Full reference to the pinned descriptor bytes.
+  ai.protomolt.proto.grpc.workflow.v1.ArtifactReference descriptors = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Complete FileDescriptorSet bytes, usable in SchemaSource's descriptor form.
+  bytes descriptor_set = 4 [(ai.protomolt.proto.validate.v1.field).bytes = {min_len: 1, max_len: 4194304}];
+}
+
+// JSON syntax, strict UTF-8, unknown-field rejection and native validation under
+// the accepted workflow's pinned descriptor are handler obligations before storage.
+// Clients cannot supply a replacement schema. Shape validity is not semantic approval.
+message PrepareWorkflowLaunchInputRequest {
+  // Exact accepted candidate selector, checked with trusted storage.
+  ai.protomolt.proto.samples.starter.v1.WorkflowAcceptedCandidate acceptance = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // UTF-8 protobuf JSON, base64-encoded on protobuf JSON transports.
+  bytes input_json = 2 [(ai.protomolt.proto.validate.v1.field).bytes = {min_len: 1, max_len: 4194304}];
+}
+
+// A stored input artifact, not a launch authorization or job.
+// The handler matches acceptance to the request and derives metadata from stored
+// deterministic protobuf bytes. Empty serialized protobuf messages are allowed.
+message PrepareWorkflowLaunchInputResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "prepared-launch-input-protobuf"
+    message: "input must be an unredacted protobuf artifact of at most 4 MiB"
+    expression: "has(this.input) && this.input.media_type == 'application/x-protobuf' && !this.input.redacted && this.input.size_bytes <= 4194304u"
+  };
+  // Exact accepted candidate selector, checked with trusted storage.
+  ai.protomolt.proto.samples.starter.v1.WorkflowAcceptedCandidate acceptance = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Full reference to the validated serialized input.
+  ai.protomolt.proto.grpc.workflow.v1.ArtifactReference input = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
