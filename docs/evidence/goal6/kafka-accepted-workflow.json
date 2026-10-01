@@ -1,0 +1,51 @@
+{
+  "release": "authoring-starter-d209f0551566",
+  "brokerImage": "docker.redpanda.com/redpandadata/redpanda:v22.2.1",
+  "brokerImageId": "sha256:37cb68aef0d8635de25bd078d20690e9d5f70fe02a92e2b95314c8effc59fc58",
+  "producerOffsets": [
+    0,
+    1
+  ],
+  "committedOffset": 2,
+  "endOffset": 2,
+  "lag": 0,
+  "job": {
+    "job_id": "1974528a-6a5d-4012-8fbd-70f4d1a9b37c",
+    "workflow_name": "normalize-record-v1",
+    "status": "COMPLETED",
+    "attempt": 1,
+    "input": {
+      "content": "Ada Lovelace <ada@example.org>",
+      "operationId": "ed7c3e68-e417-47c5-a905-e4945c8fb88b"
+    },
+    "checkpoints": [
+      {
+        "name": "normalize",
+        "response": {
+          "text": "Ada Lovelace <ada@example.org>"
+        }
+      },
+      {
+        "name": "write",
+        "response": {
+          "contentSha256": "9b27b5f0692616aade7b6ec572062132fa781efec24f5d7dca9a8f78246bdb00",
+          "operationId": "ed7c3e68-e417-47c5-a905-e4945c8fb88b"
+        }
+      }
+    ],
+    "result": {
+      "contentSha256": "9b27b5f0692616aade7b6ec572062132fa781efec24f5d7dca9a8f78246bdb00",
+      "operationId": "ed7c3e68-e417-47c5-a905-e4945c8fb88b"
+    },
+    "created_at": "2026-10-01T21:15:16.444377Z",
+    "updated_at": "2026-10-01T21:15:16.939499Z",
+    "completed_at": "2026-10-01T21:15:16.939499Z",
+    "verdict": "2 steps, output ai.protomolt.proto.samples.authoring.v1.WriteRecordResponse"
+  },
+  "exactReplayUnchanged": true,
+  "outputHashVerified": true,
+  "invalidProducerInputRejected": true,
+  "transport": "loopback plaintext",
+  "credential": "starter browser principal with coordination and launch authority; not a least-privilege deployment qualification",
+  "modelCalls": 0
+}

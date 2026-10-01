@@ -58,6 +58,11 @@ guide. Successful submission establishes a job; inspect job status to determine
 completion. A poison record stops the bridge without deliberately committing its
 offset; fix the cause before restarting the same group.
 
+For a real broker-to-coordinator example, follow
+[Forward an accepted workflow launch through Kafka](kafka-accepted-workflow.md).
+It includes a producer for the saved protobuf launch request, completion and
+offset checks, and a replay check using the published starter.
+
 ## JDBC to intake and storage
 
 Run:

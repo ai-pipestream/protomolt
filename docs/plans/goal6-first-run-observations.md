@@ -173,6 +173,18 @@ gRPC. The accepted-launch bridge uses a real broker but a test-owned launch ledg
 These results must not be combined into a claim that the Kafka bridge and production
 accepted-workflow coordinator were tested together in one deployment.
 
+A subsequent [broker-to-coordinator walkthrough](../tutorials/kafka-accepted-workflow.md)
+ran the installed bridge against the published local starter. Its producer sent
+the same typed launch intent twice to a real Redpanda broker. The job completed;
+its output hash checked correctly, the second delivery preserved the complete
+job record, and the group committed offsets 1 and 2 with zero lag. An invalid
+launch UUID failed before publishing. The
+[retained observation](../evidence/goal6/kafka-accepted-workflow.json) records the
+job and broker results. This used loopback plaintext and the starter browser
+credential, which also has coordination authority. It is not proof of Kafka
+TLS/ACLs or a dedicated least-privilege bridge principal. The temporary broker,
+bridge process, and copied credential file were removed after the check.
+
 ## Remaining evidence
 
 The [projected-workflow walkthrough](../tutorials/projected-workflow.md) now
