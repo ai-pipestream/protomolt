@@ -3,6 +3,9 @@
 Status: proposed contract design, not an available operation. Builds on main
 `70c7ae91f22d0e8a460074a12050279d4bcdb133`. The coordinator owns the protobuf
 definitions; implementation follows contract fixtures and design review.
+Land message definitions first. The current contributed-service adapter refuses
+partial service mounts, so add the RPC to the service descriptor only with its
+handler. Adding it earlier would break the existing lookup/launch mount.
 
 ## Operation and authority
 
@@ -51,11 +54,20 @@ successful response, including its nested deliverable, before returning it.
 
 ## Intent, execution and retry
 
+Complete deterministic preflight before reserving a revision: strict UTF-8/JSON,
+schema closure, compilation, target/method/TLS and template checks, offer/policy
+validation, and supported checks. Fixable source errors must leave the revision
+available for correction. Content-addressed preflight artifacts may be orphaned.
+
 Before external calls, atomically reserve task/attempt/revision and preparation
 UUID in a keyed intent store. Persist the exact source bytes, authenticated
 holder, selected offer, policy and their fingerprints. A changed UUID for an
 already reserved revision, changed source under the same UUID, or reuse of a UUID
 for another task conflicts. Scope this namespace to the coordinator store.
+Use one authoritative record per tuple under a global cross-process lock, with
+UUID uniqueness verified under that lock, or a transaction with both unique
+constraints. A secondary index is rebuildable; independent create-if-absent
+files cannot provide atomic reservation of both identities.
 
 Use the caller-pinned first acceptance fixture as recorded-run input, and run
 all pinned acceptance fixtures. Compile against the pinned descriptor closure
@@ -73,7 +85,10 @@ must enforce the caller's stable operation key. Cancellation or deadline expiry
 does not roll back effects or erase intent. Do not promise exactly-once effects.
 Before each new execution phase and completion commit, recheck the active lease
 and revision. A concurrent cancellation can still race an in-flight remote RPC;
-it must prevent a newly completed preparation from authorizing submission.
+completion may coexist with cancellation. Preparation never authorizes
+submission: the delegation reducer must independently enforce the active
+holder/attempt/revision when admitting the candidate. Recheck immediately
+before returning, without claiming atomicity across these separate stores.
 
 Recovery must inspect an existing immutable recorded run before calling
 `WorkflowRunRecorder` again: timestamped evidence cannot be overwritten with a
@@ -88,12 +103,22 @@ test must demonstrate this recovery, rather than leave a task lingering.
 UNAVAILABLE is retryable only while no immutable failed run exists; recovery
 must inspect storage before choosing that classification. This first contract
 does not introduce multiple preparation generations inside one task revision.
+Incorrect output from a live fixture also persists a terminal rejected intent,
+even if no run evidence exists yet, and requires the same new-attempt recovery.
+It must not repeatedly execute a known failing source on same-ID retries.
+The first response after a failed run is stored must also be terminal, carrying
+the bound run ID as structured error detail. A stored successful run is verified
+against the intent, source and fixture input and reused while remaining phases
+resume; it is never rerecorded with new timestamps.
 
 Current artifact and run repositories do not establish power-loss durability.
 The initial guarantee is process-restart recovery with intact storage. Missing
 or corrupt referenced bytes fail closed. Strengthening storage durability is
 required before claiming host-power-loss recovery. Require both receipt trust
 and a configured signing identity before mounting preparation.
+Before live calls, check that the configured issuer, key ID and public key are
+active for workflow-run receipts in the current trust snapshot. Recheck per
+operation so trust rotation cannot produce a receipt the reviewer would refuse.
 
 ## Example-specific correctness
 
@@ -135,3 +160,29 @@ ALREADY_EXISTS for conflicting intent, UNAVAILABLE/DEADLINE_EXCEEDED for
 retryable transport failures, INTERNAL for corrupt stored evidence and DATA_LOSS
 for an invalid successful upstream response. Sanitize errors. Contract-valid
 but incorrect fixture output is a preparation rejection, not a transport retry.
+
+## Schema coverage and current proof
+
+The new messages compile through the authoring Gradle module with all imports.
+Buf lint and complete-descriptor FILE compatibility against `70c7ae91` pass.
+Runtime validator fixtures are a separate gate; compilation cannot prove CEL
+rules execute correctly. No new service method or available-operation claim is
+included in this contract-only slice.
+The authoring module suite passes 35 tests with no failures or skips, including
+five preparation tests over generated and dynamic messages. They cover UUID
+spelling, counter limits, raw and multibyte source limits, nested required fields
+and the source-digest CEL rule. Shape-valid invalid JSON and untrusted hashes
+remain explicit handler cases. Compatibility also passes against `ffb5a3ed`.
+
+`ProtoJsonSchemaGenerator` represents protobuf bytes as base64 strings and
+explicitly leaves raw-byte length constraints to runtime. Its shared field-rule
+translation labels bytes with `x-protomolt-runtime-rules`; the OpenAPI generator
+uses that translation. Source byte limits therefore require server validation,
+not client string-length checks. Integer bounds and UUID/pattern constraints
+use the existing scalar translation. CEL is recorded under `x-protomolt-cel`,
+not executed by ordinary JSON Schema/OpenAPI validators. The response's source
+digest equality and inherited deliverable CEL rules remain runtime checks.
+Hash recomputation, trusted transcript membership, lease/holder checks, signature
+trust and executable-source semantics are handler obligations in every dialect.
+No generator changes belong in this slice. Verify the concrete mounted OpenAPI
+document when adding the RPC; it has no advertised operation today.
