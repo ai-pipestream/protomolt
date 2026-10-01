@@ -21,6 +21,7 @@ dependencies {
     implementation project(':protomolt-projection')
     implementation project(':protomolt-workflow')
     implementation project(':protomolt-workflow-authoring')
+    implementation project(':protomolt-grpc-invoke')
     implementation project(':protomolt-protobuf-validation')
     implementation project(':protomolt-jobs-service')
     implementation project(':protomolt-protobuf-llm')
@@ -192,8 +193,30 @@ tasks.register('installAuthoringCoordinator', Sync) {
     }
 }
 
+tasks.register('authoringWorkerStartScripts', CreateStartScripts) {
+    applicationName = 'authoring-worker'
+    mainClass = 'ai.protomolt.proto.samples.AuthoringWorker'
+    classpath = files(tasks.named('jar'), configurations.runtimeClasspath)
+    outputDir = layout.buildDirectory.dir('generated/authoring-worker-scripts').get().asFile
+}
+
+tasks.register('installAuthoringWorker', Sync) {
+    group = 'application'
+    description = 'Install the separate-process scripted workflow author'
+    dependsOn tasks.named('jar'), tasks.named('authoringWorkerStartScripts')
+    into layout.buildDirectory.dir('install/authoring-worker')
+    from(tasks.named('authoringWorkerStartScripts')) {
+        into 'bin'
+        filePermissions { unix('rwxr-xr-x') }
+    }
+    from(files(tasks.named('jar'), configurations.runtimeClasspath)) {
+        into 'lib'
+    }
+}
+
 tasks.named('test') {
-    dependsOn tasks.named('installAuthoringFixture'), tasks.named('installAuthoringCoordinator')
+    dependsOn tasks.named('installAuthoringFixture'), tasks.named('installAuthoringCoordinator'),
+            tasks.named('installAuthoringWorker')
 }
 
 tasks.register('runAcpStreamingDemo', JavaExec) {
