@@ -1,0 +1,35 @@
+name: Toolkit consumer
+
+on:
+  pull_request:
+    paths:
+      - 'examples/protobuf-toolkit/**'
+      - '.github/workflows/toolkit-consumer.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'examples/protobuf-toolkit/**'
+      - '.github/workflows/toolkit-consumer.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  published-consumer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run the standalone consumer against public Maven artifacts
+        run: ./gradlew -p examples/protobuf-toolkit run --refresh-dependencies --console=plain
+      - name: Save generated OpenAPI
+        uses: actions/upload-artifact@v4
+        with:
+          name: toolkit-openapi
+          path: examples/protobuf-toolkit/build/contact-openapi.json
+          if-no-files-found: error

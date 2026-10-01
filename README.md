@@ -1,16 +1,21 @@
 # ProtoMolt
 
-ProtoMolt is a Java toolkit that treats a protobuf descriptor as the semantic
-layer. A message declares its validation rules, index mapping, vector lane,
+ProtoMolt is a gRPC integration platform and a set of reusable protobuf libraries.
+Its Java engine coordinates services and agents through protocol interfaces;
+those services and agents do not have to be Java applications. You can also use
+the libraries directly in a Java application without running the platform.
+
+A protobuf descriptor supplies the shared schema and rules. A message declares
+its validation rules, index mapping, vector lane,
 projection provenance, metric membership, prompt shape, descriptive metadata,
 quality dimensions and processing roles once, as descriptor options, and every
 subsystem reads those declarations instead of restating them in a parallel
 config model.
 
-Everything operates on descriptors (`Descriptor` / `FileDescriptor`), never on
-generated classes. The same code paths serve a `DynamicMessage` resolved from a
-registry at runtime and a compiled-in type, and no module is coupled to any
-particular message type.
+The shared libraries operate on descriptors (`Descriptor` / `FileDescriptor`).
+They support both `DynamicMessage` values resolved from a registry at runtime
+and generated protobuf messages, without requiring application-specific types
+in the library implementation.
 
 On top of that layer sits one integration primitive. `ProtoAction`
 (`surface/actions/src/main/java/ai/protomolt/proto/actions/ProtoAction.java`)
@@ -50,6 +55,20 @@ Maven artifact ids carry the `protomolt-` prefix; Java packages use the
 `ai.protomolt.proto.*` namespace (see [Naming](#naming)).
 
 ## Getting started
+
+For a published, image-only workflow walkthrough, use the
+[first-workflow walkthrough](docs/tutorials/first-workflow.md). Its qualified
+AMD64/ARM64 prerelease includes pinned images and persistent storage; no host
+JDK or image build is required. The example author is scripted and requires
+no model-provider account.
+
+To connect an existing gRPC endpoint, start with
+[the MCP and ACP walkthrough](docs/tutorials/connect-grpc-service.md). To use
+individual libraries in your own Java process, run the
+[standalone protobuf toolkit example](examples/protobuf-toolkit/README.md),
+then consult the [library guides](docs/README.md#core-and-schema).
+
+### Single-process demo and source builds
 
 Run one process that gives you gRPC with reflection, the same verbs over
 JSON/REST, OpenAPI, Swagger UI, MCP, a task console and a git-backed registry:

@@ -75,6 +75,21 @@ Any message type works, including `google.protobuf.Struct` for
 schema-loose payloads. The `:samples` module contains a runnable example
 (`CelMappingSample`).
 
+From a source checkout with JDK 25, run:
+
+```shell
+./gradlew :samples:runCelMapping
+```
+
+The result contains `name`, `copiedName`, and `selectedName`, each with the
+string value `Ada`, and `enabled` with the boolean value `true`. Text mapping
+populates `copiedName`; the CEL filter and selector populate `selectedName`.
+CEL adapts `Struct` to a map and unwraps its `Value` entries, so the expressions
+are `input.enabled` and `input.name`, not protobuf wrapper-field accesses.
+This example starts no services. The repository's samples module has broader
+dependencies than the mapper itself; a library consumer needs only the mapper
+modules and their dependencies.
+
 ## Where mapping sits
 
 The REST gateway and the indexing pipeline both accept mapped messages,

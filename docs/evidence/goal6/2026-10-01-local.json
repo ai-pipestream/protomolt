@@ -1,0 +1,87 @@
+{
+  "date": "2026-10-01",
+  "environment": "Local Linux AMD64 developer host, warm caches; automated rehearsal, no unfamiliar-user results",
+  "runtimeRelease": "authoring-starter-d209f0551566",
+  "runtimeSource": "d209f0551566dbd121fabe434631301a646fb0f5",
+  "tests": [
+    {
+      "suite": "ai.protomolt.proto.jobs.service.worker.WorkflowRunKafkaIT",
+      "tests": 2,
+      "skipped": 0,
+      "failures": 0,
+      "errors": 0,
+      "timestamp": "2026-10-01T20:29:13.235Z",
+      "seconds": 16.991,
+      "reportSha256": "7439f7d80299b88ad3d59667633d3f617697b993245f86e4153b63617a9d0f21"
+    },
+    {
+      "suite": "ai.protomolt.proto.acquire.jdbc.JdbcPullIT",
+      "tests": 6,
+      "skipped": 0,
+      "failures": 0,
+      "errors": 0,
+      "timestamp": "2026-10-01T20:29:18.773Z",
+      "seconds": 6.711,
+      "reportSha256": "5749ea805a29709613aee60b0b672cc2d09d3070282a158464a17a608597bf09"
+    },
+    {
+      "suite": "ai.protomolt.proto.samples.AcceptedWorkflowKafkaBridgeTest",
+      "tests": 3,
+      "skipped": 0,
+      "failures": 0,
+      "errors": 0,
+      "timestamp": "2026-10-01T20:29:14.225Z",
+      "seconds": 67.352,
+      "reportSha256": "0cf10d9e5747c7401aebf36335f60c0c559bcba102f765a257efd26cd65ac7c2"
+    },
+    {
+      "suite": "ai.protomolt.proto.grpc.workspace.ServiceWorkspaceActionsTest",
+      "tests": 13,
+      "skipped": 0,
+      "failures": 0,
+      "errors": 0,
+      "timestamp": "2026-10-01T20:24:02.842Z",
+      "seconds": 0.751,
+      "reportSha256": "055bcd155ea95714218b9205b85f549558c20b355ffc223448761b2de2841c5b"
+    }
+  ],
+  "protocol": {
+    "profile": "tutorial-7825eb79-b364-43c7-b689-a862d4c170d7",
+    "fingerprint": "ebccb5035e4a8f3281bfbf5c8382a91b5417cd0ec514436803ccc4990e9fd972",
+    "mcp": "registered, inspected, invoked, rejected invalid input",
+    "acp": "inspected same profile, invoked, rejected invalid input",
+    "timingsMs": {
+      "mcp/initialize": [
+        60.74
+      ],
+      "mcp/notifications/initialized": [
+        2.51
+      ],
+      "mcp/service-register": [
+        168.6
+      ],
+      "mcp/service-inspect": [
+        4.89
+      ],
+      "mcp/service-invoke": [
+        56.18,
+        4.47
+      ],
+      "acp/service-inspect": [
+        159.86
+      ],
+      "acp/service-invoke": [
+        16.46,
+        6.16
+      ]
+    },
+    "measurement": "single local rehearsal; includes protocol overhead; not a throughput benchmark",
+    "modelCalls": 0
+  },
+  "limitations": [
+    "Test report hashes identify local reports; raw reports are not included.",
+    "Library public-consumer qualification is pending; earlier local runs had repository overrides.",
+    "Kafka accepted-launch bridge uses a test-owned launch ledger.",
+    "Single timing observations do not establish comparative performance."
+  ]
+}

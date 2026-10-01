@@ -79,6 +79,14 @@ built-in action exposed by the standalone and full catalogs.
 
 ## Tutorials
 
+- [Run your first workflow](tutorials/first-workflow.md): published Compose bundle,
+  browser launch, expected results, and failure diagnosis
+- [Use the protobuf toolkit](../examples/protobuf-toolkit/README.md): a standalone
+  consumer for mapping, selectors, projections, validation, registry, and OpenAPI
+- [Connect a gRPC service](tutorials/connect-grpc-service.md): register, inspect,
+  and invoke the same service workspace through MCP and remote ACP
+- [Optional Kafka and JDBC inputs](tutorials/optional-inputs.md): runnable
+  integration checks, deployment references, and contract boundaries
 - [OpenVINO from an AI agent](tutorials/openvino.md)
 - [Python clients without protoc](tutorials/python.md)
 - [Streaming through the ACP agent](tutorials/streaming.md)
