@@ -15,6 +15,7 @@ import ai.protomolt.proto.config.TrustSnapshotMounts;
 import ai.protomolt.proto.config.registry.RegistryConfigSource;
 import ai.protomolt.proto.delegation.DelegationActions;
 import ai.protomolt.proto.delegation.DelegationBridge;
+import ai.protomolt.proto.delegation.CandidateReviewer;
 import ai.protomolt.proto.grpc.policy.OutboundChannelPolicy;
 import ai.protomolt.proto.grpc.profile.FileSystemServiceProfileRepository;
 import ai.protomolt.proto.grpc.profile.ServiceProfileRepository;
@@ -61,6 +62,8 @@ import ai.protomolt.proto.workflow.TrustPin;
 import ai.protomolt.proto.workflow.RecordSigning;
 import ai.protomolt.proto.workflow.WorkflowRepository;
 import ai.protomolt.proto.workflow.WorkflowRunner;
+import ai.protomolt.proto.workflow.authoring.WorkflowAuthoringActions;
+import ai.protomolt.proto.workflow.authoring.v1.GetAcceptedWorkflowRequest;
 import com.google.protobuf.Descriptors.ServiceDescriptor;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
@@ -118,7 +121,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                           DelegationOptions delegation, TaskConsoleOptions taskConsole,
                           MeshClusterOptions meshCluster, Path accessPolicy,
                           IdentityStoreOptions identityStores,
-                          ConfigLaneOptions configLane) {
+                          ConfigLaneOptions configLane,
+                          WorkflowAuthoringOptions workflowAuthoring) {
 
         public Options {
             if (outboundPolicy == null) {
@@ -133,6 +137,28 @@ public final class ProtoMoltServe implements AutoCloseable {
                         + "operator api token; set --api-token (or PROTOMOLT_API_TOKEN) "
                         + "alongside them");
             }
+            if (workflowAuthoring != null && (apiToken == null || apiToken.isBlank()
+                    || registryGit == null || workflowWorkspace == null
+                    || delegation == null || jobs == null)) {
+                throw new IllegalArgumentException("workflow authoring requires an API token, "
+                        + "explicit persistent registry and workflow workspaces, durable "
+                        + "delegation repository, and jobs database");
+            }
+        }
+
+        /** Binary/source-compatible constructor retaining the pre-authoring options surface. */
+        public Options(String host, int grpcPort, int httpPort,
+                       Path registryGit, int registryPort, String apiToken, boolean demo,
+                       Path gatherCache, JobsOptions jobs,
+                       java.util.List<String> inferenceModels, Path serviceWorkspace,
+                       OutboundChannelPolicy outboundPolicy, Path workflowWorkspace,
+                       DelegationOptions delegation, TaskConsoleOptions taskConsole,
+                       MeshClusterOptions meshCluster, Path accessPolicy,
+                       IdentityStoreOptions identityStores, ConfigLaneOptions configLane) {
+            this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo,
+                    gatherCache, jobs, inferenceModels, serviceWorkspace, outboundPolicy,
+                    workflowWorkspace, delegation, taskConsole, meshCluster, accessPolicy,
+                    identityStores, configLane, null);
         }
 
         /** Binary/source-compatible constructor retaining the pre-config-lane surface. */
@@ -295,6 +321,10 @@ public final class ProtoMoltServe implements AutoCloseable {
             String workflowWorkspaceEnv = System.getenv("PROTOMOLT_WORKFLOW_WORKSPACE");
             Path workflowWorkspace = workflowWorkspaceEnv == null || workflowWorkspaceEnv.isBlank()
                     ? null : Path.of(workflowWorkspaceEnv);
+            String authoringPolicySha256 = System.getenv("PROTOMOLT_WORKFLOW_AUTHORING_POLICY_SHA256");
+            String authorizationDirEnv = System.getenv("PROTOMOLT_WORKFLOW_AUTHORING_AUTHORIZATION_DIR");
+            Path authoringAuthorizationDir = authorizationDirEnv == null || authorizationDirEnv.isBlank()
+                    ? null : Path.of(authorizationDirEnv);
             String allowedSchemes = System.getenv("PROTOMOLT_GRPC_ALLOWED_SCHEMES");
             String allowedHosts = System.getenv("PROTOMOLT_GRPC_ALLOWED_HOSTS");
             String allowedPorts = System.getenv("PROTOMOLT_GRPC_ALLOWED_PORTS");
@@ -370,6 +400,10 @@ public final class ProtoMoltServe implements AutoCloseable {
                             serviceWorkspace = Path.of(requireValue(args, ++i));
                     case "--workflow-workspace" ->
                             workflowWorkspace = Path.of(requireValue(args, ++i));
+                    case "--workflow-authoring-policy-sha256" ->
+                            authoringPolicySha256 = requireValue(args, ++i);
+                    case "--workflow-authoring-authorization-dir" ->
+                            authoringAuthorizationDir = Path.of(requireValue(args, ++i));
                     case "--grpc-allowed-schemes" ->
                             allowedSchemes = requireValue(args, ++i);
                     case "--grpc-allowed-hosts" ->
@@ -401,6 +435,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                                 + "(or PROTOMOLT_INFERENCE_MODELS, ';'-separated) "
                                 + "[--service-workspace <dir>] (or PROTOMOLT_SERVICE_WORKSPACE) "
                                 + "[--workflow-workspace <dir>] (or PROTOMOLT_WORKFLOW_WORKSPACE) "
+                                + "[--workflow-authoring-policy-sha256 <sha256> "
+                                + "--workflow-authoring-authorization-dir <persistent-dir>] "
                                 + "[--grpc-allowed-schemes <csv>] [--grpc-allowed-hosts <csv>] "
                                 + "[--grpc-allowed-ports <csv>] "
                                 + "[--grpc-allow-plaintext <true|false>] "
@@ -515,10 +551,16 @@ public final class ProtoMoltServe implements AutoCloseable {
                     ? null : parsePorts(allowedPorts);
             OutboundChannelPolicy outboundPolicy = outboundPolicy(schemeSet, hostSet, portSet,
                     allowPlaintext, allowTls, maxDeadlineMs, maxActiveChannels);
+            WorkflowAuthoringOptions workflowAuthoring = null;
+            if ((authoringPolicySha256 != null && !authoringPolicySha256.isBlank())
+                    || authoringAuthorizationDir != null) {
+                workflowAuthoring = new WorkflowAuthoringOptions(
+                        authoringPolicySha256, authoringAuthorizationDir);
+            }
             return new Options(host, grpcPort, httpPort, registryGit, registryPort, apiToken,
                     demo, gatherCache, jobs, java.util.List.copyOf(inferenceModels),
                     serviceWorkspace, outboundPolicy, workflowWorkspace, delegation, taskConsole,
-                    meshCluster, accessPolicy, identityStores, configLane);
+                    meshCluster, accessPolicy, identityStores, configLane, workflowAuthoring);
         }
 
         private static int envInt(String name, int fallback) {
@@ -721,6 +763,16 @@ public final class ProtoMoltServe implements AutoCloseable {
             if (requestTopic != null && (kafkaBootstrap == null || kafkaBootstrap.isBlank())) {
                 throw new IllegalArgumentException("--jobs-request-topic requires --jobs-kafka");
             }
+        }
+    }
+
+    /** Opt-in trusted authoring policy and write-once launch authorization ledger. */
+    public record WorkflowAuthoringOptions(String policySha256, Path authorizationDirectory) {
+        public WorkflowAuthoringOptions {
+            if (policySha256 == null || !policySha256.matches("[0-9a-f]{64}")) {
+                throw new IllegalArgumentException("workflow authoring policy must be a lowercase SHA-256 digest");
+            }
+            Objects.requireNonNull(authorizationDirectory, "authorizationDirectory");
         }
     }
 
@@ -960,6 +1012,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                 }
             }
 
+            Supplier<TrustSnapshot> trust = trustSource(options);
+
             // Workflow runs: the store boots (and Flyway-migrates) before the catalog so
             // the jobs verbs serve from the same truth the worker fleet executes from.
             if (options.jobs() != null) {
@@ -974,8 +1028,9 @@ public final class ProtoMoltServe implements AutoCloseable {
                         "serve-" + ManagementFactory.getRuntimeMXBean().getName(),
                         jobs.workers(), null, null, 0, 0, jobs.targetConcurrency(),
                         requestTopic, null, jobs.kafkaBootstrap(), null);
+                WorkflowRunner runner = new WorkflowRunner(outboundPolicy, structured);
                 jobsWorker = new WorkflowRunWorker(jobStore, context, workflows,
-                        new WorkflowRunner(outboundPolicy, structured),
+                        runner,
                         jobsConfig);
                 if (jobs.kafkaBootstrap() != null) {
                     jobsRelay = new WorkflowRunEventRelay(jobStore,
@@ -983,23 +1038,28 @@ public final class ProtoMoltServe implements AutoCloseable {
                             jobsConfig.eventsTopic(), jobsConfig.pollInterval(), 100);
                 }
 
+                WorkflowAuthoringMount.Prepared authoring = options.workflowAuthoring() == null
+                        ? null : WorkflowAuthoringMount.prepare(options.workflowAuthoring(),
+                                artifacts, runEvidence, workflowVersions, jobStore, context,
+                                runner, jobsConfig.maxAttemptsDefault(), trust);
+
                 // The catalog sees the store so run-workflow resolves stored workflow names and
                 // the jobs verbs serve the live job rows.
                 ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
                         workflows, jobStore, jobsConfig.maxAttemptsDefault(),
                         inference, serviceProfiles,
                         outboundPolicy, artifacts, runEvidence, workflowVersions, store,
-                        trustSource(options), starter == null ? null : starter.credentials());
+                        trust, starter == null ? null : starter.credentials());
                 return startWithJobsCatalog(options, context, catalog, store, workflows,
-                        serviceProfiles, jobsDatabase, jobsWorker, jobsRelay, starter);
+                        serviceProfiles, jobsDatabase, jobsWorker, jobsRelay, starter, authoring);
             }
             // The catalog sees the store so run-workflow resolves stored workflow names.
             ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
                     workflows, null, 0, inference, serviceProfiles,
                     outboundPolicy, artifacts, runEvidence, workflowVersions, store,
-                    trustSource(options), starter == null ? null : starter.credentials());
+                    trust, starter == null ? null : starter.credentials());
             return startWithJobsCatalog(options, context, catalog, store, workflows,
-                    serviceProfiles, null, null, null, starter);
+                    serviceProfiles, null, null, null, starter, null);
         } catch (RuntimeException e) {
             if (registry != null) {
                 registry.close();
@@ -1027,7 +1087,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                                                        WorkflowRunDatabase jobsDatabase,
                                                        WorkflowRunWorker jobsWorker,
                                                        WorkflowRunEventRelay jobsRelay,
-                                                       CorrectionStarter starter) {
+                                                       CorrectionStarter starter,
+                                                       WorkflowAuthoringMount.Prepared authoring) {
         ProtoMoltGrpcServer grpc = null;
         JdkProtoRestServer http = null;
         McpHttpHandler mcpHandler = null;
@@ -1044,9 +1105,15 @@ public final class ProtoMoltServe implements AutoCloseable {
             // The live delegation surface: one coordinator per server, adapted to
             // catalog verbs and MCP resources through the bridge. Durable when a
             // delegation repository endpoint is configured, in-memory otherwise.
-            delegation = DelegationRuntime.open(options.delegation());
+            delegation = authoring == null
+                    ? DelegationRuntime.open(options.delegation())
+                    : DelegationRuntime.open(options.delegation(), authoring.selectingReviewer());
             DelegationBridge bridge = delegation.bridge();
             DelegationActions.register(catalog, bridge);
+            if (authoring != null) {
+                WorkflowAuthoringActions.register(catalog,
+                        authoring.operations(delegation.transcripts()));
+            }
             meshCluster = MeshClusterRuntime.open(options.meshCluster(), options.delegation());
             if (meshCluster != null) {
                 ClusterActions.register(catalog, meshCluster.directory());
@@ -1081,7 +1148,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                             : CallerResolver.chain(resolvers);
 
             grpc = ProtoMoltGrpcServer.start(options.host(), options.grpcPort(), catalog,
-                    options.apiToken(), callers, contributedServices(meshCluster != null));
+                    options.apiToken(), callers,
+                    contributedServices(meshCluster != null, authoring != null));
             if (options.demo() && store != null) {
                 // The demo workflow composes this server's own verbs, so it needs the bound
                 // gRPC port - seeded here rather than with the schemas.
@@ -1121,7 +1189,7 @@ public final class ProtoMoltServe implements AutoCloseable {
             ProtoMoltRestMount.register(methods, catalog, options.apiToken() == null
                     ? null
                     : ApiTokenRequirement.apiKeyHeader("api_token"), restCallers,
-                    contributedServices(meshCluster != null));
+                    contributedServices(meshCluster != null, authoring != null));
             ProtoToolsServerConfig config = ProtoToolsServerConfig.defaults()
                     .withHost(options.host())
                     .withPort(options.httpPort());
@@ -1261,7 +1329,8 @@ public final class ProtoMoltServe implements AutoCloseable {
      * mount publishes only methods the catalog can serve, and naming a service it did not
      * wire would rely on that filter rather than saying so here.
      */
-    private static java.util.List<ServiceDescriptor> contributedServices(boolean meshCluster) {
+    private static java.util.List<ServiceDescriptor> contributedServices(boolean meshCluster,
+            boolean workflowAuthoring) {
         java.util.List<ServiceDescriptor> services = new java.util.ArrayList<>();
         // Fully qualified: the generated holder and the registrar share a simple name.
         services.add(ai.protomolt.proto.delegation.v1.DelegationActions.getDescriptor()
@@ -1269,6 +1338,10 @@ public final class ProtoMoltServe implements AutoCloseable {
         if (meshCluster) {
             services.add(ClusterDirectoryServiceProto.getDescriptor()
                     .findServiceByName("ClusterDirectoryService"));
+        }
+        if (workflowAuthoring) {
+            services.add(GetAcceptedWorkflowRequest.getDescriptor().getFile()
+                    .findServiceByName("WorkflowAuthoringService"));
         }
         return services;
     }

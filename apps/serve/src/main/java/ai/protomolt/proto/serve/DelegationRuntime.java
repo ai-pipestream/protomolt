@@ -5,6 +5,7 @@ import ai.protomolt.proto.delegation.CandidateReviewer;
 import ai.protomolt.proto.delegation.DelegationBridge;
 import ai.protomolt.proto.delegation.EnvRepositoryStateKeyResolver;
 import ai.protomolt.proto.delegation.InProcessDelegationCoordinator;
+import ai.protomolt.proto.delegation.InMemoryTranscriptRepository;
 import ai.protomolt.proto.delegation.RepositoryServiceTranscriptRepository;
 import ai.protomolt.proto.delegation.RepositoryStateKeyResolver;
 import ai.protomolt.proto.delegation.TranscriptRepository;
@@ -34,15 +35,26 @@ final class DelegationRuntime implements AutoCloseable {
 
     private final DelegationBridge bridge;
     private final ManagedChannel repoChannel;
+    private final TranscriptRepository transcripts;
 
-    private DelegationRuntime(DelegationBridge bridge, ManagedChannel repoChannel) {
+    private DelegationRuntime(DelegationBridge bridge, ManagedChannel repoChannel,
+            TranscriptRepository transcripts) {
         this.bridge = bridge;
         this.repoChannel = repoChannel;
+        this.transcripts = transcripts;
     }
 
     /** Opens the runtime with encryption keys resolved from the process environment. */
     static DelegationRuntime open(ProtoMoltServe.DelegationOptions options) {
         return open(options, new EnvRepositoryStateKeyResolver());
+    }
+
+    /** Opens with a host-selected reviewer; ordinary serve keeps manual review. */
+    static DelegationRuntime open(ProtoMoltServe.DelegationOptions options,
+            CandidateReviewer reviewer) {
+        return open(options, new EnvRepositoryStateKeyResolver(),
+                RepositoryServiceTranscriptRepository.DEFAULT_RPC_TIMEOUT,
+                DelegationRuntime::channel, reviewer);
     }
 
     /**
@@ -55,7 +67,7 @@ final class DelegationRuntime implements AutoCloseable {
                                   RepositoryStateKeyResolver keys) {
         return open(options, keys,
                 RepositoryServiceTranscriptRepository.DEFAULT_RPC_TIMEOUT,
-                DelegationRuntime::channel);
+                DelegationRuntime::channel, CandidateReviewer.manual());
     }
 
     /** Package-private seam for bounded-deadline and channel-cleanup tests. */
@@ -63,9 +75,19 @@ final class DelegationRuntime implements AutoCloseable {
                                   RepositoryStateKeyResolver keys, Duration rpcTimeout,
                                   Function<ProtoMoltServe.DelegationOptions,
                                           ManagedChannel> channels) {
+        return open(options, keys, rpcTimeout, channels, CandidateReviewer.manual());
+    }
+
+    static DelegationRuntime open(ProtoMoltServe.DelegationOptions options,
+                                  RepositoryStateKeyResolver keys, Duration rpcTimeout,
+                                  Function<ProtoMoltServe.DelegationOptions,
+                                          ManagedChannel> channels, CandidateReviewer reviewer) {
+        Objects.requireNonNull(reviewer, "reviewer");
         if (options == null) {
-            return new DelegationRuntime(
-                    new DelegationBridge(new InProcessDelegationCoordinator()), null);
+            TranscriptRepository transcripts = new InMemoryTranscriptRepository();
+            var coordinator = new InProcessDelegationCoordinator(
+                    AdmissionPolicy.allowAll(), reviewer, Clock.systemUTC(), transcripts);
+            return new DelegationRuntime(new DelegationBridge(coordinator), null, transcripts);
         }
         Objects.requireNonNull(keys, "keys");
         Objects.requireNonNull(rpcTimeout, "rpcTimeout");
@@ -76,9 +98,9 @@ final class DelegationRuntime implements AutoCloseable {
                     DocumentServiceGrpc.newBlockingStub(channel), options.drive(),
                     options.objectKey(), options.keyReference(), keys, rpcTimeout);
             InProcessDelegationCoordinator coordinator = new InProcessDelegationCoordinator(
-                    AdmissionPolicy.allowAll(), CandidateReviewer.manual(), Clock.systemUTC(),
+                    AdmissionPolicy.allowAll(), reviewer, Clock.systemUTC(),
                     transcripts);
-            return new DelegationRuntime(new DelegationBridge(coordinator), channel);
+            return new DelegationRuntime(new DelegationBridge(coordinator), channel, transcripts);
         } catch (RuntimeException | Error e) {
             channel.shutdownNow();
             throw e;
@@ -88,6 +110,11 @@ final class DelegationRuntime implements AutoCloseable {
     /** The live bridge the catalog verbs and MCP resources mount. */
     DelegationBridge bridge() {
         return bridge;
+    }
+
+    /** The coordinator's own repository, shared with the accepted-workflow launcher. */
+    TranscriptRepository transcripts() {
+        return transcripts;
     }
 
     static ManagedChannel channel(ProtoMoltServe.DelegationOptions options) {
