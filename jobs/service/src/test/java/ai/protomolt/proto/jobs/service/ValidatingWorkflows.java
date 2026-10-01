@@ -50,6 +50,7 @@ public final class ValidatingWorkflows {
               }];
             }
             message Review {
+              int32 review_count = 2;
               string notes = 1 [(ai.protomolt.proto.validate.v1.field) = {
                 required: true
                 string: {min_len: 3}

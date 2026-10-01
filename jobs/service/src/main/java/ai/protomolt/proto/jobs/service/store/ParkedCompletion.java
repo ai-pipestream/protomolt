@@ -15,12 +15,20 @@ public sealed interface ParkedCompletion {
     }
 
     /**
-     * The step's checkpoint is already persisted — an idempotent redelivery
+     * The step's checkpoint and same response are already persisted — an idempotent redelivery
      * of complete-step. Nothing changed.
      *
      * @param currentStatus the job's status as found
      */
     record AlreadyDone(String currentStatus) implements ParkedCompletion {
+    }
+
+    /** A checkpoint exists, but its response differs. Nothing changed. */
+    record Conflict(String currentStatus) implements ParkedCompletion {
+    }
+
+    /** Validation failed while this exact step was still waiting. */
+    record Rejected(String error) implements ParkedCompletion {
     }
 
     /**

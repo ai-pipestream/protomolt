@@ -118,6 +118,48 @@ class CompleteStepValidationTest {
         assertThat(MAPPER.readTree(done.result).get("notes").asText()).isEqualTo("ship it");
     }
 
+    @Test
+    void aDifferentResponseCannotReuseACompletedStepEvenAfterTheJobFinishes() throws Exception {
+        String jobId = parkOnReview();
+        ObjectNode request = envelope("{\"jobId\": \"" + jobId
+                + "\", \"stepName\": \"review\", \"response\": {\"notes\": \"ship it\"}}");
+        assertThat(dispatch(completeStep, request).path("ok").asBoolean()).isTrue();
+        assertThat(worker.workOnce()).isTrue();
+        WorkflowRunRecord before = store.get(UUID.fromString(jobId)).orElseThrow();
+        String checkpoints = before.checkpoints;
+        int events = store.events().size();
+
+        assertThat(dispatch(new CompleteStepAction(store), request).path("ok").asBoolean()).isTrue();
+        request.withObject("response").put("notes", "different answer");
+        ObjectNode conflict = dispatch(new CompleteStepAction(store), request);
+        assertThat(conflict.path("ok").asBoolean()).isFalse();
+        assertThat(conflict.path("error").asText()).contains("conflict");
+        // Even an invalid competing result cannot overwrite a successful completion.
+        request.withObject("response").put("notes", "no");
+        assertThat(dispatch(completeStep, request).path("ok").asBoolean()).isFalse();
+        assertThat(store.get(UUID.fromString(jobId)).orElseThrow().status).isEqualTo("COMPLETED");
+        assertThat(store.get(UUID.fromString(jobId)).orElseThrow().checkpoints).isEqualTo(checkpoints);
+        assertThat(store.events()).hasSize(events);
+    }
+
+    @Test
+    void anIdenticalRetryMatchesALegacyCheckpointWithoutJsonNormalization() throws Exception {
+        String jobId = parkOnReview();
+        var job = store.get(UUID.fromString(jobId)).orElseThrow();
+        // Before this change checkpoints retained the caller's proto3 JSON,
+        // including quoted numbers and explicit default values.
+        String entry = "{\"name\":\"review\",\"skipped\":false,"
+                + "\"response\":{\"review_count\":\"0\",\"notes\":\"ship it\"}}";
+        store.completeParkedStep(job.jobId, "review", entry,
+                ai.protomolt.proto.jobs.service.events.WorkflowRunEventFactory.stepCheckpoint(job, "review"));
+        int events = store.events().size();
+        ObjectNode request = envelope("{\"jobId\":\"" + jobId
+                + "\",\"stepName\":\"review\",\"response\":{\"notes\":\"ship it\",\"review_count\":\"0\"}}");
+        assertThat(dispatch(new CompleteStepAction(store), request).path("ok").asBoolean()).isTrue();
+        assertThat(store.events()).hasSize(events);
+        assertThat(store.get(job.jobId).orElseThrow().checkpoints).contains("review_count");
+    }
+
     /**
      * Dispatches the way every surface does: through a catalog holding the verb, which is
      * where the request contract is checked before the verb runs.

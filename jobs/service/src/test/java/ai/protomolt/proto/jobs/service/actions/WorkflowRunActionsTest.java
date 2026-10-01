@@ -140,6 +140,21 @@ class WorkflowRunActionsTest {
         assertThat(store.events()).hasSize(1);
         assertThat(store.get(UUID.fromString(jobId)).orElseThrow().workflowName)
                 .isEqualTo("embed-text");
+
+        ObjectNode changedInput = request.deepCopy();
+        changedInput.withObject("input").put("text", "different");
+        ObjectNode conflict = dispatch(submit, changedInput);
+        assertThat(conflict.get("ok").asBoolean()).isFalse();
+        assertThat(conflict.get("error").asText()).contains("different workflow submission");
+        assertThat(store.get(UUID.fromString(jobId)).orElseThrow().input)
+                .contains("hi");
+        assertThat(store.events()).hasSize(1);
+
+        ObjectNode changedWorkflow = request.deepCopy();
+        changedWorkflow.set("workflow", workflows.threeStepWorkflow("in-process"));
+        ObjectNode workflowConflict = dispatch(submit, changedWorkflow);
+        assertThat(workflowConflict.get("ok").asBoolean()).isFalse();
+        assertThat(store.events()).hasSize(1);
     }
 
     @Test

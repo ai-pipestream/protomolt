@@ -33,14 +33,15 @@ public final class WorkflowRunSubmitter {
      *
      * @param ok true when the job row exists (newly inserted or idempotent
      *        resubmit)
+     * @param conflict true when the job id belongs to a different submission
      * @param jobId the job id (set when {@code ok})
      * @param status the stored row's status
      * @param failedStep the step a parse/verify failure names ("" for
      *        workflow-level failures)
      * @param error the failure detail (null when {@code ok})
      */
-    public record Outcome(boolean ok, String jobId, String status, String failedStep,
-                          String error) {
+    public record Outcome(boolean ok, boolean conflict, String jobId, String status,
+                          String failedStep, String error) {
     }
 
     private final WorkflowRunStore store;
@@ -126,10 +127,15 @@ public final class WorkflowRunSubmitter {
         record.runAfter = java.time.Instant.now();
         WorkflowRunStore.InsertOutcome outcome =
                 store.insert(record, WorkflowRunEventFactory.accepted(record));
-        return new Outcome(true, outcome.job().jobId.toString(), outcome.job().status, "", null);
+        if (outcome.conflict()) {
+            return new Outcome(false, true, jobId.toString(), outcome.job().status, "",
+                    "jobId '" + jobId + "' already belongs to a different workflow submission");
+        }
+        return new Outcome(true, false, outcome.job().jobId.toString(),
+                outcome.job().status, "", null);
     }
 
     private static Outcome fail(String step, String error) {
-        return new Outcome(false, null, null, step == null ? "" : step, error);
+        return new Outcome(false, false, null, null, step == null ? "" : step, error);
     }
 }

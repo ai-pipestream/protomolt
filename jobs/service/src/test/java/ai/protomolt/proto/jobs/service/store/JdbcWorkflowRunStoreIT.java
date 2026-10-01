@@ -113,6 +113,65 @@ class JdbcWorkflowRunStoreIT {
     }
 
     @Test
+    void insertComparesSubmissionIdentityAfterJobIdConflict() {
+        WorkflowRunRecord first = newJob("embed-text");
+        first.workflowDefinition = "{\"name\":\"embed-text\",\"version\":1}";
+        first.input = "{\"text\":\"hi\",\"count\":1}";
+        store.insert(first, WorkflowRunEventFactory.accepted(first));
+
+        WorkflowRunRecord same = newJob("embed-text");
+        same.jobId = first.jobId;
+        same.workflowDefinition = "{\"version\":1,\"name\":\"embed-text\"}";
+        same.input = "{\"count\":1,\"text\":\"hi\"}";
+        same.maxAttempts = 99;
+        assertThat(store.insert(same, WorkflowRunEventFactory.accepted(same)).conflict()).isFalse();
+
+        WorkflowRunRecord changed = newJob("embed-text");
+        changed.jobId = first.jobId;
+        changed.input = "{\"text\":\"different\"}";
+        assertThat(store.insert(changed, WorkflowRunEventFactory.accepted(changed)).conflict())
+                .isTrue();
+        assertThat(WorkflowRunStore.sameSubmission(store.get(first.jobId).orElseThrow(), first))
+                .isTrue();
+        assertThat(store.pollPendingEvents(10)).hasSize(1);
+    }
+
+    @Test
+    void concurrentDifferentSubmissionsHaveOneWinnerAndOneConflict() throws Exception {
+        UUID id = UUID.randomUUID();
+        WorkflowRunRecord a = newJob("embed-text");
+        a.jobId = id;
+        WorkflowRunRecord b = newJob("embed-text");
+        b.jobId = id;
+        b.input = "{\"text\":\"other\"}";
+        CountDownLatch start = new CountDownLatch(1);
+        ConcurrentLinkedQueue<WorkflowRunStore.InsertOutcome> results = new ConcurrentLinkedQueue<>();
+        ConcurrentLinkedQueue<Throwable> failures = new ConcurrentLinkedQueue<>();
+        Thread one = Thread.ofVirtual().start(() -> insertAfter(start, a, results, failures));
+        Thread two = Thread.ofVirtual().start(() -> insertAfter(start, b, results, failures));
+        start.countDown();
+        one.join(TimeUnit.SECONDS.toMillis(10));
+        two.join(TimeUnit.SECONDS.toMillis(10));
+        assertThat(one.isAlive() || two.isAlive()).isFalse();
+        assertThat(failures).isEmpty();
+        assertThat(results).hasSize(2);
+        assertThat(results.stream().filter(WorkflowRunStore.InsertOutcome::created)).hasSize(1);
+        assertThat(results.stream().filter(WorkflowRunStore.InsertOutcome::conflict)).hasSize(1);
+        assertThat(store.pollPendingEvents(10)).hasSize(1);
+    }
+
+    private static void insertAfter(CountDownLatch start, WorkflowRunRecord record,
+            ConcurrentLinkedQueue<WorkflowRunStore.InsertOutcome> results,
+            ConcurrentLinkedQueue<Throwable> failures) {
+        try {
+            start.await();
+            results.add(store.insert(record, WorkflowRunEventFactory.accepted(record)));
+        } catch (Throwable failure) {
+            failures.add(failure);
+        }
+    }
+
+    @Test
     void claimFlipsTheOldestEligibleJobAndIncrementsTheAttempt() {
         WorkflowRunRecord first = insert("workflow-a");
         WorkflowRunRecord second = insert("workflow-b");
@@ -328,6 +387,94 @@ class JdbcWorkflowRunStoreIT {
         assertThat(doomed.attempts).isEqualTo(WorkflowRunEventRecord.MAX_ATTEMPTS);
         assertThat(doomed.lastError).isEqualTo("broker down");
         assertThat(store.pollPendingEvents(10)).isEmpty();
+    }
+
+    @Test
+    void competingCompletionsCommitOnlyOneResponseAndEvent() throws Exception {
+        WorkflowRunRecord job = parkedReview();
+        var results = raceCompletion(job, false);
+        assertThat(results.stream().filter(ParkedCompletion.Completed.class::isInstance)).hasSize(1);
+        assertThat(results.stream().filter(ParkedCompletion.Conflict.class::isInstance)).hasSize(1);
+        WorkflowRunRecord stored = store.get(job.jobId).orElseThrow();
+        assertThat(stored.status).isEqualTo("QUEUED");
+        assertThat(store.pollPendingEvents(100)).hasSize(3); // accepted, waiting, one checkpoint
+
+        // A new store instance sees the same durable identity, including after settlement.
+        store.markCompleted(job.jobId, "{}", "accepted",
+                WorkflowRunEventFactory.completed(stored, "accepted"));
+        var restarted = new JdbcWorkflowRunStore(database);
+        String response = stored.checkpoints.contains("first") ? "first" : "second";
+        assertThat(restarted.completeParkedStep(job.jobId, "review", completion(response),
+                WorkflowRunEventFactory.stepCheckpoint(stored, "review")))
+                .isInstanceOf(ParkedCompletion.AlreadyDone.class);
+        assertThat(restarted.completeParkedStep(job.jobId, "review", completion("changed"),
+                WorkflowRunEventFactory.stepCheckpoint(stored, "review")))
+                .isInstanceOf(ParkedCompletion.Conflict.class);
+        assertThat(store.get(job.jobId).orElseThrow().status).isEqualTo("COMPLETED");
+        assertThat(store.pollPendingEvents(100)).hasSize(4);
+    }
+
+    @Test
+    void validationRejectionAndSuccessfulCompletionHaveOneAtomicWinner() throws Exception {
+        WorkflowRunRecord job = parkedReview();
+        var results = raceCompletion(job, true);
+        WorkflowRunRecord stored = store.get(job.jobId).orElseThrow();
+        if (results.stream().anyMatch(ParkedCompletion.Completed.class::isInstance)) {
+            assertThat(results.stream().filter(ParkedCompletion.Conflict.class::isInstance)).hasSize(1);
+            assertThat(stored.status).isEqualTo("QUEUED");
+            assertThat(stored.checkpoints).contains("first").doesNotContain("second");
+            assertThat(stored.error).isNull();
+        } else {
+            assertThat(results.stream().filter(ParkedCompletion.Rejected.class::isInstance)).hasSize(1);
+            assertThat(results.stream().filter(ParkedCompletion.WrongState.class::isInstance)).hasSize(1);
+            assertThat(stored.status).isEqualTo("FAILED");
+            assertThat(stored.checkpoints).isEqualTo("[]");
+        }
+        assertThat(store.pollPendingEvents(100)).hasSize(3);
+    }
+
+    @Test
+    void aDelayedValidationRejectionCannotFailAnAlreadyCompletedStep() {
+        WorkflowRunRecord job = parkedReview();
+        assertThat(store.completeParkedStep(job.jobId, "review", completion("first"),
+                WorkflowRunEventFactory.stepCheckpoint(job, "review")))
+                .isInstanceOf(ParkedCompletion.Completed.class);
+        assertThat(store.completeParkedStep(job.jobId, "review", completion("bad"),
+                WorkflowRunEventFactory.failed(job, "review", "invalid"), "invalid"))
+                .isInstanceOf(ParkedCompletion.Conflict.class);
+        assertThat(store.get(job.jobId).orElseThrow().status).isEqualTo("QUEUED");
+        assertThat(store.pollPendingEvents(100)).hasSize(3);
+    }
+
+    private WorkflowRunRecord parkedReview() {
+        WorkflowRunRecord job = insert("review-workflow");
+        store.markWaiting(job.jobId, "review", "[]", WorkflowRunEventFactory.waiting(job, "review"));
+        return store.get(job.jobId).orElseThrow();
+    }
+
+    private static String completion(String notes) {
+        return "{\"name\":\"review\",\"skipped\":false,\"response\":{\"notes\":\"" + notes + "\"}}";
+    }
+
+    private List<ParkedCompletion> raceCompletion(WorkflowRunRecord job, boolean rejectSecond)
+            throws Exception {
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(() -> {
+                start.await();
+                return store.completeParkedStep(job.jobId, "review", completion("first"),
+                        WorkflowRunEventFactory.stepCheckpoint(job, "review"));
+            });
+            var second = executor.submit(() -> {
+                start.await();
+                return store.completeParkedStep(job.jobId, "review", completion("second"),
+                        rejectSecond ? WorkflowRunEventFactory.failed(job, "review", "invalid")
+                                : WorkflowRunEventFactory.stepCheckpoint(job, "review"),
+                        rejectSecond ? "invalid" : null);
+            });
+            start.countDown();
+            return List.of(first.get(10, TimeUnit.SECONDS), second.get(10, TimeUnit.SECONDS));
+        }
     }
 
     @Test
