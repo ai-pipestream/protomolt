@@ -19,6 +19,7 @@ import java.io.InputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -189,6 +190,30 @@ class WorkflowAuthoringFixturesTest {
                 artifacts, runner))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("violates contract");
         assertThat(calls).hasValue(0);
+    }
+
+    @Test
+    void admissionRejectsMalformedLaterFixtureBeforeAnyCall() throws Exception {
+        var first = fixture("first", "hello", "hello!");
+        var later = new WorkflowAuthoringFixtures.Fixture("later", first.input(),
+                artifacts.save(new byte[] {(byte) 0xff}, "application/x-protobuf", false));
+        assertThatThrownBy(() -> WorkflowAuthoringFixtures.admit(admitted,
+                List.of(first, later), List.of(first, later), artifacts))
+                .isInstanceOf(com.google.protobuf.InvalidProtocolBufferException.class);
+        assertThat(calls).hasValue(0);
+    }
+
+    @Test
+    void admittedInputsRemainStableWhenRepositoryBytesChange() throws Exception {
+        var fixture = fixture("first", "hello", "hello!");
+        var ready = WorkflowAuthoringFixtures.admit(admitted,
+                List.of(fixture), List.of(fixture), artifacts);
+        Files.write(temp.resolve(fixture.input().getSha256()), message("other").toByteArray());
+        var observed = WorkflowAuthoringFixtures.execute(ready, artifacts, runner);
+        assertThat(calls).hasValue(1);
+        assertThat(observed).hasSize(1);
+        assertThat(observed.getFirst().input()).isEqualTo(fixture.input());
+        assertThat(observed.getFirst().output()).isEqualTo(fixture.expectedOutput());
     }
 
     @Test

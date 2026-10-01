@@ -31,6 +31,24 @@ public final class WorkflowAuthoringFixtures {
     /** Evidence of this invocation, not a worker-reported PASS. */
     public record Observation(String name, ArtifactReference input, ArtifactReference output) { }
 
+    /** Fully checked fixture snapshot; only {@link #admit} can construct one. */
+    public static final class Admitted {
+        private final CompiledWorkflow workflow;
+        private final List<Fixture> fixtures;
+        private final List<DynamicMessage> inputs;
+        private final List<DynamicMessage> expected;
+        private final Descriptor outputType;
+
+        private Admitted(CompiledWorkflow workflow, List<Fixture> fixtures,
+                List<DynamicMessage> inputs, List<DynamicMessage> expected, Descriptor outputType) {
+            this.workflow = workflow;
+            this.fixtures = List.copyOf(fixtures);
+            this.inputs = List.copyOf(inputs);
+            this.expected = List.copyOf(expected);
+            this.outputType = outputType;
+        }
+    }
+
     /**
      * Matches candidate fixtures against caller policy, admits all fixture bytes
      * before any call, then executes the already-preflighted workflow. Failure
@@ -40,6 +58,15 @@ public final class WorkflowAuthoringFixtures {
             List<Fixture> candidate, List<Fixture> callerPolicy,
             ArtifactRepository artifacts, WorkflowRunner runner)
             throws IOException, WorkflowRunner.WorkflowExecutionException {
+        return execute(admit(admitted, candidate, callerPolicy, artifacts), artifacts, runner);
+    }
+
+    /** Resolves and validates every policy fixture before any external call. */
+    public static Admitted admit(WorkflowAuthoringPreflight.Result admitted,
+            List<Fixture> candidate, List<Fixture> callerPolicy, ArtifactRepository artifacts)
+            throws IOException {
+        Objects.requireNonNull(admitted, "admitted workflow");
+        Objects.requireNonNull(artifacts, "artifacts");
         candidate = List.copyOf(candidate);
         callerPolicy = List.copyOf(callerPolicy);
         if (callerPolicy.isEmpty() || callerPolicy.size() > 32 || !candidate.equals(callerPolicy)) {
@@ -65,6 +92,16 @@ public final class WorkflowAuthoringFixtures {
             inputs.add(load(fixture.input(), workflow.inputType(), artifacts));
             expected.add(load(fixture.expectedOutput(), outputType, artifacts));
         }
+        return new Admitted(workflow, callerPolicy, inputs, expected, outputType);
+    }
+
+    /** Executes only the workflow and parsed bytes captured by admission. */
+    public static List<Observation> execute(Admitted admitted,
+            ArtifactRepository artifacts, WorkflowRunner runner)
+            throws IOException, WorkflowRunner.WorkflowExecutionException {
+        Objects.requireNonNull(admitted, "admitted fixtures");
+        Objects.requireNonNull(artifacts, "artifacts");
+        Objects.requireNonNull(runner, "runner");
         var observer = new WorkflowRunner.ExecutionObserver() {
             @Override public void stepStarted(CompiledWorkflow.Step step, DynamicMessage request,
                     Instant startedAt) { validate(request); }
@@ -74,16 +111,16 @@ public final class WorkflowAuthoringFixtures {
             }
         };
         var observations = new ArrayList<Observation>();
-        for (int i = 0; i < callerPolicy.size(); i++) {
-            Fixture fixture = callerPolicy.get(i);
-            Message output = runner.run(workflow, inputs.get(i), observer).output();
+        for (int i = 0; i < admitted.fixtures.size(); i++) {
+            Fixture fixture = admitted.fixtures.get(i);
+            Message output = runner.run(admitted.workflow, admitted.inputs.get(i), observer).output();
             validate(output);
-            if (!output.equals(expected.get(i))) {
+            if (!output.equals(admitted.expected.get(i))) {
                 throw new IllegalArgumentException("fixture '" + fixture.name() + "' output differs from caller expectation");
             }
             ArtifactReference stored = artifacts.save(output.toByteArray(), "application/x-protobuf", false);
             // Confirm the repository actually retained the observed output.
-            if (!load(stored, outputType, artifacts).equals(output)) {
+            if (!load(stored, admitted.outputType, artifacts).equals(output)) {
                 throw new IOException("stored fixture observation differs from executed output");
             }
             observations.add(new Observation(fixture.name(), fixture.input(), stored));
