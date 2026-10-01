@@ -62,7 +62,8 @@ public final class FileSystemWorkflowLaunchAuthorizationRepository
             if (existing.isPresent()) {
                 if (!Arrays.equals(proposed,
                         WorkflowLaunchValidation.deterministicBytes(existing.get()))) {
-                    throw new IOException("launch authorization conflict for " + launchId);
+                    throw new WorkflowLaunchConflictException(
+                            "launch authorization conflict for " + launchId);
                 }
                 return existing.get();
             }

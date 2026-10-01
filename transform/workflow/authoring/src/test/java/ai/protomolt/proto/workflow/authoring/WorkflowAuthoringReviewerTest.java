@@ -431,6 +431,13 @@ class WorkflowAuthoringReviewerTest {
             var first = launcher.launch(request);
             assertThat(first.getJobId()).isEqualTo(request.getLaunchId());
             assertThat(launcher.launch(request)).isEqualTo(first);
+            var catalog = WorkflowAuthoringActions.register(
+                    ai.protomolt.proto.actions.ActionCatalog.defaults(
+                            ai.protomolt.proto.actions.ActionContext.create()), launcher);
+            assertThat(catalog.execute("get-accepted-workflow",
+                    ai.protomolt.proto.workflow.authoring.v1.GetAcceptedWorkflowRequest.newBuilder()
+                            .setTaskId(taskId).build())).isEqualTo(request.getAcceptance());
+            assertThat(catalog.execute("launch-accepted-workflow", request)).isEqualTo(first);
             assertThat(calls.get()).isEqualTo(afterAuthorization);
             assertThat(storedJobs.jobs).hasSize(1);
             assertThat(storedJobs.acceptedEvents.get()).isEqualTo(1);
