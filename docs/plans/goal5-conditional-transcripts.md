@@ -1,7 +1,8 @@
 # Conditional transcript persistence
 
-Status: proposed contracts and implementation plan. No conditional blob RPC is
-available yet. This is a prerequisite for durable automatic review and retry.
+Status: contracts, qualified S3 backend, repository RPCs and conditional transcript
+adapter are implemented in this change series. Deployment is not implied.
+Durable automatic review status and retry still require coordinator integration.
 
 ## Failure being addressed
 
@@ -12,8 +13,8 @@ does not stop that in-flight request.
 
 ## Protocol
 
-Add GetBlobForUpdate and CompareAndPutBlob to DocumentService when their handlers
-are ready. Define standalone messages first. New method names make an older
+GetBlobForUpdate and CompareAndPutBlob extend DocumentService with matching
+handlers, following the standalone message definitions. New method names make an older
 server return UNIMPLEMENTED instead of silently ignoring a new precondition on
 the existing unconditional PutBlob request.
 
@@ -125,6 +126,6 @@ changes remain outside this work.
    including changed-byte ETags, stale overwrite and concurrent absent create.
    Verify transport limits accommodate the payload plus message framing. Keep existing
    PutBlob behavior compatible for its existing callers.
-5. Only then wire durable review start/failure/deferred/retry and its process
+5. After landing and qualification, wire durable review start/failure/deferred/retry and its process
    recovery test. Browser, workflow-worker crash, Kafka, image-only Compose and
    anonymous/native architecture qualification remain part of Goal 5.
