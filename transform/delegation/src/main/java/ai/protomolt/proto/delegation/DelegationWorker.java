@@ -179,6 +179,10 @@ public final class DelegationWorker implements AutoCloseable {
             case RENEWAL -> {
                 // The active runner continues under the advanced expiry.
             }
+            case REVIEW_STARTED, REVIEW_FAILED, REVIEW_DEFERRED -> {
+                // Durable review status does not start, revise or cancel work.
+                // The coordinator decides separately through a bound verdict.
+            }
             case EXPIRED -> stop(frame.getTaskId());
             case CANCELLATION -> cancel(frame.getTaskId(), frame.getCancellation().getReason());
             case REVISION_REQUESTED -> revise(frame.getTaskId(), frame.getRevisionRequested());

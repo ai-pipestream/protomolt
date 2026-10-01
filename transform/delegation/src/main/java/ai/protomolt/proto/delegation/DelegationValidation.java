@@ -11,6 +11,7 @@ import ai.protomolt.proto.delegation.v1.CheckpointReference;
 import ai.protomolt.proto.delegation.v1.CommitReference;
 import ai.protomolt.proto.delegation.v1.CompletionAccepted;
 import ai.protomolt.proto.delegation.v1.CompletionCandidate;
+import ai.protomolt.proto.delegation.v1.CandidateReviewIdentity;
 import ai.protomolt.proto.delegation.v1.DelegateRequest;
 import ai.protomolt.proto.delegation.v1.DelegateResponse;
 import ai.protomolt.proto.delegation.v1.DeliverableContract;
@@ -18,6 +19,10 @@ import ai.protomolt.proto.delegation.v1.FailureReport;
 import ai.protomolt.proto.delegation.v1.Lane;
 import ai.protomolt.proto.delegation.v1.ProgressEvent;
 import ai.protomolt.proto.delegation.v1.RevisionRequested;
+import ai.protomolt.proto.delegation.v1.ReviewDeferred;
+import ai.protomolt.proto.delegation.v1.ReviewFailed;
+import ai.protomolt.proto.delegation.v1.ReviewFailureCode;
+import ai.protomolt.proto.delegation.v1.ReviewStarted;
 import ai.protomolt.proto.delegation.v1.TaskOffer;
 import ai.protomolt.proto.delegation.v1.TaskMessage;
 import ai.protomolt.proto.delegation.v1.TaskMessageKind;
@@ -30,9 +35,12 @@ import ai.protomolt.proto.delegation.v1.WorkerHello;
 import ai.protomolt.proto.grpc.workflow.WorkflowValidation;
 import ai.protomolt.proto.formats.Formats;
 import com.google.protobuf.Timestamp;
+import com.google.protobuf.Descriptors.FieldDescriptor;
+import com.google.protobuf.Message;
 import com.google.protobuf.util.Timestamps;
 
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -172,6 +180,29 @@ public final class DelegationValidation {
             case ACCEPTED -> {
                 requireTaskScoped(frame.getTaskId());
                 validate(frame.getAccepted());
+            }
+            case REVIEW_STARTED -> {
+                requireTaskScoped(frame.getTaskId());
+                requireNoUnknown(frame, "review frame");
+                validate(frame.getReviewStarted());
+                require(frame.getReviewStarted().getIdentity().getTaskId().equals(frame.getTaskId()),
+                        "review_started.identity.task_id must match frame.task_id");
+                require(frame.getReviewStarted().getStartedAt().equals(frame.getSentAt()),
+                        "review_started.started_at must match frame.sent_at");
+            }
+            case REVIEW_FAILED -> {
+                requireTaskScoped(frame.getTaskId());
+                requireNoUnknown(frame, "review frame");
+                validate(frame.getReviewFailed());
+                require(frame.getReviewFailed().getIdentity().getTaskId().equals(frame.getTaskId()),
+                        "review_failed.identity.task_id must match frame.task_id");
+            }
+            case REVIEW_DEFERRED -> {
+                requireTaskScoped(frame.getTaskId());
+                requireNoUnknown(frame, "review frame");
+                validate(frame.getReviewDeferred());
+                require(frame.getReviewDeferred().getIdentity().getTaskId().equals(frame.getTaskId()),
+                        "review_deferred.identity.task_id must match frame.task_id");
             }
             case TASK_MESSAGE -> {
                 requireTaskScoped(frame.getTaskId());
@@ -402,6 +433,8 @@ public final class DelegationValidation {
                 "revision_requested.failed_checks exceeds the maximum of " + MAX_CHECKS);
         requested.getFailedChecksList().forEach(
                 check -> validateName(check, "revision_requested.failed_checks"));
+        validateOptionalCanonicalUuid(requested.getReviewInvocationId(),
+                "revision_requested.review_invocation_id");
     }
 
     /** Validates a completion acceptance. */
@@ -411,6 +444,83 @@ public final class DelegationValidation {
         validateRevision(accepted.getRevision(), "accepted.revision");
         require(!accepted.getVerdict().isBlank(), "accepted.verdict must not be blank");
         bounded(accepted.getVerdict(), 2_048, "accepted.verdict");
+        validateOptionalCanonicalUuid(accepted.getReviewInvocationId(),
+                "accepted.review_invocation_id");
+    }
+
+    public static void validate(CandidateReviewIdentity identity) {
+        require(identity != null, "review.identity must not be null");
+        requireNoUnknown(identity, "review.identity");
+        require(Formats.isUuid(identity.getTaskId()), "review.identity.task_id must be a uuid");
+        validateName(identity.getWorkerId(), "review.identity.worker_id");
+        validateAttempt(identity.getAttempt(), "review.identity.attempt");
+        validateRevision(identity.getRevision(), "review.identity.revision");
+        validateCanonicalUuid(identity.getInvocationId(), "review.identity.invocation_id");
+        validateDigest(identity.getOfferEntrySha256(), "review.identity.offer_entry_sha256");
+        validateDigest(identity.getCandidateEntrySha256(), "review.identity.candidate_entry_sha256");
+    }
+
+    public static void validate(ReviewStarted started) {
+        require(started != null, "review_started must not be null");
+        requireNoUnknown(started, "review_started");
+        require(started.hasIdentity(), "review_started.identity is required");
+        validate(started.getIdentity());
+        require(started.hasStartedAt() && started.hasDeadline(),
+                "review_started timestamps are required");
+        validateTimestamp(started.getStartedAt(), "review_started.started_at");
+        validateTimestamp(started.getDeadline(), "review_started.deadline");
+        long seconds = started.getDeadline().getSeconds() - started.getStartedAt().getSeconds();
+        int nanos = started.getDeadline().getNanos() - started.getStartedAt().getNanos();
+        require(seconds > 0 || (seconds == 0 && nanos > 0),
+                "review_started.deadline must follow started_at");
+        require(seconds < 3600 || (seconds == 3600 && nanos <= 0),
+                "review_started deadline window exceeds one hour");
+        require(started.getRetryId().isEmpty() == started.getPreviousInvocationId().isEmpty(),
+                "review_started retry fields must occur together");
+        validateOptionalCanonicalUuid(started.getRetryId(), "review_started.retry_id");
+        validateOptionalCanonicalUuid(started.getPreviousInvocationId(),
+                "review_started.previous_invocation_id");
+        require(!started.getPreviousInvocationId().equals(started.getIdentity().getInvocationId()),
+                "review_started must use a new invocation_id");
+    }
+
+    public static void validate(ReviewFailed failed) {
+        require(failed != null && failed.hasIdentity(), "review_failed.identity is required");
+        requireNoUnknown(failed, "review_failed");
+        validate(failed.getIdentity());
+        require(failed.getCode() == ReviewFailureCode.REVIEW_FAILURE_CODE_INFRASTRUCTURE
+                        || failed.getCode() == ReviewFailureCode.REVIEW_FAILURE_CODE_DEADLINE
+                        || failed.getCode() == ReviewFailureCode.REVIEW_FAILURE_CODE_INTERRUPTED,
+                "review_failed.code must be a defined failure code");
+    }
+
+    public static void validate(ReviewDeferred deferred) {
+        require(deferred != null && deferred.hasIdentity(), "review_deferred.identity is required");
+        requireNoUnknown(deferred, "review_deferred");
+        validate(deferred.getIdentity());
+    }
+
+    private static void validateDigest(String value, String field) {
+        require(value.matches("[0-9a-f]{64}"), field + " must be a lowercase SHA-256 digest");
+    }
+
+    private static void validateCanonicalUuid(String value, String field) {
+        require(Formats.isUuid(value) && value.matches("[0-9a-f-]{36}"),
+                field + " must be a canonical lowercase uuid");
+    }
+
+    private static void validateOptionalCanonicalUuid(String value, String field) {
+        if (!value.isEmpty()) validateCanonicalUuid(value, field);
+    }
+
+    private static void requireNoUnknown(Message value, String field) {
+        require(value.getUnknownFields().asMap().isEmpty(), field + " contains unknown fields");
+        for (var entry : value.getAllFields().entrySet()) {
+            if (entry.getKey().getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
+            if (entry.getKey().isRepeated()) {
+                for (Object child : (List<?>) entry.getValue()) requireNoUnknown((Message) child, field);
+            } else requireNoUnknown((Message) entry.getValue(), field);
+        }
     }
 
     /**

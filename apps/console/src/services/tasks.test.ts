@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { TaskApi, TaskApiError } from './tasks'
+import { TaskApi, TaskApiError, frameText } from './tasks'
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 
@@ -110,6 +110,27 @@ describe('coordination recovery', () => {
   const task: TaskSummary = { taskId: 'task', phase: 'leased', attempt: 2,
     workerId: 'worker-a', objective: 'Report', candidateRevision: 0,
     lastProgressSeq: 0, lastCheckpointSeq: 0, lastCursor: 5 }
+
+  it('distinguishes running, failed and deferred review without offering a new task attempt', () => {
+    const candidate = { ...task, phase: 'candidate' }
+    expect(taskRecovery({ ...candidate, review: { status: 'running' } }).reason).toContain('is running')
+    const failed = taskRecovery({ ...candidate, review: { status: 'failed', failureCode: 'deadline' } })
+    expect(failed.reason).toContain('deadline')
+    expect(failed.retry).toBe(false)
+    expect(failed.action).toContain('manual decision')
+    expect(taskRecovery({ ...candidate, review: { status: 'deferred' } }).reason).toContain('manual decision')
+    expect(taskRecovery(candidate).reason).toContain('waiting for review')
+  })
+
+  it('renders review infrastructure failures separately from candidate rejection', () => {
+    const event = { cursor: 8, taskId: 'task', workerId: 'worker-a', lane: 'LANE_COORDINATOR',
+      entry: { coordinatorFrame: { reviewFailed: { code: 'REVIEW_FAILURE_CODE_INTERRUPTED' } } } }
+    expect(frameText(event)).toBe('Review was interrupted by coordinator recovery')
+    expect(frameText({ ...event, entry: { coordinatorFrame: { reviewStarted: {} } } }))
+      .toBe('Independent review started')
+    expect(frameText({ ...event, entry: { coordinatorFrame: { reviewDeferred: {} } } }))
+      .toContain('manual decision')
+  })
 
   it('names the actor and a next action when accepted work has no candidate', () => {
     expect(taskRecovery(task)).toMatchObject({ actor: 'worker-a', retry: false, cancel: true })
