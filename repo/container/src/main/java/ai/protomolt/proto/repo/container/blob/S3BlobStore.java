@@ -9,6 +9,7 @@ import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 
 import java.io.InputStream;
 import java.util.Base64;
@@ -48,6 +49,46 @@ public final class S3BlobStore implements BlobStore {
         var r = client.putObject(putRequest(spec, contentLength),
                 RequestBody.fromInputStream(body, contentLength));
         return new PutResult(r.eTag(), r.versionId());
+    }
+
+    @Override
+    public GetResult getForUpdate(String bucket, String key) {
+        GetResult result = get(bucket, key, null); // One uncached S3 GET pairs bytes and tag.
+        strongBackingEtag(result.eTag());
+        if (result.data().length > MAX_CONDITIONAL_BYTES) {
+            throw new IllegalArgumentException("conditional object exceeds 9 MiB");
+        }
+        return result;
+    }
+
+    @Override
+    public PutResult conditionalPut(PutSpec spec, byte[] body, WriteCondition condition) {
+        java.util.Objects.requireNonNull(spec);
+        java.util.Objects.requireNonNull(body);
+        java.util.Objects.requireNonNull(condition);
+        if (body.length > MAX_CONDITIONAL_BYTES) {
+            throw new IllegalArgumentException("conditional object exceeds 9 MiB");
+        }
+        PutObjectRequest.Builder request = putRequest(spec, body.length).toBuilder();
+        if (condition.ifAbsent()) request.ifNoneMatch("*");
+        else request.ifMatch(BlobStore.requireStrongEtag(condition.expectedEtag()));
+        try {
+            var response = client.putObject(request.build(), RequestBody.fromBytes(body));
+            return new PutResult(strongBackingEtag(response.eTag()), response.versionId());
+        } catch (S3Exception conflict) {
+            if (conflict.statusCode() == 409 || conflict.statusCode() == 412) {
+                throw new BlobConflictException("conditional object write conflicted", conflict);
+            }
+            throw conflict;
+        }
+    }
+
+    private static String strongBackingEtag(String tag) {
+        try {
+            return BlobStore.requireStrongEtag(tag);
+        } catch (IllegalArgumentException incompatible) {
+            throw new UnsupportedOperationException("backing store did not return one strong ETag", incompatible);
+        }
     }
 
     private static PutObjectRequest putRequest(PutSpec spec, long contentLength) {
