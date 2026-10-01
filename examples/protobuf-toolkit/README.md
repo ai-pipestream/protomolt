@@ -53,6 +53,11 @@ Neither warning is an application result.
 
 ## What to reuse
 
+To connect these libraries to a running platform, follow
+[Project data and run an accepted workflow](../../docs/tutorials/projected-workflow.md).
+Its optional `workflowInput` task validates a projected contact and writes JSON
+for the starter's launch form without contacting a server itself.
+
 Read [ToolkitExample.java](src/main/java/example/ToolkitExample.java) alongside
 [contact.proto](src/main/proto/contact.proto):
 

@@ -1,0 +1,52 @@
+{
+  "release": "authoring-starter-d209f0551566",
+  "mode": "local published libraries plus typed RPCs against the published Compose stack",
+  "job": {
+    "job_id": "cabf6b9e-cf44-4f79-8705-7669d362d11b",
+    "workflow_name": "normalize-record-v1",
+    "status": "COMPLETED",
+    "attempt": 1,
+    "input": {
+      "content": "Ada Lovelace <ada@example.org>",
+      "operationId": "ed7c3e68-e417-47c5-a905-e4945c8fb88b"
+    },
+    "checkpoints": [
+      {
+        "name": "normalize",
+        "response": {
+          "text": "Ada Lovelace <ada@example.org>"
+        }
+      },
+      {
+        "name": "write",
+        "response": {
+          "contentSha256": "9b27b5f0692616aade7b6ec572062132fa781efec24f5d7dca9a8f78246bdb00",
+          "operationId": "ed7c3e68-e417-47c5-a905-e4945c8fb88b"
+        }
+      }
+    ],
+    "result": {
+      "contentSha256": "9b27b5f0692616aade7b6ec572062132fa781efec24f5d7dca9a8f78246bdb00",
+      "operationId": "ed7c3e68-e417-47c5-a905-e4945c8fb88b"
+    },
+    "created_at": "2026-10-01T20:57:00.568881Z",
+    "updated_at": "2026-10-01T20:57:00.611058Z",
+    "completed_at": "2026-10-01T20:57:00.611058Z",
+    "verdict": "2 steps, output ai.protomolt.proto.samples.authoring.v1.WriteRecordResponse"
+  },
+  "launchRetryMatched": true,
+  "statusAfterRestart": {
+    "job_id": "cabf6b9e-cf44-4f79-8705-7669d362d11b",
+    "state": "WORKFLOW_LAUNCH_JOB_STATE_COMPLETED",
+    "attempt": 1,
+    "max_attempts": 3,
+    "created_at": "2026-10-01T20:57:00.568881Z",
+    "updated_at": "2026-10-01T20:57:00.611058Z",
+    "completed_at": "2026-10-01T20:57:00.611058Z"
+  },
+  "outputHashVerified": true,
+  "invalidProjectionRefusedBeforeOutputFile": true,
+  "browserInputVerified": false,
+  "humanUsabilityVerified": false,
+  "modelCalls": 0
+}
