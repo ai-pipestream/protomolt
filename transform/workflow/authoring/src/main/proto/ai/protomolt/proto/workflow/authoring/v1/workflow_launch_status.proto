@@ -41,7 +41,7 @@ message WorkflowLaunchJobStatus {
   // Existing worker claim count; zero is valid before the first claim.
   int32 attempt = 3 [(ai.protomolt.proto.validate.v1.field).int32.gte = 0];
   // Configured retry ceiling, not proof the claim count stayed below it.
-  // Existing lease-expiry recovery can exceed this value; expose that fact.
+  // Parked-step continuations can exceed this value; lease-expiry retries cannot.
   int32 max_attempts = 4 [(ai.protomolt.proto.validate.v1.field).int32.gte = 1];
   // Insertion timestamp from the job row.
   google.protobuf.Timestamp created_at = 5 [(ai.protomolt.proto.validate.v1.field).required = true];

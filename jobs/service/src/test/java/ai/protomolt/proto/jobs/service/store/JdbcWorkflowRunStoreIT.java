@@ -230,6 +230,195 @@ class JdbcWorkflowRunStoreIT {
     }
 
     @Test
+    void anExpiredLastAttemptBecomesDeadWithOneAtomicEventAndFencesItsWorker()
+            throws Exception {
+        WorkflowRunRecord job = newJob("exhausted-lease");
+        job.maxAttempts = 1;
+        store.insert(job, WorkflowRunEventFactory.accepted(job));
+        WorkflowRunRecord claimed = store.claim("lost-worker", Duration.ofMinutes(1)).orElseThrow();
+        expireLease(job.jobId);
+
+        assertThat(store.requeueExpiredLeases()).isZero(); // no row was requeued
+        WorkflowRunRecord dead = store.get(job.jobId).orElseThrow();
+        assertThat(dead.status).isEqualTo(WorkflowRunRecord.STATUS_DEAD);
+        assertThat(dead.attempt).isEqualTo(1);
+        assertThat(dead.error).isEqualTo(
+                "WORKFLOW: execution lease expired after attempt 1 of 1; retry budget exhausted");
+        assertThat(dead.completedAt).isNotNull();
+        assertThat(dead.updatedAt).isNotNull();
+        assertThat(dead.leaseOwner).isNull();
+        assertThat(dead.leaseUntil).isNull();
+
+        var events = store.pollPendingEvents(10);
+        assertThat(events).extracting(event -> event.eventType).containsExactly(
+                WorkflowRunEventRecord.TYPE_ACCEPTED, WorkflowRunEventRecord.TYPE_DEAD);
+        WorkflowRunEvent terminal = WorkflowRunEvent.parseFrom(events.get(1).payload);
+        assertThat(terminal.getJobId()).isEqualTo(job.jobId.toString());
+        assertThat(terminal.getAttempt()).isEqualTo(1);
+        assertThat(terminal.getError()).isEqualTo(dead.error);
+        assertThat(terminal.getType()).isEqualTo(WorkflowRunEvent.Type.TYPE_DEAD);
+
+        assertThatThrownBy(() -> store.markCompleted(WorkerClaim.from(claimed), "{}", "late",
+                WorkflowRunEventFactory.completed(claimed, "late")))
+                .isInstanceOf(ClaimLostException.class);
+        assertThat(store.requeueExpiredLeases()).isZero();
+        assertThat(store.claim("replacement", Duration.ofMinutes(1))).isEmpty();
+        assertThat(store.pollPendingEvents(10)).hasSize(2);
+    }
+
+    @Test
+    void anEarlierExpiredAttemptRequeuesButTheNextExpiredAttemptExhaustsTheBudget()
+            throws Exception {
+        WorkflowRunRecord job = newJob("two-attempt-lease");
+        job.maxAttempts = 2;
+        store.insert(job, WorkflowRunEventFactory.accepted(job));
+        store.claim("first", Duration.ofMinutes(1)).orElseThrow();
+        expireLease(job.jobId);
+
+        assertThat(store.requeueExpiredLeases()).isEqualTo(1);
+        WorkflowRunRecord retry = store.get(job.jobId).orElseThrow();
+        assertThat(retry.status).isEqualTo(WorkflowRunRecord.STATUS_QUEUED);
+        assertThat(retry.attempt).isEqualTo(1);
+        assertThat(store.pollPendingEvents(10)).hasSize(1);
+
+        WorkflowRunRecord second = store.claim("second", Duration.ofMinutes(1)).orElseThrow();
+        assertThat(second.attempt).isEqualTo(2);
+        expireLease(job.jobId);
+        assertThat(store.requeueExpiredLeases()).isZero();
+        assertThat(store.get(job.jobId).orElseThrow().status).isEqualTo(WorkflowRunRecord.STATUS_DEAD);
+        assertThat(store.requeueExpiredLeases()).isZero();
+        assertThat(store.pollPendingEvents(10)).extracting(event -> event.eventType)
+                .containsExactly(WorkflowRunEventRecord.TYPE_ACCEPTED,
+                        WorkflowRunEventRecord.TYPE_DEAD);
+    }
+
+    @Test
+    void concurrentSweepersCreateOnlyOneDeadEvent() throws Exception {
+        WorkflowRunRecord job = newJob("concurrent-exhaustion");
+        job.maxAttempts = 1;
+        store.insert(job, WorkflowRunEventFactory.accepted(job));
+        store.claim("lost-worker", Duration.ofMinutes(1)).orElseThrow();
+        expireLease(job.jobId);
+
+        CountDownLatch start = new CountDownLatch(1);
+        ConcurrentLinkedQueue<Integer> requeued = new ConcurrentLinkedQueue<>();
+        ConcurrentLinkedQueue<Throwable> failures = new ConcurrentLinkedQueue<>();
+        Runnable sweep = () -> {
+            try {
+                start.await();
+                requeued.add(store.requeueExpiredLeases());
+            } catch (Throwable failure) {
+                failures.add(failure);
+            }
+        };
+        Thread first = Thread.ofVirtual().start(sweep);
+        Thread second = Thread.ofVirtual().start(sweep);
+        start.countDown();
+        first.join(TimeUnit.SECONDS.toMillis(10));
+        second.join(TimeUnit.SECONDS.toMillis(10));
+
+        assertThat(first.isAlive() || second.isAlive()).isFalse();
+        assertThat(failures).isEmpty();
+        assertThat(requeued).containsExactlyInAnyOrder(0, 0);
+        assertThat(store.get(job.jobId).orElseThrow().status).isEqualTo(WorkflowRunRecord.STATUS_DEAD);
+        assertThat(store.pollPendingEvents(10)).extracting(event -> event.eventType)
+                .containsExactly(WorkflowRunEventRecord.TYPE_ACCEPTED,
+                        WorkflowRunEventRecord.TYPE_DEAD);
+    }
+
+    @Test
+    void aDeadEventInsertFailureRollsBackTheExpiredClaimSettlement() {
+        WorkflowRunRecord job = newJob("atomic-exhaustion");
+        job.maxAttempts = 1;
+        store.insert(job, WorkflowRunEventFactory.accepted(job));
+        store.claim("lost-worker", Duration.ofMinutes(1)).orElseThrow();
+        expireLease(job.jobId);
+
+        database.inTransaction(c -> {
+            try (var statement = c.createStatement()) {
+                statement.execute("""
+                        CREATE FUNCTION reject_dead_event() RETURNS trigger LANGUAGE plpgsql AS $$
+                        BEGIN
+                          IF NEW.event_type = 'DEAD' THEN
+                            RAISE EXCEPTION 'injected outbox failure';
+                          END IF;
+                          RETURN NEW;
+                        END
+                        $$""");
+                statement.execute("CREATE TRIGGER reject_dead_event BEFORE INSERT "
+                        + "ON workflow_run_events_outbox FOR EACH ROW "
+                        + "EXECUTE FUNCTION reject_dead_event()");
+            } catch (java.sql.SQLException e) {
+                throw new RuntimeException(e);
+            }
+            return null;
+        });
+        try {
+            assertThatThrownBy(() -> store.requeueExpiredLeases())
+                    .isInstanceOf(WorkflowRunStoreException.class);
+            WorkflowRunRecord unchanged = store.get(job.jobId).orElseThrow();
+            assertThat(unchanged.status).isEqualTo(WorkflowRunRecord.STATUS_RUNNING);
+            assertThat(unchanged.completedAt).isNull();
+            assertThat(unchanged.leaseOwner).isEqualTo("lost-worker");
+            assertThat(store.pollPendingEvents(10)).hasSize(1);
+        } finally {
+            database.inTransaction(c -> {
+                try (var statement = c.createStatement()) {
+                    statement.execute("DROP TRIGGER reject_dead_event ON workflow_run_events_outbox");
+                    statement.execute("DROP FUNCTION reject_dead_event()");
+                } catch (java.sql.SQLException e) {
+                    throw new RuntimeException(e);
+                }
+                return null;
+            });
+        }
+        assertThat(store.requeueExpiredLeases()).isZero();
+        assertThat(store.get(job.jobId).orElseThrow().status).isEqualTo(WorkflowRunRecord.STATUS_DEAD);
+        assertThat(store.pollPendingEvents(10)).extracting(event -> event.eventType)
+                .containsExactly(WorkflowRunEventRecord.TYPE_ACCEPTED,
+                        WorkflowRunEventRecord.TYPE_DEAD);
+    }
+
+    @Test
+    void parkedContinuationMayCompleteAfterItsClaimCountExceedsTheRetryLimit() {
+        WorkflowRunRecord job = newJob("parked-continuation");
+        job.maxAttempts = 1;
+        store.insert(job, WorkflowRunEventFactory.accepted(job));
+        WorkflowRunRecord first = store.claim("first", Duration.ofMinutes(1)).orElseThrow();
+        store.markWaiting(WorkerClaim.from(first), "review", "[]",
+                WorkflowRunEventFactory.waiting(first, "review"));
+        WorkflowRunRecord parked = store.get(job.jobId).orElseThrow();
+        assertThat(store.completeParkedStep(job.jobId, "review",
+                "{\"name\":\"review\",\"skipped\":false,\"response\":{}}",
+                WorkflowRunEventFactory.stepCheckpoint(parked, "review")))
+                .isInstanceOf(ParkedCompletion.Completed.class);
+
+        WorkflowRunRecord continuation = store.claim("second", Duration.ofMinutes(1)).orElseThrow();
+        assertThat(continuation.attempt).isEqualTo(2);
+        assertThat(continuation.maxAttempts).isEqualTo(1);
+        store.markCompleted(WorkerClaim.from(continuation), "{}", "resumed",
+                WorkflowRunEventFactory.completed(continuation, "resumed"));
+        assertThat(store.get(job.jobId).orElseThrow().status)
+                .isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
+        assertThat(store.pollPendingEvents(10)).extracting(event -> event.eventType)
+                .doesNotContain(WorkflowRunEventRecord.TYPE_DEAD);
+    }
+
+    private static void expireLease(UUID jobId) {
+        database.inTransaction(c -> {
+            try (var statement = c.prepareStatement(
+                    "UPDATE workflow_run SET lease_until = clock_timestamp() - interval '1 second'"
+                            + " WHERE job_id = ?")) {
+                statement.setObject(1, jobId);
+                assertThat(statement.executeUpdate()).isEqualTo(1);
+            } catch (java.sql.SQLException e) {
+                throw new RuntimeException(e);
+            }
+            return null;
+        });
+    }
+
+    @Test
     void concurrentClaimsNeverTakeTheSameRow() throws Exception {
         for (int i = 0; i < 3; i++) {
             insert("workflow-" + i);
