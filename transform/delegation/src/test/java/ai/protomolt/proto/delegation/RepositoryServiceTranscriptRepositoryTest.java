@@ -2,16 +2,21 @@ package ai.protomolt.proto.delegation;
 
 import ai.protomolt.proto.delegation.storage.v1.EncryptedRepositoryState;
 import ai.protomolt.proto.delegation.v1.Transcript;
+import ai.protomolt.proto.repo.v1.ConditionalBlobKey;
+import ai.protomolt.proto.repo.v1.ConditionalBlobVersion;
 import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
-import ai.protomolt.proto.repo.v1.FileStorageReference;
-import ai.protomolt.proto.repo.v1.GetBlobRequest;
-import ai.protomolt.proto.repo.v1.GetBlobResponse;
 import ai.protomolt.proto.repo.v1.PutBlobRequest;
 import ai.protomolt.proto.repo.v1.PutBlobResponse;
+import ai.protomolt.proto.repo.v1.GetBlobForUpdateRequest;
+import ai.protomolt.proto.repo.v1.GetBlobForUpdateResponse;
+import ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest;
+import ai.protomolt.proto.repo.v1.CompareAndPutBlobResponse;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.UnknownFieldSet;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.StreamObserver;
@@ -28,6 +33,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.HexFormat;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static ai.protomolt.proto.delegation.DelegationFixtures.TASK;
 import static ai.protomolt.proto.delegation.DelegationFixtures.WORKER;
@@ -73,11 +81,11 @@ class RepositoryServiceTranscriptRepositoryTest {
 
         repository().save(transcript);
 
-        assertThat(service.lastPut.getDriveName()).isEqualTo(DRIVE);
-        assertThat(service.lastPut.getObjectKey()).isEqualTo(OBJECT_KEY);
-        assertThat(service.lastPut.getMimeType())
+        assertThat(service.lastCompare.getKey().getDriveName()).isEqualTo(DRIVE);
+        assertThat(service.lastCompare.getKey().getObjectKey()).isEqualTo(OBJECT_KEY);
+        assertThat(service.lastCompare.getMimeType())
                 .isEqualTo(RepositoryServiceTranscriptRepository.MIME_TYPE);
-        assertThat(service.lastPut.getData().toStringUtf8())
+        assertThat(service.lastCompare.getData().toStringUtf8())
                 .doesNotContain("private objective marker");
         EncryptedRepositoryState envelope = parseEnvelope();
         assertThat(envelope.getKeyRef()).isEqualTo(KEY_REF);
@@ -97,7 +105,7 @@ class RepositoryServiceTranscriptRepositoryTest {
 
     @Test
     void rejectsRepositoryWriteWithoutExactIntegrityConfirmation() {
-        service.wrongWriteDigest = true;
+        service.writeFault = WriteFault.WRONG_DIGEST;
 
         assertThatThrownBy(() -> repository().save(acceptedTranscript("objective")))
                 .isInstanceOf(IllegalStateException.class)
@@ -130,6 +138,22 @@ class RepositoryServiceTranscriptRepositoryTest {
     }
 
     @Test
+    void rejectsUnknownFieldsInAuthenticatedEnvelopeAndTranscript() {
+        Transcript transcript = acceptedTranscript("unknown state fields");
+        service.stored = envelopeFor(transcript.toByteArray()).toBuilder()
+                .setUnknownFields(unknownFields()).build().toByteString();
+        service.currentEtag = "\"seed-envelope\"";
+        assertThatThrownBy(() -> repository().load()).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("unknown");
+
+        Transcript withUnknown = transcript.toBuilder().setUnknownFields(unknownFields()).build();
+        service.stored = envelopeFor(withUnknown.toByteArray()).toByteString();
+        service.currentEtag = "\"seed-transcript\"";
+        assertThatThrownBy(() -> repository().load()).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("unknown");
+    }
+
+    @Test
     void rejectsWrongKeyWithoutEchoingReferenceOrKeyMaterial() {
         repository().save(acceptedTranscript("objective"));
         RepositoryStateKeyResolver wrong = ignored -> new SecretKeySpec(
@@ -150,7 +174,7 @@ class RepositoryServiceTranscriptRepositoryTest {
         assertThatThrownBy(() -> limited.save(acceptedTranscript("objective")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("plaintext limit");
-        assertThat(service.lastPut).isNull();
+        assertThat(service.lastCompare).isNull();
     }
 
     @Test
@@ -186,6 +210,190 @@ class RepositoryServiceTranscriptRepositoryTest {
                 .hasMessageContaining("rpcTimeout");
     }
 
+    @Test
+    void repeatedSaveUsesTheConfirmedEtagAndAdvancesTheOpaqueToken() {
+        Transcript transcript = acceptedTranscript("objective");
+        RepositoryServiceTranscriptRepository writer = repository();
+
+        writer.save(transcript);
+        String first = service.currentEtag;
+        writer.save(transcript);
+
+        assertThat(service.lastCompare.hasExpectedEtag()).isTrue();
+        assertThat(service.lastCompare.getExpectedEtag()).isEqualTo(first);
+        assertThat(service.currentEtag).isNotEqualTo(first);
+    }
+
+    @Test
+    void staleIfAbsentWriteConflictsPoisonsInstanceAndFreshInstanceRecovers() {
+        RepositoryServiceTranscriptRepository first = repository();
+        RepositoryServiceTranscriptRepository stale = repository();
+        assertThat(first.load()).isEmpty();
+        assertThat(stale.load()).isEmpty();
+        Transcript transcript = acceptedTranscript("objective");
+
+        first.save(transcript);
+        assertThatThrownBy(() -> stale.save(transcript))
+                .isInstanceOf(StatusRuntimeException.class)
+                .satisfies(error -> assertThat(((StatusRuntimeException) error).getStatus().getCode())
+                        .isEqualTo(Status.Code.ABORTED));
+        assertThatThrownBy(stale::load).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("requires recovery");
+        assertThat(repository().load()).contains(transcript);
+    }
+
+    @Test
+    void delayedEarlierWriteCannotOverwriteRecoveryInstanceNewerCommit() throws Exception {
+        RepositoryServiceTranscriptRepository earlier = repository();
+        RepositoryServiceTranscriptRepository recovery = repository();
+        assertThat(earlier.load()).isEmpty();
+        assertThat(recovery.load()).isEmpty();
+        service.pauseNextCompare = true;
+        AtomicReference<Throwable> earlierFailure = new AtomicReference<>();
+        Thread earlierWriter = new Thread(() -> {
+            try {
+                earlier.save(acceptedTranscript("earlier snapshot"));
+            } catch (Throwable failure) {
+                earlierFailure.set(failure);
+            }
+        }, "delayed-transcript-writer");
+        earlierWriter.start();
+        assertThat(service.compareEntered.await(5, TimeUnit.SECONDS)).isTrue();
+        Transcript recovered = acceptedTranscript("recovery snapshot");
+        recovery.save(recovered);
+        service.resumeCompare.countDown();
+        earlierWriter.join(5_000);
+
+        assertThat(earlierWriter.isAlive()).isFalse();
+        assertThat(earlierFailure.get()).isInstanceOf(StatusRuntimeException.class);
+        assertThat(((StatusRuntimeException) earlierFailure.get()).getStatus().getCode())
+                .isEqualTo(Status.Code.ABORTED);
+        assertThat(repository().load()).contains(recovered);
+    }
+
+    @Test
+    void delayedStaleEtagWriteCannotOverwriteRecoveryAppend() throws Exception {
+        Transcript prefix = leasedTranscript("shared prefix");
+        repository().save(prefix);
+        RepositoryServiceTranscriptRepository earlier = repository();
+        RepositoryServiceTranscriptRepository recovery = repository();
+        assertThat(earlier.load()).contains(prefix);
+        assertThat(recovery.load()).contains(prefix);
+        service.pauseNextCompare = true;
+        Transcript staleExtension = leasedTranscriptBuilder("shared prefix")
+                .progress(TASK, WORKER, 1, 1, "older completion").build();
+        Transcript recoveredExtension = leasedTranscriptBuilder("shared prefix")
+                .progress(TASK, WORKER, 1, 1, "recovered completion")
+                .progress(TASK, WORKER, 1, 2, "recovery continued").build();
+        AtomicReference<Throwable> staleFailure = new AtomicReference<>();
+        Thread delayed = new Thread(() -> {
+            try {
+                earlier.save(staleExtension);
+            } catch (Throwable failure) {
+                staleFailure.set(failure);
+            }
+        }, "delayed-stale-etag-writer");
+        delayed.start();
+        assertThat(service.compareEntered.await(5, TimeUnit.SECONDS)).isTrue();
+        recovery.save(recoveredExtension);
+        service.resumeCompare.countDown();
+        delayed.join(5_000);
+
+        assertThat(delayed.isAlive()).isFalse();
+        assertThat(staleFailure.get()).isInstanceOf(StatusRuntimeException.class);
+        assertThat(((StatusRuntimeException) staleFailure.get()).getStatus().getCode())
+                .isEqualTo(Status.Code.ABORTED);
+        assertThatThrownBy(earlier::load).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("requires recovery");
+        assertThat(repository().load()).contains(recoveredExtension);
+    }
+
+    @Test
+    void acknowledgementLostAfterCommitFailsClosedAndNewInstanceRecoversCommittedState() {
+        service.loseAcknowledgementAfterCommit = true;
+        RepositoryServiceTranscriptRepository writer = repository();
+        Transcript transcript = acceptedTranscript("durable despite lost ack");
+
+        assertThatThrownBy(() -> writer.save(transcript))
+                .isInstanceOf(StatusRuntimeException.class)
+                .satisfies(error -> assertThat(((StatusRuntimeException) error).getStatus().getCode())
+                        .isEqualTo(Status.Code.UNAVAILABLE));
+        assertThatThrownBy(writer::load).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("requires recovery");
+        assertThatThrownBy(() -> writer.save(transcript)).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("requires recovery");
+        assertThat(repository().load()).contains(transcript);
+    }
+
+    @Test
+    void unsupportedConditionalRpcNeverFallsBackToUnconditionalPut() {
+        service.conditionalWriteUnimplemented = true;
+        RepositoryServiceTranscriptRepository writer = repository();
+        assertThat(writer.load()).isEmpty();
+
+        assertThatThrownBy(() -> writer.save(acceptedTranscript("no fallback")))
+                .isInstanceOf(StatusRuntimeException.class)
+                .satisfies(error -> assertThat(((StatusRuntimeException) error).getStatus().getCode())
+                        .isEqualTo(Status.Code.UNIMPLEMENTED));
+        assertThat(service.putCalls).isZero();
+        assertThatThrownBy(writer::load).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("requires recovery");
+    }
+
+    @Test
+    void divergentAndTruncatedHistoryAreRejectedBeforeConditionalWrite() {
+        Transcript confirmed = acceptedTranscript("confirmed history");
+        RepositoryServiceTranscriptRepository writer = repository();
+        writer.save(confirmed);
+        assertThat(writer.load()).contains(confirmed);
+        int writes = service.compareCalls;
+
+        assertThatThrownBy(() -> writer.save(acceptedTranscript("divergent history")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("preserve confirmed history");
+        assertThatThrownBy(() -> writer.save(confirmed.toBuilder()
+                .removeEntries(confirmed.getEntriesCount() - 1).build()))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(service.compareCalls).isEqualTo(writes);
+    }
+
+    @Test
+    void malformedUnknownAndMisboundReadResponsesFailClosed() {
+        repository().save(acceptedTranscript("valid base"));
+
+        service.readWrongKey = true;
+        assertThatThrownBy(() -> repository().load()).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("did not confirm");
+        service.readWrongKey = false;
+
+        service.readUnknownField = true;
+        assertThatThrownBy(() -> repository().load()).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("unknown repository protocol fields");
+        service.readUnknownField = false;
+
+        service.readMalformedEtag = true;
+        assertThatThrownBy(() -> repository().load()).isInstanceOf(IllegalStateException.class);
+        service.readMalformedEtag = false;
+
+        service.readWrongDigest = true;
+        assertThatThrownBy(() -> repository().load()).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("did not confirm");
+    }
+
+    @Test
+    void malformedOrUnverifiableWriteConfirmationPoisonsTheWriter() {
+        for (WriteFault fault : WriteFault.values()) {
+            if (fault == WriteFault.NONE) continue;
+            service.resetWriteFaults();
+            RepositoryServiceTranscriptRepository writer = repository();
+            service.writeFault = fault;
+            assertThatThrownBy(() -> writer.save(acceptedTranscript("write response " + fault)))
+                    .as("fault %s", fault).isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(writer::load).as("fault %s poisons writer", fault)
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("requires recovery");
+        }
+    }
+
     private RepositoryServiceTranscriptRepository repository() {
         return repository(keyResolver(), 1024 * 1024);
     }
@@ -209,6 +417,19 @@ class RepositoryServiceTranscriptRepositoryTest {
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             throw new AssertionError(e);
         }
+    }
+
+    private static EncryptedRepositoryState envelopeFor(byte[] plaintext) {
+        return new EncryptedRepositoryStateCodec(keyResolver(),
+                Clock.fixed(Instant.parse("2026-08-11T12:00:00Z"), ZoneOffset.UTC),
+                new SecureRandom(), 1024 * 1024).encrypt(plaintext,
+                RepositoryServiceTranscriptRepository.CONTENT_TYPE,
+                acceptedTranscript("unused").getEntriesCount(), KEY_REF, DRIVE + "\n" + OBJECT_KEY);
+    }
+
+    private static UnknownFieldSet unknownFields() {
+        return UnknownFieldSet.newBuilder().addField(123,
+                UnknownFieldSet.Field.newBuilder().addVarint(1).build()).build();
     }
 
     private static Transcript deliverableTranscript() {
@@ -245,6 +466,19 @@ class RepositoryServiceTranscriptRepositoryTest {
                 .build();
     }
 
+    private static Transcript leasedTranscript(String objective) {
+        return leasedTranscriptBuilder(objective).build();
+    }
+
+    private static DelegationFixtures.TranscriptBuilder leasedTranscriptBuilder(String objective) {
+        var taskSpec = spec("build").toBuilder().setObjective(objective).build();
+        return new DelegationFixtures.TranscriptBuilder()
+                .hello(WORKER)
+                .admit(WORKER)
+                .offer(TASK, WORKER, 1, taskSpec)
+                .accept(TASK, WORKER, 1);
+    }
+
     private static String sha256(ByteString data) {
         try {
             return HexFormat.of().formatHex(
@@ -254,41 +488,134 @@ class RepositoryServiceTranscriptRepositoryTest {
         }
     }
 
+    private enum WriteFault {
+        NONE, WRONG_DIGEST, WRONG_SIZE, WRONG_KEY, UNKNOWN_FIELD, MISSING_VERSION, MALFORMED_ETAG
+    }
+
     private static final class FakeDocumentService
             extends DocumentServiceGrpc.DocumentServiceImplBase {
-        private ByteString stored;
-        private PutBlobRequest lastPut;
-        private boolean wrongWriteDigest;
-        private long readSizeDelta;
+        private volatile ByteString stored;
+        private volatile String currentEtag;
+        private volatile CompareAndPutBlobRequest lastCompare;
+        private volatile WriteFault writeFault = WriteFault.NONE;
+        private volatile long readSizeDelta;
+        private volatile boolean readWrongKey;
+        private volatile boolean readWrongDigest;
+        private volatile boolean readUnknownField;
+        private volatile boolean readMalformedEtag;
+        private volatile boolean conditionalWriteUnimplemented;
+        private volatile boolean loseAcknowledgementAfterCommit;
+        private volatile boolean pauseNextCompare;
+        private volatile int compareCalls;
+        private volatile int putCalls;
+        private long generation;
+        private CountDownLatch compareEntered = new CountDownLatch(1);
+        private CountDownLatch resumeCompare = new CountDownLatch(1);
 
         @Override
-        public void putBlob(PutBlobRequest request,
-                            StreamObserver<PutBlobResponse> observer) {
-            lastPut = request;
-            stored = request.getData();
-            observer.onNext(PutBlobResponse.newBuilder()
-                    .setStorageRef(FileStorageReference.newBuilder()
-                            .setDriveName(request.getDriveName())
-                            .setObjectKey(request.getObjectKey()))
-                    .setSizeBytes(stored.size())
-                    .setSha256(wrongWriteDigest ? "0".repeat(64) : sha256(stored))
-                    .build());
-            observer.onCompleted();
-        }
-
-        @Override
-        public void getBlob(GetBlobRequest request,
-                            StreamObserver<GetBlobResponse> observer) {
+        public synchronized void getBlobForUpdate(GetBlobForUpdateRequest request,
+                                                  StreamObserver<GetBlobForUpdateResponse> observer) {
             if (stored == null) {
                 observer.onError(Status.NOT_FOUND.asRuntimeException());
                 return;
             }
-            observer.onNext(GetBlobResponse.newBuilder()
-                    .setData(stored)
+            ConditionalBlobKey responseKey = readWrongKey
+                    ? request.getKey().toBuilder().setObjectKey("wrong/key").build()
+                    : request.getKey();
+            String responseEtag = readMalformedEtag ? "*" : currentEtag;
+            ConditionalBlobVersion.Builder version = ConditionalBlobVersion.newBuilder()
+                    .setKey(responseKey)
+                    .setEtag(responseEtag)
                     .setSizeBytes(stored.size() + readSizeDelta)
-                    .setMimeType(RepositoryServiceTranscriptRepository.MIME_TYPE)
-                    .build());
+                    .setSha256(readWrongDigest ? "0".repeat(64) : sha256(stored));
+            GetBlobForUpdateResponse.Builder response = GetBlobForUpdateResponse.newBuilder()
+                    .setVersion(version)
+                    .setData(stored)
+                    .setMimeType(RepositoryServiceTranscriptRepository.MIME_TYPE);
+            if (readUnknownField) response.setUnknownFields(unknownFields());
+            observer.onNext(response.build());
             observer.onCompleted();
+        }
+
+        @Override
+        public void compareAndPutBlob(CompareAndPutBlobRequest request,
+                                      StreamObserver<CompareAndPutBlobResponse> observer) {
+            lastCompare = request;
+            compareCalls++;
+            if (conditionalWriteUnimplemented) {
+                observer.onError(Status.UNIMPLEMENTED.asRuntimeException());
+                return;
+            }
+            boolean pause;
+            synchronized (this) {
+                pause = pauseNextCompare;
+                if (pause) {
+                    pauseNextCompare = false;
+                    compareEntered.countDown();
+                }
+            }
+            if (pause) {
+                try {
+                    if (!resumeCompare.await(5, TimeUnit.SECONDS)) {
+                        observer.onError(Status.DEADLINE_EXCEEDED.asRuntimeException());
+                        return;
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    observer.onError(Status.CANCELLED.withCause(e).asRuntimeException());
+                    return;
+                }
+            }
+            CompareAndPutBlobResponse writeResponse;
+            synchronized (this) {
+                boolean mayWrite = request.hasIfAbsent()
+                        ? stored == null
+                        : stored != null && request.getExpectedEtag().equals(currentEtag);
+                if (!mayWrite) {
+                    observer.onError(Status.ABORTED.withDescription("conditional write conflict").asRuntimeException());
+                    return;
+                }
+
+                stored = request.getData();
+                currentEtag = "\"etag-" + (++generation) + "\"";
+                ConditionalBlobKey responseKey = writeFault == WriteFault.WRONG_KEY
+                        ? request.getKey().toBuilder().setObjectKey("wrong/key").build()
+                        : request.getKey();
+                ConditionalBlobVersion.Builder version = ConditionalBlobVersion.newBuilder()
+                        .setKey(responseKey)
+                        .setEtag(writeFault == WriteFault.MALFORMED_ETAG ? "*" : currentEtag)
+                        .setSizeBytes(stored.size() + (writeFault == WriteFault.WRONG_SIZE ? 1 : 0))
+                        .setSha256(writeFault == WriteFault.WRONG_DIGEST ? "0".repeat(64) : sha256(stored));
+                CompareAndPutBlobResponse.Builder response = CompareAndPutBlobResponse.newBuilder();
+                if (writeFault != WriteFault.MISSING_VERSION) response.setVersion(version);
+                if (writeFault == WriteFault.UNKNOWN_FIELD) response.setUnknownFields(unknownFields());
+                writeResponse = response.build();
+            }
+            if (loseAcknowledgementAfterCommit) {
+                observer.onError(Status.UNAVAILABLE.withDescription("simulated lost acknowledgement").asRuntimeException());
+                return;
+            }
+            observer.onNext(writeResponse);
+            observer.onCompleted();
+        }
+
+        @Override
+        public void putBlob(ai.protomolt.proto.repo.v1.PutBlobRequest request,
+                            StreamObserver<ai.protomolt.proto.repo.v1.PutBlobResponse> observer) {
+            putCalls++;
+            observer.onError(Status.UNIMPLEMENTED.asRuntimeException());
+        }
+
+        private void resetWriteFaults() {
+            writeFault = WriteFault.NONE;
+            stored = null;
+            currentEtag = null;
+            generation = 0;
+        }
+
+        private static UnknownFieldSet unknownFields() {
+            return UnknownFieldSet.newBuilder().addField(123,
+                    UnknownFieldSet.Field.newBuilder().addVarint(1).build()).build();
         }
     }
 }

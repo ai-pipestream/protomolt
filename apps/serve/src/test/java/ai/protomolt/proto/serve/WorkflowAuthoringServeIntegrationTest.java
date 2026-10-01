@@ -4,6 +4,11 @@ import ai.protomolt.proto.grpc.workflow.FileSystemArtifactRepository;
 import ai.protomolt.proto.grpc.workflow.v1.ArtifactReference;
 import ai.protomolt.proto.receipt.*;
 import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v1.ConditionalBlobVersion;
+import ai.protomolt.proto.repo.v1.GetBlobForUpdateRequest;
+import ai.protomolt.proto.repo.v1.GetBlobForUpdateResponse;
+import ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest;
+import ai.protomolt.proto.repo.v1.CompareAndPutBlobResponse;
 import ai.protomolt.proto.repo.v1.FileStorageReference;
 import ai.protomolt.proto.repo.v1.GetBlobRequest;
 import ai.protomolt.proto.repo.v1.GetBlobResponse;
@@ -334,6 +339,9 @@ class WorkflowAuthoringServeIntegrationTest {
 
     private static final class FakeDocumentService extends DocumentServiceGrpc.DocumentServiceImplBase {
         private final Map<String, ByteString> objects = new ConcurrentHashMap<>();
+        private final Map<String, String> etags = new ConcurrentHashMap<>();
+        private final Map<String, String> mimeTypes = new ConcurrentHashMap<>();
+        private long generation;
 
         @Override public void getBlob(GetBlobRequest request, StreamObserver<GetBlobResponse> observer) {
             var ref = request.getStorageRef();
@@ -349,11 +357,55 @@ class WorkflowAuthoringServeIntegrationTest {
 
         @Override public void putBlob(PutBlobRequest request, StreamObserver<PutBlobResponse> observer) {
             ByteString bytes = request.getData();
-            objects.put(key(request.getDriveName(), request.getObjectKey()), bytes);
+            String objectKey = key(request.getDriveName(), request.getObjectKey());
+            objects.put(objectKey, bytes);
+            mimeTypes.put(objectKey, request.getMimeType());
             var ref = FileStorageReference.newBuilder().setDriveName(request.getDriveName())
                     .setObjectKey(request.getObjectKey()).build();
             observer.onNext(PutBlobResponse.newBuilder().setStorageRef(ref)
                     .setSizeBytes(bytes.size()).setSha256(sha256(bytes.toByteArray())).build());
+            observer.onCompleted();
+        }
+
+        @Override public void getBlobForUpdate(GetBlobForUpdateRequest request,
+                                               StreamObserver<GetBlobForUpdateResponse> observer) {
+            String objectKey = key(request.getKey().getDriveName(), request.getKey().getObjectKey());
+            ByteString bytes = objects.get(objectKey);
+            if (bytes == null) {
+                observer.onError(Status.NOT_FOUND.asRuntimeException());
+                return;
+            }
+            var response = GetBlobForUpdateResponse.newBuilder()
+                    .setVersion(ConditionalBlobVersion.newBuilder().setKey(request.getKey())
+                            .setEtag(etags.get(objectKey)).setSizeBytes(bytes.size())
+                            .setSha256(sha256(bytes.toByteArray())))
+                    .setData(bytes);
+            String mime = mimeTypes.get(objectKey);
+            if (mime != null && !mime.isEmpty()) response.setMimeType(mime);
+            observer.onNext(response.build());
+            observer.onCompleted();
+        }
+
+        @Override public synchronized void compareAndPutBlob(CompareAndPutBlobRequest request,
+                                                              StreamObserver<CompareAndPutBlobResponse> observer) {
+            String objectKey = key(request.getKey().getDriveName(), request.getKey().getObjectKey());
+            ByteString previous = objects.get(objectKey);
+            String previousEtag = etags.get(objectKey);
+            boolean allowed = request.hasIfAbsent() ? previous == null
+                    : previous != null && request.getExpectedEtag().equals(previousEtag);
+            if (!allowed) {
+                observer.onError(Status.ABORTED.withDescription("conditional write conflict").asRuntimeException());
+                return;
+            }
+            ByteString bytes = request.getData();
+            String etag = "\"conditional-" + (++generation) + "\"";
+            objects.put(objectKey, bytes);
+            etags.put(objectKey, etag);
+            if (request.hasMimeType()) mimeTypes.put(objectKey, request.getMimeType());
+            else mimeTypes.remove(objectKey);
+            observer.onNext(CompareAndPutBlobResponse.newBuilder().setVersion(
+                    ConditionalBlobVersion.newBuilder().setKey(request.getKey()).setEtag(etag)
+                            .setSizeBytes(bytes.size()).setSha256(sha256(bytes.toByteArray()))).build());
             observer.onCompleted();
         }
 

@@ -1,7 +1,8 @@
 # Conditional transcript persistence
 
-Status: proposed contracts and implementation plan. No conditional blob RPC is
-available yet. This is a prerequisite for durable automatic review and retry.
+Status: contracts, qualified S3 backend, repository RPCs and conditional transcript
+adapter are implemented in this change series. Deployment is not implied.
+Durable automatic review status and retry still require coordinator integration.
 
 ## Failure being addressed
 
@@ -12,8 +13,8 @@ does not stop that in-flight request.
 
 ## Protocol
 
-Add GetBlobForUpdate and CompareAndPutBlob to DocumentService when their handlers
-are ready. Define standalone messages first. New method names make an older
+GetBlobForUpdate and CompareAndPutBlob extend DocumentService with matching
+handlers, following the standalone message definitions. New method names make an older
 server return UNIMPLEMENTED instead of silently ignoring a new precondition on
 the existing unconditional PutBlob request.
 
@@ -75,6 +76,10 @@ deletes and external object rollback are outside the fencing guarantee.
   fail closed; providers explicitly implement supported behavior.
 - S3 uses atomic If-None-Match or If-Match PUT, preserving the opaque token.
   Map conditional failures without retrying an unconditional PUT.
+  Conditional operations are disabled by default: S3 API compatibility alone
+  is insufficient. The operator must explicitly enable a qualified backend.
+  LocalStack 3.8 accepted a stale If-Match in the RPC tests, while the pinned
+  RustFS image rejected it. The deployment setting must reflect that distinction.
 - CachingBlobStore bypasses Redis for authoritative reads and delegates writes
   to the backing store. Invalidate cached data after a successful replacement.
 - Redis requires an atomic script for comparison and replacement, or reports
@@ -82,7 +87,10 @@ deletes and external object rollback are outside the fencing guarantee.
 - RepositoryServiceTranscriptRepository remembers the loaded token, creates
   with the absent condition, replaces with its token, and advances the token
   only after a verified successful response. Any uncertain save poisons that
-  repository instance. It must not continue from its old snapshot.
+  repository instance. It must not continue from its old snapshot. A fresh
+  instance must load existing history before replacing it; saving before load
+  can only create an absent object. Reject truncated or divergent histories and
+  unknown transcript/envelope fields before adopting or replacing state.
 
 The installed NAS backend is RustFS. Qualification must exercise its pinned
 image; SDK header support and LocalStack tests alone do not prove deployment
@@ -118,6 +126,6 @@ changes remain outside this work.
    including changed-byte ETags, stale overwrite and concurrent absent create.
    Verify transport limits accommodate the payload plus message framing. Keep existing
    PutBlob behavior compatible for its existing callers.
-5. Only then wire durable review start/failure/deferred/retry and its process
+5. After landing and qualification, wire durable review start/failure/deferred/retry and its process
    recovery test. Browser, workflow-worker crash, Kafka, image-only Compose and
    anonymous/native architecture qualification remain part of Goal 5.
