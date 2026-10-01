@@ -62,6 +62,40 @@ separate result.
 
 ## Protocol and browser entry
 
+### Reviewed host wiring
+
+The opt-in host binding uses a trusted policy artifact digest and an explicit
+persistent authorization directory. Startup resolves the complete policy artifact
+reference from the existing artifact store, checks its bytes and native rules,
+and refuses missing prerequisites before opening listeners: API authentication,
+repository-backed delegation, an explicit workflow workspace, Git registry,
+jobs database, and available receipt trust. Demo-created temporary stores do not
+satisfy these requirements.
+
+The host retains its existing transcript repository and shares it with the
+launcher. It also shares its artifact, recorded-run, version and jobs stores;
+no duplicate coordinator or queue is introduced. Reviewer selection uses the
+offered authoring deliverable type. Other tasks retain manual review. Each
+review and launch obtains the current trust snapshot once for that operation,
+so a live trust source is not silently frozen for the process lifetime.
+
+The default browser login has `worker-coordinate`; it does not have operator
+authority. The initial mount therefore does not grant browser launch access.
+A later explicit authoring scope and access-policy binding must support the
+browser path without putting the operator API token into the browser or
+elevating the default console identity.
+
+Review failure and retry need a separate contract slice. Today `reviewFailure`
+is private and transient, and restoring a candidate does not restart its
+review. Persisted review status must identify the candidate attempt/revision
+and exact review invocation; retry must target that status, reject stale or
+concurrent invocation, and prevent late results from a superseded review from
+changing acceptance. Lost replies must not schedule duplicate reviews. A
+restart must expose interrupted work instead of silently repeating fixtures.
+Retrying fixtures can repeat remote effects, so the external example must use
+durable idempotency keys. This is an implementation requirement, not a claim
+that a review-status or retry API is currently available.
+
 Retain the existing delegation and workbench operations. Add a contributed
 `ai.protomolt.proto.workflow.authoring.v1` service with
 `LaunchAcceptedWorkflow`, reusing the reviewed request/result and binding the
