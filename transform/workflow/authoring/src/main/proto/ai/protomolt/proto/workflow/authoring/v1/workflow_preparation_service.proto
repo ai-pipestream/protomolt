@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.workflow.authoring.v1;
+
+import "ai/protomolt/proto/workflow/authoring/v1/workflow_preparation.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.workflow.authoring.v1";
+
+// Separately contributed only when the host configures preparation, including
+// signing, current trust, policy, a source template and durable intent storage.
+// Existing accepted-workflow lookup and launch mounts do not expose this service.
+service WorkflowPreparationService {
+  // Requires workflow-author and the current delegation holder identity.
+  // Both request and successful response are validated before crossing the
+  // handler boundary. Invalid source cannot advance to independent review.
+  // Preparation executes pinned fixtures and records evidence; it does not
+  // submit, accept, promote or launch the candidate.
+  //
+  // Retry identical bytes and identity after an interrupted response. Pending
+  // retries may repeat remote calls: the target owns idempotency. A completed
+  // retry returns stored output only while the delegation lifecycle permits it.
+  // Changed reserved intent is ALREADY_EXISTS. A terminal failure is
+  // FAILED_PRECONDITION with code preparation-attempt-failed and structured
+  // WorkflowPreparationFailure detail in the existing JSON error trailer.
+  // Cancellation cannot undo committed effects. A new coordinator attempt is
+  // required after terminal failure; a new preparation UUID cannot bypass it.
+  rpc PrepareWorkflowCandidate(PrepareWorkflowCandidateRequest)
+      returns (PrepareWorkflowCandidateResponse);
+}
