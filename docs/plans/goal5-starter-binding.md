@@ -1,21 +1,25 @@
 # Goal 5 starter binding: remaining implementation
 
-This is a design inventory, not a mounted API. The launch helper and production
-authoring module landed in PRs #331 and #332. The service contracts are in PR #334.
+This inventory separates landed components from the unfinished starter. The
+launch helper and production authoring module landed in PRs #331 and #332;
+contracts, actions and opt-in coordinator mounting landed in #334, #335 and #337.
 The action adapters now validate requests and successful replies with the native
 engine, bind reply task/job identity to the request, and sanitize typed failures.
 Catalog tests cover generated, dynamic and JSON input; in-process gRPC tests cover
 operator authentication, scoped denial, validation and status/trailer mapping.
 The real launcher is also exercised through the catalog without repeating fixtures
-on a matching retry. These tests do not qualify a deployed MCP/ACP or browser path.
+on a matching retry. The installed-server test in #337 exercised authenticated
+gRPC, REST/OpenAPI and MCP exposure against PostgreSQL and a TCP repository
+fixture, including opt-out behavior. It did not execute an accepted authored
+workflow or qualify a deployed ACP/browser path.
 
 ## Reuse and ownership
 
 - Keep delegation offers, candidates, acceptance and transcript storage in the
-  existing coordinator. `apps/serve/DelegationRuntime` currently constructs a
-  manual reviewer even with persistent repository storage. Add explicit trusted
-  authoring-reviewer configuration rather than assuming sample acceptance is
-  mounted or changing the default review policy for unrelated tasks.
+  existing coordinator. `apps/serve/DelegationRuntime` retains manual review by
+  default. The opt-in `WorkflowAuthoringMount` routes authoring contracts to the
+  independent reviewer and shares the coordinator's transcript repository with
+  the launcher. Unrelated tasks keep their existing manual review policy.
 - Keep workflow jobs in `JdbcWorkflowRunStore` and `WorkflowRunWorker`.
   `ProtoMoltServe` already opens the jobs database, mounts its operations and runs
   the worker and optional Kafka relay. Do not add a second queue or job language.
@@ -164,7 +168,9 @@ Before restart qualification, bind worker writes to an immutable job/owner/attem
 claim and check RUNNING state and lease validity atomically with the mutation and
 outbox insertion. A rejected stale write must not trigger another stale failure
 or requeue. External parked completion retains its separate row-lock contract.
-This guard is not implemented yet; see the local `feat/goal5-claim-fencing` work.
+This guard landed in PR #333. Its PostgreSQL and worker-reconstruction tests
+passed, including stale-write refusal without mutation. The external-process
+crash-window and published starter qualification below remain unfinished.
 
 1. Real PostgreSQL worker/store reconstruction preserves completed checkpoints.
    Fail after the second RPC's remote effect but before its checkpoint; retry
