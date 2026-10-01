@@ -5,6 +5,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -37,10 +38,11 @@ class RustFsConditionalBlobStoreIT {
             .waitingFor(Wait.forHttp("/health").forPort(9000));
 
     static S3BlobStore store;
+    static S3Client client;
 
     @BeforeAll
     static void setup() {
-        S3Client client = S3Client.builder()
+        client = S3Client.builder()
                 .endpointOverride(java.net.URI.create("http://" + RUSTFS.getHost() + ":"
                         + RUSTFS.getMappedPort(9000)))
                 .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials
@@ -49,7 +51,12 @@ class RustFsConditionalBlobStoreIT {
                 .httpClient(UrlConnectionHttpClient.create())
                 .forcePathStyle(true).build();
         client.createBucket(builder -> builder.bucket(BUCKET));
-        store = new S3BlobStore(client);
+        store = new S3BlobStore(client, true);
+    }
+
+    @AfterAll
+    static void closeClient() {
+        if (client != null) client.close();
     }
 
     @Test

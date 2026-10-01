@@ -2,6 +2,7 @@ package ai.protomolt.proto.repo.container.blob;
 
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.core.ResponseBytes;
+import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
@@ -12,6 +13,8 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
 import java.io.InputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.stream.Gatherers;
@@ -28,6 +31,7 @@ public final class S3BlobStore implements BlobStore {
     private static final int DELETE_BATCH = 1000;
 
     private final S3Client client;
+    private final boolean conditionalWritesEnabled;
 
     /**
      * Wraps a client. Stateless beyond the reference — cheap to construct per use.
@@ -35,7 +39,13 @@ public final class S3BlobStore implements BlobStore {
      * @param client the S3 client to adapt
      */
     public S3BlobStore(S3Client client) {
-        this.client = client;
+        this(client, false);
+    }
+
+    /** Enables conditional operations only for an endpoint separately qualified for atomic S3 preconditions. */
+    public S3BlobStore(S3Client client, boolean conditionalWritesEnabled) {
+        this.client = java.util.Objects.requireNonNull(client, "client");
+        this.conditionalWritesEnabled = conditionalWritesEnabled;
     }
 
     @Override
@@ -53,16 +63,40 @@ public final class S3BlobStore implements BlobStore {
 
     @Override
     public GetResult getForUpdate(String bucket, String key) {
-        GetResult result = get(bucket, key, null); // One uncached S3 GET pairs bytes and tag.
-        strongBackingEtag(result.eTag());
-        if (result.data().length > MAX_CONDITIONAL_BYTES) {
-            throw new IllegalArgumentException("conditional object exceeds 9 MiB");
+        requireConditionalSupport();
+        // Keep bytes and the ETag from one authoritative GET. Do not use getObjectAsBytes:
+        // an existing object may be arbitrarily larger than this bounded API allows.
+        try (ResponseInputStream<GetObjectResponse> stream = client.getObject(
+                GetObjectRequest.builder().bucket(bucket).key(key).build())) {
+            try {
+                GetObjectResponse response = stream.response();
+                String tag = strongBackingEtag(response.eTag());
+                Long length = response.contentLength();
+                if (length != null && length > MAX_CONDITIONAL_BYTES) {
+                    throw new IllegalArgumentException("conditional object exceeds 9 MiB");
+                }
+                byte[] data = stream.readNBytes(MAX_CONDITIONAL_BYTES + 1);
+                if (data.length > MAX_CONDITIONAL_BYTES) {
+                    throw new IllegalArgumentException("conditional object exceeds 9 MiB");
+                }
+                if (length != null && (length < 0 || data.length != length)) {
+                    throw new IllegalStateException("conditional object length does not match S3 metadata");
+                }
+                return new GetResult(data, response.contentType(), tag, response.versionId());
+            } catch (RuntimeException | IOException failure) {
+                stream.abort(); // Closing alone may drain an unread oversized body.
+                throw failure;
+            }
+        } catch (NoSuchKeyException nsk) {
+            throw new BlobNotFoundException("blob not found: s3://" + bucket + "/" + key, nsk);
+        } catch (IOException io) {
+            throw new UncheckedIOException("conditional object read failed", io);
         }
-        return result;
     }
 
     @Override
     public PutResult conditionalPut(PutSpec spec, byte[] body, WriteCondition condition) {
+        requireConditionalSupport();
         java.util.Objects.requireNonNull(spec);
         java.util.Objects.requireNonNull(body);
         java.util.Objects.requireNonNull(condition);
@@ -88,6 +122,12 @@ public final class S3BlobStore implements BlobStore {
             return BlobStore.requireStrongEtag(tag);
         } catch (IllegalArgumentException incompatible) {
             throw new UnsupportedOperationException("backing store did not return one strong ETag", incompatible);
+        }
+    }
+
+    private void requireConditionalSupport() {
+        if (!conditionalWritesEnabled) {
+            throw new UnsupportedOperationException("S3 conditional operations require a qualified endpoint");
         }
     }
 
