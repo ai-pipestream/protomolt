@@ -4,8 +4,11 @@ Status: implementation in progress; original source inventory at
 `c5dec4ca812c603e0706e315a3acb86be221265a`. Retry protection, verification helpers
 and the sample reviewer landed in PRs #325, #326 and #327. Strict workflow
 validation and promotion retry protection landed through PR #329, including
-PR #328. Launch contracts landed in PR #330; the sample launch binding is implemented
-locally and awaiting review and CI.
+PR #328. Launch contracts, implementation and production extraction landed in
+PRs #330–#332. Worker claim protection landed in #333; lookup/launch contracts,
+action adapters and the opt-in coordinator mount landed in #334, #335 and #337.
+External fixture contracts landed in #336; their service implementation is in
+PR #338. See `goal5-starter-binding.md` for current evidence and remaining gates.
 The third starter is not implemented or published yet.
 
 ## Outcome
@@ -452,7 +455,7 @@ store and worker after remote success but failed checkpoint persistence, preserv
 the prior checkpoint and deduplicates the repeated request in its fixture service.
 That fixture's deduplication is in memory and the gRPC transport is in-process;
 external-service durability and process-kill qualification remain required.
-The reviewed helpers and two contract files have been extracted locally to
+The reviewed helpers and two contract files were extracted in PR #332 to
 `protomolt-workflow-authoring` so production hosts need not depend on samples.
 The protobuf files are unchanged, including their import paths, descriptor names
 and generated Java package. Handwritten Java uses the module's ADR-002 package.
