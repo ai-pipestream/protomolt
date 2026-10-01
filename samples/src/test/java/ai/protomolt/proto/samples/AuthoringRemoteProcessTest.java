@@ -1,9 +1,17 @@
 package ai.protomolt.proto.samples;
 
 import ai.protomolt.proto.delegation.v1.AcceptanceCheck;
+import ai.protomolt.proto.delegation.v1.CandidateReviewIdentity;
 import ai.protomolt.proto.delegation.v1.DeliverableContract;
+import ai.protomolt.proto.delegation.v1.DelegationServiceGrpc;
 import ai.protomolt.proto.delegation.v1.OfferTaskRequest;
+import ai.protomolt.proto.delegation.v1.RetryCandidateReviewRequest;
+import ai.protomolt.proto.delegation.v1.ReviewFailureCode;
 import ai.protomolt.proto.delegation.v1.TaskSpec;
+import ai.protomolt.proto.delegation.v1.Transcript;
+import ai.protomolt.proto.delegation.EncryptedRepositoryStateCodec;
+import ai.protomolt.proto.delegation.RepositoryServiceTranscriptRepository;
+import ai.protomolt.proto.delegation.storage.v1.EncryptedRepositoryState;
 import ai.protomolt.proto.grpc.workflow.FileSystemArtifactRepository;
 import ai.protomolt.proto.grpc.workflow.v1.ArtifactReference;
 import ai.protomolt.proto.receipt.KeyState;
@@ -25,6 +33,8 @@ import ai.protomolt.proto.samples.starter.v1.WorkflowAcceptedCandidate;
 import ai.protomolt.proto.workflow.authoring.FileSystemWorkflowPreparationRepository;
 import ai.protomolt.proto.workflow.authoring.v1.WorkflowAuthoringServiceGrpc;
 import ai.protomolt.proto.workflow.authoring.v1.GetAcceptedWorkflowRequest;
+import ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorEventsRequest;
+import ai.protomolt.proto.workflow.authoring.v1.WorkflowAuthorTaskServiceGrpc;
 import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringDeliverable;
 import ai.protomolt.proto.workflow.authoring.WorkflowAuthoringReviewer;
 import ai.protomolt.proto.workflow.authoring.v1.WorkflowPreparationIntent;
@@ -52,6 +62,7 @@ import io.grpc.Metadata;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.MetadataUtils;
 import io.grpc.stub.StreamObserver;
 import java.net.InetSocketAddress;
@@ -71,10 +82,14 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Base64;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.TimeUnit;
+import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.io.TempDir;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -93,6 +108,8 @@ class AuthoringRemoteProcessTest {
     private static final String AUTHOR_TOKEN = "remote-process-author-token";
     private static final String BROWSER_TOKEN = "remote-process-browser-launch-token";
     private static final String CONSOLE_TOKEN = "remote-process-default-console-token";
+    private static final String COORDINATE_TOKEN = "remote-process-coordinate-token";
+    private static final String TRANSCRIPT_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
     private static final String TASK_ID = "00000000-0000-4000-8000-000000000441";
     private static final String POLICY_OPERATION = "00000000-0000-4000-8000-000000000442";
     private static final String JOB_OPERATION = "00000000-0000-4000-8000-000000000443";
@@ -104,8 +121,10 @@ class AuthoringRemoteProcessTest {
 
     @TempDir Path directory;
 
-    @Test
-    void installedCoordinatorFixtureAndWorkerPrepareReviewLaunchAndPersistDistinctOperations()
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void installedCoordinatorFixtureAndWorkerPrepareReviewLaunchAndPersistDistinctOperations(
+            boolean failFirstReview)
             throws Exception {
         var postgres = new PostgreSQLContainer<>(DockerImageName.parse("postgres:16-alpine"))
                 .withDatabaseName("protomolt").withUsername("protomolt").withPassword("test-password");
@@ -116,12 +135,16 @@ class AuthoringRemoteProcessTest {
         ManagedChannel channel = null;
         try {
             postgres.start();
-            repository = ServerBuilder.forPort(0).addService(new FakeDocumentService()).build().start();
+            FakeDocumentService documents = new FakeDocumentService(failFirstReview);
+            repository = ServerBuilder.forPort(0).addService(documents).build().start();
 
             Path fixtureRecords = directory.resolve("fixture-records");
             Path fixtureLog = directory.resolve("fixture.log");
-            fixture = startFixture(fixtureRecords, fixtureLog);
+            int selectedFixturePort = freePort();
+            fixture = startFixture(selectedFixturePort, fixtureRecords, fixtureLog);
             int fixturePort = awaitFixturePort(fixture, fixtureLog);
+            assertThat(fixturePort).isEqualTo(selectedFixturePort);
+            documents.fixture = fixture;
             String fixtureTarget = "127.0.0.1:" + fixturePort;
 
             Path workspace = directory.resolve("workflow-workspace");
@@ -151,6 +174,42 @@ class AuthoringRemoteProcessTest {
             awaitOutput(worker, workerLog, "AuthoringWorker ready", Duration.ofSeconds(30));
             var offered = offerTask(mcp, policy);
             assertThat(offered.path("taskId").asText()).isEqualTo(TASK_ID);
+            channel = ManagedChannelBuilder.forAddress("127.0.0.1", grpcPort).usePlaintext()
+                    .maxInboundMessageSize(16 * 1024 * 1024).build();
+            if (failFirstReview) {
+                var authorTasks = WorkflowAuthorTaskServiceGrpc.newBlockingStub(channel)
+                        .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(bearer(AUTHOR_TOKEN)));
+                var failedIdentity = awaitAuthorReviewFailure(authorTasks, Duration.ofSeconds(90));
+                assertThat(documents.fixtureStoppedForReview()).isTrue();
+                assertThat(fixture.isAlive()).isFalse();
+                var authorDelegation = DelegationServiceGrpc.newBlockingStub(channel)
+                        .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(bearer(AUTHOR_TOKEN)));
+                RetryCandidateReviewRequest retry = RetryCandidateReviewRequest.newBuilder()
+                        .setTaskId(TASK_ID).setAttempt(1).setRevision(1)
+                        .setExpectedInvocationId(failedIdentity.getInvocationId())
+                        .setRetryId(UUID.randomUUID().toString()).build();
+                org.assertj.core.api.Assertions.assertThatThrownBy(() -> authorDelegation
+                        .withDeadlineAfter(10, TimeUnit.SECONDS).retryCandidateReview(retry))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class,
+                                denied -> assertThat(denied.getStatus().getCode())
+                                        .isEqualTo(Status.Code.PERMISSION_DENIED));
+                fixture = startFixture(fixturePort, fixtureRecords, directory.resolve("fixture-restarted.log"));
+                assertThat(awaitFixturePort(fixture, directory.resolve("fixture-restarted.log")))
+                        .isEqualTo(fixturePort);
+                var coordinate = DelegationServiceGrpc.newBlockingStub(channel)
+                        .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(bearer(COORDINATE_TOKEN)));
+                var retried = coordinate.withDeadlineAfter(10, TimeUnit.SECONDS)
+                        .retryCandidateReview(retry);
+                assertThat(retried.getRequest()).isEqualTo(retry);
+                assertThat(retried.getIdentity().getTaskId()).isEqualTo(TASK_ID);
+                assertThat(retried.getIdentity().getInvocationId())
+                        .isNotEqualTo(failedIdentity.getInvocationId());
+                assertThat(coordinate.withDeadlineAfter(10, TimeUnit.SECONDS)
+                        .retryCandidateReview(retry)).isEqualTo(retried);
+                assertThat(awaitAuthorReviewAccepted(authorTasks, Duration.ofSeconds(90)))
+                        .isEqualTo(retried.getIdentity().getInvocationId());
+                assertThat(documents.reviewStarts()).isEqualTo(2);
+            }
             try {
                 awaitOutput(worker, workerLog, "AuthoringWorker accepted task=" + TASK_ID,
                         Duration.ofSeconds(120));
@@ -160,9 +219,6 @@ class AuthoringRemoteProcessTest {
             }
             assertThat(worker.waitFor(10, TimeUnit.SECONDS)).isTrue();
             assertThat(worker.exitValue()).as(Files.readString(workerLog)).isZero();
-
-            channel = ManagedChannelBuilder.forAddress("127.0.0.1", grpcPort).usePlaintext()
-                    .maxInboundMessageSize(16 * 1024 * 1024).build();
             Metadata operatorHeaders = bearer(OPERATOR_TOKEN);
             var authoring = WorkflowAuthoringServiceGrpc.newBlockingStub(channel)
                     .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(operatorHeaders));
@@ -254,10 +310,10 @@ class AuthoringRemoteProcessTest {
         }
     }
 
-    private static Process startFixture(Path records, Path log) throws Exception {
+    private static Process startFixture(int port, Path records, Path log) throws Exception {
         Path launcher = Path.of("build/install/authoring-fixture/bin/authoring-fixture").toAbsolutePath();
         assertThat(launcher).exists();
-        ProcessBuilder builder = new ProcessBuilder(launcher.toString(), "0", records.toString())
+        ProcessBuilder builder = new ProcessBuilder(launcher.toString(), Integer.toString(port), records.toString())
                 .redirectErrorStream(true).redirectOutput(log.toFile());
         builder.environment().keySet().removeIf(name -> name.startsWith("PROTOMOLT_"));
         return builder.start();
@@ -305,7 +361,7 @@ class AuthoringRemoteProcessTest {
         env.put("PROTOMOLT_RECEIPT_KEY_FILE", signingKey.toString());
         env.put("PROTOMOLT_RECEIPT_KEY_ID", KEY_ID);
         env.put("PROTOMOLT_RECEIPT_ISSUER", ISSUER);
-        env.put("PROTOMOLT_TRANSCRIPT_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=");
+        env.put("PROTOMOLT_TRANSCRIPT_KEY", TRANSCRIPT_KEY);
         return builder.start();
     }
 
@@ -389,6 +445,65 @@ class AuthoringRemoteProcessTest {
             Thread.sleep(150);
         }
         throw new AssertionError("workflow job did not complete; last row: " + last);
+    }
+
+    private static CandidateReviewIdentity awaitAuthorReviewFailure(
+            WorkflowAuthorTaskServiceGrpc.WorkflowAuthorTaskServiceBlockingStub tasks,
+            Duration timeout) throws Exception {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        long cursor = 0;
+        CandidateReviewIdentity started = null;
+        while (System.nanoTime() < deadline) {
+            var page = tasks.withDeadlineAfter(10, TimeUnit.SECONDS)
+                    .readWorkflowAuthorEvents(ReadWorkflowAuthorEventsRequest.newBuilder()
+                            .setTaskId(TASK_ID).setAttempt(1).setAfterCursor(cursor)
+                            .setMaxEvents(32).build());
+            for (var observed : page.getEventsList()) {
+                var entry = observed.getEntry();
+                if (!entry.hasCoordinatorFrame()) continue;
+                var frame = entry.getCoordinatorFrame();
+                if (frame.hasReviewStarted()) started = frame.getReviewStarted().getIdentity();
+                if (frame.hasReviewFailed()) {
+                    assertThat(started).isNotNull();
+                    assertThat(frame.getReviewFailed().getIdentity()).isEqualTo(started);
+                    assertThat(frame.getReviewFailed().getCode())
+                            .isEqualTo(ReviewFailureCode.REVIEW_FAILURE_CODE_INFRASTRUCTURE);
+                    assertThat(started.getTaskId()).isEqualTo(TASK_ID);
+                    assertThat(started.getWorkerId()).isEqualTo(PRINCIPAL);
+                    assertThat(started.getAttempt()).isEqualTo(1);
+                    assertThat(started.getRevision()).isEqualTo(1);
+                    return started;
+                }
+            }
+            cursor = page.getCursor();
+            if (!page.getTruncated()) Thread.sleep(100);
+        }
+        throw new AssertionError("author event feed did not report persisted review infrastructure failure");
+    }
+
+    private static String awaitAuthorReviewAccepted(
+            WorkflowAuthorTaskServiceGrpc.WorkflowAuthorTaskServiceBlockingStub tasks,
+            Duration timeout) throws Exception {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        long cursor = 0;
+        while (System.nanoTime() < deadline) {
+            var page = tasks.withDeadlineAfter(10, TimeUnit.SECONDS)
+                    .readWorkflowAuthorEvents(ReadWorkflowAuthorEventsRequest.newBuilder()
+                            .setTaskId(TASK_ID).setAttempt(1).setAfterCursor(cursor)
+                            .setMaxEvents(32).build());
+            for (var observed : page.getEventsList()) {
+                var entry = observed.getEntry();
+                if (entry.hasCoordinatorFrame() && entry.getCoordinatorFrame().hasAccepted()) {
+                    var accepted = entry.getCoordinatorFrame().getAccepted();
+                    assertThat(accepted.getAttempt()).isEqualTo(1);
+                    assertThat(accepted.getRevision()).isEqualTo(1);
+                    return accepted.getReviewInvocationId();
+                }
+            }
+            cursor = page.getCursor();
+            if (!page.getTruncated()) Thread.sleep(100);
+        }
+        throw new AssertionError("author event feed did not report accepted retry");
     }
 
     private static McpSession initializeMcp(int port, String token) throws Exception {
@@ -493,10 +608,12 @@ class AuthoringRemoteProcessTest {
         return """
                 {"principals":[
                   {"name":"%s","credentialSha256":["%s"],"scopes":["workflow-author"]},
-                  {"name":"browser-launcher","credentialSha256":["%s"],"scopes":["worker-coordinate","workflow-launch"]}
+                  {"name":"browser-launcher","credentialSha256":["%s"],"scopes":["worker-coordinate","workflow-launch"]},
+                  {"name":"review-coordinator","credentialSha256":["%s"],"scopes":["worker-coordinate"]}
                 ]}
                 """.formatted(PRINCIPAL, sha256(AUTHOR_TOKEN.getBytes(StandardCharsets.UTF_8)),
-                        sha256(BROWSER_TOKEN.getBytes(StandardCharsets.UTF_8)));
+                        sha256(BROWSER_TOKEN.getBytes(StandardCharsets.UTF_8)),
+                        sha256(COORDINATE_TOKEN.getBytes(StandardCharsets.UTF_8)));
     }
 
     private static String loginBrowser(int port, String token) throws Exception {
@@ -548,6 +665,37 @@ class AuthoringRemoteProcessTest {
 
     private static final class FakeDocumentService extends DocumentServiceGrpc.DocumentServiceImplBase {
         private final Map<String, StoredObject> objects = new java.util.concurrent.ConcurrentHashMap<>();
+        private final EncryptedRepositoryStateCodec codec = new EncryptedRepositoryStateCodec(
+                ignored -> new SecretKeySpec(Base64.getDecoder().decode(TRANSCRIPT_KEY), "AES"));
+        private final boolean failFirstReview;
+        private volatile Process fixture;
+        private boolean fixtureStoppedForReview;
+
+        private FakeDocumentService(boolean failFirstReview) {
+            this.failFirstReview = failFirstReview;
+        }
+
+        private synchronized boolean fixtureStoppedForReview() {
+            return fixtureStoppedForReview;
+        }
+
+        private synchronized long reviewStarts() throws Exception {
+            StoredObject current = objects.get(key("protomolt", "delegation/serve/transcript.pb.enc"));
+            assertThat(current).isNotNull();
+            return transcript(current.bytes().toByteArray(),
+                    ConditionalBlobKey.newBuilder().setDriveName("protomolt")
+                            .setObjectKey("delegation/serve/transcript.pb.enc").build())
+                    .getEntriesList().stream().filter(entry -> entry.hasCoordinatorFrame()
+                            && entry.getCoordinatorFrame().hasReviewStarted()).count();
+        }
+
+        private Transcript transcript(byte[] bytes, ConditionalBlobKey key) throws Exception {
+            EncryptedRepositoryState envelope = EncryptedRepositoryState.parseFrom(bytes);
+            byte[] plaintext = codec.decrypt(envelope,
+                    RepositoryServiceTranscriptRepository.CONTENT_TYPE,
+                    key.getDriveName() + "\n" + key.getObjectKey());
+            return Transcript.parseFrom(plaintext);
+        }
         @Override public void getBlob(GetBlobRequest request, StreamObserver<GetBlobResponse> observer) {
             StoredObject stored = objects.get(key(request.getStorageRef().getDriveName(),
                     request.getStorageRef().getObjectKey()));
@@ -586,6 +734,26 @@ class AuthoringRemoteProcessTest {
             if (!matches) { observer.onError(Status.ABORTED.asRuntimeException()); return; }
             StoredObject stored = new StoredObject(request.getData(), request.getMimeType());
             objects.put(objectKey, stored);
+            if (failFirstReview && !fixtureStoppedForReview) {
+                try {
+                    Transcript committed = transcript(request.getData().toByteArray(), request.getKey());
+                    int size = committed.getEntriesCount();
+                    if (size >= 2 && committed.getEntries(size - 2).hasWorkerFrame()
+                            && committed.getEntries(size - 2).getWorkerFrame().hasCompletion()
+                            && committed.getEntries(size - 1).hasCoordinatorFrame()
+                            && committed.getEntries(size - 1).getCoordinatorFrame().hasReviewStarted()) {
+                        Process process = fixture;
+                        if (process == null) throw new IllegalStateException("fixture process is unavailable");
+                        stop(process);
+                        if (process.isAlive()) throw new IllegalStateException("fixture did not stop");
+                        fixtureStoppedForReview = true;
+                    }
+                } catch (Exception failure) {
+                    observer.onError(Status.INTERNAL.withDescription("test fixture shutdown failed")
+                            .asRuntimeException());
+                    return;
+                }
+            }
             observer.onNext(CompareAndPutBlobResponse.newBuilder().setVersion(version(request.getKey(), stored)).build());
             observer.onCompleted();
         }
