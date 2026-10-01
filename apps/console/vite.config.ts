@@ -39,6 +39,10 @@ export default defineConfig({
         target: serve,
         changeOrigin: true,
       },
+      '/api/workflow-launch': {
+        target: serve,
+        changeOrigin: false,
+      },
       '/api/correction': {
         target: serve,
         changeOrigin: true,

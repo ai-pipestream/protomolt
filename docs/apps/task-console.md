@@ -57,6 +57,15 @@ to 8 MiB, including the base64 representation of input bytes. This bridge does
 not expose arbitrary catalog actions or general artifact writes. A successful
 launch response identifies a job; it does not establish that execution succeeded.
 
+For accepted authored tasks, the launch panel displays the pinned input message
+and descriptor hash. Enter protobuf JSON and prepare it before launching. The
+browser saves the complete launch request and UUID locally before sending it;
+after a lost reply or reload, retry the saved request. Preparing the same input
+while that request is unresolved reuses its UUID. Changed input must be prepared
+again and gets a new launch identity. A local storage failure prevents a new
+launch from being sent. The panel shows the returned job and authorization
+reference; job execution status is not yet displayed there.
+
 The same coordinator is reachable as MCP tools on the same process, so a human
 in the console and an agent on the wire steer one shared transcript rather than
 two views that can disagree.
