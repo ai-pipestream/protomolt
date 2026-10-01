@@ -117,11 +117,12 @@ class WorkflowAuthorTaskReaderAdversarialTest {
             fixture.awaitPhase(TASK, DelegationReducer.Phase.LEASED, 1);
             fixture.coordinator.cancel(TASK, "reassign author task");
             fixture.awaitPhase(TASK, DelegationReducer.Phase.CANCELLED, 1);
+            fixture.awaitCancellationNotice(TASK, 1);
             fixture.offer(SECOND, TASK);
             fixture.awaitPhase(TASK, DelegationReducer.Phase.LEASED, 2);
             Transcript withReview = withReviewAttemptOne(fixture.transcript());
             fixture.repo.replace(withReview);
-            assertThat(new DelegationReducer().reduce(withReview).clean()).isTrue();
+            assertThat(new DelegationReducer().reduce(withReview).findings()).isEmpty();
 
             var attemptOne = reader(fixture.repo).events(request(TASK, 1, 0, 64), author(AUTHOR));
             assertThat(attemptOne.getEventsList()).anySatisfy(event ->
@@ -401,7 +402,8 @@ class WorkflowAuthorTaskReaderAdversarialTest {
         }
         long workerSeq = transcript.getEntriesList().stream().filter(TranscriptEntry::hasWorkerFrame)
                 .filter(entry -> entry.getWorkerId().equals(AUTHOR)
-                        && entry.getWorkerFrame().getTaskId().equals(TASK))
+                        && entry.getWorkerFrame().getTaskId().equals(TASK)
+                        && !entry.getWorkerFrame().hasCancelled())
                 .mapToLong(entry -> entry.getWorkerFrame().getSeq()).max().orElse(0) + 1;
         DelegateRequest candidateFrame = DelegateRequest.newBuilder().setFrameId(UUID.randomUUID().toString())
                 .setTaskId(TASK).setSeq(workerSeq)
@@ -451,6 +453,18 @@ class WorkflowAuthorTaskReaderAdversarialTest {
             }
         }
         if (cancelPosition < 0) throw new AssertionError("attempt-one cancellation is missing");
+        // Inserting the candidate consumes a worker sequence before the existing
+        // cancellation acknowledgement. Preserve that acknowledgement in order.
+        for (int i = cancelPosition + 1; i < entries.size(); i++) {
+            TranscriptEntry entry = entries.get(i);
+            if (entry.hasWorkerFrame() && entry.getWorkerId().equals(AUTHOR)
+                    && entry.getWorkerFrame().getTaskId().equals(TASK)
+                    && entry.getWorkerFrame().hasCancelled()
+                    && entry.getWorkerFrame().getCancelled().getAttempt() == 1) {
+                entries.set(i, entry.toBuilder().setWorkerFrame(entry.getWorkerFrame().toBuilder()
+                        .setSeq(entry.getWorkerFrame().getSeq() + 1)).build());
+            }
+        }
         entries.add(cancelPosition, candidateEntry);
         entries.add(cancelPosition + 1, startEntry);
         entries.add(cancelPosition + 2, failedEntry);
@@ -568,6 +582,17 @@ class WorkflowAuthorTaskReaderAdversarialTest {
         }
 
         Transcript transcript() { return repo.load().orElseThrow(); }
+        void awaitCancellationNotice(String task, int attempt) throws Exception {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (System.nanoTime() < deadline) {
+                if (transcript().getEntriesList().stream().anyMatch(entry -> entry.hasWorkerFrame()
+                        && entry.getWorkerFrame().getTaskId().equals(task)
+                        && entry.getWorkerFrame().hasCancelled()
+                        && entry.getWorkerFrame().getCancelled().getAttempt() == attempt)) return;
+                Thread.sleep(5);
+            }
+            throw new AssertionError("worker did not acknowledge cancellation of " + task);
+        }
         int cursorOfAttemptOneProgress() {
             return (int) transcript().getEntriesList().stream().filter(TranscriptEntry::hasWorkerFrame)
                     .filter(entry -> entry.getWorkerFrame().hasProgress()
