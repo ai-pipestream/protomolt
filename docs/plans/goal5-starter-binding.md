@@ -37,6 +37,20 @@ on a matching retry. These tests do not qualify a deployed MCP/ACP or browser pa
 
 ## External service and scripted author
 
+The reviewed example contract is
+`samples/src/main/proto/ai/protomolt/proto/samples/authoring/v1/authoring_fixture.proto`.
+It declares `NormalizeText` and `WriteRecord`, plus the sample-private durable
+record. Generated and dynamic fixtures use the native validator for empty and
+oversized text, UUID spelling, digest shape, storage version and cross-field
+request/response identity. Valid shape alone does not establish normalization,
+matching content digest or persistence; those require handler tests. The 8192
+code-point bound also limits valid UTF-8 content to 32768 bytes. Unicode fixtures
+cover this boundary. Buf lint and complete descriptor-set compatibility pass.
+The file currently provides contracts only; the service is not implemented or
+packaged. Ordinary scalar constraints can be rendered by existing schema
+generators, while stored-record identity CEL and handler durability checks remain
+runtime obligations. No generator changes are included.
+
 Use a small separate TCP gRPC service with reflection and two unary operations:
 a pure text normalization followed by a durable write. The write request carries
 an explicit operation UUID and bounded content; the response carries that UUID

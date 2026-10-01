@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.samples.authoring.v1;
+
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.samples.authoring.v1";
+
+// External demonstration service for the contract-driven authoring starter.
+// This descriptor does not mount a service or certify a published starter.
+// Both request and successful response boundaries use ProtoMolt runtime validation.
+service AuthoringFixtureService {
+  // Pure transformation: replace CRLF with LF, then remove leading/trailing
+  // ASCII space, tab, CR and LF. Preserve every other character and internal space.
+  // An empty normalized result is INVALID_ARGUMENT, with no stored effect.
+  rpc NormalizeText(NormalizeTextRequest) returns (NormalizeTextResponse);
+
+  // Atomically binds operation_id to the exact UTF-8 content and stored response.
+  // Matching retries return that response, including after service restart.
+  // Different content under the same ID returns ALREADY_EXISTS without mutation.
+  // Commit precedes success. An interrupted reply may have committed: retry the
+  // same ID and content. Cancellation cannot revoke an already committed write.
+  // Storage failures return INTERNAL, never a successful result; retry preserves
+  // the operation identity. Request/response validity does not prove durability.
+  rpc WriteRecord(WriteRecordRequest) returns (WriteRecordResponse);
+}
+
+// Bounded input to the pure normalization step.
+message NormalizeTextRequest {
+  // Text before the documented line-ending and edge-whitespace transformation.
+  string text = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true, string: {max_len: 8192}
+  }];
+}
+
+// The handler applies the documented transformation; annotations enforce shape.
+message NormalizeTextResponse {
+  // Nonempty normalized text; the handler verifies transformation correctness.
+  string text = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true, string: {max_len: 8192}
+  }];
+}
+
+// The authored workflow must carry the caller's operation key into this step.
+// Fixture keys must differ from job-input keys. No engine-generated key is implied.
+message WriteRecordRequest {
+  // Canonical lowercase UUID; the service does not treat alternate spellings as
+  // separate records. The explicit pattern rejects uppercase aliases at ingress.
+  string operation_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true, string: {uuid: true, pattern: "^[0-9a-f-]{36}$"}
+  }];
+  // Exact UTF-8 bytes are the content identity; no normalization happens here.
+  string content = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true, string: {max_len: 8192}
+  }];
+}
+
+// Successful replies identify the committed record. The handler must check that
+// operation_id matches the request and content_sha256 hashes its exact UTF-8 bytes.
+message WriteRecordResponse {
+  // Exact canonical UUID from the committed request.
+  string operation_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true, string: {uuid: true, pattern: "^[0-9a-f-]{36}$"}
+  }];
+  // Lowercase SHA-256 of the committed content UTF-8 bytes.
+  string content_sha256 = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true, string: {sha256_hex: true}
+  }];
+}
+
+// Sample-private durable record, not an RPC response. Compare the request's exact
+// content UTF-8 bytes on retry, not only its hash. Validate the record and recompute
+// its digest on read; corruption fails INTERNAL rather than regenerating a reply.
+// Store with atomic create under a cross-process lock, file and directory fsync
+// before success, and no non-atomic fallback. Temporary files are not committed
+// records. This proves only this fixture's write semantics, not arbitrary RPCs.
+message FixtureStoredRecord {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "stored-record-identity"
+    message: "stored response must name the committed request operation"
+    expression: "this.request.operation_id == this.response.operation_id"
+  };
+  // Storage format version. Unsupported versions fail closed.
+  int32 format_version = 1 [(ai.protomolt.proto.validate.v1.field).int32.const = 1];
+  // Exact validated request committed for the key.
+  WriteRecordRequest request = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Validated response persisted atomically with the request before returning it.
+  WriteRecordResponse response = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
