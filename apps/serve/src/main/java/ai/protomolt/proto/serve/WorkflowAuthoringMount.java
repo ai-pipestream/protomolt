@@ -122,6 +122,12 @@ final class WorkflowAuthoringMount {
             };
         }
 
+        ai.protomolt.proto.workflow.authoring.WorkflowAuthoringEntryOperations entryOperations(
+                ai.protomolt.proto.delegation.DelegationBridge bridge) {
+            return new ai.protomolt.proto.workflow.authoring.WorkflowAuthoringEntryCoordinator(
+                    bridge, policyReference, artifacts, 300);
+        }
+
         WorkflowLaunchInputOperations inputOperations(TranscriptRepository transcripts) {
             Objects.requireNonNull(transcripts, "transcripts");
             return new WorkflowLaunchInputOperations() {

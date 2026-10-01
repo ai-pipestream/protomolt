@@ -1175,6 +1175,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                         authoring.inputOperations(delegation.transcripts()));
                 ai.protomolt.proto.workflow.authoring.WorkflowLaunchStatusActions.register(catalog,
                         authoring.statusOperations(delegation.transcripts()));
+                ai.protomolt.proto.workflow.authoring.WorkflowAuthoringEntryActions.register(catalog,
+                        authoring.entryOperations(bridge));
             }
             if (preparation != null) {
                 WorkflowPreparationActions.register(catalog,
@@ -1321,6 +1323,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                 if (authoring != null && taskSessions.requiresLogin()) {
                     http.withContext("/api/workflow-launch",
                             new WorkflowLaunchConsoleApiHandler(catalog, taskSessions));
+                    http.withContext("/api/workflow-authoring",
+                            WorkflowLaunchConsoleApiHandler.authoringEntry(catalog, taskSessions));
                 }
             }
             if (options.apiToken() == null) {
@@ -1425,6 +1429,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                     .getDescriptor().findServiceByName("WorkflowLaunchInputService"));
             services.add(ai.protomolt.proto.workflow.authoring.v1.WorkflowLaunchStatusServiceOuterClass
                     .getDescriptor().findServiceByName("WorkflowLaunchStatusService"));
+            services.add(ai.protomolt.proto.workflow.authoring.v1.WorkflowAuthoringEntryServiceOuterClass
+                    .getDescriptor().findServiceByName("WorkflowAuthoringEntryService"));
         }
         if (workflowPreparation) {
             services.add(WorkflowPreparationServiceOuterClass.getDescriptor()

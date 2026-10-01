@@ -346,7 +346,12 @@ public final class InProcessDelegationCoordinator
                     || (entry.hasWorkerFrame() && entry.getWorkerFrame().getTaskId().equals(taskId)))) {
                 throw new TaskStartConflictException("task UUID is already in use");
             }
-            Session session = requireAdmittedSession(workerId);
+            Session session;
+            try {
+                session = requireAdmittedSession(workerId);
+            } catch (IllegalStateException unavailable) {
+                throw new TaskStartAdmissionException("worker is not currently admitted and connected", unavailable);
+            }
             InitialOffer initial = Objects.requireNonNull(newOffer.get(), "newOffer returned null");
             if (initial.leaseDuration().isZero() || initial.leaseDuration().isNegative()) {
                 throw new IllegalArgumentException("leaseDuration must be positive");

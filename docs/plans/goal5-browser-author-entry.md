@@ -1,11 +1,12 @@
 # Configured workflow authoring entry
 
-Status: reviewed contract-only slice. Native generated/dynamic fixtures and schema
-projection checks pass locally. No handler or new operation is available yet.
+Status: entry contracts, actions and the optional host mount are implemented in
+the local working tree. Native generated/dynamic fixtures and schema projection
+checks pass locally. This work has not been released or deployed.
 
 Coordinator implementation follow-up: `offerOnce` and the authoring binding
-function are implemented and locally tested. No entry action or host mount exists
-yet. The coordinator checks the final rendered offer binding before publication,
+function are implemented and locally tested. The entry actions expose template
+lookup and start through the catalog and gRPC. The coordinator checks the final rendered offer binding before publication,
 and uses the original transcript offer for replay. Existing generic offer behavior
 is preserved.
 
@@ -16,14 +17,28 @@ after commit. The last case proves fail-closed behavior until restoration and on
 recovered offer afterward. The delegation suite and binding tests pass. This is
 coordinator-level evidence, not a deployed browser or process-kill qualification.
 
+The entry tests also cover malformed stored offers, policy descriptor closure,
+template integrity, message bounds, permission checks and error mappings. A
+malformed persisted offer fails as corrupt evidence without policy reads or new
+transcript entries. The secured console mounts fixed template and start POST
+routes under `/api/workflow-authoring`; both retain the authenticated principal
+and require `worker-coordinate`. The browser form and idle-author assignment
+discovery remain unfinished.
+
+The installed-process test obtains the template and starts authoring over MCP,
+waits for independent acceptance, and recovers the original offer over MCP,
+generated gRPC and the authenticated console route. The ordinary console session
+still cannot launch workflows. This test passes locally; it does not qualify a
+rendered browser form, a deployment or worker termination during a remote effect.
+
 ## Existing operations and missing behavior
 
 The task console already lists workers, offers generic tasks, displays durable
 progress and renders accepted-workflow launch. Its first-offer form can attach a
 DeliverableContract but cannot supply the policy context used by authoring. The
-installed author sample constructs that TaskSpec itself, including the complete
-WorkflowAuthoringDeliverable descriptor closure, pinned policy reference and all
-WorkflowAuthoringReviewer.REQUIRED_CHECKS.
+installed author process test now obtains that TaskSpec from the configured entry,
+including the complete WorkflowAuthoringDeliverable descriptor closure, pinned
+policy reference and all WorkflowAuthoringReviewer.REQUIRED_CHECKS.
 
 Reuse those TaskSpec, DeliverableContract, ArtifactReference, TaskOffer and worker
 list models. Keep the current coordinator, transcript and independent review.
@@ -80,7 +95,7 @@ Persist enough start identity alongside the first offer to distinguish this entr
 from a generic offer and to survive coordinator restart. An in-memory request map
 or a read-then-offer adapter is insufficient. Extend the existing durable protocol
 with the smallest admission binding needed; do not create another task lifecycle.
-The reviewed binding shape is recorded below; handler implementation is pending.
+The reviewed binding shape is recorded below and implemented by the entry handler.
 
 Invalid shape is INVALID_ARGUMENT; missing permission is PERMISSION_DENIED;
 changed/reused identity is ALREADY_EXISTS; stale template or unavailable worker
