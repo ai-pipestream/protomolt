@@ -231,6 +231,16 @@ export class TaskApi {
     return this.json('POST', `${this.base}/${encodeURIComponent(taskId)}/cancel`, { reason })
   }
 
+  retryReview(taskId: string, attempt: number, revision: number,
+    expectedInvocationId: string, retryId: string): Promise<{
+      request: { taskId: string; attempt: number; revision: number; expectedInvocationId: string; retryId: string }
+      identity: { taskId: string; attempt: number; revision: number; invocationId: string }
+    }> {
+    return this.json('POST', `${this.base}/${encodeURIComponent(taskId)}/review-retry`, {
+      attempt, revision, expectedInvocationId, retryId,
+    })
+  }
+
   /** The task's transcript, projected into a signed work record. */
   exportRecord(taskId: string): Promise<ExportedTaskRecord> {
     return this.json('POST', `${this.base}/${encodeURIComponent(taskId)}/record`, {})
@@ -439,7 +449,7 @@ export function taskRecovery(task: TaskSummary): { reason: string; actor: string
   }
   if (task.phase === 'candidate' && task.review?.status === 'failed') return {
     reason: `Review could not finish (${task.review.failureCode ?? 'unknown cause'}).`, actor: 'Coordinator',
-    action: 'Inspect the recorded review status and the candidate evidence before a manual decision.', retry: false, cancel: true,
+    action: 'Retry the review after resolving the failure, or inspect the evidence for a manual decision.', retry: false, cancel: true,
   }
   if (task.phase === 'candidate' && task.review?.status === 'deferred') return {
     reason: 'Automatic review is waiting for a manual decision.', actor: 'Reviewer',
