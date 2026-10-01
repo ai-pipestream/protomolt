@@ -150,6 +150,45 @@ class WorkflowAuthorTaskMutationsTest {
         }
     }
 
+    @Test void nativelyValidOversizedCompletionIsRejectedWithoutMutationThenValidRetrySucceeds()
+            throws Exception {
+        try (Fixture fixture = new Fixture(new InMemoryTranscriptRepository(), temp.resolve("frame-limit"))) {
+            fixture.registerAndOffer();
+            fixture.mutations.accept(accept(), AUTHOR);
+            SubmitCandidateRequest validRequest = submit();
+            WorkflowAuthoringDeliverable valid = validRequest.getCandidate().getResult()
+                    .unpack(WorkflowAuthoringDeliverable.class);
+            WorkflowAuthoringDeliverable oversized = valid.toBuilder().setDeliverable(
+                    valid.getDeliverable().toBuilder().setWorkflow(valid.getDeliverable().getWorkflow()
+                            .toBuilder().setDescription("x".repeat(1_050_000)))).build();
+            WorkflowPreparationValidation.validate(oversized, 4 * 1024 * 1024);
+            var oversizedCandidate = validRequest.getCandidate().toBuilder().setResult(Any.pack(oversized)).build();
+            assertThat(oversizedCandidate.getSerializedSize()).isGreaterThan(1_048_576);
+            assertThat(DeliverableContracts.check(spec(fixture.policy).getContract(),
+                    oversizedCandidate.getResult())).isEmpty();
+            SubmitCandidateRequest oversizedRequest = validRequest.toBuilder().setCandidate(oversizedCandidate).build();
+            WorkflowPreparationValidation.validate(oversizedRequest, 16 * 1024 * 1024);
+            long acceptedSequence = fixture.coordinator.transcript().getEntriesList().stream()
+                    .filter(entry -> entry.hasWorkerFrame() && entry.getWorkerFrame().hasAccept())
+                    .mapToLong(entry -> entry.getWorkerFrame().getSeq()).findFirst().orElseThrow();
+            int before = fixture.coordinator.transcript().getEntriesCount();
+
+            fails(() -> fixture.mutations.submit(oversizedRequest, AUTHOR),
+                    WorkflowPreparationException.Kind.INVALID_INPUT);
+            assertThat(fixture.coordinator.transcript().getEntriesCount()).isEqualTo(before);
+            assertThat(fixture.coordinator.state().tasks().get(TASK).phase()).isEqualTo(DelegationReducer.Phase.LEASED);
+
+            fixture.mutations.submit(validRequest, AUTHOR);
+            Transcript completed = fixture.coordinator.transcript();
+            assertThat(completed.getEntriesCount()).isEqualTo(before + 1);
+            assertThat(completed.getEntriesList().stream()
+                    .filter(entry -> entry.hasWorkerFrame() && entry.getWorkerFrame().hasCompletion())
+                    .mapToLong(entry -> entry.getWorkerFrame().getSeq()).findFirst().orElseThrow())
+                    .isEqualTo(acceptedSequence + 1);
+            assertThat(new DelegationReducer().reduce(completed).clean()).isTrue();
+        }
+    }
+
     private static final class Fixture implements AutoCloseable {
         final InProcessDelegationCoordinator coordinator;
         final DelegationBridge bridge;
