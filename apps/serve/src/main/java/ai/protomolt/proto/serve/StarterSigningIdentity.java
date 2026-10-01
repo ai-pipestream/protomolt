@@ -36,15 +36,22 @@ public final class StarterSigningIdentity {
 
     /** Used only by the one-shot Compose identity initializer. */
     public static void main(String[] args) throws Exception {
-        if (args.length != 1) {
-            System.err.println("usage: StarterSigningIdentity <persistent-directory>");
+        if (args.length < 1 || args.length > 2) {
+            System.err.println("usage: StarterSigningIdentity <persistent-directory> [agents|authoring]");
             System.exit(2);
         }
-        ensure(Path.of(args[0]));
+        ensure(Path.of(args[0]), args.length == 2 ? args[1] : "agents");
         System.out.println("starter signing identity ready");
     }
 
     static void ensure(Path directory) throws Exception {
+        ensure(directory, "agents");
+    }
+
+    static void ensure(Path directory, String profile) throws Exception {
+        if (!Set.of("agents", "authoring").contains(profile)) {
+            throw new IllegalArgumentException("unknown starter signing profile");
+        }
         Files.createDirectories(directory);
         Path seedFile = directory.resolve("seed.bin");
         Path publicFile = directory.resolve("public.raw");
@@ -61,7 +68,7 @@ public final class StarterSigningIdentity {
                     .orElseThrow(() -> new IllegalStateException("Ed25519 seed is unavailable"));
             byte[] rawPublic = RecordKeys.rawPublicKey(pair.getPublic());
             String keyId = keyId(rawPublic);
-            TrustSnapshot trust = snapshot(rawPublic, keyId);
+            TrustSnapshot trust = snapshot(rawPublic, keyId, profile);
             Files.createFile(seedFile, PosixFilePermissions.asFileAttribute(PRIVATE));
             Files.write(seedFile, seed);
             Files.write(publicFile, rawPublic, java.nio.file.StandardOpenOption.CREATE_NEW);
@@ -74,11 +81,11 @@ public final class StarterSigningIdentity {
         } else if (present != 5) {
             throw new IllegalStateException("starter signing identity is incomplete; restore the original files");
         }
-        verify(seedFile, publicFile, trustFile, keyIdFile, issuerFile);
+        verify(seedFile, publicFile, trustFile, keyIdFile, issuerFile, profile);
     }
 
     private static void verify(Path seedFile, Path publicFile, Path trustFile,
-                               Path keyIdFile, Path issuerFile) throws Exception {
+                               Path keyIdFile, Path issuerFile, String profile) throws Exception {
         byte[] seed = Files.readAllBytes(seedFile);
         byte[] rawPublic = Files.readAllBytes(publicFile);
         if (seed.length != 32 || rawPublic.length != 32) {
@@ -87,7 +94,7 @@ public final class StarterSigningIdentity {
         String keyId = keyId(rawPublic);
         if (!keyId.equals(Files.readString(keyIdFile))
                 || !ISSUER.equals(Files.readString(issuerFile))
-                || !snapshot(rawPublic, keyId).equals(TrustSnapshots.load(trustFile))) {
+                || !snapshot(rawPublic, keyId, profile).equals(TrustSnapshots.load(trustFile))) {
             throw new IllegalStateException("starter signing identity does not match its trust snapshot");
         }
         Signature signer = Signature.getInstance("Ed25519");
@@ -102,14 +109,17 @@ public final class StarterSigningIdentity {
         Files.setPosixFilePermissions(seedFile, PRIVATE);
     }
 
-    private static TrustSnapshot snapshot(byte[] rawPublic, String keyId) {
+    private static TrustSnapshot snapshot(byte[] rawPublic, String keyId, String profile) {
+        var subjectKinds = "authoring".equals(profile)
+                ? java.util.List.of("delegation-task", "workflow-run")
+                : java.util.List.of("delegation-task");
         return TrustSnapshots.requireWellFormed(TrustSnapshot.newBuilder()
                 .addIssuers(TrustedIssuer.newBuilder().setIssuer(ISSUER)
                         .addKeys(TrustedKey.newBuilder().setKeyId(keyId)
                                 .setAlgorithm(SignatureAlgorithm.SIGNATURE_ALGORITHM_ED25519)
                                 .setPublicKey(ByteString.copyFrom(rawPublic))
                                 .setState(KeyState.KEY_STATE_ACTIVE))
-                        .addSubjectKinds("delegation-task"))
+                        .addAllSubjectKinds(subjectKinds))
                 .build());
     }
 

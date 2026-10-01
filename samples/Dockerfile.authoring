@@ -1,0 +1,17 @@
+# Native CI builds the installed distributions before building this image.
+# All sample launchers share the same runtime classpath; keep one copy of its jars.
+FROM eclipse-temurin:25-jre
+
+COPY build/install/authoring-coordinator /opt/protomolt-authoring
+COPY build/install/authoring-fixture/bin/ /opt/protomolt-authoring/bin/
+COPY build/install/authoring-worker/bin/ /opt/protomolt-authoring/bin/
+COPY build/install/accepted-workflow-kafka-bridge/bin/ /opt/protomolt-authoring/bin/
+COPY build/install/authoring-policy-seed/bin/ /opt/protomolt-authoring/bin/
+
+RUN useradd --system --uid 10001 --create-home --home-dir /home/protomolt protomolt \
+    && chmod -R a+rX /opt/protomolt-authoring
+USER 10001:10001
+ENV HOME=/home/protomolt
+WORKDIR /home/protomolt
+EXPOSE 8080 9090 9778
+ENTRYPOINT ["/opt/protomolt-authoring/bin/authoring-coordinator"]
