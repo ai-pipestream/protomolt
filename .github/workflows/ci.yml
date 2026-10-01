@@ -39,6 +39,17 @@ jobs:
       - name: Build and test
         run: ./gradlew build --console=plain -PtestJdk=${{ matrix.test-jdk }}
 
+      - name: Save failed sample test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sample-test-results-jdk-${{ matrix.test-jdk }}-${{ github.run_attempt }}
+          path: |
+            samples/build/test-results/test/*.xml
+            samples/build/reports/tests/test/
+          if-no-files-found: warn
+          retention-days: 7
+
       # Excluded from `build` because these tests fork an agent JVM and shell out to
       # protoc, which is slower than anything the default test task runs. The lane keeps
       # the coverage (the agent driven exactly as an IDE drives it) without slowing the

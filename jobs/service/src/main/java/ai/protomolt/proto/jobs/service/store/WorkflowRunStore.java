@@ -103,8 +103,10 @@ public interface WorkflowRunStore {
     Optional<WorkflowRunRecord> claim(String workerId, Duration leaseDuration);
 
     /**
-     * Crash recovery: flip RUNNING jobs whose lease expired back to QUEUED
-     * (lease cleared). The persisted checkpoints make the resume safe.
+     * Crash recovery: flip expired RUNNING claims with attempts remaining back
+     * to QUEUED. Expired claims at the retry ceiling become DEAD with a terminal
+     * outbox event in the same transaction. The persisted checkpoints make an
+     * eligible resume safe. Parked continuations are not part of this sweep.
      *
      * @return how many jobs were requeued
      */

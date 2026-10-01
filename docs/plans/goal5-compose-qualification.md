@@ -47,3 +47,63 @@ Remaining gates include review and landing, restart/crash qualification of
 the packaged stack, native AMD64/ARM64 publication and execution, clean
 anonymous pulls/downloads, and release-bundle qualification. Existing
 installed-process crash tests do not establish those image release gates.
+
+## Packaged review recovery gate
+
+`AuthoringComposeReviewTest` uses explicit digest-pinned images in an isolated
+Compose project. It pauses the idle scripted author so the test can submit
+controlled candidates through that author's scoped RPCs. Chromium starts the
+task. An invalid envelope and an invalid typed deliverable must be refused
+before review; the latter must leave the persisted events unchanged.
+
+After successful preparation, the test stops the fixture before submission.
+Chromium must show the infrastructure failure and the retry action. The fixture
+then restarts on its existing volume. A reflection call through the same running
+coordinator proves that its DNS resolution and connection to the fixture have
+recovered before the browser retries once. The browser must show acceptance,
+and a fresh retry key naming the old invocation must be refused without changing
+the accepted review or events. The current retry route returns HTTP 400 with
+`review retry does not match the latest failed candidate` for this refusal.
+
+Run this opt-in gate with both `PROTOMOLT_AUTHORING_REVIEW_IMAGE` and
+`PROTOMOLT_REPO_REVIEW_IMAGE` set to registry digests or local content IDs:
+
+```sh
+./gradlew :samples:test --tests '*AuthoringComposeReviewTest' --rerun
+```
+
+Node 22 or newer and Chromium (`CHROME_BIN` when not `google-chrome`) are needed
+on the qualification host only. Screenshots and browser logs are written under
+`samples/build/authoring-review-evidence`. Missing both image variables skips
+the test; missing one fails. Publication checks require a passing, unskipped
+JUnit report on each native architecture.
+
+Local AMD64 qualification on 2026-10-01 ran this gate together with
+`AuthoringComposeCrashTest` against the integrated-source image IDs recorded
+in `goal5-packaged-crash.md`. Both tests passed with no skips, failures or errors:
+review recovery in 72.512 seconds and crash recovery in 34.279 seconds. The
+failure and accepted browser screenshots were inspected. This remains local
+package evidence, not published-image or ARM64 qualification.
+
+## Publication and repeat qualification
+
+`.github/workflows/authoring-starter-publish.yml` publishes from an exact
+merged main commit with the matching `authoring-starter-<12sha>` tag already
+pushed to Forgejo and GitHub. Normal dispatch builds on native AMD64 and ARM64
+runners. Each runner records immutable image digests, qualifies those images
+through the browser and packaged recovery tests, and publishes a digest receipt
+only after those checks pass. Manifest assembly checks both platform children
+against those receipts before constructing the digest-pinned download.
+
+The release ZIP and its `.sha256` sidecar are immutable prerelease assets.
+An asset may exist before the anonymous downloaded-package checks finish.
+Both native download jobs must pass before claiming package qualification.
+
+If a download check fails after both assets were uploaded, dispatch the same
+workflow from main with `verify_existing_release=true` and `release_tag` set
+to the existing starter tag. This mode verifies the checksum, source ancestry,
+Compose and browser content, and image references, then repeats the anonymous
+download checks on both architectures. It does not rebuild images or replace
+assets. Native build/recovery evidence remains attached to the original run.
+A missing checksum or partially uploaded release fails closed and requires
+operator investigation; requalification does not fabricate a missing asset.

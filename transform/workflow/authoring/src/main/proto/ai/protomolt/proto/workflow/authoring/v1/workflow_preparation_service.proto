@@ -23,6 +23,11 @@ service WorkflowPreparationService {
   // Changed reserved intent is ALREADY_EXISTS. A terminal failure is
   // FAILED_PRECONDITION with code preparation-attempt-failed and structured
   // WorkflowPreparationFailure detail in the existing JSON error trailer.
+  // A caller cancelled before intent reservation cannot start preparation.
+  // After durable reservation, preparation may finish despite RPC cancellation
+  // or caller deadline expiry; workflow execution budgets still apply. Losing
+  // the reply does not cancel the delegated task. Coordinator task cancellation,
+  // reassignment and lease checks remain authoritative before completion.
   // Cancellation cannot undo committed effects. A new coordinator attempt is
   // required after terminal failure; a new preparation UUID cannot bypass it.
   rpc PrepareWorkflowCandidate(PrepareWorkflowCandidateRequest)

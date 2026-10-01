@@ -84,4 +84,5 @@ The optional accepted-workflow Kafka bridge is intentionally outside this
 base Compose stack. It needs a private dedicated launch-intent topic, broker
 ACLs, its own `workflow-launch` token mount, and a stable consumer group.
 Its topic is distinct from the mutable-name `WorkflowRunRequest` topic; see
-`samples/ACCEPTED_WORKFLOW_KAFKA_BRIDGE.md` when that sample is landed.
+`samples/ACCEPTED_WORKFLOW_KAFKA_BRIDGE.md` in the source checkout for its
+envelope, credentials, duplicate handling, and recovery procedure.

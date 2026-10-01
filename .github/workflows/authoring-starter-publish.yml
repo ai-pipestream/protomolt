@@ -1,0 +1,685 @@
+# Publishes the image-only workflow authoring starter from one merged main commit.
+# Create authoring-starter-<12sha> at that commit and push it to Forgejo first,
+# then GitHub. This workflow never moves the tag or replaces a release asset.
+name: Authoring Starter Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      verify_existing_release:
+        description: Requalify an existing immutable prerelease without rebuilding or replacing it
+        type: boolean
+        default: false
+      release_tag:
+        description: Existing authoring-starter-<12sha> tag (required only for requalification)
+        type: string
+        required: false
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: authoring-starter-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.source.outputs.version }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      verify_existing: ${{ steps.source.outputs.verify_existing }}
+      asset_sha256: ${{ steps.source.outputs.asset_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Guard exact immutable source and asset
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFY_EXISTING: ${{ inputs.verify_existing_release }}
+          VERIFY_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          [ "${{ github.ref }}" = refs/heads/main ] || { echo 'main is required' >&2; exit 1; }
+          git fetch origin main --quiet
+          if [ "$VERIFY_EXISTING" = true ]; then
+            VERSION=$VERIFY_TAG
+            [[ "$VERSION" =~ ^authoring-starter-[0-9a-f]{12}$ ]] || {
+              echo 'verification requires an exact authoring starter tag' >&2; exit 1;
+            }
+            SHA=$(git rev-list -n 1 "refs/tags/$VERSION" 2>/dev/null)
+            [ "${SHA:0:12}" = "${VERSION#authoring-starter-}" ] || {
+              echo 'tag does not identify its named source revision' >&2; exit 1;
+            }
+            git merge-base --is-ancestor "$SHA" origin/main || {
+              echo 'verification source is not in main history' >&2; exit 1;
+            }
+          else
+            SHA=$(git rev-parse HEAD)
+            [ "$SHA" = "$(git rev-parse origin/main)" ] || { echo 'main moved; dispatch again' >&2; exit 1; }
+            VERSION=authoring-starter-${SHA:0:12}
+            [ "$(git rev-list -n 1 "refs/tags/$VERSION" 2>/dev/null)" = "$SHA" ] || {
+              echo 'push the same-SHA tag to Forgejo and GitHub before dispatch' >&2; exit 1;
+            }
+          fi
+          ASSET=protomolt-authoring-starter-$VERSION.zip
+          SUMS=$ASSET.sha256
+          if [ "$VERIFY_EXISTING" = true ]; then
+            DIR="$RUNNER_TEMP/authoring-existing"
+            mkdir -p "$DIR"
+            gh release download "$VERSION" -p "$ASSET" -D "$DIR"
+            gh release download "$VERSION" -p "$SUMS" -D "$DIR"
+            cd "$DIR"
+            HASH=$(sha256sum "$ASSET" | cut -d ' ' -f1)
+            [ "$(cat "$SUMS")" = "$(printf '%s  %s' "$HASH" "$ASSET")" ] || {
+              echo 'existing release checksum differs' >&2; exit 1;
+            }
+            unzip -tq "$ASSET" >/dev/null
+            PREFIX=protomolt-authoring-starter-$VERSION
+            unzip -p "$ASSET" "$PREFIX/SOURCE.json" > SOURCE.json
+            jq -e --arg sha "$SHA" --arg version "$VERSION" '
+              .sourceRevision == $sha and .version == $version and
+              (.composeSha256 | test("^[0-9a-f]{64}$")) and
+              (.browserSmokeSha256 | test("^[0-9a-f]{64}$")) and
+              (.imageDigests | to_entries | length == 7) and
+              all(.imageDigests[]; test("^sha256:[0-9a-f]{64}$"))' SOURCE.json >/dev/null
+            [ "$(unzip -p "$ASSET" "$PREFIX/compose.yml" | sha256sum | cut -d ' ' -f1)" = \
+              "$(jq -r .composeSha256 SOURCE.json)" ] || { echo 'existing Compose provenance differs' >&2; exit 1; }
+            [ "$(unzip -p "$ASSET" "$PREFIX/browser-smoke.mjs" | sha256sum | cut -d ' ' -f1)" = \
+              "$(jq -r .browserSmokeSha256 SOURCE.json)" ] || { echo 'existing browser provenance differs' >&2; exit 1; }
+            [ "$(git -C "$GITHUB_WORKSPACE" show "$SHA:deploy/authoring/compose.yml" | sha256sum | cut -d ' ' -f1)" = \
+              "$(jq -r .composeSha256 SOURCE.json)" ] || { echo 'Compose does not match tagged source' >&2; exit 1; }
+            [ "$(git -C "$GITHUB_WORKSPACE" show "$SHA:deploy/authoring/browser-smoke.mjs" | sha256sum | cut -d ' ' -f1)" = \
+              "$(jq -r .browserSmokeSha256 SOURCE.json)" ] || { echo 'browser smoke does not match tagged source' >&2; exit 1; }
+            unzip -p "$ASSET" "$PREFIX/.env" > images.env
+            [ "$(wc -l < images.env)" -eq 7 ] && \
+              [ "$(cut -d= -f1 images.env | sort -u | wc -l)" -eq 7 ] || {
+                echo 'existing image references are duplicated or incomplete' >&2; exit 1;
+              }
+            for mapping in \
+              'PROTOMOLT_AUTHORING_IMAGE:authoring:ghcr.io/${{ github.repository_owner }}/protomolt-authoring' \
+              'PROTOMOLT_REPO_IMAGE:repoService:ghcr.io/${{ github.repository_owner }}/protomolt-repo-service' \
+              'PROTOMOLT_ALPINE_IMAGE:alpine:alpine' \
+              'PROTOMOLT_RUSTFS_IMAGE:rustfs:rustfs/rustfs' \
+              'PROTOMOLT_CURL_IMAGE:curl:curlimages/curl' \
+              'PROTOMOLT_POSTGRES_IMAGE:postgres:postgres' \
+              'PROTOMOLT_GRPCURL_IMAGE:grpcurl:fullstorydev/grpcurl'; do
+              IFS=: read -r key field image <<< "$mapping"
+              digest=$(jq -er --arg key "$field" '.imageDigests[$key]' SOURCE.json)
+              grep -Fxq "$key=$image@$digest" images.env || {
+                echo 'existing image references differ from source manifest' >&2; exit 1;
+              }
+            done
+            echo "asset_sha256=$HASH" >> "$GITHUB_OUTPUT"
+            echo 'verify_existing=true' >> "$GITHUB_OUTPUT"
+          else
+            if gh release view "$VERSION" --json assets --jq '.assets[].name' 2>/dev/null \
+              | grep -Fxq -e "$ASSET" -e "$SUMS"; then
+              echo 'authoring starter asset already exists; refusing overwrite' >&2; exit 1
+            fi
+            echo 'verify_existing=false' >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$SHA" >> "$GITHUB_OUTPUT"
+
+  native:
+    needs: prepare
+    if: needs.prepare.outputs.verify_existing != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/console/package-lock.json
+      - name: Build console and installed launchers natively
+        run: |
+          npm ci --prefix apps/console
+          npm run build --prefix apps/console
+          ./gradlew :samples:installAuthoringCoordinator \
+            :samples:installAuthoringFixture :samples:installAuthoringWorker \
+            :samples:installAuthoringPolicySeed \
+            :samples:installAcceptedWorkflowKafkaBridge \
+            :protomolt-repo-service:installDist --no-daemon
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Reuse only matching native image tags
+        id: existing
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          for pair in authoring:protomolt-authoring repo:protomolt-repo-service; do
+            KEY=${pair%%:*}
+            IMAGE=${pair#*:}
+            TAG=ghcr.io/${{ github.repository_owner }}/$IMAGE:$VERSION-$ARCH
+            if docker buildx imagetools inspect "$TAG" >/dev/null 2>inspect-error.txt; then
+              docker pull --platform "linux/$ARCH" "$TAG" >/dev/null
+              [ "$(docker image inspect "$TAG" --format '{{.Architecture}}')" = "$ARCH" ]
+              [ "$(docker image inspect "$TAG" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SOURCE_SHA" ] || {
+                echo "existing native image belongs to another source: $TAG" >&2; exit 1;
+              }
+              echo "$KEY=true" >> "$GITHUB_OUTPUT"
+            elif grep -Eqi 'not found|manifest unknown' inspect-error.txt; then
+              echo "$KEY=false" >> "$GITHUB_OUTPUT"
+            else
+              cat inspect-error.txt >&2
+              exit 1
+            fi
+          done
+      - name: Publish native authoring image
+        if: steps.existing.outputs.authoring != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: samples
+          file: samples/Dockerfile.authoring
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/protomolt-authoring:${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.source_sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.licenses=Apache-2.0
+      - name: Publish native repository image
+        if: steps.existing.outputs.repo != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: repo/service
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/protomolt-repo-service:${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.source_sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.licenses=Apache-2.0
+      - name: Pull and inspect both native images
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          for IMAGE in protomolt-authoring protomolt-repo-service; do
+            TAG=ghcr.io/${{ github.repository_owner }}/$IMAGE:$VERSION-$ARCH
+            docker pull --platform "linux/$ARCH" "$TAG"
+            [ "$(docker image inspect "$TAG" --format '{{.Architecture}}')" = "$ARCH" ]
+            [ "$(docker image inspect "$TAG" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SOURCE_SHA" ]
+          done
+      - name: Pin the native image digests to qualify
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          runnable_child() {
+            local image="$1" arch="$2" raw
+            raw=$(docker buildx imagetools inspect "$image" --raw)
+            if printf '%s\n' "$raw" | jq -e 'has("manifests")' >/dev/null; then
+              printf '%s\n' "$raw" | jq -er --arg arch "$arch" '
+                [.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch)]
+                | if length == 1 then .[0].digest else error("ambiguous native runnable child") end'
+            else
+              docker buildx imagetools inspect "$image" --format '{{json .}}' | jq -er '.manifest.digest'
+            fi
+          }
+          AUTHORING=ghcr.io/${{ github.repository_owner }}/protomolt-authoring:$VERSION-$ARCH
+          REPO=ghcr.io/${{ github.repository_owner }}/protomolt-repo-service:$VERSION-$ARCH
+          AUTHORING_TAG_DIGEST=$(docker buildx imagetools inspect "$AUTHORING" --format '{{json .}}' | jq -er '.manifest.digest')
+          REPO_TAG_DIGEST=$(docker buildx imagetools inspect "$REPO" --format '{{json .}}' | jq -er '.manifest.digest')
+          AUTHORING_BASE=ghcr.io/${{ github.repository_owner }}/protomolt-authoring
+          REPO_BASE=ghcr.io/${{ github.repository_owner }}/protomolt-repo-service
+          AUTHORING_CHILD=$(runnable_child "$AUTHORING_BASE@$AUTHORING_TAG_DIGEST" "$ARCH")
+          REPO_CHILD=$(runnable_child "$REPO_BASE@$REPO_TAG_DIGEST" "$ARCH")
+          for DIGEST in "$AUTHORING_TAG_DIGEST" "$REPO_TAG_DIGEST" "$AUTHORING_CHILD" "$REPO_CHILD"; do
+            [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          done
+          for IMAGE in "$AUTHORING_BASE@$AUTHORING_CHILD" "$REPO_BASE@$REPO_CHILD"; do
+            CONFIG=$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Image}}')
+            printf '%s\n' "$CONFIG" | jq -e --arg arch "$ARCH" --arg sha "$SOURCE_SHA" \
+              '.architecture == $arch and .config.Labels["org.opencontainers.image.revision"] == $sha' >/dev/null
+          done
+          jq -n --arg arch "$ARCH" --arg sha "$SOURCE_SHA" \
+            --arg authoringTag "$AUTHORING_TAG_DIGEST" --arg repoTag "$REPO_TAG_DIGEST" \
+            --arg authoringChild "$AUTHORING_CHILD" --arg repoChild "$REPO_CHILD" \
+            '{arch:$arch, sourceRevision:$sha, authoringTagDigest:$authoringTag,
+              repoTagDigest:$repoTag, authoringChildDigest:$authoringChild,
+              repoChildDigest:$repoChild}' > "$RUNNER_TEMP/native-$ARCH.json"
+      - name: Install pinned Chromium
+        run: bash .github/scripts/install-agents-browser.sh
+      - name: Qualify native published images with Compose and browser
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          DIR="$RUNNER_TEMP/authoring-native-$ARCH"
+          AUTHORING_DIGEST=$(jq -r '.authoringTagDigest' "$RUNNER_TEMP/native-$ARCH.json")
+          REPO_DIGEST=$(jq -r '.repoTagDigest' "$RUNNER_TEMP/native-$ARCH.json")
+          mkdir -p "$DIR"
+          cp deploy/authoring/compose.yml deploy/authoring/browser-smoke.mjs "$DIR/"
+          cat > "$DIR/.env" <<EOF
+          COMPOSE_PROJECT_NAME=authoring-native-$ARCH
+          PROTOMOLT_AUTHORING_IMAGE=ghcr.io/${{ github.repository_owner }}/protomolt-authoring@$AUTHORING_DIGEST
+          PROTOMOLT_REPO_IMAGE=ghcr.io/${{ github.repository_owner }}/protomolt-repo-service@$REPO_DIGEST
+          PROTOMOLT_HTTP_PORT=18080
+          PROTOMOLT_GRPC_PORT=19090
+          EOF
+          cd "$DIR"
+          docker compose config --quiet
+          trap 'docker compose down -v --remove-orphans >/dev/null' EXIT
+          docker compose up -d --pull always
+          for attempt in $(seq 1 120); do
+            if docker compose ps --all --format json | jq -se '
+              (map(select(.Service == "bootstrap" or .Service == "signing-init" or
+                .Service == "rustfs-init" or .Service == "repo-init" or .Service == "policy-seed"))
+                | length == 5 and all(.[]; .State == "exited" and (.ExitCode | tostring) == "0")) and
+              (map(select(.Service == "rustfs" or .Service == "repo-postgres" or
+                .Service == "jobs-postgres" or .Service == "repo-service" or
+                .Service == "fixture" or .Service == "serve" or .Service == "author"))
+                | length == 7 and all(.[]; .State == "running") and
+                  all(map(select(.Service == "serve" or .Service == "rustfs" or
+                    .Service == "repo-postgres" or .Service == "jobs-postgres" or
+                    .Service == "repo-service"))[]; .Health == "healthy"))' >/dev/null; then break; fi
+            [ "$attempt" -lt 120 ] || { docker compose ps --all; exit 1; }
+            sleep 2
+          done
+          HTTP_BASE=http://127.0.0.1:18080 SCREENSHOT_PATH="$DIR/browser-smoke.png" \
+            node browser-smoke.mjs | tee browser-result.json
+          jq -e '.authoring == "accepted" and .job == "completed" and .liveModel == false' \
+            browser-result.json >/dev/null
+      - name: Qualify packaged review recovery and executor crash recovery
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          AUTHORING_BASE=ghcr.io/${{ github.repository_owner }}/protomolt-authoring
+          REPO_BASE=ghcr.io/${{ github.repository_owner }}/protomolt-repo-service
+          AUTHORING_DIGEST=$(jq -r '.authoringTagDigest' "$RUNNER_TEMP/native-$ARCH.json")
+          REPO_DIGEST=$(jq -r '.repoTagDigest' "$RUNNER_TEMP/native-$ARCH.json")
+          export PROTOMOLT_AUTHORING_CRASH_IMAGE="$AUTHORING_BASE@$AUTHORING_DIGEST"
+          export PROTOMOLT_REPO_CRASH_IMAGE="$REPO_BASE@$REPO_DIGEST"
+          export PROTOMOLT_AUTHORING_REVIEW_IMAGE="$PROTOMOLT_AUTHORING_CRASH_IMAGE"
+          export PROTOMOLT_REPO_REVIEW_IMAGE="$PROTOMOLT_REPO_CRASH_IMAGE"
+          docker pull "$PROTOMOLT_AUTHORING_CRASH_IMAGE"
+          docker pull "$PROTOMOLT_REPO_CRASH_IMAGE"
+          ./gradlew :samples:test --tests '*AuthoringComposeCrashTest' \
+            --tests '*AuthoringComposeReviewTest' --rerun --console=plain
+          for CASE in AuthoringComposeCrashTest AuthoringComposeReviewTest; do
+            REPORT="samples/build/test-results/test/TEST-ai.protomolt.proto.samples.$CASE.xml"
+            test -s "$REPORT"
+            grep -Eq 'tests="1".*skipped="0".*failures="0".*errors="0"' "$REPORT"
+          done
+      - name: Publish exact native digest qualification receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: authoring-native-digests-${{ matrix.arch }}-${{ needs.prepare.outputs.version }}
+          path: ${{ runner.temp }}/native-${{ matrix.arch }}.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Save native browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: authoring-native-${{ matrix.arch }}-${{ needs.prepare.outputs.version }}
+          path: |
+            ${{ runner.temp }}/authoring-native-${{ matrix.arch }}/browser-result.json
+            ${{ runner.temp }}/authoring-native-${{ matrix.arch }}/browser-smoke.png
+            samples/build/test-results/test/TEST-ai.protomolt.proto.samples.AuthoringComposeCrashTest.xml
+            samples/build/test-results/test/TEST-ai.protomolt.proto.samples.AuthoringComposeReviewTest.xml
+            samples/build/authoring-review-evidence/
+          if-no-files-found: warn
+          retention-days: 14
+
+  manifests:
+    needs: [prepare, native]
+    if: needs.prepare.outputs.verify_existing != 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      authoring_digest: ${{ steps.publish.outputs.authoring_digest }}
+      repo_digest: ${{ steps.publish.outputs.repo_digest }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: authoring-native-digests-*-${{ needs.prepare.outputs.version }}
+          path: ${{ runner.temp }}/native-digests
+          merge-multiple: true
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create or verify immutable multiarch images
+        id: publish
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          for pair in authoring:protomolt-authoring repo:protomolt-repo-service; do
+            KEY=${pair%%:*}
+            IMAGE=${pair#*:}
+            BASE=ghcr.io/${{ github.repository_owner }}/$IMAGE
+            TAG=$BASE:$VERSION
+            if docker buildx imagetools inspect "$TAG" >/dev/null 2>inspect-error.txt; then
+              echo "Verifying existing version tag: $TAG"
+            elif grep -Eqi 'not found|manifest unknown' inspect-error.txt; then
+              docker buildx imagetools create -t "$TAG" "$TAG-amd64" "$TAG-arm64"
+            else
+              cat inspect-error.txt >&2; exit 1
+            fi
+            RAW=$(docker buildx imagetools inspect "$TAG" --raw)
+            printf '%s\n' "$RAW" | jq -e '
+              [.manifests[] | select(.platform.os == "linux") | .platform.architecture]
+              | unique | sort == ["amd64", "arm64"]' >/dev/null
+            for ARCH in amd64 arm64; do
+              RECEIPT="$RUNNER_TEMP/native-digests/native-$ARCH.json"
+              test -s "$RECEIPT"
+              jq -e --arg sha "$SOURCE_SHA" --arg arch "$ARCH" \
+                '.sourceRevision == $sha and .arch == $arch' "$RECEIPT" >/dev/null
+              CHILD=$(printf '%s\n' "$RAW" | jq -r --arg arch "$ARCH" \
+                '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest')
+              if [ "$KEY" = authoring ]; then
+                EXPECTED_TAG=$(jq -r '.authoringTagDigest' "$RECEIPT")
+                EXPECTED_CHILD=$(jq -r '.authoringChildDigest' "$RECEIPT")
+              else
+                EXPECTED_TAG=$(jq -r '.repoTagDigest' "$RECEIPT")
+                EXPECTED_CHILD=$(jq -r '.repoChildDigest' "$RECEIPT")
+              fi
+              CURRENT_TAG=$(docker buildx imagetools inspect "$TAG-$ARCH" --format '{{json .}}' | jq -r '.manifest.digest')
+              [ "$CURRENT_TAG" = "$EXPECTED_TAG" ] || { echo "native tag changed since qualification: $ARCH" >&2; exit 1; }
+              PARTIAL_RAW=$(docker buildx imagetools inspect "$TAG-$ARCH" --raw)
+              if printf '%s\n' "$PARTIAL_RAW" | jq -e 'has("manifests")' >/dev/null; then
+                # Buildx may publish an attestation index under the native tag.
+                # Compare its runnable child, not the index or an attestation.
+                PARTIAL=$(printf '%s\n' "$PARTIAL_RAW" | jq -er --arg arch "$ARCH" '
+                  [.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch)]
+                  | if length == 1 then .[0].digest else error("native tag has ambiguous runnable children") end')
+              else
+                PARTIAL=$(docker buildx imagetools inspect "$TAG-$ARCH" --format '{{json .}}' | jq -r '.manifest.digest')
+              fi
+              [ "$CHILD" = "$PARTIAL" ] && [ "$CHILD" = "$EXPECTED_CHILD" ] || {
+                echo "version tag differs from qualified native image: $ARCH" >&2; exit 1;
+              }
+              CONFIG=$(docker buildx imagetools inspect "$BASE@$CHILD" --format '{{json .Image}}')
+              printf '%s\n' "$CONFIG" | jq -e --arg arch "$ARCH" --arg sha "$SOURCE_SHA" \
+                '.architecture == $arch and .config.Labels["org.opencontainers.image.revision"] == $sha' >/dev/null
+            done
+            DIGEST=$(docker buildx imagetools inspect "$TAG" --format '{{json .}}' | jq -r '.manifest.digest')
+            [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+            echo "${KEY}_digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          done
+
+  bundle:
+    needs: [prepare, manifests]
+    if: needs.prepare.outputs.verify_existing != 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      asset_sha256: ${{ steps.assemble.outputs.asset_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install pinned Chromium
+        run: bash .github/scripts/install-agents-browser.sh
+      - name: Assemble digest-pinned image-only bundle
+        id: assemble
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          AUTHORING_DIGEST: ${{ needs.manifests.outputs.authoring_digest }}
+          REPO_DIGEST: ${{ needs.manifests.outputs.repo_digest }}
+        run: |
+          set -euo pipefail
+          multiarch_digest() {
+            local image="$1" raw digest
+            raw=$(docker buildx imagetools inspect "$image" --raw)
+            printf '%s\n' "$raw" | jq -e '
+              [.manifests[] | select(.platform.os == "linux") | .platform.architecture]
+              | unique | index("amd64") != null and index("arm64") != null' >/dev/null
+            digest=$(docker buildx imagetools inspect "$image" --format '{{json .}}' | jq -r '.manifest.digest')
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            printf '%s' "$digest"
+          }
+          ALPINE_DIGEST=$(multiarch_digest alpine:3.21)
+          RUSTFS_DIGEST=$(multiarch_digest rustfs/rustfs:1.0.0-beta.11-preview.1)
+          CURL_DIGEST=$(multiarch_digest curlimages/curl:8.22.0)
+          POSTGRES_DIGEST=$(multiarch_digest postgres:18.6-alpine)
+          GRPCURL_DIGEST=$(multiarch_digest fullstorydev/grpcurl:v1.9.3-alpine)
+          DIR="$RUNNER_TEMP/protomolt-authoring-starter-$VERSION"
+          mkdir -p "$DIR"
+          cp deploy/authoring/compose.yml deploy/authoring/README.md \
+            deploy/authoring/browser-smoke.mjs "$DIR/"
+          cat > "$DIR/README.md" <<EOF
+          # ProtoMolt workflow authoring starter
+
+          Prerelease candidate for source commit $SOURCE_SHA.
+          This bundle pins every container image by digest. Docker Compose is
+          the only host runtime required for the walkthrough; no local image
+          build or JDK is needed. The author is scripted and uses no model key.
+
+          Check the Authoring Starter Publish workflow for this source commit
+          before use. A release asset can exist before both native downloaded
+          package checks finish; the asset alone does not prove qualification.
+
+          Run these commands in this extracted directory:
+
+          EOF
+          awk 'BEGIN { copy=0 } /^```sh$/ { copy=1 } copy { print }' \
+            deploy/authoring/README.md >> "$DIR/README.md"
+          cat > "$DIR/.env" <<EOF
+          PROTOMOLT_AUTHORING_IMAGE=ghcr.io/${{ github.repository_owner }}/protomolt-authoring@$AUTHORING_DIGEST
+          PROTOMOLT_REPO_IMAGE=ghcr.io/${{ github.repository_owner }}/protomolt-repo-service@$REPO_DIGEST
+          PROTOMOLT_ALPINE_IMAGE=alpine@$ALPINE_DIGEST
+          PROTOMOLT_RUSTFS_IMAGE=rustfs/rustfs@$RUSTFS_DIGEST
+          PROTOMOLT_CURL_IMAGE=curlimages/curl@$CURL_DIGEST
+          PROTOMOLT_POSTGRES_IMAGE=postgres@$POSTGRES_DIGEST
+          PROTOMOLT_GRPCURL_IMAGE=fullstorydev/grpcurl@$GRPCURL_DIGEST
+          EOF
+          jq -n --arg revision "$SOURCE_SHA" --arg version "$VERSION" \
+            --arg authoring "$AUTHORING_DIGEST" --arg repo "$REPO_DIGEST" \
+            --arg alpine "$ALPINE_DIGEST" --arg rustfs "$RUSTFS_DIGEST" \
+            --arg curl "$CURL_DIGEST" --arg postgres "$POSTGRES_DIGEST" \
+            --arg grpcurl "$GRPCURL_DIGEST" \
+            --arg composeSha "$(sha256sum "$DIR/compose.yml" | cut -d ' ' -f1)" \
+            --arg browserSha "$(sha256sum "$DIR/browser-smoke.mjs" | cut -d ' ' -f1)" \
+            '{sourceRevision:$revision, version:$version,
+              composeSha256:$composeSha, browserSmokeSha256:$browserSha,
+              imageDigests:{authoring:$authoring, repoService:$repo,
+                alpine:$alpine, rustfs:$rustfs, curl:$curl,
+                postgres:$postgres, grpcurl:$grpcurl}}' > "$DIR/SOURCE.json"
+          (cd "$DIR" && docker compose config --quiet)
+          (cd "$RUNNER_TEMP" && zip -qr "protomolt-authoring-starter-$VERSION.zip" \
+            "protomolt-authoring-starter-$VERSION")
+          ASSET_SHA=$(sha256sum "$RUNNER_TEMP/protomolt-authoring-starter-$VERSION.zip" | cut -d ' ' -f1)
+          printf '%s  %s\n' "$ASSET_SHA" "protomolt-authoring-starter-$VERSION.zip" \
+            > "$RUNNER_TEMP/protomolt-authoring-starter-$VERSION.zip.sha256"
+          echo "asset_sha256=$ASSET_SHA" >> "$GITHUB_OUTPUT"
+      - name: Anonymous clean pull and bundled acceptance
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          export DOCKER_CONFIG="$RUNNER_TEMP/docker-anonymous"
+          mkdir -p "$DOCKER_CONFIG" "$RUNNER_TEMP/authoring-clean"
+          cd "$RUNNER_TEMP/authoring-clean"
+          unzip -q "$RUNNER_TEMP/protomolt-authoring-starter-$VERSION.zip"
+          cd "protomolt-authoring-starter-$VERSION"
+          printf '\nCOMPOSE_PROJECT_NAME=authoring-clean\nPROTOMOLT_HTTP_PORT=18080\nPROTOMOLT_GRPC_PORT=19090\n' >> .env
+          docker compose config --quiet
+          trap 'docker compose down -v --remove-orphans >/dev/null' EXIT
+          docker compose pull --quiet
+          docker compose up -d --pull never
+          for attempt in $(seq 1 120); do
+            if docker compose ps --all --format json | jq -se '
+              (map(select(.Service == "bootstrap" or .Service == "signing-init" or
+                .Service == "rustfs-init" or .Service == "repo-init" or .Service == "policy-seed"))
+                | length == 5 and all(.[]; .State == "exited" and (.ExitCode | tostring) == "0")) and
+              (map(select(.Service == "rustfs" or .Service == "repo-postgres" or
+                .Service == "jobs-postgres" or .Service == "repo-service" or
+                .Service == "fixture" or .Service == "serve" or .Service == "author"))
+                | length == 7 and all(.[]; .State == "running") and
+                  all(map(select(.Service == "serve" or .Service == "rustfs" or
+                    .Service == "repo-postgres" or .Service == "jobs-postgres" or
+                    .Service == "repo-service"))[]; .Health == "healthy"))' >/dev/null; then break; fi
+            [ "$attempt" -lt 120 ] || { docker compose ps --all; exit 1; }
+            sleep 2
+          done
+          HTTP_BASE=http://127.0.0.1:18080 SCREENSHOT_PATH="$PWD/browser-smoke.png" \
+            node browser-smoke.mjs | tee browser-result.json
+          jq -e '.authoring == "accepted" and .job == "completed" and .liveModel == false' \
+            browser-result.json >/dev/null
+      - name: Save clean-bundle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: authoring-clean-${{ needs.prepare.outputs.version }}
+          path: |
+            ${{ runner.temp }}/authoring-clean/protomolt-authoring-starter-${{ needs.prepare.outputs.version }}/browser-result.json
+            ${{ runner.temp }}/authoring-clean/protomolt-authoring-starter-${{ needs.prepare.outputs.version }}/browser-smoke.png
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Create immutable prerelease asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          ASSET="$RUNNER_TEMP/protomolt-authoring-starter-$VERSION.zip"
+          SUMS="$ASSET.sha256"
+          [ "$(git rev-list -n 1 "refs/tags/$VERSION")" = "$SOURCE_SHA" ] || {
+            echo 'authoring starter tag moved' >&2; exit 1;
+          }
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            EXISTING=$(gh release view "$VERSION" --json assets --jq '.assets[].name')
+            if printf '%s\n' "$EXISTING" | grep -Fxq -e "protomolt-authoring-starter-$VERSION.zip" \
+              -e "protomolt-authoring-starter-$VERSION.zip.sha256"; then
+              echo 'authoring starter asset exists; refusing overwrite' >&2; exit 1
+            fi
+            gh release upload "$VERSION" "$ASSET" "$SUMS"
+          else
+            gh release create "$VERSION" "$ASSET" "$SUMS" --verify-tag \
+              --title "ProtoMolt authoring starter $VERSION" --prerelease \
+              --notes "Scripted workflow authoring starter for commit $SOURCE_SHA. Digest-pinned native linux/amd64 and linux/arm64 authoring and repository images; browser, fixture, and PostgreSQL qualification. No model credentials are bundled."
+          fi
+
+  public-download:
+    needs: [prepare, bundle]
+    if: always() && needs.prepare.result == 'success' && (needs.prepare.outputs.verify_existing == 'true' || needs.bundle.result == 'success')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install pinned Chromium
+        run: bash .github/scripts/install-agents-browser.sh
+      - name: Anonymous release download and native package acceptance
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          EXPECTED_SHA: ${{ needs.prepare.outputs.asset_sha256 || needs.bundle.outputs.asset_sha256 }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          export DOCKER_CONFIG="$RUNNER_TEMP/docker-anonymous-public-$ARCH"
+          mkdir -p "$DOCKER_CONFIG" "$RUNNER_TEMP/authoring-public-$ARCH"
+          cd "$RUNNER_TEMP/authoring-public-$ARCH"
+          ASSET=protomolt-authoring-starter-$VERSION.zip
+          SUMS=$ASSET.sha256
+          curl --fail --location --silent --show-error --retry 5 --retry-delay 3 \
+            "https://github.com/${{ github.repository }}/releases/download/$VERSION/$ASSET" -o "$ASSET"
+          curl --fail --location --silent --show-error --retry 5 --retry-delay 3 \
+            "https://github.com/${{ github.repository }}/releases/download/$VERSION/$SUMS" -o "$SUMS"
+          [ "$(cat "$SUMS")" = "$(printf '%s  %s' "$EXPECTED_SHA" "$ASSET")" ] || {
+            echo 'published checksum differs from qualified checksum' >&2; exit 1;
+          }
+          [ "$(sha256sum "$ASSET" | cut -d ' ' -f1)" = "$EXPECTED_SHA" ] || {
+            echo 'anonymous download differs from qualified bundle' >&2; exit 1;
+          }
+          unzip -tq "$ASSET" >/dev/null
+          unzip -q "$ASSET"
+          cd "protomolt-authoring-starter-$VERSION"
+          jq -e --arg sha "$SOURCE_SHA" --arg version "$VERSION" \
+            '.sourceRevision == $sha and .version == $version' SOURCE.json >/dev/null
+          [ "$(sha256sum compose.yml | cut -d ' ' -f1)" = "$(jq -r .composeSha256 SOURCE.json)" ]
+          [ "$(sha256sum browser-smoke.mjs | cut -d ' ' -f1)" = "$(jq -r .browserSmokeSha256 SOURCE.json)" ]
+          printf '\nCOMPOSE_PROJECT_NAME=authoring-public-%s\nPROTOMOLT_HTTP_PORT=18080\nPROTOMOLT_GRPC_PORT=19090\n' "$ARCH" >> .env
+          docker compose config --quiet
+          trap 'docker compose down -v --remove-orphans >/dev/null' EXIT
+          docker compose pull --quiet
+          docker compose up -d --pull never
+          for attempt in $(seq 1 120); do
+            if docker compose ps --all --format json | jq -se '
+              (map(select(.Service == "bootstrap" or .Service == "signing-init" or
+                .Service == "rustfs-init" or .Service == "repo-init" or .Service == "policy-seed"))
+                | length == 5 and all(.[]; .State == "exited" and (.ExitCode | tostring) == "0")) and
+              (map(select(.Service == "rustfs" or .Service == "repo-postgres" or
+                .Service == "jobs-postgres" or .Service == "repo-service" or
+                .Service == "fixture" or .Service == "serve" or .Service == "author"))
+                | length == 7 and all(.[]; .State == "running") and
+                  all(map(select(.Service == "serve" or .Service == "rustfs" or
+                    .Service == "repo-postgres" or .Service == "jobs-postgres" or
+                    .Service == "repo-service"))[]; .Health == "healthy"))' >/dev/null; then break; fi
+            [ "$attempt" -lt 120 ] || { docker compose ps --all; exit 1; }
+            sleep 2
+          done
+          HTTP_BASE=http://127.0.0.1:18080 SCREENSHOT_PATH="$PWD/browser-smoke.png" \
+            node browser-smoke.mjs | tee browser-result.json
+          jq -e '.authoring == "accepted" and .job == "completed" and .liveModel == false' \
+            browser-result.json >/dev/null
+          echo "Anonymous downloaded authoring starter passed on $ARCH."
+      - name: Save downloaded-package evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: authoring-public-${{ matrix.arch }}-${{ needs.prepare.outputs.version }}
+          path: |
+            ${{ runner.temp }}/authoring-public-${{ matrix.arch }}/protomolt-authoring-starter-${{ needs.prepare.outputs.version }}/browser-result.json
+            ${{ runner.temp }}/authoring-public-${{ matrix.arch }}/protomolt-authoring-starter-${{ needs.prepare.outputs.version }}/browser-smoke.png
+          if-no-files-found: warn
+          retention-days: 14
