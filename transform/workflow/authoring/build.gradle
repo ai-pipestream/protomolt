@@ -1,0 +1,29 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'Validated authoring review and recoverable launch of accepted workflows'
+
+dependencies {
+    api project(':protomolt-delegation')
+    api project(':protomolt-workflow')
+    api project(':protomolt-jobs-service')
+    api project(':protomolt-grpc-workflow')
+    api project(':protomolt-receipt')
+    api project(':protomolt-actions')
+    implementation project(':protomolt-protobuf-validation')
+    implementation libs.protobuf.java.util
+    implementation libs.jackson.databind
+    api libs.grpc.protobuf
+    api libs.grpc.stub
+    compileOnly libs.javax.annotation.api
+    testImplementation project(':protomolt-sources')
+    testImplementation project(':protomolt-registry')
+    testImplementation libs.grpc.inprocess
+}
+
+protobuf {
+    protoc { artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}" }
+    plugins { grpc { artifact = "io.grpc:protoc-gen-grpc-java:${libs.versions.grpc.get()}" } }
+    generateProtoTasks { all().configureEach { plugins { grpc {} } } }
+}

@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.workflow.authoring.v1;
+
+import "ai/protomolt/proto/samples/starter/v1/workflow_launch.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.workflow.authoring.v1";
+
+// Requests the server-computed selector for one terminal accepted task.
+message GetAcceptedWorkflowRequest {
+  // Existing delegation task identity, resolved only from trusted transcripts.
+  // Preserve the exact spelling returned by delegation; task IDs are protocol
+  // string keys, so another UUID spelling is not an alias for an existing task.
+  string task_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+}
+
+// Launches independently verified, durably accepted authored workflows.
+// This descriptor alone does not mount a service. A host must configure trusted
+// transcripts, policy, artifacts, recorded runs, workflow versions, jobs and a
+// durable keyed authorization store before contributing the operation.
+service WorkflowAuthoringService {
+  // Returns the server-computed identity of a durably accepted candidate.
+  // This read performs no fixture calls, promotion or job insertion. It does not
+  // independently certify semantic correctness or authorize execution. Launch
+  // rechecks this selector, the trusted policy and evidence before any effects.
+  // Callers need not compute language-dependent protobuf identity hashes.
+  rpc GetAcceptedWorkflow(GetAcceptedWorkflowRequest)
+      returns (ai.protomolt.proto.samples.starter.v1.WorkflowAcceptedCandidate);
+
+  // Validates the request and successful result using their existing annotations.
+  // The handler independently checks acceptance, pinned evidence and launch input
+  // before persisting authorization, promoting the exact workflow and inserting
+  // the job. A caller-provided identity or artifact is not authorization.
+  //
+  // Retry the same launch UUID and content after an interrupted response. Changed
+  // intent under that UUID conflicts. Successful return establishes a matching
+  // job, not successful execution; existing job operations report its progress.
+  // Cancelling the RPC or losing its response does not revoke persisted authorization.
+  // Promotion and job insertion are separate commits; failure can leave a
+  // promotion without a job. Unsupported validation rules and invalid candidates
+  // must fail without semantic acceptance. Job cancellation is not provided.
+  rpc LaunchAcceptedWorkflow(ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchRequest)
+      returns (ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchResult);
+}

@@ -6,6 +6,7 @@ def supportedModules = [
         'protomolt-descriptors',
         'protomolt-shapes',
         'protomolt-workflow',
+        'protomolt-workflow-authoring',
         'protomolt-helpers',
         'protomolt-formats',
         'protomolt-sources',

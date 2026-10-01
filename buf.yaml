@@ -2,6 +2,8 @@
 # Lint only — codegen stays protoc / protobuf-gradle-plugin. Not a runtime dependency.
 version: v2
 modules:
+  - path: transform/workflow/authoring/src/main/proto
+    name: buf.build/ai-pipestream/workflow-authoring
   - path: apps/correction/src/main/proto
     name: buf.build/ai-pipestream/correction
   - path: protobuf/metadata/src/main/proto
@@ -124,6 +126,9 @@ lint:
     - parse/grparse/src/main/proto/ai/protomolt/proto/parse/grparse/v1/parse_stream.proto
     - parse/grparse/src/main/proto/ai/protomolt/proto/parse/grparse/v1/parse_types.proto
   ignore_only:
+    # Reuse the reviewed launch request/result identities; no wrapper messages.
+    RPC_REQUEST_STANDARD_NAME:
+      - transform/workflow/authoring/src/main/proto/ai/protomolt/proto/workflow/authoring/v1/workflow_authoring_service.proto
     # GetDocument and GetDocumentByReference deliberately share
     # GetDocumentResponse: same payload, two coordinate systems.
     RPC_REQUEST_RESPONSE_UNIQUE:
@@ -140,6 +145,7 @@ lint:
       - sink/kafka/serde/src/test/proto/serde/gen/v1/gen_order.proto
       - sink/kafka/serde/src/test/proto/serde/gen/v1/legacy_event.proto
     RPC_RESPONSE_STANDARD_NAME:
+      - transform/workflow/authoring/src/main/proto/ai/protomolt/proto/workflow/authoring/v1/workflow_authoring_service.proto
       - repo/proto/src/main/proto/ai/protomolt/proto/repo/v1/document_service.proto
 breaking:
   use:

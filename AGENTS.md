@@ -125,6 +125,7 @@ These are correct as they stand. Do not "fix" them.
 | bom, samples, system-tests | excluded from the published BOM | build-only projects, never published |
 | host/integration/quarkus | runtime module named protomolt-integration-quarkus | the Quarkus extension convention pairs artifact with artifact-deployment |
 | search/index/spi | proto package ai.protomolt.proto.index.hints.v1 | wire-frozen dialect; schemas in the wild reference the extension |
+| transform/workflow/authoring | generated proto/Java package ai.protomolt.proto.samples.starter.v1 for workflow_deliverable.proto and workflow_launch.proto | extracted starter contracts retain descriptor names, import paths and stored Any type URLs; handwritten Java uses ai.protomolt.proto.workflow.authoring |
 
 The parse/document and parse/grparse protos are canonical here and conform;
 fleet repos re-vendor them from this repo, byte-identical.
