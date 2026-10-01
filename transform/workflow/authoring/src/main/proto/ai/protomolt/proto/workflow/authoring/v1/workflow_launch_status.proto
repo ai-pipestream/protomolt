@@ -58,7 +58,8 @@ message GetWorkflowLaunchStatusRequest {
 }
 
 // A read-only observation, not permission to create a job or execute a step.
-// The handler echoes the exact validated intent and rejects unknown fields.
+// The handler echoes the validated intent with canonical launch UUID spelling
+// and rejects unknown fields. Other string identities retain exact spelling.
 message GetWorkflowLaunchStatusResponse {
   option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "launch-status-outcome-required"
@@ -70,7 +71,7 @@ message GetWorkflowLaunchStatusResponse {
     message: "the projected job must match the saved launch UUID"
     expression: "!has(this.job) || (has(this.request) && this.job.job_id == this.request.launch_id)"
   };
-  // Exact saved intent from the request, matched by the handler.
+  // Saved intent with canonical launch UUID spelling, matched by the handler.
   ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchRequest request = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
   // Exactly one observation; the oneof excludes simultaneous alternatives.
   oneof outcome {

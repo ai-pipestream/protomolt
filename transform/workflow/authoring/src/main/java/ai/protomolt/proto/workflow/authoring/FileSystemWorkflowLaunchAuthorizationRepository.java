@@ -88,25 +88,30 @@ public final class FileSystemWorkflowLaunchAuthorizationRepository
             throws IOException {
         if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) return Optional.empty();
         if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
-            throw new IOException("launch authorization is not a regular file: " + target);
+            throw new WorkflowLaunchAuthorizationCorruptException(
+                    "launch authorization is not a regular file: " + target);
         }
         long size = Files.size(target);
         if (size > WorkflowLaunchValidation.MAX_BYTES) {
-            throw new IOException("stored launch authorization exceeds 4 MiB: " + launchId);
+            throw new WorkflowLaunchAuthorizationCorruptException(
+                    "stored launch authorization exceeds 4 MiB: " + launchId);
         }
         try {
             byte[] bytes = Files.readAllBytes(target);
             if (bytes.length > WorkflowLaunchValidation.MAX_BYTES) {
-                throw new IOException("stored launch authorization exceeds 4 MiB: " + launchId);
+                throw new WorkflowLaunchAuthorizationCorruptException(
+                        "stored launch authorization exceeds 4 MiB: " + launchId);
             }
             WorkflowAuthoringLaunchAuthorization stored =
                     WorkflowAuthoringLaunchAuthorization.parseFrom(bytes);
             WorkflowLaunchValidation.validate(stored);
             if (!canonicalId(stored.getRequest().getLaunchId()).equals(launchId)) {
-                throw new IOException("launch authorization identity differs from path: " + launchId);
+                throw new WorkflowLaunchAuthorizationCorruptException(
+                        "launch authorization identity differs from path: " + launchId);
             }
             if (!Arrays.equals(bytes, WorkflowLaunchValidation.deterministicBytes(stored))) {
-                throw new IOException("launch authorization has noncanonical storage bytes: " + launchId);
+                throw new WorkflowLaunchAuthorizationCorruptException(
+                        "launch authorization has noncanonical storage bytes: " + launchId);
             }
             // A prior writer may have crashed after rename but before directory fsync.
             // Complete that durability barrier before allowing recovery effects.
@@ -118,7 +123,8 @@ public final class FileSystemWorkflowLaunchAuthorizationRepository
             forceDirectory();
             return Optional.of(stored);
         } catch (InvalidProtocolBufferException | IllegalArgumentException e) {
-            throw new IOException("invalid stored launch authorization: " + launchId, e);
+            throw new WorkflowLaunchAuthorizationCorruptException(
+                    "invalid stored launch authorization: " + launchId, e);
         }
     }
 

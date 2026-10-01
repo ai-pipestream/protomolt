@@ -52,9 +52,32 @@
             <div class="text-caption">Authorization SHA-256:
               <span class="text-mono">{{ record.result.authorization.sha256 }}</span>
             </div>
-            <div class="text-caption text-medium-emphasis">Launch submitted. Job execution status is not shown here.</div>
+            <div class="text-caption text-medium-emphasis">Launch submitted. Refresh to read job progress.</div>
           </template>
-          <v-btn v-else size="small" variant="outlined" class="mt-2"
+          <div v-if="statuses[record.intent.launchId]" class="text-body-2 mt-2">
+            <template v-if="'notAuthorized' in statuses[record.intent.launchId]!">
+              No launch authorization was observed. Retry the same saved request if its outcome is uncertain.
+            </template>
+            <template v-else-if="'authorizedNotQueued' in statuses[record.intent.launchId]!">
+              Launch authorized; no job was observed. Retry the same saved request to finish submission.
+            </template>
+            <template v-else-if="jobStatus(record.intent.launchId)">
+              <strong>{{ stateText(jobStatus(record.intent.launchId)!.state) }}</strong>
+              · attempt {{ jobStatus(record.intent.launchId)!.attempt }}
+              / {{ jobStatus(record.intent.launchId)!.maxAttempts }}
+              <span v-if="jobStatus(record.intent.launchId)!.completedAt">
+                · finished {{ jobStatus(record.intent.launchId)!.completedAt }}
+              </span>
+            </template>
+          </div>
+          <div v-if="statusErrors[record.intent.launchId]" class="text-caption text-error mt-2">
+            {{ statusErrors[record.intent.launchId] }}
+          </div>
+          <v-btn size="small" variant="tonal" class="mt-2 mr-2"
+                 :loading="statusLoading[record.intent.launchId]"
+                 :disabled="!sameAccepted(record.intent.acceptance) || statusLoading[record.intent.launchId]"
+                 @click="refreshStatus(record.intent)">Refresh status</v-btn>
+          <v-btn v-if="canRetry(record)" size="small" variant="outlined" class="mt-2"
                  :disabled="launching || !sameAccepted(record.intent.acceptance)"
                  @click="retry(record.intent)">Retry saved launch</v-btn>
           <div v-if="!sameAccepted(record.intent.acceptance)" class="text-caption text-warning mt-1">
@@ -79,6 +102,9 @@ import {
   type LaunchIntent,
   type PreparedLaunchInput,
   type SavedLaunch,
+  type WorkflowLaunchJobState,
+  type WorkflowLaunchJobStatus,
+  type WorkflowLaunchStatus,
 } from '../services/workflowLaunch'
 
 const props = defineProps<{ taskId: string }>()
@@ -93,6 +119,10 @@ const contract = ref<LaunchInputContract | null>(null)
 const inputJson = ref('{}')
 const prepared = ref<PreparedLaunchInput | null>(null)
 const saved = ref<SavedLaunch[]>([])
+const statuses = ref<Record<string, WorkflowLaunchStatus>>({})
+const statusErrors = ref<Record<string, string>>({})
+const statusLoading = ref<Record<string, boolean>>({})
+const statusVersions = new Map<string, number>()
 let generation = 0
 let draftVersion = 0
 let controller: AbortController | null = null
@@ -125,6 +155,10 @@ async function load() {
   accepted.value = null
   contract.value = null
   prepared.value = null
+  statuses.value = {}
+  statusErrors.value = {}
+  statusLoading.value = {}
+  statusVersions.clear()
   try {
     saved.value = workflowLaunchApi.intents.list(props.taskId)
     const selected = await workflowLaunchApi.accepted(props.taskId, controller.signal)
@@ -199,6 +233,10 @@ async function launchPrepared() {
 async function retry(intent: LaunchIntent) {
   if (launching.value || !sameAccepted(intent.acceptance)) return
   const current = generation
+  statusVersions.set(intent.launchId, (statusVersions.get(intent.launchId) ?? 0) + 1)
+  delete statuses.value[intent.launchId]
+  delete statusErrors.value[intent.launchId]
+  delete statusLoading.value[intent.launchId]
   launching.value = true
   error.value = ''
   try {
@@ -214,6 +252,50 @@ async function retry(intent: LaunchIntent) {
     }
   } finally {
     if (current === generation) launching.value = false
+  }
+}
+
+function canRetry(record: SavedLaunch): boolean {
+  const status = statuses.value[record.intent.launchId]
+  return !record.result || status !== undefined && !('job' in status)
+}
+
+function jobStatus(id: string): WorkflowLaunchJobStatus | null {
+  const status = statuses.value[id]
+  return status && 'job' in status ? status.job : null
+}
+
+function stateText(state: WorkflowLaunchJobState): string {
+  switch (state) {
+    case 'WORKFLOW_LAUNCH_JOB_STATE_QUEUED': return 'Queued for execution'
+    case 'WORKFLOW_LAUNCH_JOB_STATE_RUNNING': return 'Running'
+    case 'WORKFLOW_LAUNCH_JOB_STATE_WAITING': return 'Waiting for external completion'
+    case 'WORKFLOW_LAUNCH_JOB_STATE_COMPLETED': return 'Execution completed'
+    case 'WORKFLOW_LAUNCH_JOB_STATE_FAILED': return 'Execution failed'
+    case 'WORKFLOW_LAUNCH_JOB_STATE_DEAD': return 'Execution exhausted its retry budget'
+  }
+}
+
+async function refreshStatus(intent: LaunchIntent) {
+  if (!sameAccepted(intent.acceptance)) return
+  const id = intent.launchId
+  const current = generation
+  const version = (statusVersions.get(id) ?? 0) + 1
+  statusVersions.set(id, version)
+  statusLoading.value[id] = true
+  delete statusErrors.value[id]
+  try {
+    const observation = await workflowLaunchApi.status(intent)
+    if (current !== generation || statusVersions.get(id) !== version) return
+    statuses.value[id] = observation
+  } catch (failure) {
+    if (current === generation && statusVersions.get(id) === version) {
+      statusErrors.value[id] = displayError(failure)
+    }
+  } finally {
+    if (current === generation && statusVersions.get(id) === version) {
+      statusLoading.value[id] = false
+    }
   }
 }
 

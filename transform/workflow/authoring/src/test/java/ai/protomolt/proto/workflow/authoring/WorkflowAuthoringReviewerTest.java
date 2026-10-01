@@ -43,6 +43,7 @@ import ai.protomolt.proto.samples.starter.v1.WorkflowDeliverable;
 import ai.protomolt.proto.samples.starter.v1.WorkflowPermittedCall;
 import ai.protomolt.proto.workflow.authoring.v1.GetWorkflowLaunchInputContractRequest;
 import ai.protomolt.proto.workflow.authoring.v1.PrepareWorkflowLaunchInputRequest;
+import ai.protomolt.proto.workflow.authoring.v1.GetWorkflowLaunchStatusRequest;
 import com.google.protobuf.StringValue;
 import ai.protomolt.proto.sources.CompiledProtos;
 import ai.protomolt.proto.sources.ProtoSourceCompiler;
@@ -619,6 +620,11 @@ class WorkflowAuthoringReviewerTest {
             org.assertj.core.api.Assertions.assertThatThrownBy(() -> beforePromotion.launch(request))
                     .isInstanceOf(java.io.IOException.class).hasMessageContaining("injected promotion failure");
             assertThat(ledger.find(request.getLaunchId())).isPresent();
+            var status = new WorkflowLaunchStatusReader(ledger, transcripts, reviewer,
+                    artifacts, storedJobs.store, ActionContext.create());
+            var pending = status.get(GetWorkflowLaunchStatusRequest.newBuilder().setRequest(request).build());
+            assertThat(pending.hasAuthorizedNotQueued()).isTrue();
+            assertThat(pending.getRequest()).isEqualTo(request);
             assertThat(versions.versions(authored.getDeliverable().getWorkflow().getName())).isEmpty();
             assertThat(storedJobs.jobs).isEmpty();
             int beforeRecovery = calls.get();
@@ -686,6 +692,38 @@ class WorkflowAuthoringReviewerTest {
             }
             var first = launcher.launch(request);
             assertThat(first.getJobId()).isEqualTo(request.getLaunchId());
+            verifyLaunchStatus(transcripts, reviewer, restoredLedger, storedJobs, request);
+            var statusQuery = GetWorkflowLaunchStatusRequest.newBuilder().setRequest(request).build();
+            var status = new WorkflowLaunchStatusReader(restoredLedger, transcripts, reviewer,
+                    artifacts, storedJobs.store, ActionContext.create());
+            var recordPath = ledgerPath.resolve(request.getLaunchId() + ".pb");
+            byte[] savedRecord = java.nio.file.Files.readAllBytes(recordPath);
+            try {
+                java.nio.file.Files.write(recordPath, new byte[] {1, 2, 3});
+                org.assertj.core.api.Assertions.assertThatThrownBy(() -> status.get(statusQuery))
+                        .isInstanceOfSatisfying(WorkflowLaunchStatusException.class, failure ->
+                                assertThat(failure.kind())
+                                        .isEqualTo(WorkflowLaunchStatusException.Kind.CORRUPT_EVIDENCE));
+            } finally {
+                java.nio.file.Files.write(recordPath, savedRecord);
+            }
+            var unavailableLedger = new WorkflowLaunchAuthorizationRepository() {
+                public Optional<ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchAuthorization>
+                        find(String launchId) throws java.io.IOException {
+                    throw new java.io.IOException("injected ledger outage");
+                }
+                public ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchAuthorization createOrMatch(
+                        ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchAuthorization authorization) {
+                    throw new AssertionError("status must not write authorization");
+                }
+            };
+            var unavailableStatus = new WorkflowLaunchStatusReader(unavailableLedger, transcripts, reviewer,
+                    artifacts, storedJobs.store, ActionContext.create());
+            int readsBeforeOutage = storedJobs.getReads.get();
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> unavailableStatus.get(statusQuery))
+                    .isInstanceOfSatisfying(WorkflowLaunchStatusException.class, failure ->
+                            assertThat(failure.kind()).isEqualTo(WorkflowLaunchStatusException.Kind.UNAVAILABLE));
+            assertThat(storedJobs.getReads.get()).isEqualTo(readsBeforeOutage);
             assertThat(launcher.launch(request)).isEqualTo(first);
             var catalog = WorkflowAuthoringActions.register(
                     ai.protomolt.proto.actions.ActionCatalog.defaults(
@@ -751,10 +789,68 @@ class WorkflowAuthoringReviewerTest {
         }
     }
 
+    private void verifyLaunchStatus(InMemoryTranscriptRepository transcripts,
+            WorkflowAuthoringReviewer reviewer, WorkflowLaunchAuthorizationRepository ledger,
+            TestLaunchJobs storedJobs, WorkflowAuthoringLaunchRequest request) throws Exception {
+        var status = new WorkflowLaunchStatusReader(ledger, transcripts, reviewer,
+                artifacts, storedJobs.store, ActionContext.create());
+        var query = GetWorkflowLaunchStatusRequest.newBuilder().setRequest(request).build();
+        var row = storedJobs.jobs.get(UUID.fromString(request.getLaunchId()));
+        int fixtureCalls = calls.get();
+        for (var state : List.of(WorkflowRunRecord.STATUS_QUEUED, WorkflowRunRecord.STATUS_RUNNING,
+                WorkflowRunRecord.STATUS_WAITING, WorkflowRunRecord.STATUS_COMPLETED,
+                WorkflowRunRecord.STATUS_FAILED, WorkflowRunRecord.STATUS_DEAD)) {
+            row.status = state;
+            row.attempt = 4; // Existing lease recovery may exceed the configured ceiling.
+            row.maxAttempts = 3;
+            row.updatedAt = java.time.Instant.parse("2026-01-02T03:04:05Z");
+            row.completedAt = List.of(WorkflowRunRecord.STATUS_COMPLETED,
+                    WorkflowRunRecord.STATUS_FAILED, WorkflowRunRecord.STATUS_DEAD).contains(state)
+                    ? java.time.Instant.parse("2026-01-02T03:04:06Z") : null;
+            var observed = status.get(query);
+            assertThat(observed.getRequest()).isEqualTo(request);
+            assertThat(observed.getJob().getJobId()).isEqualTo(request.getLaunchId());
+            assertThat(observed.getJob().getState().name()).isEqualTo("WORKFLOW_LAUNCH_JOB_STATE_" + state);
+            assertThat(observed.getJob().getAttempt()).isEqualTo(4);
+            assertThat(observed.getJob().getMaxAttempts()).isEqualTo(3);
+            assertThat(observed.getJob().hasCompletedAt()).isEqualTo(row.completedAt != null);
+        }
+        assertThat(calls.get()).isEqualTo(fixtureCalls);
+
+        // Case aliases select the same durable record and echo the canonical job UUID.
+        var uppercase = request.toBuilder().setLaunchId(request.getLaunchId().toUpperCase()).build();
+        assertThat(status.get(GetWorkflowLaunchStatusRequest.newBuilder().setRequest(uppercase).build())
+                .getRequest().getLaunchId()).isEqualTo(request.getLaunchId());
+
+        var changed = request.toBuilder().setInput(artifacts.save(message("changed").toByteArray(),
+                "application/x-protobuf", false)).build();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> status.get(
+                GetWorkflowLaunchStatusRequest.newBuilder().setRequest(changed).build()))
+                .isInstanceOfSatisfying(WorkflowLaunchStatusException.class, failure ->
+                        assertThat(failure.kind()).isEqualTo(WorkflowLaunchStatusException.Kind.CONFLICT));
+        String absentId = UUID.randomUUID().toString();
+        var absent = GetWorkflowLaunchStatusRequest.newBuilder()
+                .setRequest(request.toBuilder().setLaunchId(absentId)).build();
+        int reads = storedJobs.getReads.get();
+        assertThat(status.get(absent).hasNotAuthorized()).isTrue();
+        assertThat(storedJobs.getReads.get()).isEqualTo(reads);
+
+        row.workflowDefinition = "{}";
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> status.get(query))
+                .isInstanceOfSatisfying(WorkflowLaunchStatusException.class, failure ->
+                        assertThat(failure.kind()).isEqualTo(WorkflowLaunchStatusException.Kind.CORRUPT_EVIDENCE));
+        row.workflowDefinition = null; // Restored below from the real submission source.
+        row.workflowDefinition = storedJobs.originalSource;
+        row.status = WorkflowRunRecord.STATUS_QUEUED;
+        row.completedAt = null;
+    }
+
     // Only the job persistence boundary is simulated here. The production submitter,
     // reviewer, protobuf validation, fixture RPCs, ledger and Git registry are exercised.
     private static final class TestLaunchJobs {
         final Map<UUID, WorkflowRunRecord> jobs = new LinkedHashMap<>();
+        final AtomicInteger getReads = new AtomicInteger();
+        String originalSource;
         final AtomicInteger acceptedEvents = new AtomicInteger();
         final AtomicBoolean failBeforeInsert = new AtomicBoolean();
         final AtomicBoolean failAfterInsert = new AtomicBoolean();
@@ -762,10 +858,16 @@ class WorkflowAuthoringReviewerTest {
         final WorkflowRunStore store = (WorkflowRunStore) java.lang.reflect.Proxy.newProxyInstance(
                 WorkflowRunStore.class.getClassLoader(), new Class<?>[] {WorkflowRunStore.class},
                 (proxy, method, args) -> {
-                    if (method.getName().equals("get")) return Optional.ofNullable(jobs.get(args[0]));
+                    if (method.getName().equals("get")) {
+                        getReads.incrementAndGet();
+                        return Optional.ofNullable(jobs.get(args[0]));
+                    }
                     if (method.getName().equals("insert")) {
                         if (failBeforeInsert.getAndSet(false)) throw new IllegalStateException("injected insert failure");
                         var proposed = (WorkflowRunRecord) args[0];
+                        proposed.createdAt = java.time.Instant.parse("2026-01-01T00:00:00Z");
+                        proposed.updatedAt = proposed.createdAt;
+                        originalSource = proposed.workflowDefinition;
                         if (externalClaim.getAndSet(false)) {
                             var external = new WorkflowRunRecord();
                             external.jobId = proposed.jobId;
