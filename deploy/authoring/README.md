@@ -18,6 +18,7 @@ After a verified bundle supplies its `.env`, run from its extracted directory:
 
 ```sh
 docker compose config --quiet
+docker compose pull
 docker compose up -d --pull never
 docker compose ps --all
 ```
@@ -62,9 +63,12 @@ For a local browser session, retrieve the appropriate token on the Docker
 host, then sign in at `http://127.0.0.1:8080/console/tasks`:
 
 ```sh
-docker compose exec -T serve cat /run/console/token
 docker compose exec -T serve cat /run/browser/token
 ```
+
+Use the browser token for this authoring walkthrough. The separate
+`/run/console/token` credential is for the general task console and cannot
+launch an accepted workflow.
 
 The flow is browser author start, idle author assignment and candidate
 preparation, independent review, accepted workflow launch with a pinned
