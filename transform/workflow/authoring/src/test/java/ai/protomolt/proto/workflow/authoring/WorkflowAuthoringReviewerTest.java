@@ -91,7 +91,7 @@ class WorkflowAuthoringReviewerTest {
     private static final String PROTO = """
             syntax = "proto3";
             package workflow.test;
-            message Text { string text = 1; }
+            message Text { string text = 1; repeated int32 signed_values = 2; }
             service Echo { rpc Say(Text) returns (Text); }
             """;
 
@@ -372,6 +372,33 @@ class WorkflowAuthoringReviewerTest {
                 .isEqualTo(message("browser input").toByteArray());
         assertThat(input.prepare(request)).isEqualTo(prepared);
         assertThat(calls.get()).isEqualTo(before);
+
+        // A small JSON spelling of negative int32 values expands to ten-byte
+        // varints in a packed protobuf field. Reject before any artifact write.
+        String expandedJson = "{\"signedValues\":[" + "-1,".repeat(429_999) + "-1]}";
+        assertThat(expandedJson.getBytes(StandardCharsets.UTF_8).length).isLessThan(4 * 1024 * 1024);
+        var signedValues = textType.findFieldByName("signed_values");
+        assertThat(DynamicMessage.newBuilder(textType)
+                .setField(signedValues, java.util.Collections.nCopies(430_000, -1)).build()
+                .getSerializedSize()).isGreaterThan(4 * 1024 * 1024);
+        AtomicBoolean savedOversize = new AtomicBoolean();
+        ArtifactRepository noOversizeSave = new ArtifactRepository() {
+            @Override public ArtifactReference save(byte[] content, String mediaType, boolean redacted)
+                    throws java.io.IOException {
+                savedOversize.set(true);
+                throw new AssertionError("oversized launch input reached artifact storage");
+            }
+            @Override public Optional<StoredArtifact> find(String sha256) throws java.io.IOException {
+                return artifacts.find(sha256);
+            }
+        };
+        var sizeGuarded = new WorkflowLaunchInputPreparer(transcripts, reviewer, noOversizeSave);
+        assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> sizeGuarded.prepare(
+                request.toBuilder().setInputJson(ByteString.copyFromUtf8(expandedJson)).build())))
+                .isInstanceOfSatisfying(WorkflowLaunchInputException.class,
+                        failure -> assertThat(failure.kind())
+                                .isEqualTo(WorkflowLaunchInputException.Kind.INVALID_INPUT));
+        assertThat(savedOversize).isFalse();
 
         var changed = accepted.toBuilder().setCandidateSha256("0".repeat(64)).build();
         assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> input.contract(
