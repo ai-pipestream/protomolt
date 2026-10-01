@@ -36,12 +36,16 @@ the same tasks at the same cursors.
 ## The coordinator behind the page
 
 `protomolt-serve` creates one in-process coordinator per server and gives the
-console a bridge onto it. That coordinator admits every worker that says hello
-and reviews no candidate on its own: its candidate reviewer is the manual one,
-which leaves every completion candidate pending for an external judge. The
-console session is that judge. Nothing in the delegation contract lets a worker
-mark its own task done, and nothing in the server's default wiring quietly does
-it on the worker's behalf.
+console a bridge onto it. That coordinator admits every worker that says hello.
+By default its reviewer is manual, leaving every completion candidate pending
+for an external judge in the console. An operator can opt into the trusted
+workflow-authoring reviewer; only offers naming its deliverable contract then
+receive automatic review. Other tasks still wait for manual review. Nothing
+in the delegation contract lets a worker mark its own task done.
+
+The authoring lookup and launch actions are operator-only and are not available
+to the normal `worker-coordinate` console session. The console never receives
+the operator API token.
 
 The same coordinator is reachable as MCP tools on the same process, so a human
 in the console and an agent on the wire steer one shared transcript rather than

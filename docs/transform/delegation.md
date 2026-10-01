@@ -313,6 +313,27 @@ and checked against `DelegationReducer`.
 `CandidateReviewer` runs on a virtual thread and can accept a candidate,
 request a revision, or leave it pending for external review. Reviewers can
 inspect referenced commits and artifacts before accepting reported evidence.
+An opt-in workflow-authoring mount selects its independent reviewer only for
+offers naming the authoring deliverable contract. It requires a pinned policy
+artifact, persistent transcript, workflow evidence and authorization storage,
+registry, jobs database, operator API token, and available receipt trust before
+serve opens listeners. Other contracts retain manual review. The review and
+launch paths resolve the current trust snapshot for each operation, so later
+trust changes are not silently frozen at mount time.
+Set `--workflow-authoring-policy-sha256` (or
+`PROTOMOLT_WORKFLOW_AUTHORING_POLICY_SHA256`) to the lowercase digest of the
+already stored, unredacted protobuf policy, and
+`--workflow-authoring-authorization-dir` (or
+`PROTOMOLT_WORKFLOW_AUTHORING_AUTHORIZATION_DIR`) to a persistent directory.
+Both options are required together; an explicit workflow workspace supplies
+the existing artifact and run repositories. The launch ledger should live on
+the same persistent server volume, outside the artifact content directory.
+
+A reviewer infrastructure exception currently leaves the candidate pending;
+the in-process `reviewFailure` is transient and a restored candidate is not
+automatically reviewed again. Recovery needs a separate, attempt/revision-bound
+query and retry contract. Re-running live fixtures without a defined
+idempotency or durable per-fixture record could repeat side effects.
 
 `waitForEvent` blocks until a task event appears after a caller-owned cursor or
 the timeout expires. It is suitable for an MCP long-poll tool and is safe to

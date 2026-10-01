@@ -18,6 +18,7 @@ dependencies {
     implementation project(':protomolt-http-json')
     implementation project(':protomolt-mcp')
     implementation project(':protomolt-workflow')
+    implementation project(':protomolt-workflow-authoring')
     // The live delegation coordinator and its MCP verbs mount in this process.
     implementation project(':protomolt-delegation')
     implementation project(':protomolt-mesh-cluster')
