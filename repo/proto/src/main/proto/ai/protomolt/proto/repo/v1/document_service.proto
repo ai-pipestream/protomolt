@@ -3,6 +3,7 @@ syntax = "proto3";
 package ai.protomolt.proto.repo.v1;
 
 import "ai/protomolt/proto/repo/v1/address.proto";
+import "ai/protomolt/proto/repo/v1/conditional_blob.proto";
 import "ai/protomolt/proto/repo/v1/document.proto";
 import "ai/protomolt/proto/repo/v1/manifest.proto";
 
@@ -383,6 +384,19 @@ service DocumentService {
   // server-computed SHA-256. Blank object_key = content-addressed key, so
   // identical puts are idempotent.
   rpc PutBlob(PutBlobRequest) returns (PutBlobResponse);
+
+  // Reads the current object and its exact strong backing ETag from the same
+  // authoritative operation, bypassing caches. NOT_FOUND means absent;
+  // unsupported authoritative reads return UNIMPLEMENTED. Requests and
+  // successful responses pass runtime validation. No mutation occurs.
+  rpc GetBlobForUpdate(GetBlobForUpdateRequest) returns (GetBlobForUpdateResponse);
+
+  // Atomically creates only if absent or replaces only if the current ETag
+  // matches. ABORTED means the condition failed; no unconditional fallback.
+  // Unsupported backends return UNIMPLEMENTED. Requests and successful results
+  // pass runtime validation. A lost reply or cancellation does not undo a write;
+  // retry with the old condition may conflict after the first write committed.
+  rpc CompareAndPutBlob(CompareAndPutBlobRequest) returns (CompareAndPutBlobResponse);
 
   // Delete a raw blob by its coordinates. Idempotent: deleting an absent
   // object succeeds with deleted=false.
