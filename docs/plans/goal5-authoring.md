@@ -1,6 +1,9 @@
 # Goal 5: contract-driven pipeline authoring
 
-Status: implementation plan and source inventory at `c5dec4ca812c603e0706e315a3acb86be221265a`.
+Status: implementation in progress; original source inventory at
+`c5dec4ca812c603e0706e315a3acb86be221265a`. Retry protection, verification helpers
+and the sample reviewer landed in PRs #325, #326 and #327. Strict workflow
+validation is under review in PR #328. Promotion retry and recovery work follows.
 The third starter is not implemented or published yet.
 
 ## Outcome
@@ -255,3 +258,55 @@ delegation service, observes the independent fixture rerun and accepted frame,
 then reconstructs a coordinator from a shared in-memory transcript repository.
 This proves accepted attempt/revision restoration in that test; it is not yet a
 process-restart, external-worker, async-job or published-starter qualification.
+
+## Acceptance-to-execution binding under design
+
+Promotion stores `VersionedWorkflow`; jobs currently execute a snapshotted JSON
+definition. The starter must bind both representations rather than submit a
+mutable registry name. Load acceptance from the trusted `TranscriptRepository`,
+reduce the complete transcript without findings, and select the matching offer,
+candidate and terminal acceptance by task, attempt and revision. A reviewer's
+return value or display verdict is not a durable acceptance record.
+
+Before the first promotion, independently verify the accepted candidate under
+the pinned policy and validate the launch input. Persist a structured launch
+authorization at a recoverable, write-once launch identity before any promotion
+or job insertion. It must bind the offer and candidate digests, policy, source,
+input, exact promoted envelope and job UUID. Recovery must verify these bindings
+and reuse the authorization instead of repeating live fixture calls after a
+partially completed launch. Changed content at the same identity must conflict.
+The contract and persistence mechanism still require review and implementation;
+this is not an available endpoint.
+
+Use the caller's launch UUID as the keyed authorization and job identity. An
+intentional new input needs a new launch UUID. Derive the promotion version from
+the accepted task/attempt/revision and offer/candidate identity, and use the
+accepted frame's timestamp in its envelope, so separate launches of the same
+accepted workflow agree on promotion bytes. The authorization store needs atomic
+create-if-absent with exact-content conflict detection; content-addressed artifact
+storage alone does not provide that keyed guarantee. Bind the accepted frame or
+prefix rather than the whole transcript, which can grow with unrelated tasks.
+
+The promotion prerequisite now returns the stored envelope and original timestamp
+for identical retries, including a concurrent identical winner. Previously each
+call generated a fresh timestamp, which conflicted with whole-envelope immutable
+storage. Different workflow bytes under the same name/version remain a conflict.
+The action now also renders the envelope into its declared `Struct` response
+instead of placing a different message type into that field. The real MCP/Git
+registry regression failed on the old retry behavior and passed with the fix;
+focused tests cover changed content, race winners and storage failures.
+Registry visibility now requires matching committed HEAD bytes. A failed Git
+commit leaves its file and index untouched; that file is not a promoted version
+until committed. Existing registry commits still include the whole index, so a
+later registry write can include a previously staged path. This change does not
+promise one dedicated commit per promotion. Registry failures are mapped through
+the repository's declared I/O boundary. Local affected suites passed: 180 workflow
+tests, 101 registry tests and 129 server tests (one opt-in live-provider test skipped).
+
+Acceptance tests for the binding must cover absent, revised, cancelled and stale
+acceptance with no side effects; a manual acceptance that fails independent
+verification; restart after authorization and after promotion but before job
+submission; exact retry producing one version and one job acceptance event;
+changed source/input under a reused launch identity; and durable evidence tying
+the job source snapshot to the promoted workflow. These tests precede the full
+PostgreSQL, Kafka, remote-effect and published-starter qualification.

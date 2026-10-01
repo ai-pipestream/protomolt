@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.ByteString;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.PersonIdent;
+import org.eclipse.jgit.lib.ObjectId;
 
 import java.io.IOException;
 import java.net.URLDecoder;
@@ -330,13 +331,22 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
             String path = workflowPath(workflow.getWorkflow().getName(), workflow.getVersion());
             Path target = repoDir.resolve(path);
             byte[] bytes = workflow.toByteArray();
-            if (Files.isRegularFile(target)) {
-                if (Arrays.equals(Files.readAllBytes(target), bytes)) {
+            byte[] committed = committedWorkflowBytes(path);
+            if (committed != null) {
+                if (!Files.isRegularFile(target)
+                        || !Arrays.equals(Files.readAllBytes(target), committed)) {
+                    throw new RegistryStoreException("Promoted workflow has uncommitted changes at " + path);
+                }
+                if (Arrays.equals(committed, bytes)) {
                     return null; // idempotent re-promotion of identical content
                 }
                 throw new IllegalArgumentException("workflow " + workflow.getWorkflow().getName()
                         + " version " + workflow.getVersion()
                         + " is immutable: the stored content differs");
+            }
+            if (Files.exists(target)) {
+                throw new RegistryStoreException("Uncommitted workflow file at " + path
+                        + "; refusing to claim it as a promoted version");
             }
             Files.createDirectories(target.getParent());
             Files.write(target, bytes);
@@ -352,11 +362,17 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
         WorkflowValidation.validateName(name, "workflow.name");
         WorkflowValidation.validateName(version, "versioned_workflow.version");
         Path path = repoDir.resolve(workflowPath(name, version));
-        if (!Files.isRegularFile(path)) {
+        String relative = workflowPath(name, version);
+        byte[] committed = committedWorkflowBytes(relative);
+        if (committed == null) {
             return Optional.empty();
         }
         try {
-            return Optional.of(readWorkflow(path));
+            if (!Files.isRegularFile(path)
+                    || !Arrays.equals(Files.readAllBytes(path), committed)) {
+                throw new RegistryStoreException("Promoted workflow has uncommitted changes at " + relative);
+            }
+            return Optional.of(readWorkflow(committed));
         } catch (IOException e) {
             throw new RegistryStoreException("Failed to read workflow " + name, e);
         }
@@ -373,7 +389,13 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
             List<VersionedWorkflow> versions = new ArrayList<>();
             for (Path file : files.filter(Files::isRegularFile).sorted().toList()) {
                 if (file.getFileName().toString().endsWith(".pb")) {
-                    versions.add(readWorkflow(file));
+                    String relative = repoDir.relativize(file).toString().replace('\\', '/');
+                    byte[] committed = committedWorkflowBytes(relative);
+                    if (committed == null) continue;
+                    if (!Arrays.equals(Files.readAllBytes(file), committed)) {
+                        throw new RegistryStoreException("Promoted workflow has uncommitted changes at " + relative);
+                    }
+                    versions.add(readWorkflow(committed));
                 }
             }
             return List.copyOf(versions);
@@ -391,6 +413,7 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
         try (Stream<Path> files = Files.list(dir)) {
             return files.filter(Files::isDirectory)
                     .map(path -> decode(path.getFileName().toString()))
+                    .filter(name -> !workflowVersions(name).isEmpty())
                     .sorted()
                     .toList();
         } catch (IOException e) {
@@ -398,12 +421,27 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
         }
     }
 
-    private static VersionedWorkflow readWorkflow(Path path) throws IOException {
-        VersionedWorkflow workflow = VersionedWorkflow.parseFrom(Files.readAllBytes(path));
+    private static VersionedWorkflow readWorkflow(byte[] bytes) throws IOException {
+        VersionedWorkflow workflow = VersionedWorkflow.parseFrom(bytes);
         // Stored bytes answer to the same contract as fresh promotions: a corrupted or
         // hand-edited file fails loudly here instead of serving an invalid workflow.
         WorkflowValidation.validate(workflow);
         return workflow;
+    }
+
+    /** HEAD, rather than a working-tree file, is the durable promotion boundary. */
+    private byte[] committedWorkflowBytes(String relative) {
+        try {
+            ObjectId blob = git.getRepository().resolve("HEAD:" + relative);
+            if (blob == null) return null;
+            var loader = git.getRepository().open(blob);
+            if (loader.getSize() > WorkflowValidation.MAX_WORKFLOW_BYTES) {
+                throw new RegistryStoreException("Promoted workflow exceeds size limit at " + relative);
+            }
+            return loader.getBytes();
+        } catch (IOException e) {
+            throw new RegistryStoreException("Failed to verify committed workflow " + relative, e);
+        }
     }
 
     /**
