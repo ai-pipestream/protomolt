@@ -83,6 +83,19 @@ public final class ProtoMoltGrpcServer implements AutoCloseable {
                                             String apiToken, CallerResolver resolver,
                                             Collection<ServiceDescriptor> contributed,
                                             Map<String, Map<String, String>> explicitBindings) {
+        return start(host, port, catalog, apiToken, resolver, contributed, explicitBindings,
+                4 * 1024 * 1024);
+    }
+
+    /** Starts the listener with a host-selected inbound transport bound. */
+    public static ProtoMoltGrpcServer start(String host, int port, ActionCatalog catalog,
+                                            String apiToken, CallerResolver resolver,
+                                            Collection<ServiceDescriptor> contributed,
+                                            Map<String, Map<String, String>> explicitBindings,
+                                            int maxInboundMessageBytes) {
+        if (maxInboundMessageBytes <= 0) {
+            throw new IllegalArgumentException("inbound message bound must be positive");
+        }
         Objects.requireNonNull(catalog, "catalog");
         Objects.requireNonNull(contributed, "contributed");
         if (resolver != null && apiToken == null) {
@@ -97,6 +110,7 @@ public final class ProtoMoltGrpcServer implements AutoCloseable {
                     : io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder.forAddress(
                             new java.net.InetSocketAddress(host, port)))
                     .executor(executor)
+                    .maxInboundMessageSize(maxInboundMessageBytes)
                     .addService(ProtoMoltGrpcService.definition(catalog))
                     .addService(ProtoReflectionServiceV1.newInstance());
             for (ServiceDescriptor service : contributed) {

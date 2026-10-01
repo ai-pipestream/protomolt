@@ -68,7 +68,7 @@ class WorkflowAuthoringActionsTest {
     void refusesScopedCallersBeforeEitherBackendOperation() throws Exception {
         var backend = new FakeOperations();
         var catalog = catalog(backend);
-        for (String scope : Set.of(Scopes.WORKER_COORDINATE, Scopes.WORKFLOW_RUN)) {
+        for (String scope : Set.of(Scopes.WORKER_COORDINATE, Scopes.WORKFLOW_RUN, Scopes.WORKFLOW_AUTHOR)) {
             Caller caller = Caller.scoped("scoped", Set.of(scope));
             assertThatThrownBy(() -> catalog.execute("get-accepted-workflow",
                     GetAcceptedWorkflowRequest.newBuilder().setTaskId(TASK_ID).build(), caller))
@@ -88,6 +88,22 @@ class WorkflowAuthoringActionsTest {
         assertThat(catalog.execute("get-accepted-workflow",
                 GetAcceptedWorkflowRequest.newBuilder().setTaskId(TASK_ID).build(), Caller.operator()))
                 .isEqualTo(backend.candidate);
+    }
+
+    @Test
+    void explicitLaunchScopePermitsLookupAndLaunchThroughCatalog() throws Exception {
+        var backend = new FakeOperations();
+        var catalog = catalog(backend);
+        Caller launcher = Caller.scoped("launcher", Set.of(Scopes.WORKFLOW_LAUNCH));
+        assertThat(catalog.get("get-accepted-workflow").requiredScope()).isEqualTo(Scopes.WORKFLOW_LAUNCH);
+        assertThat(catalog.get("launch-accepted-workflow").requiredScope()).isEqualTo(Scopes.WORKFLOW_LAUNCH);
+        assertThat(catalog.execute("get-accepted-workflow",
+                GetAcceptedWorkflowRequest.newBuilder().setTaskId(TASK_ID).build(), launcher))
+                .isEqualTo(backend.candidate);
+        assertThat(catalog.execute("launch-accepted-workflow", launchRequest(), launcher))
+                .isEqualTo(backend.launchResult);
+        assertThat(backend.acceptedCalls).hasValue(1);
+        assertThat(backend.launchCalls).hasValue(1);
     }
 
     @Test

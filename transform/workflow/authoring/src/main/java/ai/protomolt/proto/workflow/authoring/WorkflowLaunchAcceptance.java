@@ -17,6 +17,19 @@ import java.util.UUID;
 
 /** Evidence of durable terminal acceptance; independent authoring review is still required. */
 final class WorkflowLaunchAcceptance {
+    enum FailureKind { INACTIVE, CORRUPT_EVIDENCE }
+
+    static final class Failure extends IllegalArgumentException {
+        private final FailureKind kind;
+
+        Failure(FailureKind kind, String message) {
+            super(message);
+            this.kind = kind;
+        }
+
+        FailureKind kind() { return kind; }
+    }
+
     private final WorkflowAcceptedCandidate identity;
     private final ReviewContext context;
     private final WorkflowAuthoringDeliverable authored;
@@ -38,12 +51,12 @@ final class WorkflowLaunchAcceptance {
     static WorkflowLaunchAcceptance inspect(TranscriptRepository repository, String taskId) {
         Objects.requireNonNull(repository);
         UUID.fromString(taskId);
-        var transcript = repository.load().orElseThrow(() -> invalid("no durable transcript"));
+        var transcript = repository.load().orElseThrow(() -> inactive("no durable transcript"));
         var reduced = new DelegationReducer().reduce(transcript);
         if (!reduced.clean()) throw invalid("durable transcript has lifecycle findings: " + reduced.findings());
         var task = reduced.tasks().get(taskId);
         if (task == null || task.phase() != DelegationReducer.Phase.ACCEPTED) {
-            throw invalid("task is not durably accepted");
+            throw inactive("task is not durably accepted");
         }
         TaskSpec spec = null;
         CompletionCandidate candidate = null;
@@ -82,7 +95,7 @@ final class WorkflowLaunchAcceptance {
         WorkflowLaunchValidation.validate(accepted);
         if (!spec.hasContract() || !spec.getContract().getTypeName().equals(
                 WorkflowAuthoringDeliverable.getDescriptor().getFullName())) {
-            throw invalid("task does not offer the authoring result contract");
+            throw inactive("task does not offer the authoring result contract");
         }
         var violations = DeliverableContracts.check(spec.getContract(), candidate.getResult());
         if (!violations.isEmpty()) throw invalid("accepted result violates its offered contract: " + violations);
@@ -107,7 +120,11 @@ final class WorkflowLaunchAcceptance {
                 new ReviewContext(taskId, task.holder(), spec, candidate), authored, frame.getSentAt());
     }
 
-    private static IllegalArgumentException invalid(String reason) {
-        return new IllegalArgumentException(reason);
+    private static Failure inactive(String reason) {
+        return new Failure(FailureKind.INACTIVE, reason);
+    }
+
+    private static Failure invalid(String reason) {
+        return new Failure(FailureKind.CORRUPT_EVIDENCE, reason);
     }
 }

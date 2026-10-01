@@ -1171,6 +1171,8 @@ public final class ProtoMoltServe implements AutoCloseable {
             if (authoring != null) {
                 WorkflowAuthoringActions.register(catalog,
                         authoring.operations(delegation.transcripts()));
+                ai.protomolt.proto.workflow.authoring.WorkflowLaunchInputActions.register(catalog,
+                        authoring.inputOperations(delegation.transcripts()));
             }
             if (preparation != null) {
                 WorkflowPreparationActions.register(catalog,
@@ -1216,7 +1218,10 @@ public final class ProtoMoltServe implements AutoCloseable {
             grpc = ProtoMoltGrpcServer.start(options.host(), options.grpcPort(), catalog,
                     options.apiToken(), callers,
                     contributedServices(meshCluster != null, authoring != null,
-                            preparation != null), authorTaskBindings);
+                            preparation != null), authorTaskBindings,
+                    // Launch input permits 4 MiB of JSON plus acceptance metadata.
+                    // Native contract validation enforces the individual field bounds.
+                    (authoring != null ? 8 : 4) * 1024 * 1024);
             if (options.demo() && store != null) {
                 // The demo workflow composes this server's own verbs, so it needs the bound
                 // gRPC port - seeded here rather than with the schemas.
@@ -1410,6 +1415,8 @@ public final class ProtoMoltServe implements AutoCloseable {
         if (workflowAuthoring) {
             services.add(GetAcceptedWorkflowRequest.getDescriptor().getFile()
                     .findServiceByName("WorkflowAuthoringService"));
+            services.add(ai.protomolt.proto.workflow.authoring.v1.WorkflowLaunchInputServiceOuterClass
+                    .getDescriptor().findServiceByName("WorkflowLaunchInputService"));
         }
         if (workflowPreparation) {
             services.add(WorkflowPreparationServiceOuterClass.getDescriptor()

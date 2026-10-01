@@ -76,9 +76,13 @@ class WorkflowAuthoringGrpcTest {
         String name = InProcessServerBuilder.generateName();
         server = InProcessServerBuilder.forName(name)
                 .intercept(new ApiTokenServerInterceptor("operator-token", token ->
-                        "worker-token".equals(token)
-                                ? Optional.of(Caller.scoped("worker", Set.of(Scopes.WORKER_COORDINATE)))
-                                : Optional.empty()))
+                        switch (token) {
+                            case "worker-token" -> Optional.of(Caller.scoped("worker", Set.of(Scopes.WORKER_COORDINATE)));
+                            case "author-token" -> Optional.of(Caller.scoped("author", Set.of(Scopes.WORKFLOW_AUTHOR)));
+                            case "run-token" -> Optional.of(Caller.scoped("runner", Set.of(Scopes.WORKFLOW_RUN)));
+                            case "launch-token" -> Optional.of(Caller.scoped("launcher", Set.of(Scopes.WORKFLOW_LAUNCH)));
+                            default -> Optional.empty();
+                        }))
                 .addService(ProtoMoltGrpcService.contributed(catalog,
                         WorkflowAuthoringServiceOuterClass.getDescriptor()
                                 .findServiceByName("WorkflowAuthoringService")))
@@ -115,10 +119,27 @@ class WorkflowAuthoringGrpcTest {
     }
 
     @Test
-    void scopedCredentialCannotReadAcceptedIdentity() {
-        assertStatus("GetAcceptedWorkflow", GetAcceptedWorkflowRequest.newBuilder().setTaskId(ID).build(),
-                "worker-token", Status.Code.PERMISSION_DENIED, "permission-denied");
+    void otherScopesCannotReadOrLaunchAcceptedWorkflows() {
+        for (String token : Set.of("worker-token", "author-token", "run-token")) {
+            assertStatus("GetAcceptedWorkflow", GetAcceptedWorkflowRequest.newBuilder().setTaskId(ID).build(),
+                    token, Status.Code.PERMISSION_DENIED, "permission-denied");
+            assertStatus("LaunchAcceptedWorkflow", WorkflowAuthoringLaunchRequest.newBuilder()
+                    .setLaunchId(ID).setAcceptance(accepted()).setInput(artifact()).build(),
+                    token, Status.Code.PERMISSION_DENIED, "permission-denied");
+        }
         assertThat(calls.get()).isZero();
+    }
+
+    @Test
+    void launchScopeCanUseBothContractsOverGrpc() throws Exception {
+        var identity = WorkflowAcceptedCandidate.parseFrom(call("GetAcceptedWorkflow",
+                GetAcceptedWorkflowRequest.newBuilder().setTaskId(ID).build(), "launch-token").toByteArray());
+        assertThat(identity).isEqualTo(accepted());
+        var result = WorkflowAuthoringLaunchResult.parseFrom(call("LaunchAcceptedWorkflow",
+                WorkflowAuthoringLaunchRequest.newBuilder().setLaunchId(ID)
+                        .setAcceptance(identity).setInput(artifact()).build(), "launch-token").toByteArray());
+        assertThat(result.getJobId()).isEqualTo(ID);
+        assertThat(calls.get()).isEqualTo(2);
     }
 
     @Test
