@@ -25,7 +25,7 @@ A separately mounted `WorkflowAuthorService` requires `workflow-author`:
   `RegisterWorkerResponse`. Require `worker_id == Caller.name()` before invoking
   the bridge. Provider and capability fields are metadata, never authority.
 - `AcceptWorkflowTask` reuses `AcceptTaskRequest` and `AcceptTaskResponse`.
-  Require the authenticated identity, exact task, attempt, current offered holder
+  Require the authenticated identity, exact task, attempt, current offeree
   and authoring deliverable contract. The coordinator owns the state transition.
 - `SubmitWorkflowCandidate` reuses `SubmitCandidateRequest` and
   `SubmitCandidateResponse`, including the existing deliverable Any registry.
@@ -59,7 +59,8 @@ success, identity and response consistency rather than treating their current
 annotations as complete validation.
 
 Handler checks independently load and validate trusted transcript state, bind
-principal to holder and selected offer, require the supported authoring contract
+principal to offeree or holder as the operation requires, select the matching
+offer, require the supported authoring contract
 and configured policy, and verify referenced bytes against full metadata and
 hashes. The descriptor is capped at 4 MiB; bound permitted calls and reject oversized
 responses before transport. Context is a snapshot, not a lease renewal or an
