@@ -5,6 +5,7 @@ import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.actions.CatalogContract;
 import ai.protomolt.proto.actions.ProtoAction;
+import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.samples.starter.v1.WorkflowAcceptedCandidate;
 import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchRequest;
 import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchResult;
@@ -23,7 +24,7 @@ import java.util.UUID;
 public final class WorkflowAuthoringActions {
     private WorkflowAuthoringActions() {}
 
-    /** The host supplies trusted operations and explicitly registers these operator-only verbs. */
+    /** The host supplies trusted operations and registers scoped launch verbs. */
     public static ActionCatalog register(ActionCatalog catalog, WorkflowAuthoringOperations operations) {
         Objects.requireNonNull(catalog, "catalog");
         Objects.requireNonNull(operations, "operations");
@@ -37,6 +38,8 @@ public final class WorkflowAuthoringActions {
         AuthoringAction(WorkflowAuthoringOperations operations) {
             this.operations = operations;
         }
+
+        @Override public String requiredScope() { return Scopes.WORKFLOW_LAUNCH; }
 
         static void validateRequest(Message request, String verb) throws ActionException {
             try {

@@ -52,6 +52,7 @@ policy is a loud failure, not a silently dead grant.
 | `service-invoke` | Calling other services through the platform: reflection-driven invocation, chain execution and submission, job inspection and completion, model inference |
 | `workflow-run` | Workflow and pipeline execution and their evidence verbs: recording, replay, promotion, work-record export and evaluation |
 | `workflow-author` | Preparing a workflow candidate under the authenticated principal's current delegation lease and pinned policy; does not grant promotion, launch, arbitrary artifact access or acceptance |
+| `workflow-launch` | Looking up accepted authored workflows, preparing input under their pinned descriptors, and launching through trusted acceptance and evidence checks; excludes general artifact access and direct workflow execution |
 | `artifact-access` | Reading and writing the artifact repository outside a workflow run's own recording |
 | `worker-coordinate` | The delegation and mesh coordination surfaces: offering tasks, accepting checkpoints, steering workers, node registration and capacity |
 | `search-query` | Querying a search service |

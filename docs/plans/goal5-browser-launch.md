@@ -40,7 +40,10 @@ metadata causes FAILED_PRECONDITION without altering the stored reference.
 Add workflow-launch permission for the browser bridge. Named console principals
 need worker-coordinate plus workflow-launch. Default console and workflow-author
 credentials cannot launch. Use the HttpOnly session, with no browser operator
-credential. Existing catalog launch actions remain operator-only.
+credential. Catalog lookup, input preparation and launch actions require
+workflow-launch across protocols; operator access remains available. Cookie
+routes dispatch through the catalog with the session caller. The browser entry
+also requires worker-coordinate. No default credential receives launch scope.
 
 Display the server-verified contract and a JSON input editor for accepted authored
 workflows. Preparation errors prevent advancement. Persist the complete launch
