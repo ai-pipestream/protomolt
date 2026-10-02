@@ -1,4 +1,4 @@
-package ai.protomolt.proto.registry.service;
+package ai.protomolt.proto.schema.registry.git.service;
 
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.actions.ActionException;

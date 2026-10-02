@@ -3,7 +3,7 @@
  *
  * <p>A {@link Bundle} is an ordered, path-validated set of rendered files — the unit every
  * emitter produces. {@link BundleSink} is the extension point on the delivery side;
- * {@link DirectorySink} writes under a root directory and {@link GitSink} writes into a git
+ * {@link DirectorySink} writes under a root directory and {@code protomolt-emit-git} writes into a git
  * working tree and commits. A sink is always constructed with a destination the caller named,
  * so nothing in the emit pipeline chooses a location on its own. {@link Bundles} covers the
  * cases that need no destination at all, such as the deterministic in-memory zip a verb

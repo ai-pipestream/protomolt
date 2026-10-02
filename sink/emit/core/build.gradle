@@ -1,5 +1,4 @@
-description = 'Emit SPI: bundles of rendered files and the sinks that deliver them (directory, git, zip)'
+description = 'Emit SPI, rendered bundles, directory delivery and ZIP support'
 
-dependencies {
-    implementation libs.jgit
-}
+ext.forbiddenRuntimeModules = ['org.eclipse.jgit', 'protomolt-emit-git']
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

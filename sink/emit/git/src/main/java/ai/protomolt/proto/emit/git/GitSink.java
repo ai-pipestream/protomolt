@@ -1,4 +1,7 @@
-package ai.protomolt.proto.emit;
+package ai.protomolt.proto.emit.git;
+
+import ai.protomolt.proto.emit.Bundle;
+import ai.protomolt.proto.emit.BundleSink;
 
 import org.eclipse.jgit.api.CommitCommand;
 import org.eclipse.jgit.api.Git;

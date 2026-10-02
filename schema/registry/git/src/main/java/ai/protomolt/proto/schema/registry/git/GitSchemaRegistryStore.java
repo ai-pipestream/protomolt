@@ -1,5 +1,8 @@
 package ai.protomolt.proto.schema.registry.git;
 
+import ai.protomolt.proto.registry.ConfigDocumentStore;
+import ai.protomolt.proto.registry.WorkflowDocumentStore;
+
 import ai.protomolt.proto.registry.CompatibilityModes;
 import ai.protomolt.proto.registry.DescriptorSetArtifacts;
 import ai.protomolt.proto.registry.RegistrationSupport;
@@ -68,7 +71,7 @@ import java.util.stream.Stream;
  * is invalidated after every write, and {@link #refresh()} exposes the invalidation for
  * commits made externally (e.g. an out-of-band {@code git pull}).</p>
  */
-public final class GitSchemaRegistryStore implements SchemaRegistryStore {
+public final class GitSchemaRegistryStore implements ConfigDocumentStore, WorkflowDocumentStore {
 
     private static final ConcurrentMap<Path, ReentrantLock> JVM_LOCKS = new ConcurrentHashMap<>();
 

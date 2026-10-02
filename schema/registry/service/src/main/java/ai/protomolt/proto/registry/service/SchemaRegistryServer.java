@@ -7,7 +7,8 @@ import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.authz.CallerResolver;
 import ai.protomolt.proto.registry.ConfigSupport;
 import ai.protomolt.proto.registry.InvalidConfigException;
-import ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore;
+import ai.protomolt.proto.registry.ConfigDocumentStore;
+import ai.protomolt.proto.registry.WorkflowDocumentStore;
 import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.registry.CompatibilityModes;
 import ai.protomolt.proto.registry.IncompatibleRegistrationException;
@@ -561,12 +562,12 @@ public final class SchemaRegistryServer implements AutoCloseable {
     // ---------------------------------------------------------------- native extras
 
     private void listWorkflows(HttpExchange exchange) throws IOException {
-        if (!(store instanceof GitSchemaRegistryStore gitStore)) {
+        if (!(store instanceof WorkflowDocumentStore documentStore)) {
             writeError(exchange, 404, 40401, "This store does not hold workflows");
             return;
         }
         try {
-            writeJson(exchange, 200, json.valueToTree(gitStore.workflows()));
+            writeJson(exchange, 200, json.valueToTree(documentStore.workflows()));
         } catch (Exception e) {
             internalError(exchange, "listing workflows", e);
         }
@@ -575,12 +576,12 @@ public final class SchemaRegistryServer implements AutoCloseable {
     // ---------------------------------------------------------------- config documents
 
     private void listConfigs(HttpExchange exchange) throws IOException {
-        if (!(store instanceof GitSchemaRegistryStore gitStore)) {
+        if (!(store instanceof ConfigDocumentStore documentStore)) {
             writeError(exchange, 404, 40401, "This store does not hold configs");
             return;
         }
         ArrayNode array = json.createArrayNode();
-        gitStore.configs().forEach(array::add);
+        documentStore.configs().forEach(array::add);
         writeJson(exchange, 200, array);
     }
 
@@ -591,12 +592,12 @@ public final class SchemaRegistryServer implements AutoCloseable {
      * document — it serves a refusal an operator can read.
      */
     private void getConfig(HttpExchange exchange, String name) throws IOException {
-        if (!(store instanceof GitSchemaRegistryStore gitStore)) {
+        if (!(store instanceof ConfigDocumentStore documentStore)) {
             writeError(exchange, 404, 40401, "This store does not hold configs");
             return;
         }
         try {
-            var envelope = gitStore.config(name);
+            var envelope = documentStore.config(name);
             if (envelope.isEmpty()) {
                 writeError(exchange, 404, 40401, "Config not found: " + name);
                 return;
@@ -612,7 +613,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
             ObjectNode body = json.createObjectNode();
             body.put("name", name);
             body.put("messageType", gated.messageType());
-            body.put("version", gitStore.configVersion(name).orElse(""));
+            body.put("version", documentStore.configVersion(name).orElse(""));
             body.put("payloadBase64", java.util.Base64.getEncoder()
                     .encodeToString(gated.message().toByteArray()));
             body.set("config", json.readTree(envelope.get()).path(ConfigSupport.CONFIG));
@@ -623,7 +624,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
     }
 
     private void putConfig(HttpExchange exchange, String name) throws IOException {
-        if (!(store instanceof GitSchemaRegistryStore gitStore)) {
+        if (!(store instanceof ConfigDocumentStore documentStore)) {
             writeError(exchange, 404, 40401, "This store does not hold configs");
             return;
         }
@@ -634,7 +635,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
         }
         try {
             ConfigSupport.gate(store, envelope.toString());
-            String version = gitStore.putConfig(name, envelope.toString());
+            String version = documentStore.putConfig(name, envelope.toString());
             ObjectNode response = json.createObjectNode();
             response.put("name", name);
             response.put("version", version);
@@ -647,12 +648,12 @@ public final class SchemaRegistryServer implements AutoCloseable {
     }
 
     private void getWorkflow(HttpExchange exchange, String name) throws IOException {
-        if (!(store instanceof GitSchemaRegistryStore gitStore)) {
+        if (!(store instanceof WorkflowDocumentStore documentStore)) {
             writeError(exchange, 404, 40401, "This store does not hold workflows");
             return;
         }
         try {
-            var workflow = gitStore.workflow(name);
+            var workflow = documentStore.workflow(name);
             if (workflow.isEmpty()) {
                 writeError(exchange, 404, 40401, "Workflow not found: " + name);
                 return;
@@ -670,7 +671,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
      * catalog is mounted, {@code check-workflow} must pass before anything is committed.
      */
     private void putWorkflow(HttpExchange exchange, String name) throws IOException {
-        if (!(store instanceof GitSchemaRegistryStore gitStore)) {
+        if (!(store instanceof WorkflowDocumentStore documentStore)) {
             writeError(exchange, 404, 40401, "This store does not hold workflows");
             return;
         }
@@ -698,7 +699,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
             }
         }
         try {
-            gitStore.putWorkflow(name, workflow.toString());
+            documentStore.putWorkflow(name, workflow.toString());
             writeJson(exchange, 200, json.createObjectNode().put("name", name));
         } catch (IllegalArgumentException e) {
             writeError(exchange, 422, 42201, e.getMessage());

@@ -136,3 +136,31 @@ invalid global counters instead of treating them as defaults. Absence of a
 subject override still means inheritance; a malformed override does not. A listed
 schema version missing from storage fails history assembly so the compatibility
 gate cannot evaluate an incomplete history.
+
+Optional `WorkflowDocumentStore` and `ConfigDocumentStore` capabilities extend
+the schema store contract for document storage. HTTP routes select these
+interfaces rather than checking for Git. Non-Git test backends exercise workflow
+put/get/list and typed-config HTTP/action publication. Git implements both.
+`PublishConfigAction` now accepts `ConfigDocumentStore`; source callers passing a
+Git store still compile, but existing binaries must be recompiled for the changed
+constructor signature. Publication errors retain their original cause.
+
+The generic `protomolt-registry-service` no longer assembles Git federation,
+workflow runtime or toolkit/index action providers. The optional
+`protomolt-schema-registry-git-service` supplies `RegistryModule`,
+`RegistryRemotesAction` and `RegistrySyncAction` in
+`ai.protomolt.proto.schema.registry.git.service`; consumers of those classes
+must add that artifact, update imports and recompile. The document-platform
+assembly selects it explicitly. HTTP callers may supply a catalog containing
+only the actions they intend to expose.
+
+`protomolt-emit` no longer includes Git delivery. `GitSink` moves to
+`protomolt-emit-git`, in `ai.protomolt.proto.emit.git`; callers must add that
+artifact and update the import. This also removes JGit from Parquet emission
+and the registry HTTP service's Parquet schema endpoint. Runtime gates reject
+Git dependencies from emit core and the generic registry HTTP service.
+
+Configuration type resolution reports corrupt stored schemas and missing listed
+subjects as storage errors. It does not skip them and return a misleading
+"type not found" result. Invalid JSON and protobuf config input retain their
+parse causes in `InvalidConfigException`.

@@ -7,7 +7,7 @@ import ai.protomolt.proto.actions.ProtoAction;
 import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.protomolt.proto.registry.ConfigSupport;
-import ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore;
+import ai.protomolt.proto.registry.ConfigDocumentStore;
 import ai.protomolt.proto.registry.InvalidConfigException;
 import ai.protomolt.proto.registry.RegistryStoreException;
 import ai.protomolt.proto.schema.registry.v1.PublishConfigRequest;
@@ -20,7 +20,7 @@ import com.google.protobuf.Message;
  * The config lane's write verb: publishes one typed config document
  * through exactly the gate the registry's HTTP config gate mounts (strict
  * parse as the declared type, the type's own declared validate.v1 rules
- * enforced), then commits it. The commit id is the version every consumer
+ * enforced), then stores it. The backend version identity is what every consumer
  * reports. Exact or refused: an invalid document never lands.
  */
 public final class PublishConfigAction implements ProtoAction {
@@ -28,14 +28,14 @@ public final class PublishConfigAction implements ProtoAction {
     /** The action name: {@value}. */
     public static final String NAME = "publish-config";
 
-    private final GitSchemaRegistryStore store;
+    private final ConfigDocumentStore store;
 
     /**
      * Creates the verb over the co-mounted store.
      *
-     * @param store the registry store config documents commit to
+     * @param store the registry store holding config documents
      */
-    public PublishConfigAction(GitSchemaRegistryStore store) {
+    public PublishConfigAction(ConfigDocumentStore store) {
         if (store == null) {
             throw new IllegalArgumentException("store must not be null");
         }
@@ -56,8 +56,8 @@ public final class PublishConfigAction implements ProtoAction {
     public String description() {
         return "Publish one typed config document to the registry's config gate: the "
                 + "document parses strictly as the declared messageType and its type's "
-                + "own validate.v1 rules are enforced before anything commits; the "
-                + "commit id is the version consumers report.";
+                + "own validate.v1 rules are enforced before storage; the "
+                + "backend version identity is what consumers report.";
     }
 
     @Override
@@ -91,9 +91,13 @@ public final class PublishConfigAction implements ProtoAction {
                     .setVersion(store.putConfig(request.getName(), json))
                     .build();
         } catch (InvalidConfigException e) {
-            throw new ActionException("invalid-config", e.getMessage());
+            ActionException failure = new ActionException("invalid-config", e.getMessage());
+            failure.initCause(e);
+            throw failure;
         } catch (RegistryStoreException e) {
-            throw new ActionException("store-error", e.getMessage());
+            ActionException failure = new ActionException("store-error", e.getMessage());
+            failure.initCause(e);
+            throw failure;
         }
     }
 }

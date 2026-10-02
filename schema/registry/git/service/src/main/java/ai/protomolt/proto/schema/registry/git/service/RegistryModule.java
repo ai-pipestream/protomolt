@@ -1,4 +1,8 @@
-package ai.protomolt.proto.registry.service;
+package ai.protomolt.proto.schema.registry.git.service;
+
+import ai.protomolt.proto.registry.service.SchemaRegistryServer;
+import ai.protomolt.proto.registry.service.SchemaRegistryServerConfig;
+import ai.protomolt.proto.registry.service.PublishConfigAction;
 
 import ai.protomolt.proto.actions.ActionCatalog;
 import ai.protomolt.proto.authz.CallerResolver;

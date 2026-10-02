@@ -526,3 +526,9 @@ project(':protomolt-cel').projectDir = file('core/cel')
 
 include 'protomolt-schema-registry-git'
 project(':protomolt-schema-registry-git').projectDir = file('schema/registry/git')
+
+include 'protomolt-schema-registry-git-service'
+project(':protomolt-schema-registry-git-service').projectDir = file('schema/registry/git/service')
+
+include 'protomolt-emit-git'
+project(':protomolt-emit-git').projectDir = file('sink/emit/git')

@@ -1,14 +1,10 @@
 description = 'Schema registry server: Confluent subjects protocol and descriptor-set serving over the store'
 
 dependencies {
-    api project(':protomolt-schema-registry-git')
-    api project(':protomolt-composer')
-    api project(':protomolt-workflow')
     api project(':protomolt-registry')
     api project(':protomolt-actions')
-    // This full catalog distribution explicitly includes optional indexing actions.
-    runtimeOnly project(':protomolt-actions-index')
-    runtimeOnly project(':protomolt-actions-toolkit')
+    testRuntimeOnly project(':protomolt-actions-index')
+    testRuntimeOnly project(':protomolt-actions-toolkit')
     // The administrative verbs take declared request messages.
     api project(':protomolt-registry-proto')
     // Their input schemas are derived from those messages rather than hand-written.
@@ -25,4 +21,8 @@ dependencies {
     implementation libs.slf4j.api
 
     testImplementation project(':protomolt-schema-confluent')
+    testImplementation project(':protomolt-schema-registry-git')
 }
+
+ext.forbiddenRuntimeModules = ['protomolt-schema-registry-git', 'protomolt-schema-registry-git-service', 'org.eclipse.jgit', 'protomolt-workflow', 'protomolt-actions-toolkit', 'protomolt-actions-index']
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

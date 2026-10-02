@@ -63,7 +63,10 @@ public final class ConfigSupport {
             envelope = JSON.readTree(envelopeJson);
         } catch (Exception e) {
             throw new InvalidConfigException(
-                    "the envelope is not JSON: " + e.getMessage());
+                    "the envelope is not JSON: " + e.getMessage(), e);
+        }
+        if (envelope == null || !envelope.isObject()) {
+            throw new InvalidConfigException("the envelope must be a JSON object");
         }
         JsonNode type = envelope.path(MESSAGE_TYPE);
         JsonNode config = envelope.path(CONFIG);
@@ -79,7 +82,7 @@ public final class ConfigSupport {
             JsonFormat.parser().merge(config.toString(), builder);
         } catch (Exception e) {
             throw new InvalidConfigException("the config is not a valid "
-                    + type.asText() + ": " + e.getMessage());
+                    + type.asText() + ": " + e.getMessage(), e);
         }
         DynamicMessage message = builder.build();
         ValidationResult validated = VALIDATOR.validate(message);
@@ -106,7 +109,7 @@ public final class ConfigSupport {
         for (String subject : store.subjects()) {
             Optional<StoredSchema> latest = store.latest(subject);
             if (latest.isEmpty()) {
-                continue;
+                throw new RegistryStoreException("Missing latest version for listed subject " + subject);
             }
             CompiledProtos compiled;
             try {
@@ -114,10 +117,8 @@ public final class ConfigSupport {
                         store, subject, latest.get().schemaText(),
                         latest.get().references());
                 compiled = COMPILER.compile(resolved.sources());
-            } catch (Exception e) {
-                // A subject that no longer links cannot serve the type;
-                // the next subject may.
-                continue;
+            } catch (ai.protomolt.proto.sources.ProtoCompilationException | ReferenceNotFoundException e) {
+                throw new RegistryStoreException("Cannot resolve stored schema " + subject, e);
             }
             for (FileDescriptor file : compiled.fileDescriptors()) {
                 Descriptor found = find(file, fullName);

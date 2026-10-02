@@ -11,7 +11,7 @@ import ai.protomolt.proto.metric.lucene.MetricServiceModule;
 import ai.protomolt.proto.parse.playground.PlaygroundModule;
 import ai.protomolt.proto.parse.service.ParseModule;
 import ai.protomolt.proto.parse.text.TextParserModule;
-import ai.protomolt.proto.registry.service.RegistryModule;
+import ai.protomolt.proto.schema.registry.git.service.RegistryModule;
 import ai.protomolt.proto.repo.service.RepoServiceModule;
 import ai.protomolt.proto.search.console.SearchConsoleModule;
 import ai.protomolt.proto.search.service.SearchServiceModule;

@@ -9,7 +9,8 @@ message data goes only where a caller deliberately sends it.
 
 | Module | What it adds |
 |---|---|
-| `protomolt-emit` | `Bundle`, `BundleSink`, `DirectorySink`, `GitSink`, in-memory zip |
+| `protomolt-emit` | `Bundle`, `BundleSink`, `DirectorySink`, in-memory zip |
+| `protomolt-emit-git` | Optional `ai.protomolt.proto.emit.git.GitSink` delivery |
 | `protomolt-emit-okf` | Open Knowledge Format renderer + the `emit-okf` verb |
 | `protomolt-emit-parquet` | Descriptor-driven Parquet files from protobuf messages |
 | `protomolt-emit-parquet-s3` | Parquet files uploaded to any S3-compatible store (RustFS, AWS S3) |
@@ -27,7 +28,7 @@ Bundle bundle = Bundle.builder()
         .build();
 
 new DirectorySink(Path.of("/srv/knowledge")).write(bundle);
-new GitSink(Path.of("/srv/knowledge-repo"), "Update knowledge bundle").write(bundle);
+new ai.protomolt.proto.emit.git.GitSink(Path.of("/srv/knowledge-repo"), "Update knowledge bundle").write(bundle);
 byte[] zip = Bundles.zip(bundle); // deterministic, entirely in memory
 ```
 
