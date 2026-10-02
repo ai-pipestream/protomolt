@@ -1,0 +1,33 @@
+syntax = "proto2";
+
+package ai.protomolt.proto.validate.protovalidate.testdata.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.validate.protovalidate.testdata";
+
+import "buf/validate/validate.proto";
+
+// Predefined rules: (buf.validate.predefined) CEL expressions attached as extensions to the
+// buf.validate.<T>Rules messages. The extension's configured value binds as `rule` in the
+// expression, so one declaration serves every field that sets it.
+//
+// This file is proto2 because proto3 allows extensions only on options messages, and the
+// <T>Rules messages are ordinary messages. The schema that uses these rules stays proto3.
+
+extend buf.validate.StringRules {
+  // A flag-shaped rule: `rule` is the bool the field sets, so setting it false disables the check.
+  optional bool lowercase_only = 1101 [(buf.validate.predefined).cel = {
+    id: "string.lowercase_only"
+    message: "must be lowercase"
+    expression: "!rule || this == this.lowerAscii()"
+  }];
+}
+
+extend buf.validate.Int32Rules {
+  // A valued rule: `rule` is the int32 the field sets, proving the value survives the reparse.
+  optional int32 multiple_of = 1102 [(buf.validate.predefined).cel = {
+    id: "int32.multiple_of"
+    message: "must be a multiple of the configured divisor"
+    expression: "this % rule == 0"
+  }];
+}
