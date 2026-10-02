@@ -1,4 +1,4 @@
-package ai.protomolt.proto.mcp;
+package ai.protomolt.proto.mcp.transport;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -33,9 +33,35 @@ public interface McpResources {
      * allowing providers with a cheap page primitive to avoid materializing their full index.
      */
     default Page page(ObjectMapper mapper, String cursor, int pageSize) {
-        var page = ai.protomolt.proto.mcp.transport.McpResources.page(
-                mapper, () -> list(mapper), cursor, pageSize);
-        return new Page(page.resources(), page.nextCursor());
+        return page(mapper, () -> list(mapper), cursor, pageSize);
+    }
+
+    /** Shared pagination for resource interfaces retained by compatibility adapters. */
+    static Page page(ObjectMapper mapper, java.util.function.Supplier<ArrayNode> rows, String cursor, int pageSize) {
+        if (pageSize <= 0) {
+            throw new IllegalArgumentException("page size must be positive");
+        }
+        int offset = 0;
+        if (cursor != null && !cursor.isBlank()) {
+            try {
+                offset = Integer.parseInt(cursor);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("resource cursor is invalid");
+            }
+        }
+        if (offset < 0) {
+            throw new IllegalArgumentException("resource cursor is invalid");
+        }
+        ArrayNode all = rows.get();
+        if (offset > all.size()) {
+            throw new IllegalArgumentException("resource cursor is invalid");
+        }
+        int end = Math.min(offset + pageSize, all.size());
+        ArrayNode page = mapper.createArrayNode();
+        for (int i = offset; i < end; i++) {
+            page.add(all.get(i));
+        }
+        return new Page(page, end < all.size() ? Integer.toString(end) : null);
     }
 
     /** Reads one URI, or empty when this collection does not own it. */

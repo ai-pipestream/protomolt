@@ -1,0 +1,7 @@
+description = 'Configured gRPC reflection and invocation contributions for composed nodes'
+
+dependencies {
+    api project(':protomolt-composer')
+    implementation project(':protomolt-actions')
+    implementation project(':protomolt-grpc-invoke')
+}

@@ -511,3 +511,12 @@ project(':protomolt-actions-schema').projectDir = file('surface/actions/schema')
 
 include 'protomolt-actions-toolkit'
 project(':protomolt-actions-toolkit').projectDir = file('surface/actions/toolkit')
+
+include 'protomolt-mcp-transport'
+project(':protomolt-mcp-transport').projectDir = file('surface/mcp/transport')
+
+include 'protomolt-grpc-invoke-service'
+project(':protomolt-grpc-invoke-service').projectDir = file('surface/grpc/invoke/service')
+
+include 'protomolt-grpc-mcp'
+project(':protomolt-grpc-mcp').projectDir = file('apps/grpc-mcp')
