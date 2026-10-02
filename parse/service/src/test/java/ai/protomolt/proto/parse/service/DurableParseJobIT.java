@@ -209,17 +209,9 @@ class DurableParseJobIT {
         assertThat(afterFailure.attempt).isEqualTo(1);
         assertThat(repo.saves).isEmpty();
 
-        // The retry (zero backoff base) completes the parse. run_after is
-        // stamped from the JVM clock and claimed against the database clock,
-        // so eligibility can lag by a few milliseconds: poll, bounded.
-        boolean retried = false;
-        for (int i = 0; i < 100 && !retried; i++) {
-            retried = worker.workOnce();
-            if (!retried) {
-                Thread.sleep(50);
-            }
-        }
-        assertThat(retried).isTrue();
+        // Both scheduling and claiming use the database clock. Zero backoff
+        // must make the retry eligible immediately, without a polling delay.
+        assertThat(worker.workOnce()).isTrue();
         WorkflowRunRecord done = store.get(jobId).orElseThrow();
         assertThat(done.status).isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
         assertThat(repo.saves).hasSize(1);

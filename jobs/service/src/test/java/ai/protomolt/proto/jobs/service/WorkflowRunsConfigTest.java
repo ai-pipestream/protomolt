@@ -9,8 +9,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The worker/relay/consumer configuration record: the required (and
- * non-blank) workerId, the request-topic/broker pair rule, and the defaults
- * every non-positive or absent knob falls back to.
+ * non-blank) workerId, the request-topic/broker pair rule, and the explicit defaults factory.
  */
 class WorkflowRunsConfigTest {
 
@@ -21,25 +20,25 @@ class WorkflowRunsConfigTest {
                 maxConcurrent, requestTopic, eventsTopic, bootstrap, null);
     }
 
-    /** A fully-defaulted config: every knob non-positive or absent. */
+    /** Explicit conventional configuration. */
     private static WorkflowRunsConfig defaulted() {
-        return config("worker-1", 0, null, null, 0, 0, 0, null, null, null);
+        return WorkflowRunsConfig.defaults("worker-1");
     }
 
     @Test
     void aNullOrBlankWorkerIdIsRejected() {
         assertThatThrownBy(() -> config(null, 1, Duration.ofMinutes(1),
-                Duration.ofMillis(10), 1, 1, 1, null, null, null))
+                Duration.ofMillis(10), 1, 1, 1, null, "events", null))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("workerId");
         assertThatThrownBy(() -> config("   ", 1, Duration.ofMinutes(1),
-                Duration.ofMillis(10), 1, 1, 1, null, null, null))
+                Duration.ofMillis(10), 1, 1, 1, null, "events", null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("workerId must not be blank");
     }
 
     @Test
-    void nonPositiveKnobsFallBackToTheDefaults() {
+    void theFactorySelectsTheDocumentedDefaults() {
         WorkflowRunsConfig config = defaulted();
         assertThat(config.workerCount()).isEqualTo(WorkflowRunsConfig.DEFAULT_WORKER_COUNT);
         assertThat(config.leaseDuration()).isEqualTo(WorkflowRunsConfig.DEFAULT_LEASE_DURATION);
@@ -52,20 +51,6 @@ class WorkflowRunsConfigTest {
         assertThat(config.eventsTopic()).isEqualTo(WorkflowRunsConfig.DEFAULT_EVENTS_TOPIC);
         assertThat(config.requestTopic()).isNull();
         assertThat(config.kafkaBootstrapServers()).isNull();
-    }
-
-    @Test
-    void zeroAndNegativeDurationsFallBackToo() {
-        WorkflowRunsConfig zeroed = config("worker-1", -3, Duration.ZERO, Duration.ZERO,
-                -1, -2, -8, null, " ", null);
-        assertThat(zeroed.leaseDuration()).isEqualTo(WorkflowRunsConfig.DEFAULT_LEASE_DURATION);
-        assertThat(zeroed.pollInterval()).isEqualTo(WorkflowRunsConfig.DEFAULT_POLL_INTERVAL);
-        assertThat(zeroed.eventsTopic()).isEqualTo(WorkflowRunsConfig.DEFAULT_EVENTS_TOPIC);
-
-        WorkflowRunsConfig negative = config("worker-1", 1, Duration.ofSeconds(-5),
-                Duration.ofMillis(-1), 1, 1, 1, null, null, null);
-        assertThat(negative.leaseDuration()).isEqualTo(WorkflowRunsConfig.DEFAULT_LEASE_DURATION);
-        assertThat(negative.pollInterval()).isEqualTo(WorkflowRunsConfig.DEFAULT_POLL_INTERVAL);
     }
 
     @Test
@@ -85,20 +70,20 @@ class WorkflowRunsConfigTest {
     @Test
     void aRequestTopicWithoutABrokerIsAConfigurationError() {
         assertThatThrownBy(() -> config("worker-1", 1, Duration.ofMinutes(1),
-                Duration.ofMillis(10), 1, 1, 1, "workflow-run-requests", null, null))
+                Duration.ofMillis(10), 1, 1, 1, "workflow-run-requests", "events", null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("requestTopic")
                 .hasMessageContaining("bootstrap");
         // A blank bootstrap is no bootstrap at all.
         assertThatThrownBy(() -> config("worker-1", 1, Duration.ofMinutes(1),
-                Duration.ofMillis(10), 1, 1, 1, "workflow-run-requests", null, "  "))
+                Duration.ofMillis(10), 1, 1, 1, "workflow-run-requests", "events", "  "))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void aRequestTopicWithABrokerIsAccepted() {
         WorkflowRunsConfig config = config("worker-1", 1, Duration.ofMinutes(1),
-                Duration.ofMillis(10), 1, 1, 1, "workflow-run-requests", null,
+                Duration.ofMillis(10), 1, 1, 1, "workflow-run-requests", "events",
                 "localhost:9092");
         assertThat(config.requestTopic()).isEqualTo("workflow-run-requests");
         assertThat(config.kafkaBootstrapServers()).isEqualTo("localhost:9092");
@@ -109,7 +94,7 @@ class WorkflowRunsConfigTest {
         WorkflowRunsConfig without = defaulted();
         assertThat(without.schemaRegistryUrl()).isNull();
         WorkflowRunsConfig with = new WorkflowRunsConfig("worker-1", 1, Duration.ofMinutes(1),
-                Duration.ofMillis(10), 1, 1, 1, null, null, null, "http://registry:8081");
+                Duration.ofMillis(10), 1, 1, 1, null, "events", null, "http://registry:8081");
         assertThat(with.schemaRegistryUrl()).isEqualTo("http://registry:8081");
     }
 }
