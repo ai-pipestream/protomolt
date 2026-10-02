@@ -532,3 +532,6 @@ project(':protomolt-schema-registry-git-service').projectDir = file('schema/regi
 
 include 'protomolt-emit-git'
 project(':protomolt-emit-git').projectDir = file('sink/emit/git')
+
+include 'protomolt-schema-registry-composer'
+project(':protomolt-schema-registry-composer').projectDir = file('schema/registry/composer')
