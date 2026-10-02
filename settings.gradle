@@ -520,3 +520,6 @@ project(':protomolt-grpc-invoke-service').projectDir = file('surface/grpc/invoke
 
 include 'protomolt-grpc-mcp'
 project(':protomolt-grpc-mcp').projectDir = file('apps/grpc-mcp')
+
+include 'protomolt-cel'
+project(':protomolt-cel').projectDir = file('core/cel')

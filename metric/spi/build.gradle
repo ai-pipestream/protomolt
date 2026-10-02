@@ -7,6 +7,6 @@ dependencies {
     // Descriptions and sensitivity flow from the metadata standard.
     implementation project(':protomolt-protobuf-metadata')
     // filter_cel and calculated measures compile through the house CEL seam.
-    implementation project(':protomolt-mapper-cel')
+    implementation project(':protomolt-cel')
     implementation libs.slf4j.api
 }

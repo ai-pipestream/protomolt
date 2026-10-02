@@ -62,6 +62,7 @@ def supportedModules = [
         'protomolt-protobuf-validation-protovalidate',
         'protomolt-mapper',
         'protomolt-mapper-cel',
+        'protomolt-cel',
         'protomolt-projection',
         'protomolt-pipeline',
         'protomolt-delegation',

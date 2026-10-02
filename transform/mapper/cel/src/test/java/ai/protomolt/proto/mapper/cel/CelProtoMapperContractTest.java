@@ -1,5 +1,9 @@
-package ai.protomolt.proto.cel;
+package ai.protomolt.proto.mapper.cel;
 
+import ai.protomolt.proto.cel.CelCompilationException;
+import ai.protomolt.proto.cel.CelEvaluationException;
+import ai.protomolt.proto.cel.CelEnvironmentFactory;
+import ai.protomolt.proto.cel.CelEvaluator;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.mapper.MappingException;
 import ai.protomolt.proto.mapper.ProtoFieldMapperImpl;

@@ -4,7 +4,7 @@ import ai.protomolt.proto.actions.ActionCatalog;
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.actions.ProtoAction;
-import ai.protomolt.proto.cel.CelMappingRule;
+import ai.protomolt.proto.mapper.cel.CelMappingRule;
 import ai.protomolt.proto.grpc.invoke.DynamicGrpcCalls;
 import ai.protomolt.proto.grpc.policy.OutboundChannelPolicyException;
 import ai.protomolt.proto.sources.CompiledProtos;

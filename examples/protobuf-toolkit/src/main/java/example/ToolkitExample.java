@@ -2,8 +2,8 @@ package example;
 
 import ai.protomolt.proto.cel.CelEnvironmentFactory;
 import ai.protomolt.proto.cel.CelEvaluator;
-import ai.protomolt.proto.cel.CelMappingRule;
-import ai.protomolt.proto.cel.CelProtoMapper;
+import ai.protomolt.proto.mapper.cel.CelMappingRule;
+import ai.protomolt.proto.mapper.cel.CelProtoMapper;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.http.openapi.ProtoOpenApiGenerator;
 import ai.protomolt.proto.http.rest.ProtoRestMethod;

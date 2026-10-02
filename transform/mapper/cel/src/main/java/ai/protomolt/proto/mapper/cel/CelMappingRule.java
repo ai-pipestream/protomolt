@@ -1,4 +1,4 @@
-package ai.protomolt.proto.cel;
+package ai.protomolt.proto.mapper.cel;
 
 import java.util.List;
 import java.util.Objects;

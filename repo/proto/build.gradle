@@ -21,6 +21,7 @@ dependencies {
     // Contract fixtures exercise validate.v1 on generated and dynamic messages and
     // verify the OpenAPI-facing JSON Schema projection.
     testImplementation project(':protomolt-http-jsonschema')
+    testImplementation libs.jackson.databind
 
     // grpc-java's generated stubs annotate with @javax.annotation.Generated.
     compileOnly libs.javax.annotation.api

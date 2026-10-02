@@ -1,7 +1,7 @@
 package ai.protomolt.proto.shapes;
 
 import ai.protomolt.proto.cel.CelEnvironmentFactory;
-import ai.protomolt.proto.cel.CelMappingRule;
+import ai.protomolt.proto.mapper.cel.CelMappingRule;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import dev.cel.bundle.Cel;

@@ -1,0 +1,11 @@
+description = 'Shared CEL environments, compilation and evaluation independent of mapping'
+
+dependencies {
+    api libs.cel
+    api libs.protobuf.java
+    implementation libs.slf4j.api
+}
+
+ext.forbiddenRuntimeModules = ['protomolt-mapper', 'protomolt-mapper-cel', 'protomolt-shapes',
+    'protomolt-workflow', 'protomolt-protobuf-validation']
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

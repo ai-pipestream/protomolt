@@ -5,6 +5,7 @@ dependencies {
     api libs.protobuf.java
     api project(':protomolt-protobuf-validation')
     api project(':protomolt-protobuf-quality')
+    implementation libs.slf4j.api
 
     testImplementation libs.grpc.inprocess
     testImplementation libs.grpc.stub
