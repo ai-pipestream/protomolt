@@ -13,11 +13,11 @@ jobs:
   published-consumer:
     runs-on: ubuntu-latest
     steps:
-      # Public artifacts implement the base API while a PR changes the source API.
+      # Public artifacts track main; stacked PR bases can contain unpublished APIs.
       # The candidate API is tested separately against staged Maven artifacts.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.repository.default_branch || github.sha }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
