@@ -1,0 +1,13 @@
+description = 'MCP protocol, sessions and stdio transport over a supplied action catalog'
+
+dependencies {
+    api project(':protomolt-actions')
+    implementation libs.slf4j.api
+}
+
+ext.forbiddenRuntimeModules = [
+    'protomolt-actions-toolkit', 'protomolt-actions-schema', 'protomolt-actions-index',
+    'protomolt-registry', 'protomolt-workflow', 'protomolt-delegation', 'protomolt-codegen',
+    'protomolt-acquire-gather-git', 'protomolt-grpc-service-workspace', 'protomolt-search-index-lucene'
+]
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

@@ -32,6 +32,7 @@ def supportedModules = [
         'protomolt-registry',
         'protomolt-registry-proto',
         'protomolt-mcp',
+        'protomolt-mcp-transport',
         'protomolt-grpc-channel-policy',
         'protomolt-grpc-invoke',
         'protomolt-grpc-service-contract',

@@ -511,3 +511,6 @@ project(':protomolt-actions-schema').projectDir = file('surface/actions/schema')
 
 include 'protomolt-actions-toolkit'
 project(':protomolt-actions-toolkit').projectDir = file('surface/actions/toolkit')
+
+include 'protomolt-mcp-transport'
+project(':protomolt-mcp-transport').projectDir = file('surface/mcp/transport')
