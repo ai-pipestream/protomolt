@@ -159,3 +159,8 @@ only the actions they intend to expose.
 artifact and update the import. This also removes JGit from Parquet emission
 and the registry HTTP service's Parquet schema endpoint. Runtime gates reject
 Git dependencies from emit core and the generic registry HTTP service.
+
+Configuration type resolution reports corrupt stored schemas and missing listed
+subjects as storage errors. It does not skip them and return a misleading
+"type not found" result. Invalid JSON and protobuf config input retain their
+parse causes in `InvalidConfigException`.
