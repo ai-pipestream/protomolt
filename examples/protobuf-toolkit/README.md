@@ -123,7 +123,7 @@ staged directory. Missing candidate artifacts fail resolution instead of falling
 back to public snapshots. This checks Maven packaging and transitive dependencies;
 it does not publish artifacts remotely. The candidate CI job uses this path.
 
-On pull requests, the separate public-artifact job runs the base revision's
-example, whose API predates the proposed changes. On main and manual runs it uses
+On pull requests, the separate public-artifact job runs the default branch's
+example. A stacked PR base may already contain unpublished API changes. On main and manual runs it uses
 the selected revision. That public check can fail until matching snapshots have
 been published; candidate success is not evidence of public availability.
