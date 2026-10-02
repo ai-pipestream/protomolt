@@ -24,14 +24,16 @@ class ActionsMountTest {
     private SchemaRegistryServer server;
     private HttpClient client;
     private String base;
+    private ActionCatalog catalog;
 
     @BeforeEach
     void start() {
         store = new InMemorySchemaRegistryStore();
+        catalog = ActionCatalog.defaults(ActionContext.create());
         server = new SchemaRegistryServer(
                 SchemaRegistryServerConfig.defaults().withPort(0),
                 store,
-                ActionCatalog.defaults(ActionContext.create()));
+                catalog);
         int port = server.start();
         client = HttpClient.newHttpClient();
         base = "http://127.0.0.1:" + port;
@@ -92,6 +94,21 @@ class ActionsMountTest {
         assertThat(response.statusCode()).isEqualTo(400);
         assertThat(JSON.readTree(response.body()).path("error").asText())
                 .isEqualTo("invalid-input");
+    }
+
+    @Test
+    void invalidActionResponseIs500RatherThanAClientError() throws Exception {
+        catalog.register(new ai.protomolt.proto.actions.ProtoAction() {
+            public String name() { return "bad-response"; }
+            public String description() { return "Deliberately broken test action"; }
+            public com.google.protobuf.Descriptors.Descriptor requestType() { return com.google.protobuf.Empty.getDescriptor(); }
+            public com.google.protobuf.Descriptors.Descriptor responseType() { return com.google.protobuf.Struct.getDescriptor(); }
+            public com.google.protobuf.Message execute(com.google.protobuf.Message request,
+                    ai.protomolt.proto.actions.ActionContext context) { return com.google.protobuf.Empty.getDefaultInstance(); }
+        });
+        var response = post("/protomolt/actions/bad-response", "{}");
+        assertThat(response.statusCode()).isEqualTo(500);
+        assertThat(JSON.readTree(response.body()).path("error").asText()).isEqualTo("invalid-response");
     }
 
     @Test
