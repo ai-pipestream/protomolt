@@ -1,6 +1,6 @@
 package ai.protomolt.proto.workflow;
 
-import ai.protomolt.proto.cel.CelMappingRule;
+import ai.protomolt.proto.mapper.cel.CelMappingRule;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;

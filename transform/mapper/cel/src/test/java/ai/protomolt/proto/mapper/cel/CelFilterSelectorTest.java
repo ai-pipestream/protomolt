@@ -1,5 +1,8 @@
-package ai.protomolt.proto.cel;
+package ai.protomolt.proto.mapper.cel;
 
+import ai.protomolt.proto.cel.CelEvaluationException;
+import ai.protomolt.proto.cel.CelEnvironmentFactory;
+import ai.protomolt.proto.cel.CelEvaluator;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.mapper.ProtoFieldMapperImpl;
 import com.google.protobuf.Struct;
@@ -48,21 +51,21 @@ class CelFilterSelectorTest {
         mapper.map(document, List.of(new CelMappingRule("", "input.info.version", "body")));
         assertEquals("v1", document.build().getField(CelFixtures.DOCUMENT.findFieldByName("body")));
     }
-    @Test void selectorMissFallsBackToNextCandidate() throws Exception {
+    @Test void selectorFailureStopsBeforeTheNextCandidate() throws Exception {
         var document = CelFixtures.doc("title");
-        assertTrue(mapper.mapFirstCandidate(document, List.of(new CelMappingRule("", "input.nope", "body"), new CelMappingRule("", "'ok'", "body"))));
-        assertEquals("ok", document.build().getField(CelFixtures.DOCUMENT.findFieldByName("body")));
+        assertThrows(CelEvaluationException.class, () -> mapper.mapFirstCandidate(document, List.of(new CelMappingRule("", "input.nope", "body"), new CelMappingRule("", "'ok'", "body"))));
+        assertEquals("", document.build().getField(CelFixtures.DOCUMENT.findFieldByName("body")));
     }
     @Test void invalidFilterThrowsInStrictMap() {
         var document = CelFixtures.doc("title");
         assertThrows(CelEvaluationException.class,
                 () -> mapper.map(document, List.of(new CelMappingRule("input.title ==", "'x'", "body"))));
     }
-    @Test void invalidFilterSkipsCandidateInSoftMode() throws Exception {
+    @Test void invalidFilterStopsCandidateSelection() throws Exception {
         var document = CelFixtures.doc("title");
-        assertTrue(mapper.mapFirstCandidate(document, List.of(
+        assertThrows(CelEvaluationException.class, () -> mapper.mapFirstCandidate(document, List.of(
                 new CelMappingRule("input.title ==", "'x'", "body"), new CelMappingRule("", "'ok'", "body"))));
-        assertEquals("ok", document.build().getField(CelFixtures.DOCUMENT.findFieldByName("body")));
+        assertEquals("", document.build().getField(CelFixtures.DOCUMENT.findFieldByName("body")));
     }
     @Test void extraBindingIsVisibleToFilters() throws Exception {
         var registry = DescriptorRegistry.create(); registry.registerFile(CelFixtures.FILE);

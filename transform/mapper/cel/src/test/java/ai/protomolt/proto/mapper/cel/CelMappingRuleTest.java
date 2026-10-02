@@ -1,4 +1,4 @@
-package ai.protomolt.proto.cel;
+package ai.protomolt.proto.mapper.cel;
 
 import org.junit.jupiter.api.Test;
 

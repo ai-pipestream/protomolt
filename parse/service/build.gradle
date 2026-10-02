@@ -13,7 +13,7 @@ dependencies {
     // blocking stub, never repo container/service internals.
     implementation project(':protomolt-repo-proto')
     // CelEvaluator drives the routing-rule guards.
-    implementation project(':protomolt-mapper-cel')
+    implementation project(':protomolt-cel')
     // Parser discovery reads the toolkit's service-profile store.
     implementation project(':protomolt-grpc-service-profile')
     implementation libs.grpc.netty.shaded

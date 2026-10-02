@@ -613,10 +613,10 @@ public final class PipelineChecker {
         return types;
     }
 
-    private static List<ai.protomolt.proto.cel.CelMappingRule> records(
+    private static List<ai.protomolt.proto.mapper.cel.CelMappingRule> records(
             List<ai.protomolt.proto.grpc.workflow.v1.CelMappingRule> rules) {
         return rules.stream()
-                .map(rule -> new ai.protomolt.proto.cel.CelMappingRule(
+                .map(rule -> new ai.protomolt.proto.mapper.cel.CelMappingRule(
                         rule.getFilter().isBlank() ? null : rule.getFilter(),
                         rule.getSelector().isBlank() ? null : rule.getSelector(),
                         rule.getTarget(), rule.getFallbackList()))

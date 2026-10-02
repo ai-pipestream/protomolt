@@ -170,7 +170,7 @@ public final class WorkflowCompiler {
     }
 
     private static ai.protomolt.proto.grpc.workflow.v1.CelMappingRule compileRule(
-            ai.protomolt.proto.cel.CelMappingRule rule) {
+            ai.protomolt.proto.mapper.cel.CelMappingRule rule) {
         ai.protomolt.proto.grpc.workflow.v1.CelMappingRule.Builder builder =
                 ai.protomolt.proto.grpc.workflow.v1.CelMappingRule.newBuilder()
                         .setTarget(rule.targetPath())

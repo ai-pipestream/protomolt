@@ -30,6 +30,7 @@ dependencies {
     implementation project(':protomolt-protobuf-validation')
     implementation project(':protomolt-protobuf-metadata')
     implementation project(':protomolt-protobuf-quality')
+    implementation project(':protomolt-mapper-cel')
 
     testImplementation libs.kafka.clients
     testImplementation project(':protomolt-sources')

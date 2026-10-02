@@ -5,7 +5,7 @@ plugins {
 description = 'Protobuf validation standard — CEL-driven field and message constraints'
 
 dependencies {
-    api project(':protomolt-mapper-cel')
+    api project(':protomolt-cel')
     api libs.protobuf.java
     implementation project(':protomolt-formats')
 }
@@ -15,3 +15,6 @@ protobuf {
         artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}"
     }
 }
+
+ext.forbiddenRuntimeModules = ['protomolt-mapper', 'protomolt-mapper-cel']
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

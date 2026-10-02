@@ -2,7 +2,7 @@ package ai.protomolt.proto.workflow;
 
 import ai.protomolt.proto.cel.CelEnvironmentFactory;
 import ai.protomolt.proto.cel.CelEvaluator;
-import ai.protomolt.proto.cel.CelProtoMapper;
+import ai.protomolt.proto.mapper.cel.CelProtoMapper;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.grpc.workflow.WorkflowValidation;
 import ai.protomolt.proto.grpc.workflow.ArtifactRepository;
@@ -831,9 +831,9 @@ public final class WorkflowReplay {
         return builder.build();
     }
 
-    private static ai.protomolt.proto.cel.CelMappingRule toRecord(
+    private static ai.protomolt.proto.mapper.cel.CelMappingRule toRecord(
             ai.protomolt.proto.grpc.workflow.v1.CelMappingRule rule) {
-        return new ai.protomolt.proto.cel.CelMappingRule(
+        return new ai.protomolt.proto.mapper.cel.CelMappingRule(
                 rule.getFilter().isBlank() ? null : rule.getFilter(),
                 rule.getSelector().isBlank() ? null : rule.getSelector(),
                 rule.getTarget(), rule.getFallbackList());

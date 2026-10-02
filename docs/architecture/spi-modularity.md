@@ -81,3 +81,27 @@ Composer shutdown attempts all resources and channels before reporting cleanup
 failures. A startup failure retains its original cause and carries cleanup
 failures as suppressed exceptions. Channel termination timeout and interruption
 are failures; interruption preserves the thread flag.
+
+## Shared CEL foundation
+
+`protomolt-cel` supplies the existing environment factory, evaluator, expression
+validation and exception types in `ai.protomolt.proto.cel`. It depends on CEL,
+protobuf and SLF4J, with no mapping implementation. Protobuf validation now uses
+this foundation directly; a runtime gate prohibits both mapper modules. Quality,
+metric and parser routing code also select the foundation where mapping is unused.
+
+`protomolt-mapper-cel` supplies `CelProtoMapper` and `CelMappingRule` in
+`ai.protomolt.proto.mapper.cel`, depending on the foundation and field mapper.
+**Java migration:** callers of these two classes must update their imports from
+`ai.protomolt.proto.cel` and recompile. Public Java signatures referring to them
+change with the package move. Keeping wrappers in the old package would split
+that package across JARs, against the module rules. Shared evaluator types retain
+their names; consumers using only those types can depend on `protomolt-cel`.
+No protobuf definitions or stored descriptor identities change in this extraction.
+
+The extraction preserves evaluation behavior in a separate commit. The subsequent
+failure-handling change makes `evaluateBoolean`, `tryMap` and `mapFirstCandidate`
+propagate compilation and evaluation errors. Only a successfully evaluated false
+filter skips a candidate; a malformed expression cannot select a later fallback.
+Filtered-out selectors remain unevaluated. Callers relying on error-driven fallback
+must express the intended presence or eligibility condition as a filter.

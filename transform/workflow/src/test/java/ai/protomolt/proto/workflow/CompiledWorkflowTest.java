@@ -1,6 +1,6 @@
 package ai.protomolt.proto.workflow;
 
-import ai.protomolt.proto.cel.CelMappingRule;
+import ai.protomolt.proto.mapper.cel.CelMappingRule;
 import ai.protomolt.proto.sources.CompiledProtos;
 import ai.protomolt.proto.sources.ProtoSourceCompiler;
 import ai.protomolt.proto.sources.ProtoSourceSet;

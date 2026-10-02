@@ -2,7 +2,7 @@ package ai.protomolt.proto.workflow;
 
 import ai.protomolt.proto.cel.CelEnvironmentFactory;
 import ai.protomolt.proto.cel.CelEvaluator;
-import ai.protomolt.proto.cel.CelProtoMapper;
+import ai.protomolt.proto.mapper.cel.CelProtoMapper;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.grpc.invoke.DynamicGrpcCalls;
 import ai.protomolt.proto.grpc.policy.OutboundChannelPolicyException;
@@ -1073,7 +1073,7 @@ public final class WorkflowRunner {
                                                Map<String, Message> values,
                                                com.google.protobuf.Descriptors.Descriptor type,
                                                List<String> rules,
-                                               List<ai.protomolt.proto.cel.CelMappingRule> celRules,
+                                               List<ai.protomolt.proto.mapper.cel.CelMappingRule> celRules,
                                                String where) throws WorkflowExecutionException {
         MessageScope.Builder scope = MessageScope.builder();
         values.forEach(scope::add);

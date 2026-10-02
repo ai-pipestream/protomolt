@@ -5,7 +5,7 @@ plugins {
 description = 'Schema-native data quality: CEL-scored dimensions declared as protobuf message options'
 
 dependencies {
-    api project(':protomolt-mapper-cel')
+    api project(':protomolt-cel')
     api libs.protobuf.java
 }
 

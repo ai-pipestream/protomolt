@@ -1,6 +1,6 @@
 package ai.protomolt.proto.shapes;
 
-import ai.protomolt.proto.cel.CelMappingRule;
+import ai.protomolt.proto.mapper.cel.CelMappingRule;
 import ai.protomolt.proto.mapper.MappingException;
 import ai.protomolt.proto.sources.CompiledProtos;
 import ai.protomolt.proto.sources.ProtoSourceCompiler;

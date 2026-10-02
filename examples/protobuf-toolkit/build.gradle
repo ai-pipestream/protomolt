@@ -3,7 +3,15 @@ plugins {
     id 'com.google.protobuf' version '0.10.0'
 }
 
+def toolkitRepository = providers.gradleProperty('toolkitRepository')
+
 repositories {
+    if (toolkitRepository.isPresent()) {
+        exclusiveContent {
+            forRepository { maven { url = uri(toolkitRepository.get()) } }
+            filter { includeGroup 'ai.pipestream' }
+        }
+    }
     mavenCentral()
     maven {
         url = uri('https://central.sonatype.com/repository/maven-snapshots')
@@ -13,7 +21,7 @@ repositories {
 
 java { toolchain { languageVersion = JavaLanguageVersion.of(25) } }
 
-def protomoltVersion = '0.1.0-SNAPSHOT'
+def protomoltVersion = providers.gradleProperty('protomoltVersion').getOrElse('0.1.0-SNAPSHOT')
 dependencies {
     implementation "ai.pipestream:protomolt-mapper-cel:${protomoltVersion}"
     implementation "ai.pipestream:protomolt-projection:${protomoltVersion}"

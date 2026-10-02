@@ -45,22 +45,11 @@ public final class CelEvaluator {
     }
 
     /**
-     * Evaluates a boolean expression, returning {@code false} on any failure.
-     *
-     * <p>Compile failures are logged at WARN once (when first compiled and cached);
-     * runtime evaluation failures are logged at DEBUG.</p>
+     * Evaluates a boolean expression. Only an evaluated boolean false is a non-match;
+     * compilation errors, missing bindings, non-boolean results and runtime failures throw.
      */
     public boolean evaluateBoolean(String expression, Map<String, Object> bindings) {
-        try {
-            return evaluateBooleanOrFail(expression, bindings);
-        } catch (CelCompilationException e) {
-            // Already WARN-logged once when the failure was cached.
-            return false;
-        } catch (CelEvaluationException e) {
-            LOG.debug("CEL boolean expression failed at runtime, treating as false: {} ({})",
-                    expression, e.getMessage());
-            return false;
-        }
+        return evaluateBooleanOrFail(expression, bindings);
     }
 
     public boolean evaluateBooleanOrFail(String expression, Map<String, Object> bindings) {

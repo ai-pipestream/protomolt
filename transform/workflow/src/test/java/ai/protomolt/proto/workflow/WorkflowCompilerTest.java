@@ -1,6 +1,6 @@
 package ai.protomolt.proto.workflow;
 
-import ai.protomolt.proto.cel.CelMappingRule;
+import ai.protomolt.proto.mapper.cel.CelMappingRule;
 import ai.protomolt.proto.grpc.workflow.v1.Workflow;
 import ai.protomolt.proto.grpc.workflow.v1.ServiceDependency;
 import ai.protomolt.proto.grpc.workflow.v1.StepCompletion;

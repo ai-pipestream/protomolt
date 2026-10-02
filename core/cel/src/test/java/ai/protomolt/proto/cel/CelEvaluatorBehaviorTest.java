@@ -127,8 +127,8 @@ class CelEvaluatorBehaviorTest {
     }
 
     @Test
-    void evaluateBooleanOnMissingVariableReturnsFalse() {
+    void evaluateBooleanOnMissingVariableThrows() {
         CelEvaluator evaluator = new CelEvaluator();
-        assertFalse(evaluator.evaluateBoolean("input > 1", Map.of()));
+        assertThrows(CelEvaluationException.class, () -> evaluator.evaluateBoolean("input > 1", Map.of()));
     }
 }

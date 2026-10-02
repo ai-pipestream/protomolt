@@ -14,8 +14,11 @@ class CelEvaluatorTest {
         assertTrue(evaluator.evaluateBoolean("true", Map.of()));
         assertFalse(evaluator.evaluateBoolean("false", Map.of()));
     }
-    @Test void evaluateBooleanFailsSoftly() {
-        assertFalse(new CelEvaluator().evaluateBoolean("not valid(", Map.of()));
+    @Test void evaluateBooleanPropagatesCompilationFailure() {
+        assertThrows(CelCompilationException.class, () -> new CelEvaluator().evaluateBoolean("not valid(", Map.of()));
+    }
+    @Test void evaluateBooleanRejectsNonBoolean() {
+        assertThrows(CelEvaluationException.class, () -> new CelEvaluator().evaluateBoolean("'value'", Map.of()));
     }
     @Test void evaluateBooleanOrFailRejectsNonBoolean() {
         assertThrows(CelEvaluationException.class, () -> new CelEvaluator().evaluateBooleanOrFail("'value'", Map.of()));
@@ -60,7 +63,7 @@ class CelEvaluatorTest {
         CelEvaluationException e = assertThrows(CelEvaluationException.class,
                 () -> evaluator.evaluateValue("1 / 0", Map.of()));
         assertFalse(e instanceof CelCompilationException);
-        assertFalse(evaluator.evaluateBoolean("1 / 0 == 1", Map.of()));
+        assertThrows(CelEvaluationException.class, () -> evaluator.evaluateBoolean("1 / 0 == 1", Map.of()));
     }
     /**
      * Warmup is precompilation, so callers that catch {@link CelCompilationException} to tell a

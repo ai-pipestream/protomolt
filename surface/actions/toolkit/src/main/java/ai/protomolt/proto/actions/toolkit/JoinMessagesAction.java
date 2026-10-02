@@ -12,7 +12,7 @@ import ai.protomolt.proto.actions.Scopes;
 
 import ai.protomolt.proto.cel.CelCompilationException;
 import ai.protomolt.proto.cel.CelEvaluationException;
-import ai.protomolt.proto.cel.CelMappingRule;
+import ai.protomolt.proto.mapper.cel.CelMappingRule;
 import ai.protomolt.proto.http.json.MalformedProtobufJsonException;
 import ai.protomolt.proto.mapper.MappingException;
 import ai.protomolt.proto.shapes.MessageJoiner;

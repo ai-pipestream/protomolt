@@ -2,7 +2,7 @@ package ai.protomolt.proto.pipeline;
 
 import ai.protomolt.proto.cel.CelEnvironmentFactory;
 import ai.protomolt.proto.cel.CelEvaluator;
-import ai.protomolt.proto.cel.CelProtoMapper;
+import ai.protomolt.proto.mapper.cel.CelProtoMapper;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.grpc.workflow.v1.BranchFailurePolicy;
 import ai.protomolt.proto.grpc.workflow.v1.CelMappingRule;
@@ -688,8 +688,8 @@ public final class PipelineExecutor {
         return new CelEvaluator(factory.build());
     }
 
-    private static ai.protomolt.proto.cel.CelMappingRule celRule(CelMappingRule rule) {
-        return new ai.protomolt.proto.cel.CelMappingRule(
+    private static ai.protomolt.proto.mapper.cel.CelMappingRule celRule(CelMappingRule rule) {
+        return new ai.protomolt.proto.mapper.cel.CelMappingRule(
                 rule.getFilter().isBlank() ? null : rule.getFilter(),
                 rule.getSelector().isBlank() ? null : rule.getSelector(),
                 rule.getTarget(), rule.getFallbackList());
