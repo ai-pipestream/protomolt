@@ -247,20 +247,37 @@ public final class CatalogContract {
      */
     public static void validate(Message request, Descriptor descriptor, String verb)
             throws ActionException {
-        // Compared by name rather than by identity: the same contract reaches a verb both
-        // as a generated message and as a dynamic one built off the compiled descriptor, and
-        // those are the same type even though they are not the same descriptor instance.
+        checkedRequest(request, descriptor, verb);
+    }
+
+    /** Validates using the declared request rules and returns that contract's representation. */
+    public static Message checkedRequest(Message request, Descriptor descriptor, String verb)
+            throws ActionException {
+        if (request == null) {
+            throw new ActionException("invalid-input", verb + " requires a non-null request");
+        }
         if (!request.getDescriptorForType().getFullName().equals(descriptor.getFullName())) {
             throw new ActionException("invalid-input",
                     verb + " expects a " + descriptor.getFullName() + ", not a "
                             + request.getDescriptorForType().getFullName());
         }
-        ValidationResult result = inspect(request);
+        Message checked;
+        try {
+            checked = request.getDescriptorForType() == descriptor ? request
+                    : DynamicMessage.parseFrom(descriptor, request.toByteString());
+        } catch (InvalidProtocolBufferException e) {
+            ActionException failure = new ActionException("invalid-input",
+                    verb + " request could not be decoded as " + descriptor.getFullName());
+            failure.initCause(e);
+            throw failure;
+        }
+        ValidationResult result = inspect(checked);
         if (!result.valid()) {
             throw new ActionException("invalid-input",
                     verb + " does not satisfy the request contract: " + describe(result),
                     violations(result));
         }
+        return checked;
     }
 
     /**
