@@ -23,8 +23,8 @@ import java.util.ServiceLoader;
  *
  * <p>Optional actions are discovered from the thread context class loader through
  * {@link ActionProvider}. Only installed providers are advertised. Add
- * {@code protomolt-actions-index} to retain the index-rendering verb in a standalone
- * catalog; the full launchers include it explicitly. Provider loading failures abort
+ * {@code protomolt-actions-toolkit} for toolkit verbs and {@code protomolt-actions-index}
+ * for index rendering; the full launchers include both explicitly. Provider loading failures abort
  * construction rather than silently returning a partially populated catalog.
  */
 public final class ActionCatalog {
@@ -39,7 +39,7 @@ public final class ActionCatalog {
     }
 
     /**
-     * A catalog with the core actions and installed optional providers registered,
+     * A catalog with the installed action providers registered,
      * spending on its own ledger, for the node's only enforcement point. A node that also serves another
      * enforcement point passes one shared ledger through
      * {@link #defaults(ActionContext, ScopeBudgets)}, or a principal gets a separate
@@ -50,18 +50,12 @@ public final class ActionCatalog {
     }
 
     /**
-     * A catalog with the core actions and installed optional providers registered,
+     * A catalog with the installed action providers registered,
      * spending on {@code budgets}. The node's other enforcement points take the same ledger, so a principal's per-scope
      * budget is one allowance however it reaches the node.
      */
     public static ActionCatalog defaults(ActionContext context, ScopeBudgets budgets) {
         ActionCatalog catalog = new ActionCatalog(context, budgets);
-        catalog.register(new CompileAction());
-        catalog.register(new ValidateMessageAction());
-        catalog.register(new DiffSchemasAction());
-        catalog.register(new CheckCompatAction());
-        catalog.register(new RenderJsonSchemaAction());
-        catalog.register(new RenderPromptAction());
         for (ActionProvider provider : ServiceLoader.load(ActionProvider.class).stream()
                 .sorted(Comparator.comparing(p -> p.type().getName()))
                 .map(ServiceLoader.Provider::get).toList()) {
@@ -69,16 +63,6 @@ public final class ActionCatalog {
                 catalog.register(action);
             }
         }
-        catalog.register(new EvalCelAction());
-        catalog.register(new MapMessageAction());
-        catalog.register(new SynthesizeShapeAction());
-        catalog.register(new JoinMessagesAction());
-        catalog.register(new MergeSchemasAction());
-        catalog.register(new CheckRulesAction());
-        catalog.register(new InferSchemaAction());
-        catalog.register(new MaskMessageAction());
-        catalog.register(new ExtractMetadataAction());
-        catalog.register(new ListTypesAction());
         return catalog;
     }
 
@@ -100,7 +84,7 @@ public final class ActionCatalog {
      *         {@link #replace} when overriding is the intent
      */
     public synchronized ActionCatalog register(ProtoAction action) {
-        String name = Objects.requireNonNull(action, "action").name();
+        String name = checkedName(action);
         ProtoAction existing = actions.putIfAbsent(name, action);
         if (existing != null) {
             throw new IllegalStateException("Action '" + name + "' is already registered ("
@@ -109,9 +93,20 @@ public final class ActionCatalog {
         return this;
     }
 
+    private static String checkedName(ProtoAction action) {
+        Objects.requireNonNull(action, "action");
+        String name = Objects.requireNonNull(action.name(), "action name");
+        if (name.isBlank()) {
+            throw new IllegalArgumentException("Action name must not be blank");
+        }
+        Objects.requireNonNull(action.requestType(), "request contract for " + name);
+        Objects.requireNonNull(action.responseType(), "response contract for " + name);
+        return name;
+    }
+
     /** Deliberately replaces (or adds) an action — the explicit override path. */
     public synchronized ActionCatalog replace(ProtoAction action) {
-        actions.put(Objects.requireNonNull(action, "action").name(), action);
+        actions.put(checkedName(action), action);
         return this;
     }
 

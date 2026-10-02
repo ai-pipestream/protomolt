@@ -27,6 +27,8 @@ def supportedModules = [
         'protomolt-compat',
         'protomolt-actions',
         'protomolt-actions-index',
+        'protomolt-actions-schema',
+        'protomolt-actions-toolkit',
         'protomolt-registry',
         'protomolt-registry-proto',
         'protomolt-mcp',

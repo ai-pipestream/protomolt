@@ -1,0 +1,19 @@
+// Applied by reusable entry points after declaring ext.forbiddenRuntimeModules.
+// Inspect the production runtime graph, not the broader integration-test classpath.
+tasks.register('checkRuntimeBoundaries') {
+    group = 'verification'
+    description = 'Reject optional capability implementations in this runtime graph'
+    doLast {
+        def forbidden = project.ext.forbiddenRuntimeModules as Set
+        def leaked = configurations.runtimeClasspath.incoming.resolutionResult.allComponents.findAll { component ->
+            def id = component.moduleVersion
+            id != null && forbidden.contains(id.name)
+        }.collect { it.id.displayName }.sort()
+        if (!leaked.isEmpty()) {
+            throw new GradleException(project.name + ' includes forbidden runtime dependencies: ' + leaked)
+        }
+    }
+}
+
+tasks.named('check') { dependsOn tasks.named('checkRuntimeBoundaries') }
+tasks.named('test') { dependsOn tasks.named('checkRuntimeBoundaries') }

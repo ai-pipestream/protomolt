@@ -1,26 +1,51 @@
-description = 'Action catalog: JSON-in/JSON-out verbs over the toolkit, mountable as HTTP endpoints or MCP tools'
+description = 'Action contracts, dispatch, authorization and validation with SPI-loaded capabilities'
 
 dependencies {
     api project(':protomolt-descriptors')
     api libs.jackson.databind
-    // ActionContext.transcoder() returns ProtobufJsonTranscoder from this module.
     api project(':protomolt-http-json')
-
-    implementation project(':protomolt-sources')
-    implementation project(':protomolt-compat')
-    implementation project(':protomolt-protobuf-validation')
-    implementation project(':protomolt-protobuf-metadata')
-    implementation project(':protomolt-protobuf-llm')
-    implementation project(':protomolt-protobuf-quality')
-    implementation project(':protomolt-protobuf-prompt')
+    // CatalogContract.inspect/finding expose ValidationResult in the public API.
+    api project(':protomolt-protobuf-validation')
     implementation project(':protomolt-http-jsonschema')
-    // The request messages the catalog verbs are declared in, so an input schema is
-    // derived from the contract rather than hand-written beside it.
-    implementation project(':protomolt-grpc-service-contract')
-    implementation project(':protomolt-mapper')
-    implementation project(':protomolt-mapper-cel')
-    implementation project(':protomolt-shapes')
-    implementation project(':protomolt-search-index-spi')
-    // Existing full-catalog tests exercise optional indexing through its provider.
+    testImplementation project(':protomolt-grpc-service-contract')
+    testImplementation project(':protomolt-sources')
+    testImplementation project(':protomolt-protobuf-metadata')
+    testImplementation project(':protomolt-protobuf-llm')
+    testImplementation project(':protomolt-protobuf-quality')
+    testImplementation project(':protomolt-search-index-spi')
+    testRuntimeOnly project(':protomolt-actions-toolkit')
     testRuntimeOnly project(':protomolt-actions-index')
 }
+
+ext.forbiddenRuntimeModules = [
+        'protomolt-actions-toolkit', 'protomolt-actions-schema', 'protomolt-actions-index',
+        'protomolt-sources', 'protomolt-compat', 'protomolt-shapes',
+        'protomolt-protobuf-metadata', 'protomolt-protobuf-quality', 'protomolt-protobuf-prompt',
+        'protomolt-search-index-spi', 'protomolt-grpc-service-contract',
+        'protomolt-grpc-workflow', 'protomolt-workflow', 'protomolt-delegation', 'protomolt-codegen'
+]
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')
+
+// A separate JVM proves the core operates without the full integration-test providers.
+sourceSets {
+    boundaryTest {
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+configurations {
+    boundaryTestImplementation.extendsFrom implementation
+    boundaryTestRuntimeOnly.extendsFrom runtimeOnly
+}
+dependencies {
+    boundaryTestImplementation platform(libs.junit.bom)
+    boundaryTestImplementation libs.junit.jupiter
+    boundaryTestImplementation libs.assertj.core
+    boundaryTestRuntimeOnly libs.junit.platform.launcher
+}
+tasks.register('boundaryTest', Test) {
+    testClassesDirs = sourceSets.boundaryTest.output.classesDirs
+    classpath = sourceSets.boundaryTest.runtimeClasspath
+    useJUnitPlatform()
+}
+tasks.named('test') { dependsOn tasks.named('boundaryTest') }

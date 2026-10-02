@@ -1,6 +1,5 @@
 package ai.protomolt.proto.actions;
 
-import ai.protomolt.proto.grpc.service.contract.ProtoMoltServiceSchema;
 import ai.protomolt.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.protomolt.proto.validate.ProtoValidator;
 import ai.protomolt.proto.validate.ValidationResult;
@@ -14,17 +13,20 @@ import com.google.protobuf.Message;
 import com.google.protobuf.MessageOrBuilder;
 import com.google.protobuf.util.JsonFormat;
 
+import java.util.ServiceLoader;
+
 /**
  * The declared contract behind a catalog verb: the request message it accepts, the input
  * schema derived from that message, and envelope parsing that enforces the message's rules.
  *
- * <p>Every verb is declared as an RPC on the ProtoMolt service, so the request message is
+ * <p>Each verb declares its request descriptor, so the request message is
  * the one description of what the verb takes. Deriving the published schema from it means a
  * caller reading the tool manifest sees the bounds the verb applies, and a rule added to the
  * proto reaches every surface without a second edit.
  *
- * <p>The definition is compiled from source at load, so a request message is reached by name
- * off that descriptor rather than through a generated class.
+ * <p>Descriptor-native actions use their descriptors directly. Named toolkit contracts
+ * resolve through an installed {@link ActionContractProvider}; the dispatch core does not
+ * compile or depend on the bundled service definition.
  */
 public final class CatalogContract {
 
@@ -47,12 +49,13 @@ public final class CatalogContract {
 
     /** The request message a verb is declared in, by its name in the service definition. */
     public static Descriptor request(String message) {
-        Descriptor descriptor = ProtoMoltServiceSchema.file().findMessageTypeByName(message);
-        if (descriptor == null) {
-            throw new IllegalStateException(
-                    "The service definition declares no message named " + message);
+        var matches = ServiceLoader.load(ActionContractProvider.class).stream()
+                .flatMap(provider -> provider.get().find(message).stream()).toList();
+        if (matches.size() != 1) {
+            throw new IllegalStateException("Expected one installed action contract named " + message
+                    + "; found " + matches.size() + ". Install or correct the action contract provider.");
         }
-        return descriptor;
+        return matches.getFirst();
     }
 
     /** The response message a verb answers with, by its name in the service definition. */

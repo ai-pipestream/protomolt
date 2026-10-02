@@ -1,8 +1,8 @@
 # Actions
 
-`protomolt-actions` is a catalog of verbs over the toolkit: compile,
-validate, diff, check, render, evaluate: with one JSON envelope in and one
-out. It exists for the edges: the registry console drives it over HTTP, and
+`protomolt-actions` supplies the catalog and validated dispatch boundary.
+`protomolt-actions-toolkit` supplies compile, validate, diff, check, render and
+evaluate operations through Java SPI. It exists for the edges: the registry console drives it over HTTP, and
 an MCP mount can expose the same catalog as tools for LLM-driven schema
 work. JSON is deliberately confined to this layer; every action wraps a
 descriptor-native library underneath, and machine-to-machine paths should
@@ -22,9 +22,10 @@ repair strategies, which matters when the caller is a model.
 
 ## The built-in catalog
 
-`ActionCatalog.defaults(...)` registers the core actions and installed optional providers.
-Index rendering requires `protomolt-actions-index`; the full gRPC, MCP and registry
-distributions include it. A standalone catalog can omit it, or use
+`ActionCatalog.defaults(...)` registers installed action providers.
+Toolkit operations require `protomolt-actions-toolkit`; index rendering requires
+`protomolt-actions-index`. The full gRPC, MCP and registry
+distributions include both. A standalone catalog can omit either, or use
 `ActionCatalog.empty(...)` and register only the required operations. See
 [optional action providers](../architecture/action-providers.md) for dependencies
 and provider registration.

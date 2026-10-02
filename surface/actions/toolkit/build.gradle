@@ -1,0 +1,17 @@
+description = 'Optional protobuf toolkit actions'
+
+dependencies {
+    api project(':protomolt-actions')
+    runtimeOnly project(':protomolt-actions-schema')
+    implementation project(':protomolt-sources')
+    implementation project(':protomolt-compat')
+    implementation project(':protomolt-protobuf-validation')
+    implementation project(':protomolt-protobuf-metadata')
+    implementation project(':protomolt-protobuf-llm')
+    implementation project(':protomolt-protobuf-quality')
+    implementation project(':protomolt-protobuf-prompt')
+    implementation project(':protomolt-http-jsonschema')
+    implementation project(':protomolt-mapper')
+    implementation project(':protomolt-mapper-cel')
+    implementation project(':protomolt-shapes')
+}

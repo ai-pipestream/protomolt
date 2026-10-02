@@ -5,6 +5,7 @@ plugins {
 description = 'Validated authoring review and recoverable launch of accepted workflows'
 
 dependencies {
+    runtimeOnly project(':protomolt-actions-schema')
     api project(':protomolt-delegation')
     api project(':protomolt-workflow')
     api project(':protomolt-jobs-service')

@@ -2,6 +2,7 @@ description = 'Optional index-rendering actions for the ProtoMolt action catalog
 
 dependencies {
     api project(':protomolt-actions')
+    runtimeOnly project(':protomolt-actions-schema')
     implementation project(':protomolt-search-index-spi')
     implementation project(':protomolt-search-index-lucene')
     implementation project(':protomolt-search-index-opensearch')

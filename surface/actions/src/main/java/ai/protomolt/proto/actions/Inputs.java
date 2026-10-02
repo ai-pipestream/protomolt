@@ -53,7 +53,7 @@ public final class Inputs {
         return (ObjectNode) node;
     }
 
-    static String requireString(ObjectNode input, String field) throws ActionException {
+    public static String requireString(ObjectNode input, String field) throws ActionException {
         JsonNode node = input.get(field);
         if (node == null || node.isNull()) {
             throw invalidInput("Missing required string field '" + field + "'", "/" + field);
@@ -65,7 +65,7 @@ public final class Inputs {
     }
 
     /** Returns {@code null} when absent; rejects present non-string values. */
-    static String optionalString(ObjectNode input, String field) throws ActionException {
+    public static String optionalString(ObjectNode input, String field) throws ActionException {
         JsonNode node = input.get(field);
         if (node == null || node.isNull()) {
             return null;

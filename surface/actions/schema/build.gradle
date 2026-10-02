@@ -1,0 +1,12 @@
+description = 'Schema-source resolution provider for action callers'
+
+dependencies {
+    api project(':protomolt-actions')
+    implementation project(':protomolt-grpc-service-contract')
+    implementation project(':protomolt-sources')
+    implementation project(':protomolt-protobuf-validation')
+    implementation project(':protomolt-protobuf-metadata')
+    implementation project(':protomolt-protobuf-llm')
+    implementation project(':protomolt-protobuf-quality')
+    implementation project(':protomolt-search-index-spi')
+}

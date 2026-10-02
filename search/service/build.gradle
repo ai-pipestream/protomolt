@@ -1,6 +1,8 @@
 description = 'The search service: a Lucene-backed query and indexing gRPC service serving mapping subjects, gated by mapping membership, running the chunk-and-embed lane at index time'
 
 dependencies {
+    // Replay tests supply a job action using the named workflow contract provider.
+    testRuntimeOnly project(':protomolt-actions-schema')
     api project(':protomolt-composer')
     api project(':protomolt-search-proto')
     api project(':protomolt-search-index-spi')

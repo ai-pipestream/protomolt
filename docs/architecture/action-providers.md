@@ -11,16 +11,37 @@ required by your service. Use `empty(context, budgets)` when several transports
 must share a caller's scope-budget ledger. An empty catalog does not bypass
 request validation or authorization.
 
-`ActionCatalog.defaults(context)` registers the core toolkit actions plus
+`ActionCatalog.defaults(context)` registers actions supplied by
 providers visible to the thread context class loader. Provider classes are sorted
 by fully qualified class name; each provider returns its actions in a stable
-order. Optional actions occupy the slot after `render-prompt` and before
-`eval-cel`, retaining the previous position of `render-index-mappings` in the
-full distribution.
+order. No provider means an empty catalog. Use `empty` when composing entirely
+through explicit registration. Full-catalog ordering follows provider class order,
+then each provider's action order; callers should identify tools by name.
 
 Only installed providers appear in the catalog manifest. Duplicate names and
 provider-loading errors fail construction; they do not silently override an
 action or produce an apparently complete catalog.
+
+## Toolkit and schema-source migration
+
+`protomolt-actions` contains action types, dispatch, authorization, budgets and
+descriptor-based contract validation. Install the toolkit actions explicitly:
+
+```groovy
+runtimeOnly "ai.pipestream:protomolt-actions-toolkit:${protomoltVersion}"
+```
+
+That module includes `protomolt-actions-schema` at runtime. Applications using
+`SchemaResolver` or named `CatalogContract.request(String)` lookups without toolkit
+actions can install `protomolt-actions-schema` alone. It supplies
+`SchemaResolverProvider` and `ActionContractProvider`; missing or ambiguous schema
+providers and missing or ambiguous named contracts fail explicitly. Existing public
+facades and protobuf definitions retain their names. Descriptor-native custom actions
+do not need either provider and can use the core alone.
+
+Registration resolves an action's request and response descriptors before installing
+it. Broken contract providers therefore fail during catalog construction. Provider
+constructors must be stateless and must not acquire network or worker resources.
 
 ## Index-rendering migration
 
@@ -68,9 +89,13 @@ and Lucene libraries from the resolved production runtime graph. Both `test` and
 inspects the production configuration so test-only dependencies cannot hide a
 runtime dependency leak.
 
-The catalog still includes core toolkit implementations and schema-source helpers.
-This first extraction removes the concrete indexing dependency; it does not claim
-that a fully minimal gRPC/MCP/ACP distribution has already been built.
+`:protomolt-actions:checkRuntimeBoundaries` rejects toolkit implementations,
+compilation, indexing, workflow and named service-contract dependencies in the core
+runtime. `:protomolt-actions:boundaryTest` runs a descriptor-native action in a separate
+test JVM without any optional action, schema or contract providers. The broader action
+suite exercises the installed toolkit and index providers.
+
+A fully minimal gRPC/MCP/ACP distribution remains separate work.
 
 ## Separate response-validation follow-up
 
