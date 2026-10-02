@@ -5,6 +5,8 @@ plugins {
 description = 'One-process launcher: ProtoMoltService over gRPC with reflection, the same verbs over JSON/REST with OpenAPI and Swagger UI, MCP on streamable HTTP, and an optional git-backed registry'
 
 dependencies {
+    implementation project(':protomolt-delegation-repository')
+    implementation project(':protomolt-delegation-receipt')
     implementation project(':protomolt-schema-registry-git')
     api project(':protomolt-grpc-service')
     // The access-policy loader and resolver behind --access-policy, and the

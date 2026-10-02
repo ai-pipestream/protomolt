@@ -1,5 +1,7 @@
 package ai.protomolt.proto.samples;
 
+import ai.protomolt.proto.delegation.lifecycle.DelegationReducer;
+
 import ai.protomolt.proto.delegation.DelegationBridge;
 import ai.protomolt.proto.delegation.InProcessDelegationCoordinator;
 import ai.protomolt.proto.delegation.v1.AcceptanceCheck;
@@ -65,7 +67,7 @@ class CoordinationReportAdmissionTest {
                     .hasMessageContaining("finding_count must equal the number of findings");
 
             assertThat(coordinator.state().tasks().get(TASK).phase())
-                    .isEqualTo(ai.protomolt.proto.delegation.DelegationReducer.Phase.LEASED);
+                    .isEqualTo(ai.protomolt.proto.delegation.lifecycle.DelegationReducer.Phase.LEASED);
             assertThat(coordinator.transcript().getEntriesList())
                     .noneSatisfy(entry -> assertThat(entry.getWorkerFrame().hasCompletion()).isTrue());
         } finally {

@@ -5,6 +5,7 @@ plugins {
 description = 'The mesh cluster directory: cluster advertisement and presence contracts, the in-memory TTL directory, and the delegation hello bridge'
 
 dependencies {
+    api project(':protomolt-delegation-repository')
     api libs.protobuf.java
     api libs.protobuf.java.util
     // The cluster contracts reuse the mesh core SchemaReference and

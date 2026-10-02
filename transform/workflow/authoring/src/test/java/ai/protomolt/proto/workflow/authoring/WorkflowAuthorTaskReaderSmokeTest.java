@@ -2,7 +2,7 @@ package ai.protomolt.proto.workflow.authoring;
 
 import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.actions.Scopes;
-import ai.protomolt.proto.delegation.InMemoryTranscriptRepository;
+import ai.protomolt.proto.delegation.lifecycle.InMemoryTranscriptRepository;
 import ai.protomolt.proto.grpc.workflow.ArtifactRepository;
 import ai.protomolt.proto.grpc.workflow.v1.ArtifactReference;
 import ai.protomolt.proto.workflow.authoring.v1.GetWorkflowAuthorContextRequest;

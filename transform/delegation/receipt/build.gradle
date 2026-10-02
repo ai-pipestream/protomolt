@@ -1,0 +1,7 @@
+description = 'Project delegation transcripts into signed-work-record manifests'
+dependencies {
+    api project(':protomolt-delegation-lifecycle')
+    api project(':protomolt-receipt')
+}
+ext.forbiddenRuntimeModules = ['protomolt-delegation', 'protomolt-actions', 'protomolt-repo-proto', 'protomolt-delegation-repository']
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

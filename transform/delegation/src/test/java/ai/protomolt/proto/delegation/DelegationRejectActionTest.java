@@ -1,5 +1,7 @@
 package ai.protomolt.proto.delegation;
 
+import ai.protomolt.proto.delegation.lifecycle.DelegationReducer;
+
 import ai.protomolt.proto.actions.ActionCatalog;
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.actions.ActionException;

@@ -1,5 +1,7 @@
 package ai.protomolt.proto.delegation;
 
+import ai.protomolt.proto.delegation.lifecycle.DelegationReducer;
+
 import ai.protomolt.proto.delegation.v1.CheckEvidence;
 import ai.protomolt.proto.delegation.v1.CheckVerdict;
 import ai.protomolt.proto.delegation.v1.CheckpointReference;

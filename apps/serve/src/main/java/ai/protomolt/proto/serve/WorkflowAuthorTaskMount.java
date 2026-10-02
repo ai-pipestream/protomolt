@@ -2,7 +2,7 @@ package ai.protomolt.proto.serve;
 
 import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.delegation.DelegationBridge;
-import ai.protomolt.proto.delegation.TranscriptRepository;
+import ai.protomolt.proto.delegation.lifecycle.TranscriptRepository;
 import ai.protomolt.proto.delegation.v1.*;
 import ai.protomolt.proto.workflow.authoring.WorkflowAuthorTaskMutations;
 import ai.protomolt.proto.workflow.authoring.WorkflowAuthorTaskOperations;

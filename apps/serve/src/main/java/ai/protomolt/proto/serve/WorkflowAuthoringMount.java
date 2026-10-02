@@ -2,7 +2,7 @@ package ai.protomolt.proto.serve;
 
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.delegation.CandidateReviewer;
-import ai.protomolt.proto.delegation.TranscriptRepository;
+import ai.protomolt.proto.delegation.lifecycle.TranscriptRepository;
 import ai.protomolt.proto.grpc.workflow.ArtifactRepository;
 import ai.protomolt.proto.grpc.workflow.RunEvidenceRepository;
 import ai.protomolt.proto.grpc.workflow.WorkflowValidation;

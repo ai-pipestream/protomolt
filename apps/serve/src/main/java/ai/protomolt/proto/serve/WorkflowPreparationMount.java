@@ -1,6 +1,6 @@
 package ai.protomolt.proto.serve;
 
-import ai.protomolt.proto.delegation.TranscriptRepository;
+import ai.protomolt.proto.delegation.lifecycle.TranscriptRepository;
 import ai.protomolt.proto.workflow.RecordSigning;
 import ai.protomolt.proto.workflow.authoring.FileSystemWorkflowPreparationRepository;
 import ai.protomolt.proto.workflow.authoring.WorkflowCandidatePreparer;

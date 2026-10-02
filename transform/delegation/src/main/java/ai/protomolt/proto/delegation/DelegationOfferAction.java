@@ -1,5 +1,7 @@
 package ai.protomolt.proto.delegation;
 
+import ai.protomolt.proto.delegation.contract.DeliverableContracts;
+
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.actions.CatalogContract;

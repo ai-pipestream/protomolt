@@ -1,0 +1,21 @@
+plugins { alias(libs.plugins.protobuf) }
+
+protobuf {
+    protoc { artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}" }
+    plugins { grpc { artifact = "io.grpc:protoc-gen-grpc-java:${libs.versions.grpc.get()}" } }
+    generateProtoTasks { all().configureEach { plugins { grpc {} } } }
+}
+
+description = 'Delegation wire contracts with stable protobuf and generated Java identities'
+dependencies {
+    api libs.protobuf.java
+    api libs.grpc.api
+    api libs.grpc.stub
+    api libs.grpc.protobuf
+    api project(':protomolt-grpc-workflow')
+    api project(':protomolt-protobuf-validation')
+    api project(':protomolt-protobuf-metadata')
+    compileOnly libs.javax.annotation.api
+}
+ext.forbiddenRuntimeModules = ['protomolt-delegation', 'protomolt-actions', 'protomolt-receipt', 'protomolt-repo-proto']
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

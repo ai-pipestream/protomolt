@@ -1,5 +1,17 @@
 package ai.protomolt.proto.delegation;
 
+import ai.protomolt.proto.delegation.lifecycle.InMemoryTranscriptRepository;
+
+import ai.protomolt.proto.delegation.lifecycle.TranscriptRepository;
+
+import ai.protomolt.proto.delegation.lifecycle.DelegationReviewBindings;
+
+import ai.protomolt.proto.delegation.lifecycle.DelegationReducer;
+
+import ai.protomolt.proto.delegation.contract.DelegationValidation;
+
+import ai.protomolt.proto.delegation.contract.DeliverableContracts;
+
 import ai.protomolt.proto.delegation.CandidateReviewer.ReviewDecision;
 import ai.protomolt.proto.delegation.v1.AdmissionDecision;
 import ai.protomolt.proto.delegation.v1.AgentDelegationServiceGrpc;

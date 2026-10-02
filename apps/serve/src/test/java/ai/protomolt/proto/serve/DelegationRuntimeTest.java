@@ -1,9 +1,9 @@
 package ai.protomolt.proto.serve;
 
 import ai.protomolt.proto.delegation.DelegationBridge;
-import ai.protomolt.proto.delegation.DelegationReducer;
-import ai.protomolt.proto.delegation.RepositoryServiceTranscriptRepository;
-import ai.protomolt.proto.delegation.RepositoryStateKeyResolver;
+import ai.protomolt.proto.delegation.lifecycle.DelegationReducer;
+import ai.protomolt.proto.delegation.repository.RepositoryServiceTranscriptRepository;
+import ai.protomolt.proto.delegation.repository.RepositoryStateKeyResolver;
 import ai.protomolt.proto.delegation.v1.AcceptanceCheck;
 import ai.protomolt.proto.delegation.v1.TaskSpec;
 import ai.protomolt.proto.delegation.v1.WorkerCapability;

@@ -1,56 +1,12 @@
-plugins {
-    alias(libs.plugins.protobuf)
-}
-
-description = 'The agent delegation contract: the engine-neutral coordinator/worker bidirectional protocol plus the offline lifecycle reducer'
-
+description = 'Delegation coordinator, worker runtime and catalog actions over optional transcript storage'
 dependencies {
-    api libs.protobuf.java
-    api libs.protobuf.java.util
-    api libs.grpc.api
-    api libs.grpc.stub
-    api libs.grpc.protobuf
-    // The contract reuses the workflow's content-addressed ArtifactReference for
-    // context, checkpoint state, and completion evidence references.
-    api project(':protomolt-grpc-workflow')
-    // An accepted task's transcript projects into a signed work record.
-    implementation project(':protomolt-receipt')
-    implementation project(':protomolt-formats')
-    // Durable transcripts use the repository service raw-blob API. The
-    // repository service remains responsible for its S3 backing store and
-    // optional Redis cache.
-    api project(':protomolt-repo-proto')
-    // Persisted delegation fields carry the house validation and sensitivity
-    // metadata options.
-    api project(':protomolt-protobuf-validation')
-    api project(':protomolt-protobuf-metadata')
-    // DelegationBridge and the delegation catalog actions implement ProtoAction
-    // from this module.
+    api project(':protomolt-delegation-lifecycle')
     api project(':protomolt-actions')
-    // Action input schemas are derived from the request descriptors rather than
-    // hand-written, so the declared validation rules reach every caller.
+    implementation project(':protomolt-formats')
     implementation project(':protomolt-http-jsonschema')
-
-    // grpc-java's generated stubs annotate with @javax.annotation.Generated.
-    compileOnly libs.javax.annotation.api
-
     testImplementation libs.grpc.inprocess
+    testImplementation project(':protomolt-delegation-repository')
+    testImplementation project(':protomolt-delegation-receipt')
 }
-
-protobuf {
-    protoc {
-        artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}"
-    }
-    plugins {
-        grpc {
-            artifact = "io.grpc:protoc-gen-grpc-java:${libs.versions.grpc.get()}"
-        }
-    }
-    generateProtoTasks {
-        all().configureEach {
-            plugins {
-                grpc {}
-            }
-        }
-    }
-}
+ext.forbiddenRuntimeModules = ['protomolt-delegation-repository', 'protomolt-delegation-receipt', 'protomolt-repo-proto', 'protomolt-receipt']
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

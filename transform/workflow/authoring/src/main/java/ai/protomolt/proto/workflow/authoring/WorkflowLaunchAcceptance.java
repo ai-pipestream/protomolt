@@ -1,9 +1,9 @@
 package ai.protomolt.proto.workflow.authoring;
 
 import ai.protomolt.proto.delegation.CandidateReviewer.ReviewContext;
-import ai.protomolt.proto.delegation.DelegationReducer;
-import ai.protomolt.proto.delegation.DeliverableContracts;
-import ai.protomolt.proto.delegation.TranscriptRepository;
+import ai.protomolt.proto.delegation.lifecycle.DelegationReducer;
+import ai.protomolt.proto.delegation.contract.DeliverableContracts;
+import ai.protomolt.proto.delegation.lifecycle.TranscriptRepository;
 import ai.protomolt.proto.delegation.v1.CompletionCandidate;
 import ai.protomolt.proto.delegation.v1.TaskSpec;
 import ai.protomolt.proto.delegation.v1.TranscriptEntry;

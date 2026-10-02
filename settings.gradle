@@ -538,3 +538,17 @@ project(':protomolt-schema-registry-composer').projectDir = file('schema/registr
 
 include 'protomolt-grpc-adapter'
 project(':protomolt-grpc-adapter').projectDir = file('surface/grpc/adapter')
+
+include 'protomolt-delegation-proto'
+project(':protomolt-delegation-proto').projectDir = file('transform/delegation/proto')
+include 'protomolt-delegation-contract'
+project(':protomolt-delegation-contract').projectDir = file('transform/delegation/contract')
+
+include 'protomolt-delegation-lifecycle'
+project(':protomolt-delegation-lifecycle').projectDir = file('transform/delegation/lifecycle')
+
+include 'protomolt-delegation-repository'
+project(':protomolt-delegation-repository').projectDir = file('transform/delegation/repository')
+
+include 'protomolt-delegation-receipt'
+project(':protomolt-delegation-receipt').projectDir = file('transform/delegation/receipt')

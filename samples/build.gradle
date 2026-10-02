@@ -11,6 +11,7 @@ description = 'Examples for Pipestream protobuf tools'
 sourceSets.main.proto.srcDir '../protobuf/llm/examples/court-decoration/proto'
 
 dependencies {
+    testImplementation project(':protomolt-delegation-repository')
     testImplementation project(':protomolt-schema-registry-git')
     // The starter distribution adds sample template providers to the production
     // server's classpath. The server itself has no dependency on samples.

@@ -1,6 +1,6 @@
 package ai.protomolt.proto.agenthost;
 
-import ai.protomolt.proto.delegation.DeliverableContracts;
+import ai.protomolt.proto.delegation.contract.DeliverableContracts;
 import ai.protomolt.proto.delegation.v1.DeliverableContract;
 import ai.protomolt.proto.validate.ValidateProto;
 import com.fasterxml.jackson.databind.JsonNode;

@@ -1,7 +1,7 @@
 package ai.protomolt.proto.mcp;
 
 import ai.protomolt.proto.delegation.DelegationBridge;
-import ai.protomolt.proto.delegation.DelegationReducer;
+import ai.protomolt.proto.delegation.lifecycle.DelegationReducer;
 import ai.protomolt.proto.delegation.InProcessDelegationCoordinator;
 import ai.protomolt.proto.delegation.v1.WorkerCapability;
 import ai.protomolt.proto.delegation.v1.WorkerHello;

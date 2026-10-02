@@ -1,7 +1,7 @@
 package ai.protomolt.proto.samples;
 
 import ai.protomolt.proto.actions.ActionContext;
-import ai.protomolt.proto.delegation.DeliverableContracts;
+import ai.protomolt.proto.delegation.contract.DeliverableContracts;
 import ai.protomolt.proto.delegation.v1.CheckEvidence;
 import ai.protomolt.proto.delegation.v1.CheckVerdict;
 import ai.protomolt.proto.delegation.v1.DeliverableContract;

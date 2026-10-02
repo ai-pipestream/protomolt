@@ -2,12 +2,12 @@ package ai.protomolt.proto.workflow.authoring;
 
 import ai.protomolt.proto.delegation.AdmissionPolicy;
 import ai.protomolt.proto.delegation.CandidateReviewer;
-import ai.protomolt.proto.delegation.DelegationReducer;
+import ai.protomolt.proto.delegation.lifecycle.DelegationReducer;
 import ai.protomolt.proto.delegation.DelegationWorker;
-import ai.protomolt.proto.delegation.InMemoryTranscriptRepository;
+import ai.protomolt.proto.delegation.lifecycle.InMemoryTranscriptRepository;
 import ai.protomolt.proto.delegation.InProcessDelegationCoordinator;
 import ai.protomolt.proto.delegation.ScriptedWorkerRunner;
-import ai.protomolt.proto.delegation.TranscriptRepository;
+import ai.protomolt.proto.delegation.lifecycle.TranscriptRepository;
 import ai.protomolt.proto.delegation.v1.AcceptanceCheck;
 import ai.protomolt.proto.delegation.v1.CheckEvidence;
 import ai.protomolt.proto.delegation.v1.CheckVerdict;

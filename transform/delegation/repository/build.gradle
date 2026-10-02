@@ -1,0 +1,11 @@
+plugins { alias(libs.plugins.protobuf) }
+description = 'Encrypted delegation transcript persistence through the repository service'
+dependencies {
+    api project(':protomolt-delegation-lifecycle')
+    api project(':protomolt-repo-proto')
+}
+protobuf {
+    protoc { artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}" }
+}
+ext.forbiddenRuntimeModules = ['protomolt-delegation', 'protomolt-actions', 'protomolt-receipt', 'protomolt-delegation-receipt']
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

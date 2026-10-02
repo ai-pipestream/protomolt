@@ -1,5 +1,7 @@
 package ai.protomolt.proto.delegation;
 
+import ai.protomolt.proto.delegation.contract.DelegationValidation;
+
 import ai.protomolt.proto.delegation.v1.AcceptanceCheck;
 import ai.protomolt.proto.delegation.v1.AdmissionDecision;
 import ai.protomolt.proto.delegation.v1.CheckEvidence;

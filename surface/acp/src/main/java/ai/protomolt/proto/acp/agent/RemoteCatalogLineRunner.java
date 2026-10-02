@@ -1,7 +1,7 @@
 package ai.protomolt.proto.acp.agent;
 
 import ai.protomolt.proto.acp.PromptContext;
-import ai.protomolt.proto.delegation.DeliverableContracts;
+import ai.protomolt.proto.delegation.contract.DeliverableContracts;
 import ai.protomolt.proto.delegation.v1.DeliverableContract;
 import ai.protomolt.proto.delegation.v1.ObservedEvent;
 import ai.protomolt.proto.delegation.v1.ReadTranscriptRequest;

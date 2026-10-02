@@ -1,5 +1,7 @@
 package ai.protomolt.proto.delegation;
 
+import ai.protomolt.proto.delegation.lifecycle.DelegationReducer;
+
 import ai.protomolt.proto.delegation.v1.CheckpointReference;
 import ai.protomolt.proto.delegation.v1.Transcript;
 import org.junit.jupiter.api.Test;

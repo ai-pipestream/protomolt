@@ -1,5 +1,11 @@
 package ai.protomolt.proto.workflow.authoring;
 
+import ai.protomolt.proto.delegation.lifecycle.InMemoryTranscriptRepository;
+
+import ai.protomolt.proto.delegation.lifecycle.DelegationReducer;
+
+import ai.protomolt.proto.delegation.contract.DeliverableContracts;
+
 import ai.protomolt.proto.receipt.WorkRecords;
 
 import ai.protomolt.proto.actions.Caller;

@@ -305,3 +305,43 @@ are absent, preserving its established protocol behavior. The adapter's normal
 `bind` path rejects absent actions instead. Neither path selects a fallback provider.
 The CLI still selects the full catalog intentionally; small embeddings should depend
 on the adapter directly.
+
+## Delegation contracts and optional persistence
+
+Workers depend on `protomolt-delegation-contract` for generated messages and
+runtime deliverable validation. `protomolt-delegation-proto` owns the generated
+protocol types. Neither brings in coordinator actions, receipt projection, or
+repository-service clients. Agent Host selects the contract dependency directly.
+
+`protomolt-delegation-lifecycle` provides replay, review bindings, and the
+`TranscriptRepository` storage interface. `protomolt-delegation` adds the
+coordinator, worker runtime, and catalog actions. Applications explicitly assemble
+these with optional integrations:
+
+- `protomolt-delegation-repository` implements transcript storage using the
+  repository-service gRPC client, encrypted envelopes, and conditional writes.
+  It depends on repository contracts, not the repository server or its storage
+  backends.
+- `protomolt-delegation-receipt` projects transcripts into work records.
+
+The serve application selects these integrations. The coordinator's production
+classpath excludes them; integration tests add them explicitly. Runtime dependency
+gates enforce the worker, lifecycle, coordinator, and integration boundaries.
+Storage is currently constructor-wired; this extraction does not introduce a
+ServiceLoader provider factory or automatic backend discovery. In-memory storage
+is an explicit choice, not a fallback for failed durable storage.
+
+Generated protobuf packages, Java identities, descriptor import paths, field
+numbers, and Any URLs are unchanged. Java consumers of handwritten helpers must
+recompile and update imports from `ai.protomolt.proto.delegation`:
+
+- `DeliverableContracts` and `DelegationValidation` move to `.delegation.contract`.
+- `DelegationReducer`, `DelegationReviewBindings`, `TranscriptRepository`, and
+  `InMemoryTranscriptRepository` move to `.delegation.lifecycle`.
+- Repository storage and encryption helpers move to `.delegation.repository`.
+- `DelegationRecordProjector` moves to `.delegation.receipt`.
+
+Consumers of optional implementations must declare their artifacts explicitly.
+`WorkRecords` retains its public fingerprint methods, delegating to the shared
+`MessageFingerprints` descriptor utility. A golden serialization and digest test
+protects persisted review identities from changes during this extraction.

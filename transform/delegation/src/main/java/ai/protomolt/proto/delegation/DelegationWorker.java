@@ -1,5 +1,7 @@
 package ai.protomolt.proto.delegation;
 
+import ai.protomolt.proto.delegation.contract.DelegationValidation;
+
 import ai.protomolt.proto.delegation.v1.AgentDelegationServiceGrpc;
 import ai.protomolt.proto.delegation.v1.CancelledNotice;
 import ai.protomolt.proto.delegation.v1.Checkpoint;

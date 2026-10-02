@@ -1,7 +1,7 @@
 package ai.protomolt.proto.mesh.cluster;
 
-import ai.protomolt.proto.delegation.EncryptedRepositoryStateCodec;
-import ai.protomolt.proto.delegation.RepositoryStateKeyResolver;
+import ai.protomolt.proto.delegation.repository.EncryptedRepositoryStateCodec;
+import ai.protomolt.proto.delegation.repository.RepositoryStateKeyResolver;
 import ai.protomolt.proto.delegation.storage.v1.EncryptedRepositoryState;
 import ai.protomolt.proto.mesh.cluster.v1.DirectoryCheckpoint;
 import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;

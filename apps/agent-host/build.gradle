@@ -8,7 +8,7 @@ dependencies {
     implementation project(':protomolt-acp')
     // A command is a delegation request message: the host parses one into the
     // generated type the coordinator declares for the verb.
-    implementation project(':protomolt-delegation')
+    implementation project(':protomolt-delegation-contract')
     // The same rules the coordinator applies server-side, applied here before a
     // command is sent, so a rejected reply quotes the proto's own rule text.
     implementation project(':protomolt-protobuf-validation')
@@ -26,3 +26,6 @@ dependencies {
 application {
     mainClass = 'ai.protomolt.proto.agenthost.AgentHostMain'
 }
+
+ext.forbiddenRuntimeModules = ['protomolt-delegation', 'protomolt-repo-proto', 'protomolt-receipt', 'protomolt-actions']
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')
