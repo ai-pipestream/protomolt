@@ -26,7 +26,7 @@ import ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorEventsRequest;
 import ai.protomolt.proto.workflow.authoring.v1.WorkflowAuthorAssignment;
 import ai.protomolt.proto.workflow.authoring.v1.WorkflowAuthorTaskServiceGrpc;
 import ai.protomolt.proto.workflow.authoring.v1.WorkflowPreparationIntent;
-import ai.protomolt.proto.delegation.EncryptedRepositoryStateCodec;
+import ai.protomolt.proto.delegation.repository.EncryptedRepositoryStateCodec;
 import ai.protomolt.proto.delegation.storage.v1.EncryptedRepositoryState;
 import ai.protomolt.proto.delegation.v1.Transcript;
 import ai.protomolt.proto.repo.v1.ConditionalBlobKey;

@@ -4,7 +4,7 @@ import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.actions.CatalogContract;
 import ai.protomolt.proto.actions.Fields;
-import ai.protomolt.proto.delegation.TranscriptRepository;
+import ai.protomolt.proto.delegation.lifecycle.TranscriptRepository;
 import ai.protomolt.proto.delegation.v1.CheckEvidence;
 import ai.protomolt.proto.delegation.v1.CheckVerdict;
 import ai.protomolt.proto.grpc.workflow.ArtifactRepository;

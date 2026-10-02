@@ -1,5 +1,9 @@
 package ai.protomolt.proto.delegation;
 
+import ai.protomolt.proto.delegation.lifecycle.InMemoryTranscriptRepository;
+
+import ai.protomolt.proto.delegation.lifecycle.DelegationReducer;
+
 import ai.protomolt.proto.delegation.v1.CheckpointReference;
 import ai.protomolt.proto.delegation.v1.CompletionCandidate;
 import ai.protomolt.proto.delegation.v1.DelegateRequest;

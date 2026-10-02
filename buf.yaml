@@ -89,8 +89,10 @@ modules:
     name: buf.build/ai-pipestream/grpc-workflow
   - path: transform/pipeline/src/main/proto
     name: buf.build/ai-pipestream/pipeline
-  - path: transform/delegation/src/main/proto
+  - path: transform/delegation/proto/src/main/proto
     name: buf.build/ai-pipestream/delegation
+  - path: transform/delegation/repository/src/main/proto
+    name: buf.build/ai-pipestream/delegation-repository
   - path: mesh/proto/src/main/proto
     name: buf.build/ai-pipestream/mesh
   - path: mesh/contracts/src/test/proto

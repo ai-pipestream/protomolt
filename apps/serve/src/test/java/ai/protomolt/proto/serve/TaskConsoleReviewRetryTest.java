@@ -1,5 +1,7 @@
 package ai.protomolt.proto.serve;
 
+import ai.protomolt.proto.delegation.lifecycle.DelegationReducer;
+
 import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.authz.ConsoleSessions;

@@ -6,7 +6,7 @@ import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.actions.CatalogContract;
 import ai.protomolt.proto.actions.ProtoAction;
 import ai.protomolt.proto.actions.Scopes;
-import ai.protomolt.proto.delegation.DeliverableContracts;
+import ai.protomolt.proto.delegation.contract.DeliverableContracts;
 import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringDeliverable;
 import ai.protomolt.proto.workflow.authoring.v1.GetWorkflowAuthoringTemplateRequest;
 import ai.protomolt.proto.workflow.authoring.v1.GetWorkflowAuthoringTemplateResponse;

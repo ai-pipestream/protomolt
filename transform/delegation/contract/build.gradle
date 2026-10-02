@@ -1,0 +1,9 @@
+description = 'Delegation message and deliverable validation without coordinator or persistence'
+dependencies {
+    api project(':protomolt-delegation-proto')
+    api libs.protobuf.java.util
+    implementation project(':protomolt-http-jsonschema')
+    implementation project(':protomolt-formats')
+}
+ext.forbiddenRuntimeModules = ['protomolt-delegation', 'protomolt-actions', 'protomolt-receipt', 'protomolt-repo-proto']
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

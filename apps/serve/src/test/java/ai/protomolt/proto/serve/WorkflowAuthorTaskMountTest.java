@@ -1,5 +1,7 @@
 package ai.protomolt.proto.serve;
 
+import ai.protomolt.proto.delegation.lifecycle.InMemoryTranscriptRepository;
+
 import ai.protomolt.proto.actions.*;
 import ai.protomolt.proto.authz.CallerResolver;
 import ai.protomolt.proto.delegation.*;

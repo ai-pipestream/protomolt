@@ -1,5 +1,11 @@
 package ai.protomolt.proto.delegation;
 
+import ai.protomolt.proto.delegation.repository.EncryptedRepositoryStateCodec;
+
+import ai.protomolt.proto.delegation.repository.RepositoryStateKeyResolver;
+
+import ai.protomolt.proto.delegation.repository.RepositoryServiceTranscriptRepository;
+
 import ai.protomolt.proto.delegation.storage.v1.EncryptedRepositoryState;
 import ai.protomolt.proto.delegation.v1.Transcript;
 import ai.protomolt.proto.repo.v1.ConditionalBlobKey;

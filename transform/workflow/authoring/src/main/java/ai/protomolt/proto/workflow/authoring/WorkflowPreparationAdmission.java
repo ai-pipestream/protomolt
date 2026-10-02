@@ -1,9 +1,9 @@
 package ai.protomolt.proto.workflow.authoring;
 
 import ai.protomolt.proto.actions.Caller;
-import ai.protomolt.proto.delegation.DelegationReducer;
-import ai.protomolt.proto.delegation.DelegationValidation;
-import ai.protomolt.proto.delegation.TranscriptRepository;
+import ai.protomolt.proto.delegation.lifecycle.DelegationReducer;
+import ai.protomolt.proto.delegation.contract.DelegationValidation;
+import ai.protomolt.proto.delegation.lifecycle.TranscriptRepository;
 import ai.protomolt.proto.delegation.v1.TranscriptEntry;
 import ai.protomolt.proto.grpc.workflow.v1.ArtifactReference;
 import ai.protomolt.proto.receipt.WorkRecords;

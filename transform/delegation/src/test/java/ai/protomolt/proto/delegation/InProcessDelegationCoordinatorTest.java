@@ -1,5 +1,7 @@
 package ai.protomolt.proto.delegation;
 
+import ai.protomolt.proto.delegation.lifecycle.DelegationReducer;
+
 import ai.protomolt.proto.delegation.v1.AgentDelegationServiceGrpc;
 import ai.protomolt.proto.delegation.v1.Checkpoint;
 import ai.protomolt.proto.delegation.v1.CheckpointReference;

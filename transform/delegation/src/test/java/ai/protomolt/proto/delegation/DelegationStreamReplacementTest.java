@@ -1,5 +1,11 @@
 package ai.protomolt.proto.delegation;
 
+import ai.protomolt.proto.delegation.lifecycle.InMemoryTranscriptRepository;
+
+import ai.protomolt.proto.delegation.lifecycle.TranscriptRepository;
+
+import ai.protomolt.proto.delegation.lifecycle.DelegationReducer;
+
 import ai.protomolt.proto.delegation.v1.TaskMessageKind;
 import ai.protomolt.proto.delegation.v1.Transcript;
 import ai.protomolt.proto.delegation.v1.WorkerCapability;

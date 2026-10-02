@@ -6,6 +6,7 @@ plugins {
 description = 'The receipt layer: canonical signed work records, the trust snapshot, and the strict offline verifier'
 
 dependencies {
+    implementation project(':protomolt-descriptors')
     api libs.protobuf.java
     // receipt.v1 annotates its fields with validate.v1 rules.
     api project(':protomolt-protobuf-validation')

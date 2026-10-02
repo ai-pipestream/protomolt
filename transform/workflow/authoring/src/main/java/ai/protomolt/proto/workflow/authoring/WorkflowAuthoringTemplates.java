@@ -1,7 +1,7 @@
 package ai.protomolt.proto.workflow.authoring;
 
-import ai.protomolt.proto.delegation.DelegationValidation;
-import ai.protomolt.proto.delegation.DeliverableContracts;
+import ai.protomolt.proto.delegation.contract.DelegationValidation;
+import ai.protomolt.proto.delegation.contract.DeliverableContracts;
 import ai.protomolt.proto.delegation.v1.AcceptanceCheck;
 import ai.protomolt.proto.delegation.v1.DelegateResponse;
 import ai.protomolt.proto.delegation.v1.DeliverableContract;

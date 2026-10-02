@@ -1,6 +1,10 @@
 package ai.protomolt.proto.delegation;
 
-import ai.protomolt.proto.delegation.DelegationReducer.ReviewStatus;
+import ai.protomolt.proto.delegation.lifecycle.DelegationReviewBindings;
+
+import ai.protomolt.proto.delegation.lifecycle.DelegationReducer;
+
+import ai.protomolt.proto.delegation.lifecycle.DelegationReducer.ReviewStatus;
 import ai.protomolt.proto.delegation.v1.CandidateReviewIdentity;
 import ai.protomolt.proto.delegation.v1.CompletionAccepted;
 import ai.protomolt.proto.delegation.v1.DelegateResponse;

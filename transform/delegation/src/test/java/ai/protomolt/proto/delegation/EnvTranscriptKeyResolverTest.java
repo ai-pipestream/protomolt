@@ -1,5 +1,7 @@
 package ai.protomolt.proto.delegation;
 
+import ai.protomolt.proto.delegation.repository.EnvRepositoryStateKeyResolver;
+
 import org.junit.jupiter.api.Test;
 
 import java.util.Base64;

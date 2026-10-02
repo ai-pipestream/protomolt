@@ -1,5 +1,7 @@
 package ai.protomolt.proto.acp.agent;
 
+import ai.protomolt.proto.delegation.contract.DeliverableContracts;
+
 import ai.protomolt.proto.acp.PromptContext;
 import ai.protomolt.proto.actions.ActionCatalog;
 import ai.protomolt.proto.actions.ActionContext;
@@ -234,7 +236,7 @@ class RemoteDelegationLineRunnerTest {
                         .setRanAt(Timestamp.newBuilder().setSeconds(Instant.parse("2026-09-25T12:00:00Z").getEpochSecond()))
                         .addArtifacts(artifact))
                 .addArtifacts(artifact).setResult(any).build();
-        JsonFormat.TypeRegistry registry = ai.protomolt.proto.delegation.DeliverableContracts
+        JsonFormat.TypeRegistry registry = ai.protomolt.proto.delegation.contract.DeliverableContracts
                 .typeRegistry(contract);
         return JsonFormat.printer().usingTypeRegistry(registry).print(candidate);
     }

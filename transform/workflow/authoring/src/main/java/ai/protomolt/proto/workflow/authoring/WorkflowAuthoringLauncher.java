@@ -1,7 +1,7 @@
 package ai.protomolt.proto.workflow.authoring;
 
 import ai.protomolt.proto.actions.ActionContext;
-import ai.protomolt.proto.delegation.TranscriptRepository;
+import ai.protomolt.proto.delegation.lifecycle.TranscriptRepository;
 import ai.protomolt.proto.grpc.workflow.ArtifactRepository;
 import ai.protomolt.proto.grpc.workflow.WorkflowValidation;
 import ai.protomolt.proto.grpc.workflow.WorkflowVersionRepository;

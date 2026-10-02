@@ -1,6 +1,6 @@
 package ai.protomolt.proto.serve;
 
-import ai.protomolt.proto.delegation.EnvRepositoryStateKeyResolver;
+import ai.protomolt.proto.delegation.repository.EnvRepositoryStateKeyResolver;
 import ai.protomolt.proto.mesh.cluster.ClusterEventRepository;
 import ai.protomolt.proto.mesh.cluster.ClusterValidation;
 import ai.protomolt.proto.mesh.cluster.InMemoryClusterEventRepository;

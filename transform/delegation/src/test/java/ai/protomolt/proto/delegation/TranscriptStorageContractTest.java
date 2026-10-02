@@ -1,5 +1,7 @@
 package ai.protomolt.proto.delegation;
 
+import ai.protomolt.proto.delegation.repository.RepositoryServiceTranscriptRepository;
+
 import ai.protomolt.proto.delegation.storage.v1.EncryptedRepositoryState;
 import ai.protomolt.proto.delegation.storage.v1.RepositoryStateEncryptionAlgorithm;
 import ai.protomolt.proto.meta.MetadataProto;

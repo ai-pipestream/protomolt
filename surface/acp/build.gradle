@@ -16,13 +16,14 @@ dependencies {
     implementation project(':protomolt-grpc-invoke')
     // The remote agent exposes the already-declared delegation RPCs and resolves
     // caller-owned Any values against each task offer's descriptor.
-    implementation project(':protomolt-delegation')
+    implementation project(':protomolt-delegation-contract')
     implementation libs.protobuf.java.util
 
     runtimeOnly libs.slf4j.simple
 
     // Process round-trip fixtures: compile protos and stand up a dynamic gRPC server at test time.
     testImplementation project(':protomolt-sources')
+    testImplementation project(':protomolt-delegation')
     testImplementation project(':protomolt-grpc-invoke')
     testImplementation testFixtures(project(':protomolt-acp'))
     testImplementation libs.grpc.stub

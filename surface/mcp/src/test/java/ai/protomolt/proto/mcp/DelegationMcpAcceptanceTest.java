@@ -4,7 +4,7 @@ import ai.protomolt.proto.actions.ActionCatalog;
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.delegation.DelegationActions;
 import ai.protomolt.proto.delegation.DelegationBridge;
-import ai.protomolt.proto.delegation.DelegationReducer;
+import ai.protomolt.proto.delegation.lifecycle.DelegationReducer;
 import ai.protomolt.proto.delegation.InProcessDelegationCoordinator;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;

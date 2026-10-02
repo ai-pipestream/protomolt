@@ -5,7 +5,7 @@ import ai.protomolt.proto.delegation.v1.RejectTaskRequest;
 import ai.protomolt.proto.delegation.v1.DeliverableContract;
 import com.google.protobuf.util.JsonFormat.TypeRegistry;
 import com.google.protobuf.Any;
-import ai.protomolt.proto.delegation.DeliverableContracts;
+import ai.protomolt.proto.delegation.contract.DeliverableContracts;
 import ai.protomolt.proto.delegation.v1.CancelTaskRequest;
 import ai.protomolt.proto.delegation.v1.OfferTaskRequest;
 import ai.protomolt.proto.delegation.v1.RecordCheckpointRequest;

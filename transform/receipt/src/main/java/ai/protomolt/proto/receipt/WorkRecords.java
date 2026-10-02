@@ -1,13 +1,8 @@
 package ai.protomolt.proto.receipt;
 
-import com.google.protobuf.CodedOutputStream;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Message;
-import java.io.IOException;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 
@@ -40,42 +35,17 @@ public final class WorkRecords {
         return deterministicBytes(manifest);
     }
 
-    /** The message's deterministic serialization: the bytes {@link #fingerprint} hashes. */
+    /** Deterministic protobuf bytes, shared with protocol identity checks. */
     public static byte[] deterministicBytes(Message message) {
-        byte[] bytes = new byte[message.getSerializedSize()];
-        CodedOutputStream out = CodedOutputStream.newInstance(bytes);
-        out.useDeterministicSerialization();
-        try {
-            message.writeTo(out);
-            out.checkNoSpaceLeft();
-        } catch (IOException e) {
-            throw new IllegalStateException("in-memory serialization failed", e);
-        }
-        return bytes;
+        return ai.protomolt.proto.descriptors.MessageFingerprints.deterministicBytes(message);
     }
-
-    /**
-     * SHA-256 of the message's deterministic serialization: the platform's
-     * fingerprint discipline, for identifying a message by its content.
-     */
+    /** SHA-256 of the message's deterministic serialization. */
     public static String fingerprint(Message message) {
-        if (message == null) {
-            throw new IllegalArgumentException("message must not be null");
-        }
-        return sha256Hex(deterministicBytes(message));
+        return ai.protomolt.proto.descriptors.MessageFingerprints.fingerprint(message);
     }
-
-    /** SHA-256 of the given bytes as lowercase hex; the manifest digest. */
+    /** SHA-256 of the given bytes as lowercase hex. */
     public static String sha256Hex(byte[] bytes) {
-        if (bytes == null) {
-            throw new IllegalArgumentException("bytes must not be null");
-        }
-        try {
-            return HexFormat.of().formatHex(
-                    MessageDigest.getInstance("SHA-256").digest(bytes));
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 is unavailable in this JDK", e);
-        }
+        return ai.protomolt.proto.descriptors.MessageFingerprints.sha256Hex(bytes);
     }
 
     /**

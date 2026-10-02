@@ -1,7 +1,7 @@
 package ai.protomolt.proto.serve;
 
 import ai.protomolt.proto.actions.ActionContext;
-import ai.protomolt.proto.delegation.InMemoryTranscriptRepository;
+import ai.protomolt.proto.delegation.lifecycle.InMemoryTranscriptRepository;
 import ai.protomolt.proto.grpc.workflow.ArtifactRepository;
 import ai.protomolt.proto.grpc.workflow.FileSystemArtifactRepository;
 import ai.protomolt.proto.grpc.workflow.FileSystemRunEvidenceRepository;

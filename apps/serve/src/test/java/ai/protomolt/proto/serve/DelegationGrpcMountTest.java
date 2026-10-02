@@ -1,5 +1,7 @@
 package ai.protomolt.proto.serve;
 
+import ai.protomolt.proto.delegation.lifecycle.DelegationReducer;
+
 import ai.protomolt.proto.actions.ActionCatalog;
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.actions.Caller;
@@ -91,7 +93,7 @@ class DelegationGrpcMountTest {
             long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
             long cursor = 0;
             while (fixture.coordinator.state().tasks().get(task).review().status()
-                    != ai.protomolt.proto.delegation.DelegationReducer.ReviewStatus.DEFERRED) {
+                    != ai.protomolt.proto.delegation.lifecycle.DelegationReducer.ReviewStatus.DEFERRED) {
                 assertThat(System.nanoTime()).isLessThan(deadline);
                 var event = fixture.coordinator.waitForEvent(task, cursor, java.time.Duration.ofMillis(100));
                 if (event.isPresent()) cursor = event.get().cursor();
