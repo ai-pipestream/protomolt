@@ -53,6 +53,44 @@ class WorkflowsEndpointTest {
         client.close();
     }
 
+    @Test
+    void workflowCapabilityWorksWithoutAGitStore() throws Exception {
+        java.util.Map<String, String> documents = new java.util.TreeMap<>();
+        try (InMemorySchemaRegistryStore schemas = new InMemorySchemaRegistryStore()) {
+            var store = (ai.protomolt.proto.registry.WorkflowDocumentStore)
+                    java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                            new Class<?>[] {ai.protomolt.proto.registry.WorkflowDocumentStore.class},
+                            (proxy, method, args) -> {
+                                switch (method.getName()) {
+                                    case "putWorkflow":
+                                        documents.put((String) args[0], (String) args[1]);
+                                        return null;
+                                    case "workflow":
+                                        return java.util.Optional.ofNullable(documents.get(args[0]));
+                                    case "workflows":
+                                        return java.util.List.copyOf(documents.keySet());
+                                    default:
+                                        try {
+                                            return method.invoke(schemas, args);
+                                        } catch (java.lang.reflect.InvocationTargetException e) {
+                                            throw e.getCause();
+                                        }
+                                }
+                            });
+            try (SchemaRegistryServer server = new SchemaRegistryServer(
+                    SchemaRegistryServerConfig.defaults().withHost("127.0.0.1").withPort(0), store)) {
+                String base = "http://127.0.0.1:" + server.start();
+                assertThat(put(base + "/protomolt/workflows/pipe", WORKFLOW_BODY).statusCode())
+                        .isEqualTo(200);
+                var response = get(base + "/protomolt/workflows/pipe");
+                assertThat(response.statusCode()).isEqualTo(200);
+                assertThat(JSON.readTree(response.body())).isEqualTo(JSON.readTree(WORKFLOW_BODY));
+                assertThat(JSON.readTree(get(base + "/protomolt/workflows").body()))
+                        .isEqualTo(JSON.readTree("[\"pipe\"]"));
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ non-Git store
 
     @Test
