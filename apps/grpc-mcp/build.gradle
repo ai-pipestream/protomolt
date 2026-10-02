@@ -1,0 +1,27 @@
+plugins {
+    id 'application'
+}
+
+description = 'Minimal stdio MCP application for a configured gRPC endpoint'
+
+dependencies {
+    implementation project(':protomolt-mcp-transport')
+    implementation project(':protomolt-composer')
+    runtimeOnly project(':protomolt-grpc-invoke-service')
+    runtimeOnly libs.slf4j.simple
+    testImplementation libs.grpc.services
+    testImplementation libs.grpc.netty.shaded
+}
+
+application {
+    mainClass = 'ai.protomolt.proto.grpc.mcp.GrpcMcpMain'
+}
+
+ext.forbiddenRuntimeModules = [
+    'protomolt-mcp', 'protomolt-actions-toolkit', 'protomolt-actions-index',
+    'protomolt-registry', 'protomolt-workflow', 'protomolt-delegation', 'protomolt-codegen',
+    'protomolt-acquire-gather-git', 'protomolt-grpc-service-workspace',
+    'protomolt-search-index-lucene', 'protomolt-search-index-opensearch',
+    'protomolt-search-index-solr', 'protomolt-search-index-qdrant'
+]
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')
