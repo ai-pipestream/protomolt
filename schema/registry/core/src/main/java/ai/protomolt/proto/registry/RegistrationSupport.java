@@ -57,7 +57,9 @@ public final class RegistrationSupport {
     public static List<StoredSchema> history(SchemaRegistryStore store, String subject) {
         List<StoredSchema> history = new ArrayList<>();
         for (int version : store.versions(subject)) {
-            store.version(subject, version).ifPresent(history::add);
+            history.add(store.version(subject, version).orElseThrow(() ->
+                    new RegistryStoreException("Missing listed schema version " + version
+                            + " for subject " + subject)));
         }
         return List.copyOf(history);
     }

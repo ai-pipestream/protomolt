@@ -130,3 +130,9 @@ A shared test-fixtures variant exercises the same storage contract against both
 in-memory and Git implementations. Test dependencies remain separate from the
 production runtime. The Git module still includes workflow version storage;
 separating that backend further is independent of this core boundary.
+
+Registry metadata parsing also rejects malformed stored compatibility policies and
+invalid global counters instead of treating them as defaults. Absence of a
+subject override still means inheritance; a malformed override does not. A listed
+schema version missing from storage fails history assembly so the compatibility
+gate cannot evaluate an incomplete history.

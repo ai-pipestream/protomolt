@@ -66,6 +66,37 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
         return GitSchemaRegistryStore.builder().repositoryDir(dir).build();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "{}", "null", "[]",
+            "{\"compatibility\":\"FULL\",\"nextGlobalId\":\"1\"}",
+            "{\"compatibility\":\"FULL\",\"nextGlobalId\":0}",
+            "{\"compatibility\":\"TYPO\",\"nextGlobalId\":1}"
+    })
+    void malformedGlobalMetadataDoesNotBecomeFreshStoreDefaults(String metadata) throws Exception {
+        Path dir = tempDir.resolve("corrupt-global");
+        try (GitSchemaRegistryStore store = storeAt(dir)) {
+            Files.writeString(dir.resolve("registry.json"), metadata);
+            assertThatThrownBy(store::globalCompatibilityMode)
+                    .isInstanceOf(ai.protomolt.proto.registry.RegistryStoreException.class)
+                    .hasMessageContaining("registry.json");
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"{}", "null", "{\"compatibility\":\"TYPO\"}"})
+    void malformedSubjectPolicyDoesNotFallBackToGlobal(String metadata) throws Exception {
+        Path dir = tempDir.resolve("corrupt-subject");
+        try (GitSchemaRegistryStore store = storeAt(dir)) {
+            store.register("sample.proto", CORE_PROTO, List.of());
+            Files.writeString(dir.resolve("subjects/sample.proto/config.json"), metadata);
+            store.refresh();
+            assertThatThrownBy(() -> store.compatibilityMode("sample.proto"))
+                    .isInstanceOf(ai.protomolt.proto.registry.RegistryStoreException.class)
+                    .hasMessageContaining("config.json");
+        }
+    }
+
     // ---------------------------------------------------------------- git behavior
 
     @Test
