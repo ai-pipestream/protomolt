@@ -535,3 +535,6 @@ project(':protomolt-emit-git').projectDir = file('sink/emit/git')
 
 include 'protomolt-schema-registry-composer'
 project(':protomolt-schema-registry-composer').projectDir = file('schema/registry/composer')
+
+include 'protomolt-grpc-adapter'
+project(':protomolt-grpc-adapter').projectDir = file('surface/grpc/adapter')

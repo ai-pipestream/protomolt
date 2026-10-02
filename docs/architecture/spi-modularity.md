@@ -257,3 +257,51 @@ Lease and poll durations must be at least one millisecond and fit the Java
 millisecond representation used by the worker and store. Retry backoff must also
 fit that representation at the maximum exponent (20). Overflow is rejected with
 the arithmetic cause retained; it cannot wrap into a negative scheduling delay.
+
+## gRPC action adapter
+
+`protomolt-grpc-adapter` binds a supplied `ActionCatalog` and protobuf service
+`ServiceDescriptor` to a gRPC `ServerServiceDefinition`. It contains dispatch,
+error translation and contract-to-action binding, with no platform catalog,
+workspace, workflow engine, jobs, inference, registry, Git, code generation or
+optional action providers. It uses gRPC's protobuf marshaller directly rather
+than depending on the outbound invocation capability. Runtime dependency gates
+protect this boundary.
+
+An embedding application selects its own listener, transport and authentication:
+
+```java
+var service = GrpcActionService.bind(catalog, serviceDescriptor,
+        Map.of("Process", "process-record"));
+serverBuilder.addService(service);
+```
+
+The class is in `ai.protomolt.proto.grpc.adapter`. Bindings must cover the service
+exactly and reference installed actions with matching protobuf request and response
+type names. Missing actions, incomplete or extra mappings, blank names and unsupported
+streaming methods fail during binding. This adapter serves unary RPCs; it does not
+turn a unary action into a streaming protocol. An empty catalog does not discover
+or load optional providers.
+
+The action catalog remains responsible for authorization before request validation,
+request/response contract validation and budget accounting. The adapter obtains
+caller identity from `CallerContexts`; a host must install the appropriate interceptor
+for authenticated use. As with existing embedded catalog calls, absent caller context
+means process authority. Merely binding a service does not authenticate its clients.
+Successful replies are also checked against the bound RPC output descriptor. Error
+codes and structured trailers retain the existing wire format; internal exception
+causes are not serialized into gRPC status responses.
+
+`ContractActionBindings` supports contract-based discovery with an explicit eligibility
+predicate. The full assembly uses that predicate to exclude restored workspace proxies
+from local RPC binding; the adapter has no workspace implementation dependency.
+
+`protomolt-grpc-service` remains the full platform distribution. Its existing
+`ProtoMoltGrpcService`, `CatalogBridge` and `ContractActionBindings` APIs forward to
+the adapter; `ProtoMoltCatalog` and `ProtoMoltGrpcServer` keep platform assembly and
+listener ownership. Existing consumers need no import migration. The fixed platform
+service inventory explicitly uses `EXPOSE_UNIMPLEMENTED` for methods whose actions
+are absent, preserving its established protocol behavior. The adapter's normal
+`bind` path rejects absent actions instead. Neither path selects a fallback provider.
+The CLI still selects the full catalog intentionally; small embeddings should depend
+on the adapter directly.
