@@ -1,6 +1,7 @@
 description = 'Dynamic gRPC invocation from descriptors: call any unary or server-streaming method with no generated stubs'
 
 dependencies {
+    runtimeOnly project(':protomolt-actions-schema')
     api project(':protomolt-actions')
     api project(':protomolt-grpc-channel-policy')
     api libs.grpc.api
@@ -14,6 +15,8 @@ dependencies {
     runtimeOnly libs.grpc.netty.shaded
 
     testImplementation project(':protomolt-sources')
+    // Reflection-to-toolkit interoperability is exercised by ReflectActionTest.
+    testRuntimeOnly project(':protomolt-actions-toolkit')
     testImplementation libs.grpc.inprocess
     testImplementation libs.grpc.protobuf
 }

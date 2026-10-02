@@ -1,6 +1,7 @@
 description = 'The inference gRPC service: the generic InferenceService surface wrapped around the SPI facade, requests validated against their declared validate.v1 rules, blocking provider calls on virtual threads'
 
 dependencies {
+    runtimeOnly project(':protomolt-actions-schema')
     api project(':protomolt-inference-spi')
     api project(':protomolt-inference-proto')
 

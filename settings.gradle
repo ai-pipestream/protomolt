@@ -505,3 +505,9 @@ project(':protomolt-system-tests').projectDir = file('tests/system')
 
 include 'protomolt-actions-index'
 project(':protomolt-actions-index').projectDir = file('surface/actions/index')
+
+include 'protomolt-actions-schema'
+project(':protomolt-actions-schema').projectDir = file('surface/actions/schema')
+
+include 'protomolt-actions-toolkit'
+project(':protomolt-actions-toolkit').projectDir = file('surface/actions/toolkit')

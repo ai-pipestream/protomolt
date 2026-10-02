@@ -1,6 +1,7 @@
 description = 'Open Knowledge Format renderer: descriptor sets and registry stores as OKF v0.1 knowledge bundles, plus the emit-okf verb'
 
 dependencies {
+    runtimeOnly project(':protomolt-actions-schema')
     api project(':protomolt-emit')
     api project(':protomolt-actions')
     // OkfRegistryBundles.render takes SchemaRegistryStore from this module.

@@ -1,6 +1,7 @@
 description = 'Git proto gatherer: clone/fetch repositories and stage proto trees (JGit)'
 
 dependencies {
+    runtimeOnly project(':protomolt-actions-schema')
     api project(':protomolt-acquire-gather')
     api project(':protomolt-actions')
 

@@ -1,6 +1,7 @@
 description = 'The workflow-runs service: durable asynchronous workflow execution — Postgres is the truth, a Kafka request topic in, lifecycle events out via the transactional outbox, no framework'
 
 dependencies {
+    runtimeOnly project(':protomolt-actions-schema')
     api project(':protomolt-composer')
     api project(':protomolt-jobs-proto')
 

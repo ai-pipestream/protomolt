@@ -234,7 +234,7 @@ class ActionCatalogTest {
 
     @Test
     void namesKeepRegistrationOrder() {
-        assertThat(catalog.names()).startsWith("compile", "validate-message")
+        assertThat(catalog.names()).startsWith("render-index-mappings", "compile", "validate-message")
                 .endsWith("extract-metadata", "list-types");
     }
 

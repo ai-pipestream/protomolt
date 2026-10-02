@@ -5,7 +5,7 @@
  * <p>{@link ai.protomolt.proto.actions.ProtoAction} is the extension point. Each action
  * declares a kebab-case name, a description written for tool use, and a JSON Schema for its
  * input envelope, so a catalog listing is a self-describing tool manifest.
- * {@link ai.protomolt.proto.actions.ActionCatalog} registers the built-in actions and is the
+ * {@link ai.protomolt.proto.actions.ActionCatalog} registers installed providers and is the
  * single dispatch point; {@link ai.protomolt.proto.actions.ActionContext} carries the
  * {@link ai.protomolt.proto.descriptors.DescriptorRegistry} and JSON machinery that actions
  * share. Failures are {@link ai.protomolt.proto.actions.ActionException}s with stable codes

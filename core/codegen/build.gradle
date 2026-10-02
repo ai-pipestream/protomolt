@@ -1,6 +1,7 @@
 description = 'Live code generation from descriptors: protoc and its Java/Kotlin/gRPC generators as WebAssembly, no native toolchain'
 
 dependencies {
+    runtimeOnly project(':protomolt-actions-schema')
     api project(':protomolt-actions')
     api libs.protobuf.java
 

@@ -138,8 +138,8 @@ class CheckCompatActionTest {
     }
 
     @Test
-    void thePublishedSchemaListsTheLegalModes() {
-        ObjectNode schema = new CheckCompatAction().inputSchema();
+    void thePublishedSchemaListsTheLegalModes() throws Exception {
+        ObjectNode schema = ActionCatalog.defaults(ActionContext.create()).get("check-compat").inputSchema();
 
         // proto3 JSON accepts an enum by name or by number, so the property is the choice
         // between the two; the names are what a caller writes.

@@ -23,25 +23,26 @@ class OptionalActionsTest {
     @TempDir Path temporary;
 
     @Test
-    void absentProviderIsNotAdvertisedAndCoreActionsStillWork() throws Exception {
+    void absentProvidersAreNotAdvertisedAndExplicitActionsStillWork() throws Exception {
         withProviders(null, () -> {
             ActionCatalog catalog = ActionCatalog.defaults(TestFixtures.personContext());
-            assertThat(catalog.names()).contains("validate-message", "map-message")
-                    .doesNotContain("render-index-mappings");
-            assertThat(catalog.execute("list-types", TestFixtures.obj("{}"))).isNotNull();
+            assertThat(catalog.names()).isEmpty();
+            catalog.register(new FakeAction("explicit-action", new AtomicBoolean()));
+            assertThat(catalog.execute("explicit-action", Struct.getDefaultInstance())).isNotNull();
             assertThatThrownBy(() -> catalog.get("render-index-mappings"))
                     .isInstanceOf(ActionException.class).hasMessageContaining("Unknown action");
         });
     }
 
     @Test
-    void installedIndexProviderRetainsItsPositionInTheFullCatalog() {
+    void installedProvidersHaveDeterministicClassAndActionOrder() {
         assertThat(ActionCatalog.defaults(ActionContext.create()).names())
-                .containsSubsequence("render-prompt", "render-index-mappings", "eval-cel");
+                .startsWith("render-index-mappings", "compile", "validate-message")
+                .containsSubsequence("render-prompt", "eval-cel");
     }
 
     @Test
-    void duplicateProviderCannotShadowCoreAction() throws Exception {
+    void duplicateProviderActionsCannotShadowEachOther() throws Exception {
         Path file = temporary.resolve("duplicate");
         Files.writeString(file, DuplicateProvider.class.getName());
         withProviders(file.toUri().toURL(), () ->
@@ -80,7 +81,8 @@ class OptionalActionsTest {
 
     public static final class DuplicateProvider implements ActionProvider {
         @Override public List<? extends ProtoAction> actions() {
-            return List.of(new FakeAction("compile", new AtomicBoolean()));
+            return List.of(new FakeAction("compile", new AtomicBoolean()),
+                    new FakeAction("compile", new AtomicBoolean()));
         }
     }
 
