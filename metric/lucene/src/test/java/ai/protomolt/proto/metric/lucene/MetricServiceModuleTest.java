@@ -393,10 +393,10 @@ class MetricServiceModuleTest {
     /** A registry role: the real store over a temp repository, inert mount. */
     static final class FakeRegistryModule implements ServiceModule, ServiceMount {
 
-        final ai.protomolt.proto.registry.GitSchemaRegistryStore store;
+        final ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore store;
 
         FakeRegistryModule(Path dir) {
-            this.store = ai.protomolt.proto.registry.GitSchemaRegistryStore.builder()
+            this.store = ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore.builder()
                     .repositoryDir(dir)
                     .build();
         }
@@ -409,7 +409,7 @@ class MetricServiceModuleTest {
         @Override
         public ServiceMount wire(NodeContext context) {
             context.contributions().contribute(
-                    ai.protomolt.proto.registry.GitSchemaRegistryStore.class, store);
+                    ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore.class, store);
             return this;
         }
 

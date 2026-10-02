@@ -13,7 +13,7 @@ import java.util.Objects;
  * reference verification, write-gate enforcement and compile verification. Callers invoke the
  * steps under their own write lock, in the documented order.
  */
-final class RegistrationSupport {
+public final class RegistrationSupport {
 
     private static final ProtoSourceCompiler COMPILER = new ProtoSourceCompiler();
 
@@ -31,7 +31,7 @@ final class RegistrationSupport {
      * the boundary instead. Stores that never touch the filesystem apply the same rule so both
      * implementations accept the same inputs.
      */
-    static String requireSubject(String subject) {
+    public static String requireSubject(String subject) {
         Objects.requireNonNull(subject, "subject");
         if (subject.isBlank()) {
             throw new IllegalArgumentException("subject must not be blank");
@@ -44,7 +44,7 @@ final class RegistrationSupport {
     }
 
     /** Every reference must already exist in the store. */
-    static void verifyReferences(SchemaRegistryStore store, List<SchemaReference> references)
+    public static void verifyReferences(SchemaRegistryStore store, List<SchemaReference> references)
             throws ReferenceNotFoundException {
         for (SchemaReference reference : references) {
             if (store.version(reference.subject(), reference.version()).isEmpty()) {
@@ -54,7 +54,7 @@ final class RegistrationSupport {
     }
 
     /** The subject's full history, ascending by version. */
-    static List<StoredSchema> history(SchemaRegistryStore store, String subject) {
+    public static List<StoredSchema> history(SchemaRegistryStore store, String subject) {
         List<StoredSchema> history = new ArrayList<>();
         for (int version : store.versions(subject)) {
             store.version(subject, version).ifPresent(history::add);
@@ -68,7 +68,7 @@ final class RegistrationSupport {
      *
      * @throws IncompatibleRegistrationException carrying the gate's violations
      */
-    static void enforceWriteGate(WriteGate gate, SchemaRegistryStore store, String subject,
+    public static void enforceWriteGate(WriteGate gate, SchemaRegistryStore store, String subject,
                                  List<StoredSchema> history, String schemaText,
                                  List<SchemaReference> references)
             throws IncompatibleRegistrationException {
@@ -91,7 +91,7 @@ final class RegistrationSupport {
      *
      * @throws InvalidSchemaException carrying the compiler's message
      */
-    static void compileCandidate(SchemaRegistryStore store, String subject, String schemaText,
+    public static void compileCandidate(SchemaRegistryStore store, String subject, String schemaText,
                                  List<SchemaReference> references)
             throws InvalidSchemaException, ReferenceNotFoundException {
         StoredSchemaSources.Resolved resolved =

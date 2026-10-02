@@ -50,7 +50,8 @@ existing affected tests and startup/shutdown behavior. Record before/after depen
 counts separately from runtime or performance claims.
 
 The implementation is in progress. Local checks do not establish publication or
-deployment; the remaining service, registry and CEL extractions are unfinished.
+deployment. Service wiring and registry provider discovery remain in progress;
+the extracted boundaries are described below.
 
 ## MCP transport boundary
 
@@ -105,3 +106,27 @@ propagate compilation and evaluation errors. Only a successfully evaluated false
 filter skips a candidate; a malformed expression cannot select a later fallback.
 Filtered-out selectors remain unevaluated. Callers relying on error-driven fallback
 must express the intended presence or eligibility condition as a filter.
+
+## Registry storage boundary
+
+`protomolt-registry` contains storage contracts, in-memory storage and shared
+registration/descriptor-set validation. Its runtime dependency gate rejects
+JGit and the Git and workflow implementation modules.
+
+`protomolt-schema-registry-git` contains `GitSchemaRegistryStore`,
+`RegistryFederation` and `RegistryWorkflowVersionRepository`. Applications that
+use these implementations must select the optional module explicitly. This
+extraction does not yet add storage-provider discovery; existing launchers still
+construct their configured Git store.
+
+**Java migration:** the three implementation classes move from
+`ai.protomolt.proto.registry` to `ai.protomolt.proto.schema.registry.git`.
+Consumers must add the new dependency, update imports and recompile. Storage
+contracts retain their package. Existing persisted formats and protocol definitions
+are unchanged by this extraction. `RegistrationSupport` and `DescriptorSetArtifacts`
+are public shared helpers so backends reuse the core checks.
+
+A shared test-fixtures variant exercises the same storage contract against both
+in-memory and Git implementations. Test dependencies remain separate from the
+production runtime. The Git module still includes workflow version storage;
+separating that backend further is independent of this core boundary.

@@ -4,7 +4,7 @@ import ai.protomolt.proto.composer.Channels;
 import ai.protomolt.proto.composer.NodeContext;
 import ai.protomolt.proto.composer.ServiceModule;
 import ai.protomolt.proto.composer.ServiceMount;
-import ai.protomolt.proto.registry.GitSchemaRegistryStore;
+import ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore;
 import io.grpc.Server;
 
 import java.util.List;

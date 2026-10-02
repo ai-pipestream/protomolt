@@ -1,4 +1,11 @@
-package ai.protomolt.proto.registry;
+package ai.protomolt.proto.schema.registry.git;
+
+import ai.protomolt.proto.registry.SchemaRegistryStoreContractTest;
+
+import ai.protomolt.proto.registry.SchemaContents;
+import ai.protomolt.proto.registry.SchemaReference;
+import ai.protomolt.proto.registry.SchemaRegistryStore;
+import ai.protomolt.proto.registry.StoredSchema;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.eclipse.jgit.api.Git;

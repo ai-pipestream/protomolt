@@ -4,7 +4,7 @@
  * <p>{@link SchemaRegistryStore} is the storage SPI: subjects holding ascending 1-based
  * versions, global IDs unique across the store, content-identity lookup, and per-subject
  * compatibility configuration falling back to a global default. Two implementations ship —
- * {@link GitSchemaRegistryStore}, where a Git repository is the storage and every registration
+ * {@code GitSchemaRegistryStore}, where a Git repository is the storage and every registration
  * is a commit, and {@link InMemorySchemaRegistryStore} for tests and embedding. Both run the
  * same registration pipeline: reference verification, write gate, compile verification.</p>
  *

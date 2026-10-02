@@ -1,6 +1,7 @@
 description = 'The registry plug for distributed config: config documents read from the git-backed registry over its native HTTP surface, commit ids as versions'
 
 dependencies {
+    testImplementation project(':protomolt-schema-registry-git')
     api project(':protomolt-config')
     implementation libs.jackson.databind
     implementation libs.slf4j.api

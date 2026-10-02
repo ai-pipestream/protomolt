@@ -41,7 +41,7 @@ import ai.protomolt.proto.parse.service.RoutingRules;
 import ai.protomolt.proto.parse.text.TextParserService;
 import ai.protomolt.proto.parse.v1.ParseDocumentRequest;
 import ai.protomolt.proto.parse.v1.RoutingRule;
-import ai.protomolt.proto.registry.GitSchemaRegistryStore;
+import ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore;
 import ai.protomolt.proto.registry.service.SchemaRegistryServer;
 import ai.protomolt.proto.registry.service.SchemaRegistryServerConfig;
 import ai.protomolt.proto.repo.container.ledger.LedgerConfig;

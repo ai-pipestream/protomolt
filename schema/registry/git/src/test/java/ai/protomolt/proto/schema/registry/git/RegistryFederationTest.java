@@ -1,4 +1,10 @@
-package ai.protomolt.proto.registry;
+package ai.protomolt.proto.schema.registry.git;
+
+import ai.protomolt.proto.registry.SchemaRegistryStoreContractTest;
+
+import ai.protomolt.proto.registry.RegistryStoreException;
+import ai.protomolt.proto.registry.SchemaReference;
+import ai.protomolt.proto.registry.StoredSchema;
 
 import com.google.protobuf.ByteString;
 import org.junit.jupiter.api.AfterEach;

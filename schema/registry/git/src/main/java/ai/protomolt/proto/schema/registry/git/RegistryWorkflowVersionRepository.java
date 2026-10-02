@@ -1,4 +1,6 @@
-package ai.protomolt.proto.registry;
+package ai.protomolt.proto.schema.registry.git;
+
+import ai.protomolt.proto.registry.RegistryStoreException;
 
 import ai.protomolt.proto.grpc.workflow.WorkflowVersionRepository;
 import ai.protomolt.proto.grpc.workflow.v1.VersionedWorkflow;

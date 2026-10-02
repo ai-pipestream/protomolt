@@ -262,9 +262,9 @@ public final class MetricServiceModule implements ServiceModule {
         // With a co-mounted registry, register the rebuild-rollup workflow
         // so operators can submit it by name; without one the RPC still
         // answers, there is just no declared envelope to submit.
-        List<ai.protomolt.proto.registry.GitSchemaRegistryStore> registries =
+        List<ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore> registries =
                 context.contributions().all(
-                        ai.protomolt.proto.registry.GitSchemaRegistryStore.class);
+                        ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore.class);
         if (!registries.isEmpty()) {
             registries.getFirst().putWorkflow(
                     MetricWorkflows.REBUILD_ROLLUP_WORKFLOW,

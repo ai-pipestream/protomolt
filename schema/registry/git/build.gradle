@@ -1,0 +1,9 @@
+description = 'Optional Git schema registry, federation and workflow version storage'
+
+dependencies {
+    testImplementation(testFixtures(project(':protomolt-registry')))
+    api project(':protomolt-registry')
+    api project(':protomolt-grpc-workflow')
+    implementation libs.jgit
+    implementation libs.jackson.databind
+}

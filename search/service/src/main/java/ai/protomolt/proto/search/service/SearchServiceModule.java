@@ -6,7 +6,7 @@ import ai.protomolt.proto.authz.CallerResolver;
 import ai.protomolt.proto.composer.NodeContext;
 import ai.protomolt.proto.composer.ServiceModule;
 import ai.protomolt.proto.composer.ServiceMount;
-import ai.protomolt.proto.registry.GitSchemaRegistryStore;
+import ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore;
 import ai.protomolt.proto.search.embedding.VectorizationPolicy;
 import ai.protomolt.proto.screening.Screener;
 import ai.protomolt.proto.validate.ProtoValidator;

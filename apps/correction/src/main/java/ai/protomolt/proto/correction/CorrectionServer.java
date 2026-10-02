@@ -6,7 +6,7 @@ import ai.protomolt.proto.inference.spi.*;
 import ai.protomolt.proto.inference.structured.StructuredGenerator;
 import ai.protomolt.proto.inference.v1.ModelCapabilities;
 import ai.protomolt.proto.inference.v1.ModelEntry;
-import ai.protomolt.proto.registry.GitSchemaRegistryStore;
+import ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore;
 import ai.protomolt.proto.workflow.WorkflowRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;

@@ -6,6 +6,7 @@ plugins {
 description = 'Fixed recorded contact correction candidate service'
 
 dependencies {
+    implementation project(':protomolt-schema-registry-git')
     implementation project(':protomolt-delegation')
     implementation project(':protomolt-projection')
     implementation project(':protomolt-workflow')

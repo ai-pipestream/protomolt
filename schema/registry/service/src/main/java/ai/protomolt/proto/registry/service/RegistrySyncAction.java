@@ -6,7 +6,7 @@ import ai.protomolt.proto.actions.CatalogContract;
 import ai.protomolt.proto.actions.ProtoAction;
 import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.http.jsonschema.ProtoJsonSchemaGenerator;
-import ai.protomolt.proto.registry.RegistryFederation;
+import ai.protomolt.proto.schema.registry.git.RegistryFederation;
 import ai.protomolt.proto.registry.RegistryStoreException;
 import ai.protomolt.proto.schema.registry.v1.ImportedSubject;
 import ai.protomolt.proto.schema.registry.v1.RegistrySyncRequest;

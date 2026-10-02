@@ -30,6 +30,7 @@ def supportedModules = [
         'protomolt-actions-schema',
         'protomolt-actions-toolkit',
         'protomolt-registry',
+        'protomolt-schema-registry-git',
         'protomolt-registry-proto',
         'protomolt-mcp',
         'protomolt-mcp-transport',

@@ -14,7 +14,7 @@ import ai.protomolt.proto.delegation.RepositoryServiceTranscriptRepository;
 import ai.protomolt.proto.delegation.storage.v1.EncryptedRepositoryState;
 import ai.protomolt.proto.grpc.workflow.FileSystemArtifactRepository;
 import ai.protomolt.proto.grpc.workflow.v1.ArtifactReference;
-import ai.protomolt.proto.registry.GitSchemaRegistryStore;
+import ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore;
 import ai.protomolt.proto.receipt.KeyState;
 import ai.protomolt.proto.receipt.RecordKeys;
 import ai.protomolt.proto.receipt.RecordVerifier;

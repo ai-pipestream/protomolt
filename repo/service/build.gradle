@@ -17,6 +17,7 @@ configurations.matching { it.name in ['testCompileClasspath', 'testRuntimeClassp
         }
 
 dependencies {
+    implementation project(':protomolt-schema-registry-git')
     api project(':protomolt-composer')
     implementation project(':protomolt-repo-proto')
     implementation project(':protomolt-authz-grpc')

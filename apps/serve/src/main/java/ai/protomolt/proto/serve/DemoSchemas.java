@@ -4,7 +4,7 @@ import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.grpc.service.contract.ProtoMoltServiceSchema;
 import ai.protomolt.proto.search.index.spi.ProtoOptionsIndexingHintSource;
 import ai.protomolt.proto.meta.DescriptorMetadata;
-import ai.protomolt.proto.registry.GitSchemaRegistryStore;
+import ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore;
 import ai.protomolt.proto.registry.SchemaReference;
 import ai.protomolt.proto.sources.CompiledProtos;
 import ai.protomolt.proto.sources.ProtoSourceCompiler;

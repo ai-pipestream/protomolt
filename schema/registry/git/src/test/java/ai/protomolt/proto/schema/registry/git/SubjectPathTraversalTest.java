@@ -1,4 +1,7 @@
-package ai.protomolt.proto.registry;
+package ai.protomolt.proto.schema.registry.git;
+
+import ai.protomolt.proto.registry.InMemorySchemaRegistryStore;
+import ai.protomolt.proto.registry.StoredSchema;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;

@@ -1,6 +1,7 @@
 description = 'The Kafka plug for distributed config: a compacted topic read through the house serde against the registry, with the schema\'s declared rules enforced on read - never an unvalidated document'
 
 dependencies {
+    testImplementation project(':protomolt-schema-registry-git')
     api project(':protomolt-config')
     // The house serde: Confluent wire format against the protomolt
     // registry, validate-on-read forced on for the config lane.
