@@ -21,8 +21,6 @@ dependencies {
     implementation project(':protomolt-mapper-cel')
     implementation project(':protomolt-shapes')
     implementation project(':protomolt-search-index-spi')
-    implementation project(':protomolt-search-index-lucene')
-    implementation project(':protomolt-search-index-opensearch')
-    implementation project(':protomolt-search-index-solr')
-    implementation project(':protomolt-search-index-qdrant')
+    // Existing full-catalog tests exercise optional indexing through its provider.
+    testRuntimeOnly project(':protomolt-actions-index')
 }

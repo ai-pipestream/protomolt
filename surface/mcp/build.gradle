@@ -6,6 +6,8 @@ description = 'MCP server over the action catalog and registry: JSON-RPC 2.0 on 
 
 dependencies {
     api project(':protomolt-actions')
+    // This full catalog distribution explicitly includes optional indexing actions.
+    runtimeOnly project(':protomolt-actions-index')
     api project(':protomolt-registry')
     api project(':protomolt-acquire-gather-git')
     api project(':protomolt-grpc-invoke')

@@ -12,12 +12,12 @@ import java.util.List;
  * Hand-rolled minimal envelope validation: required fields and basic JSON types. Violations
  * surface as {@code invalid-input} with the offending JSON pointer in {@code details.pointer}.
  */
-final class Inputs {
+public final class Inputs {
 
     private Inputs() {
     }
 
-    static ActionException invalidInput(String message, String pointer) {
+    public static ActionException invalidInput(String message, String pointer) {
         ObjectNode details = JsonNodeFactory.instance.objectNode();
         details.put("pointer", pointer);
         return new ActionException("invalid-input", message + " (at '" + pointer + "')", details);
@@ -42,7 +42,7 @@ final class Inputs {
         return (ObjectNode) node;
     }
 
-    static ObjectNode optionalObject(ObjectNode input, String field) throws ActionException {
+    public static ObjectNode optionalObject(ObjectNode input, String field) throws ActionException {
         JsonNode node = input.get(field);
         if (node == null || node.isNull()) {
             return null;
@@ -89,7 +89,7 @@ final class Inputs {
     }
 
     /** Returns {@code null} when absent; rejects present non-array values. */
-    static ArrayNode optionalArray(ObjectNode input, String field) throws ActionException {
+    public static ArrayNode optionalArray(ObjectNode input, String field) throws ActionException {
         JsonNode node = input.get(field);
         if (node == null || node.isNull()) {
             return null;
@@ -101,7 +101,7 @@ final class Inputs {
     }
 
     /** Every element of {@code array} as a string; rejects non-string elements. */
-    static List<String> stringElements(ArrayNode array, String pointer) throws ActionException {
+    public static List<String> stringElements(ArrayNode array, String pointer) throws ActionException {
         List<String> values = new ArrayList<>(array.size());
         for (int i = 0; i < array.size(); i++) {
             JsonNode element = array.get(i);

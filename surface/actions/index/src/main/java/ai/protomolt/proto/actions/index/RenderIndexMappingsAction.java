@@ -1,4 +1,14 @@
-package ai.protomolt.proto.actions;
+package ai.protomolt.proto.actions.index;
+
+import ai.protomolt.proto.actions.ActionContext;
+import ai.protomolt.proto.actions.ActionException;
+import ai.protomolt.proto.actions.CatalogContract;
+import ai.protomolt.proto.actions.Fields;
+import ai.protomolt.proto.actions.Inputs;
+import ai.protomolt.proto.actions.ProtoAction;
+import ai.protomolt.proto.actions.Reply;
+import ai.protomolt.proto.actions.SchemaResolver;
+import ai.protomolt.proto.actions.Scopes;
 
 import ai.protomolt.proto.search.index.lucene.LuceneFieldSpecs;
 import ai.protomolt.proto.search.index.opensearch.OpenSearchMappingGenerator;
@@ -49,7 +59,7 @@ final class RenderIndexMappingsAction implements ProtoAction {
     public Message execute(Message input, ActionContext context) throws ActionException {
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
         Descriptor descriptor = schema.message(
-                SynthesizeShapeAction.named(input, "type"), "/type");
+                namedType(input), "/type");
         String engine = Fields.enumName(input, "engine");
         IndexMapping mapping = IndexMappingFactory.defaults(new CatalogIndexingHintSource())
                 .create(descriptor);
@@ -60,6 +70,11 @@ final class RenderIndexMappingsAction implements ProtoAction {
                 .set("engine", engine)
                 .set("mappings", renderFor(engine, mapping, descriptor, input, context))
                 .build();
+    }
+
+    private static String namedType(Message input) {
+        String type = Fields.string(input, "type");
+        return type.isEmpty() ? null : type;
     }
 
     private static ObjectNode renderFor(String engine, IndexMapping mapping, Descriptor descriptor,
