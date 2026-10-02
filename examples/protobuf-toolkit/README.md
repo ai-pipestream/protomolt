@@ -102,3 +102,28 @@ For more depth, see [mapping](../../docs/transform/mapping.md),
 [validation](../../docs/transform/validation.md),
 [registry](../../docs/schema/registry.md), and
 [JSON Schema](../../docs/schema/json-schema.md).
+
+## Verify an unpublished library change
+
+A branch can change Java APIs before matching public artifacts exist. To test
+that branch, stage its library graph into a local Maven repository, then run this
+standalone build against that repository:
+
+```sh
+./gradlew -I gradle/toolkit-consumer.init.gradle \
+  -PtoolkitRepository="$PWD/build/toolkit-maven" \
+  -PpublishVersion=0.1.0-consumer-candidate-SNAPSHOT stageToolkitConsumer
+./gradlew -p examples/protobuf-toolkit \
+  -PtoolkitRepository="$PWD/build/toolkit-maven" \
+  -PprotomoltVersion=0.1.0-consumer-candidate-SNAPSHOT run --refresh-dependencies
+```
+
+The repository override exclusively resolves `ai.pipestream` artifacts from the
+staged directory. Missing candidate artifacts fail resolution instead of falling
+back to public snapshots. This checks Maven packaging and transitive dependencies;
+it does not publish artifacts remotely. The candidate CI job uses this path.
+
+On pull requests, the separate public-artifact job runs the base revision's
+example, whose API predates the proposed changes. On main and manual runs it uses
+the selected revision. That public check can fail until matching snapshots have
+been published; candidate success is not evidence of public availability.
