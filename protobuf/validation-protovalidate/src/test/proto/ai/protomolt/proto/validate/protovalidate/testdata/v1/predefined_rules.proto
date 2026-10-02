@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.validate.protovalidate.testdata.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.validate.protovalidate.testdata";
+
+import "buf/validate/validate.proto";
+import "ai/protomolt/proto/validate/protovalidate/testdata/v1/predefined_ext.proto";
+
+// A schema switching on the predefined rules declared in predefined_ext.proto. The rules reach
+// this file through its import, which is the lookup path PredefinedRules walks.
+
+message PredefinedUser {
+  string handle = 1 [(buf.validate.field).string = {
+    min_len: 2
+    [ai.protomolt.proto.validate.protovalidate.testdata.v1.lowercase_only]: true
+  }];
+
+  // The same predefined rule, switched off: the rule still resolves, `rule` is false, and the
+  // expression short-circuits — so an uppercase value passes here.
+  string label = 2 [(buf.validate.field).string = {
+    [ai.protomolt.proto.validate.protovalidate.testdata.v1.lowercase_only]: false
+  }];
+
+  int32 seats = 3 [(buf.validate.field).int32 = {
+    gte: 0
+    [ai.protomolt.proto.validate.protovalidate.testdata.v1.multiple_of]: 5
+  }];
+
+  // No predefined rule set: the standard rule still applies and nothing else does.
+  string plain = 4 [(buf.validate.field).string = {min_len: 2}];
+}
