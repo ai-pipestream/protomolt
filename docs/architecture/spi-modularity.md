@@ -227,3 +227,8 @@ must pass null deliberately to disable token authentication; the generic registr
 role requires `AUTH=none` for that choice. Token values are neither trimmed nor
 included in configuration errors. Existing code that supplied missing values to
 request defaults must use `defaults()` or pass the intended values explicitly.
+
+The serve and document-platform launchers also reject blank operator tokens.
+For an open node, omit `PROTOMOLT_API_TOKEN` and `--api-token` rather than supplying
+an empty secret. Java options accept null for that choice. The document-platform
+environment parser preserves the exact token value instead of trimming it.
