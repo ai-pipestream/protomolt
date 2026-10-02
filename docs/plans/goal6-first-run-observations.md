@@ -201,8 +201,21 @@ The focused check passed `EdgeVerifierTest` (10 tests) and `TypedEdgeTest`
 `/tmp/protomolt-goal6-typed-edge.log`. This is in-process execution evidence,
 not a replacement for the deployed rehearsal above.
 
-Cold setup timings; independent human walkthrough;
-documented-input rehearsal; a user's own external endpoint;
-correction/coordination/integration latency and outcome measurements;
-deployed optional-extension walkthroughs; durable publication of tutorials and evidence.
-Goal 6 is not complete.
+## Goal 6 closeout
+
+On 2026-10-02, the user requested publication and closure of Goal 6, with their
+walkthrough deferred until later. The delivery scope is complete with the
+published tutorials, runnable examples, and rehearsal evidence described above.
+The first-workflow guide now introduces workflows with a concrete text-cleanup
+example, provides one setup script, and explains the browser steps in order.
+
+This closes the delivery work; it does not establish independent usability.
+The follow-up walkthrough still needs cold setup timing, the documented browser
+input and restart checks, and a user's own external endpoint. Record assistance,
+confusing steps, and failures using the [tester checklist](../tutorials/adoption-checklist.md),
+then address those findings separately. Broader latency and outcome measurements
+and additional deployed connector configurations remain outside this closeout.
+
+The tutorial and evidence publication is complete when this closeout change is
+merged. No new runtime release or NAS deployment is part of this documentation
+update.
