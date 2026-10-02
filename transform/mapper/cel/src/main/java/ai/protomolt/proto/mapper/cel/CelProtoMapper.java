@@ -51,17 +51,18 @@ public final class CelProtoMapper {
             return;
         }
         for (CelMappingRule rule : rules) {
-            apply(target, rule, false);
+            apply(target, rule);
         }
     }
 
     /**
-     * Tries a single rule. Returns {@code false} when the filter rejects it or
-     * the selector fails (candidate-fallback friendly). Throws only for path I/O
-     * failures after a successful selector evaluation.
+     * Tries a single rule. Returns {@code false} when the filter rejects it or the
+     * rule has no selector or text mapping. Expression and path failures propagate.
+     *
+     * @throws CelEvaluationException when a filter or selector fails
      */
     public boolean tryMap(Message.Builder target, CelMappingRule rule) throws MappingException {
-        return apply(target, rule, true);
+        return apply(target, rule);
     }
 
     /**
@@ -82,7 +83,7 @@ public final class CelProtoMapper {
         return false;
     }
 
-    private boolean apply(Message.Builder target, CelMappingRule rule, boolean softSelector)
+    private boolean apply(Message.Builder target, CelMappingRule rule)
             throws MappingException {
         Objects.requireNonNull(rule, "rule");
         Map<String, Object> bindings = new LinkedHashMap<>(extraBindings);
@@ -90,24 +91,13 @@ public final class CelProtoMapper {
         // required fields mid-mapping; build() would throw UninitializedMessageException.
         bindings.put(rootVariable, target.buildPartial());
         if (rule.filterExpression() != null && !rule.filterExpression().isBlank()) {
-            // Soft mode skips the rule on filter compile/evaluation errors; strict mode propagates them.
-            boolean filterMatches = softSelector
-                    ? evaluator.evaluateBoolean(rule.filterExpression(), bindings)
-                    : evaluator.evaluateBooleanOrFail(rule.filterExpression(), bindings);
+            boolean filterMatches = evaluator.evaluateBooleanOrFail(rule.filterExpression(), bindings);
             if (!filterMatches) {
                 return false;
             }
         }
         if (rule.selectorExpression() != null && !rule.selectorExpression().isBlank()) {
-            Object value;
-            try {
-                value = evaluator.evaluateValue(rule.selectorExpression(), bindings);
-            } catch (CelEvaluationException e) {
-                if (softSelector) {
-                    return false;
-                }
-                throw e;
-            }
+            Object value = evaluator.evaluateValue(rule.selectorExpression(), bindings);
             fieldMapper.setValue(target, rule.targetPath(), value);
             return true;
         }

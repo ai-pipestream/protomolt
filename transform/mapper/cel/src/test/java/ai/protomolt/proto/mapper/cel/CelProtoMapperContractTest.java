@@ -54,9 +54,9 @@ class CelProtoMapperContractTest {
     }
 
     @Test
-    void tryMapSoftensSelectorRuntimeFailure() throws Exception {
+    void tryMapPropagatesSelectorRuntimeFailure() throws Exception {
         var document = CelFixtures.doc("t");
-        assertFalse(mapper.tryMap(document, new CelMappingRule("", "1 / 0", "body")));
+        assertThrows(CelEvaluationException.class, () -> mapper.tryMap(document, new CelMappingRule("", "1 / 0", "body")));
         assertEquals("", document.build().getField(CelFixtures.DOCUMENT.findFieldByName("body")));
     }
 

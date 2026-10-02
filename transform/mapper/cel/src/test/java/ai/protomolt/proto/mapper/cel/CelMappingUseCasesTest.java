@@ -69,7 +69,7 @@ class CelMappingUseCasesTest {
     void coalesceCandidatesPreferPresentPath() throws Exception {
         var doc = CelFixtures.doc("headline");
         assertTrue(mapper.mapFirstCandidate(doc, List.of(
-                new CelMappingRule("", "input.missing", "body"),
+                new CelMappingRule("has(input.body)", "input.body", "body"),
                 new CelMappingRule("", "input.title", "body")
         )));
         assertEquals("headline", doc.build().getField(CelFixtures.DOCUMENT.findFieldByName("body")));
@@ -202,11 +202,11 @@ class CelMappingUseCasesTest {
     }
 
     @Test
-    void allCandidatesFailReturnsFalse() throws Exception {
+    void allCandidateFiltersFalseReturnsFalse() throws Exception {
         var doc = CelFixtures.doc("t");
         assertFalse(mapper.mapFirstCandidate(doc, List.of(
                 new CelMappingRule("false", "'a'", "body"),
-                new CelMappingRule("", "input.missing", "body")
+                new CelMappingRule("false", "1 / 0", "body")
         )));
         assertEquals("", doc.build().getField(CelFixtures.DOCUMENT.findFieldByName("body")));
     }

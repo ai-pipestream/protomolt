@@ -69,7 +69,16 @@ evaluation problems surface as `CelCompilationException` and
 Beyond `map`, the mapper supports progressive builder state (later rules see
 earlier writes), extra per-call bindings, and candidate fallback via
 `tryMap` / `mapFirstCandidate`: try a list of rules and keep the first that
-applies.
+applies. A false filter skips that candidate without evaluating its selector.
+Expression compilation errors, missing bindings, non-boolean filters and selector
+failures throw instead of selecting a fallback. For optional data, use an explicit
+filter such as `has(input.body)` before reading the field. Earlier successful
+writes remain on the builder when a later rule fails.
+
+The shared evaluator lives in `protomolt-cel` at `ai.protomolt.proto.cel`.
+The mapping classes `CelProtoMapper` and `CelMappingRule` live in
+`protomolt-mapper-cel` at `ai.protomolt.proto.mapper.cel`; callers migrating from
+their previous package must update imports and recompile.
 
 Any message type works, including `google.protobuf.Struct` for
 schema-loose payloads. The `:samples` module contains a runnable example

@@ -99,6 +99,9 @@ that package across JARs, against the module rules. Shared evaluator types retai
 their names; consumers using only those types can depend on `protomolt-cel`.
 No protobuf definitions or stored descriptor identities change in this extraction.
 
-The extraction preserves evaluation behavior. Existing soft evaluation and
-candidate-mapping methods still convert some failures to a non-match; replacing
-that behavior with explicit results or exceptions remains unfinished work.
+The extraction preserves evaluation behavior in a separate commit. The subsequent
+failure-handling change makes `evaluateBoolean`, `tryMap` and `mapFirstCandidate`
+propagate compilation and evaluation errors. Only a successfully evaluated false
+filter skips a candidate; a malformed expression cannot select a later fallback.
+Filtered-out selectors remain unevaluated. Callers relying on error-driven fallback
+must express the intended presence or eligibility condition as a filter.
