@@ -10,6 +10,7 @@ final class ContractStreamEmitter implements StreamEmitter {
     private final Descriptor descriptor;
     private final String action;
     private ActionException failure;
+    private RuntimeException uncheckedFailure;
     private boolean finished;
 
     ContractStreamEmitter(StreamEmitter downstream, Descriptor descriptor, String action) {
@@ -27,11 +28,15 @@ final class ContractStreamEmitter implements StreamEmitter {
         } catch (ActionException e) {
             failure = e;
             throw e;
+        } catch (RuntimeException e) {
+            uncheckedFailure = e;
+            throw e;
         }
     }
 
     synchronized void checkFailure() throws ActionException {
         if (failure != null) throw failure;
+        if (uncheckedFailure != null) throw uncheckedFailure;
     }
 
     synchronized void complete() throws ActionException {
