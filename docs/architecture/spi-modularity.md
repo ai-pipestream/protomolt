@@ -240,3 +240,20 @@ The serve and document-platform launchers also reject blank operator tokens.
 For an open node, omit `PROTOMOLT_API_TOKEN` and `--api-token` rather than supplying
 an empty secret. Java options accept null for that choice. The document-platform
 environment parser preserves the exact token value instead of trimming it.
+
+## Explicit workflow worker configuration
+
+`WorkflowRunsConfig` preserves zero retry backoff as an immediate retry. Negative
+backoff, nonpositive worker/attempt/concurrency counts, missing or nonpositive
+lease and poll durations, and missing or blank event topics fail configuration.
+They no longer select replacement values. Java callers wanting the conventional
+settings can use `WorkflowRunsConfig.defaults(workerId)` or pass the named
+constants explicitly. The serve launcher selects those constants when options
+are omitted and rejects supplied nonpositive worker and concurrency counts.
+
+The durable parse regression verifies immediate retry against PostgreSQL without
+sleeping or polling: scheduling and claiming both use the database clock.
+Lease and poll durations must be at least one millisecond and fit the Java
+millisecond representation used by the worker and store. Retry backoff must also
+fit that representation at the maximum exponent (20). Overflow is rejected with
+the arithmetic cause retained; it cannot wrap into a negative scheduling delay.

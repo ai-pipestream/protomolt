@@ -393,8 +393,8 @@ public final class WorkflowRunWorker implements AutoCloseable {
 
     private Duration backoff(int attempt) {
         // attempt is the 1-based counter of the attempt that just failed.
-        long shift = Math.min(Math.max(attempt - 1, 0), 20);
-        return Duration.ofSeconds(config.backoffBaseSeconds() * (1L << shift));
+        long shift = Math.min(Math.max(attempt - 1, 0), WorkflowRunsConfig.MAX_BACKOFF_EXPONENT);
+        return Duration.ofSeconds(Math.multiplyExact(config.backoffBaseSeconds(), 1L << shift));
     }
 
     private void fail(WorkflowRunRecord job, WorkerClaim claim, String step, String detail) {

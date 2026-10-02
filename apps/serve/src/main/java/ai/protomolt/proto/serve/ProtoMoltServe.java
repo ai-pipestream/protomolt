@@ -342,8 +342,9 @@ public final class ProtoMoltServe implements AutoCloseable {
             String jobsPassword = System.getenv("PROTOMOLT_JOBS_PASSWORD");
             String jobsKafka = System.getenv("PROTOMOLT_JOBS_KAFKA");
             String jobsRequestTopic = System.getenv("PROTOMOLT_JOBS_REQUEST_TOPIC");
-            int jobsWorkers = envInt("PROTOMOLT_JOBS_WORKERS", 0);
-            int jobsTargetConcurrency = envInt("PROTOMOLT_JOBS_TARGET_CONCURRENCY", 0);
+            int jobsWorkers = envInt("PROTOMOLT_JOBS_WORKERS", WorkflowRunsConfig.DEFAULT_WORKER_COUNT);
+            int jobsTargetConcurrency = envInt("PROTOMOLT_JOBS_TARGET_CONCURRENCY",
+                    WorkflowRunsConfig.DEFAULT_MAX_CONCURRENT_PER_TARGET);
             java.util.List<String> inferenceModels = new java.util.ArrayList<>();
             String serviceWorkspaceEnv = System.getenv("PROTOMOLT_SERVICE_WORKSPACE");
             Path serviceWorkspace = serviceWorkspaceEnv == null || serviceWorkspaceEnv.isBlank()
@@ -803,6 +804,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                               int workers, int targetConcurrency) {
 
         public JobsOptions {
+            if (workers <= 0) throw new IllegalArgumentException("jobs workers must be positive");
+            if (targetConcurrency <= 0) throw new IllegalArgumentException("jobs targetConcurrency must be positive");
             if (requestTopic != null && (kafkaBootstrap == null || kafkaBootstrap.isBlank())) {
                 throw new IllegalArgumentException("--jobs-request-topic requires --jobs-kafka");
             }
@@ -1080,8 +1083,10 @@ public final class ProtoMoltServe implements AutoCloseable {
                         : jobs.requestTopic() != null ? jobs.requestTopic() : "workflow-run-requests";
                 WorkflowRunsConfig jobsConfig = new WorkflowRunsConfig(
                         "serve-" + ManagementFactory.getRuntimeMXBean().getName(),
-                        jobs.workers(), null, null, 0, 0, jobs.targetConcurrency(),
-                        requestTopic, null, jobs.kafkaBootstrap(), null);
+                        jobs.workers(), WorkflowRunsConfig.DEFAULT_LEASE_DURATION,
+                        WorkflowRunsConfig.DEFAULT_POLL_INTERVAL, WorkflowRunsConfig.DEFAULT_BACKOFF_BASE_SECONDS,
+                        WorkflowRunsConfig.DEFAULT_MAX_ATTEMPTS, jobs.targetConcurrency(),
+                        requestTopic, WorkflowRunsConfig.DEFAULT_EVENTS_TOPIC, jobs.kafkaBootstrap(), null);
                 WorkflowRunner runner = new WorkflowRunner(outboundPolicy, structured);
                 jobsWorker = new WorkflowRunWorker(jobStore, context, workflows,
                         runner,

@@ -20,7 +20,7 @@ import java.util.Objects;
  *        steps are minutes, not milliseconds
  * @param pollInterval idle backoff for the worker loops
  * @param backoffBaseSeconds the base of the retry backoff
- *        ({@code base * 2^(attempt-1)} seconds)
+     *        ({@code base * 2^(attempt-1)} seconds); zero retries immediately
  * @param maxAttemptsDefault the retry ceiling stamped on new jobs
  * @param maxConcurrentPerTarget the per-target concurrency cap (one OpenVINO
  *        box per model: an uncapped worker fleet DDoSes the inference tier)
@@ -53,6 +53,8 @@ public record WorkflowRunsConfig(
     public static final Duration DEFAULT_POLL_INTERVAL = Duration.ofMillis(500);
     /** Default retry backoff base. */
     public static final long DEFAULT_BACKOFF_BASE_SECONDS = 5;
+    /** Maximum exponent used by retry scheduling. */
+    public static final int MAX_BACKOFF_EXPONENT = 20;
     /** Default retry ceiling for new jobs. */
     public static final int DEFAULT_MAX_ATTEMPTS = 3;
     /** Default per-target concurrency cap. */
@@ -70,30 +72,51 @@ public record WorkflowRunsConfig(
                     + "be debugged from the row");
         }
         if (workerCount <= 0) {
-            workerCount = DEFAULT_WORKER_COUNT;
+            throw new IllegalArgumentException("workerCount must be positive");
         }
-        if (leaseDuration == null || leaseDuration.isNegative() || leaseDuration.isZero()) {
-            leaseDuration = DEFAULT_LEASE_DURATION;
+        requirePositiveMillis(leaseDuration, "leaseDuration");
+        requirePositiveMillis(pollInterval, "pollInterval");
+        if (backoffBaseSeconds < 0) {
+            throw new IllegalArgumentException("backoffBaseSeconds must be nonnegative");
         }
-        if (pollInterval == null || pollInterval.isNegative() || pollInterval.isZero()) {
-            pollInterval = DEFAULT_POLL_INTERVAL;
-        }
-        if (backoffBaseSeconds <= 0) {
-            backoffBaseSeconds = DEFAULT_BACKOFF_BASE_SECONDS;
+        try {
+            Math.multiplyExact(Math.multiplyExact(backoffBaseSeconds, 1L << MAX_BACKOFF_EXPONENT), 1000L);
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException("backoffBaseSeconds must fit milliseconds at the maximum retry exponent", e);
         }
         if (maxAttemptsDefault <= 0) {
-            maxAttemptsDefault = DEFAULT_MAX_ATTEMPTS;
+            throw new IllegalArgumentException("maxAttemptsDefault must be positive");
         }
         if (maxConcurrentPerTarget <= 0) {
-            maxConcurrentPerTarget = DEFAULT_MAX_CONCURRENT_PER_TARGET;
+            throw new IllegalArgumentException("maxConcurrentPerTarget must be positive");
         }
         if (eventsTopic == null || eventsTopic.isBlank()) {
-            eventsTopic = DEFAULT_EVENTS_TOPIC;
+            throw new IllegalArgumentException("eventsTopic must be nonblank");
         }
         if (requestTopic != null && (kafkaBootstrapServers == null
                 || kafkaBootstrapServers.isBlank())) {
             throw new IllegalArgumentException("requestTopic is set but no Kafka bootstrap "
                     + "servers are configured — broker-native submission needs a broker");
+        }
+    }
+
+    /** Explicit conventional configuration without a Kafka broker. */
+    public static WorkflowRunsConfig defaults(String workerId) {
+        return new WorkflowRunsConfig(workerId, DEFAULT_WORKER_COUNT, DEFAULT_LEASE_DURATION,
+                DEFAULT_POLL_INTERVAL, DEFAULT_BACKOFF_BASE_SECONDS, DEFAULT_MAX_ATTEMPTS,
+                DEFAULT_MAX_CONCURRENT_PER_TARGET, null, DEFAULT_EVENTS_TOPIC, null, null);
+    }
+
+    private static void requirePositiveMillis(Duration duration, String name) {
+        if (duration == null || duration.isNegative() || duration.isZero()) {
+            throw new IllegalArgumentException(name + " must be positive and non-null");
+        }
+        try {
+            if (duration.toMillis() == 0) {
+                throw new IllegalArgumentException(name + " must be at least one millisecond");
+            }
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException(name + " must fit a millisecond duration", e);
         }
     }
 }

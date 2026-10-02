@@ -61,7 +61,7 @@ class WorkflowAuthoringMountTest {
                 .workflowAuthoring()).isNull();
         var authoring = new ProtoMoltServe.WorkflowAuthoringOptions("a".repeat(64), directory);
         var jobs = new ProtoMoltServe.JobsOptions("jdbc:postgresql://localhost/protomolt",
-                "user", "password", null, null, 0, 0);
+                "user", "password", null, null, 1, 1);
         var delegation = new ProtoMoltServe.DelegationOptions("repo.example.test:443", true);
         var registry = directory.resolve("registry.git");
         var workspace = directory.resolve("workflows");
