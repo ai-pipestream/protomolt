@@ -164,7 +164,7 @@ public final class CatalogContract {
                     .merge(document.toString(), builder);
         } catch (InvalidProtocolBufferException e) {
             throw new ActionException("invalid-input",
-                    what + " is not a " + descriptor.getName() + ": " + e.getMessage());
+                    what + " is not a " + descriptor.getName() + ": " + e.getMessage(), null, e);
         }
         return builder.build();
     }
@@ -206,7 +206,7 @@ public final class CatalogContract {
             JsonFormat.parser().usingTypeRegistry(registry).merge(input.toString(), builder);
         } catch (InvalidProtocolBufferException e) {
             throw new ActionException("invalid-input",
-                    verb + " expects a " + descriptor.getName() + ": " + e.getMessage());
+                    verb + " expects a " + descriptor.getName() + ": " + e.getMessage(), null, e);
         }
         DynamicMessage request = builder.build();
         validate(request, descriptor, verb);
@@ -341,7 +341,7 @@ public final class CatalogContract {
         } catch (InvalidProtocolBufferException e) {
             throw new ActionException("internal-error",
                     verb + " request does not re-read as " + expected.getFullName()
-                            + ": " + e.getMessage());
+                            + ": " + e.getMessage(), null, e);
         }
     }
 
@@ -392,7 +392,7 @@ public final class CatalogContract {
             return (ObjectNode) MAPPER.readTree(json.isBlank() ? "{}" : json);
         } catch (Exception e) {
             throw new ActionException("internal-error",
-                    verb + " " + what + " does not render as JSON: " + e.getMessage());
+                    verb + " " + what + " does not render as JSON: " + e.getMessage(), null, e);
         }
     }
 
@@ -411,7 +411,7 @@ public final class CatalogContract {
         } catch (InvalidProtocolBufferException e) {
             throw new ActionException("internal-error",
                     "Result of " + verb + " does not parse as " + descriptor.getFullName()
-                            + ": " + e.getMessage());
+                            + ": " + e.getMessage(), null, e);
         }
         return builder.build();
     }
