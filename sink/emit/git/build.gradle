@@ -1,0 +1,6 @@
+description = 'Optional Git delivery for emitted bundles'
+
+dependencies {
+    api project(':protomolt-emit')
+    implementation libs.jgit
+}

@@ -1,0 +1,12 @@
+description = 'Git registry service assembly and federation actions'
+
+dependencies {
+    api project(':protomolt-registry-service')
+    api project(':protomolt-schema-registry-git')
+    api project(':protomolt-composer')
+    api project(':protomolt-workflow')
+    runtimeOnly project(':protomolt-actions-toolkit')
+    runtimeOnly project(':protomolt-actions-index')
+    implementation project(':protomolt-http-jsonschema')
+    implementation libs.jackson.databind
+}

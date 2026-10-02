@@ -15,7 +15,7 @@ import ai.protomolt.proto.parse.service.RoutingRules;
 import ai.protomolt.proto.parse.text.TextParserModule;
 import ai.protomolt.proto.parse.text.TextParserService;
 import ai.protomolt.proto.parse.v1.RoutingRule;
-import ai.protomolt.proto.registry.service.RegistryModule;
+import ai.protomolt.proto.schema.registry.git.service.RegistryModule;
 import ai.protomolt.proto.registry.service.SchemaRegistryServerConfig;
 import ai.protomolt.proto.repo.service.RepoServiceModule;
 import ai.protomolt.proto.search.chunk.SentencePackedChunker;

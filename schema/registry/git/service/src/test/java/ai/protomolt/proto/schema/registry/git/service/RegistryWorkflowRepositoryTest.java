@@ -1,4 +1,4 @@
-package ai.protomolt.proto.registry.service;
+package ai.protomolt.proto.schema.registry.git.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

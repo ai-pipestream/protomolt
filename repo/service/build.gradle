@@ -62,6 +62,7 @@ dependencies {
     // Interop verification: a standard Confluent consumer against the events the relay
     // publishes and against our registry server. Test-scoped.
     testImplementation project(':protomolt-registry-service')
+    testImplementation project(':protomolt-workflow')
     // The bridge-entry envelope is parsed and verified against the real
     // descriptors rather than string-matched.
     testImplementation project(':protomolt-grpc-workflow')
