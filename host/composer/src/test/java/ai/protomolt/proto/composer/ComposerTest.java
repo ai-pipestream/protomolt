@@ -256,6 +256,20 @@ class ComposerTest {
     }
 
     @Test
+    void emptyEnvironmentRoleEntriesFailBeforeWiring() {
+        for (String roles : List.of(",", ",repo", "repo,", "repo,,repo", "repo, ,repo")) {
+            List<String> journal = new ArrayList<>();
+            Composer composer = Composer.emptyBuilder()
+                    .module(new RecordingModule("repo", Set.of(), journal))
+                    .environment(Map.of(Composer.ENV_ROLES, roles)).build();
+            assertThatThrownBy(composer::bootFromEnvironment)
+                    .as(roles).isInstanceOf(ComposerException.class)
+                    .hasMessageContaining(Composer.ENV_ROLES).hasMessageContaining("empty role");
+            assertThat(journal).isEmpty();
+        }
+    }
+
+    @Test
     void bootFromEnvironmentParsesRolesAndRequiresTheVariable() {
         List<String> journal = new ArrayList<>();
         Composer composer = Composer.emptyBuilder()
