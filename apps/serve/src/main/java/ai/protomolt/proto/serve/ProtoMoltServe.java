@@ -130,6 +130,9 @@ public final class ProtoMoltServe implements AutoCloseable {
                           WorkflowPreparationOptions workflowPreparation) {
 
         public Options {
+            if (apiToken != null && apiToken.isBlank()) {
+                throw new IllegalArgumentException("API token must be nonblank when supplied; use null for an open node");
+            }
             if (outboundPolicy == null) {
                 outboundPolicy = OutboundChannelPolicy.defaults();
             }
@@ -496,9 +499,6 @@ public final class ProtoMoltServe implements AutoCloseable {
                         System.exit(2);
                     }
                 }
-            }
-            if (apiToken != null && apiToken.isBlank()) {
-                apiToken = null;
             }
             JobsOptions jobs = null;
             if (jobsJdbc != null && !jobsJdbc.isBlank()) {

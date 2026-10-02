@@ -49,9 +49,9 @@ providers. Check generated Maven and Gradle metadata, classpath dependency gates
 existing affected tests and startup/shutdown behavior. Record before/after dependency
 counts separately from runtime or performance claims.
 
-The implementation is in progress. Local checks do not establish publication or
-deployment. Service wiring and registry provider discovery remain in progress;
-the extracted boundaries are described below.
+The extracted boundaries and their verification paths are described below.
+Local checks do not establish publication or deployment; consumers of published
+artifacts must use a version containing the relevant modules.
 
 ## MCP transport boundary
 
@@ -116,8 +116,8 @@ JGit and the Git and workflow implementation modules.
 `protomolt-schema-registry-git` contains `GitSchemaRegistryStore`,
 `RegistryFederation` and `RegistryWorkflowVersionRepository`. Applications that
 use these implementations must select the optional module explicitly. This
-extraction does not yet add storage-provider discovery; existing launchers still
-construct their configured Git store.
+module registers a storage provider for the generic registry role described below.
+Existing full launchers retain their explicit Git assembly.
 
 **Java migration:** the three implementation classes move from
 `ai.protomolt.proto.registry` to `ai.protomolt.proto.schema.registry.git`.
@@ -128,8 +128,10 @@ are public shared helpers so backends reuse the core checks.
 
 A shared test-fixtures variant exercises the same storage contract against both
 in-memory and Git implementations. Test dependencies remain separate from the
-production runtime. The Git module still includes workflow version storage;
-separating that backend further is independent of this core boundary.
+production runtime. The Git module includes workflow version storage and the
+gRPC workflow contracts. It does not depend on the workflow execution engine.
+Moving the repository adapter by itself would not remove those contracts: the
+store uses their validation and versioned message format for workflow documents.
 
 Registry metadata parsing also rejects malformed stored compatibility policies and
 invalid global counters instead of treating them as defaults. Absence of a
@@ -180,8 +182,9 @@ three options: `directory`, `author-name` and `author-email`. Unknown, missing o
 blank options fail before the repository is opened. Existing direct builders keep
 their API; this factory path does not choose an implicit commit author.
 
-This factory API is available for application wiring. The existing Git-specific
-service assembly has not yet been converted into a generic provider-backed role.
+The factory API supports application wiring through the generic registry role.
+The separate Git service assembly also provides federation and workflow integration
+for the full document-platform application.
 
 `protomolt-schema-registry-composer` supplies the generic `registry` role through
 `ServiceModule` SPI without adding Git or workflow dependencies to the HTTP
@@ -213,3 +216,22 @@ storage capability contributes `publish-config`; the generic role does not suppl
 Git federation or workflow execution. Multiple action contexts or caller resolvers
 fail instead of selecting the first. Startup failure and shutdown release the
 server and store through the composer's cleanup stack.
+
+## Explicit registry HTTP configuration
+
+`SchemaRegistryServerConfig` rejects null or blank hosts and endpoint paths.
+Supplying an empty host no longer binds every interface, and missing paths no
+longer select endpoints implicitly. `defaults()` remains an explicit factory for
+the documented conventional configuration; callers can also supply each field.
+
+A non-null authentication token must be nonblank. An empty secret therefore
+fails configuration instead of starting an unauthenticated service. Java callers
+must pass null deliberately to disable token authentication; the generic registry
+role requires `AUTH=none` for that choice. Token values are neither trimmed nor
+included in configuration errors. Existing code that supplied missing values to
+request defaults must use `defaults()` or pass the intended values explicitly.
+
+The serve and document-platform launchers also reject blank operator tokens.
+For an open node, omit `PROTOMOLT_API_TOKEN` and `--api-token` rather than supplying
+an empty secret. Java options accept null for that choice. The document-platform
+environment parser preserves the exact token value instead of trimming it.

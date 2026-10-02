@@ -204,6 +204,9 @@ console demands a browser login bound to a policy principal holding
 session's own credential to the operations panel's registry proxy —
 see [the console](../search/service.md#the-console). Both variables
 unset is the open, trusted-network node.
+If `PROTOMOLT_API_TOKEN` is set, it must be nonblank. An empty secret fails
+startup; remove the variable to select an open node. Tokens are used exactly
+as supplied, without trimming whitespace.
 
 Repo-service is worth stating separately because of what it holds: every
 account's documents and every claim-check blob. On a guarded node its TCP

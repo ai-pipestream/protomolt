@@ -925,9 +925,12 @@ public final class DocumentPlatform implements AutoCloseable {
 
     /** The operator token ({@code PROTOMOLT_API_TOKEN}), or null for an open node. */
     static String apiTokenFromEnvironment(Map<String, String> environment) {
-        String value = environment
-                .getOrDefault(DocumentPlatformConfig.ENV_API_TOKEN, "").trim();
-        return value.isEmpty() ? null : value;
+        String value = environment.get(DocumentPlatformConfig.ENV_API_TOKEN);
+        if (value != null && value.isBlank()) {
+            throw new IllegalArgumentException(DocumentPlatformConfig.ENV_API_TOKEN
+                    + " must be nonblank when set; omit it for an open node");
+        }
+        return value;
     }
 
     /**

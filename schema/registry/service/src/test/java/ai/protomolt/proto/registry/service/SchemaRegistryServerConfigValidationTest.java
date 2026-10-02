@@ -51,17 +51,15 @@ class SchemaRegistryServerConfigValidationTest {
     }
 
     @Test
-    void aBlankHostFallsBackToTheWildcard() {
-        assertThat(new SchemaRegistryServerConfig(null, 0, "/health", "/protomolt", 1024).host())
-                .isEqualTo("0.0.0.0");
-        assertThat(new SchemaRegistryServerConfig("  ", 0, "/health", "/protomolt", 1024).host())
-                .isEqualTo("0.0.0.0");
+    void aMissingHostCannotAccidentallyBindEveryInterface() {
+        for (String host : new String[] {null, "", "  "}) {
+            assertThatThrownBy(() -> SchemaRegistryServerConfig.defaults().withHost(host))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("host");
+        }
     }
 
     @Test
     void theHealthPathIsNormalizedLikeThePrefix() {
-        assertThat(new SchemaRegistryServerConfig("h", 0, null, "/protomolt", 1024).healthPath())
-                .isEqualTo("/health");
         assertThat(new SchemaRegistryServerConfig("h", 0, "livez", "/protomolt", 1024).healthPath())
                 .isEqualTo("/livez");
         assertThat(new SchemaRegistryServerConfig("h", 0, "/livez/", "/protomolt", 1024).healthPath())
@@ -69,13 +67,25 @@ class SchemaRegistryServerConfigValidationTest {
     }
 
     @Test
-    void aBlankApiTokenMeansUnauthenticated() {
+    void onlyAnExplicitNullTokenDisablesAuthentication() {
         assertThat(new SchemaRegistryServerConfig("h", 0, "/health", "/protomolt", 1024, null)
                 .apiToken()).isNull();
-        assertThat(new SchemaRegistryServerConfig("h", 0, "/health", "/protomolt", 1024, "  ")
-                .apiToken()).isNull();
+        for (String token : new String[] {"", "  ", "\t"}) {
+            assertThatThrownBy(() -> SchemaRegistryServerConfig.defaults().withApiToken(token))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("apiToken");
+        }
         assertThat(new SchemaRegistryServerConfig("h", 0, "/health", "/protomolt", 1024, "sekret")
                 .apiToken()).isEqualTo("sekret");
+    }
+
+    @Test
+    void missingPathsDoNotSelectImplicitEndpoints() {
+        for (String path : new String[] {null, "", " "}) {
+            assertThatThrownBy(() -> new SchemaRegistryServerConfig("h", 0, path, "/protomolt", 1024))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("healthPath");
+            assertThatThrownBy(() -> new SchemaRegistryServerConfig("h", 0, "/health", path, 1024))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("nativePathPrefix");
+        }
     }
 
     @Test
