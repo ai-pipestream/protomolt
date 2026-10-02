@@ -164,3 +164,21 @@ Configuration type resolution reports corrupt stored schemas and missing listed
 subjects as storage errors. It does not skip them and return a misleading
 "type not found" result. Invalid JSON and protobuf config input retain their
 parse causes in `InvalidConfigException`.
+
+## Registry storage provider discovery
+
+`SchemaRegistryStores.discover()` loads `SchemaRegistryStoreProvider` factories
+through Java SPI. Discovery does not open stores. `open(id, options, writeGate)`
+requires an explicit installed provider ID and returns a caller-owned store.
+Duplicate/malformed IDs, missing providers, null results and provider failures
+are errors; there is no fallback backend. The caller supplies the compatibility
+write gate explicitly, including null when no gate is intended.
+
+Registry core registers the `memory` provider, which accepts no options. Installing
+`protomolt-schema-registry-git` also registers `git`. That provider requires all
+three options: `directory`, `author-name` and `author-email`. Unknown, missing or
+blank options fail before the repository is opened. Existing direct builders keep
+their API; this factory path does not choose an implicit commit author.
+
+This factory API is available for application wiring. The existing Git-specific
+service assembly has not yet been converted into a generic provider-backed role.
