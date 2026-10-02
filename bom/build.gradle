@@ -60,6 +60,7 @@ def supportedModules = [
         'protomolt-kafka-serde-micrometer',
         'protomolt-codegen',
         'protomolt-registry-service',
+        'protomolt-schema-registry-composer',
         'protomolt-schema-registry-git-service',
         'protomolt-http-jsonschema',
         'protomolt-protobuf-validation-protovalidate',

@@ -182,3 +182,34 @@ their API; this factory path does not choose an implicit commit author.
 
 This factory API is available for application wiring. The existing Git-specific
 service assembly has not yet been converted into a generic provider-backed role.
+
+`protomolt-schema-registry-composer` supplies the generic `registry` role through
+`ServiceModule` SPI without adding Git or workflow dependencies to the HTTP
+library. An embedding application includes this module and uses
+`Composer.builder().environment(environment).build().bootFromEnvironment()`.
+The existing document-platform continues to select its Git-specific assembly.
+
+The generic role requires these environment settings:
+
+- `PROTOMOLT_ROLES=registry`
+- `PROTOMOLT_REGISTRY_STORE=memory` (or another installed provider ID)
+- `PROTOMOLT_REGISTRY_HOST=127.0.0.1`
+- `PROTOMOLT_REGISTRY_PORT=8081`
+- `PROTOMOLT_REGISTRY_AUTH=token` and `PROTOMOLT_REGISTRY_TOKEN` set to the secret;
+  `AUTH=none` is an explicit unauthenticated choice and rejects a supplied token.
+- `PROTOMOLT_REGISTRY_COMPATIBILITY=wire` for the compatibility write gate;
+  `none` explicitly disables that gate. Schema compilation still runs.
+
+Provider settings use `PROTOMOLT_REGISTRY_OPTION_` followed by the uppercase
+option name with hyphens replaced by underscores. Git therefore requires
+`OPTION_DIRECTORY`, `OPTION_AUTHOR_NAME` and `OPTION_AUTHOR_EMAIL` under that
+prefix. Unknown registry settings and unknown provider options fail. The HTTP
+protocol uses `/health`, `/protomolt` and the documented 16 MiB request cap.
+
+Wiring opens only the selected store and registers cleanup immediately. HTTP
+starts after all selected roles have contributed actions. The catalog includes
+those contributions rather than loading every installed action provider. A config
+storage capability contributes `publish-config`; the generic role does not supply
+Git federation or workflow execution. Multiple action contexts or caller resolvers
+fail instead of selecting the first. Startup failure and shutdown release the
+server and store through the composer's cleanup stack.

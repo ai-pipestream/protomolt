@@ -1,0 +1,7 @@
+description = 'Provider-backed registry HTTP role for the service composer'
+dependencies {
+    api project(':protomolt-composer')
+    api project(':protomolt-registry-service')
+}
+ext.forbiddenRuntimeModules = ['org.eclipse.jgit', 'protomolt-schema-registry-git', 'protomolt-workflow', 'protomolt-actions-toolkit', 'protomolt-actions-index']
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')
