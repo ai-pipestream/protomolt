@@ -253,3 +253,7 @@ are omitted and rejects supplied nonpositive worker and concurrency counts.
 
 The durable parse regression verifies immediate retry against PostgreSQL without
 sleeping or polling: scheduling and claiming both use the database clock.
+Lease and poll durations must be at least one millisecond and fit the Java
+millisecond representation used by the worker and store. Retry backoff must also
+fit that representation at the maximum exponent (20). Overflow is rejected with
+the arithmetic cause retained; it cannot wrap into a negative scheduling delay.

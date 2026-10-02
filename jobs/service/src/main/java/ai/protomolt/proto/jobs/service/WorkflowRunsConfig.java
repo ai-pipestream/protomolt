@@ -53,6 +53,8 @@ public record WorkflowRunsConfig(
     public static final Duration DEFAULT_POLL_INTERVAL = Duration.ofMillis(500);
     /** Default retry backoff base. */
     public static final long DEFAULT_BACKOFF_BASE_SECONDS = 5;
+    /** Maximum exponent used by retry scheduling. */
+    public static final int MAX_BACKOFF_EXPONENT = 20;
     /** Default retry ceiling for new jobs. */
     public static final int DEFAULT_MAX_ATTEMPTS = 3;
     /** Default per-target concurrency cap. */
@@ -72,14 +74,15 @@ public record WorkflowRunsConfig(
         if (workerCount <= 0) {
             throw new IllegalArgumentException("workerCount must be positive");
         }
-        if (leaseDuration == null || leaseDuration.isNegative() || leaseDuration.isZero()) {
-            throw new IllegalArgumentException("leaseDuration must be positive and non-null");
-        }
-        if (pollInterval == null || pollInterval.isNegative() || pollInterval.isZero()) {
-            throw new IllegalArgumentException("pollInterval must be positive and non-null");
-        }
+        requirePositiveMillis(leaseDuration, "leaseDuration");
+        requirePositiveMillis(pollInterval, "pollInterval");
         if (backoffBaseSeconds < 0) {
             throw new IllegalArgumentException("backoffBaseSeconds must be nonnegative");
+        }
+        try {
+            Math.multiplyExact(Math.multiplyExact(backoffBaseSeconds, 1L << MAX_BACKOFF_EXPONENT), 1000L);
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException("backoffBaseSeconds must fit milliseconds at the maximum retry exponent", e);
         }
         if (maxAttemptsDefault <= 0) {
             throw new IllegalArgumentException("maxAttemptsDefault must be positive");
@@ -102,5 +105,18 @@ public record WorkflowRunsConfig(
         return new WorkflowRunsConfig(workerId, DEFAULT_WORKER_COUNT, DEFAULT_LEASE_DURATION,
                 DEFAULT_POLL_INTERVAL, DEFAULT_BACKOFF_BASE_SECONDS, DEFAULT_MAX_ATTEMPTS,
                 DEFAULT_MAX_CONCURRENT_PER_TARGET, null, DEFAULT_EVENTS_TOPIC, null, null);
+    }
+
+    private static void requirePositiveMillis(Duration duration, String name) {
+        if (duration == null || duration.isNegative() || duration.isZero()) {
+            throw new IllegalArgumentException(name + " must be positive and non-null");
+        }
+        try {
+            if (duration.toMillis() == 0) {
+                throw new IllegalArgumentException(name + " must be at least one millisecond");
+            }
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException(name + " must fit a millisecond duration", e);
+        }
     }
 }
