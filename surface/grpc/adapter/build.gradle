@@ -1,0 +1,22 @@
+description = 'Descriptor-driven gRPC adapter for a supplied action catalog, without platform assembly'
+
+dependencies {
+    api project(':protomolt-actions')
+    api libs.grpc.api
+    api libs.protobuf.java
+    implementation project(':protomolt-authz-grpc')
+    implementation libs.grpc.protobuf
+    implementation libs.grpc.stub
+    implementation libs.slf4j.api
+    testImplementation libs.grpc.inprocess
+}
+
+ext.forbiddenRuntimeModules = [
+    'protomolt-grpc-service', 'protomolt-grpc-service-contract',
+    'protomolt-grpc-service-workspace', 'protomolt-grpc-invoke',
+    'protomolt-actions-toolkit', 'protomolt-actions-index', 'protomolt-actions-schema',
+    'protomolt-workflow', 'protomolt-jobs-service', 'protomolt-inference-service',
+    'protomolt-registry', 'protomolt-schema-registry-git', 'protomolt-delegation',
+    'protomolt-codegen', 'protomolt-acquire-gather-git', 'org.eclipse.jgit'
+]
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

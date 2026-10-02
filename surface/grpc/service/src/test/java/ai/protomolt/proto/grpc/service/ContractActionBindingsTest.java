@@ -58,7 +58,7 @@ class ContractActionBindingsTest {
         assertThatThrownBy(() -> ContractActionBindings.mounted(catalog, author,
                 Map.of(author.getFullName(), Map.of(
                         "First", "author-first", "Second", "author-second"))))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("reflected proxy");
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("excluded action");
     }
 
     private void register(String name, String request, String response) {
