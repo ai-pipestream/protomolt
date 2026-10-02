@@ -213,3 +213,17 @@ storage capability contributes `publish-config`; the generic role does not suppl
 Git federation or workflow execution. Multiple action contexts or caller resolvers
 fail instead of selecting the first. Startup failure and shutdown release the
 server and store through the composer's cleanup stack.
+
+## Explicit registry HTTP configuration
+
+`SchemaRegistryServerConfig` rejects null or blank hosts and endpoint paths.
+Supplying an empty host no longer binds every interface, and missing paths no
+longer select endpoints implicitly. `defaults()` remains an explicit factory for
+the documented conventional configuration; callers can also supply each field.
+
+A non-null authentication token must be nonblank. An empty secret therefore
+fails configuration instead of starting an unauthenticated service. Java callers
+must pass null deliberately to disable token authentication; the generic registry
+role requires `AUTH=none` for that choice. Token values are neither trimmed nor
+included in configuration errors. Existing code that supplied missing values to
+request defaults must use `defaults()` or pass the intended values explicitly.

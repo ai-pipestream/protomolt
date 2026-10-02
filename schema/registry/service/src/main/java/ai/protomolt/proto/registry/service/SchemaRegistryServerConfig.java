@@ -27,12 +27,20 @@ public record SchemaRegistryServerConfig(
     public static final int DEFAULT_MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 
     public SchemaRegistryServerConfig {
-        host = host == null || host.isBlank() ? "0.0.0.0" : host;
+        if (host == null || host.isBlank()) {
+            throw new IllegalArgumentException("host must be supplied explicitly");
+        }
         if (port < 0 || port > 65535) {
             throw new IllegalArgumentException("port out of range: " + port);
         }
-        healthPath = normalize(healthPath == null ? "/health" : healthPath);
-        nativePathPrefix = normalize(nativePathPrefix == null ? "/protomolt" : nativePathPrefix);
+        if (healthPath == null || healthPath.isBlank()) {
+            throw new IllegalArgumentException("healthPath must be supplied explicitly");
+        }
+        if (nativePathPrefix == null || nativePathPrefix.isBlank()) {
+            throw new IllegalArgumentException("nativePathPrefix must be a single path segment");
+        }
+        healthPath = normalize(healthPath);
+        nativePathPrefix = normalize(nativePathPrefix);
         // The router compares the prefix against the first decoded path segment, so a nested
         // or empty prefix would match nothing and silently 404 every native endpoint.
         if (nativePathPrefix.length() < 2 || nativePathPrefix.indexOf('/', 1) >= 0) {
@@ -42,7 +50,9 @@ public record SchemaRegistryServerConfig(
         if (maxRequestBytes <= 0) {
             throw new IllegalArgumentException("maxRequestBytes must be positive: " + maxRequestBytes);
         }
-        apiToken = apiToken == null || apiToken.isBlank() ? null : apiToken;
+        if (apiToken != null && apiToken.isBlank()) {
+            throw new IllegalArgumentException("apiToken must be nonblank; use null explicitly for unauthenticated service");
+        }
     }
 
     public SchemaRegistryServerConfig(String host, int port, String healthPath,
