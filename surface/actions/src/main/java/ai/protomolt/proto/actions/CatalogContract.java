@@ -264,6 +264,38 @@ public final class CatalogContract {
     }
 
     /**
+     * Checks a successful response against the action's declared descriptor.
+     * Distinct descriptor instances are decoded using the declared contract so
+     * a provider cannot remove rules by supplying a same-named descriptor.
+     * The canonical message is returned for transport and downstream consumers.
+     */
+    public static Message checkedResponse(Message response, Descriptor descriptor, String verb)
+            throws ActionException {
+        if (response == null) {
+            throw new ActionException("invalid-response", verb + " returned a null response");
+        }
+        if (!response.getDescriptorForType().getFullName().equals(descriptor.getFullName())) {
+            throw new ActionException("invalid-response", verb + " returned "
+                    + response.getDescriptorForType().getFullName() + "; expected " + descriptor.getFullName());
+        }
+        try {
+            Message checked = response.getDescriptorForType() == descriptor ? response
+                    : DynamicMessage.parseFrom(descriptor, response.toByteString());
+            ValidationResult result = inspect(checked);
+            if (!result.valid()) {
+                throw new ActionException("invalid-response",
+                        verb + " does not satisfy the response contract: " + describe(result), violations(result));
+            }
+            return checked;
+        } catch (InvalidProtocolBufferException | RuntimeException e) {
+            ActionException failure = new ActionException("invalid-response",
+                    verb + " response could not be validated against " + descriptor.getFullName());
+            failure.initCause(e);
+            throw failure;
+        }
+    }
+
+    /**
      * The request as the generated type a verb is written against.
      *
      * <p>A verb declared on a contract with generated stubs reads its request through them.

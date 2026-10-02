@@ -237,7 +237,7 @@ public final class ActionCatalog {
         requireScope(action, caller);
         requireBudget(action, caller, request);
         CatalogContract.validate(request, action.requestType(), name);
-        return action.execute(request, context, caller);
+        return CatalogContract.checkedResponse(action.execute(request, context, caller), action.responseType(), name);
     }
 
     /**
@@ -257,10 +257,16 @@ public final class ActionCatalog {
         requireScope(action, caller);
         requireBudget(action, caller, request);
         CatalogContract.validate(request, action.requestType(), name);
-        if (action instanceof StreamingAction streaming) {
-            streaming.executeStreaming(request, context, caller, emitter);
-        } else {
-            emitter.emit(action.execute(request, context, caller));
+        var checked = new ContractStreamEmitter(emitter, action.responseType(), name);
+        try {
+            if (action instanceof StreamingAction streaming) {
+                streaming.executeStreaming(request, context, caller, checked);
+            } else {
+                checked.emit(action.execute(request, context, caller));
+            }
+            checked.complete();
+        } finally {
+            checked.finish();
         }
     }
 

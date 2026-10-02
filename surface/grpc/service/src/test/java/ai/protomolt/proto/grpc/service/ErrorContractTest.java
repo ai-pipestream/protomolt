@@ -39,6 +39,12 @@ class ErrorContractTest {
     // A password-shaped secret standing in for anything a backend exception might carry.
     private static final String SECRET = "jdbc://svc:hunter2@internal-db.corp/ledger";
 
+    @Test
+    void invalidActionResponseIsAServerFailure() {
+        var failure = CatalogBridge.toStatus(new ActionException("invalid-response", "invalid result"));
+        assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.INTERNAL);
+    }
+
     // ---- CatalogBridge.toStatus: the code -> status mapping table (pure) ----
 
     @Test

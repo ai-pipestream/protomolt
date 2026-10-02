@@ -97,13 +97,23 @@ suite exercises the installed toolkit and index providers.
 
 A fully minimal gRPC/MCP/ACP distribution remains separate work.
 
-## Separate response-validation follow-up
+## Response validation
 
-During this change, a probe confirmed that direct typed `ActionCatalog.execute`
-calls validate the request but do not independently enforce the declared response
-type. `executeStreaming` similarly forwards typed emissions. This behavior existed
-before provider discovery. It must not be generalized to workflow or transport
-validation boundaries, which have their own checks. Response-contract hardening
-is tracked in [Forgejo #293](https://git.rokkon.com/ai-pipestream/protomolt/issues/293)
-and requires unary and streaming regression tests and correct
-server-error classification; this refactor does not silently change that behavior.
+Direct typed and JSON catalog calls validate successful responses against the
+action's declared response descriptor before returning or rendering them.
+Null responses, wrong types and validation failures report `invalid-response`.
+Distinct descriptor instances are decoded against the declared descriptor before
+validation, so same-named descriptors cannot remove its rules. Generated messages
+using the declared descriptor retain their instance; other responses may return a
+canonical dynamic message.
+
+Every streaming emission passes the same check before transport delivery. The
+first validation or transport ActionException is terminal: subsequent emissions
+fail, and a provider cannot catch that failure and report successful completion.
+Earlier valid emissions cannot be withdrawn. Emission after execution completes
+is rejected. This validation checks protocol contracts, not semantic correctness,
+and does not undo side effects already performed by a handler.
+
+An invalid action response is a server failure: gRPC INTERNAL and registry HTTP
+500. MCP/ACP preserve the action error through their existing error paths.
+The work addresses [Forgejo #293](https://git.rokkon.com/ai-pipestream/protomolt/issues/293).

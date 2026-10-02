@@ -102,7 +102,7 @@ public final class CatalogBridge {
     /** Maps an action failure onto a gRPC status: client-repairable codes are INVALID_ARGUMENT. */
     public static io.grpc.StatusRuntimeException toStatus(ActionException e) {
         io.grpc.Status status = switch (e.code().toLowerCase(Locale.ROOT)) {
-            case "internal-error" -> io.grpc.Status.INTERNAL;
+            case "internal-error", "invalid-response" -> io.grpc.Status.INTERNAL;
             case "unknown-action" -> io.grpc.Status.UNIMPLEMENTED;
             case "permission-denied" -> io.grpc.Status.PERMISSION_DENIED;
             case "resource-exhausted" -> io.grpc.Status.RESOURCE_EXHAUSTED;
