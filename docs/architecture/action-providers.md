@@ -99,6 +99,12 @@ A fully minimal gRPC/MCP/ACP distribution remains separate work.
 
 ## Response validation
 
+Typed requests also use the action's declared descriptor. A caller cannot omit
+validation rules by providing a same-named descriptor with different annotations.
+The catalog decodes distinct descriptor instances against the declared contract
+before validation and execution; identical instances retain their representation.
+Null requests fail with `invalid-input` before the handler runs.
+
 Direct typed and JSON catalog calls validate successful responses against the
 action's declared response descriptor before returning or rendering them.
 Null responses, wrong types and validation failures report `invalid-response`.
