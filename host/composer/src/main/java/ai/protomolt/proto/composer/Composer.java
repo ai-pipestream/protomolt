@@ -72,7 +72,7 @@ public final class Composer {
      * Boots the roles named in {@link #ENV_ROLES} (comma-separated).
      *
      * @return the running node
-     * @throws ComposerException when the variable is missing or blank
+     * @throws ComposerException when the variable is missing, blank or contains an empty role
      */
     public Node bootFromEnvironment() {
         String roles = environment.get(ENV_ROLES);
@@ -81,10 +81,11 @@ public final class Composer {
                     + knownRoles());
         }
         List<String> requested = new ArrayList<>();
-        for (String role : roles.split(",")) {
-            if (!role.isBlank()) {
-                requested.add(role.trim().toLowerCase(Locale.ROOT));
+        for (String role : roles.split(",", -1)) {
+            if (role.isBlank()) {
+                throw new ComposerException(ENV_ROLES + " contains an empty role; supply a name between separators");
             }
+            requested.add(role.trim().toLowerCase(Locale.ROOT));
         }
         return boot(requested);
     }

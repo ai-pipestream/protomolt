@@ -83,6 +83,11 @@ failures. A startup failure retains its original cause and carries cleanup
 failures as suppressed exceptions. Channel termination timeout and interruption
 are failures; interruption preserves the thread flag.
 
+`PROTOMOLT_ROLES` requires a name between every comma. Leading, trailing or repeated
+separators and whitespace-only entries fail before any role is wired. Spaces around
+valid names and case normalization remain supported. A comma-only value cannot
+start a node with no mounted capabilities.
+
 ## Shared CEL foundation
 
 `protomolt-cel` supplies the existing environment factory, evaluator, expression
