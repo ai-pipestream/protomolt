@@ -114,7 +114,8 @@ using the declared descriptor retain their instance; other responses may return 
 canonical dynamic message.
 
 Every streaming emission passes the same check before transport delivery. The
-first validation or transport ActionException is terminal: subsequent emissions
+first validation or transport exception is terminal, including unchecked delivery
+failures: subsequent emissions
 fail, and a provider cannot catch that failure and report successful completion.
 Earlier valid emissions cannot be withdrawn. Emission after execution completes
 is rejected. This validation checks protocol contracts, not semantic correctness,
