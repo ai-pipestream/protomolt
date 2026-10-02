@@ -114,6 +114,9 @@ Earlier valid emissions cannot be withdrawn. Emission after execution completes
 is rejected. This validation checks protocol contracts, not semantic correctness,
 and does not undo side effects already performed by a handler.
 
-An invalid action response is a server failure: gRPC INTERNAL and registry HTTP
+An invalid action response is a server failure: gRPC DATA_LOSS and registry HTTP
 500. MCP/ACP preserve the action error through their existing error paths.
+The catalog now rejects invalid delegation replies before the gRPC response gate;
+their gRPC status remains DATA_LOSS, with the catalog's `invalid-response` error
+code replacing `invalid-upstream-response` for these failures.
 The work addresses [Forgejo #293](https://git.rokkon.com/ai-pipestream/protomolt/issues/293).

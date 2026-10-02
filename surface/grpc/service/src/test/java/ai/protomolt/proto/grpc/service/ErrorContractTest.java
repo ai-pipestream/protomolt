@@ -42,7 +42,8 @@ class ErrorContractTest {
     @Test
     void invalidActionResponseIsAServerFailure() {
         var failure = CatalogBridge.toStatus(new ActionException("invalid-response", "invalid result"));
-        assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.INTERNAL);
+        assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.DATA_LOSS);
+        assertThat(failure.getTrailers().get(CatalogBridge.ERROR_CODE_KEY)).isEqualTo("invalid-response");
     }
 
     // ---- CatalogBridge.toStatus: the code -> status mapping table (pure) ----
