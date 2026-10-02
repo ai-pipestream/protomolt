@@ -4,7 +4,7 @@ import ai.protomolt.proto.composer.NodeContext;
 import ai.protomolt.proto.composer.ServiceModule;
 import ai.protomolt.proto.composer.ServiceMount;
 import ai.protomolt.proto.grpc.profile.FileSystemServiceProfileRepository;
-import ai.protomolt.proto.registry.GitSchemaRegistryStore;
+import ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore;
 import com.google.protobuf.Descriptors;
 import io.grpc.Server;
 import java.nio.file.Path;

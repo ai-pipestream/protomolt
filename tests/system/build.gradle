@@ -1,6 +1,7 @@
 description = 'Unpublished end-to-end system tests exercising the toolkit across module boundaries'
 
 dependencies {
+    testImplementation project(':protomolt-schema-registry-git')
     testImplementation project(':protomolt-grpc-service')
     testImplementation project(':protomolt-mcp')
     testImplementation project(':protomolt-descriptors')

@@ -1,6 +1,6 @@
 package ai.protomolt.proto.registry.service;
 
-import ai.protomolt.proto.registry.GitSchemaRegistryStore;
+import ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore;
 import ai.protomolt.proto.schema.confluent.ConfluentSchemaPublisher;
 import ai.protomolt.proto.schema.confluent.ConfluentSchemaRegistryLoader;
 import ai.protomolt.proto.sources.ProtoSourceSet;

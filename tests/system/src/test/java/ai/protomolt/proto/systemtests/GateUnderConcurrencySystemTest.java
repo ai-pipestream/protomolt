@@ -4,7 +4,7 @@ import ai.protomolt.proto.compat.CompatibilityChecker;
 import ai.protomolt.proto.compat.CompatibilityMode;
 import ai.protomolt.proto.compat.CompatibilityResult;
 import ai.protomolt.proto.registry.CompatibilityWriteGate;
-import ai.protomolt.proto.registry.GitSchemaRegistryStore;
+import ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore;
 import ai.protomolt.proto.registry.IncompatibleRegistrationException;
 import ai.protomolt.proto.registry.StoredSchema;
 import ai.protomolt.proto.sources.ProtoSourceCompiler;

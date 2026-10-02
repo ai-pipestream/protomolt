@@ -12,7 +12,7 @@ import ai.protomolt.proto.search.index.spi.ResolvedFieldHint;
 import ai.protomolt.proto.http.json.ProtobufJsonTranscoder;
 import ai.protomolt.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.protomolt.proto.registry.CompatibilityWriteGate;
-import ai.protomolt.proto.registry.GitSchemaRegistryStore;
+import ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore;
 import ai.protomolt.proto.registry.service.SchemaRegistryServer;
 import ai.protomolt.proto.registry.service.SchemaRegistryServerConfig;
 import ai.protomolt.proto.schema.confluent.ConfluentSchemaPublisher;

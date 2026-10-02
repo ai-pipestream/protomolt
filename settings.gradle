@@ -523,3 +523,6 @@ project(':protomolt-grpc-mcp').projectDir = file('apps/grpc-mcp')
 
 include 'protomolt-cel'
 project(':protomolt-cel').projectDir = file('core/cel')
+
+include 'protomolt-schema-registry-git'
+project(':protomolt-schema-registry-git').projectDir = file('schema/registry/git')

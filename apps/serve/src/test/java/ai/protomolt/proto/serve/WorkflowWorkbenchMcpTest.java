@@ -1,8 +1,8 @@
 package ai.protomolt.proto.serve;
 
 import ai.protomolt.proto.grpc.invoke.DynamicGrpcCalls;
-import ai.protomolt.proto.registry.GitSchemaRegistryStore;
-import ai.protomolt.proto.registry.RegistryWorkflowVersionRepository;
+import ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore;
+import ai.protomolt.proto.schema.registry.git.RegistryWorkflowVersionRepository;
 import ai.protomolt.proto.sources.CompiledProtos;
 import ai.protomolt.proto.sources.ProtoSourceCompiler;
 import ai.protomolt.proto.sources.ProtoSourceSet;

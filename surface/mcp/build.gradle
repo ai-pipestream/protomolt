@@ -5,6 +5,7 @@ plugins {
 description = 'MCP server over the action catalog and registry: JSON-RPC 2.0 on stdio, no framework'
 
 dependencies {
+    implementation project(':protomolt-schema-registry-git')
     api project(':protomolt-mcp-transport')
     api project(':protomolt-actions')
     // This full catalog distribution explicitly includes optional indexing actions.

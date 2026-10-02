@@ -1,4 +1,13 @@
-package ai.protomolt.proto.registry;
+package ai.protomolt.proto.schema.registry.git;
+
+import ai.protomolt.proto.registry.CompatibilityWriteGate;
+import ai.protomolt.proto.registry.IncompatibleRegistrationException;
+import ai.protomolt.proto.registry.RegistrationSupport;
+import ai.protomolt.proto.registry.RegistryStoreException;
+import ai.protomolt.proto.registry.SchemaContents;
+import ai.protomolt.proto.registry.SchemaReference;
+import ai.protomolt.proto.registry.SchemaRegistryStore;
+import ai.protomolt.proto.registry.StoredSchema;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;

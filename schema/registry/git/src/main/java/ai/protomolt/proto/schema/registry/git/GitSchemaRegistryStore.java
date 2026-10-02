@@ -1,4 +1,13 @@
-package ai.protomolt.proto.registry;
+package ai.protomolt.proto.schema.registry.git;
+
+import ai.protomolt.proto.registry.CompatibilityModes;
+import ai.protomolt.proto.registry.DescriptorSetArtifacts;
+import ai.protomolt.proto.registry.RegistrationSupport;
+import ai.protomolt.proto.registry.RegistryStoreException;
+import ai.protomolt.proto.registry.SchemaContents;
+import ai.protomolt.proto.registry.SchemaReference;
+import ai.protomolt.proto.registry.SchemaRegistryStore;
+import ai.protomolt.proto.registry.StoredSchema;
 
 import ai.protomolt.proto.grpc.workflow.WorkflowValidation;
 import ai.protomolt.proto.grpc.workflow.v1.VersionedWorkflow;
@@ -671,10 +680,14 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
         String globalMode = CompatibilityModes.DEFAULT_GLOBAL;
         int nextGlobalId = 1;
         Path registryFile = repoDir.resolve(REGISTRY_FILE);
-        if (Files.isRegularFile(registryFile)) {
-            JsonNode node = json.readTree(Files.readString(registryFile));
-            globalMode = node.path("compatibility").asText(CompatibilityModes.DEFAULT_GLOBAL);
-            nextGlobalId = node.path("nextGlobalId").asInt(1);
+        if (Files.exists(registryFile)) {
+            JsonNode node = readMetadata(registryFile);
+            globalMode = readCompatibility(node, registryFile);
+            JsonNode counter = node.path("nextGlobalId");
+            if (!counter.isIntegralNumber() || !counter.canConvertToInt() || counter.intValue() < 1) {
+                throw new RegistryStoreException("Invalid nextGlobalId in " + registryFile);
+            }
+            nextGlobalId = counter.intValue();
         }
 
         Map<String, SubjectEntry> subjects = new TreeMap<>();
@@ -701,8 +714,8 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
         TreeMap<Integer, StoredSchema> versions = new TreeMap<>();
         String mode = null;
         Path configFile = dir.resolve(CONFIG_FILE);
-        if (Files.isRegularFile(configFile)) {
-            mode = json.readTree(Files.readString(configFile)).path("compatibility").asText(null);
+        if (Files.exists(configFile)) {
+            mode = readCompatibility(readMetadata(configFile), configFile);
         }
         try (Stream<Path> files = Files.list(dir)) {
             for (Path file : files.toList()) {
@@ -727,6 +740,26 @@ public final class GitSchemaRegistryStore implements SchemaRegistryStore {
             }
         }
         return new SubjectEntry(versions, mode);
+    }
+
+    private JsonNode readMetadata(Path file) {
+        try {
+            JsonNode node = json.readTree(Files.readString(file));
+            if (node == null || !node.isObject()) {
+                throw new RegistryStoreException("Expected a metadata object in " + file);
+            }
+            return node;
+        } catch (IOException e) {
+            throw new RegistryStoreException("Cannot read registry metadata " + file, e);
+        }
+    }
+
+    private static String readCompatibility(JsonNode node, Path file) {
+        JsonNode value = node.path("compatibility");
+        if (!value.isTextual() || !CompatibilityModes.isValid(value.textValue())) {
+            throw new RegistryStoreException("Invalid compatibility policy in " + file);
+        }
+        return value.textValue();
     }
 
     private static String encode(String subject) {

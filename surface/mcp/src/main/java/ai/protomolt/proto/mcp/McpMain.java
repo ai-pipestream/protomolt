@@ -17,8 +17,8 @@ import ai.protomolt.proto.grpc.workflow.WorkflowVersionRepository;
 import ai.protomolt.proto.grpc.workflow.RunEvidenceRepository;
 import ai.protomolt.proto.grpc.workspace.ReflectedServiceActions;
 import ai.protomolt.proto.grpc.workspace.ServiceWorkspaceActions;
-import ai.protomolt.proto.registry.GitSchemaRegistryStore;
-import ai.protomolt.proto.registry.RegistryWorkflowVersionRepository;
+import ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore;
+import ai.protomolt.proto.schema.registry.git.RegistryWorkflowVersionRepository;
 
 import java.nio.file.Path;
 

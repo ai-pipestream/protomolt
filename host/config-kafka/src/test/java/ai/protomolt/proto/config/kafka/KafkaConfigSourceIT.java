@@ -7,7 +7,7 @@ import ai.protomolt.proto.config.ConfigSource;
 import ai.protomolt.proto.config.DistributedConfig;
 import ai.protomolt.proto.kafka.serde.ProtoMoltProtobufSerializer;
 import ai.protomolt.proto.kafka.serde.ProtoMoltSerdeConfig;
-import ai.protomolt.proto.registry.GitSchemaRegistryStore;
+import ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore;
 import ai.protomolt.proto.registry.SchemaReference;
 import ai.protomolt.proto.registry.service.SchemaRegistryServer;
 import ai.protomolt.proto.registry.service.SchemaRegistryServerConfig;

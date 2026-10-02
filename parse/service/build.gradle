@@ -1,6 +1,7 @@
 description = 'The parsing coordinator runtime: magic-byte content sniffing, CEL routing rules, scatter-gather parser fan-out over the plugin contract, and the SearchMetadata fold persisted back through repo-service'
 
 dependencies {
+    implementation project(':protomolt-schema-registry-git')
     api project(':protomolt-composer')
     implementation project(':protomolt-parse-document')
     // Content detection lives on the asset family's one seam; routing and

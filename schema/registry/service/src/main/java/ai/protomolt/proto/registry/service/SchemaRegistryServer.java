@@ -7,7 +7,7 @@ import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.authz.CallerResolver;
 import ai.protomolt.proto.registry.ConfigSupport;
 import ai.protomolt.proto.registry.InvalidConfigException;
-import ai.protomolt.proto.registry.GitSchemaRegistryStore;
+import ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore;
 import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.registry.CompatibilityModes;
 import ai.protomolt.proto.registry.IncompatibleRegistrationException;

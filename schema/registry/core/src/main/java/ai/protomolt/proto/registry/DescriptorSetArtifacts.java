@@ -14,21 +14,21 @@ import java.util.HexFormat;
 import java.util.Objects;
 
 /** Validation and content identity for registry-owned descriptor-set artifacts. */
-final class DescriptorSetArtifacts {
+public final class DescriptorSetArtifacts {
 
     private static final int MAX_BYTES = 16 * 1024 * 1024;
 
     private DescriptorSetArtifacts() {
     }
 
-    static void requireFingerprint(String fingerprint) {
+    public static void requireFingerprint(String fingerprint) {
         if (fingerprint == null || !fingerprint.matches("[0-9a-f]{64}")) {
             throw new IllegalArgumentException(
                     "descriptor fingerprint must be a lowercase SHA-256 hex string");
         }
     }
 
-    static void validate(String fingerprint, ByteString descriptorSet) {
+    public static void validate(String fingerprint, ByteString descriptorSet) {
         requireFingerprint(fingerprint);
         Objects.requireNonNull(descriptorSet, "descriptorSet");
         if (descriptorSet.isEmpty()) {
@@ -52,7 +52,7 @@ final class DescriptorSetArtifacts {
         }
     }
 
-    static ByteString read(Path path, String fingerprint) throws IOException {
+    public static ByteString read(Path path, String fingerprint) throws IOException {
         byte[] bytes;
         try (InputStream input = Files.newInputStream(path)) {
             bytes = input.readNBytes(MAX_BYTES + 1);

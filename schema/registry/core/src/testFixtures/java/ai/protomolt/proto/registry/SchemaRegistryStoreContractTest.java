@@ -21,12 +21,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * write-gate wiring and compile verification. Implementation-specific behavior (git commits,
  * locking, refresh) lives in the concrete subclasses.
  */
-abstract class SchemaRegistryStoreContractTest {
+public abstract class SchemaRegistryStoreContractTest {
 
-    static final String CORE_SUBJECT = "common/v1/core.proto";
-    static final String USER_SUBJECT = "common/v1/user.proto";
+    protected static final String CORE_SUBJECT = "common/v1/core.proto";
+    protected static final String USER_SUBJECT = "common/v1/user.proto";
 
-    static final String CORE_PROTO = """
+    protected static final String CORE_PROTO = """
             syntax = "proto3";
             package common.v1;
             message Core {
@@ -34,7 +34,7 @@ abstract class SchemaRegistryStoreContractTest {
             }
             """;
 
-    static final String CORE_PROTO_V2 = """
+    protected static final String CORE_PROTO_V2 = """
             syntax = "proto3";
             package common.v1;
             message Core {
@@ -43,7 +43,7 @@ abstract class SchemaRegistryStoreContractTest {
             }
             """;
 
-    static final String USER_PROTO = """
+    protected static final String USER_PROTO = """
             syntax = "proto3";
             package common.v1;
             import "common/v1/core.proto";
@@ -57,18 +57,18 @@ abstract class SchemaRegistryStoreContractTest {
     /** A fresh store with the given (possibly {@code null}) write gate. */
     protected abstract SchemaRegistryStore create(SchemaRegistryStore.WriteGate gate) throws Exception;
 
-    SchemaRegistryStore store() throws Exception {
+    protected SchemaRegistryStore store() throws Exception {
         return store(null);
     }
 
-    SchemaRegistryStore store(SchemaRegistryStore.WriteGate gate) throws Exception {
+    protected SchemaRegistryStore store(SchemaRegistryStore.WriteGate gate) throws Exception {
         SchemaRegistryStore store = create(gate);
         opened.add(store);
         return store;
     }
 
     @AfterEach
-    void closeStores() {
+    protected void closeStores() {
         opened.forEach(SchemaRegistryStore::close);
         opened.clear();
     }
@@ -76,7 +76,7 @@ abstract class SchemaRegistryStoreContractTest {
     // ---------------------------------------------------------------- versions & lookups
 
     @Test
-    void freshStoreIsEmptyWithBackwardGlobalMode() throws Exception {
+    protected void freshStoreIsEmptyWithBackwardGlobalMode() throws Exception {
         SchemaRegistryStore store = store();
         assertThat(store.subjects()).isEmpty();
         assertThat(store.versions("nope")).isEmpty();
@@ -88,7 +88,7 @@ abstract class SchemaRegistryStoreContractTest {
     }
 
     @Test
-    void versionsArePerSubjectOneBasedAndAscending() throws Exception {
+    protected void versionsArePerSubjectOneBasedAndAscending() throws Exception {
         SchemaRegistryStore store = store();
         StoredSchema v1 = store.register(CORE_SUBJECT, CORE_PROTO, List.of());
         StoredSchema v2 = store.register(CORE_SUBJECT, CORE_PROTO_V2, List.of());
@@ -105,7 +105,7 @@ abstract class SchemaRegistryStoreContractTest {
     }
 
     @Test
-    void globalIdsAreUniqueAndMonotonicAcrossSubjects() throws Exception {
+    protected void globalIdsAreUniqueAndMonotonicAcrossSubjects() throws Exception {
         SchemaRegistryStore store = store();
         StoredSchema a = store.register("a.proto", CORE_PROTO, List.of());
         StoredSchema b = store.register("b.proto", CORE_PROTO, List.of());
@@ -119,7 +119,7 @@ abstract class SchemaRegistryStoreContractTest {
     }
 
     @Test
-    void identicalContentRegistersIdempotently() throws Exception {
+    protected void identicalContentRegistersIdempotently() throws Exception {
         SchemaRegistryStore store = store();
         StoredSchema first = store.register(CORE_SUBJECT, CORE_PROTO, List.of());
         StoredSchema again = store.register(CORE_SUBJECT, CORE_PROTO, List.of());
@@ -129,7 +129,7 @@ abstract class SchemaRegistryStoreContractTest {
     }
 
     @Test
-    void sameTextWithDifferentReferencesIsANewVersion() throws Exception {
+    protected void sameTextWithDifferentReferencesIsANewVersion() throws Exception {
         SchemaRegistryStore store = store();
         store.register(CORE_SUBJECT, CORE_PROTO, List.of());
         store.register(CORE_SUBJECT, CORE_PROTO_V2, List.of());
@@ -143,7 +143,7 @@ abstract class SchemaRegistryStoreContractTest {
     }
 
     @Test
-    void contentHashIsStableSha256OverTextAndReferences() throws Exception {
+    protected void contentHashIsStableSha256OverTextAndReferences() throws Exception {
         SchemaRegistryStore store = store();
         StoredSchema stored = store.register(CORE_SUBJECT, CORE_PROTO, List.of());
         assertThat(stored.contentHash())
@@ -152,7 +152,7 @@ abstract class SchemaRegistryStoreContractTest {
     }
 
     @Test
-    void findByContentMatchesTextAndReferencesExactly() throws Exception {
+    protected void findByContentMatchesTextAndReferencesExactly() throws Exception {
         SchemaRegistryStore store = store();
         store.register(CORE_SUBJECT, CORE_PROTO, List.of());
         List<SchemaReference> refs = List.of(new SchemaReference(CORE_SUBJECT, CORE_SUBJECT, 1));
@@ -165,7 +165,7 @@ abstract class SchemaRegistryStoreContractTest {
     }
 
     @Test
-    void descriptorSetsAreContentAddressedAndIdempotent() throws Exception {
+    protected void descriptorSetsAreContentAddressedAndIdempotent() throws Exception {
         SchemaRegistryStore store = store();
         ByteString descriptorSet = descriptorSet();
         String fingerprint = HexFormat.of().formatHex(
@@ -180,7 +180,7 @@ abstract class SchemaRegistryStoreContractTest {
     }
 
     @Test
-    void descriptorSetIdentityIsValidatedBeforeStorage() throws Exception {
+    protected void descriptorSetIdentityIsValidatedBeforeStorage() throws Exception {
         SchemaRegistryStore store = store();
 
         assertThatThrownBy(() -> store.putDescriptorSet("not-a-fingerprint",
@@ -202,7 +202,7 @@ abstract class SchemaRegistryStoreContractTest {
                 .hasMessageContaining("FileDescriptorSet");
     }
 
-    static ByteString descriptorSet() {
+    public static ByteString descriptorSet() {
         return FileDescriptorSet.newBuilder()
                 .addFile(FileDescriptorProto.newBuilder()
                         .setName("registry-test.proto")
@@ -214,7 +214,7 @@ abstract class SchemaRegistryStoreContractTest {
     // ---------------------------------------------------------------- reference enforcement
 
     @Test
-    void registeringWithUnknownReferenceThrowsAndStoresNothing() throws Exception {
+    protected void registeringWithUnknownReferenceThrowsAndStoresNothing() throws Exception {
         SchemaRegistryStore store = store();
         SchemaReference dangling = new SchemaReference(CORE_SUBJECT, CORE_SUBJECT, 1);
 
@@ -227,7 +227,7 @@ abstract class SchemaRegistryStoreContractTest {
     }
 
     @Test
-    void referenceMustExistWithTheExactVersion() throws Exception {
+    protected void referenceMustExistWithTheExactVersion() throws Exception {
         SchemaRegistryStore store = store();
         store.register(CORE_SUBJECT, CORE_PROTO, List.of());
 
@@ -238,7 +238,7 @@ abstract class SchemaRegistryStoreContractTest {
     }
 
     @Test
-    void referencedSchemaResolvesDuringCompileVerification() throws Exception {
+    protected void referencedSchemaResolvesDuringCompileVerification() throws Exception {
         SchemaRegistryStore store = store();
         store.register(CORE_SUBJECT, CORE_PROTO, List.of());
         StoredSchema user = store.register(USER_SUBJECT, USER_PROTO,
@@ -250,7 +250,7 @@ abstract class SchemaRegistryStoreContractTest {
     // ---------------------------------------------------------------- compile verification
 
     @Test
-    void unparseableSchemaTextIsRejected() throws Exception {
+    protected void unparseableSchemaTextIsRejected() throws Exception {
         SchemaRegistryStore store = store();
         assertThatThrownBy(() -> store.register(CORE_SUBJECT, "this is not proto {", List.of()))
                 .isInstanceOf(InvalidSchemaException.class)
@@ -259,7 +259,7 @@ abstract class SchemaRegistryStoreContractTest {
     }
 
     @Test
-    void schemaImportingAnUndeclaredFileIsRejected() throws Exception {
+    protected void schemaImportingAnUndeclaredFileIsRejected() throws Exception {
         SchemaRegistryStore store = store();
         // user.proto imports core.proto but declares no reference for it: unlinkable.
         assertThatThrownBy(() -> store.register(USER_SUBJECT, USER_PROTO, List.of()))
@@ -270,7 +270,7 @@ abstract class SchemaRegistryStoreContractTest {
     // ---------------------------------------------------------------- compatibility modes
 
     @Test
-    void subjectModeFallsBackToGlobalUntilSet() throws Exception {
+    protected void subjectModeFallsBackToGlobalUntilSet() throws Exception {
         SchemaRegistryStore store = store();
         assertThat(store.compatibilityMode(CORE_SUBJECT)).isEmpty();
 
@@ -285,7 +285,7 @@ abstract class SchemaRegistryStoreContractTest {
     }
 
     @Test
-    void invalidCompatibilityModesAreRejected() throws Exception {
+    protected void invalidCompatibilityModesAreRejected() throws Exception {
         SchemaRegistryStore store = store();
         assertThatThrownBy(() -> store.setGlobalCompatibilityMode("SIDEWAYS"))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -297,7 +297,7 @@ abstract class SchemaRegistryStoreContractTest {
     // ---------------------------------------------------------------- write gate
 
     @Test
-    void writeGateSeesEffectiveModeAndFullAscendingHistory() throws Exception {
+    protected void writeGateSeesEffectiveModeAndFullAscendingHistory() throws Exception {
         RecordingGate gate = new RecordingGate();
         SchemaRegistryStore store = store(gate);
 
@@ -316,7 +316,7 @@ abstract class SchemaRegistryStoreContractTest {
     }
 
     @Test
-    void writeGateViolationsBecomeIncompatibleRegistrationException() throws Exception {
+    protected void writeGateViolationsBecomeIncompatibleRegistrationException() throws Exception {
         RecordingGate gate = new RecordingGate();
         SchemaRegistryStore store = store(gate);
         store.register(CORE_SUBJECT, CORE_PROTO, List.of());
@@ -331,7 +331,7 @@ abstract class SchemaRegistryStoreContractTest {
     }
 
     @Test
-    void writeGateIsSkippedWhenEffectiveModeIsNone() throws Exception {
+    protected void writeGateIsSkippedWhenEffectiveModeIsNone() throws Exception {
         RecordingGate gate = new RecordingGate();
         gate.violations = List.of("would reject everything");
         SchemaRegistryStore store = store(gate);
@@ -346,7 +346,7 @@ abstract class SchemaRegistryStoreContractTest {
     }
 
     @Test
-    void writeGateIsNotInvokedForIdenticalContent() throws Exception {
+    protected void writeGateIsNotInvokedForIdenticalContent() throws Exception {
         RecordingGate gate = new RecordingGate();
         SchemaRegistryStore store = store(gate);
         store.register(CORE_SUBJECT, CORE_PROTO, List.of());
