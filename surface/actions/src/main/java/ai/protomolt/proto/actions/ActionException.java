@@ -27,6 +27,13 @@ public class ActionException extends Exception {
         this.details = details;
     }
 
+    /** Retains the underlying failure without adding exception internals to the wire error. */
+    public ActionException(String code, String message, ObjectNode details, Throwable cause) {
+        super(message, cause);
+        this.code = Objects.requireNonNull(code, "code");
+        this.details = details;
+    }
+
     /** Stable kebab-case error code. */
     public String code() {
         return code;
