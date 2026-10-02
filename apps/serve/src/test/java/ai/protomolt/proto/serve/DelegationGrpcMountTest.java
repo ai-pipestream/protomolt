@@ -191,7 +191,7 @@ class DelegationGrpcMountTest {
                     "operator"), StatusRuntimeException.class);
             assertThat(failure).isNotNull();
             assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.DATA_LOSS);
-            assertThat(failure.getStatus().getDescription()).contains("invalid-upstream-response");
+            assertThat(failure.getStatus().getDescription()).contains("invalid-response");
         }
     }
 

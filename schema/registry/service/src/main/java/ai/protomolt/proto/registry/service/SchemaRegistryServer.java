@@ -116,7 +116,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
      * {@code {nativePathPrefix}/actions}: {@code GET .../actions} lists the actions with their
      * input schemas; {@code POST .../actions/{name}} executes one with a JSON body. Action
      * failures map to the action error envelope with {@code unknown-action} as 404,
-     * {@code invalid-input} as 400 and every other action error as 422.
+     * {@code invalid-input} as 400, {@code invalid-response} as 500, and other action errors by code.
      */
     public SchemaRegistryServer(SchemaRegistryServerConfig config, SchemaRegistryStore store,
                                 ActionCatalog actions) {
@@ -913,6 +913,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
             int status = switch (e.code()) {
                 case "unknown-action" -> 404;
                 case "invalid-input" -> 400;
+                case "invalid-response" -> 500;
                 case "permission-denied" -> 403;
                 case "resource-exhausted" -> 429;
                 default -> 422;

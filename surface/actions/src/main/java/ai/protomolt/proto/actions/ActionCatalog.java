@@ -236,8 +236,8 @@ public final class ActionCatalog {
         // Idempotent when the JSON edge already refused: the check is by scope, not by call.
         requireScope(action, caller);
         requireBudget(action, caller, request);
-        CatalogContract.validate(request, action.requestType(), name);
-        return action.execute(request, context, caller);
+        request = CatalogContract.checkedRequest(request, action.requestType(), name);
+        return CatalogContract.checkedResponse(action.execute(request, context, caller), action.responseType(), name);
     }
 
     /**
@@ -256,11 +256,17 @@ public final class ActionCatalog {
         ProtoAction action = get(name);
         requireScope(action, caller);
         requireBudget(action, caller, request);
-        CatalogContract.validate(request, action.requestType(), name);
-        if (action instanceof StreamingAction streaming) {
-            streaming.executeStreaming(request, context, caller, emitter);
-        } else {
-            emitter.emit(action.execute(request, context, caller));
+        request = CatalogContract.checkedRequest(request, action.requestType(), name);
+        var checked = new ContractStreamEmitter(emitter, action.responseType(), name);
+        try {
+            if (action instanceof StreamingAction streaming) {
+                streaming.executeStreaming(request, context, caller, checked);
+            } else {
+                checked.emit(action.execute(request, context, caller));
+            }
+            checked.complete();
+        } finally {
+            checked.finish();
         }
     }
 

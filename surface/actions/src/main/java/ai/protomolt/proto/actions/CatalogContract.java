@@ -247,19 +247,68 @@ public final class CatalogContract {
      */
     public static void validate(Message request, Descriptor descriptor, String verb)
             throws ActionException {
-        // Compared by name rather than by identity: the same contract reaches a verb both
-        // as a generated message and as a dynamic one built off the compiled descriptor, and
-        // those are the same type even though they are not the same descriptor instance.
+        checkedRequest(request, descriptor, verb);
+    }
+
+    /** Validates using the declared request rules and returns that contract's representation. */
+    public static Message checkedRequest(Message request, Descriptor descriptor, String verb)
+            throws ActionException {
+        if (request == null) {
+            throw new ActionException("invalid-input", verb + " requires a non-null request");
+        }
         if (!request.getDescriptorForType().getFullName().equals(descriptor.getFullName())) {
             throw new ActionException("invalid-input",
                     verb + " expects a " + descriptor.getFullName() + ", not a "
                             + request.getDescriptorForType().getFullName());
         }
-        ValidationResult result = inspect(request);
+        Message checked;
+        try {
+            checked = request.getDescriptorForType() == descriptor ? request
+                    : DynamicMessage.parseFrom(descriptor, request.toByteString());
+        } catch (InvalidProtocolBufferException e) {
+            ActionException failure = new ActionException("invalid-input",
+                    verb + " request could not be decoded as " + descriptor.getFullName());
+            failure.initCause(e);
+            throw failure;
+        }
+        ValidationResult result = inspect(checked);
         if (!result.valid()) {
             throw new ActionException("invalid-input",
                     verb + " does not satisfy the request contract: " + describe(result),
                     violations(result));
+        }
+        return checked;
+    }
+
+    /**
+     * Checks a successful response against the action's declared descriptor.
+     * Distinct descriptor instances are decoded using the declared contract so
+     * a provider cannot remove rules by supplying a same-named descriptor.
+     * The canonical message is returned for transport and downstream consumers.
+     */
+    public static Message checkedResponse(Message response, Descriptor descriptor, String verb)
+            throws ActionException {
+        if (response == null) {
+            throw new ActionException("invalid-response", verb + " returned a null response");
+        }
+        if (!response.getDescriptorForType().getFullName().equals(descriptor.getFullName())) {
+            throw new ActionException("invalid-response", verb + " returned "
+                    + response.getDescriptorForType().getFullName() + "; expected " + descriptor.getFullName());
+        }
+        try {
+            Message checked = response.getDescriptorForType() == descriptor ? response
+                    : DynamicMessage.parseFrom(descriptor, response.toByteString());
+            ValidationResult result = inspect(checked);
+            if (!result.valid()) {
+                throw new ActionException("invalid-response",
+                        verb + " does not satisfy the response contract: " + describe(result), violations(result));
+            }
+            return checked;
+        } catch (InvalidProtocolBufferException | RuntimeException e) {
+            ActionException failure = new ActionException("invalid-response",
+                    verb + " response could not be validated against " + descriptor.getFullName());
+            failure.initCause(e);
+            throw failure;
         }
     }
 

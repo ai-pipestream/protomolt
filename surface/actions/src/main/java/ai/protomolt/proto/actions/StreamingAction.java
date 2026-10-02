@@ -18,8 +18,10 @@ public interface StreamingAction extends ProtoAction {
      * @param request a {@link ProtoAction#requestType()} message, already checked
      * @param context type resolution and JSON machinery shared across actions
      * @param emitter the sink for incremental results
-     * @throws ActionException with a stable code on any failure before streaming starts;
-     *         mid-stream failures are emitted as terminal status messages instead
+     * Emissions must complete before this method returns. Catalog dispatch validates each
+     * message before delivery and makes an emission failure terminal.
+     *
+     * @throws ActionException with a stable code on failure, including a rejected emission
      */
     void executeStreaming(Message request, ActionContext context, StreamEmitter emitter)
             throws ActionException;
