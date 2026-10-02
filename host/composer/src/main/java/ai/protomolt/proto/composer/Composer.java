@@ -118,10 +118,10 @@ public final class Composer {
                 mounts.get(i).start();
             }
         } catch (Exception e) {
-            closeAll(closeStack);
-            // Channels handed out during wiring are node-owned; with no Node
-            // returned, the failed boot must close them itself.
-            context.channels.close();
+            ComposerException cleanup = context.closeResources();
+            if (cleanup != null) {
+                e.addSuppressed(cleanup);
+            }
             if (e instanceof ComposerException composer) {
                 throw composer;
             }
@@ -170,15 +170,29 @@ public final class Composer {
         ordered.add(module);
     }
 
-    private static void closeAll(Deque<AutoCloseable> closeStack) {
+    private static ComposerException closeAll(Deque<AutoCloseable> closeStack) {
+        ComposerException failure = null;
         while (!closeStack.isEmpty()) {
             AutoCloseable resource = closeStack.pop();
             try {
                 resource.close();
             } catch (Exception e) {
-                LOG.warn("shutdown resource failed to close", e);
+                if (e instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
+                failure = cleanupFailure(failure, "shutdown resource failed to close", e);
             }
         }
+        return failure;
+    }
+
+    private static ComposerException cleanupFailure(ComposerException failure, String message,
+                                                     Exception cause) {
+        if (failure == null) {
+            return new ComposerException(message, cause);
+        }
+        failure.addSuppressed(cause);
+        return failure;
     }
 
     /** A running node; closing it unwinds every mount in reverse order. */
@@ -197,8 +211,10 @@ public final class Composer {
 
         @Override
         public void close() {
-            closeAll(context.closeStack);
-            context.channels.close();
+            ComposerException failure = context.closeResources();
+            if (failure != null) {
+                throw failure;
+            }
         }
     }
 
@@ -252,6 +268,16 @@ public final class Composer {
     }
 
     private final class DefaultContext implements NodeContext {
+
+        private ComposerException closeResources() {
+            ComposerException failure = closeAll(closeStack);
+            try {
+                channels.close();
+            } catch (ComposerException e) {
+                failure = cleanupFailure(failure, "node channels failed to close", e);
+            }
+            return failure;
+        }
 
         private final String nodeId = UUID.randomUUID().toString().substring(0, 8);
         private final DefaultChannels channels = new DefaultChannels();
@@ -358,15 +384,24 @@ public final class Composer {
             }
 
             private synchronized void close() {
+                ComposerException failure = null;
                 for (ManagedChannel channel : open.values()) {
-                    channel.shutdownNow();
                     try {
-                        channel.awaitTermination(5, TimeUnit.SECONDS);
+                        channel.shutdownNow();
+                        if (!channel.awaitTermination(5, TimeUnit.SECONDS)) {
+                            throw new ComposerException("channel did not terminate within 5 seconds");
+                        }
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
+                        failure = cleanupFailure(failure, "interrupted closing channel", e);
+                    } catch (RuntimeException e) {
+                        failure = cleanupFailure(failure, "channel failed to close", e);
                     }
                 }
                 open.clear();
+                if (failure != null) {
+                    throw failure;
+                }
             }
         }
 
