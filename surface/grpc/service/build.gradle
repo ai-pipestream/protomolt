@@ -2,6 +2,8 @@ description = 'The action catalog as a gRPC service: every verb a typed RPC, ser
 
 dependencies {
     api project(':protomolt-actions')
+    // This full catalog distribution explicitly includes optional indexing actions.
+    runtimeOnly project(':protomolt-actions-index')
     // The service definition and its compiled schema; api because this module's own
     // public surface hands out descriptors from it.
     api project(':protomolt-grpc-service-contract')

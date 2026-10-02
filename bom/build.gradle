@@ -26,6 +26,7 @@ def supportedModules = [
         'protomolt-iceberg-s3',
         'protomolt-compat',
         'protomolt-actions',
+        'protomolt-actions-index',
         'protomolt-registry',
         'protomolt-registry-proto',
         'protomolt-mcp',

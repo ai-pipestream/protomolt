@@ -5,11 +5,13 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Message;
 
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.ServiceLoader;
 
 /**
  * A framework-agnostic catalog of {@link ProtoAction}s: one registry of JSON-in/JSON-out verbs,
@@ -18,6 +20,12 @@ import java.util.Optional;
  * replacement, and manifest snapshots are synchronized so a host that installs a plugin while
  * serving requests cannot corrupt iteration order or expose a partial catalog update. Action
  * execution itself runs outside that catalog monitor.
+ *
+ * <p>Optional actions are discovered from the thread context class loader through
+ * {@link ActionProvider}. Only installed providers are advertised. Add
+ * {@code protomolt-actions-index} to retain the index-rendering verb in a standalone
+ * catalog; the full launchers include it explicitly. Provider loading failures abort
+ * construction rather than silently returning a partially populated catalog.
  */
 public final class ActionCatalog {
 
@@ -31,8 +39,8 @@ public final class ActionCatalog {
     }
 
     /**
-     * A catalog with every built-in action registered, spending on its own ledger, for a
-     * catalog that is the node's only enforcement point. A node that also serves another
+     * A catalog with the core actions and installed optional providers registered,
+     * spending on its own ledger, for the node's only enforcement point. A node that also serves another
      * enforcement point passes one shared ledger through
      * {@link #defaults(ActionContext, ScopeBudgets)}, or a principal gets a separate
      * allowance per surface.
@@ -42,8 +50,8 @@ public final class ActionCatalog {
     }
 
     /**
-     * A catalog with every built-in action registered, spending on {@code budgets}: the
-     * node's other enforcement points take the same ledger, so a principal's per-scope
+     * A catalog with the core actions and installed optional providers registered,
+     * spending on {@code budgets}. The node's other enforcement points take the same ledger, so a principal's per-scope
      * budget is one allowance however it reaches the node.
      */
     public static ActionCatalog defaults(ActionContext context, ScopeBudgets budgets) {
@@ -54,7 +62,13 @@ public final class ActionCatalog {
         catalog.register(new CheckCompatAction());
         catalog.register(new RenderJsonSchemaAction());
         catalog.register(new RenderPromptAction());
-        catalog.register(new RenderIndexMappingsAction());
+        for (ActionProvider provider : ServiceLoader.load(ActionProvider.class).stream()
+                .sorted(Comparator.comparing(p -> p.type().getName()))
+                .map(ServiceLoader.Provider::get).toList()) {
+            for (ProtoAction action : provider.actions()) {
+                catalog.register(action);
+            }
+        }
         catalog.register(new EvalCelAction());
         catalog.register(new MapMessageAction());
         catalog.register(new SynthesizeShapeAction());
@@ -66,6 +80,16 @@ public final class ActionCatalog {
         catalog.register(new ExtractMetadataAction());
         catalog.register(new ListTypesAction());
         return catalog;
+    }
+
+    /** An empty catalog with the same authorization, budgets and contract checks as defaults. */
+    public static ActionCatalog empty(ActionContext context, ScopeBudgets budgets) {
+        return new ActionCatalog(context, budgets);
+    }
+
+    /** An empty catalog with a private budget ledger. */
+    public static ActionCatalog empty(ActionContext context) {
+        return empty(context, new ScopeBudgets());
     }
 
     /**

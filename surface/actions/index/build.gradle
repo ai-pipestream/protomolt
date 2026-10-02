@@ -1,0 +1,10 @@
+description = 'Optional index-rendering actions for the ProtoMolt action catalog'
+
+dependencies {
+    api project(':protomolt-actions')
+    implementation project(':protomolt-search-index-spi')
+    implementation project(':protomolt-search-index-lucene')
+    implementation project(':protomolt-search-index-opensearch')
+    implementation project(':protomolt-search-index-solr')
+    implementation project(':protomolt-search-index-qdrant')
+}

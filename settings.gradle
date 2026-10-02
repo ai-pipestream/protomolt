@@ -502,3 +502,6 @@ include 'samples'
 
 include 'protomolt-system-tests'
 project(':protomolt-system-tests').projectDir = file('tests/system')
+
+include 'protomolt-actions-index'
+project(':protomolt-actions-index').projectDir = file('surface/actions/index')

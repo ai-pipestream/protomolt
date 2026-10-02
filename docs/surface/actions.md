@@ -22,10 +22,17 @@ repair strategies, which matters when the caller is a model.
 
 ## The built-in catalog
 
-`ActionCatalog.defaults(...)` registers the built-in actions: the ones that need
-nothing beyond a descriptor and the toolkit's own libraries. The generated
-[action inventory](../generated/action-inventory.json) is the authoritative list
-for this and every assembled surface:
+`ActionCatalog.defaults(...)` registers the core actions and installed optional providers.
+Index rendering requires `protomolt-actions-index`; the full gRPC, MCP and registry
+distributions include it. A standalone catalog can omit it, or use
+`ActionCatalog.empty(...)` and register only the required operations. See
+[optional action providers](../architecture/action-providers.md) for dependencies
+and provider registration.
+
+The following toolkit actions operate on descriptors and protobuf data. The
+generated [action inventory](../generated/action-inventory.json) records the full
+assembled distributions; a catalog without optional providers advertises only
+the actions installed in that process:
 
 | Action | Does |
 |---|---|

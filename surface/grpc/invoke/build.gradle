@@ -17,3 +17,26 @@ dependencies {
     testImplementation libs.grpc.inprocess
     testImplementation libs.grpc.protobuf
 }
+
+// Reflection/invocation must not require concrete search backends or their native libraries.
+tasks.register('checkRuntimeBoundaries') {
+    group = 'verification'
+    description = 'Rejects concrete search adapters in the dynamic gRPC runtime graph'
+    doLast {
+        def forbidden = ['protomolt-actions-index', 'protomolt-search-index-lucene',
+                         'protomolt-search-index-opensearch', 'protomolt-search-index-solr',
+                         'protomolt-search-index-qdrant'] as Set
+        def leaked = configurations.runtimeClasspath.incoming.resolutionResult.allComponents.findAll { c ->
+            def id = c.moduleVersion
+            id != null && (forbidden.contains(id.name) || id.group == 'org.apache.lucene'
+                    || (id.group == 'ai.pipestream' && id.name.startsWith('lucene-')))
+        }.collect { it.id.displayName }
+        if (!leaked.isEmpty()) {
+            throw new GradleException('Dynamic gRPC runtime includes optional indexing: ' + leaked)
+        }
+    }
+}
+
+tasks.named('check') { dependsOn tasks.named('checkRuntimeBoundaries') }
+// CI invokes test directly as well as build; keep the boundary gate on both paths.
+tasks.named('test') { dependsOn tasks.named('checkRuntimeBoundaries') }

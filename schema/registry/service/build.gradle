@@ -5,6 +5,8 @@ dependencies {
     api project(':protomolt-workflow')
     api project(':protomolt-registry')
     api project(':protomolt-actions')
+    // This full catalog distribution explicitly includes optional indexing actions.
+    runtimeOnly project(':protomolt-actions-index')
     // The administrative verbs take declared request messages.
     api project(':protomolt-registry-proto')
     // Their input schemas are derived from those messages rather than hand-written.
