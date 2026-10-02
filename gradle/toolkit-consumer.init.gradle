@@ -1,0 +1,33 @@
+// Stage only the library graph used by the standalone toolkit consumer.
+// No artifacts leave this filesystem repository.
+gradle.projectsEvaluated {
+    def root = gradle.rootProject
+    def destination = root.providers.gradleProperty('toolkitRepository').get()
+    def selected = new LinkedHashSet<Project>()
+    def visit
+    visit = { Project project ->
+        if (selected.add(project)) {
+            ['api', 'implementation', 'runtimeOnly'].each { name ->
+                project.configurations.findByName(name)?.allDependencies
+                    ?.withType(ProjectDependency)?.each { dependency ->
+                        visit(root.project(dependency.path))
+                    }
+            }
+        }
+    }
+    ['protomolt-mapper-cel', 'protomolt-projection',
+     'protomolt-protobuf-validation-protovalidate', 'protomolt-registry',
+     'protomolt-http-openapi'].each { visit(root.project(':' + it)) }
+    selected.each { project ->
+        project.publishing.repositories.maven {
+            name = 'ToolkitConsumer'
+            url = root.uri(destination)
+        }
+    }
+    root.tasks.register('stageToolkitConsumer') {
+        group = 'verification'
+        dependsOn selected.collect {
+            it.tasks.named('publishMavenPublicationToToolkitConsumerRepository')
+        }
+    }
+}
