@@ -5,26 +5,15 @@ import ai.protomolt.proto.cel.CelEnvironmentFactory;
 import ai.protomolt.proto.cel.CelEvaluationException;
 import ai.protomolt.proto.cel.CelEvaluator;
 import ai.protomolt.proto.validate.cel.ValidationCelFunctions;
-import ai.protomolt.proto.validate.model.BoolConstraints;
-import ai.protomolt.proto.validate.model.BytesConstraints;
-import ai.protomolt.proto.validate.model.BytesFormat;
 import ai.protomolt.proto.validate.model.CelConstraint;
-import ai.protomolt.proto.validate.model.DurationConstraints;
-import ai.protomolt.proto.validate.model.EnumConstraints;
 import ai.protomolt.proto.validate.model.FieldConstraints;
-import ai.protomolt.proto.validate.model.FloatingConstraints;
 import ai.protomolt.proto.validate.model.IgnoreMode;
-import ai.protomolt.proto.validate.model.IntegralConstraints;
 import ai.protomolt.proto.validate.model.MapConstraints;
 import ai.protomolt.proto.validate.model.MessageConstraints;
 import ai.protomolt.proto.validate.model.RepeatedConstraints;
-import ai.protomolt.proto.validate.model.StringConstraints;
-import ai.protomolt.proto.validate.model.StringFormat;
-import ai.protomolt.proto.validate.model.TimestampConstraints;
 import ai.protomolt.proto.validate.spi.TaxonomyCatalog;
 import ai.protomolt.proto.validate.spi.ValidationRuleSource;
 import ai.protomolt.proto.validate.spi.ValidationRuleSources;
-import com.google.common.primitives.UnsignedLong;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.EnumValueDescriptor;
@@ -35,19 +24,21 @@ import dev.cel.common.CelValidationException;
 import dev.cel.common.types.CelKind;
 import dev.cel.common.types.CelType;
 
-import java.time.DateTimeException;
-import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
+
+import static ai.protomolt.proto.validate.CelValues.celListValue;
+import static ai.protomolt.proto.validate.CelValues.celMapValue;
+import static ai.protomolt.proto.validate.CelValues.celScalar;
+import static ai.protomolt.proto.validate.CelValues.evalCel;
+import static ai.protomolt.proto.validate.ValueChecks.applyFieldConstraints;
+import static ai.protomolt.proto.validate.ValueChecks.compiledPattern;
+import static ai.protomolt.proto.validate.Violations.violation;
 
 /**
  * Validates protobuf messages against constraint annotations. The validator core
@@ -74,11 +65,15 @@ import java.util.regex.PatternSyntaxException;
  * <p>Violation paths use protobuf field names, {@code [i]} subscripts for repeated
  * elements, {@code ["key"]} subscripts for map entries, and a {@code #key} suffix for
  * violations against a map key itself.
+ *
+ * <p>This class owns rule compilation and the descriptor walk — which values are reached, at
+ * which path, and whether a collection or nesting level is entered at all. The checks a single
+ * value then faces live in {@link ValueChecks}, the CEL bindings and failure classification in
+ * {@link CelValues}, and the well-known conversions both of those share in
+ * {@link WellKnownValues}.
  */
 public final class ProtoValidator {
 
-    private static final String TIMESTAMP_TYPE = "google.protobuf.Timestamp";
-    private static final String DURATION_TYPE = "google.protobuf.Duration";
     private static final String TREE_PATH_TYPE = "ai.protomolt.proto.types.v1.TreePath";
 
     /** Maximum message nesting the recursive walk follows before failing the evaluation. */
@@ -87,23 +82,6 @@ public final class ProtoValidator {
     // repopulated on demand, which keeps them thread-safe and dependency-free while preventing
     // unbounded growth for callers that validate many distinct (e.g. dynamically built) types.
     private static final int MAX_CACHED_TYPES = 256;
-    private static final int MAX_CACHED_PATTERNS = 512;
-
-    /** Well-known wrapper message types mapped to the scalar family that validates their value. */
-    private static final Map<String, FieldDescriptor.JavaType> WRAPPER_TYPES = Map.of(
-            "google.protobuf.Int32Value", FieldDescriptor.JavaType.INT,
-            "google.protobuf.Int64Value", FieldDescriptor.JavaType.LONG,
-            "google.protobuf.UInt32Value", FieldDescriptor.JavaType.INT,
-            "google.protobuf.UInt64Value", FieldDescriptor.JavaType.LONG,
-            "google.protobuf.FloatValue", FieldDescriptor.JavaType.FLOAT,
-            "google.protobuf.DoubleValue", FieldDescriptor.JavaType.DOUBLE,
-            "google.protobuf.BoolValue", FieldDescriptor.JavaType.BOOLEAN,
-            "google.protobuf.StringValue", FieldDescriptor.JavaType.STRING,
-            "google.protobuf.BytesValue", FieldDescriptor.JavaType.BYTE_STRING);
-
-    /** Compiled regex patterns shared across validators, keyed by the pattern source. */
-    private static final Map<String, Pattern> PATTERNS =
-            new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * A CEL environment paired with its evaluator. The raw {@link Cel} handle enables static
@@ -357,8 +335,8 @@ public final class ProtoValidator {
 
     /** Compiles every pattern and CEL rule in {@code constraints}, including nested element rules. */
     private void compileFieldConstraints(FieldConstraints constraints) {
-        constraints.string().ifPresent(s -> s.pattern().ifPresent(ProtoValidator::compiledPattern));
-        constraints.bytes().ifPresent(b -> b.pattern().ifPresent(ProtoValidator::compiledPattern));
+        constraints.string().ifPresent(s -> s.pattern().ifPresent(ValueChecks::compiledPattern));
+        constraints.bytes().ifPresent(b -> b.pattern().ifPresent(ValueChecks::compiledPattern));
         for (CelConstraint rule : constraints.cel()) {
             compileCel(fieldCel, rule);
         }
@@ -440,22 +418,6 @@ public final class ProtoValidator {
 
     private static boolean declaresTaxonomy(FieldConstraints constraints) {
         return constraints.taxonomy().isPresent() || nestedTaxonomy(constraints);
-    }
-
-    /** The compiled form of {@code pattern}; an uncompilable pattern is a schema error. */
-    private static Pattern compiledPattern(String pattern) {
-        Pattern existing = PATTERNS.get(pattern);
-        if (existing != null) {
-            return existing;
-        }
-        try {
-            if (PATTERNS.size() >= MAX_CACHED_PATTERNS) {
-                PATTERNS.clear();
-            }
-            return PATTERNS.computeIfAbsent(pattern, Pattern::compile);
-        } catch (PatternSyntaxException e) {
-            throw new RuleCompilationException("invalid regex pattern: " + e.getMessage(), e);
-        }
     }
 
     /** Clear-on-threshold cache lookup (see the cache-bounds note on the constants). */
@@ -736,532 +698,6 @@ public final class ProtoValidator {
         return "[" + key + "]";
     }
 
-    private static void applyFieldConstraints(
-            FieldDescriptor field,
-            FieldConstraints constraints,
-            Object value,
-            String path,
-            List<ValidationResult.Violation> violations) {
-        switch (field.getJavaType()) {
-            case STRING, INT, LONG, FLOAT, DOUBLE, BOOLEAN, BYTE_STRING ->
-                    applyScalar(constraints, field.getJavaType(), value, path, violations);
-            case ENUM -> constraints.enumeration()
-                    .ifPresent(e -> applyEnum(e, (EnumValueDescriptor) value, path, violations));
-            case MESSAGE -> {
-                String type = field.getMessageType().getFullName();
-                switch (type) {
-                    case TIMESTAMP_TYPE -> constraints.timestamp().ifPresent(t ->
-                            applyTimestamp(t, toInstant((Message) value), path, violations));
-                    case DURATION_TYPE -> constraints.duration().ifPresent(d ->
-                            applyDuration(d, toJavaDuration((Message) value), path, violations));
-                    case "google.protobuf.Any" -> constraints.any()
-                            .ifPresent(a -> applyAny(a, (Message) value, path, violations));
-                    case "google.protobuf.FieldMask" -> constraints.fieldMask().ifPresent(fm ->
-                            applyFieldMask(fm, (Message) value, path, violations));
-                    default -> {
-                        // Well-known wrapper types (Int32Value, StringValue, …) apply their scalar
-                        // rules to the wrapped value; the field is present (message presence) so
-                        // this only runs when the wrapper is set.
-                        FieldDescriptor.JavaType wrapped = WRAPPER_TYPES.get(type);
-                        if (wrapped != null) {
-                            Message wrapper = (Message) value;
-                            Object inner = wrapper.getField(
-                                    wrapper.getDescriptorForType().findFieldByNumber(1));
-                            applyScalar(constraints, wrapped, inner, path, violations);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /** {@code google.protobuf.Any}: its type URL must be allowed by {@code in}/{@code not_in}. */
-    private static void applyAny(
-            ai.protomolt.proto.validate.model.AnyConstraints rules, Message any, String path,
-            List<ValidationResult.Violation> violations) {
-        String typeUrl = (String) any.getField(any.getDescriptorForType().findFieldByNumber(1));
-        if (!rules.in().isEmpty() && !rules.in().contains(typeUrl)) {
-            violations.add(violation(path, "any.in", "type URL must be one of the allowed values"));
-        }
-        if (!rules.notIn().isEmpty() && rules.notIn().contains(typeUrl)) {
-            violations.add(violation(path, "any.not_in", "type URL must not be a forbidden value"));
-        }
-    }
-
-    /** {@code google.protobuf.FieldMask}: compare the mask in its comma-joined path form. */
-    private static void applyFieldMask(
-            ai.protomolt.proto.validate.model.FieldMaskConstraints rules, Message mask, String path,
-            List<ValidationResult.Violation> violations) {
-        @SuppressWarnings("unchecked")
-        List<String> paths = (List<String>) mask.getField(mask.getDescriptorForType().findFieldByNumber(1));
-        if (rules.constant().isPresent() && !String.join(",", paths).equals(rules.constant().get())) {
-            violations.add(violation(path, "field_mask.const", "must equal the required field mask"));
-        }
-        // in / not_in test each path against the rule paths by prefix coverage: a mask path "a.foo"
-        // is covered by the entry "a". Every path must be covered by some in entry; no path may be
-        // covered by any not_in entry.
-        if (!rules.in().isEmpty()
-                && !paths.stream().allMatch(p -> coveredByAny(p, rules.in()))) {
-            violations.add(violation(path, "field_mask.in", "must be one of the allowed values"));
-        }
-        if (!rules.notIn().isEmpty()
-                && paths.stream().anyMatch(p -> coveredByAny(p, rules.notIn()))) {
-            violations.add(violation(path, "field_mask.not_in", "must not be one of the forbidden values"));
-        }
-    }
-
-    /** True when {@code path} equals or is nested under one of {@code entries} (e.g. a.foo under a). */
-    private static boolean coveredByAny(String path, List<String> entries) {
-        for (String entry : entries) {
-            if (path.equals(entry) || path.startsWith(entry + ".")) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /** Applies the scalar constraint family matching {@code type} to {@code value}. */
-    private static void applyScalar(
-            FieldConstraints constraints, FieldDescriptor.JavaType type, Object value,
-            String path, List<ValidationResult.Violation> violations) {
-        switch (type) {
-            case STRING -> constraints.string()
-                    .ifPresent(s -> applyString(s, (String) value, path, violations));
-            case INT, LONG -> constraints.integral()
-                    .ifPresent(n -> applyIntegral(n, integralValue(n, value), path, violations));
-            case FLOAT, DOUBLE -> constraints.floating()
-                    .ifPresent(n -> applyFloating(n, ((Number) value).doubleValue(), path, violations));
-            case BOOLEAN -> constraints.bool()
-                    .ifPresent(b -> applyBool(b, (Boolean) value, path, violations));
-            case BYTE_STRING -> constraints.bytes()
-                    .ifPresent(b -> applyBytes(b, (ByteString) value, path, violations));
-            default -> {
-            }
-        }
-    }
-
-    /** Widens the raw value to a long, honoring unsigned 32-bit semantics. */
-    private static long integralValue(IntegralConstraints rules, Object value) {
-        if (rules.unsigned() && value instanceof Integer i) {
-            return Integer.toUnsignedLong(i);
-        }
-        return ((Number) value).longValue();
-    }
-
-    private static void applyString(
-            StringConstraints rules, String value, String path,
-            List<ValidationResult.Violation> violations) {
-        long len = value.codePointCount(0, value.length());
-        if (rules.constant().isPresent() && !value.equals(rules.constant().get())) {
-            violations.add(violation(path, "string.const",
-                    "must equal \"" + rules.constant().get() + "\""));
-        }
-        if (rules.len().isPresent() && len != rules.len().getAsLong()) {
-            violations.add(violation(path, "string.len",
-                    "length must be exactly " + rules.len().getAsLong()));
-        }
-        if (rules.minLen().isPresent() && len < rules.minLen().getAsLong()) {
-            violations.add(violation(path, "string.min_len",
-                    "length must be at least " + rules.minLen().getAsLong()));
-        }
-        if (rules.maxLen().isPresent() && len > rules.maxLen().getAsLong()) {
-            violations.add(violation(path, "string.max_len",
-                    "length must be at most " + rules.maxLen().getAsLong()));
-        }
-        if (rules.lenBytes().isPresent() || rules.minBytes().isPresent() || rules.maxBytes().isPresent()) {
-            long bytes = value.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
-            if (rules.lenBytes().isPresent() && bytes != rules.lenBytes().getAsLong()) {
-                violations.add(violation(path, "string.len_bytes",
-                        "must be exactly " + rules.lenBytes().getAsLong() + " bytes"));
-            }
-            if (rules.minBytes().isPresent() && bytes < rules.minBytes().getAsLong()) {
-                violations.add(violation(path, "string.min_bytes",
-                        "must be at least " + rules.minBytes().getAsLong() + " bytes"));
-            }
-            if (rules.maxBytes().isPresent() && bytes > rules.maxBytes().getAsLong()) {
-                violations.add(violation(path, "string.max_bytes",
-                        "must be at most " + rules.maxBytes().getAsLong() + " bytes"));
-            }
-        }
-        if (rules.pattern().isPresent()
-                && !compiledPattern(rules.pattern().get()).matcher(value).find()) {
-            violations.add(violation(path, "string.pattern", "value does not match pattern"));
-        }
-        if (rules.prefix().isPresent() && !value.startsWith(rules.prefix().get())) {
-            violations.add(violation(path, "string.prefix",
-                    "must start with \"" + rules.prefix().get() + "\""));
-        }
-        if (rules.suffix().isPresent() && !value.endsWith(rules.suffix().get())) {
-            violations.add(violation(path, "string.suffix",
-                    "must end with \"" + rules.suffix().get() + "\""));
-        }
-        if (rules.contains().isPresent() && !value.contains(rules.contains().get())) {
-            violations.add(violation(path, "string.contains",
-                    "must contain \"" + rules.contains().get() + "\""));
-        }
-        if (rules.notContains().isPresent() && value.contains(rules.notContains().get())) {
-            violations.add(violation(path, "string.not_contains",
-                    "must not contain \"" + rules.notContains().get() + "\""));
-        }
-        if (!rules.in().isEmpty() && !rules.in().contains(value)) {
-            violations.add(violation(path, "string.in", "must be one of " + rules.in()));
-        }
-        if (!rules.notIn().isEmpty() && rules.notIn().contains(value)) {
-            violations.add(violation(path, "string.not_in", "must not be one of " + rules.notIn()));
-        }
-        for (StringFormat format : rules.formats()) {
-            if (value.isEmpty()) {
-                violations.add(violation(path, format.emptyRuleId(), format.emptyMessage()));
-            } else if (!format.matches(value)) {
-                violations.add(violation(path, format.ruleId(), format.defaultMessage()));
-            }
-        }
-        rules.httpHeader().ifPresent(header -> {
-            if (header.rejectEmpty() && value.isEmpty()) {
-                violations.add(violation(path, header.emptyRuleId(), "value is empty"));
-            } else if (!header.matches(value)) {
-                violations.add(violation(path, header.ruleId(), "must be a valid HTTP header"));
-            }
-        });
-    }
-
-    private static void applyIntegral(
-            IntegralConstraints rules, long value, String path,
-            List<ValidationResult.Violation> violations) {
-        String prefix = rules.ruleIdPrefix();
-        boolean unsigned = rules.unsigned();
-        if (rules.constant().isPresent() && value != rules.constant().getAsLong()) {
-            violations.add(violation(path, prefix + ".const",
-                    "must equal " + fmt(rules.constant().getAsLong(), unsigned)));
-        }
-        Comparator<Long> order = unsigned ? Long::compareUnsigned : Long::compare;
-        applyRange(prefix, path, value,
-                boxed(rules.gt()), boxed(rules.gte()), boxed(rules.lt()), boxed(rules.lte()),
-                order, v -> fmt(v, unsigned), violations);
-        if (!rules.in().isEmpty() && !rules.in().contains(value)) {
-            violations.add(violation(path, prefix + ".in", "must be one of the allowed values"));
-        }
-        if (!rules.notIn().isEmpty() && rules.notIn().contains(value)) {
-            violations.add(violation(path, prefix + ".not_in", "must not be one of the forbidden values"));
-        }
-    }
-
-    private static String fmt(long value, boolean unsigned) {
-        return unsigned ? Long.toUnsignedString(value) : Long.toString(value);
-    }
-
-    private static Long boxed(java.util.OptionalLong o) {
-        return o.isPresent() ? o.getAsLong() : null;
-    }
-
-    private static Double boxed(java.util.OptionalDouble o) {
-        return o.isPresent() ? o.getAsDouble() : null;
-    }
-
-    /**
-     * Emits a single range violation for the combined lower/upper bounds, matching protovalidate's
-     * semantics: when only one bound is set it fires the individual {@code gt/gte/lt/lte} rule; when
-     * both are set they collapse into one {@code <lower>_<upper>} rule (or {@code …_exclusive} when
-     * the bounds are reversed so the valid region is outside the range). {@code null} bounds are
-     * absent. Used for every totally-ordered numeric type (integers, timestamps, durations).
-     */
-    private static <T> void applyRange(
-            String prefix, String path, T value, T gt, T gte, T lt, T lte,
-            Comparator<T> order, java.util.function.Function<T, String> fmt,
-            List<ValidationResult.Violation> violations) {
-        T lower = gt != null ? gt : gte;
-        String lowerName = gt != null ? "gt" : (gte != null ? "gte" : null);
-        boolean lowerInclusive = gt == null && gte != null;
-        T upper = lt != null ? lt : lte;
-        String upperName = lt != null ? "lt" : (lte != null ? "lte" : null);
-        boolean upperInclusive = lt == null && lte != null;
-
-        if (lower != null && upper != null) {
-            boolean satLower = lowerInclusive
-                    ? order.compare(value, lower) >= 0 : order.compare(value, lower) > 0;
-            boolean satUpper = upperInclusive
-                    ? order.compare(value, upper) <= 0 : order.compare(value, upper) < 0;
-            boolean exclusive = order.compare(upper, lower) < 0;
-            boolean ok = exclusive ? (satLower || satUpper) : (satLower && satUpper);
-            if (!ok) {
-                String ruleId = prefix + "." + lowerName + "_" + upperName + (exclusive ? "_exclusive" : "");
-                violations.add(violation(path, ruleId, exclusive
-                        ? "must be " + lowerName + " " + fmt.apply(lower) + " or " + upperName + " " + fmt.apply(upper)
-                        : "must be " + lowerName + " " + fmt.apply(lower) + " and " + upperName + " " + fmt.apply(upper)));
-            }
-        } else if (lower != null) {
-            boolean sat = lowerInclusive
-                    ? order.compare(value, lower) >= 0 : order.compare(value, lower) > 0;
-            if (!sat) {
-                violations.add(violation(path, prefix + "." + lowerName,
-                        "must be " + (lowerInclusive ? ">= " : "> ") + fmt.apply(lower)));
-            }
-        } else if (upper != null) {
-            boolean sat = upperInclusive
-                    ? order.compare(value, upper) <= 0 : order.compare(value, upper) < 0;
-            if (!sat) {
-                violations.add(violation(path, prefix + "." + upperName,
-                        "must be " + (upperInclusive ? "<= " : "< ") + fmt.apply(upper)));
-            }
-        }
-    }
-
-    /**
-     * IEEE-aware counterpart of {@link #applyRange} for floating-point values: a {@code NaN} value
-     * satisfies no bound (every comparison is false), so it violates any range — which a total-order
-     * comparator could not express.
-     */
-    private static void applyDoubleRange(
-            String prefix, String path, double value, Double gt, Double gte, Double lt, Double lte,
-            List<ValidationResult.Violation> violations) {
-        Double lower = gt != null ? gt : gte;
-        String lowerName = gt != null ? "gt" : (gte != null ? "gte" : null);
-        boolean lowerInclusive = gt == null && gte != null;
-        Double upper = lt != null ? lt : lte;
-        String upperName = lt != null ? "lt" : (lte != null ? "lte" : null);
-        boolean upperInclusive = lt == null && lte != null;
-
-        if (lower != null && upper != null) {
-            boolean satLower = lowerInclusive ? value >= lower : value > lower;
-            boolean satUpper = upperInclusive ? value <= upper : value < upper;
-            boolean exclusive = upper < lower;
-            boolean ok = exclusive ? (satLower || satUpper) : (satLower && satUpper);
-            if (!ok) {
-                String ruleId = prefix + "." + lowerName + "_" + upperName + (exclusive ? "_exclusive" : "");
-                violations.add(violation(path, ruleId, "must be within " + lowerName + "/" + upperName + " range"));
-            }
-        } else if (lower != null) {
-            boolean sat = lowerInclusive ? value >= lower : value > lower;
-            if (!sat) {
-                violations.add(violation(path, prefix + "." + lowerName,
-                        "must be " + (lowerInclusive ? ">= " : "> ") + lower));
-            }
-        } else if (upper != null) {
-            boolean sat = upperInclusive ? value <= upper : value < upper;
-            if (!sat) {
-                violations.add(violation(path, prefix + "." + upperName,
-                        "must be " + (upperInclusive ? "<= " : "< ") + upper));
-            }
-        }
-    }
-
-    private static void applyFloating(
-            FloatingConstraints rules, double value, String path,
-            List<ValidationResult.Violation> violations) {
-        String prefix = rules.ruleIdPrefix();
-        if (rules.constant().isPresent() && value != rules.constant().getAsDouble()) {
-            violations.add(violation(path, prefix + ".const",
-                    "must equal " + rules.constant().getAsDouble()));
-        }
-        applyDoubleRange(prefix, path, value,
-                boxed(rules.gt()), boxed(rules.gte()), boxed(rules.lt()), boxed(rules.lte()),
-                violations);
-        if (!rules.in().isEmpty() && !containsNumeric(rules.in(), value)) {
-            violations.add(violation(path, prefix + ".in", "must be one of the allowed values"));
-        }
-        if (!rules.notIn().isEmpty() && containsNumeric(rules.notIn(), value)) {
-            violations.add(violation(path, prefix + ".not_in", "must not be one of the forbidden values"));
-        }
-        if (rules.finite() && !Double.isFinite(value)) {
-            violations.add(violation(path, prefix + ".finite", "must be finite"));
-        }
-    }
-
-    /**
-     * Membership by IEEE numeric equality, matching CEL: {@code -0.0} equals {@code 0.0} and
-     * {@code NaN} equals nothing — boxed {@link Double#equals} gets both edge cases wrong.
-     */
-    private static boolean containsNumeric(List<Double> values, double value) {
-        for (double candidate : values) {
-            if (candidate == value) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static void applyBool(
-            BoolConstraints rules, boolean value, String path,
-            List<ValidationResult.Violation> violations) {
-        if (rules.constant().isPresent() && value != rules.constant().get()) {
-            violations.add(violation(path, "bool.const", "must equal " + rules.constant().get()));
-        }
-    }
-
-    private static void applyBytes(
-            BytesConstraints rules, ByteString value, String path,
-            List<ValidationResult.Violation> violations) {
-        int size = value.size();
-        if (rules.constant().isPresent() && !value.equals(rules.constant().get())) {
-            violations.add(violation(path, "bytes.const", "must equal the required bytes"));
-        }
-        if (rules.len().isPresent() && size != rules.len().getAsLong()) {
-            violations.add(violation(path, "bytes.len",
-                    "length must be exactly " + rules.len().getAsLong() + " bytes"));
-        }
-        if (rules.minLen().isPresent() && size < rules.minLen().getAsLong()) {
-            violations.add(violation(path, "bytes.min_len",
-                    "length must be at least " + rules.minLen().getAsLong() + " bytes"));
-        }
-        if (rules.maxLen().isPresent() && size > rules.maxLen().getAsLong()) {
-            violations.add(violation(path, "bytes.max_len",
-                    "length must be at most " + rules.maxLen().getAsLong() + " bytes"));
-        }
-        if (rules.prefix().isPresent() && !value.startsWith(rules.prefix().get())) {
-            violations.add(violation(path, "bytes.prefix", "must start with the required bytes"));
-        }
-        if (rules.suffix().isPresent() && !value.endsWith(rules.suffix().get())) {
-            violations.add(violation(path, "bytes.suffix", "must end with the required bytes"));
-        }
-        if (rules.contains().isPresent() && !bytesContain(value, rules.contains().get())) {
-            violations.add(violation(path, "bytes.contains", "must contain the required bytes"));
-        }
-        if (rules.pattern().isPresent()) {
-            // protovalidate applies the pattern to the value decoded as UTF-8; non-UTF-8 bytes are a
-            // runtime error rather than a validation failure.
-            if (!decodesAsUtf8(value)) {
-                throw new RuleEvaluationException(
-                        "bytes.pattern", "value must be valid UTF-8 to apply regexp", null);
-            }
-            if (!compiledPattern(rules.pattern().get()).matcher(value.toStringUtf8()).find()) {
-                violations.add(violation(path, "bytes.pattern", "value does not match pattern"));
-            }
-        }
-        if (!rules.in().isEmpty() && !rules.in().contains(value)) {
-            violations.add(violation(path, "bytes.in", "must be one of the allowed values"));
-        }
-        if (!rules.notIn().isEmpty() && rules.notIn().contains(value)) {
-            violations.add(violation(path, "bytes.not_in", "must not be one of the forbidden values"));
-        }
-        for (BytesFormat format : rules.formats()) {
-            if (size == 0) {
-                // An empty value reports the companion <id>_empty rule, matching string formats.
-                violations.add(violation(path, format.emptyRuleId(), "value is empty"));
-            } else if (!format.matches(size)) {
-                violations.add(violation(path, format.ruleId(), format.defaultMessage()));
-            }
-        }
-    }
-
-    private static boolean decodesAsUtf8(ByteString value) {
-        try {
-            java.nio.charset.StandardCharsets.UTF_8.newDecoder()
-                    .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
-                    .decode(value.asReadOnlyByteBuffer());
-            return true;
-        } catch (java.nio.charset.CharacterCodingException e) {
-            return false;
-        }
-    }
-
-    private static boolean bytesContain(ByteString haystack, ByteString needle) {
-        if (needle.isEmpty()) {
-            return true;
-        }
-        for (int i = 0; i + needle.size() <= haystack.size(); i++) {
-            boolean match = true;
-            for (int j = 0; j < needle.size(); j++) {
-                if (haystack.byteAt(i + j) != needle.byteAt(j)) {
-                    match = false;
-                    break;
-                }
-            }
-            if (match) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static void applyEnum(
-            EnumConstraints rules, EnumValueDescriptor value, String path,
-            List<ValidationResult.Violation> violations) {
-        int number = value.getNumber();
-        if (rules.constant().isPresent() && number != rules.constant().getAsInt()) {
-            violations.add(violation(path, "enum.const", "must equal " + rules.constant().getAsInt()));
-        }
-        // Unknown numbers surface as synthetic value descriptors with index -1.
-        if (rules.definedOnly() && value.getIndex() < 0) {
-            violations.add(violation(path, "enum.defined_only",
-                    "must be a defined enum value, got " + number));
-        }
-        if (!rules.in().isEmpty() && !rules.in().contains(number)) {
-            violations.add(violation(path, "enum.in", "must be one of the allowed values"));
-        }
-        if (!rules.notIn().isEmpty() && rules.notIn().contains(number)) {
-            violations.add(violation(path, "enum.not_in", "must not be one of the forbidden values"));
-        }
-    }
-
-    private static void applyTimestamp(
-            TimestampConstraints rules, Instant value, String path,
-            List<ValidationResult.Violation> violations) {
-        Instant now = Instant.now();
-        if (rules.constant().isPresent() && !value.equals(rules.constant().get())) {
-            violations.add(violation(path, "timestamp.const", "must equal " + rules.constant().get()));
-        }
-        applyRange("timestamp", path, value,
-                rules.gt().orElse(null), rules.gte().orElse(null),
-                rules.lt().orElse(null), rules.lte().orElse(null),
-                Comparator.naturalOrder(), Instant::toString, violations);
-        if (rules.ltNow() && value.compareTo(now) >= 0) {
-            violations.add(violation(path, "timestamp.lt_now", "must be in the past"));
-        }
-        if (rules.gtNow() && value.compareTo(now) <= 0) {
-            violations.add(violation(path, "timestamp.gt_now", "must be in the future"));
-        }
-        if (rules.within().isPresent()) {
-            Duration distance = Duration.between(value, now).abs();
-            if (distance.compareTo(rules.within().get()) > 0) {
-                violations.add(violation(path, "timestamp.within",
-                        "must be within " + rules.within().get() + " of now"));
-            }
-        }
-    }
-
-    private static void applyDuration(
-            DurationConstraints rules, Duration value, String path,
-            List<ValidationResult.Violation> violations) {
-        if (rules.constant().isPresent() && !value.equals(rules.constant().get())) {
-            violations.add(violation(path, "duration.const",
-                    "must equal " + rules.constant().get()));
-        }
-        applyRange("duration", path, value,
-                rules.gt().orElse(null), rules.gte().orElse(null),
-                rules.lt().orElse(null), rules.lte().orElse(null),
-                Comparator.naturalOrder(), Duration::toString, violations);
-        if (!rules.in().isEmpty() && !rules.in().contains(value)) {
-            violations.add(violation(path, "duration.in", "must be one of the allowed values"));
-        }
-        if (!rules.notIn().isEmpty() && rules.notIn().contains(value)) {
-            violations.add(violation(path, "duration.not_in", "must not be one of the forbidden values"));
-        }
-    }
-
-    private static Instant toInstant(Message timestamp) {
-        Descriptor d = timestamp.getDescriptorForType();
-        long seconds = (Long) timestamp.getField(d.findFieldByName("seconds"));
-        int nanos = (Integer) timestamp.getField(d.findFieldByName("nanos"));
-        try {
-            return Instant.ofEpochSecond(seconds, nanos);
-        } catch (DateTimeException | ArithmeticException e) {
-            // Out-of-range seconds/nanos are a runtime failure, not a raw unchecked leak.
-            throw new RuleEvaluationException("timestamp value out of range: " + e.getMessage(), e);
-        }
-    }
-
-    private static Duration toJavaDuration(Message duration) {
-        Descriptor d = duration.getDescriptorForType();
-        long seconds = (Long) duration.getField(d.findFieldByName("seconds"));
-        int nanos = (Integer) duration.getField(d.findFieldByName("nanos"));
-        try {
-            return Duration.ofSeconds(seconds, nanos);
-        } catch (DateTimeException | ArithmeticException e) {
-            throw new RuleEvaluationException("duration value out of range: " + e.getMessage(), e);
-        }
-    }
-
     /** Runs a field's CEL rules against an already CEL-converted {@code this} value. */
     private void runFieldCel(
             FieldConstraints constraints, Object celValue, String path,
@@ -1402,108 +838,6 @@ public final class ProtoValidator {
         }
     }
 
-    private static void evalCel(
-            CelEvaluator evaluator,
-            CelConstraint rule,
-            Object thisValue,
-            String path,
-            String rulePath,
-            List<ValidationResult.Violation> violations) {
-        if (rule.expression().isBlank()) {
-            return;
-        }
-        // With no explicit id protovalidate uses the expression text as the rule id.
-        String id = rule.id().isBlank() ? rule.expression() : rule.id();
-        try {
-            Map<String, Object> bindings = new java.util.HashMap<>();
-            bindings.put("this", thisValue);
-            // protovalidate exposes the current time as `now`; a single value keeps now == now true.
-            bindings.put("now", java.time.Instant.now());
-            if (rule.ruleValue() != null) {
-                // Predefined rules see their configured value as `rule`.
-                bindings.put("rule", rule.ruleValue());
-            }
-            Object result = evaluator.evaluateValue(rule.expression(), bindings);
-            if (result instanceof Boolean ok) {
-                if (!ok) {
-                    String msg = rule.message().isBlank()
-                            ? "\"" + rule.expression() + "\" returned false" : rule.message();
-                    violations.add(new ValidationResult.Violation(path, id, msg, rulePath));
-                }
-            } else if (result instanceof String text) {
-                if (!text.isEmpty()) {
-                    violations.add(new ValidationResult.Violation(path, id, text, rulePath));
-                }
-            } else {
-                // Statically bool/string-typed programs never land here; a dyn program returning
-                // another type is still a per-value failure.
-                violations.add(new ValidationResult.Violation(
-                        path, id, "CEL rule must return bool or string", rulePath));
-            }
-        } catch (CelCompilationException e) {
-            // A rule whose CEL does not compile (type error, unknown field) is a compilation error.
-            throw new RuleCompilationException(e.getMessage(), e);
-        } catch (CelEvaluationException e) {
-            // A rule that compiles but fails at evaluation is a runtime error, not a violation.
-            throw new RuleEvaluationException(id, "CEL runtime error: " + e.getMessage(), e);
-        }
-    }
-
-    /** The whole repeated field as a CEL list, each element converted to its CEL Java type. */
-    private static Object celListValue(Message message, FieldDescriptor field) {
-        int count = message.getRepeatedFieldCount(field);
-        List<Object> list = new java.util.ArrayList<>(count);
-        for (int i = 0; i < count; i++) {
-            list.add(celScalar(field, message.getRepeatedField(field, i)));
-        }
-        return list;
-    }
-
-    /** The whole map field as a CEL map, keys and values converted to their CEL Java types. */
-    private static Object celMapValue(Message message, FieldDescriptor field) {
-        Descriptor entryType = field.getMessageType();
-        FieldDescriptor keyField = entryType.findFieldByNumber(1);
-        FieldDescriptor valueField = entryType.findFieldByNumber(2);
-        int count = message.getRepeatedFieldCount(field);
-        Map<Object, Object> map = new java.util.LinkedHashMap<>();
-        for (int i = 0; i < count; i++) {
-            Message entry = (Message) message.getRepeatedField(field, i);
-            map.put(celScalar(keyField, entry.getField(keyField)),
-                    celScalar(valueField, entry.getField(valueField)));
-        }
-        return map;
-    }
-
-    /** Converts a scalar protobuf value to the Java type CEL expects (unsigned for uint types). */
-    private static Object celScalar(FieldDescriptor field, Object value) {
-        return switch (field.getType()) {
-            case UINT32, FIXED32 -> UnsignedLong.fromLongBits(Integer.toUnsignedLong((Integer) value));
-            case UINT64, FIXED64 -> UnsignedLong.fromLongBits((Long) value);
-            case INT32, SINT32, SFIXED32 -> ((Integer) value).longValue();
-            case FLOAT -> ((Float) value).doubleValue();
-            case ENUM -> (long) ((EnumValueDescriptor) value).getNumber();
-            case MESSAGE, GROUP -> celMessage((Message) value);
-            default -> value;
-        };
-    }
-
-    /** Wrapper messages bind as their unwrapped scalar; Timestamp/Duration as temporal values. */
-    private static Object celMessage(Message value) {
-        Descriptor descriptor = value.getDescriptorForType();
-        String type = descriptor.getFullName();
-        return switch (type) {
-            case TIMESTAMP_TYPE -> toInstant(value);
-            case DURATION_TYPE -> toJavaDuration(value);
-            default -> {
-                if (WRAPPER_TYPES.containsKey(type)) {
-                    FieldDescriptor inner = descriptor.findFieldByNumber(1);
-                    yield celScalar(inner, value.getField(inner));
-                }
-                yield value;
-            }
-        };
-    }
-
     /** Whether an element (repeated item, map key/value) is skipped by its own ignore mode. */
     private static boolean skipValue(FieldConstraints constraints, Object value, FieldDescriptor field) {
         return switch (constraints.ignore()) {
@@ -1558,9 +892,5 @@ public final class ProtoValidator {
                     Double.doubleToRawLongBits(((Number) value).doubleValue()) != 0L;
             default -> true;
         };
-    }
-
-    private static ValidationResult.Violation violation(String path, String id, String message) {
-        return new ValidationResult.Violation(path, id, message);
     }
 }
