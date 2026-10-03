@@ -43,7 +43,9 @@ message DocumentSaved {
 }
 
 // A document row was hard-deleted (DeleteDocument with purge_storage=true):
-// the row is gone and its objects were purged best-effort first. A soft
+// the row is gone and its manifest objects were confirmed purged first. Recovery
+// of an admitted synchronous purge preserves this event; a duplicate completion
+// without a row removal does not emit another DocumentDeleted. A soft
 // delete (purge_storage=false) fires PurgeRequested instead.
 message DocumentDeleted {
   // The canonical storage identity of the removed row.

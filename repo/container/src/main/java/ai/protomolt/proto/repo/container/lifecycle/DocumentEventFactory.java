@@ -75,6 +75,18 @@ public final class DocumentEventFactory {
         return record(eventId, DocumentEventRecord.TYPE_DELETED, row.docId, event, when);
     }
 
+    /** Synchronous purge completion uses its admitted identity, including after recovery. */
+    public static DocumentEventRecord deleted(DocumentPurgeRecord purge, Instant when) {
+        UUID eventId = UUID.randomUUID();
+        DocumentEvent event = envelope(eventId, DocumentDeleted.newBuilder()
+                .setAddress(NodeAddress.newBuilder().setDocId(purge.docId)
+                        .setAccountId(purge.accountId).setGraphId(purge.graphId)
+                        .setGraphAddressId(purge.graphAddressId))
+                .setChecksum(purge.contentChecksum == null ? "" : purge.contentChecksum)
+                .setDeletedAt(timestamp(when)).build());
+        return record(eventId, DocumentEventRecord.TYPE_DELETED, purge.docId, event, when);
+    }
+
     /**
      * Phase A of the two-phase delete: tombstone + purge enqueue commit.
      *

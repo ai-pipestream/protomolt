@@ -68,6 +68,21 @@ public class DocumentPurgeRecord {
     @Column(name = "purge_id", nullable = false)
     public UUID purgeId;
 
+    public static final String MODE_ASYNC = "ASYNC";
+    public static final String MODE_SYNCHRONOUS = "SYNCHRONOUS";
+
+    /** Freezes completion event semantics; object scope is frozen in objectKeys. */
+    @Column(name = "completion_mode", nullable = false)
+    public String completionMode = MODE_ASYNC;
+
+    /** New admissions match the row's pendingPurgeId; old records retain their timestamp guard. */
+    @Column(name = "generation_id")
+    public UUID generationId;
+
+    /** Content identity at admission, retained even when another drain removes the row. */
+    @Column(name = "content_checksum")
+    public String contentChecksum;
+
     /** The deterministic id of the documents row to purge. NOT unique. */
     @Column(name = "node_id", nullable = false)
     public UUID nodeId;

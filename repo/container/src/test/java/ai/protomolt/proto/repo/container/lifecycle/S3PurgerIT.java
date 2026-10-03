@@ -23,6 +23,63 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Testcontainers(disabledWithoutDocker = true)
 class S3PurgerIT extends AbstractLifecycleIT {
 
+    @Test
+    void repeatedSynchronousAdmissionsEmitOneActualRemovalEvent() {
+        var drive = createDrive("sync-events", "docs", "sync-purge-events", "pfx");
+        var row = intakeRow(UUID.randomUUID(), drive.accountId, "sync-events", "ds", drive.name, List.of());
+        row.status = DocumentStatus.PENDING_PURGE;
+        row.pendingPurgeId = UUID.randomUUID();
+        documents.save(row);
+        var first = enqueuePurge(row, null, Instant.now());
+        var second = enqueuePurge(row, null, Instant.now());
+        tx.inTransaction(em -> {
+            for (var snapshot : List.of(first, second)) {
+                var record = em.find(DocumentPurgeRecord.class, snapshot.purgeId);
+                record.generationId = row.pendingPurgeId;
+                record.completionMode = DocumentPurgeRecord.MODE_SYNCHRONOUS;
+                record.contentChecksum = row.checksum;
+            }
+        });
+        var events = new JdbcEventOutbox(tx);
+        var worker = new S3Purger(tx, documents, drives, queue, events);
+        assertThat(worker.purgeNow(store, first.purgeId)).isEqualTo("PURGED");
+        assertThat(worker.purgeNow(store, second.purgeId)).isEqualTo("PURGED");
+        assertThat(events.claimBatch(1000).stream().filter(event -> event.kafkaKey.equals(row.docId))
+                .map(event -> event.eventType).toList()).containsExactly("DocumentDeleted");
+    }
+
+    @Test
+    void admittedGenerationSurvivesAclEditsButRejectsNewTombstonesAndTerminalReplays() {
+        var drive = createDrive("generation", "docs", "purge-generations", "pfx");
+        for (boolean replaced : List.of(false, true)) {
+            UUID id = UUID.randomUUID();
+            String key = "pfx/" + id;
+            putObject(drive.bucket, key);
+            var row = intakeRow(id, drive.accountId, "generation-" + replaced, "ds", drive.name, List.of(key));
+            row.status = DocumentStatus.PENDING_PURGE;
+            row.pendingPurgeId = UUID.randomUUID();
+            documents.save(row);
+            var record = enqueuePurge(row, drive.prefix, Instant.now());
+            tx.inTransaction(em -> {
+                em.find(DocumentPurgeRecord.class, record.purgeId).generationId = row.pendingPurgeId;
+            });
+            var changed = documents.findByNodeId(id).orElseThrow();
+            if (replaced) changed.pendingPurgeId = UUID.randomUUID();
+            else changed.security = "{}"; // Policy-only changes do not undo an admitted command.
+            documents.save(changed);
+            assertThat(purger.purgeNow(store, record.purgeId)).isEqualTo(replaced ? "VOID" : "PURGED");
+            assertThat(objectExists(drive.bucket, key)).isEqualTo(replaced);
+            if (!replaced) {
+                // Reusing an identity and key cannot make a terminal command run again.
+                documents.save(intakeRow(id, drive.accountId, row.docId, "ds", drive.name, List.of(key)));
+                putObject(drive.bucket, key);
+                assertThat(purger.purgeNow(store, record.purgeId)).isEqualTo("PURGED");
+                assertThat(objectExists(drive.bucket, key)).isTrue();
+                assertThat(documents.findByNodeId(id)).isPresent();
+            }
+        }
+    }
+
     /** A BlobStore that fails batch deletes containing the poison key. */
     private static final class PoisonStore implements BlobStore {
         private final BlobStore delegate;

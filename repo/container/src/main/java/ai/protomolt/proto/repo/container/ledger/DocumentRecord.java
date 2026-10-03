@@ -76,6 +76,10 @@ public class DocumentRecord {
     @Column(name = "mutation_revision", nullable = false, insertable = false, updatable = false)
     public long mutationRevision;
 
+    /** Admitted deletion generation; a body rewrite clears it. */
+    @Column(name = "pending_purge_id")
+    public UUID pendingPurgeId;
+
     /**
      * Logical document identifier, stable across all pipeline states.
      * Multiple rows can share a doc_id (one per storage address).

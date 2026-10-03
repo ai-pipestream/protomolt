@@ -1180,6 +1180,9 @@ class RepoServiceIT {
                 .toList();
         assertThat(partKeys).hasSize(5);
 
+        String rawKey = ai.protomolt.proto.repo.container.lifecycle.PurgeSnapshots.rawBlobKey(drive.getPrefix(), account, doc.getDocId(), "ds-3");
+        services.blobStore().put(new BlobStore.PutSpec(drive.getBucket(), rawKey, "application/octet-stream", null, null), new byte[] {1});
+
         // Metadata-only delete: tombstone to PENDING_PURGE; updated_at must
         // NOT move (the staleness guard only trusts body rewrites).
         DeleteDocumentResponse tombstoned = documents.deleteDocument(DeleteDocumentRequest.newBuilder()
@@ -1193,6 +1196,9 @@ class RepoServiceIT {
         DocumentRecord after = services.documentLedger().findByNodeId(nodeId).orElseThrow();
         assertThat(after.status).isEqualTo(DocumentStatus.PENDING_PURGE);
         assertThat(after.updatedAt).isEqualTo(before.updatedAt);
+        var asyncAdmission = services.purgeQueue().claimBatch(1000).stream()
+                .filter(record -> record.nodeId.equals(nodeId)).findFirst().orElseThrow();
+        assertThat(asyncAdmission.generationId).isEqualTo(after.pendingPurgeId);
         // Objects survive the tombstone.
         for (String key : partKeys) {
             services.blobStore().headObject(drive.getBucket(), key);
@@ -1221,6 +1227,183 @@ class RepoServiceIT {
         assertThat(again.getOutcome())
                 .isEqualTo(DeleteDocumentOutcome.DELETE_DOCUMENT_OUTCOME_NOTHING_TO_REMOVE);
         assertThat(again.getDocumentsRemoved()).isZero();
+        // Sync cleanup did not broaden its scope or cancel an earlier async admission.
+        services.blobStore().headObject(drive.getBucket(), rawKey);
+        assertThat(services.s3Purger().purgeNow(services.blobStore(), asyncAdmission.purgeId)).isEqualTo("PURGED");
+        assertThatThrownBy(() -> services.blobStore().headObject(drive.getBucket(), rawKey))
+                .isInstanceOf(BlobStore.BlobNotFoundException.class);
+    }
+
+    @Test
+    void migratedPendingPurgeMustSettleBeforeReadmission() {
+        String account = "acct-legacy-readmission";
+        var drive = createDrive("legacy-readmission", account);
+        var doc = fixture("legacy-readmission", account, "ds");
+        var saved = documents.saveDocument(intakeSave(doc, "legacy-readmission", account).build());
+        UUID nodeId = UUID.fromString(saved.getNodeId());
+        try (var database = new ai.protomolt.proto.repo.container.ledger.LedgerDatabase(
+                new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()))) {
+            var tx = new ai.protomolt.proto.repo.container.ledger.Tx(database.entityManagerFactory());
+            var queue = new ai.protomolt.proto.repo.container.lifecycle.JdbcPurgeQueue(tx);
+            var legacy = tx.inTransaction(em -> {
+                var row = em.find(DocumentRecord.class, nodeId);
+                row.status = DocumentStatus.PENDING_PURGE;
+                var record = new ai.protomolt.proto.repo.container.ledger.DocumentPurgeRecord();
+                record.purgeId = UUID.randomUUID();
+                record.nodeId = nodeId;
+                record.docId = row.docId;
+                record.graphAddressId = row.graphAddressId;
+                record.accountId = row.accountId;
+                record.graphId = row.graphId;
+                record.driveName = row.driveName;
+                record.writeObjectKeys(ai.protomolt.proto.repo.container.lifecycle.PurgeSnapshots.objectKeysOf(row, drive.getPrefix()));
+                record.requestedAt = java.time.Instant.now();
+                queue.enqueue(em, record);
+                return record;
+            });
+            var request = DeleteDocumentRequest.newBuilder().setByReference(DeleteDocumentByReferenceCommand.newBuilder()
+                    .setAddress(saved.getAddress())).setPurgeStorage(true).build();
+            assertRepositoryFailure(() -> documents.deleteDocument(request), Status.Code.FAILED_PRECONDITION);
+            assertThat(services.documentLedger().findByNodeId(nodeId).orElseThrow().pendingPurgeId).isNull();
+            var worker = new ai.protomolt.proto.repo.container.lifecycle.S3Purger(tx, services.documentLedger(), services.driveLedger(), queue);
+            assertThat(worker.purgeNow(services.blobStore(), legacy.purgeId)).isEqualTo("PURGED");
+            assertThat(documents.deleteDocument(request).getOutcome()).isEqualTo(DeleteDocumentOutcome.DELETE_DOCUMENT_OUTCOME_NOTHING_TO_REMOVE);
+        }
+    }
+
+    @Test
+    void logicalDeletionAdmissionRollsBackEveryTargetWhenEnqueueFails() {
+        String account = "acct-delete-admission";
+        createDrive("delete-admission", account);
+        var doc = fixture("delete-admission", account, "ds");
+        var save = intakeSave(doc, "delete-admission", account).build();
+        var first = documents.saveDocument(save);
+        var second = documents.saveDocument(save.toBuilder().setGraphLocationId("second")
+                .setGraphId("admission-graph").build());
+        try (var database = new ai.protomolt.proto.repo.container.ledger.LedgerDatabase(
+                new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()))) {
+            var tx = new ai.protomolt.proto.repo.container.ledger.Tx(database.entityManagerFactory());
+            var real = new ai.protomolt.proto.repo.container.lifecycle.JdbcPurgeQueue(tx);
+            var enqueues = new java.util.concurrent.atomic.AtomicInteger();
+            var queue = (ai.protomolt.proto.repo.container.lifecycle.PurgeQueue) java.lang.reflect.Proxy.newProxyInstance(
+                    getClass().getClassLoader(), new Class<?>[] {ai.protomolt.proto.repo.container.lifecycle.PurgeQueue.class},
+                    (proxy, method, args) -> {
+                        Object result;
+                        try { result = method.invoke(real, args); }
+                        catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                        if (method.getName().equals("enqueue") && enqueues.incrementAndGet() == 2)
+                            throw new IllegalStateException("injected after second enqueue");
+                        return result;
+                    });
+            var engine = new ai.protomolt.proto.repo.engine.DocumentOperations(services.documentLedger(), services.driveLedger(),
+                    tx, services.blobStore(), new ai.protomolt.proto.repo.container.blob.PartStorage(), queue);
+            var request = DeleteDocumentRequest.newBuilder().setLogicalDocument(DeleteLogicalDocumentCommand.newBuilder()
+                    .setDocId(doc.getDocId()).setAccountId(account).setDatasourceId("ds")).setPurgeStorage(true).build();
+            assertThatThrownBy(() -> engine.deleteDocument(new ai.protomolt.proto.repo.spi.RepositoryCaller("test", true), request))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("second enqueue");
+            assertThat(enqueues.get()).isEqualTo(2);
+            for (var saved : List.of(first, second)) {
+                var row = services.documentLedger().findByNodeId(UUID.fromString(saved.getNodeId())).orElseThrow();
+                assertThat(row.status).isEqualTo(DocumentStatus.AVAILABLE);
+                assertThat(row.pendingPurgeId).isNull();
+                assertThat(documents.getDocument(GetDocumentRequest.newBuilder().setNodeId(saved.getNodeId()).build())
+                        .getDocument()).isEqualTo(doc);
+            }
+            long pending = tx.readOnly(em -> em.createQuery("SELECT count(p) FROM DocumentPurgeRecord p WHERE p.accountId = :account", Long.class)
+                    .setParameter("account", account).getSingleResult());
+            assertThat(pending).isZero();
+        }
+    }
+
+    @Test
+    void synchronousPurgeRetainsRecoveryAndCannotRemoveRevivedVersions() throws Exception {
+        try (var database = new ai.protomolt.proto.repo.container.ledger.LedgerDatabase(
+                new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()))) {
+            var tx = new ai.protomolt.proto.repo.container.ledger.Tx(database.entityManagerFactory());
+            for (boolean overGrpc : List.of(false, true)) for (boolean revive : List.of(false, true)) {
+                String account = "acct-durable-delete-" + overGrpc + "-" + revive;
+                var drive = createDrive("durable-delete", account);
+                var doc = fixture("durable-delete", account, "ds");
+                var save = intakeSave(doc, "durable-delete", account).build();
+                var saved = documents.saveDocument(save);
+                UUID nodeId = UUID.fromString(saved.getNodeId());
+                var before = services.documentLedger().findByNodeId(nodeId).orElseThrow();
+                var oldKeys = before.readManifest().getPartsList().stream()
+                        .filter(p -> p.getState() == PartState.PART_STATE_PRESENT).map(PartManifestEntry::getObjectKey).toList();
+                String rawKey = ai.protomolt.proto.repo.container.lifecycle.PurgeSnapshots.rawBlobKey(
+                        drive.getPrefix(), account, doc.getDocId(), "ds");
+                var real = services.blobStore();
+                real.put(new BlobStore.PutSpec(drive.getBucket(), rawKey, "application/octet-stream", null, null),
+                        new byte[] {1, 2, 3});
+                var injected = new java.util.concurrent.atomic.AtomicBoolean();
+                var replacement = doc.toBuilder();
+                replacement.getSearchMetadataBuilder().setTitle("revived body");
+                var faulty = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                        new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
+                            if (method.getName().equals("deleteAll") && injected.compareAndSet(false, true)) {
+                                if (!revive) {
+                                    // Delete real bytes, then fail before the remaining keys are attempted.
+                                    real.delete((String) args[0], oldKeys.getFirst());
+                                    throw new ai.protomolt.proto.repo.blob.spi.BlobStoreException(
+                                            ai.protomolt.proto.repo.blob.spi.BlobStoreException.Code.UNAVAILABLE,
+                                            "injected after one real deletion", null);
+                                }
+                                Object result;
+                                try { result = method.invoke(real, args); }
+                                catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                                documents.saveDocument(save.toBuilder().setDocument(replacement).setForceSave(true).build());
+                                return result;
+                            }
+                            try { return method.invoke(real, args); }
+                            catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                        });
+                var queue = new ai.protomolt.proto.repo.container.lifecycle.JdbcPurgeQueue(tx);
+                var engine = new ai.protomolt.proto.repo.engine.DocumentOperations(services.documentLedger(), services.driveLedger(),
+                        tx, faulty, new ai.protomolt.proto.repo.container.blob.PartStorage(), queue);
+                String endpoint = "durable-delete-" + UUID.randomUUID();
+                var server = io.grpc.inprocess.InProcessServerBuilder.forName(endpoint).addService(new DocumentGrpcService(engine,
+                        new ai.protomolt.proto.repo.engine.BlobOperations(real, services.driveLedger()))).build().start();
+                var connection = InProcessChannelBuilder.forName(endpoint).build();
+                try {
+                    var remote = DocumentServiceGrpc.newBlockingStub(connection).withDeadlineAfter(10, java.util.concurrent.TimeUnit.SECONDS);
+                    var request = DeleteDocumentRequest.newBuilder().setByReference(DeleteDocumentByReferenceCommand.newBuilder()
+                            .setAddress(saved.getAddress())).setPurgeStorage(true).build();
+                    var operator = new ai.protomolt.proto.repo.spi.RepositoryCaller("test", true);
+                    assertRepositoryFailure(() -> {
+                        if (overGrpc) remote.deleteDocument(request); else engine.deleteDocument(operator, request);
+                    }, revive ? Status.Code.ABORTED : Status.Code.UNAVAILABLE);
+                    assertThat(injected).isTrue();
+                    var purge = tx.readOnly(em -> em.createQuery("SELECT p FROM DocumentPurgeRecord p WHERE p.nodeId = :id",
+                            ai.protomolt.proto.repo.container.ledger.DocumentPurgeRecord.class).setParameter("id", nodeId).getSingleResult());
+                    assertThat(purge.completionMode).isEqualTo("SYNCHRONOUS");
+                    assertThat(purge.generationId).isNotNull();
+                    assertThat(purge.readObjectKeys()).containsExactlyInAnyOrderElementsOf(oldKeys);
+                    if (revive) {
+                        assertThat(purge.status).isEqualTo("VOID");
+                        assertThat(documents.getDocument(GetDocumentRequest.newBuilder().setNodeId(saved.getNodeId()).build())
+                                .getDocument()).isEqualTo(replacement.build());
+                    } else {
+                        assertThat(purge.status).isEqualTo("PENDING");
+                        assertThat(purge.attempts).isEqualTo(1);
+                        assertThat(purge.lastError).contains("injected");
+                        assertThat(services.documentLedger().findByNodeId(nodeId).orElseThrow().status).isEqualTo(DocumentStatus.PENDING_PURGE);
+                        assertRepositoryFailure(() -> remote.getDocument(GetDocumentRequest.newBuilder().setNodeId(saved.getNodeId()).build()), Status.Code.NOT_FOUND);
+                        // A newly constructed worker recovers the exact durable admission.
+                        var recovery = new ai.protomolt.proto.repo.container.lifecycle.S3Purger(tx,
+                                services.documentLedger(), services.driveLedger(), queue);
+                        assertThat(recovery.purgeNow(real, purge.purgeId)).isEqualTo("PURGED");
+                        assertThat(services.documentLedger().findByNodeId(nodeId)).isEmpty();
+                        for (String key : oldKeys) assertThatThrownBy(() -> real.headObject(drive.getBucket(), key))
+                                .isInstanceOf(BlobStore.BlobNotFoundException.class);
+                    }
+                    // Synchronous cleanup must not broaden into the separately owned raw blob.
+                    assertThat(real.get(drive.getBucket(), rawKey).data()).containsExactly(1, 2, 3);
+                } finally {
+                    connection.shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+                    server.shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+                }
+            }
+        }
     }
 
     @Test

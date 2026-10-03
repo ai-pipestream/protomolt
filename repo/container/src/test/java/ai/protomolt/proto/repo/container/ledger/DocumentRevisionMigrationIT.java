@@ -28,8 +28,25 @@ class DocumentRevisionMigrationIT {
                 insert.setObject(1, id);
                 insert.executeUpdate();
             }
+            try (var insert = connection.prepareStatement("""
+                    INSERT INTO document_purges(purge_id, node_id, doc_id, graph_address_id,
+                        account_id, graph_id, drive_name, object_keys, requested_at)
+                    VALUES (?, ?, 'legacy', 'source', 'legacy', 'intake:legacy', 'drive', '["object"]', now())
+                    """)) {
+                insert.setObject(1, UUID.randomUUID());
+                insert.setObject(2, id);
+                insert.executeUpdate();
+            }
             Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
                     .locations("classpath:db/migration/repo").load().migrate();
+            try (var query = connection.createStatement();
+                 var rows = query.executeQuery("SELECT completion_mode, generation_id, content_checksum, object_keys FROM document_purges")) {
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getString(1)).isEqualTo("ASYNC");
+                assertThat(rows.getObject(2)).isNull();
+                assertThat(rows.getString(3)).isNull();
+                assertThat(rows.getString(4)).isEqualTo("[\"object\"]");
+            }
             long migrated = revision(connection, id);
             assertThat(migrated).isPositive();
             try (var sql = connection.createStatement()) {

@@ -513,7 +513,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
             UUID nodeId = DocumentRequests.parseUuid(request.getNodeId(), "node_id");
             DocumentRecord row = documents.findByNodeId(nodeId)
                     .orElseThrow(() -> readMissing(caller, "no document row for node_id " + nodeId));
-            requireRead(caller, row);
+            requireVisibleRead(caller, row);
             return assemble(row, DocumentRequests.partsOrThrow(request.getPartsList(), "parts"),
                     Set.copyOf(request.getChunkSetsList()));
         });
@@ -527,7 +527,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
             requireReadAccount(caller, address.getAccountId());
             DocumentRecord row = documents.findByReference(address)
                     .orElseThrow(() -> readMissing(caller, "no document row for " + DocumentRequests.describe(address)));
-            requireRead(caller, row);
+            requireVisibleRead(caller, row);
             return assemble(row, DocumentRequests.partsOrThrow(request.getPartsList(), "parts"),
                     Set.copyOf(request.getChunkSetsList()));
         });
@@ -583,7 +583,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
                 default -> throw invalidArgument(
                         "exactly one coordinate (node_id or address) must be set");
             };
-            requireRead(caller, row);
+            requireVisibleRead(caller, row);
             DocumentManifest manifest = row.readManifest();
             if (manifest == null) {
                 throw notFound("document row " + row.nodeId + " carries no part manifest");
@@ -616,6 +616,11 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
     /** The loaded row is the policy snapshot for this read; body ACLs never grant access. */
     private static void requireRead(RepositoryCaller caller, DocumentRecord row) {
         if (!canRead(caller, row)) throw notFound("Document is unavailable");
+    }
+
+    private static void requireVisibleRead(RepositoryCaller caller, DocumentRecord row) {
+        requireRead(caller, row);
+        if (!DocumentStatus.AVAILABLE.equals(row.status)) throw notFound("Document is unavailable");
     }
 
     private static boolean canRead(RepositoryCaller caller, DocumentRecord row) {
@@ -676,16 +681,11 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
     }
 
     /**
-     * Delete, idempotently. {@code purge_storage=false} tombstones each
-     * matching row to PENDING_PURGE AND enqueues one purge record per row IN
-     * THE SAME TRANSACTION (Phase A of the two-phase delete: metadata-only,
-     * the snapshot of object keys captured at tombstone time, and the
-     * tombstone deliberately does not bump {@code updated_at}) — the
-     * background purger (Phase B) lands the actual object deletion.
-     * {@code purge_storage=true} FIRST deletes each removed row's
-     * manifest-PRESENT object keys from its drive's bucket (best-effort:
-     * failures are logged, the row removal is still reported), then
-     * hard-deletes the rows. Nothing matched → NOTHING_TO_REMOVE.
+     * Atomically admit the selected revisions into durable cleanup. Asynchronous
+     * deletion returns after admission; synchronous deletion waits for its exact
+     * records to finish, preserving manifest-only scope and DocumentDeleted events.
+     * Storage failures propagate with the queue retained for recovery. New rows
+     * matching a logical selector after sampling are not part of this command.
      */
     private DeleteDocumentResponse delete(DeleteDocumentRequest request) {
         List<DocumentRecord> targets;
@@ -720,34 +720,22 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
                     .build();
         }
 
-        List<DocumentRecord> removed;
-        String detail;
+        List<StagedDelete> staged = stageDeletes(targets, request.getPurgeStorage());
+        String detail = request.getPurgeStorage() ? "PURGED" : "TOMBSTONED";
         if (request.getPurgeStorage()) {
-            for (DocumentRecord row : targets) {
-                purgePartObjects(row);
+            // The fleet's Kafka queue owns consumer state on its own thread.
+            // Request threads settle exact IDs through a separate JDBC handle.
+            var purger = new ai.protomolt.proto.repo.container.lifecycle.S3Purger(tx, documents, drives,
+                    new ai.protomolt.proto.repo.container.lifecycle.JdbcPurgeQueue(tx), events);
+            for (StagedDelete item : staged) {
+                String status = purger.purgeNow(blobStore, item.purge().purgeId);
+                if (DocumentPurgeRecord.STATUS_VOID.equals(status))
+                    throw RepositoryErrors.aborted("Document changed after deletion was admitted");
+                if (!DocumentPurgeRecord.STATUS_PURGED.equals(status))
+                    throw RepositoryErrors.unavailable("Document purge remains " + status + "; durable recovery is pending");
             }
-            // Re-delete through the ledger so the returned rows are the rows
-            // actually removed (a concurrent delete settles to empty). When
-            // eventing is on, the removal and the DocumentDeleted events
-            // commit in ONE transaction instead (transactional outbox).
-            if (events != null) {
-                removed = hardDeleteAndEmit(byRef, logical);
-            } else if (byRef != null) {
-                removed = documents.deleteByReference(byRef)
-                        .map(List::of)
-                        .orElse(List.of());
-            } else {
-                removed = documents.deleteLogical(logical.getDocId(), logical.getAccountId(),
-                        logical.getDatasourceId());
-            }
-            detail = "PURGED";
-        } else {
-            removed = new ArrayList<>(targets.size());
-            for (DocumentRecord row : targets) {
-                tombstoneAndEnqueue(row).ifPresent(removed::add);
-            }
-            detail = "TOMBSTONED";
         }
+        List<DocumentRecord> removed = staged.stream().map(StagedDelete::row).toList();
 
         if (removed.isEmpty()) {
             return DeleteDocumentResponse.newBuilder()
@@ -772,123 +760,63 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         return response.build();
     }
 
-    /**
-     * Phase A of the two-phase delete: tombstone the row to PENDING_PURGE and
-     * enqueue its purge record IN ONE TRANSACTION, so the queue can never
-     * drift from the tombstone (the sweeper covers only pre-lifecycle rows and
-     * crashes outside this transaction). The purge record snapshots every
-     * object key to delete (manifest PRESENT keys + the intake row's raw blob
-     * key) so Phase B never recomputes. A re-delete of an already-tombstoned
-     * row enqueues a fresh record — harmless: the drain is idempotent and
-     * terminal queue transitions are conditional on PENDING.
-     */
-    private Optional<DocumentRecord> tombstoneAndEnqueue(DocumentRecord row) {
-        // The raw-blob key derivation needs the drive prefix; unresolvable
-        // drive → no raw key in the snapshot (the drain fails the record on
-        // the missing drive anyway). Best-effort, outside the transaction.
-        String drivePrefix = drives.findByName(row.accountId, row.driveName)
-                .map(d -> d.prefix)
-                .orElse(null);
-        Instant requestedAt = Instant.now();
-        // Cast disambiguates the Tx.inTransaction Function overload.
-        return Optional.ofNullable(tx.inTransaction(
-                (Function<EntityManager, DocumentRecord>) em -> {
-                    DocumentRecord managed = em.find(DocumentRecord.class, row.nodeId,
-                            LockModeType.PESSIMISTIC_WRITE);
-                    if (managed == null) {
-                        return null;
-                    }
-                    // Status-only transition: updated_at deliberately NOT
-                    // bumped — the purger's staleness guard depends on it.
-                    managed.status = DocumentStatus.PENDING_PURGE;
-                    DocumentPurgeRecord record = new DocumentPurgeRecord();
-                    record.purgeId = UUID.randomUUID();
-                    record.nodeId = managed.nodeId;
-                    record.docId = managed.docId;
-                    record.graphAddressId = managed.graphAddressId;
-                    record.accountId = managed.accountId;
-                    record.graphId = managed.graphId;
-                    record.driveName = managed.driveName;
-                    record.writeObjectKeys(PurgeSnapshots.objectKeysOf(managed, drivePrefix));
-                    record.requestedAt = requestedAt;
-                    purgeQueue.enqueue(em, record);
-                    if (events != null) {
-                        // PurgeRequested commits with the tombstone and the
-                        // purge record: one transaction, no drift.
-                        events.enqueue(em, DocumentEventFactory.purgeRequested(record,
-                                managed.checksum, requestedAt));
-                    }
-                    return managed;
-                }));
-    }
+    private record StagedDelete(DocumentRecord row, DocumentPurgeRecord purge) {}
 
-    /**
-     * Hard-delete with eventing: re-find the target rows and remove them IN
-     * ONE TRANSACTION with their DocumentDeleted events, so the event stream
-     * cannot drift from the removal (transactional outbox). Mirrors the
-     * ledger's deleteByReference/deleteLogical shapes - the events table is
-     * the service's concern, not the ledger's.
-     */
-    private List<DocumentRecord> hardDeleteAndEmit(NodeAddress byRef,
-            DeleteLogicalDocumentCommand logical) {
-        Instant when = Instant.now();
+    /** Admit exactly the sampled rows atomically; no object I/O occurs under these locks. */
+    private List<StagedDelete> stageDeletes(List<DocumentRecord> targets, boolean synchronous) {
+        Map<UUID, String> prefixes = new java.util.HashMap<>();
+        for (DocumentRecord row : targets) {
+            DriveRecord drive = drives.findByName(row.accountId, row.driveName)
+                    .orElseThrow(() -> failedPrecondition("Document drive is unavailable for deletion"));
+            prefixes.put(row.nodeId, drive.prefix);
+        }
         return tx.inTransaction(em -> {
-            List<DocumentRecord> rows = new ArrayList<>(byRef != null
-                    ? em.createQuery("SELECT d FROM DocumentRecord d WHERE d.docId = :docId"
-                                    + " AND d.graphAddressId = :graphAddressId"
-                                    + " AND d.accountId = :accountId AND d.graphId = :graphId",
-                                    DocumentRecord.class)
-                            .setParameter("docId", byRef.getDocId())
-                            .setParameter("graphAddressId", byRef.getGraphAddressId())
-                            .setParameter("accountId", byRef.getAccountId())
-                            .setParameter("graphId", byRef.getGraphId())
-                            .getResultList()
-                    : em.createQuery("SELECT d FROM DocumentRecord d WHERE d.docId = :docId"
-                                    + " AND d.accountId = :accountId"
-                                    + " AND d.datasourceId = :datasourceId",
-                                    DocumentRecord.class)
-                            .setParameter("docId", logical.getDocId())
-                            .setParameter("accountId", logical.getAccountId())
-                            .setParameter("datasourceId", logical.getDatasourceId())
-                            .getResultList());
-            for (DocumentRecord managed : rows) {
-                em.remove(managed);
-                events.enqueue(em, DocumentEventFactory.deleted(managed, when));
+            List<DocumentRecord> locked = new ArrayList<>();
+            for (DocumentRecord sampled : targets.stream().sorted(java.util.Comparator.comparing(row -> row.nodeId)).toList()) {
+                DocumentRecord current = em.find(DocumentRecord.class, sampled.nodeId, LockModeType.PESSIMISTIC_WRITE);
+                if (current == null || current.mutationRevision != sampled.mutationRevision)
+                    throw RepositoryErrors.aborted("Document changed before deletion was admitted");
+                if (current.pendingPurgeId == null && !DocumentStatus.AVAILABLE.equals(current.status)) {
+                    long legacyPending = em.createQuery("SELECT count(p) FROM DocumentPurgeRecord p WHERE p.nodeId = :node"
+                                    + " AND p.generationId IS NULL AND p.status = :pending", Long.class)
+                            .setParameter("node", current.nodeId).setParameter("pending", DocumentPurgeRecord.STATUS_PENDING).getSingleResult();
+                    if (legacyPending > 0)
+                        throw failedPrecondition("Legacy purge admission must settle before another delete is admitted");
+                }
+                locked.add(current);
             }
-            return rows;
+            List<StagedDelete> staged = new ArrayList<>();
+            Instant requestedAt = Instant.now();
+            for (DocumentRecord current : locked) {
+                DocumentPurgeRecord record = new DocumentPurgeRecord();
+                record.purgeId = UUID.randomUUID();
+                record.nodeId = current.nodeId;
+                record.docId = current.docId;
+                record.graphAddressId = current.graphAddressId;
+                record.accountId = current.accountId;
+                record.graphId = current.graphId;
+                record.driveName = current.driveName;
+                record.contentChecksum = current.checksum;
+                record.completionMode = synchronous ? DocumentPurgeRecord.MODE_SYNCHRONOUS : DocumentPurgeRecord.MODE_ASYNC;
+                // Repeated delete commands for the same tombstone keep its
+                // generation, so an earlier admitted async raw cleanup is not
+                // cancelled merely by a later synchronous part cleanup.
+                record.generationId = current.pendingPurgeId != null
+                        && (DocumentStatus.PENDING_PURGE.equals(current.status) || DocumentStatus.PURGE_FAILED.equals(current.status))
+                        ? current.pendingPurgeId : record.purgeId;
+                // Synchronous deletion has always covered manifest parts only.
+                // Passing no prefix deliberately excludes the intake raw blob.
+                record.writeObjectKeys(PurgeSnapshots.objectKeysOf(current, synchronous ? null : prefixes.get(current.nodeId)));
+                record.requestedAt = requestedAt;
+                current.status = DocumentStatus.PENDING_PURGE;
+                current.pendingPurgeId = record.generationId;
+                purgeQueue.enqueue(em, record);
+                if (!synchronous && events != null)
+                    events.enqueue(em, DocumentEventFactory.purgeRequested(record, current.checksum, requestedAt));
+                staged.add(new StagedDelete(current, record));
+            }
+            return staged;
         });
-    }
-
-    /** Best-effort deletion of one row's manifest-PRESENT part objects. */
-    private void purgePartObjects(DocumentRecord row) {
-        DocumentManifest manifest = row.readManifest();
-        if (manifest == null) {
-            return;
-        }
-        List<String> keys = manifest.getPartsList().stream()
-                .filter(e -> e.getState() == PartState.PART_STATE_PRESENT)
-                .map(PartManifestEntry::getObjectKey)
-                .filter(k -> k != null && !k.isBlank())
-                .toList();
-        if (keys.isEmpty()) {
-            return;
-        }
-        try {
-            Optional<DriveRecord> drive = drives.findByName(row.accountId, row.driveName);
-            if (drive.isEmpty()) {
-                LOG.warn("Purge of {} skipped: drive '{}' gone (account {})",
-                        row.nodeId, row.driveName, row.accountId);
-                return;
-            }
-            BlobStore.BatchDeleteResult result = blobStore.deleteAll(drive.get().bucket, keys);
-            if (!result.allSucceeded()) {
-                LOG.warn("Purge of {} left failed keys: {}", row.nodeId, result.failedKeys());
-            }
-        } catch (RuntimeException e) {
-            // Best-effort: the row removal is still reported; a sweeper
-            // reconciles orphaned objects later.
-            LOG.warn("Purge of {} failed ({} objects): {}", row.nodeId, keys.size(), e.getMessage());
-        }
     }
 
     /**

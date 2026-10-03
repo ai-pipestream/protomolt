@@ -348,6 +348,47 @@ such a resolver and rejects null, changed principal or changed process authority
 It is not a request-header override. Open listeners retain process authority and
 require the trusted-network deployment boundary.
 
+### Deletion admission and recovery
+
+Document deletion now admits the sampled rows in one SQL transaction. Each row
+must still match its sampled mutation revision before it is tombstoned and its
+purge record is inserted. A logical selector covers those sampled identities;
+rows created afterwards are not silently added to the command. Admission failure
+rolls back every selected row and queue insertion before any storage deletion.
+
+Synchronous deletion retains its existing manifest-part scope and waits on the
+exact admitted purge IDs. Storage failures propagate and leave durable recovery
+work; pending and failed documents are unavailable to normal reads. Recovery uses
+the original completion mode. `DocumentDeleted` is emitted with actual synchronous
+row removal, not repeated when another command already removed the row. Async
+commands retain `PurgeRequested` and `DocumentPurged`. Request threads use a
+separate JDBC queue handle, never the fleet's single-threaded Kafka consumer.
+
+V9 adds a tombstone generation and completion metadata without changing protobuf
+field identities. A body rewrite clears the generation; old work cannot remove a
+new generation even if timestamps coincide. ACL edits after admission do not undo
+the accepted command. Repeated deletes of the same tombstone share its generation
+while retaining their own object scopes and command IDs. The recovery sweeper
+locks and revalidates legacy rows before assigning a generation and enqueuing;
+it does not replace existing admissions or reset exhausted retry state.
+
+Migrated queue records have ASYNC mode and unknown generation/checksum. They keep
+their previous timestamp guard only for legacy rows; they cannot remove a new
+generation. Operators must review any remaining legacy cleanup rather than infer
+its ownership from new data. Re-deleting a legacy tombstone with a pending legacy
+command fails with FAILED_PRECONDITION until that command settles; it does not
+silently cancel the earlier raw-blob cleanup or invent a generation binding.
+Restore must preserve both the row generation and
+its purge records; a generation without a durable admission is reported as an
+error instead of manufacturing a cleanup scope.
+
+The async raw-blob path still has an unresolved physical-data race: its upload
+key is deterministic and may be overwritten between purge eligibility checking
+and key-based deletion. Generation checks protect row removal, not a newer raw
+upload at that key. Immutable raw versions or conditional deletion are required
+before claiming complete async purge safety. Scoped deletion remains disabled
+while its authorization and raw-byte protection are unfinished.
+
 ## Partial updates and progressive hydration
 
 Support this as a bounded extension after typed admission, not a prerequisite for

@@ -174,6 +174,9 @@ class KafkaEventingIT {
         DocumentEvent deleted = parse(pendingFor("doc-kafka-harddeleted", "DocumentDeleted"));
         assertThat(deleted.getDeleted().getAddress().getDocId()).isEqualTo("doc-kafka-harddeleted");
         assertThat(deleted.getDeleted().getDeletedAt().getSeconds()).isPositive();
+        assertThat(services.eventOutbox().claimBatch(1000).stream()
+                .filter(row -> row.kafkaKey.equals("doc-kafka-harddeleted")).map(row -> row.eventType).toList())
+                .containsExactlyInAnyOrder("DocumentSaved", "DocumentDeleted");
     }
 
     @Test
