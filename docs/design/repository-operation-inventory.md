@@ -238,6 +238,17 @@ for reads as well as cleanup, and recover abandoned candidates. The reused manag
 profile implementation currently qualifies only S3; other providers need explicit
 qualification without falling back to a current drive or S3 client.
 
+V15 and `ArchiveUploadLedger` add internal STAGING/VERIFIED admission. Begin commits
+the immutable binding and upload lease atomically. Renewal and verification lock
+the upload row before sampling database wall-clock time, reject expired/wrong
+tokens, require the admitted byte length, and preserve the first verified hash,
+provider version and ETag. Identical verification replay is accepted only while
+the lease remains live. SQL constraints/triggers also protect those identities.
+Tests cover rollback of both reservation and admission, stale/wrong attempts,
+length mismatch, verification replay and direct SQL mutation. Bare V14 bindings
+are not promoted to upload admissions. No archive engine path uses this ledger
+yet; transactional publication references and cleanup claims remain required.
+
 - **Extended requests:** DeleteEntry currently has only address (tag 1);
   DeleteRendition has address/rendition/reason (tags 1–3); PruneVersions has
   address/keep_latest (tags 1–2). None has an idempotency key. Add optional operation

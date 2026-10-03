@@ -38,23 +38,25 @@ public final class ArchiveObjectLedger {
      */
     public Binding register(Location location) {
         Objects.requireNonNull(location, "location");
+        return tx.inTransaction(em -> { return register(em, location); });
+    }
+
+    static Binding register(jakarta.persistence.EntityManager em, Location location) {
         UUID id = UUID.randomUUID();
-        return tx.inTransaction(em -> {
-            List<?> realms = em.createNativeQuery("SELECT storage_realm FROM managed_backend_profiles WHERE generation=:generation")
-                    .setParameter("generation", location.backendGeneration()).getResultList();
-            if (realms.isEmpty()) throw new IllegalArgumentException("Archive backend generation is not registered");
-            String realm = (String) realms.getFirst();
-            em.createNativeQuery("""
-                    INSERT INTO archive_object_bindings
-                    (object_id,entry_uuid,account_id,archive,backend_generation,storage_realm,bucket,object_key)
-                    VALUES (:id,:entry,:account,:archive,:backend,:realm,:bucket,:key)
-                    """).setParameter("id", id).setParameter("entry", location.entryUuid())
-                    .setParameter("account", location.accountId()).setParameter("archive", location.archive())
-                    .setParameter("backend", location.backendGeneration()).setParameter("realm", realm)
-                    .setParameter("bucket", location.bucket())
-                    .setParameter("key", location.objectKey()).executeUpdate();
-            return new Binding(id, location, realm);
-        });
+        List<?> realms = em.createNativeQuery("SELECT storage_realm FROM managed_backend_profiles WHERE generation=:generation")
+                .setParameter("generation", location.backendGeneration()).getResultList();
+        if (realms.isEmpty()) throw new IllegalArgumentException("Archive backend generation is not registered");
+        String realm = (String) realms.getFirst();
+        em.createNativeQuery("""
+                INSERT INTO archive_object_bindings
+                (object_id,entry_uuid,account_id,archive,backend_generation,storage_realm,bucket,object_key)
+                VALUES (:id,:entry,:account,:archive,:backend,:realm,:bucket,:key)
+                """).setParameter("id", id).setParameter("entry", location.entryUuid())
+                .setParameter("account", location.accountId()).setParameter("archive", location.archive())
+                .setParameter("backend", location.backendGeneration()).setParameter("realm", realm)
+                .setParameter("bucket", location.bucket())
+                .setParameter("key", location.objectKey()).executeUpdate();
+        return new Binding(id, location, realm);
     }
 
     public Optional<Binding> find(UUID objectId) {
