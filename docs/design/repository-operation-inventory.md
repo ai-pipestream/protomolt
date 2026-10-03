@@ -62,6 +62,12 @@ extension even where the message shape remains unchanged.
 
 ## Other entry points and unchanged semantics
 
+- **Extended, engine error mapping:** managed writer failures retain recognized
+  domain/provider codes through their wrapper, with attempt ID and phase in the
+  error message and the original cause for local callers. Unclassified failures
+  are UNKNOWN and require outcome reconciliation; no automatic retry is implied.
+  Verified-read identity/checksum mismatch is DATA_LOSS. This adds no wire fields
+  or retry RPC and does not enable the managed save route.
 - **New, Java byte SPI:** `PayloadBudget.reserve` returns an idempotent closeable
   lease or throws explicit capacity exhaustion without waiting. The document
   writer accepts a shared budget for active staging inputs and verification

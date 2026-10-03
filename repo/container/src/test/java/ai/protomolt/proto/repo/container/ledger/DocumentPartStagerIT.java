@@ -198,7 +198,10 @@ class DocumentPartStagerIT {
         });
         try (var stager = serialStager(tx, GENERATION, identity, borrowed(store))) {
             assertThatThrownBy(() -> stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(5), Map.of()))
-                    .isInstanceOf(DocumentPartStager.StageFailure.class).hasStackTraceContaining("Read-back differs");
+                    .isInstanceOf(DocumentPartStager.StageFailure.class).hasStackTraceContaining("Read-back differs")
+                    .satisfies(failure -> assertThat(failure.getCause())
+                            .isInstanceOfSatisfying(ai.protomolt.proto.repo.blob.spi.BlobStoreException.class,
+                                    e -> assertThat(e.code()).isEqualTo(ai.protomolt.proto.repo.blob.spi.BlobStoreException.Code.DATA_LOSS)));
         }
         assertThat(new DocumentPartAttemptLedger(tx).find(input.plan().attemptId()).orElseThrow().state()).isEqualTo("STAGING");
     }

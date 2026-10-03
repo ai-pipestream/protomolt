@@ -191,7 +191,9 @@ final class DocumentPartStager implements AutoCloseable {
                     || !DocumentPartCodec.sha256Hex(actual.data()).equals(expected.sha256())
                     || !Objects.equals(expected.contentType(), actual.contentType())
                     || !Objects.equals(put.versionId(), actual.versionId()) || !Objects.equals(put.eTag(), actual.eTag()))
-                throw new IllegalStateException("Read-back differs from planned bytes or PUT identity");
+                throw new ai.protomolt.proto.repo.blob.spi.BlobStoreException(
+                        ai.protomolt.proto.repo.blob.spi.BlobStoreException.Code.DATA_LOSS,
+                        "Read-back differs from planned bytes or PUT identity", null);
             phase = "verification record";
             check.run();
             attempts.verify(owner.id(), owner.token(), expected.objectKey(), actual.data().length,

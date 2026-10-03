@@ -661,8 +661,13 @@ Managed routing must preserve these behaviors explicitly:
   runs the existing exact-reference admission checks. The older store/drive
   overload remains for legacy saves and must not be used for managed composition.
 - Capacity, cancellation, deadline and revision errors wrapped by WriteFailure
-  retain domain meaning and attempt identity. An ambiguous commit is reconciled,
-  not blindly retried.
+  now retain recognized domain meaning through `RepositoryErrors.call`, with
+  attempt ID and phase in the public error message and the original wrapper as
+  local cause. Staging verification mismatch is explicit DATA_LOSS. Unclassified
+  state/identity fences are FAILED_PRECONDITION; only typed revision conflicts
+  or explicit domain conflicts map to CONFLICT. Other unclassified
+  failures remain UNKNOWN; this classification promises neither rollback nor
+  retry safety. An ambiguous commit is reconciled, not blindly retried.
 - Host composition supplies a shared budget and drains writers/readers before
   releasing providers and SQL resources. Passing a cache decorator requires its
   own qualified bounded-read support or explicit original-backing resolution.
