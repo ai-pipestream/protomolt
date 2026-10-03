@@ -29,6 +29,19 @@ Keep the database where it provides transactions, metadata, version history and
 ownership. Removing dependencies from small consumers does not require removing
 the database from the repository implementation.
 
+Storage selection is identity-based. Repository objects retain a backend
+configuration generation and storage realm; the host resolves that identity to
+the selected provider. S3 bucket, key, region and endpoint vocabulary belongs in
+S3 configuration. Other providers must retain their own coordinates without
+requiring S3 configuration or SDKs. Changing a current default affects new writes,
+not existing bindings. Credential rotation may preserve an identity; a physical
+namespace change requires a new generation and explicit migration. An unresolved
+original backend is an error, never permission to try another backend.
+
+The current managed profile and SQL binding coordinates remain S3-shaped. Their
+generalization and non-S3 lifecycle qualification are still required; the
+identity-based reader alone does not establish that completion.
+
 Embedding intent is defined by protobuf field annotations, including
 [`index.chunking_policy.embedding`](../../search/index/spi/src/main/proto/ai/protomolt/proto/index/hints/v1/indexing_hints.proto).
 Reuse those definitions; mappings/projections select or reshape annotated data

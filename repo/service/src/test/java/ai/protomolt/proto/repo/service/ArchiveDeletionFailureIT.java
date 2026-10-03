@@ -65,6 +65,103 @@ class ArchiveDeletionFailureIT {
     @Test void libraryDeletePropagatesStorageFailure() throws Exception { assertDeleteFailure(false); }
     @Test void grpcDeletePropagatesStorageFailure() throws Exception { assertDeleteFailure(true); }
 
+    @Test void boundReadsUseOriginalBackendIdentityAndNeverTheCurrentDrive() throws Exception {
+        var address = EntryAddress.newBuilder().setAccountId("account").setArchive("records")
+                .setEntryId(UUID.randomUUID().toString()).build();
+        var bytes = ByteString.copyFromUtf8("bytes at the original location");
+        var saved = normal.putEntry(CALLER, PutEntryRequest.newBuilder().setAddress(address)
+                .addRenditions(RenditionContent.newBuilder().setRendition(RenditionDescriptor.newBuilder()
+                        .setName("original")).setData(bytes)).build());
+        var tx = new Tx(database.entityManagerFactory());
+        var objects = new ai.protomolt.proto.repo.container.archive.ArchiveObjectLedger(tx);
+        var profiles = new ManagedBackendLedger(tx);
+        String generation = "bound-read-" + UUID.randomUUID();
+        var profile = new ManagedBackendLedger.Profile("s3", S3.getEndpoint().toString(), S3.getRegion(), true, generation);
+        profiles.bind(generation, profile);
+        var entry = ledger.findEntry(UUID.fromString(saved.getEntryUuid())).orElseThrow();
+        var item = saved.getManifest().getRenditions(0);
+        String originalBucket = "bound-read-" + UUID.randomUUID();
+        opened.ensureNamespace(originalBucket);
+        assertThat(S3.execInContainer("awslocal", "s3api", "put-bucket-versioning", "--bucket", originalBucket,
+                "--versioning-configuration", "Status=Enabled").getExitCode()).isZero();
+        opened.store().put(new BlobStore.PutSpec(originalBucket, item.getObjectKey(), "text/plain", Map.of(), null), bytes.toByteArray());
+        var uploads = new ai.protomolt.proto.repo.container.archive.ArchiveUploadLedger(tx);
+        var admission = uploads.begin(new ai.protomolt.proto.repo.container.archive.ArchiveObjectLedger.Location(
+                entry.entryUuid, entry.accountId, entry.archive, generation, originalBucket, item.getObjectKey()),
+                bytes.size(), "text/plain", java.time.Duration.ofMinutes(1));
+        var stored = opened.store().get(originalBucket, item.getObjectKey());
+        assertThat(stored.versionId()).isNotBlank().isNotEqualTo("null");
+        uploads.verify(admission.upload().objectId(), admission.upload().leaseToken(), stored.data().length,
+                ai.protomolt.proto.repo.container.archive.ArchiveManifests.sha256Hex(stored.data()), stored.versionId(), stored.eTag());
+        var version = ledger.findVersion(entry.entryUuid, 1).orElseThrow();
+        version.version = 2;
+        version.manifest = ai.protomolt.proto.repo.container.archive.ArchiveManifests.toJson(saved.getManifest().toBuilder()
+                .setVersion(2).setRenditions(0, item.toBuilder().setStorageObjectId(admission.upload().objectId().toString())).build());
+        entry.currentVersion = 2;
+        ledger.commitSave(entry, 1, version, 0, ArchiveLedger.StatsDelta.none(),
+                Map.of(admission.upload().objectId(), admission.upload().leaseToken()));
+        opened.store().put(new BlobStore.PutSpec(originalBucket, item.getObjectKey(), "text/plain", Map.of(), null),
+                ByteString.copyFromUtf8("a later provider revision").toByteArray());
+        var reader = new ai.protomolt.proto.repo.engine.ArchiveObjectReader(objects, (identity, realm) -> {
+            assertThat(identity).isEqualTo(generation);
+            assertThat(realm).isEqualTo(generation);
+            assertThat(profiles.find(identity)).contains(profile);
+            return opened.store();
+        });
+        var bound = new ArchiveOperations(ledger, drives, opened.store(),
+                ai.protomolt.proto.asset.bridge.BridgeEngine.standard(), reader);
+        var request = GetEntryRequest.newBuilder().setAddress(address).setVersion(2).build();
+        var published = ai.protomolt.proto.repo.container.archive.ArchiveManifests.fromJson(version.manifest).getRenditions(0);
+        var noIo = new ai.protomolt.proto.repo.engine.ArchiveObjectReader(objects, (identity, realm) -> {
+            throw new AssertionError("Invalid manifest must fail before provider resolution");
+        });
+        for (var invalid : java.util.List.of(published.toBuilder().setObjectKey("wrong-key").build(),
+                published.toBuilder().setSizeBytes(bytes.size() + 1).build(),
+                published.toBuilder().setSha256("0".repeat(64)).build())) {
+            assertThatThrownBy(() -> noIo.read(entry, 2, invalid)).isInstanceOfSatisfying(RepositoryException.class,
+                    failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+        }
+        tx.inTransaction(em -> {
+            em.createNativeQuery("UPDATE drives SET bucket='unrelated-current-location' WHERE account_id='account' AND name='archive-drive'")
+                    .executeUpdate();
+        });
+        try {
+            assertThat(bound.getEntry(CALLER, request).getRenditions(0).getData()).isEqualTo(bytes);
+            String name = "bound-read-" + UUID.randomUUID();
+            var server = InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(bound)).build().start();
+            var channel = InProcessChannelBuilder.forName(name).build();
+            try {
+                assertThat(ArchiveServiceGrpc.newBlockingStub(channel).getEntry(request).getRenditions(0).getData()).isEqualTo(bytes);
+            } finally { channel.shutdownNow(); server.shutdownNow(); }
+            assertThatThrownBy(() -> normal.getEntry(CALLER, request)).isInstanceOfSatisfying(RepositoryException.class,
+                    failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+            var unavailable = new ArchiveOperations(ledger, drives, opened.store(),
+                    ai.protomolt.proto.asset.bridge.BridgeEngine.standard(),
+                    new ai.protomolt.proto.repo.engine.ArchiveObjectReader(objects, (identity, realm) -> {
+                        throw new RepositoryException(RepositoryException.Code.UNAVAILABLE, "original backend offline");
+                    }));
+            assertThatThrownBy(() -> unavailable.getEntry(CALLER, request)).isInstanceOfSatisfying(RepositoryException.class,
+                    failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.UNAVAILABLE));
+            String failedName = "bound-read-unavailable-" + UUID.randomUUID();
+            var failedServer = InProcessServerBuilder.forName(failedName).addService(new ArchiveGrpcService(unavailable)).build().start();
+            var failedChannel = InProcessChannelBuilder.forName(failedName).build();
+            try {
+                assertThatThrownBy(() -> ArchiveServiceGrpc.newBlockingStub(failedChannel).getEntry(request))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class,
+                                failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+            } finally { failedChannel.shutdownNow(); failedServer.shutdownNow(); }
+            assertThat(S3.execInContainer("awslocal", "s3api", "delete-object", "--bucket", originalBucket,
+                    "--key", item.getObjectKey(), "--version-id", stored.versionId()).getExitCode()).isZero();
+            assertThatThrownBy(() -> bound.getEntry(CALLER, request)).isInstanceOfSatisfying(RepositoryException.class,
+                    failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.DATA_LOSS));
+        } finally {
+            tx.inTransaction(em -> {
+                em.createNativeQuery("UPDATE drives SET bucket='archive-failures' WHERE account_id='account' AND name='archive-drive'")
+                        .executeUpdate();
+            });
+        }
+    }
+
     @Test void legacyDestructivePathsRefuseBoundManifestsBeforeDeletingObjects() {
         var address = EntryAddress.newBuilder().setAccountId("account").setArchive("records")
                 .setEntryId(UUID.randomUUID().toString()).build();

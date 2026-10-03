@@ -216,6 +216,13 @@ public final class S3BlobStore implements BlobStore {
         } catch (NoSuchKeyException nsk) {
             throw new BlobNotFoundException("blob not found: s3://" + bucket + "/" + key
                     + (versionId != null ? "@" + versionId : ""), nsk);
+        } catch (S3Exception failure) {
+            if (failure.statusCode() == 404 && failure.awsErrorDetails() != null
+                    && "NoSuchVersion".equals(failure.awsErrorDetails().errorCode())) {
+                throw new BlobNotFoundException("blob version not found: s3://" + bucket + "/" + key
+                        + "@" + versionId, failure);
+            }
+            throw failure;
         }
     }
 

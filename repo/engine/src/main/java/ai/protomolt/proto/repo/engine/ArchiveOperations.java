@@ -129,6 +129,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     private final DriveLedger drives;
     private final BlobStore blobStore;
     private final BridgeEngine bridgeEngine;
+    private final ArchiveObjectReader objectReader;
 
     public ArchiveOperations(ArchiveLedger ledger, DriveLedger drives, BlobStore blobStore) {
         this(ledger, drives, blobStore, BridgeEngine.standard());
@@ -136,10 +137,16 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
 
     public ArchiveOperations(ArchiveLedger ledger, DriveLedger drives, BlobStore blobStore,
                       BridgeEngine bridgeEngine) {
+        this(ledger, drives, blobStore, bridgeEngine, null);
+    }
+
+    public ArchiveOperations(ArchiveLedger ledger, DriveLedger drives, BlobStore blobStore,
+                      BridgeEngine bridgeEngine, ArchiveObjectReader objectReader) {
         this.ledger = ledger;
         this.drives = drives;
         this.blobStore = blobStore;
         this.bridgeEngine = bridgeEngine;
+        this.objectReader = objectReader;
     }
 
     // ------------------------------------------------------------------
@@ -597,7 +604,6 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     private GetEntryResponse getEntryImpl(GetEntryRequest request) {
         EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
         ArchiveRecord archive = archiveOrThrow(address.getAccountId(), address.getArchive());
-        DriveRecord drive = driveOrThrow(archive);
         ArchiveEntryRecord entry = entryOrThrow(address);
         ArchiveVersionRecord version = versionOrThrow(entry, request.getVersion());
         VersionManifest manifest = ArchiveManifests.fromJson(version.manifest);
@@ -615,7 +621,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             }
             BlobStore.GetResult got;
             try {
-                got = blobStore.get(drive.bucket, item.getObjectKey());
+                got = readObject(archive, entry, version.version, item);
             } catch (BlobStore.BlobNotFoundException e) {
                 // The manifest says PRESENT and the store disagrees: fail
                 // honestly with the account of what is missing, never an
@@ -881,7 +887,6 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
         FormatFact declared = ArchiveClassifications.declared(
                 request.hasDeclared(), request.getDeclared());
         ArchiveRecord archive = archiveOrThrow(address.getAccountId(), address.getArchive());
-        DriveRecord drive = driveOrThrow(archive);
         ArchiveEntryRecord entry = entryOrThrow(address);
         Classification stored = ArchiveClassifications.fromJson(entry.classification);
         if (declared == null && stored != null && stored.hasDeclared()) {
@@ -902,7 +907,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
         if (primary != null
                 && primary.getState() == RenditionState.RENDITION_STATE_PRESENT) {
             windows = ByteWindows.ofWhole(
-                    blobStore.get(drive.bucket, primary.getObjectKey()).data());
+                    readObject(archive, entry, version.version, primary).data());
         }
         applyClassification(entry, declared, origin, windows, entry.filename,
                 request.hasClassifiedBy() ? request.getClassifiedBy() : null);
@@ -925,7 +930,6 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     private BridgeEntryResponse bridgeEntryImpl(BridgeEntryRequest request) {
         EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
         ArchiveRecord archive = archiveOrThrow(address.getAccountId(), address.getArchive());
-        DriveRecord drive = driveOrThrow(archive);
         ArchiveEntryRecord entry = entryOrThrow(address);
 
         Classification classification = ArchiveClassifications.fromJson(entry.classification);
@@ -979,7 +983,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                 continue;
             }
             if (original == null) {
-                original = blobStore.get(drive.bucket, primary.getObjectKey()).data();
+                original = readObject(archive, entry, version.version, primary).data();
             }
             Bridge.Derivation derivation;
             try {
@@ -996,7 +1000,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
 
         long landed = produced.isEmpty()
                 ? entry.currentVersion
-                : landDerived(address, archive, drive, produced, request.getBridgedBy());
+                : landDerived(address, archive, driveOrThrow(archive), produced, request.getBridgedBy());
         return BridgeEntryResponse.newBuilder()
                 .setVersion(landed)
                 .addAllOutcomes(outcomes.stream().map(BridgeOutcome.Builder::build).toList())
@@ -1215,6 +1219,18 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
         return ledger.findArchive(accountId, name)
                 .orElseThrow(() -> notFound("archive '" + name
                         + "' not found for account '" + accountId + "'"));
+    }
+
+    private BlobStore.GetResult readObject(ArchiveRecord archive, ArchiveEntryRecord entry,
+            long version, RenditionManifestEntry rendition) {
+        if (!rendition.getStorageObjectId().isEmpty()) {
+            if (objectReader == null)
+                throw failedPrecondition("Original archive backend resolution is not configured");
+            return objectReader.read(entry, version, rendition);
+        }
+        // Legacy manifests have no recorded backend identity. This path is not
+        // evidence of their original location and must not be used for bound objects.
+        return blobStore.get(driveOrThrow(archive).bucket, rendition.getObjectKey());
     }
 
     private DriveRecord driveOrThrow(ArchiveRecord archive) {

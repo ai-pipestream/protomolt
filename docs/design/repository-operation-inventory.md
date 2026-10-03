@@ -366,6 +366,24 @@ passed (212 tasks executed, 1m 47s); log:
 passed before any protocol change. These checks do not prove the proposed gates,
 historical snapshots or hydration behavior; those require new red/green tests.
 
+### Bound archive reads (internal composition)
+
+GetEntry, ClassifyEntry and BridgeEntry now share an optional ArchiveObjectReader
+for renditions with storage_object_id. It requires an exact retained version
+reference to a LIVE upload, checks manifest scope/key/size/checksum, and resolves
+the immutable backend generation and realm. Reads use the recorded provider
+revision and verify returned bytes. Missing published bytes report DATA_LOSS;
+missing resolver configuration fails explicitly. The host owns provider clients
+and historical configuration lookup. Legacy renditions still use the current
+drive because their original backend identity is unknown; this is not a verified
+migration. Production composition has not yet enabled bound archive admission or
+the resolver. Do not advertise these as deployed capabilities.
+
+The PostgreSQL lifecycle test covers unpublished, wrong-entry/wrong-version,
+carried and removed references. The service regression uses real PostgreSQL and
+versioned S3, with local and in-process gRPC reads, changed current drive settings,
+provider overwrites, unavailable resolution, and deletion of the recorded revision.
+
 ### Remote byte coordinate migration
 
 The extracted client and service now require explicit local-bucket to remote-drive

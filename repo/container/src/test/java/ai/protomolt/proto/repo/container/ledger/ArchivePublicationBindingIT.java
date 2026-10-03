@@ -37,19 +37,31 @@ class ArchivePublicationBindingIT {
             var admission = admission(tx, entry);
             var upload = admission.upload();
             var uploads = new ArchiveUploadLedger(tx);
-            uploads.verify(upload.objectId(), upload.leaseToken(), 7, "a".repeat(64), null, null);
+            var objects = new ArchiveObjectLedger(tx);
+            assertThat(objects.readable(entry.entryUuid, 1, upload.objectId())).isEmpty();
+            uploads.verify(upload.objectId(), upload.leaseToken(), 7, "a".repeat(64), "provider-revision", null);
+            assertThat(objects.readable(entry.entryUuid, 1, upload.objectId())).isEmpty();
             var first = version(entry, upload.objectId());
             assertThatThrownBy(() -> ledger.commitSave(entry, 0, first, 0, ArchiveLedger.StatsDelta.none()))
                     .isInstanceOf(ArchiveUploadLedger.FenceException.class);
             assertThat(ledger.findEntry(entry.entryUuid)).isEmpty();
             ledger.commitSave(entry, 0, first, 0, ArchiveLedger.StatsDelta.none(), Map.of(upload.objectId(), upload.leaseToken()));
             assertThat(referenceCount(tx, upload.objectId())).isEqualTo(1);
+            var readable = objects.readable(entry.entryUuid, 1, upload.objectId()).orElseThrow();
+            assertThat(readable.binding()).isEqualTo(admission.binding());
+            assertThat(readable.size()).isEqualTo(7);
+            assertThat(readable.sha256()).isEqualTo("a".repeat(64));
+            assertThat(readable.providerVersion()).isEqualTo("provider-revision");
+            assertThat(objects.readable(UUID.randomUUID(), 1, upload.objectId())).isEmpty();
+            assertThat(objects.readable(entry.entryUuid, 2, upload.objectId())).isEmpty();
             assertThatThrownBy(() -> uploads.renew(upload.objectId(), upload.leaseToken(), Duration.ofMinutes(1)))
                     .isInstanceOf(ArchiveUploadLedger.FenceException.class);
             var current = ledger.findEntry(entry.entryUuid).orElseThrow();
             current.currentVersion = 2;
             ledger.commitSave(current, 1, version(current, upload.objectId()), 1, ArchiveLedger.StatsDelta.none());
             assertThat(ledger.findVersion(entry.entryUuid, 1)).isEmpty();
+            assertThat(objects.readable(entry.entryUuid, 1, upload.objectId())).isEmpty();
+            assertThat(objects.readable(entry.entryUuid, 2, upload.objectId())).contains(readable);
             assertThat(referenceCount(tx, upload.objectId())).isEqualTo(1);
             assertThatThrownBy(() -> ledger.commitDeleteEntry(entry.entryUuid, ArchiveLedger.StatsDelta.none()))
                     .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("durable admission");
@@ -63,6 +75,7 @@ class ArchivePublicationBindingIT {
                         .setParameter("id", entry.entryUuid).executeUpdate();
             });
             assertThat(referenceCount(tx, upload.objectId())).isZero();
+            assertThat(objects.readable(entry.entryUuid, 2, upload.objectId())).isEmpty();
             var recreated = current;
             recreated.currentVersion = 1;
             var resurrected = version(recreated, upload.objectId());

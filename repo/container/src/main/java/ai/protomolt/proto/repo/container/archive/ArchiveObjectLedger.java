@@ -31,6 +31,36 @@ public final class ArchiveObjectLedger {
 
     public record Binding(UUID objectId, Location location, String storageRealm) {}
 
+    public record Readable(Binding binding, long size, String sha256, String providerVersion) {}
+
+    /**
+     * Resolve only an object published by this exact retained version. A reservation,
+     * verified upload, or LIVE object without that reference grants no read access.
+     * The caller must separately authorize access to the entry and version.
+     */
+    public Optional<Readable> readable(UUID entryUuid, long version, UUID objectId) {
+        Objects.requireNonNull(entryUuid, "entryUuid");
+        Objects.requireNonNull(objectId, "objectId");
+        if (version <= 0) throw new IllegalArgumentException("A retained version is required");
+        return tx.readOnly(em -> {
+            List<?> rows = em.createNativeQuery("""
+                    SELECT b.object_id,b.entry_uuid,b.account_id,b.archive,b.backend_generation,
+                           b.bucket,b.object_key,b.storage_realm,u.expected_size,u.sha256,u.provider_version
+                    FROM archive_object_bindings b
+                    JOIN archive_object_uploads u ON u.object_id=b.object_id AND u.state='LIVE'
+                    JOIN archive_version_object_refs r ON r.object_id=b.object_id AND r.entry_uuid=b.entry_uuid
+                    WHERE r.entry_uuid=:entry AND r.version=:version AND b.object_id=:id
+                    """).setParameter("entry", entryUuid).setParameter("version", version)
+                    .setParameter("id", objectId).getResultList();
+            if (rows.isEmpty()) return Optional.empty();
+            var row = (Object[]) rows.getFirst();
+            var binding = new Binding((UUID) row[0], new Location((UUID) row[1],
+                    (String) row[2], (String) row[3], (String) row[4], (String) row[5], (String) row[6]),
+                    (String) row[7]);
+            return Optional.of(new Readable(binding, ((Number) row[8]).longValue(), (String) row[9], (String) row[10]));
+        });
+    }
+
     /**
      * Register a fresh physical object before PUT. Duplicate coordinates fail;
      * they never redirect an existing object. A backend profile must already
