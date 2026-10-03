@@ -512,6 +512,45 @@ commit acknowledgements, cancellation, restart and late writes. Test both local
 and transport paths against real storage. Remove the quarantine-only limitation
 only after these gates pass; do not re-enable snapshot-based deletion.
 
+Publication implementation decisions:
+
+- Keep the active attempt reference in a separate publication table keyed by
+  document node, with a unique attempt reference. `saveIfRevision` already flushes
+  and refreshes the document before running its callback. Updating the document
+  again in that callback would advance its database mutation revision again and
+  leave the returned row and outbox event stale. A mutable binding field on the
+  public `DocumentRecord` also risks being cleared by ordinary `merge` calls.
+- Share the existing sorted document advisory locks and destination/source row
+  locks; then lock the admitted attempt. Recheck token, database-clock expiry,
+  VERIFIED state, node/account, sampled destination revision and exact source
+  revision map. Match every PRESENT manifest entry in order to the sealed plan,
+  including slot, key, size and digest. Check manifest address, root checksum,
+  total size and CORE provider identity. Per-part provider versions remain in
+  the attempt ledger because the current manifest has no such fields.
+  Managed publication parses persisted manifest JSON strictly. New bodies must
+  be AVAILABLE with no pending purge. The transaction must derive the next
+  manifest version from the locked prior row, not merely accept a positive
+  version, and compare the selected drive's physical namespace/provider profile
+  with the admitted generation. A drive name alone is not proof of location.
+- Enforce final row/publication consistency with deferred database guards. The
+  document flush precedes the publication switch, so an immediate cross-table
+  check would reject a valid transaction. Removing a publication while its row
+  survives must fail; deleting a row releases its reference in the same commit.
+  Replacing a reference must pass the new attempt's publication gate. Preserve
+  an immutable publication fact so a retired attempt cannot be published again.
+- Status-only tombstones, purge failure and dedupe bookkeeping retain the same
+  binding. `CoherenceProbe` currently marks missing parts in the manifest and
+  saves it through ordinary `saveIfRevision`. For bound documents it must report
+  corruption without rewriting that manifest until an explicit managed repair
+  operation exists. Do not enable managed saves before this path and document
+  purge respect the new ownership boundary.
+
+The internal `requirePublishable` checks the candidate against the locked attempt
+but does not create a publication, acquire document revision locks, authorize a
+caller or emit an event. It is a precondition helper for that transaction, not a
+standalone publication API. Its PostgreSQL fixtures use synthetic measured-byte
+identities and do not qualify provider writes, recovery or end-to-end publication.
+
 This is one document publication boundary. It does not supply JCR session saves,
 multi-object content transactions, JCR workspaces, or version restoration.
 

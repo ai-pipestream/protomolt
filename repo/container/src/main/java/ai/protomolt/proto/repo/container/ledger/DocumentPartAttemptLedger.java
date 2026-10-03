@@ -86,6 +86,7 @@ public final class DocumentPartAttemptLedger {
 
     public static final class FenceException extends RuntimeException {
         public FenceException(String message) { super(message); }
+        public FenceException(String message, Throwable cause) { super(message, cause); }
     }
 
     /** Reserve the complete immutable plan in one transaction before any PUT/COPY. */
@@ -131,6 +132,42 @@ public final class DocumentPartAttemptLedger {
     public Optional<Attempt> find(UUID id) {
         Objects.requireNonNull(id, "id");
         return tx.readOnly(em -> read(em, id, false));
+    }
+
+    /**
+     * Internal precondition for atomic publication; it does not create a binding.
+     * The caller must already hold the destination/source revision locks through
+     * DocumentLedger's guarded save transaction, and keep this transaction open
+     * until the manifest, binding, raw references and outbox have committed.
+     */
+    static Attempt requirePublishable(EntityManager em, UUID id, UUID token, DocumentRecord candidate,
+            Long expectedRevision, Map<UUID, Long> sourceRevisions) {
+        var attempt = requireOwner(em, id, token);
+        if (!attempt.state().equals("VERIFIED")) throw new FenceException("Document part attempt is not fully verified");
+        if (!attempt.location().nodeId().equals(candidate.nodeId)
+                || !attempt.location().accountId().equals(candidate.accountId)
+                || attempt.sampledRevision() != (expectedRevision == null ? 0 : expectedRevision))
+            throw new FenceException("Document publication identity or sampled revision differs from admission");
+        var admittedSources = new java.util.HashMap<UUID, Long>();
+        for (Object result : em.createNativeQuery("SELECT source_node_id,revision FROM document_part_attempt_sources WHERE attempt_id=:id")
+                .setParameter("id", id).getResultList()) {
+            Object[] row = (Object[]) result;
+            admittedSources.put((UUID) row[0], ((Number) row[1]).longValue());
+        }
+        if (!admittedSources.equals(sourceRevisions)) throw new FenceException("Document publication source revisions differ from admission");
+        var verified = new java.util.ArrayList<DocumentPartPublication.VerifiedPart>();
+        for (Object result : em.createNativeQuery("""
+                SELECT ordinal,part,sub_key,object_key,expected_size,expected_sha256,provider_version,etag
+                FROM document_part_attempt_objects WHERE attempt_id=:id AND verified ORDER BY ordinal
+                """).setParameter("id", id).getResultList()) {
+            Object[] row = (Object[]) result;
+            verified.add(new DocumentPartPublication.VerifiedPart(((Number) row[0]).intValue(),
+                    DocumentPart.forNumber(((Number) row[1]).intValue()), (String) row[2], (String) row[3],
+                    ((Number) row[4]).longValue(), (String) row[5], (String) row[6], (String) row[7]));
+        }
+        if (verified.size() != attempt.plannedCount()) throw new FenceException("Document part verification is incomplete");
+        DocumentPartPublication.validate(candidate, verified);
+        return attempt;
     }
 
     public Attempt renew(UUID id, UUID token, Duration lease) {
