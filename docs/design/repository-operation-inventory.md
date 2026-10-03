@@ -481,6 +481,29 @@ the final enablement step. These locks and object lifecycle records are reposito
 foundation work; they do not establish JCR transient sessions, atomic multi-object
 commits or workspace/version semantics. Keep that optional extension separate.
 
+`DocumentPartStager` now implements the internal staging step in the container
+module. It is package-private and has no public service caller. It copies and
+checks the ordered payloads before admitting the complete plan, then performs
+PUT and exact-version read-back verification outside SQL transactions. Verification
+checks bytes, content type and provider identity. A shared renewal scheduler keeps
+leases live during I/O; lease failure prevents further verification. Failures retain
+the attempt ID and original cause, without retrying ambiguous PUTs or deleting bytes.
+
+The stager limits active stages to 32 and copied payload bytes to a shared 256 MiB
+default budget, configurable at construction. This does not change the byte SPI's
+conditional-write bound. Closing prevents new stage registration and stops renewal;
+an already registered stage can still leave an admitted attempt during shutdown.
+Hosts must call `awaitIdle` and retain both borrowed provider and database resources
+if it reports busy. The host must construct the handle and retained backend identity
+from the same selected provider; comparing a supplied identity cannot prove which
+physical service an arbitrary borrowed client reaches.
+
+Real PostgreSQL and versioned-storage tests cover admission before PUT, exact-version
+verification, partial progress after a lost acknowledgement, corrupt reads, caller
+payload mutation, lease expiry, slow-call renewal, budget contention and shutdown.
+These tests do not implement abandoned-attempt recovery, typed validation, copy-source
+authorization or public write idempotency. The stager does not publish documents.
+
 Keep archive operations process-authorized until current-policy guards support
 scoped callers. Legacy write/staging cleanup remains separate follow-up work;
 removing destructive RPCs does not qualify those older write paths.
