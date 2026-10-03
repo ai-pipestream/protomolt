@@ -1,5 +1,9 @@
 package ai.protomolt.proto.repo.service;
 
+import ai.protomolt.proto.repo.spi.ArchiveRepository;
+import ai.protomolt.proto.repo.spi.RepositoryCaller;
+import ai.protomolt.proto.repo.engine.ArchiveOperations;
+
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.container.blob.DocumentIds;
 import ai.protomolt.proto.repo.container.ledger.DriveLedger;
@@ -116,7 +120,7 @@ public final class UploadHttpServer implements AutoCloseable {
     private final DriveLedger drives;
     private final BlobStore blobStore;
     private final byte[] expectedToken;
-    private final ArchiveOperations archiveOperations;
+    private final ArchiveRepository archiveOperations;
 
     private HttpServer server;
     private ExecutorService executor;
@@ -160,7 +164,7 @@ public final class UploadHttpServer implements AutoCloseable {
      *        route alone
      */
     public UploadHttpServer(DocumentGrpcService documentService, DriveLedger drives,
-            BlobStore blobStore, String apiToken, ArchiveOperations archiveOperations) {
+            BlobStore blobStore, String apiToken, ArchiveRepository archiveOperations) {
         this(documentService.repository(), drives, blobStore, apiToken, archiveOperations);
     }
 
@@ -171,7 +175,7 @@ public final class UploadHttpServer implements AutoCloseable {
     }
 
     private UploadHttpServer(ai.protomolt.proto.repo.spi.DocumentRepository documents,
-            DriveLedger drives, BlobStore blobStore, String apiToken, ArchiveOperations archiveOperations) {
+            DriveLedger drives, BlobStore blobStore, String apiToken, ArchiveRepository archiveOperations) {
         this.documentService = java.util.Objects.requireNonNull(documents);
 
         this.drives = drives;
@@ -450,6 +454,15 @@ public final class UploadHttpServer implements AutoCloseable {
             writeJson(exchange, 200, archiveUpload(exchange));
         } catch (HttpError e) {
             writeError(exchange, e.status, e.getMessage());
+        } catch (ai.protomolt.proto.repo.spi.RepositoryException e) {
+            int status = switch (e.code()) {
+                case INVALID_ARGUMENT -> 400;
+                case NOT_FOUND -> 404;
+                case PERMISSION_DENIED -> 403;
+                case FAILED_PRECONDITION, CONFLICT -> 409;
+                default -> 502;
+            };
+            writeError(exchange, status, e.getMessage());
         } catch (StatusRuntimeException e) {
             // The archive flows' gRPC status vocabulary, flattened onto HTTP.
             int status = switch (e.getStatus().getCode()) {
@@ -504,7 +517,7 @@ public final class UploadHttpServer implements AutoCloseable {
                         .setName(rendition == null ? "original" : rendition)
                         .setMediaType(contentType)
                         .build();
-        ArchiveOperations.UploadResult result = archiveOperations.uploadStream(address,
+        ArchiveRepository.UploadResult result = archiveOperations.uploadStream(new RepositoryCaller("http-upload", true), address,
                 descriptor, contentLength,
                 declaredSha == null ? "" : declaredSha,
                 null, filename, null, null, exchange.getRequestBody());

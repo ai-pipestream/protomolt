@@ -1,5 +1,9 @@
 package ai.protomolt.proto.repo.service;
 
+import ai.protomolt.proto.repo.spi.ArchiveRepository;
+import ai.protomolt.proto.repo.spi.RepositoryCaller;
+import ai.protomolt.proto.repo.engine.ArchiveOperations;
+
 import ai.protomolt.proto.repo.archive.v1.ArchiveServiceGrpc;
 import ai.protomolt.proto.repo.archive.v1.BridgeEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.BridgeEntryResponse;
@@ -55,107 +59,116 @@ final class ArchiveGrpcService extends ArchiveServiceGrpc.ArchiveServiceImplBase
     /** Bounded chunk buffer between the transport and the store writer. */
     private static final int CHUNK_QUEUE_DEPTH = 64;
 
-    private final ArchiveOperations operations;
+    private final ArchiveRepository operations;
 
-    ArchiveGrpcService(ArchiveOperations operations) {
+    ArchiveGrpcService(ArchiveRepository operations) {
         this.operations = operations;
+    }
+
+    private static RepositoryCaller caller() {
+        var context = ai.protomolt.proto.authz.grpc.CallerContexts.current();
+        return new RepositoryCaller(context.name(), context.unrestricted());
     }
 
     @Override
     public void createArchive(CreateArchiveRequest request,
                               StreamObserver<CreateArchiveResponse> observer) {
-        GrpcErrors.run(observer, () -> operations.createArchive(request));
+        GrpcErrors.run(observer, () -> operations.createArchive(caller(), request));
     }
 
     @Override
     public void getArchive(GetArchiveRequest request,
                            StreamObserver<GetArchiveResponse> observer) {
-        GrpcErrors.run(observer, () -> operations.getArchive(request));
+        GrpcErrors.run(observer, () -> operations.getArchive(caller(), request));
     }
 
     @Override
     public void listArchives(ListArchivesRequest request,
                              StreamObserver<ListArchivesResponse> observer) {
-        GrpcErrors.run(observer, () -> operations.listArchives(request));
+        GrpcErrors.run(observer, () -> operations.listArchives(caller(), request));
     }
 
     @Override
     public void putEntry(PutEntryRequest request,
                          StreamObserver<PutEntryResponse> observer) {
-        GrpcErrors.run(observer, () -> operations.putEntry(request));
+        GrpcErrors.run(observer, () -> operations.putEntry(caller(), request));
     }
 
     @Override
     public void getEntry(GetEntryRequest request,
                          StreamObserver<GetEntryResponse> observer) {
-        GrpcErrors.run(observer, () -> operations.getEntry(request));
+        GrpcErrors.run(observer, () -> operations.getEntry(caller(), request));
     }
 
     @Override
     public void getEntryManifest(GetEntryManifestRequest request,
                                  StreamObserver<GetEntryManifestResponse> observer) {
-        GrpcErrors.run(observer, () -> operations.getManifest(request));
+        GrpcErrors.run(observer, () -> operations.getManifest(caller(), request));
     }
 
     @Override
     public void listEntries(ListEntriesRequest request,
                             StreamObserver<ListEntriesResponse> observer) {
-        GrpcErrors.run(observer, () -> operations.listEntries(request));
+        GrpcErrors.run(observer, () -> operations.listEntries(caller(), request));
     }
 
     @Override
     public void listVersions(ListVersionsRequest request,
                              StreamObserver<ListVersionsResponse> observer) {
-        GrpcErrors.run(observer, () -> operations.listVersions(request));
+        GrpcErrors.run(observer, () -> operations.listVersions(caller(), request));
     }
 
     @Override
     public void deleteEntry(DeleteEntryRequest request,
                             StreamObserver<DeleteEntryResponse> observer) {
-        GrpcErrors.run(observer, () -> operations.deleteEntry(request));
+        GrpcErrors.run(observer, () -> operations.deleteEntry(caller(), request));
     }
 
     @Override
     public void deleteRendition(DeleteRenditionRequest request,
                                 StreamObserver<DeleteRenditionResponse> observer) {
-        GrpcErrors.run(observer, () -> operations.deleteRendition(request));
+        GrpcErrors.run(observer, () -> operations.deleteRendition(caller(), request));
     }
 
     @Override
     public void pruneVersions(PruneVersionsRequest request,
                               StreamObserver<PruneVersionsResponse> observer) {
-        GrpcErrors.run(observer, () -> operations.pruneVersions(request));
+        GrpcErrors.run(observer, () -> operations.pruneVersions(caller(), request));
     }
 
     @Override
     public void getArchiveStats(GetArchiveStatsRequest request,
                                 StreamObserver<GetArchiveStatsResponse> observer) {
-        GrpcErrors.run(observer, () -> operations.stats(request));
+        GrpcErrors.run(observer, () -> operations.stats(caller(), request));
     }
 
     @Override
     public void classifyEntry(ClassifyEntryRequest request,
                               StreamObserver<ClassifyEntryResponse> observer) {
-        GrpcErrors.run(observer, () -> operations.classifyEntry(request));
+        GrpcErrors.run(observer, () -> operations.classifyEntry(caller(), request));
     }
 
     @Override
     public void bridgeEntry(BridgeEntryRequest request,
                             StreamObserver<BridgeEntryResponse> observer) {
-        GrpcErrors.run(observer, () -> operations.bridgeEntry(request));
+        GrpcErrors.run(observer, () -> operations.bridgeEntry(caller(), request));
     }
 
     @Override
     public StreamObserver<UploadRenditionRequest> uploadRendition(
             StreamObserver<UploadRenditionResponse> observer) {
+        RepositoryCaller caller = caller();
         return new StreamObserver<>() {
             private final ChunkStream chunks = new ChunkStream();
-            private CompletableFuture<ArchiveOperations.UploadResult> landing;
+            private final java.util.concurrent.atomic.AtomicBoolean terminal =
+                    new java.util.concurrent.atomic.AtomicBoolean();
+            private CompletableFuture<ArchiveRepository.UploadResult> landing;
             private long received;
             private long declared;
 
             @Override
             public void onNext(UploadRenditionRequest frame) {
+                if (terminal.get()) return;
                 try {
                     if (frame.hasHeader()) {
                         if (landing != null) {
@@ -169,7 +182,7 @@ final class ArchiveGrpcService extends ArchiveServiceGrpc.ArchiveServiceImplBase
                         // the bounded queue.
                         landing = CompletableFuture.supplyAsync(() -> {
                             try {
-                                return operations.uploadStream(header.getAddress(),
+                                return operations.uploadStream(caller, header.getAddress(),
                                         header.getRendition(), header.getSizeBytes(),
                                         header.getExpectedSha256(),
                                         header.hasWrittenBy() ? header.getWrittenBy() : null,
@@ -181,6 +194,9 @@ final class ArchiveGrpcService extends ArchiveServiceGrpc.ArchiveServiceImplBase
                                 throw new java.io.UncheckedIOException(e);
                             }
                         }, runnable -> Thread.ofVirtual().start(runnable));
+                        landing.whenComplete((result, failure) -> {
+                            if (failure != null) fail(failure);
+                        });
                         return;
                     }
                     if (landing == null) {
@@ -200,6 +216,7 @@ final class ArchiveGrpcService extends ArchiveServiceGrpc.ArchiveServiceImplBase
 
             @Override
             public void onError(Throwable t) {
+                terminal.set(true);
                 // The client went away mid-stream: abort the store writer so
                 // it stops consuming; anything it landed is a staging orphan
                 // the reconciler reclaims.
@@ -208,6 +225,7 @@ final class ArchiveGrpcService extends ArchiveServiceGrpc.ArchiveServiceImplBase
 
             @Override
             public void onCompleted() {
+                if (terminal.get()) return;
                 try {
                     if (landing == null) {
                         throw invalidArgument("the stream carried no header");
@@ -217,7 +235,8 @@ final class ArchiveGrpcService extends ArchiveServiceGrpc.ArchiveServiceImplBase
                                 + " bytes against a declared size_bytes of " + declared);
                     }
                     chunks.finish();
-                    ArchiveOperations.UploadResult result = landing.get();
+                    ArchiveRepository.UploadResult result = landing.get();
+                    if (!terminal.compareAndSet(false, true)) return;
                     observer.onNext(UploadRenditionResponse.newBuilder()
                             .setEntryUuid(result.entryUuid())
                             .setVersion(result.version())
@@ -232,20 +251,22 @@ final class ArchiveGrpcService extends ArchiveServiceGrpc.ArchiveServiceImplBase
                     if (cause instanceof java.io.UncheckedIOException unchecked) {
                         cause = unchecked.getCause();
                     }
-                    observer.onError(GrpcErrors.map(cause));
+                    fail(cause);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
-                    observer.onError(GrpcErrors.map(e));
+                    fail(e);
                 } catch (RuntimeException e) {
                     fail(e);
                 }
             }
 
-            private void fail(RuntimeException e) {
-                chunks.abort(new IOException("upload refused: " + e.getMessage()));
-                if (landing != null) {
-                    landing.cancel(true);
+            private void fail(Throwable e) {
+                while ((e instanceof java.util.concurrent.CompletionException
+                        || e instanceof java.io.UncheckedIOException) && e.getCause() != null) {
+                    e = e.getCause();
                 }
+                if (!terminal.compareAndSet(false, true)) return;
+                chunks.abort(new IOException("upload refused: " + e.getMessage(), e));
                 observer.onError(GrpcErrors.map(e));
             }
         };
@@ -270,8 +291,15 @@ final class ArchiveGrpcService extends ArchiveServiceGrpc.ArchiveServiceImplBase
             if (chunk.length == 0) {
                 return;
             }
+            enqueue(chunk);
+        }
+
+        private void enqueue(byte[] chunk) {
             try {
-                queue.put(chunk);
+                while (true) {
+                    if (aborted != null) throw new java.io.UncheckedIOException(aborted);
+                    if (queue.offer(chunk, 50, java.util.concurrent.TimeUnit.MILLISECONDS)) return;
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new IllegalStateException("interrupted delivering an upload chunk", e);
@@ -279,12 +307,7 @@ final class ArchiveGrpcService extends ArchiveServiceGrpc.ArchiveServiceImplBase
         }
 
         void finish() {
-            try {
-                queue.put(END);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException("interrupted finishing an upload", e);
-            }
+            enqueue(END);
         }
 
         void abort(IOException cause) {

@@ -632,4 +632,59 @@ class ArchiveServiceIT {
         assertThat(rest.getEntriesList()).hasSize(1);
         assertThat(rest.getNextContinuationToken()).isEmpty();
     }
+
+    @Test
+    void rejectedUploadUnblocksAProducerBeyondTheQueueCapacity() throws Exception {
+        CompletableFuture<Throwable> failure = new CompletableFuture<>();
+        var requests = archivesAsync.uploadRendition(new StreamObserver<UploadRenditionResponse>() {
+            public void onNext(UploadRenditionResponse response) {
+                failure.completeExceptionally(new AssertionError("invalid upload succeeded"));
+            }
+            public void onError(Throwable error) { failure.complete(error); }
+            public void onCompleted() {
+                failure.completeExceptionally(new AssertionError("invalid upload completed"));
+            }
+        });
+        CompletableFuture<Void> producer = CompletableFuture.runAsync(() -> {
+            requests.onNext(UploadRenditionRequest.newBuilder().setHeader(
+                    UploadRenditionHeader.newBuilder().setSizeBytes(128)
+                            .setRendition(RenditionDescriptor.newBuilder().setName("original")))
+                    .build()); // Missing address must fail before any byte is consumed.
+            for (int i = 0; i < 128; i++) {
+                requests.onNext(UploadRenditionRequest.newBuilder()
+                        .setChunk(ByteString.copyFromUtf8("x")).build());
+            }
+            requests.onCompleted();
+        }, runnable -> Thread.ofVirtual().start(runnable));
+        assertThat(Status.fromThrowable(failure.get(5, TimeUnit.SECONDS)).getCode())
+                .isEqualTo(Status.Code.INVALID_ARGUMENT);
+        producer.get(5, TimeUnit.SECONDS);
+    }
+    @Test
+    void localAndGrpcArchiveOperationsShareVersionsAndReads() {
+        var local = services.archiveRepository();
+        var caller = new ai.protomolt.proto.repo.spi.RepositoryCaller("operator", true);
+        provision("acct-shared", VersioningPolicy.VERSIONING_POLICY_RETAINED, "shared");
+        var address = address("acct-shared", "shared", "record");
+        var first = PutEntryRequest.newBuilder().setAddress(address)
+                .addRenditions(rendition("original", "text/plain", "first")).build();
+        var saved = local.putEntry(caller, first);
+        assertThat(archives.putEntry(first).getDeduplicated()).isTrue();
+        var second = first.toBuilder().clearRenditions()
+                .addRenditions(rendition("original", "text/plain", "second")).build();
+        var updated = archives.putEntry(second);
+        assertThat(updated.getVersion()).isGreaterThan(saved.getVersion());
+        var read = GetEntryRequest.newBuilder().setAddress(address).build();
+        assertThat(local.getEntry(caller, read)).isEqualTo(archives.getEntry(read));
+        var historical = read.toBuilder().setVersion(saved.getVersion()).build();
+        assertThat(local.getEntry(caller, historical)).isEqualTo(archives.getEntry(historical));
+        assertThat(local.getEntry(caller, historical).getRenditions(0).getData().toStringUtf8())
+                .isEqualTo("first");
+        var manifest = GetEntryManifestRequest.newBuilder().setAddress(address).build();
+        assertThat(local.getManifest(caller, manifest)).isEqualTo(archives.getEntryManifest(manifest));
+        var versions = ListVersionsRequest.newBuilder().setAddress(address).build();
+        assertThat(local.listVersions(caller, versions)).isEqualTo(archives.listVersions(versions));
+        var list = ListEntriesRequest.newBuilder().setAccountId("acct-shared").setArchive("shared").build();
+        assertThat(local.listEntries(caller, list)).isEqualTo(archives.listEntries(list));
+    }
 }

@@ -54,7 +54,7 @@ contract and behavior requirements below still apply.
   already define versions, rendition manifests, hashes and provenance.
   `schema_subject` explicitly records a subject without enforcing it. A subject
   name alone does not pin an immutable schema or its imports.
-- [ArchiveOperations](../../repo/service/src/main/java/ai/protomolt/proto/repo/service/ArchiveOperations.java)
+- [ArchiveOperations](../../repo/engine/src/main/java/ai/protomolt/proto/repo/engine/ArchiveOperations.java)
   implements archive operations. Current entry metadata and immutable version
   manifests are distinct; historical versions do not snapshot every EntryInfo
   field. Deterministic entry identity alone does not guarantee idempotency for

@@ -1,4 +1,4 @@
-package ai.protomolt.proto.repo.service;
+package ai.protomolt.proto.repo.engine;
 
 import ai.protomolt.proto.asset.characterize.ByteWindows;
 import ai.protomolt.proto.asset.characterize.Characterizer;
@@ -20,7 +20,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.stream.Collectors;
 
-import static ai.protomolt.proto.repo.service.GrpcErrors.invalidArgument;
+import static ai.protomolt.proto.repo.engine.RepositoryErrors.invalidArgument;
 
 /**
  * The archive doors' side of the classification state machine: declared

@@ -1,4 +1,4 @@
-package ai.protomolt.proto.repo.service;
+package ai.protomolt.proto.repo.engine;
 
 import ai.protomolt.proto.asset.bridge.Bridge;
 import ai.protomolt.proto.asset.bridge.BridgeEngine;
@@ -95,11 +95,11 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 
-import static ai.protomolt.proto.repo.service.GrpcErrors.aborted;
-import static ai.protomolt.proto.repo.service.GrpcErrors.alreadyExists;
-import static ai.protomolt.proto.repo.service.GrpcErrors.failedPrecondition;
-import static ai.protomolt.proto.repo.service.GrpcErrors.invalidArgument;
-import static ai.protomolt.proto.repo.service.GrpcErrors.notFound;
+import static ai.protomolt.proto.repo.engine.RepositoryErrors.aborted;
+import static ai.protomolt.proto.repo.engine.RepositoryErrors.alreadyExists;
+import static ai.protomolt.proto.repo.engine.RepositoryErrors.failedPrecondition;
+import static ai.protomolt.proto.repo.engine.RepositoryErrors.invalidArgument;
+import static ai.protomolt.proto.repo.engine.RepositoryErrors.notFound;
 
 /**
  * The archive's flows: every mutation follows the same discipline — object
@@ -109,7 +109,7 @@ import static ai.protomolt.proto.repo.service.GrpcErrors.notFound;
  * phases leaves orphans, never lies: an object with no owning manifest is
  * reclaimable by the reconciler's standing rule.
  */
-final class ArchiveOperations {
+public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.ArchiveRepository {
 
     /** Sorted map key for one rendition instance inside a manifest. */
     private record Slot(String name, String subKey) implements Comparable<Slot> {
@@ -120,10 +120,6 @@ final class ArchiveOperations {
         }
     }
 
-    /** Receipt of a completed streamed upload. */
-    record UploadResult(String entryUuid, long version, String sha256, long sizeBytes,
-                        String objectKey, String rootChecksum, boolean deduplicated) {
-    }
 
     private static final Logger LOG = LoggerFactory.getLogger(ArchiveOperations.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -136,11 +132,11 @@ final class ArchiveOperations {
     private final BlobStore blobStore;
     private final BridgeEngine bridgeEngine;
 
-    ArchiveOperations(ArchiveLedger ledger, DriveLedger drives, BlobStore blobStore) {
+    public ArchiveOperations(ArchiveLedger ledger, DriveLedger drives, BlobStore blobStore) {
         this(ledger, drives, blobStore, BridgeEngine.standard());
     }
 
-    ArchiveOperations(ArchiveLedger ledger, DriveLedger drives, BlobStore blobStore,
+    public ArchiveOperations(ArchiveLedger ledger, DriveLedger drives, BlobStore blobStore,
                       BridgeEngine bridgeEngine) {
         this.ledger = ledger;
         this.drives = drives;
@@ -152,7 +148,13 @@ final class ArchiveOperations {
     // Archives
     // ------------------------------------------------------------------
 
-    CreateArchiveResponse createArchive(CreateArchiveRequest request) {
+    @Override
+    public CreateArchiveResponse createArchive(ai.protomolt.proto.repo.spi.RepositoryCaller caller, CreateArchiveRequest request) {
+        RepositoryErrors.requireProcessAuthority(caller);
+        return RepositoryErrors.call(() -> createArchiveImpl(request));
+    }
+
+    private CreateArchiveResponse createArchiveImpl(CreateArchiveRequest request) {
         if (!request.hasArchive()) {
             throw invalidArgument("archive is required");
         }
@@ -195,7 +197,13 @@ final class ArchiveOperations {
         return CreateArchiveResponse.newBuilder().setArchive(toProto(record)).build();
     }
 
-    GetArchiveResponse getArchive(GetArchiveRequest request) {
+    @Override
+    public GetArchiveResponse getArchive(ai.protomolt.proto.repo.spi.RepositoryCaller caller, GetArchiveRequest request) {
+        RepositoryErrors.requireProcessAuthority(caller);
+        return RepositoryErrors.call(() -> getArchiveImpl(request));
+    }
+
+    private GetArchiveResponse getArchiveImpl(GetArchiveRequest request) {
         ArchiveRequests.accountId(request.getAccountId());
         ArchiveRequests.archiveName(request.getArchive(), "archive");
         return GetArchiveResponse.newBuilder()
@@ -203,7 +211,13 @@ final class ArchiveOperations {
                 .build();
     }
 
-    ListArchivesResponse listArchives(ListArchivesRequest request) {
+    @Override
+    public ListArchivesResponse listArchives(ai.protomolt.proto.repo.spi.RepositoryCaller caller, ListArchivesRequest request) {
+        RepositoryErrors.requireProcessAuthority(caller);
+        return RepositoryErrors.call(() -> listArchivesImpl(request));
+    }
+
+    private ListArchivesResponse listArchivesImpl(ListArchivesRequest request) {
         ArchiveRequests.accountId(request.getAccountId());
         int limit = ArchiveRequests.page(request.getLimit());
         long offset = ArchiveRequests.offset(request.getContinuationToken());
@@ -216,7 +230,13 @@ final class ArchiveOperations {
         return response.build();
     }
 
-    GetArchiveStatsResponse stats(GetArchiveStatsRequest request) {
+    @Override
+    public GetArchiveStatsResponse stats(ai.protomolt.proto.repo.spi.RepositoryCaller caller, GetArchiveStatsRequest request) {
+        RepositoryErrors.requireProcessAuthority(caller);
+        return RepositoryErrors.call(() -> statsImpl(request));
+    }
+
+    private GetArchiveStatsResponse statsImpl(GetArchiveStatsRequest request) {
         ArchiveRequests.accountId(request.getAccountId());
         ArchiveRequests.archiveName(request.getArchive(), "archive");
         archiveOrThrow(request.getAccountId(), request.getArchive());
@@ -251,7 +271,13 @@ final class ArchiveOperations {
     // Saves
     // ------------------------------------------------------------------
 
-    PutEntryResponse putEntry(PutEntryRequest request) {
+    @Override
+    public PutEntryResponse putEntry(ai.protomolt.proto.repo.spi.RepositoryCaller caller, PutEntryRequest request) {
+        RepositoryErrors.requireProcessAuthority(caller);
+        return RepositoryErrors.call(() -> putEntryImpl(request));
+    }
+
+    private PutEntryResponse putEntryImpl(PutEntryRequest request) {
         EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
         ArchiveRequests.bounded(request.getTitle(), 500, "title");
         ArchiveRequests.bounded(request.getFilename(), 500, "filename");
@@ -372,15 +398,27 @@ final class ArchiveOperations {
         }
     }
 
-    UploadResult uploadStream(EntryAddress rawAddress, RenditionDescriptor rawDescriptor,
-                              long declaredSize, String declaredSha,
-                              WriteAttribution writtenBy, InputStream body)
-            throws IOException {
-        return uploadStream(rawAddress, rawDescriptor, declaredSize, declaredSha, writtenBy,
-                null, null, null, body);
+    @Override
+    public UploadResult uploadStream(ai.protomolt.proto.repo.spi.RepositoryCaller caller,
+            EntryAddress address, RenditionDescriptor descriptor, long size, String sha256,
+            WriteAttribution attribution, String filename, FormatFact declared,
+            ObjectStoreOrigin origin, InputStream body) throws IOException {
+        RepositoryErrors.requireProcessAuthority(caller);
+        try {
+            return RepositoryErrors.call(() -> {
+                try {
+                    return uploadStreamImpl(address, descriptor, size, sha256, attribution,
+                            filename, declared, origin, body);
+                } catch (IOException failure) {
+                    throw new java.io.UncheckedIOException(failure);
+                }
+            });
+        } catch (java.io.UncheckedIOException failure) {
+            throw failure.getCause();
+        }
     }
 
-    UploadResult uploadStream(EntryAddress rawAddress, RenditionDescriptor rawDescriptor,
+    private UploadResult uploadStreamImpl(EntryAddress rawAddress, RenditionDescriptor rawDescriptor,
                               long declaredSize, String declaredSha,
                               WriteAttribution writtenBy, String filename,
                               FormatFact rawDeclaredFormat, ObjectStoreOrigin rawOrigin,
@@ -542,7 +580,13 @@ final class ArchiveOperations {
     // Reads
     // ------------------------------------------------------------------
 
-    GetEntryResponse getEntry(GetEntryRequest request) {
+    @Override
+    public GetEntryResponse getEntry(ai.protomolt.proto.repo.spi.RepositoryCaller caller, GetEntryRequest request) {
+        RepositoryErrors.requireProcessAuthority(caller);
+        return RepositoryErrors.call(() -> getEntryImpl(request));
+    }
+
+    private GetEntryResponse getEntryImpl(GetEntryRequest request) {
         EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
         ArchiveRecord archive = archiveOrThrow(address.getAccountId(), address.getArchive());
         DriveRecord drive = driveOrThrow(archive);
@@ -586,7 +630,13 @@ final class ArchiveOperations {
         return response.build();
     }
 
-    GetEntryManifestResponse getManifest(GetEntryManifestRequest request) {
+    @Override
+    public GetEntryManifestResponse getManifest(ai.protomolt.proto.repo.spi.RepositoryCaller caller, GetEntryManifestRequest request) {
+        RepositoryErrors.requireProcessAuthority(caller);
+        return RepositoryErrors.call(() -> getManifestImpl(request));
+    }
+
+    private GetEntryManifestResponse getManifestImpl(GetEntryManifestRequest request) {
         EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
         archiveOrThrow(address.getAccountId(), address.getArchive());
         ArchiveEntryRecord entry = entryOrThrow(address);
@@ -597,7 +647,13 @@ final class ArchiveOperations {
                 .build();
     }
 
-    ListEntriesResponse listEntries(ListEntriesRequest request) {
+    @Override
+    public ListEntriesResponse listEntries(ai.protomolt.proto.repo.spi.RepositoryCaller caller, ListEntriesRequest request) {
+        RepositoryErrors.requireProcessAuthority(caller);
+        return RepositoryErrors.call(() -> listEntriesImpl(request));
+    }
+
+    private ListEntriesResponse listEntriesImpl(ListEntriesRequest request) {
         ArchiveRequests.accountId(request.getAccountId());
         ArchiveRequests.archiveName(request.getArchive(), "archive");
         archiveOrThrow(request.getAccountId(), request.getArchive());
@@ -629,7 +685,13 @@ final class ArchiveOperations {
         return response.build();
     }
 
-    ListVersionsResponse listVersions(ListVersionsRequest request) {
+    @Override
+    public ListVersionsResponse listVersions(ai.protomolt.proto.repo.spi.RepositoryCaller caller, ListVersionsRequest request) {
+        RepositoryErrors.requireProcessAuthority(caller);
+        return RepositoryErrors.call(() -> listVersionsImpl(request));
+    }
+
+    private ListVersionsResponse listVersionsImpl(ListVersionsRequest request) {
         EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
         archiveOrThrow(address.getAccountId(), address.getArchive());
         ArchiveEntryRecord entry = entryOrThrow(address);
@@ -648,7 +710,13 @@ final class ArchiveOperations {
     // Deletion
     // ------------------------------------------------------------------
 
-    DeleteEntryResponse deleteEntry(DeleteEntryRequest request) {
+    @Override
+    public DeleteEntryResponse deleteEntry(ai.protomolt.proto.repo.spi.RepositoryCaller caller, DeleteEntryRequest request) {
+        RepositoryErrors.requireProcessAuthority(caller);
+        return RepositoryErrors.call(() -> deleteEntryImpl(request));
+    }
+
+    private DeleteEntryResponse deleteEntryImpl(DeleteEntryRequest request) {
         EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
         ArchiveRecord archive = archiveOrThrow(address.getAccountId(), address.getArchive());
         DriveRecord drive = driveOrThrow(archive);
@@ -677,7 +745,13 @@ final class ArchiveOperations {
                 .build();
     }
 
-    DeleteRenditionResponse deleteRendition(DeleteRenditionRequest request) {
+    @Override
+    public DeleteRenditionResponse deleteRendition(ai.protomolt.proto.repo.spi.RepositoryCaller caller, DeleteRenditionRequest request) {
+        RepositoryErrors.requireProcessAuthority(caller);
+        return RepositoryErrors.call(() -> deleteRenditionImpl(request));
+    }
+
+    private DeleteRenditionResponse deleteRenditionImpl(DeleteRenditionRequest request) {
         EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
         String rendition = ArchiveRequests.renditionName(request.getRendition(), "rendition");
         if (request.getReason().isBlank()) {
@@ -743,7 +817,13 @@ final class ArchiveOperations {
                 .build();
     }
 
-    PruneVersionsResponse pruneVersions(PruneVersionsRequest request) {
+    @Override
+    public PruneVersionsResponse pruneVersions(ai.protomolt.proto.repo.spi.RepositoryCaller caller, PruneVersionsRequest request) {
+        RepositoryErrors.requireProcessAuthority(caller);
+        return RepositoryErrors.call(() -> pruneVersionsImpl(request));
+    }
+
+    private PruneVersionsResponse pruneVersionsImpl(PruneVersionsRequest request) {
         EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
         if (request.getKeepLatest() < 1) {
             throw invalidArgument(
@@ -779,7 +859,13 @@ final class ArchiveOperations {
                 .build();
     }
 
-    ClassifyEntryResponse classifyEntry(ClassifyEntryRequest request) {
+    @Override
+    public ClassifyEntryResponse classifyEntry(ai.protomolt.proto.repo.spi.RepositoryCaller caller, ClassifyEntryRequest request) {
+        RepositoryErrors.requireProcessAuthority(caller);
+        return RepositoryErrors.call(() -> classifyEntryImpl(request));
+    }
+
+    private ClassifyEntryResponse classifyEntryImpl(ClassifyEntryRequest request) {
         EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
         FormatFact declared = ArchiveClassifications.declared(
                 request.hasDeclared(), request.getDeclared());
@@ -819,7 +905,13 @@ final class ArchiveOperations {
     // Bridging
     // ------------------------------------------------------------------
 
-    BridgeEntryResponse bridgeEntry(BridgeEntryRequest request) {
+    @Override
+    public BridgeEntryResponse bridgeEntry(ai.protomolt.proto.repo.spi.RepositoryCaller caller, BridgeEntryRequest request) {
+        RepositoryErrors.requireProcessAuthority(caller);
+        return RepositoryErrors.call(() -> bridgeEntryImpl(request));
+    }
+
+    private BridgeEntryResponse bridgeEntryImpl(BridgeEntryRequest request) {
         EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
         ArchiveRecord archive = archiveOrThrow(address.getAccountId(), address.getArchive());
         DriveRecord drive = driveOrThrow(archive);

@@ -1,10 +1,10 @@
-package ai.protomolt.proto.repo.service;
+package ai.protomolt.proto.repo.engine;
 
 import ai.protomolt.proto.formats.Formats;
 import ai.protomolt.proto.repo.archive.v1.EntryAddress;
 import ai.protomolt.proto.repo.archive.v1.RenditionDescriptor;
 
-import static ai.protomolt.proto.repo.service.GrpcErrors.invalidArgument;
+import static ai.protomolt.proto.repo.engine.RepositoryErrors.invalidArgument;
 
 /**
  * Request validation for the archive surface, mirroring the validate.v1

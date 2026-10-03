@@ -477,8 +477,8 @@ extraction. Tests run identical put/get/delete cases locally and over real gRPC
 against SQL and object storage, plus scoped-caller denial before writes.
 
 The engine still depends on `repo/container`, including its current ledger and
-optional messaging code. Archive operations, ledger
-extraction, messaging separation and complete ownership enforcement remain open.
+optional messaging code. Ledger extraction, messaging separation and complete
+ownership enforcement remain open.
 Do not interpret the raw-byte extraction as full repository conformance.
 
 ## Shared document operations
@@ -517,3 +517,27 @@ part/version, conditional-write and deletion suites remain regression coverage.
 Legacy destructive-operation failure handling is unchanged by extraction and
 remains part of the durability work; this does not complete archival admission,
 metadata snapshots, ownership policy or progressive hydration.
+
+## Shared archive operations
+
+`ArchiveRepository` exposes the existing archive requests and responses plus a
+blocking streamed upload with an `InputStream`. `ArchiveOperations` and its request,
+classification and key helpers now live in `repo/engine`. The service adapts gRPC
+and HTTP calls to that interface; `RepoServices.archiveRepository()` exposes the
+same instance to library callers. Archive workflows remain in the service module.
+
+Every archive operation takes trusted caller identity and currently requires
+process authority, matching the interim document boundary. The streaming adapter
+captures identity before starting its worker. It reports early worker failure
+without waiting for the client to finish filling the bounded queue. This does not
+yet guarantee cancellation during a provider call or rollback after commit.
+
+The engine now includes the asset bridge, characterization and formats libraries.
+They do not add provider SDKs, but document-only engine consumers also resolve
+them. The repository SPI remains independent of these implementations. Hosts can
+still supply their own `BridgeEngine` through the existing composition API.
+
+Existing archive versioning, redaction, pruning and HTTP tests remain regression
+coverage. Additional cases compare local and gRPC current/historical reads and
+version listings over SQL and object storage. These cases do not establish the
+future typed-admission, ownership, retry or metadata snapshot guarantees.

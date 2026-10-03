@@ -1,5 +1,9 @@
 package ai.protomolt.proto.repo.service;
 
+import ai.protomolt.proto.repo.spi.ArchiveRepository;
+import ai.protomolt.proto.repo.spi.RepositoryCaller;
+import ai.protomolt.proto.repo.engine.ArchiveOperations;
+
 import ai.protomolt.proto.authz.CallerResolver;
 import ai.protomolt.proto.authz.grpc.ApiTokenServerInterceptor;
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
@@ -244,6 +248,12 @@ public final class RepoServices implements AutoCloseable {
      */
     public static RepoServices build(RepoServiceConfig config, BridgeEngine bridges) {
         return new RepoServices(config, bridges);
+    }
+
+    /** Archive operations sharing this composition's storage lifetime. */
+    public ArchiveRepository archiveRepository() {
+        requireOpen();
+        return archiveOperations;
     }
 
     /** Shared document operations; this composition retains ownership of storage resources. */

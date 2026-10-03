@@ -10,6 +10,14 @@ import java.util.List;
 
 /** Runs from published artifacts, with no project dependency substitution. */
 public final class RepositoryConsumer {
+    /** Compile the archive API using published metadata without any storage implementation. */
+    static ai.protomolt.proto.repo.archive.v1.GetEntryResponse readArchive(
+            ai.protomolt.proto.repo.spi.ArchiveRepository repository,
+            ai.protomolt.proto.repo.spi.RepositoryCaller caller,
+            ai.protomolt.proto.repo.archive.v1.GetEntryRequest request) {
+        return repository.getEntry(caller, request);
+    }
+
     public static void main(String[] args) throws Exception {
         var caller = new ai.protomolt.proto.repo.spi.RepositoryCaller("consumer", false);
         if (caller.processAuthority()) throw new AssertionError("Unexpected process authority");
