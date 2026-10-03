@@ -57,11 +57,24 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
     }
 
     @Override public void getDocument(GetDocumentRequest request, StreamObserver<GetDocumentResponse> observer) {
-        GrpcErrors.run(observer, () -> documents.getDocument(caller(), request));
+        var control = readControl();
+        GrpcErrors.run(observer, () -> documents.getDocument(caller(), request, control));
     }
 
     @Override public void getDocumentByReference(GetDocumentByReferenceRequest request, StreamObserver<GetDocumentResponse> observer) {
-        GrpcErrors.run(observer, () -> documents.getDocumentByReference(caller(), request));
+        var control = readControl();
+        GrpcErrors.run(observer, () -> documents.getDocumentByReference(caller(), request, control));
+    }
+
+    private static RepositoryReadControl readControl() {
+        var context = io.grpc.Context.current();
+        var deadline = context.getDeadline();
+        return new RepositoryReadControl() {
+            @Override public boolean isCancelled() { return context.isCancelled(); }
+            @Override public long remainingNanos() {
+                return deadline == null ? Long.MAX_VALUE : deadline.timeRemaining(java.util.concurrent.TimeUnit.NANOSECONDS);
+            }
+        };
     }
 
     @Override public void getDocumentManifest(GetDocumentManifestRequest request, StreamObserver<GetDocumentManifestResponse> observer) {

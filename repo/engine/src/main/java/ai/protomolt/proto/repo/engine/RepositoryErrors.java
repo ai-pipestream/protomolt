@@ -25,6 +25,9 @@ final class RepositoryErrors {
     static RepositoryException alreadyExists(String message) { return new RepositoryException(ALREADY_EXISTS, message); }
     static <T> T call(java.util.function.Supplier<T> operation) {
         try { return operation.get(); }
+        catch (ai.protomolt.proto.repo.container.ledger.DocumentLedger.RevisionConflictException conflict) {
+            throw new RepositoryException(CONFLICT, conflict.getMessage(), conflict);
+        }
         catch (ai.protomolt.proto.repo.container.archive.ArchiveLedger.VersionConflictException conflict) {
             throw new RepositoryException(CONFLICT, conflict.getMessage(), conflict);
         }

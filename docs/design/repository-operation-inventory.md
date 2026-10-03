@@ -382,6 +382,56 @@ are enabled. Database migration locks protect the reference scan and trigger
 installation; they cannot cancel a PUT already started by an older binary.
 The public managed writer/read/recovery integration is still not enabled.
 
+The original-backend document read path is under qualification. Its SQL snapshot
+locks the current document revision after authorization and loads the immutable
+attempt, profile, namespace and ordered verified objects. A changed or deleted
+revision conflicts; it cannot be mistaken for an unbound legacy row. Bound reads
+require an explicit resolver and verify the recorded provider version, eTag,
+size and SHA-256 before decoding. They never retry against the current drive.
+Provider I/O starts after the SQL transaction releases its locks.
+
+Current tests cover drive changes and stale/deleted revisions in PostgreSQL,
+and recorded-version reads, missing versions, checksum mismatch, malformed
+protobuf and unavailable resolution against versioned LocalStack storage.
+An interruption regression reproduced blocking executor shutdown after a real
+GET. Cancellation now cancels outstanding tasks and returns without waiting for
+an interrupt-insensitive provider; borrowed clients remain host-owned. Such
+provider calls still require finite host-configured timeouts to release resources.
+
+Bound publication tests now exercise local and in-process gRPC reads over real
+PostgreSQL and versioned storage after the current drive changes. The Java read
+interface accepts a transport-neutral `RepositoryReadControl`; existing two-argument
+callers use its no-deadline default. The gRPC adapter captures its cancellation and
+monotonic deadline, and the managed reader polls completion within that budget.
+Implementations of `DocumentRepository` must implement the new three-argument
+read methods. No protobuf field, method or type URL changes are involved.
+Legacy unbound reads check cancellation before and after their existing blocking
+storage call; they do not yet provide prompt cancellation during that call.
+The gRPC cancellation and deadline tests assert server-side worker interruption,
+not merely client completion. Their fault gate is after a real provider GET;
+they do not establish that an in-flight HTTP request is interruptible.
+
+S3 GET failures now retain provider-neutral error codes and their original causes.
+Real SDK fault-response tests distinguish confirmed missing objects from missing
+namespaces, denied access, outages, refused connections, API deadlines and socket
+timeouts. This normalization currently covers GET, not all provider operations.
+
+One shared `DocumentPartReader` enforces a concurrent GET budget across its
+requests (32 by default, configurable at construction). Saturation returns
+`RESOURCE_EXHAUSTED` without a waiting queue. Cancelled workers retain their slots
+until the provider actually returns. A request's submission window never exceeds
+that shared limit or 32. Hosts must share the reader across requests using the
+same resource budget; constructing a reader per RPC defeats that bound. The S3
+factory now configures finite whole-call, attempt, connection and socket timeouts;
+hosts supplying external clients must configure their own finite timeouts.
+
+Tests exercise cancelled calls retaining capacity, recovery after provider return,
+ordered multipart selection with delayed fragments, and bound-read errors through
+both the library and gRPC. This qualifies the internal read path, not a completed
+managed document feature. Public managed write admission, host composition and
+document attempt reclamation remain unfinished. Do not enable managed document
+writes until those publication and recovery paths are implemented and qualified.
+
 Keep archive operations process-authorized until current-policy guards support
 scoped callers. Legacy write/staging cleanup remains separate follow-up work;
 removing destructive RPCs does not qualify those older write paths.

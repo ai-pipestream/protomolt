@@ -42,6 +42,9 @@ public final class DocumentLedger {
     /** Uses the same persistence unit as document publication and its outbox. */
     public RawObjectLedger rawObjects() { return new RawObjectLedger(tx); }
 
+    /** Reads physical publication bindings in this document ledger's persistence unit. */
+    public DocumentPublicationLedger partPublications() { return new DocumentPublicationLedger(tx); }
+
     /**
      * Reserve every legacy PUT/COPY destination before provider I/O. These
      * reservations survive failed saves and row deletion; they grant no cleanup

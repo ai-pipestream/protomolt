@@ -150,6 +150,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
     private final PurgeQueue purgeQueue;
     private final JdbcEventOutbox events;
     private final ManagedRawBindings rawBindings;
+    private final DocumentPartReader managedParts;
 
     /**
      * @param documents the document-row ledger
@@ -198,6 +199,13 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
     public DocumentOperations(DocumentLedger documents, DriveLedger drives, Tx tx,
             BlobStore blobStore, PartStorage partStorage, PurgeQueue purgeQueue,
             JdbcEventOutbox events, String managedBackendIdentity) {
+        this(documents, drives, tx, blobStore, partStorage, purgeQueue, events, managedBackendIdentity, null);
+    }
+
+    /** Original-backend reader is required for bound documents; this does not enable managed writes. */
+    public DocumentOperations(DocumentLedger documents, DriveLedger drives, Tx tx,
+            BlobStore blobStore, PartStorage partStorage, PurgeQueue purgeQueue,
+            JdbcEventOutbox events, String managedBackendIdentity, DocumentPartReader managedParts) {
         this.documents = documents;
         this.drives = drives;
         this.tx = tx;
@@ -207,6 +215,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         this.purgeQueue = purgeQueue;
         this.events = events;
         this.rawBindings = new ManagedRawBindings(documents, drives, managedBackendIdentity);
+        this.managedParts = managedParts;
     }
 
     // ------------------------------------------------------------------ save
@@ -552,7 +561,9 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
     // ------------------------------------------------------------------ reads
 
     @Override
-    public GetDocumentResponse getDocument(RepositoryCaller caller, GetDocumentRequest request) {
+    public GetDocumentResponse getDocument(RepositoryCaller caller, GetDocumentRequest request,
+            ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
+        control.check();
         requireReadBinding(caller);
         return RepositoryErrors.call(() -> {
             UUID nodeId = DocumentRequests.parseUuid(request.getNodeId(), "node_id");
@@ -560,12 +571,14 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
                     .orElseThrow(() -> readMissing(caller, "no document row for node_id " + nodeId));
             requireVisibleRead(caller, row);
             return assemble(row, DocumentRequests.partsOrThrow(request.getPartsList(), "parts"),
-                    Set.copyOf(request.getChunkSetsList()));
+                    Set.copyOf(request.getChunkSetsList()), control);
         });
     }
 
     @Override
-    public GetDocumentResponse getDocumentByReference(RepositoryCaller caller, GetDocumentByReferenceRequest request) {
+    public GetDocumentResponse getDocumentByReference(RepositoryCaller caller, GetDocumentByReferenceRequest request,
+            ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
+        control.check();
         requireReadBinding(caller);
         return RepositoryErrors.call(() -> {
             NodeAddress address = DocumentRequests.validateAddress(request.getAddress(), "address");
@@ -574,7 +587,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
                     .orElseThrow(() -> readMissing(caller, "no document row for " + DocumentRequests.describe(address)));
             requireVisibleRead(caller, row);
             return assemble(row, DocumentRequests.partsOrThrow(request.getPartsList(), "parts"),
-                    Set.copyOf(request.getChunkSetsList()));
+                    Set.copyOf(request.getChunkSetsList()), control);
         });
     }
 
@@ -585,16 +598,26 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
      * the manifest here; a {@code null} (transient) read is UNAVAILABLE so the
      * caller retries.
      */
-    private GetDocumentResponse assemble(DocumentRecord row, Set<DocumentPart> parts, Set<String> chunkSets) {
+    private GetDocumentResponse assemble(DocumentRecord row, Set<DocumentPart> parts, Set<String> chunkSets,
+            ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
+        control.check();
         DocumentManifest manifest = row.readManifest();
         if (manifest == null) {
             throw failedPrecondition("document row " + row.nodeId + " carries no part manifest");
         }
-        DriveRecord drive = drives.findByName(row.accountId, row.driveName)
-                .orElseThrow(() -> notFound("drive '" + row.driveName + "' of document row "
-                        + row.nodeId + " not found for account '" + row.accountId + "'"));
-        Document assembled = partStorage.readParts(blobStore, drive.bucket, manifest, parts, chunkSets,
-                Document.getDefaultInstance());
+        var publication = documents.partPublications().findForRead(row);
+        Document assembled;
+        if (publication.isPresent()) {
+            if (managedParts == null) throw failedPrecondition("Managed document reader is not configured");
+            assembled = managedParts.read(publication.orElseThrow(), parts, chunkSets, Document.getDefaultInstance(), control);
+        } else {
+            DriveRecord drive = drives.findByName(row.accountId, row.driveName)
+                    .orElseThrow(() -> notFound("drive '" + row.driveName + "' of document row "
+                            + row.nodeId + " not found for account '" + row.accountId + "'"));
+            assembled = partStorage.readParts(blobStore, drive.bucket, manifest, parts, chunkSets,
+                    Document.getDefaultInstance());
+        }
+        control.check();
         if (assembled == null) {
             throw RepositoryErrors.unavailable(
                     "transient part read failure for node_id " + row.nodeId + " — retry");
@@ -629,7 +652,9 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
                         "exactly one coordinate (node_id or address) must be set");
             };
             requireVisibleRead(caller, row);
-            DocumentManifest manifest = row.readManifest();
+            DocumentManifest manifest = documents.partPublications().findForRead(row)
+                    .map(ai.protomolt.proto.repo.container.ledger.DocumentPublicationLedger.Publication::manifest)
+                    .orElseGet(row::readManifest);
             if (manifest == null) {
                 throw notFound("document row " + row.nodeId + " carries no part manifest");
             }

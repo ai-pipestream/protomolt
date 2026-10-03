@@ -31,6 +31,34 @@ class DocumentAtomicPublicationIT {
     }
     @AfterAll static void close() { if (database != null) database.close(); }
 
+    @Test void readSnapshotRetainsOriginalBindingAfterDriveChanges() {
+        var f = fixture(null);
+        var saved = publish(f, (em, row) -> {});
+        var reader = new DocumentPublicationLedger(tx);
+        var original = reader.findForRead(saved).orElseThrow();
+        tx.inTransaction(em -> {
+            em.createNativeQuery("UPDATE drives SET bucket='replacement-container' WHERE drive_id=:id")
+                    .setParameter("id", f.drive.driveId).executeUpdate();
+        });
+        assertThat(reader.findForRead(saved)).contains(original);
+        assertThat(original.namespace()).isEqualTo("container");
+        assertThat(original.attemptId()).isEqualTo(f.attempt.id());
+        assertThat(original.parts()).hasSize(1);
+        assertThat(original.parts().getFirst().providerVersion()).isEqualTo("v1");
+    }
+
+    @Test void staleOrDeletedAuthorizedRevisionCannotBecomeLegacyRead() {
+        var first = publish(fixture(null), (em, row) -> {});
+        var second = publish(fixture(first), (em, row) -> {});
+        var reader = new DocumentPublicationLedger(tx);
+        assertThatThrownBy(() -> reader.findForRead(first))
+                .isInstanceOf(DocumentLedger.RevisionConflictException.class);
+        assertThat(reader.findForRead(second)).isPresent();
+        documents.deleteByNodeId(second.nodeId);
+        assertThatThrownBy(() -> reader.findForRead(second))
+                .isInstanceOf(DocumentLedger.RevisionConflictException.class);
+    }
+
     @Test void rowPinAndOutboxCommitTogetherWithOneRevision() {
         var f = fixture(null);
         var observedRevision = new java.util.concurrent.atomic.AtomicLong();
