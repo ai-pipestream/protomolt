@@ -168,6 +168,33 @@ extension even where the message shape remains unchanged.
   responsibilities. Named-component replacement only; arbitrary field merging is
   outside this goal. Normal reads remain on the last committed complete version.
 
+## Reviewed redesign status
+
+- **New, planned internal foundation:** immutable physical-object identities,
+  retained references, reader lifetime and acquisition/reclamation coordination.
+  No generic object catalog or commit API is advertised as implemented.
+- **New, planned commit primitive:** bounded multi-object atomic changes with
+  expected revisions, current authorization, reference updates, outbox and durable
+  operation result. Existing archive admission/receipt behavior informs this port;
+  its entry-specific contract is not a general session transaction.
+- **Extended, planned document save:** changed-part uploads with immutable reuse,
+  batched verification persistence and an operation heartbeat. The current copying
+  path fails the intended efficiency requirements despite passing scoped tests.
+- **Extended, planned byte provider contract:** opt-in verified upload evidence.
+  S3 sends a checksum today but PutResult does not expose validated checksum proof.
+  Ordinary providers retain an explicit verification policy; no silent downgrade.
+- **Extended, current delete guard:** managed current/history publications cause
+  FAILED_PRECONDITION before synchronous or queued purge admission. This preserves
+  the source but does not implement managed deletion. Legacy deletion remains.
+- **Unchanged wire contracts:** this redesign has not changed protobuf names,
+  tags, imports or Any URLs. New transport fields require separate inventory and
+  validation review. Progressive hydration remains gated on the full foundations.
+
+Correctness includes latency, throughput and resource use. See the design's
+operation-count targets and diagnostic evidence; no production speed guarantee
+has been established. The V25 reference-table experiment is set aside and does
+not constitute the generic retention foundation.
+
 ## Existing identities to reuse
 
 `grpc.service.v1.SchemaSource` accepts exactly one of a type name, inline sources,
@@ -376,8 +403,9 @@ indexes retain the exact storage coordinates; a digest collision refuses admissi
 `VERIFIED` records byte verification reported by a trusted writer, not schema or
 semantic acceptance. Internal publication and recovery now consume this foundation,
 and qualified hosts now schedule recovery for abandoned attempts. Public document
-saves are not wired to it, and it is not an available managed-write API.
-End-to-end writer integration remains required before public managed writes.
+saves in the production host are not wired to it. Explicit library composition
+now integrates the managed full/partial writer, with selected real local/gRPC
+coverage; this is an experimental path pending lifecycle and performance gates.
 
 V22 adds immutable document publication history and an active attempt reference,
 without adopting existing rows. The package-private `saveVerifiedAttempt` now
@@ -397,9 +425,10 @@ failure. That refusal conservatively matches physical namespace and key across
 registered realms because legacy commands do not carry a qualified realm.
 PostgreSQL/LocalStack fixtures admit before PUT, read and hash the resulting bytes,
 then publish through the internal transaction to exercise these guards. Public
-full/partial save, original-profile reads, raw-reference integration and managed
-reclamation remain unwired. These internal checks do not qualify a managed
-document API, authorization, crash recovery or end-to-end transport behavior.
+full/partial save and original-profile reading have explicit library composition;
+raw-reference and source-revision races have selected local/gRPC coverage. Managed
+delete/reclamation and production host wiring remain unfinished. This evidence
+does not qualify the complete managed document API or its performance.
 
 V23 reserves document keys permanently before provider I/O. Both attempt admission
 and the existing full/partial save paths acquire the same digest-indexed key
@@ -470,8 +499,8 @@ hosts supplying external clients must configure their own finite timeouts.
 Tests exercise cancelled calls retaining capacity, recovery after provider return,
 ordered multipart selection with delayed fragments, and bound-read errors through
 both the library and gRPC. This qualifies the internal read path, not a completed
-managed document feature. Public managed write admission, host composition and
-document attempt reclamation remain unfinished. Do not enable managed document
+managed document feature. Opt-in full/partial write composition is tested, while
+host composition and retained-document reclamation remain unfinished. Do not enable managed document
 writes until those publication and recovery paths are implemented and qualified.
 
 ### Managed document writer and recovery sequence
@@ -486,8 +515,10 @@ The preflight query is not a lock held across I/O. A publication racing after th
 check can still leave an abandoned legacy object; fresh keys and final SQL
 revision/publication guards prevent it from replacing the visible bound body.
 
-The next implementation pieces reuse the current attempt, publication and receipt
-models; they do not require a replacement document RPC:
+The following sequence records the implemented copy-based writer baseline. The
+transaction/concurrency redesign in repository-composition.md supersedes it for
+future work; preserve its failure guarantees without retaining unnecessary copying
+or per-part transactions. It does not require renaming existing document RPCs:
 
 1. An internal stager owns admission of a complete ordered plan and immutable
    payload snapshots. If admission is separated later, it must reload the sealed
