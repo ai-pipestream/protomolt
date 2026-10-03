@@ -27,12 +27,15 @@ public final class ArchiveCleanupLedger {
         Objects.requireNonNull(abandonedBefore);
         return tx.inTransaction(em -> {
             var upload = ArchiveUploadLedger.lock(em, objectId);
+            em.createNativeQuery("SELECT object_id FROM repository_object_retention WHERE object_id=:id FOR UPDATE")
+                    .setParameter("id", objectId).getSingleResult();
             Instant now = em.unwrap(org.hibernate.Session.class)
                     .createNativeQuery("SELECT clock_timestamp()", Instant.class).getSingleResult();
             Number eligible = (Number) em.createNativeQuery("""
                     SELECT count(*) FROM archive_object_uploads WHERE object_id=:id AND updated_at<=:cutoff
                     AND (state<>'DELETING' OR cleanup_error IS NOT NULL OR updated_at<=:abandoned)
                     AND NOT EXISTS (SELECT 1 FROM archive_version_object_refs WHERE object_id=:id)
+                    AND NOT EXISTS (SELECT 1 FROM repository_object_references WHERE object_id=:id)
                     """).setParameter("id", objectId).setParameter("cutoff", inactiveBefore)
                     .setParameter("abandoned", abandonedBefore).getSingleResult();
             if (eligible.longValue() == 0 || (("STAGING".equals(upload.state()) || "VERIFIED".equals(upload.state()))
@@ -70,6 +73,7 @@ public final class ArchiveCleanupLedger {
                 SELECT u.object_id FROM archive_object_uploads u WHERE u.updated_at<=:cutoff
                 AND (u.state NOT IN ('STAGING','VERIFIED') OR u.lease_until<=clock_timestamp())
                 AND NOT EXISTS (SELECT 1 FROM archive_version_object_refs r WHERE r.object_id=u.object_id)
+                AND NOT EXISTS (SELECT 1 FROM repository_object_references r WHERE r.object_id=u.object_id)
                 ORDER BY u.updated_at,u.object_id
                 """, UUID.class).setParameter("cutoff", inactiveBefore).setMaxResults(limit).getResultList());
     }
@@ -85,6 +89,7 @@ public final class ArchiveCleanupLedger {
                 AND (u.state<>'DELETING' OR u.cleanup_error IS NOT NULL OR u.updated_at<=:abandoned)
                 AND EXISTS (SELECT 1 FROM archive_mutation_targets t WHERE t.object_id=u.object_id)
                 AND NOT EXISTS (SELECT 1 FROM archive_version_object_refs r WHERE r.object_id=u.object_id)
+                AND NOT EXISTS (SELECT 1 FROM repository_object_references r WHERE r.object_id=u.object_id)
                 ORDER BY u.updated_at,u.object_id
                 """, UUID.class).setParameter("cutoff", inactiveBefore).setParameter("abandoned", abandonedBefore)
                 .setMaxResults(limit).getResultList());

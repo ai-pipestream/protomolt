@@ -58,7 +58,7 @@ class ArchiveDeletionFailureIT {
         new ManagedBackendLedger(tx).bind("failure-test", new ManagedBackendLedger.Profile(
                 ai.protomolt.proto.repo.blob.s3.S3BackendIdentity.of(S3.getEndpoint().toString(), S3.getRegion(), true), "failure-realm"));
         managed = new ArchiveOperations(ledger, drives, opened.store(), ai.protomolt.proto.asset.bridge.BridgeEngine.standard(),
-                new ArchiveObjectReader(new ArchiveObjectLedger(tx), (generation, realm) -> {
+                new ArchiveObjectReader(new ArchiveReadLedger(tx, UUID.randomUUID()), (generation, realm) -> {
                     assertThat(generation).isEqualTo("failure-test");
                     assertThat(realm).isEqualTo("failure-realm");
                     return opened.store();
@@ -72,6 +72,12 @@ class ArchiveDeletionFailureIT {
     @AfterAll static void close() throws Exception {
         try { if (opened != null) opened.close(); }
         finally { if (database != null) database.close(); }
+    }
+
+    @AfterEach void completedReadsReleasePinsIncludingFailurePaths() {
+        long pins = new Tx(database.entityManagerFactory()).readOnly(em -> ((Number) em.createNativeQuery(
+                "SELECT count(*) FROM archive_read_pins").getSingleResult()).longValue());
+        assertThat(pins).isZero();
     }
 
     @Test void libraryDeleteRecordsStorageFailureWithoutClaimingCompletion() throws Exception { assertDeleteFailure(false); }
@@ -117,7 +123,7 @@ class ArchiveDeletionFailureIT {
                 Map.of(admission.upload().objectId(), admission.upload().leaseToken()));
         opened.store().put(new BlobStore.PutSpec(originalBucket, managedKey, "text/plain", Map.of(), null),
                 ByteString.copyFromUtf8("a later provider revision").toByteArray());
-        var reader = new ai.protomolt.proto.repo.engine.ArchiveObjectReader(objects, (identity, realm) -> {
+        var reader = new ai.protomolt.proto.repo.engine.ArchiveObjectReader(new ArchiveReadLedger(tx, UUID.randomUUID()), (identity, realm) -> {
             assertThat(identity).isEqualTo(generation);
             assertThat(realm).isEqualTo(generation);
             assertThat(profiles.find(identity)).contains(profile);
@@ -127,7 +133,7 @@ class ArchiveDeletionFailureIT {
                 ai.protomolt.proto.asset.bridge.BridgeEngine.standard(), reader);
         var request = GetEntryRequest.newBuilder().setAddress(address).setVersion(2).build();
         var published = ai.protomolt.proto.repo.container.archive.ArchiveManifests.fromJson(version.manifest).getRenditions(0);
-        var noIo = new ai.protomolt.proto.repo.engine.ArchiveObjectReader(objects, (identity, realm) -> {
+        var noIo = new ai.protomolt.proto.repo.engine.ArchiveObjectReader(new ArchiveReadLedger(tx, UUID.randomUUID()), (identity, realm) -> {
             throw new AssertionError("Invalid manifest must fail before provider resolution");
         });
         for (var invalid : java.util.List.of(published.toBuilder().setObjectKey("wrong-key").build(),
@@ -152,7 +158,7 @@ class ArchiveDeletionFailureIT {
                     failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
             var unavailable = new ArchiveOperations(ledger, drives, opened.store(),
                     ai.protomolt.proto.asset.bridge.BridgeEngine.standard(),
-                    new ai.protomolt.proto.repo.engine.ArchiveObjectReader(objects, (identity, realm) -> {
+                    new ai.protomolt.proto.repo.engine.ArchiveObjectReader(new ArchiveReadLedger(tx, UUID.randomUUID()), (identity, realm) -> {
                         throw new RepositoryException(RepositoryException.Code.UNAVAILABLE, "original backend offline");
                     }));
             assertThatThrownBy(() -> unavailable.getEntry(CALLER, request)).isInstanceOfSatisfying(RepositoryException.class,

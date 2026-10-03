@@ -68,12 +68,18 @@ class ArchiveManagedUploadIT {
         finally { if (database != null) database.close(); }
     }
 
+    @AfterEach void completedOperationsLeaveNoReaderPins() {
+        long pins = tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM archive_read_pins")
+                .getSingleResult()).longValue());
+        assertThat(pins).isZero();
+    }
+
     static ArchiveOperations operations(BlobStore writerStore) {
         return operations(writerStore, opened.store());
     }
 
     static ArchiveOperations operations(BlobStore writerStore, BlobStore readerStore) {
-        var reader = new ArchiveObjectReader(new ArchiveObjectLedger(tx), (generation, realm) -> {
+        var reader = new ArchiveObjectReader(new ArchiveReadLedger(tx, UUID.randomUUID()), (generation, realm) -> {
             if (!generation.equals("original") || !realm.equals("original-realm"))
                 throw new RepositoryException(RepositoryException.Code.UNAVAILABLE, "Original backend unavailable");
             return readerStore;

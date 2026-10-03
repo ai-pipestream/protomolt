@@ -1367,13 +1367,20 @@ capability rejection is injected around the real adapter. This bounds one manage
 object, not aggregate response memory. Legacy unbound archive reads still need
 the same bound, and multi-rendition responses need a shared payload reservation.
 
-Reader pins are not implemented. Their admission must prove the exact retained
-version under the source-owner and retention locks before returning original
-storage coordinates. A distinct reader-incarnation owner must hold the pin until
-the actual provider call and materialization finish, including ignored cancellation.
-Timeout alone cannot release it. Crash recovery needs explicit evidence that the
-owning incarnation and its provider work have stopped; failed release leaves a
-durable pin for retry, never an age-based deletion permission.
+V28 adds managed archive reader pins. Admission proves the exact retained version
+under the source-owner and retention locks and returns original storage coordinates
+in that same transaction. Each reader incarnation has a fresh UUID, separate from
+the pin and object IDs. The reader holds its pin through backend resolution, the
+synchronous bounded provider call, and byte verification. Cancellation cannot
+release it while the call continues. Native pins survive logical version deletion;
+shared references prevent physical reclamation until the last pin is released.
+
+Failed release is visible and leaves durable protection for retry. A retry accepts
+an absent pin after a potentially lost commit acknowledgement, but rejects a pin
+owned by a different incarnation. Pins never expire by age. Crash recovery still
+needs explicit evidence that the owning incarnation and its provider work have
+stopped; no automatic crash-pin release API is implemented. Operators must not
+delete pins based on elapsed time or a request timeout.
 
 V27 separates logical retirement from physical reclamation. An admitted archive
 mutation closes reference acquisition with a permanent retiring flag; the later
@@ -1390,10 +1397,30 @@ PostgreSQL races cover retirement/reference admission in both orders, commit and
 rollback, and progress on an unrelated object while the target remains locked.
 These are SQL lifecycle fixtures, not provider byte-verification evidence.
 
-Reader pins are still required before a read can claim lifetime protection. Their
-cleanup gate must wait for existing readers to finish after logical retirement.
-No SQL transaction may span a provider read. V27 establishes the two states but
-does not yet add reader ownership, process-drain recovery or a reader cleanup gate.
+V28 cleanup claims lock the source and retention rows, then decline while any
+shared reference remains. Candidate scans exclude pinned objects, leaving room for
+other eligible work. No SQL transaction spans provider I/O. Each managed object
+read adds one short acquisition transaction and one release transaction; these
+include native/common reference maintenance. Their latency and contention costs
+remain to be qualified under representative load; they are not a performance win.
+
+`ArchiveReadLifetimeIT` uses real PostgreSQL and S3 plus a delayed provider-call
+decorator. Local and in-process gRPC cases prove logical deletion completes while
+the provider call remains active, cleanup skips it, and reclamation proceeds after
+completion. The cancellation cases include ignored thread interruption and gRPC
+client cancellation. Container cases cover two reader incarnations, failed release,
+direct mirror-release rejection, and pin/mutation commit/rollback races in both
+orders with observed PostgreSQL lock waits. Completed archive service operations,
+including failure cases, assert no leaked pins.
+
+Operation inventory for this slice: protobuf operations and wire contracts are
+unchanged; managed archive reads and cleanup are extended with lifetime protection;
+internal `ArchiveReadLedger.acquire` and `Pin.close` are new. The Java
+`ArchiveObjectReader` constructor now takes `ArchiveReadLedger` instead of
+`ArchiveObjectLedger`; all in-tree callers are updated. `ArchiveObjectLedger.readable`
+remains a metadata inspection API and does not protect provider I/O. This does not
+add pins to legacy unbound archive reads or document reads, change authorization,
+or implement incarnation-drain recovery.
 
 `ArchiveRetentionConcurrencyIT` supplies the SQL baseline for that fence. It
 observes actual PostgreSQL lock waits for reference-first and cleanup-first

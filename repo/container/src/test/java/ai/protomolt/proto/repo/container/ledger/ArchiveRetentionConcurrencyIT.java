@@ -3,6 +3,7 @@ package ai.protomolt.proto.repo.container.ledger;
 import ai.protomolt.proto.repo.blob.s3.S3BackendIdentity;
 import ai.protomolt.proto.repo.container.archive.ArchiveCleanupLedger;
 import ai.protomolt.proto.repo.container.archive.ArchiveObjectLedger;
+import ai.protomolt.proto.repo.container.archive.ArchiveReadLedger;
 import ai.protomolt.proto.repo.container.archive.ArchiveUploadLedger;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -15,6 +16,7 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -26,6 +28,160 @@ import static org.assertj.core.api.Assertions.*;
 class ArchiveRetentionConcurrencyIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
     private record ObjectFixture(UUID objectId, UUID entryId, String generation) {}
+
+    @ParameterizedTest @ValueSource(booleans = {true, false})
+    void committedReadPinSurvivesARacingLogicalMutation(boolean commitPin) throws Exception {
+        try (var database = database(); var owner = connection();
+                var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var tx = new Tx(database.entityManagerFactory());
+            var object = liveObject(tx);
+            insertReference(owner, object);
+            UUID pin = UUID.randomUUID();
+            owner.setAutoCommit(false);
+            try {
+                try (var statement = owner.prepareStatement("INSERT INTO archive_read_pins(pin_id,reader_incarnation,object_id,entry_uuid,version) VALUES(?,?,?,?,1)")) {
+                    statement.setObject(1, pin); statement.setObject(2, UUID.randomUUID());
+                    statement.setObject(3, object.objectId()); statement.setObject(4, object.entryId());
+                    statement.executeUpdate();
+                }
+                int pid = backendPid(owner);
+                var mutation = executor.submit(() -> {
+                    try (var writer = connection()) {
+                        writer.setAutoCommit(false);
+                        try {
+                            deleteVersion(writer, object);
+                            insertTarget(writer, object);
+                            writer.commit();
+                        } finally { writer.rollback(); }
+                    }
+                    return true;
+                });
+                awaitDatabaseWait(pid);
+                if (commitPin) owner.commit(); else owner.rollback();
+                assertThat(mutation.get(10, TimeUnit.SECONDS)).isTrue();
+                assertThat(readerCount(object)).isEqualTo(commitPin ? 1 : 0);
+                assertThat(retiring(object)).isTrue();
+                assertThat(new ArchiveCleanupLedger(tx).claim(object.objectId(), Instant.now().plusSeconds(60)).isPresent())
+                        .isEqualTo(!commitPin);
+            } finally {
+                owner.rollback();
+                owner.setAutoCommit(true);
+                try (var statement = owner.prepareStatement("DELETE FROM archive_read_pins WHERE pin_id=?")) {
+                    statement.setObject(1, pin); statement.executeUpdate();
+                }
+            }
+        }
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {true, false})
+    void logicalMutationOutcomeDeterminesWhetherNewReaderCanAcquire(boolean commitMutation) throws Exception {
+        try (var database = database(); var owner = connection();
+                var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var tx = new Tx(database.entityManagerFactory());
+            var object = liveObject(tx);
+            insertReference(owner, object);
+            owner.setAutoCommit(false);
+            try {
+                deleteVersion(owner, object);
+                insertTarget(owner, object);
+                int pid = backendPid(owner);
+                var read = executor.submit(() -> new ArchiveReadLedger(tx, UUID.randomUUID())
+                        .acquire(object.entryId(), 1, object.objectId()));
+                awaitDatabaseWait(pid);
+                if (commitMutation) owner.commit(); else owner.rollback();
+                var admitted = read.get(10, TimeUnit.SECONDS);
+                try {
+                    assertThat(admitted.isPresent()).isEqualTo(!commitMutation);
+                    assertThat(readerCount(object)).isEqualTo(commitMutation ? 0 : 1);
+                    assertThat(retiring(object)).isEqualTo(commitMutation);
+                } finally { admitted.ifPresent(ArchiveReadLedger.Pin::close); }
+            } finally { owner.rollback(); }
+        }
+    }
+
+    private static void deleteVersion(Connection connection, ObjectFixture object) throws SQLException {
+        try (var statement = connection.prepareStatement("DELETE FROM archive_versions WHERE entry_uuid=? AND version=1")) {
+            statement.setObject(1, object.entryId()); statement.executeUpdate();
+        }
+    }
+
+    @Test void readersSurviveLogicalDeletionAndCleanupWaitsForEveryIncarnation() throws Exception {
+        try (var database = database(); var connection = connection()) {
+            var tx = new Tx(database.entityManagerFactory());
+            var object = liveObject(tx);
+            var firstReader = new ArchiveReadLedger(tx, UUID.randomUUID());
+            var secondReader = new ArchiveReadLedger(tx, UUID.randomUUID());
+            assertThat(firstReader.acquire(object.entryId(), 1, object.objectId())).isEmpty();
+            insertReference(connection, object);
+            assertThat(firstReader.acquire(object.entryId(), 2, object.objectId())).isEmpty();
+            assertThat(firstReader.acquire(UUID.randomUUID(), 1, object.objectId())).isEmpty();
+            var first = firstReader.acquire(object.entryId(), 1, object.objectId()).orElseThrow();
+            var second = secondReader.acquire(object.entryId(), 1, object.objectId()).orElseThrow();
+            try {
+                assertThat(first.readable().binding().location().backendGeneration()).isEqualTo(object.generation());
+                assertThat(readerCount(object)).isEqualTo(2);
+                try (var statement = connection.createStatement()) {
+                    assertThatThrownBy(() -> statement.executeUpdate("DELETE FROM repository_object_references WHERE object_id='"
+                            + object.objectId() + "' AND owner_kind='ARCHIVE_READER'"))
+                            .hasMessageContaining("cannot release a retained native owner");
+                    statement.executeUpdate("DELETE FROM archive_versions WHERE entry_uuid='" + object.entryId() + "'");
+                }
+                insertTarget(connection, object);
+                assertThat(retiring(object)).isTrue();
+                assertThat(reclaiming(object)).isFalse();
+                assertThat(secondReader.acquire(object.entryId(), 1, object.objectId())).isEmpty();
+                var cleanup = new ArchiveCleanupLedger(tx);
+                var distantCutoff = Instant.now().plus(Duration.ofDays(36500));
+                assertThat(cleanup.claim(object.objectId(), distantCutoff)).isEmpty();
+                assertThat(cleanup.candidates(distantCutoff, 1000)).doesNotContain(object.objectId());
+                assertThat(cleanup.mutationCandidates(distantCutoff, distantCutoff, 1000)).doesNotContain(object.objectId());
+                first.close();
+                first.close();
+                assertThat(readerCount(object)).isEqualTo(1);
+                assertThat(cleanup.claim(object.objectId(), distantCutoff)).isEmpty();
+                second.close();
+                assertThat(readerCount(object)).isZero();
+                assertThat(cleanup.claim(object.objectId(), distantCutoff)).isPresent();
+            } finally { first.close(); second.close(); }
+        }
+    }
+
+    @Test void failedReleaseRetainsProtectionAndTheSameHandleCanRetry() throws Exception {
+        try (var database = database(); var connection = connection(); var statement = connection.createStatement()) {
+            var tx = new Tx(database.entityManagerFactory());
+            var object = liveObject(tx);
+            insertReference(connection, object);
+            var pin = new ArchiveReadLedger(tx, UUID.randomUUID())
+                    .acquire(object.entryId(), 1, object.objectId()).orElseThrow();
+            statement.executeUpdate("DELETE FROM archive_versions WHERE entry_uuid='" + object.entryId() + "'");
+            insertTarget(connection, object);
+            // A real SQL failure at release; no fake ledger or successful provider stub.
+            statement.executeUpdate("""
+                    CREATE FUNCTION injected_read_release_failure() RETURNS trigger LANGUAGE plpgsql AS $$
+                    BEGIN RAISE EXCEPTION 'Injected read release failure'; END; $$
+                    """);
+            statement.executeUpdate("CREATE TRIGGER injected_read_release_failure BEFORE DELETE ON archive_read_pins FOR EACH ROW EXECUTE FUNCTION injected_read_release_failure()");
+            try {
+                assertThatThrownBy(pin::close).hasStackTraceContaining("Injected read release failure");
+                assertThat(readerCount(object)).isEqualTo(1);
+                assertThat(new ArchiveCleanupLedger(tx).claim(object.objectId(), Instant.now().plusSeconds(60))).isEmpty();
+            } finally {
+                statement.executeUpdate("DROP TRIGGER injected_read_release_failure ON archive_read_pins");
+                statement.executeUpdate("DROP FUNCTION injected_read_release_failure()");
+                pin.close();
+            }
+            assertThat(readerCount(object)).isZero();
+            assertThat(new ArchiveCleanupLedger(tx).claim(object.objectId(), Instant.now().plusSeconds(60))).isPresent();
+        }
+    }
+
+    private static int readerCount(ObjectFixture object) throws SQLException {
+        try (var reader = connection(); var statement = reader.prepareStatement(
+                "SELECT count(*) FROM archive_read_pins WHERE object_id=?")) {
+            statement.setObject(1, object.objectId());
+            try (var result = statement.executeQuery()) { assertThat(result.next()).isTrue(); return result.getInt(1); }
+        }
+    }
 
     @ParameterizedTest
     @ValueSource(booleans = {true, false})

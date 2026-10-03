@@ -10,6 +10,7 @@ import ai.protomolt.proto.repo.engine.*;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Set;
+import java.util.UUID;
 
 /** Qualified archive components sharing the host's borrowed provider lifetime. */
 final class ManagedArchiveServices {
@@ -26,7 +27,7 @@ final class ManagedArchiveServices {
         var profiles = new ManagedBackendLedger(tx);
         if (!profiles.find(generation).filter(profile::equals).isPresent())
             throw new IllegalStateException("Original archive backend profile is not bound");
-        reader = new ArchiveObjectReader(new ArchiveObjectLedger(tx), (original, realm) -> {
+        reader = new ArchiveObjectReader(new ArchiveReadLedger(tx, UUID.randomUUID()), (original, realm) -> {
             if (!generation.equals(original) || !profile.storageRealm().equals(realm))
                 throw new IllegalStateException("Original archive backend is not configured on this host");
             return store;
