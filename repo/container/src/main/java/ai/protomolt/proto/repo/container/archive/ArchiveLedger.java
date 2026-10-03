@@ -303,6 +303,7 @@ public final class ArchiveLedger {
         tx.inTransaction(em -> {
             ArchiveEntryRecord existing = em.find(ArchiveEntryRecord.class,
                     entry.entryUuid, LockModeType.PESSIMISTIC_WRITE);
+            ArchiveEntryRecord managed;
             if (existing == null) {
                 if (baseVersion != 0) {
                     throw new VersionConflictException("entry '" + entry.entryId
@@ -310,13 +311,15 @@ public final class ArchiveLedger {
                             + baseVersion + ")");
                 }
                 em.persist(entry);
+                managed = entry;
             } else {
-                if (existing.currentVersion != baseVersion) {
+                if (existing.currentVersion != baseVersion || existing.mutationRevision != entry.mutationRevision) {
                     throw new VersionConflictException("entry '" + entry.entryId
-                            + "' moved to version " + existing.currentVersion
-                            + " under a save computed against " + baseVersion);
+                            + "' changed during save preparation (expected version " + baseVersion
+                            + ", revision " + entry.mutationRevision + "; found version "
+                            + existing.currentVersion + ", revision " + existing.mutationRevision + ")");
                 }
-                em.merge(entry);
+                managed = em.merge(entry);
             }
             em.persist(version);
             if (dropVersion != 0) {
@@ -327,6 +330,10 @@ public final class ArchiveLedger {
                 }
             }
             applyDelta(em, entry.accountId, entry.archive, delta);
+            em.flush();
+            em.refresh(managed);
+            em.refresh(version);
+            entry.mutationRevision = managed.mutationRevision;
         });
     }
 
@@ -405,7 +412,13 @@ public final class ArchiveLedger {
      */
     public void mergeEntry(ArchiveEntryRecord entry) {
         tx.inTransaction(em -> {
-            em.merge(entry);
+            var existing = em.find(ArchiveEntryRecord.class, entry.entryUuid, LockModeType.PESSIMISTIC_WRITE);
+            if (existing == null || existing.mutationRevision != entry.mutationRevision)
+                throw new VersionConflictException("Archive entry changed during metadata preparation");
+            var managed = em.merge(entry);
+            em.flush();
+            em.refresh(managed);
+            entry.mutationRevision = managed.mutationRevision;
         });
     }
 

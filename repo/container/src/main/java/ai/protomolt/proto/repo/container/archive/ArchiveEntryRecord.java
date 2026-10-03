@@ -40,6 +40,10 @@ public class ArchiveEntryRecord {
     @Column(name = "current_version", nullable = false)
     public long currentVersion;
 
+    /** Database-assigned revision, including metadata-only changes and recreated identities. */
+    @Column(name = "mutation_revision", nullable = false, insertable = false, updatable = false)
+    public long mutationRevision;
+
     /** Display title; null when none was given. */
     @Column(name = "title")
     public String title;

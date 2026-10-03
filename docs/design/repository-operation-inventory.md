@@ -181,8 +181,21 @@ Post-save pruning and upload cleanup also call that helper and require durable
 orphan handling. Keep archive operations process-authorized until mutation and
 current-policy guards support scoped callers.
 
-After destructive admission, add historical metadata/schema/policy snapshots and
-guard metadata-only updates. Current historical archive reads expose current entry
+V12 adds database-assigned revisions to entries and retained versions, including
+existing rows. Metadata merges and saves compare the sampled entry revision under
+the entry lock; stale metadata cannot overwrite a newer edit at the same version
+number. Migration coverage includes direct SQL updates and delete/reinsert of both
+row types. Restores must preserve or advance the revision sequence beyond restored
+row revisions.
+
+This is not yet a complete retained-reference guard. Version rewrites and pruning
+do not advance the entry revision. Saves and classification must also compare the
+sampled version revisions and retained set before publishing derived state. Keep
+that work coupled to destructive admission so a concurrent save cannot republish
+references to removed bytes.
+
+After destructive admission, add historical metadata/schema/policy snapshots.
+Current historical archive reads expose current entry
 metadata, and same-content saves can merge metadata without creating a version.
 Typed admission must not inherit that ambiguity.
 
