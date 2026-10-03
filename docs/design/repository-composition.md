@@ -1287,6 +1287,32 @@ remains. Four value-contract tests and the runtime dependency gate pass, and
 generated Maven/Gradle metadata still declares only repo-proto directly. This
 does not prove the later database adapter or published-consumer acceptance cases.
 
+The database migration must cover all existing storage authorities. V10 raw
+objects identify a backend with a string that has no foreign key to the immutable
+profile table introduced in V11. Older archive manifests also have keys without
+V14 bindings. Neither source can be assigned an original realm from current drive
+configuration. Quarantine unknown keys conservatively until verified adoption;
+preserve V23's existing global reservations for legacy document keys.
+
+The first catalog migration records locations, not a second cleanup lifecycle.
+Backfill every admitted archive binding and document attempt object, including
+bare reservations and staging rows. Include raw identities only when their
+original profile is established. Reject cross-domain coordinate aliases and
+digest collisions rather than merging records. Lock source tables during the
+scan and install write-through guards in the same migration; drain older writers
+before deployment. Existing cleanup remains authoritative until all acquisition
+and cleanup paths use one catalog-row fence and account for existing references.
+Do not enable common references or reuse before that cutover.
+
+`ArchiveRetentionConcurrencyIT` supplies the SQL baseline for that fence. It
+observes actual PostgreSQL lock waits for reference-first and cleanup-first
+transactions, then checks both commit and rollback outcomes. While a reference
+transaction holds one object, cleanup of another key under the same profile,
+realm and namespace must finish. These use synthetic SQL lifecycle fixtures;
+they establish neither provider durability nor new catalog behavior. The
+cleanup-first cases exercise the SQL state transition directly, while the
+reference-first cases invoke `ArchiveCleanupLedger.claim`.
+
 1. Define immutable physical identity and reference ownership before stabilizing
    the generic commit API. Build a small provider-neutral port and PostgreSQL
    adapter without exposing SQL, Kafka, SDK or JCR types in the port. Model exact
