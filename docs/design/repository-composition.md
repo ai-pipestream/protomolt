@@ -638,6 +638,15 @@ authorized the exact destination revision; this builder does not authorize a sav
 The current transaction still publishes raw bindings and enqueues the saved event
 with cancellation checks before and after those changes.
 
+An explicit `DocumentOperations` constructor now accepts a borrowed managed writer
+alongside the reader and retained generation. In that configuration, full saves
+use the existing authorization and locked dedupe checks, then build an admitted
+attempt and publish verified parts through `ManagedDocumentSave`. Raw references
+and the saved event run in the writer's publication transaction. Existing host
+constructors remain unchanged. Managed partial saves are explicitly refused by
+this configuration until their composition is qualified; this is not yet the
+production host default or a complete managed-save feature.
+
 Managed routing must preserve these behaviors explicitly:
 
 - Full-save dedupe mutates reprocessing bookkeeping and raw references under the

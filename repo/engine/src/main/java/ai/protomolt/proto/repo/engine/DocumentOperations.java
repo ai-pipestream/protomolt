@@ -152,6 +152,8 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
     private final JdbcEventOutbox events;
     private final ManagedRawBindings rawBindings;
     private final DocumentPartReader managedParts;
+    private final ai.protomolt.proto.repo.container.ledger.DocumentAttemptWriter managedWriter;
+    private final String managedGeneration;
 
     /**
      * @param documents the document-row ledger
@@ -207,6 +209,16 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
     public DocumentOperations(DocumentLedger documents, DriveLedger drives, Tx tx,
             BlobStore blobStore, PartStorage partStorage, PurgeQueue purgeQueue,
             JdbcEventOutbox events, String managedBackendIdentity, DocumentPartReader managedParts) {
+        this(documents, drives, tx, blobStore, partStorage, purgeQueue, events, managedBackendIdentity, managedParts, null);
+    }
+
+    /** Explicit library composition; host must qualify and drain the borrowed reader/writer. Partial saves remain gated. */
+    public DocumentOperations(DocumentLedger documents, DriveLedger drives, Tx tx,
+            BlobStore blobStore, PartStorage partStorage, PurgeQueue purgeQueue,
+            JdbcEventOutbox events, String managedBackendIdentity, DocumentPartReader managedParts,
+            ai.protomolt.proto.repo.container.ledger.DocumentAttemptWriter managedWriter) {
+        if (managedWriter != null && (managedParts == null || managedBackendIdentity == null || managedBackendIdentity.isBlank()))
+            throw new IllegalArgumentException("Managed writer requires a reader and retained generation");
         this.documents = documents;
         this.drives = drives;
         this.tx = tx;
@@ -217,6 +229,8 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         this.events = events;
         this.rawBindings = new ManagedRawBindings(documents, drives, managedBackendIdentity);
         this.managedParts = managedParts;
+        this.managedWriter = managedWriter;
+        this.managedGeneration = managedBackendIdentity;
     }
 
     // ------------------------------------------------------------------ save
@@ -262,7 +276,9 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         boolean writesCore = request.getPartsWrittenList().isEmpty()
                 || request.getPartsWrittenList().contains(DocumentPart.DOCUMENT_PART_CORE);
         requireWrite(caller, destination, r.doc(), request, writesCore);
-        requireLegacyWriteTarget(destination);
+        if (managedWriter == null) requireLegacyWriteTarget(destination);
+        else if (!request.getPartsWrittenList().isEmpty())
+            throw failedPrecondition("Managed partial-save composition is not configured");
         DriveRecord drive = drives.findByName(r.address().getAccountId(), request.getDrive())
                 .orElseThrow(() -> readMissing(caller, "drive '" + request.getDrive() + "' not found for account '"
                         + r.address().getAccountId() + "'"));
@@ -338,6 +354,12 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
                     .setDeduplicated(true)
                     .setAddress(r.address())
                     .build();
+        }
+
+        if (managedWriter != null) {
+            var row = ManagedDocumentSave.full(managedWriter, managedGeneration, caller, r, request, drive, nodeId,
+                    basePrefix, split, decision.existing(), decision.nextDocVersion(), bindings, events, control);
+            return SaveResolution.saveResponse(row, row.checksum);
         }
 
         // A re-saved PENDING_PURGE row needs no special case here: the upsert

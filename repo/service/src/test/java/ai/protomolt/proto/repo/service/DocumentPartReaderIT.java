@@ -194,6 +194,46 @@ class DocumentPartReaderIT {
         assertThat(budget.reservedBytes()).isZero();
     }
 
+    @Test void explicitlyComposedEnginePublishesFullSaveThenDeduplicatesWithoutNewAttempt() throws Exception {
+        var original = bound();
+        var budget = new PayloadBudget(1024 * 1024);
+        var reader = new DocumentPartReader((g, p) -> store, 4, 1024 * 1024, budget);
+        var writer = new DocumentAttemptWriter(tx, drives, GENERATION, profile.identity(), opened, budget);
+        var outbox = new ai.protomolt.proto.repo.container.lifecycle.JdbcEventOutbox(tx);
+        var engine = new ai.protomolt.proto.repo.engine.DocumentOperations(documents, drives, tx, store,
+                new ai.protomolt.proto.repo.container.blob.PartStorage(),
+                new ai.protomolt.proto.repo.container.lifecycle.JdbcPurgeQueue(tx), outbox, GENERATION, reader, writer);
+        var request = SaveDocumentRequest.newBuilder().setDocument(original.expected).setDrive(original.drive.name)
+                .setGraphId(original.row.graphId).setUseDatasourceId(true).setForceSave(true).build();
+        var caller = new ai.protomolt.proto.repo.spi.RepositoryCaller("operator", true);
+        try {
+            var response = engine.saveDocument(caller, request);
+            assertThat(response.getDeduplicated()).isFalse();
+            var saved = documents.findByNodeId(original.row.nodeId).orElseThrow();
+            var publication = new DocumentPublicationLedger(tx).findForRead(saved).orElseThrow();
+            assertThat(publication.manifest().getDocVersion()).isEqualTo(2);
+            assertThat(reader.read(publication, Set.of(), Set.of(), Document.getDefaultInstance())).isEqualTo(original.expected);
+            long attempts = tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM document_part_attempts WHERE node_id=:node")
+                    .setParameter("node", saved.nodeId).getSingleResult()).longValue());
+            var deduped = engine.saveDocument(caller, request.toBuilder().setForceSave(false).build());
+            assertThat(deduped.getDeduplicated()).isTrue();
+            var after = documents.findByNodeId(saved.nodeId).orElseThrow();
+            assertThat(after.reprocessCount).isEqualTo(saved.reprocessCount + 1);
+            assertThat(new DocumentPublicationLedger(tx).findForRead(after).orElseThrow().attemptId()).isEqualTo(publication.attemptId());
+            long afterAttempts = tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM document_part_attempts WHERE node_id=:node")
+                    .setParameter("node", saved.nodeId).getSingleResult()).longValue());
+            long savedEvents = tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM document_events_outbox WHERE kafka_key=:id")
+                    .setParameter("id", saved.docId).getSingleResult()).longValue());
+            assertThat(afterAttempts).isEqualTo(attempts);
+            assertThat(savedEvents).isEqualTo(1);
+        } finally {
+            writer.close(); reader.close();
+            assertThat(writer.awaitIdle(java.time.Duration.ofSeconds(5))).isTrue();
+            assertThat(reader.awaitIdle(java.time.Duration.ofSeconds(5))).isTrue();
+        }
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
     private static ai.protomolt.proto.repo.engine.DocumentOperations engine(DocumentPartReader reader) {
         return new ai.protomolt.proto.repo.engine.DocumentOperations(documents, drives, tx, store,
                 new ai.protomolt.proto.repo.container.blob.PartStorage(),
