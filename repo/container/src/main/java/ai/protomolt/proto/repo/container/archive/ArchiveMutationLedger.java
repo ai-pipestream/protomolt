@@ -44,7 +44,7 @@ public final class ArchiveMutationLedger {
      * and perform no provider I/O or nested transactions. A missing entry can
      * only produce a no-op; handlers may instead report NOT_FOUND.
      */
-    public ArchiveMutationReceipt admit(String principal, ArchiveMutationCommand command,
+    ArchiveMutationReceipt admit(String principal, ArchiveMutationCommand command,
             long sampledRevision, BiFunction<EntityManager, ArchiveEntryRecord, LogicalOutcome> mutation) {
         requireText(principal, "principal");
         Objects.requireNonNull(command);

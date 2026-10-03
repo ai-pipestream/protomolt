@@ -15,6 +15,24 @@ class ArchiveMutationContractTest {
     private static final EntryAddress ADDRESS = EntryAddress.newBuilder().setAccountId("account")
             .setArchive("records").setEntryId("entry").build();
 
+    @Test void destructiveOperationsRequireTheIdentifiedServiceAndPreservePayloadTags() {
+        var file = DeleteEntryRequest.getDescriptor().getFile();
+        var service = file.findServiceByName("ArchiveService");
+        for (String name : List.of("DeleteEntry", "DeleteRendition", "PruneVersions")) {
+            assertThat(service.findMethodByName(name)).isNull();
+            assertThat(file.findMessageTypeByName(name + "Response")).isNull();
+            assertThat(file.findMessageTypeByName(name + "Request").findFieldByName("address").getNumber()).isEqualTo(1);
+        }
+        assertThat(DeleteRenditionRequest.getDescriptor().findFieldByName("rendition").getNumber()).isEqualTo(2);
+        assertThat(DeleteRenditionRequest.getDescriptor().findFieldByName("reason").getNumber()).isEqualTo(3);
+        assertThat(PruneVersionsRequest.getDescriptor().findFieldByName("keep_latest").getNumber()).isEqualTo(2);
+        var mutation = ArchiveMutationRequest.getDescriptor();
+        assertThat(mutation.findFieldByName("operation_id").getNumber()).isEqualTo(1);
+        assertThat(mutation.findFieldByName("delete_entry").getMessageType()).isEqualTo(DeleteEntryRequest.getDescriptor());
+        assertThat(mutation.findFieldByName("delete_rendition").getMessageType()).isEqualTo(DeleteRenditionRequest.getDescriptor());
+        assertThat(mutation.findFieldByName("prune_versions").getMessageType()).isEqualTo(PruneVersionsRequest.getDescriptor());
+    }
+
     @Test void requiresAnIdentifiedExclusiveCommandAndValidNestedRequest() throws Exception {
         var delete = ArchiveMutationRequest.newBuilder().setOperationId(UUID.randomUUID().toString())
                 .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(ADDRESS)).build();

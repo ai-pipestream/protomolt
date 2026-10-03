@@ -20,9 +20,6 @@ public interface ArchiveRepository {
     GetEntryManifestResponse getManifest(RepositoryCaller caller, GetEntryManifestRequest request);
     ListEntriesResponse listEntries(RepositoryCaller caller, ListEntriesRequest request);
     ListVersionsResponse listVersions(RepositoryCaller caller, ListVersionsRequest request);
-    DeleteEntryResponse deleteEntry(RepositoryCaller caller, DeleteEntryRequest request);
-    DeleteRenditionResponse deleteRendition(RepositoryCaller caller, DeleteRenditionRequest request);
-    PruneVersionsResponse pruneVersions(RepositoryCaller caller, PruneVersionsRequest request);
     ClassifyEntryResponse classifyEntry(RepositoryCaller caller, ClassifyEntryRequest request);
     BridgeEntryResponse bridgeEntry(RepositoryCaller caller, BridgeEntryRequest request);
 

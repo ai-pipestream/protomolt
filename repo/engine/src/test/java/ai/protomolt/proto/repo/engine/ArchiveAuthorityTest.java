@@ -17,9 +17,6 @@ class ArchiveAuthorityTest {
                 () -> operations.getManifest(caller, GetEntryManifestRequest.getDefaultInstance()),
                 () -> operations.listEntries(caller, ListEntriesRequest.getDefaultInstance()),
                 () -> operations.listVersions(caller, ListVersionsRequest.getDefaultInstance()),
-                () -> operations.deleteEntry(caller, DeleteEntryRequest.getDefaultInstance()),
-                () -> operations.deleteRendition(caller, DeleteRenditionRequest.getDefaultInstance()),
-                () -> operations.pruneVersions(caller, PruneVersionsRequest.getDefaultInstance()),
                 () -> operations.classifyEntry(caller, ClassifyEntryRequest.getDefaultInstance()),
                 () -> operations.bridgeEntry(caller, BridgeEntryRequest.getDefaultInstance()))) {
             assertThatThrownBy(operation::run).isInstanceOfSatisfying(RepositoryException.class,

@@ -392,10 +392,15 @@ The design of record is [docs/design/archive.md](../docs/design/archive.md).
   any retained version; stored bytes are digest-checked against the
   manifest, and a missing body fails `FAILED_PRECONDITION` by name.
 - `ListEntries` / `ListVersions` — paginated listings.
-- `DeleteEntry` — every version, every object (exact manifest keys).
-- `DeleteRendition` — bytes gone from every retained version, tombstones
-  (size, hash, named reason) kept as provenance.
-- `PruneVersions` — keep the newest N; only unshared objects delete.
+- `ArchiveMutation` on `ArchiveMutationService` — an operation UUID plus one
+  delete-entry, delete-rendition, or prune-versions command. The transaction removes
+  logical references and records exact cleanup targets. Rendition removal leaves
+  tombstones with size, hash, and reason. Pruning keeps the newest N versions.
+- `GetArchiveMutation` — inspect the durable receipt: logical counts, pending
+  objects, confirmed absence, and retry state. Retry the same command with the
+  same UUID; a different command under that UUID conflicts. These operations
+  require explicit authenticated authority and a qualified managed-storage host.
+  Legacy unbound content requires verified identity migration before deletion.
 - `GetArchiveStats` — exact ledger-maintained counters (entries, versions,
   retained/current bytes, per-rendition breakdown), adjusted in the same
   transaction as the mutations they describe, plus exact per-state

@@ -1,7 +1,7 @@
-package ai.protomolt.proto.repo.container.ledger;
+package ai.protomolt.proto.repo.container.archive;
 
 import ai.protomolt.proto.repo.archive.v1.*;
-import ai.protomolt.proto.repo.container.archive.*;
+import ai.protomolt.proto.repo.container.ledger.*;
 import com.google.protobuf.UnknownFieldSet;
 import java.time.Instant;
 import java.util.Set;

@@ -11,10 +11,6 @@ import ai.protomolt.proto.repo.archive.v1.ClassifyEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.ClassifyEntryResponse;
 import ai.protomolt.proto.repo.archive.v1.CreateArchiveRequest;
 import ai.protomolt.proto.repo.archive.v1.CreateArchiveResponse;
-import ai.protomolt.proto.repo.archive.v1.DeleteEntryRequest;
-import ai.protomolt.proto.repo.archive.v1.DeleteEntryResponse;
-import ai.protomolt.proto.repo.archive.v1.DeleteRenditionRequest;
-import ai.protomolt.proto.repo.archive.v1.DeleteRenditionResponse;
 import ai.protomolt.proto.repo.archive.v1.GetArchiveRequest;
 import ai.protomolt.proto.repo.archive.v1.GetArchiveResponse;
 import ai.protomolt.proto.repo.archive.v1.GetArchiveStatsRequest;
@@ -29,8 +25,6 @@ import ai.protomolt.proto.repo.archive.v1.ListEntriesRequest;
 import ai.protomolt.proto.repo.archive.v1.ListEntriesResponse;
 import ai.protomolt.proto.repo.archive.v1.ListVersionsRequest;
 import ai.protomolt.proto.repo.archive.v1.ListVersionsResponse;
-import ai.protomolt.proto.repo.archive.v1.PruneVersionsRequest;
-import ai.protomolt.proto.repo.archive.v1.PruneVersionsResponse;
 import ai.protomolt.proto.repo.archive.v1.PutEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.PutEntryResponse;
 import ai.protomolt.proto.repo.archive.v1.UploadRenditionHeader;
@@ -116,24 +110,6 @@ final class ArchiveGrpcService extends ArchiveServiceGrpc.ArchiveServiceImplBase
     public void listVersions(ListVersionsRequest request,
                              StreamObserver<ListVersionsResponse> observer) {
         GrpcErrors.run(observer, () -> operations.listVersions(caller(), request));
-    }
-
-    @Override
-    public void deleteEntry(DeleteEntryRequest request,
-                            StreamObserver<DeleteEntryResponse> observer) {
-        GrpcErrors.run(observer, () -> operations.deleteEntry(caller(), request));
-    }
-
-    @Override
-    public void deleteRendition(DeleteRenditionRequest request,
-                                StreamObserver<DeleteRenditionResponse> observer) {
-        GrpcErrors.run(observer, () -> operations.deleteRendition(caller(), request));
-    }
-
-    @Override
-    public void pruneVersions(PruneVersionsRequest request,
-                              StreamObserver<PruneVersionsResponse> observer) {
-        GrpcErrors.run(observer, () -> operations.pruneVersions(caller(), request));
     }
 
     @Override

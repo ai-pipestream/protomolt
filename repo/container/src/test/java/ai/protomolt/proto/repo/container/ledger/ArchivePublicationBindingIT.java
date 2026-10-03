@@ -66,11 +66,6 @@ class ArchivePublicationBindingIT {
             assertThat(objects.readable(entry.entryUuid, 1, upload.objectId())).isEmpty();
             assertThat(objects.readable(entry.entryUuid, 2, upload.objectId())).contains(readable);
             assertThat(referenceCount(tx, upload.objectId())).isEqualTo(1);
-            assertThatThrownBy(() -> ledger.commitDeleteEntry(entry.entryUuid, ArchiveLedger.StatsDelta.none()))
-                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("durable admission");
-            assertThatThrownBy(() -> ledger.commitPrune(entry.entryUuid, java.util.List.of(2L),
-                    entry.accountId, entry.archive, ArchiveLedger.StatsDelta.none()))
-                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("durable admission");
             assertThat(referenceCount(tx, upload.objectId())).isEqualTo(1);
             // Simulate administratively removed references; LIVE alone must never authorize resurrection.
             tx.inTransaction(em -> {

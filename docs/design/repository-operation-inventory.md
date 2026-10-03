@@ -258,41 +258,37 @@ composition, including workers and providers. A real Netty/PostgreSQL/S3 test
 admits an authenticated mutation, closes the host, and verifies cleanup after
 restart through in-process startup without a separate lifecycle call.
 
-Ownership enforcement, legacy identity migration and destructive RPC cutover
-remain unfinished. The three old destructive RPCs and their response types are
-scheduled for removal; their request messages remain the selected command
-payloads. Do not add a second optional-id mutation dialect or generated retry IDs.
-The existing unsafe legacy deletion regressions below are still relevant; the
-new path does not make those old handlers safe. No live deployment is claimed.
+Ownership enforcement and legacy identity migration remain unfinished. The three
+old destructive RPCs and response messages, Java SPI methods, object-first engine
+bodies, and public ledger helpers are removed. Request payloads retain their
+names, imports and tags for ArchiveMutationRequest. This is an intentional
+pre-release API break, authorized while there are no external users. No stored
+rows or objects are rewritten or deleted by this cutover. No deployment is claimed.
+The unwaived FILE compatibility comparison against `dd788630` reports exactly
+the three RPC and three response-message removals. `buf.yaml` temporarily waives
+only those deletion rule families for this intentional pre-release cutover;
+remove the waiver after it lands in the base branch. Descriptor tests preserve
+the command payload tags and assert the old endpoints and responses are absent.
 
-`ArchiveDeletionFailureIT` now reproduces swallowed delete failures over both the
-library and real in-process gRPC transport with PostgreSQL and S3. Both cases are
-intentionally red: injecting UNAVAILABLE into physical deletion still produces a
-successful response. Do not describe these paths as recovered or retry-safe yet.
+ArchiveDeletionFailureIT originally exposed swallowed provider failures and SQL
+rollback restoring rows whose bytes had already been deleted. Its replacement
+cases qualify the identified API through Java and authenticated gRPC using real
+PostgreSQL and S3: rollback preserves rows, pins and bytes with no receipt; the
+same operation can retry; cleanup failures remain RETRY_REQUIRED until confirmed
+reclamation. ArchiveServiceIT uses managed composition for all archive operations
+and checks logical targets separately from physical completion.
 
-Two additional cases inject a PostgreSQL serialization failure before entry
-deletion commits, using the real S3 adapter. Both library and gRPC calls fail,
-and SQL restores the entry/version rows, but the referenced object is missing.
-These cases are also intentionally red. A storage-error propagation fix alone
-cannot repair this rollback window.
+**Outstanding byte-mutation guard:** generic BlobRepository put, compareAndPut,
+and delete reserve raw managed keys, but existing archive keys do not carry that
+reserved segment. An administrator can therefore bypass archive pin/recovery
+rules through the generic byte API. Protect newly minted keys and already stored
+archive coordinates before claiming an exclusive managed byte lifecycle. Cover
+all three calls with real bound objects, including versioned storage. This issue
+predates the RPC removal and is not repaired by changing archive RPCs alone.
 
-The next implementation must cover DeleteEntry, DeleteRendition and PruneVersions:
-
-- Lock and compare sampled entry/version state before admitting deletion.
-- Persist exact original storage coordinates and a durable operation identity
-  before object I/O. Fence writes that could reintroduce affected references.
-- Make affected content unavailable through normal reads while physical cleanup
-  is pending, without falsely reporting that physical deletion completed.
-- Complete counters, tombstones and responses from confirmed state; preserve
-  retryable failures and handle a timeout after successful completion.
-- Exercise partial provider failure, SQL failure, concurrent saves, shared
-  retained objects, restart and retry through both invocation paths.
-
-Changing `deleteQuietly` alone cannot satisfy this boundary: object-first deletion
-can still damage retained manifests if a commit fails or a concurrent save wins.
-Post-save pruning and upload cleanup also call that helper and require durable
-orphan handling. Keep archive operations process-authorized until mutation and
-current-policy guards support scoped callers.
+Keep archive operations process-authorized until current-policy guards support
+scoped callers. Legacy write/staging cleanup remains separate follow-up work;
+removing destructive RPCs does not qualify those older write paths.
 
 V12 adds database-assigned revisions to entries and retained versions, including
 existing rows. Metadata merges and saves compare the sampled entry revision under
@@ -308,9 +304,8 @@ owners. Saves and metadata/classification merges therefore reject a snapshot
 sampled before a committed retained-set change. Regression tests reproduce all
 three previously accepted stale writes against PostgreSQL.
 
-This still does not make object-first deletion safe: bytes can disappear before
-the manifest transaction commits. Durable destructive admission must fence that
-interval and prevent later writes from reviving references selected for cleanup.
+Revision checks alone did not make object-first deletion safe. The identified
+mutation path now removes that ordering and fences later reference publication.
 Direct SQL that locks versions before entries can also deadlock with an engine
 save; PostgreSQL aborts a participant. Consistent application lock ordering and
 explicit retry/error coverage remain part of destructive admission.
@@ -353,8 +348,8 @@ provider version and ETag. Identical verification replay is accepted only while
 the lease remains live. SQL constraints/triggers also protect those identities.
 Tests cover rollback of both reservation and admission, stale/wrong attempts,
 length mismatch, verification replay and direct SQL mutation. Bare V14 bindings
-are not promoted to upload admissions. No archive engine path uses this ledger
-yet; transactional publication references and cleanup claims remain required.
+are not promoted to upload admissions. Managed archive writers use this ledger; publication references and cleanup
+claims are described below. Legacy writers remain unqualified.
 
 **Extended manifest contract:** `RenditionManifestEntry.storage_object_id` is an
 additive UUID string at tag 10. Existing field tags, imports, package and Any URL
@@ -387,28 +382,13 @@ lose its binding ID. Reference insertion failure rolls back the entry, version,
 references and upload transition together. This is archive byte publication,
 not typed payload admission or a universal content/JCR transaction boundary.
 
-The old destructive methods refuse bound content before provider I/O; use the
-identified mutation API. Legacy ledger deletion/pruning/rewriting rechecks authoritative
-references and bound manifests under the entry lock, covering a concurrent bound
-save after preflight. The historical deletion failure regressions now exercise
-the identified API: SQL rollback preserves the entry, retained version, binding
-and bytes without admitting a receipt; retrying the same operation can succeed
-after the fault clears. Provider failure after admission is recorded as
-RETRY_REQUIRED, with physical completion reported only after real reclamation.
-Both cases run through the Java interface and authenticated in-process gRPC.
-These tests qualify the replacement, not the still-present legacy API.
-Managed upload/read routing and original-profile recovery are wired by qualified
-host composition. Carry-forward helpers preserve the binding ID when sharing its key.
-
-The remaining removal boundary is the three old destructive RPCs and response
-messages, their `ArchiveRepository` methods, gRPC delegates, engine bodies, and
-`ArchiveLedger.commitDeleteEntry`, `commitPrune`, and `commitManifestRewrite`.
-Keep the request messages and field tags used by `ArchiveMutationRequest`.
-Migrate the remaining service and publication tests, README and archive design
-documentation in the same cutover. Existing unbound PRESENT content must fail
-closed until verified binding migration; removing an API does not migrate or
-delete persisted data. The replacement refusal is tested for all three commands
-through both library and gRPC paths.
+The old destructive methods and their SQL helpers have been removed. Use the
+identified mutation API. Managed upload/read routing and original-profile recovery
+are wired by qualified host composition. Carry-forward helpers preserve binding
+identity. The command payloads and their field tags remain unchanged. Existing
+unbound PRESENT content fails closed until verified binding migration; refusal
+for all three commands is tested through Java and gRPC without changing stored
+rows or bytes.
 
 - **Reused command payloads:** DeleteEntry has only address (tag 1);
   DeleteRendition has address/rendition/reason (tags 1–3); PruneVersions has

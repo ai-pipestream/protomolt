@@ -23,10 +23,6 @@ import ai.protomolt.proto.repo.archive.v1.ClassifyEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.ClassifyEntryResponse;
 import ai.protomolt.proto.repo.archive.v1.CreateArchiveRequest;
 import ai.protomolt.proto.repo.archive.v1.CreateArchiveResponse;
-import ai.protomolt.proto.repo.archive.v1.DeleteEntryRequest;
-import ai.protomolt.proto.repo.archive.v1.DeleteEntryResponse;
-import ai.protomolt.proto.repo.archive.v1.DeleteRenditionRequest;
-import ai.protomolt.proto.repo.archive.v1.DeleteRenditionResponse;
 import ai.protomolt.proto.repo.archive.v1.EntryAddress;
 import ai.protomolt.proto.repo.archive.v1.EntryInfo;
 import ai.protomolt.proto.repo.archive.v1.GetArchiveRequest;
@@ -43,8 +39,6 @@ import ai.protomolt.proto.repo.archive.v1.ListEntriesRequest;
 import ai.protomolt.proto.repo.archive.v1.ListEntriesResponse;
 import ai.protomolt.proto.repo.archive.v1.ListVersionsRequest;
 import ai.protomolt.proto.repo.archive.v1.ListVersionsResponse;
-import ai.protomolt.proto.repo.archive.v1.PruneVersionsRequest;
-import ai.protomolt.proto.repo.archive.v1.PruneVersionsResponse;
 import ai.protomolt.proto.repo.archive.v1.PutEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.PutEntryResponse;
 import ai.protomolt.proto.repo.archive.v1.RenditionContent;
@@ -756,162 +750,6 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             response.setNextContinuationToken(Long.toString(offset + limit));
         }
         return response.build();
-    }
-
-    // ------------------------------------------------------------------
-    // Deletion
-    // ------------------------------------------------------------------
-
-    @Override
-    public DeleteEntryResponse deleteEntry(ai.protomolt.proto.repo.spi.RepositoryCaller caller, DeleteEntryRequest request) {
-        RepositoryErrors.requireProcessAuthority(caller);
-        return RepositoryErrors.call(() -> deleteEntryImpl(request));
-    }
-
-    private DeleteEntryResponse deleteEntryImpl(DeleteEntryRequest request) {
-        EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
-        ArchiveRecord archive = archiveOrThrow(address.getAccountId(), address.getArchive());
-        DriveRecord drive = driveOrThrow(archive);
-        UUID entryUuid = ArchiveIds.entryUuid(address);
-        Optional<ArchiveEntryRecord> entry = ledger.findEntry(entryUuid);
-        if (entry.isEmpty()) {
-            return DeleteEntryResponse.newBuilder().setDeleted(false).build();
-        }
-        List<ArchiveVersionRecord> retained = ledger.allVersions(entryUuid);
-        requireLegacyDestructivePath(retained);
-        Map<String, RenditionManifestEntry> owned =
-                ArchiveManifests.referencedObjects(manifests(retained));
-        VersionManifest current = manifestOf(retained, entry.get().currentVersion);
-
-        // Legacy object-first ordering is unsafe if the following SQL commit
-        // fails: retained rows can then reference deleted bytes. The deletion
-        // failure regressions track replacement with durable admission.
-        deleteQuietly(drive, List.copyOf(owned.keySet()));
-        StatsDelta delta = delta(-1, -retained.size(), owned, Map.of(),
-                current == null ? 0
-                        : -ArchiveManifests.totalBytes(current.getRenditionsList()));
-        boolean deleted = ledger.commitDeleteEntry(entryUuid, delta);
-        return DeleteEntryResponse.newBuilder()
-                .setDeleted(deleted)
-                .setVersionsRemoved(deleted ? retained.size() : 0)
-                .setObjectsDeleted(deleted ? owned.size() : 0)
-                .build();
-    }
-
-    @Override
-    public DeleteRenditionResponse deleteRendition(ai.protomolt.proto.repo.spi.RepositoryCaller caller, DeleteRenditionRequest request) {
-        RepositoryErrors.requireProcessAuthority(caller);
-        return RepositoryErrors.call(() -> deleteRenditionImpl(request));
-    }
-
-    private DeleteRenditionResponse deleteRenditionImpl(DeleteRenditionRequest request) {
-        EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
-        String rendition = ArchiveRequests.renditionName(request.getRendition(), "rendition");
-        if (request.getReason().isBlank()) {
-            throw invalidArgument("reason is required: bytes never disappear without a stated why");
-        }
-        ArchiveRequests.bounded(request.getReason(), 200, "reason");
-        ArchiveRecord archive = archiveOrThrow(address.getAccountId(), address.getArchive());
-        DriveRecord drive = driveOrThrow(archive);
-        ArchiveEntryRecord entry = entryOrThrow(address);
-        List<ArchiveVersionRecord> retained = ledger.allVersions(entry.entryUuid);
-
-        Set<String> keys = new HashSet<>();
-        requireLegacyDestructivePath(retained);
-        Map<String, Long> objectSizes = new HashMap<>();
-        List<ArchiveVersionRecord> rewritten = new ArrayList<>();
-        long oldCurrentBytes = 0;
-        long newCurrentBytes = 0;
-        for (ArchiveVersionRecord row : retained) {
-            VersionManifest manifest = ArchiveManifests.fromJson(row.manifest);
-            boolean touched = false;
-            VersionManifest.Builder rebuilt = manifest.toBuilder().clearRenditions();
-            for (RenditionManifestEntry item : manifest.getRenditionsList()) {
-                if (item.getRendition().getName().equals(rendition)
-                        && item.getState() == RenditionState.RENDITION_STATE_PRESENT) {
-                    keys.add(item.getObjectKey());
-                    objectSizes.put(item.getObjectKey(), item.getSizeBytes());
-                    // The tombstone: bytes gone, size/hash/key retained as
-                    // provenance, the reason on the record.
-                    rebuilt.addRenditions(item.toBuilder()
-                            .setState(RenditionState.RENDITION_STATE_DELETED)
-                            .setDeletedReason(request.getReason()));
-                    touched = true;
-                } else {
-                    rebuilt.addRenditions(item);
-                }
-            }
-            if (touched) {
-                VersionManifest updated = rebuilt.build();
-                if (row.version == entry.currentVersion) {
-                    oldCurrentBytes = ArchiveManifests.totalBytes(manifest.getRenditionsList());
-                    newCurrentBytes = ArchiveManifests.totalBytes(updated.getRenditionsList());
-                }
-                row.manifest = ArchiveManifests.toJson(updated);
-                row.rootChecksum = ArchiveManifests.rootChecksum(updated.getRenditionsList());
-                row.totalBytes = ArchiveManifests.totalBytes(updated.getRenditionsList());
-                rewritten.add(row);
-            }
-        }
-        if (rewritten.isEmpty()) {
-            return DeleteRenditionResponse.newBuilder().build();
-        }
-
-        deleteQuietly(drive, List.copyOf(keys));
-        long bytesGone = objectSizes.values().stream().mapToLong(Long::longValue).sum();
-        StatsDelta delta = new StatsDelta(0, 0, -bytesGone,
-                newCurrentBytes - oldCurrentBytes,
-                Map.of(rendition, (long) -keys.size()),
-                Map.of(rendition, -bytesGone));
-        ledger.commitManifestRewrite(rewritten, address.getAccountId(), address.getArchive(),
-                delta);
-        return DeleteRenditionResponse.newBuilder()
-                .setObjectsDeleted(keys.size())
-                .setVersionsTombstoned(rewritten.size())
-                .build();
-    }
-
-    @Override
-    public PruneVersionsResponse pruneVersions(ai.protomolt.proto.repo.spi.RepositoryCaller caller, PruneVersionsRequest request) {
-        RepositoryErrors.requireProcessAuthority(caller);
-        return RepositoryErrors.call(() -> pruneVersionsImpl(request));
-    }
-
-    private PruneVersionsResponse pruneVersionsImpl(PruneVersionsRequest request) {
-        EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
-        if (request.getKeepLatest() < 1) {
-            throw invalidArgument(
-                    "keep_latest must be at least 1: pruning everything is DeleteEntry's job");
-        }
-        ArchiveRecord archive = archiveOrThrow(address.getAccountId(), address.getArchive());
-        DriveRecord drive = driveOrThrow(archive);
-        ArchiveEntryRecord entry = entryOrThrow(address);
-        List<ArchiveVersionRecord> retained = ledger.allVersions(entry.entryUuid);
-        if (retained.size() <= request.getKeepLatest()) {
-            return PruneVersionsResponse.newBuilder().build();
-        }
-        requireLegacyDestructivePath(retained);
-        int removeCount = retained.size() - request.getKeepLatest();
-        List<ArchiveVersionRecord> removed = retained.subList(0, removeCount);
-        List<ArchiveVersionRecord> kept = retained.subList(removeCount, retained.size());
-
-        // Entry-local sharing: only objects no kept manifest references may
-        // be deleted; everything else survives the prune untouched.
-        Map<String, RenditionManifestEntry> before =
-                ArchiveManifests.referencedObjects(manifests(retained));
-        Map<String, RenditionManifestEntry> after =
-                ArchiveManifests.referencedObjects(manifests(kept));
-        List<String> gone = ArchiveManifests.unreferencedKeys(before, after);
-
-        deleteQuietly(drive, gone);
-        StatsDelta delta = delta(0, -removeCount, before, after, 0);
-        ledger.commitPrune(entry.entryUuid,
-                removed.stream().map(r -> r.version).toList(),
-                address.getAccountId(), address.getArchive(), delta);
-        return PruneVersionsResponse.newBuilder()
-                .setVersionsRemoved(removeCount)
-                .setObjectsDeleted(gone.size())
-                .build();
     }
 
     @Override

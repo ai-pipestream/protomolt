@@ -5,9 +5,7 @@ import ai.protomolt.proto.repo.archive.v1.ArchiveServiceGrpc;
 import ai.protomolt.proto.repo.archive.v1.ArchiveStats;
 import ai.protomolt.proto.repo.archive.v1.CreateArchiveRequest;
 import ai.protomolt.proto.repo.archive.v1.DeleteEntryRequest;
-import ai.protomolt.proto.repo.archive.v1.DeleteEntryResponse;
 import ai.protomolt.proto.repo.archive.v1.DeleteRenditionRequest;
-import ai.protomolt.proto.repo.archive.v1.DeleteRenditionResponse;
 import ai.protomolt.proto.repo.archive.v1.EntryAddress;
 import ai.protomolt.proto.repo.archive.v1.GetArchiveStatsRequest;
 import ai.protomolt.proto.repo.archive.v1.GetEntryManifestRequest;
@@ -16,7 +14,6 @@ import ai.protomolt.proto.repo.archive.v1.GetEntryResponse;
 import ai.protomolt.proto.repo.archive.v1.ListEntriesRequest;
 import ai.protomolt.proto.repo.archive.v1.ListVersionsRequest;
 import ai.protomolt.proto.repo.archive.v1.PruneVersionsRequest;
-import ai.protomolt.proto.repo.archive.v1.PruneVersionsResponse;
 import ai.protomolt.proto.repo.archive.v1.PutEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.PutEntryResponse;
 import ai.protomolt.proto.repo.archive.v1.RenditionContent;
@@ -34,6 +31,9 @@ import ai.protomolt.proto.repo.v1.DriveType;
 import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import ai.protomolt.proto.repo.archive.v1.ArchiveMutationRequest;
+import ai.protomolt.proto.repo.archive.v1.ArchiveMutationReceipt;
+import ai.protomolt.proto.repo.archive.v1.ArchiveMutationServiceGrpc;
 import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
 import io.grpc.Status;
@@ -90,9 +90,11 @@ class ArchiveServiceIT {
     static ArchiveServiceGrpc.ArchiveServiceStub archivesAsync;
     static DriveServiceGrpc.DriveServiceBlockingStub drives;
     static UploadHttpServer http;
+    static io.grpc.Server server;
+    static ArchiveMutationServiceGrpc.ArchiveMutationServiceBlockingStub mutations;
 
     @BeforeAll
-    static void boot() {
+    static void boot() throws java.io.IOException {
         RepoServiceConfig config = new RepoServiceConfig(
                 0,
                 new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(),
@@ -103,19 +105,36 @@ class ArchiveServiceIT {
                 LOCALSTACK.getSecretKey(),
                 "it-archive",
                 0,
-                null, null, null, null, 0, 0L);
+                null, null, null, null, 0, 0L)
+                .withManagedStorage(new ManagedStoragePolicy("archive-it-original", "archive-it-realm", true));
         services = RepoServices.build(config);
-        services.startInProcess("archive-it");
+        var operator = ai.protomolt.proto.actions.Caller.operator();
+        var builder = io.grpc.inprocess.InProcessServerBuilder.forName("archive-it")
+                .intercept(new io.grpc.ServerInterceptor() {
+                    @Override public <Q, S> io.grpc.ServerCall.Listener<Q> interceptCall(io.grpc.ServerCall<Q, S> call,
+                            io.grpc.Metadata headers, io.grpc.ServerCallHandler<Q, S> next) {
+                        return io.grpc.Contexts.interceptCall(io.grpc.Context.current()
+                                .withValue(ai.protomolt.proto.authz.grpc.CallerContexts.CALLER, operator), call, headers, next);
+                    }
+                });
+        services.services().forEach(builder::addService);
+        server = builder.build().start();
         channel = InProcessChannelBuilder.forName("archive-it").build();
         archives = ArchiveServiceGrpc.newBlockingStub(channel);
+        mutations = ArchiveMutationServiceGrpc.newBlockingStub(channel);
         archivesAsync = ArchiveServiceGrpc.newStub(channel);
         drives = DriveServiceGrpc.newBlockingStub(channel);
         http = services.startHttp(0);
     }
 
+    private static ArchiveMutationReceipt mutate(ArchiveMutationRequest.Builder command) {
+        return mutations.archiveMutation(command.setOperationId(java.util.UUID.randomUUID().toString()).build()).getReceipt();
+    }
+
     @AfterAll
     static void tearDown() {
         channel.shutdownNow();
+        server.shutdownNow();
         services.close();
     }
 
@@ -324,9 +343,10 @@ class ArchiveServiceIT {
             var caller = new ai.protomolt.proto.repo.spi.RepositoryCaller("identity-test", true);
             var local = services.archiveRepository();
             var first = transport ? archives.putEntry(request) : local.putEntry(caller, request);
-            var deletion = DeleteEntryRequest.newBuilder().setAddress(address).build();
-            if (transport) archives.deleteEntry(deletion);
-            else local.deleteEntry(caller, deletion);
+            var deletion = ArchiveMutationRequest.newBuilder().setOperationId(java.util.UUID.randomUUID().toString())
+                    .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(address)).build();
+            if (transport) mutations.archiveMutation(deletion);
+            else services.archiveMutationRepository().mutateArchive(caller, deletion);
             var second = transport ? archives.putEntry(request) : local.putEntry(caller, request);
             assertThat(second.getRootChecksum()).isEqualTo(first.getRootChecksum());
             assertThat(entryOf(second.getManifest(), "original").getObjectKey())
@@ -342,13 +362,12 @@ class ArchiveServiceIT {
         byte[] body = "streamed rendition content, delivered in small chunks"
                 .getBytes(StandardCharsets.UTF_8);
 
-        // With the hash declared up front, bytes land directly on their final
-        // content-addressed key.
+        // Managed streams use an admitted unique key and verify the declared hash.
         UploadRenditionResponse declared = upload(address, "original", "text/plain",
                 body, sha256(body));
         assertThat(declared.getVersion()).isEqualTo(1);
         assertThat(declared.getSha256()).isEqualTo(sha256(body));
-        assertThat(declared.getObjectKey()).endsWith("/" + sha256(body));
+        assertThat(declared.getObjectKey()).isNotBlank();
         var duplicate = upload(address, "original", "text/plain", body, sha256(body));
         assertThat(duplicate.getVersion()).isEqualTo(declared.getVersion());
         assertThat(duplicate.getObjectKey()).isEqualTo(declared.getObjectKey());
@@ -356,7 +375,7 @@ class ArchiveServiceIT {
         assertThat(stagedDuplicate.getVersion()).isEqualTo(declared.getVersion());
         assertThat(stagedDuplicate.getObjectKey()).isEqualTo(declared.getObjectKey());
 
-        // Without one, the bytes stage and settle; the receipt is identical
+        // Without a declared hash, streaming computes it; the receipt is identical
         // in shape and the sibling rendition is re-referenced, not copied.
         byte[] parsed = "{\"parsed\":true}".getBytes(StandardCharsets.UTF_8);
         UploadRenditionResponse staged = upload(address, "parsed.json", "application/json",
@@ -369,6 +388,15 @@ class ArchiveServiceIT {
         assertThat(read.getRenditionsList()).hasSize(2);
         assertThat(entryOf(read.getManifest(), "original").getObjectKey())
                 .isEqualTo(declared.getObjectKey());
+        assertThat(entryOf(read.getManifest(), "original").getStorageObjectId()).isNotBlank();
+        assertThat(entryOf(read.getManifest(), "parsed.json").getStorageObjectId()).isNotBlank();
+        assertThat(read.getRenditionsList()).anySatisfy(item -> {
+            assertThat(item.getRendition().getName()).isEqualTo("original");
+            assertThat(item.getData().toByteArray()).isEqualTo(body);
+        }).anySatisfy(item -> {
+            assertThat(item.getRendition().getName()).isEqualTo("parsed.json");
+            assertThat(item.getData().toByteArray()).isEqualTo(parsed);
+        });
     }
 
     @Test
@@ -449,7 +477,7 @@ class ArchiveServiceIT {
     // ------------------------------------------------------------------
 
     @Test
-    void deletingARenditionRemovesBytesEverywhereAndLeavesTombstones() throws Exception {
+    void deletingARenditionAdmitsCleanupEverywhereAndLeavesTombstones() throws Exception {
         String account = "acct-rtbf";
         provision(account, VersioningPolicy.VERSIONING_POLICY_RETAINED, "sensitive");
         EntryAddress address = address(account, "sensitive", "subject-record");
@@ -463,16 +491,16 @@ class ArchiveServiceIT {
                 .addRenditions(rendition("summary", "text/plain", "a summary v2"))
                 .build());
 
-        DeleteRenditionResponse removed = archives.deleteRendition(
+        ArchiveMutationReceipt removed = mutate(ArchiveMutationRequest.newBuilder().setDeleteRendition(
                 DeleteRenditionRequest.newBuilder()
                         .setAddress(address)
                         .setRendition("summary")
                         .setReason("RTBF")
-                        .build());
-        assertThat(removed.getObjectsDeleted()).isEqualTo(2);
+                        .build()));
+        assertThat(removed.getObjectsTargeted()).isEqualTo(2);
         assertThat(removed.getVersionsTombstoned()).isEqualTo(2);
 
-        // Both manifests carry the tombstone: bytes gone, size and hash
+        // Both manifests carry the tombstone: hidden from reads, size and hash
         // retained as provenance, the reason on the record.
         for (long version : new long[] {1, 2}) {
             VersionManifest manifest = archives.getEntryManifest(
@@ -493,13 +521,13 @@ class ArchiveServiceIT {
         assertThat(read.getRenditions(0).getRendition().getName()).isEqualTo("original");
 
         // A rendition nothing holds is an idempotent no-op, not an error.
-        assertThat(archives.deleteRendition(DeleteRenditionRequest.newBuilder()
-                .setAddress(address).setRendition("summary").setReason("RTBF").build())
-                .getObjectsDeleted()).isZero();
+        assertThat(mutate(ArchiveMutationRequest.newBuilder().setDeleteRendition(DeleteRenditionRequest.newBuilder()
+                .setAddress(address).setRendition("summary").setReason("RTBF").build()))
+                .getObjectsTargeted()).isZero();
     }
 
     @Test
-    void pruningKeepsTheNewestVersionsAndOnlyDeletesUnsharedObjects() throws Exception {
+    void pruningKeepsTheNewestVersionsAndOnlyTargetsUnsharedObjects() throws Exception {
         String account = "acct-prune";
         provision(account, VersioningPolicy.VERSIONING_POLICY_RETAINED, "pruned");
         EntryAddress address = address(account, "pruned", "doc");
@@ -511,14 +539,14 @@ class ArchiveServiceIT {
                     .build());
         }
 
-        PruneVersionsResponse pruned = archives.pruneVersions(PruneVersionsRequest.newBuilder()
+        ArchiveMutationReceipt pruned = mutate(ArchiveMutationRequest.newBuilder().setPruneVersions(PruneVersionsRequest.newBuilder()
                 .setAddress(address)
                 .setKeepLatest(1)
-                .build());
+                .build()));
         assertThat(pruned.getVersionsRemoved()).isEqualTo(2);
         // 'stable body' is shared by the kept version and must survive; only
         // the two superseded notes objects go.
-        assertThat(pruned.getObjectsDeleted()).isEqualTo(2);
+        assertThat(pruned.getObjectsTargeted()).isEqualTo(2);
 
         GetEntryResponse read = archives.getEntry(GetEntryRequest.newBuilder()
                 .setAddress(address).build());
@@ -546,15 +574,15 @@ class ArchiveServiceIT {
                 .addRenditions(rendition("original", "text/plain", "body two"))
                 .build());
 
-        DeleteEntryResponse deleted = archives.deleteEntry(DeleteEntryRequest.newBuilder()
-                .setAddress(address).build());
-        assertThat(deleted.getDeleted()).isTrue();
+        ArchiveMutationReceipt deleted = mutate(ArchiveMutationRequest.newBuilder().setDeleteEntry(DeleteEntryRequest.newBuilder()
+                .setAddress(address).build()));
+        assertThat(deleted.getEntryDeleted()).isTrue();
         assertThat(deleted.getVersionsRemoved()).isEqualTo(2);
-        assertThat(deleted.getObjectsDeleted()).isEqualTo(2);
+        assertThat(deleted.getObjectsTargeted()).isEqualTo(2);
 
         // Idempotent: a second delete finds nothing and says so.
-        assertThat(archives.deleteEntry(DeleteEntryRequest.newBuilder()
-                .setAddress(address).build()).getDeleted()).isFalse();
+        assertThat(mutate(ArchiveMutationRequest.newBuilder().setDeleteEntry(DeleteEntryRequest.newBuilder()
+                .setAddress(address).build())).getEntryDeleted()).isFalse();
 
         ArchiveStats stats = archives.getArchiveStats(GetArchiveStatsRequest.newBuilder()
                 .setAccountId(account).setArchive("doomed").build()).getStats();
