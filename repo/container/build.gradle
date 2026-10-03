@@ -32,6 +32,11 @@ dependencies {
 }
 
 tasks.named('test') {
+    def documentBenchmark = providers.environmentVariable('PROTOMOLT_DOCUMENT_BENCHMARK').map { it == 'true' }.orElse(false)
+    inputs.property('documentBenchmark', documentBenchmark)
+    // Timing evidence must execute, never come from an up-to-date or cached test result.
+    outputs.upToDateWhen { !documentBenchmark.get() }
+    outputs.cacheIf { !documentBenchmark.get() }
     doFirst {
         systemProperty 'protomolt.test.runtimeClasspath', sourceSets.test.runtimeClasspath.asPath
     }

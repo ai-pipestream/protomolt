@@ -532,6 +532,30 @@ part counts and sizes on the same backend. The read-back and lease guarantees
 must survive any bounded-concurrency or batching change. No performance parity
 claim is supported by the correctness integration tests.
 
+The opt-in diagnostic can be run from the repository root with
+`PROTOMOLT_DOCUMENT_BENCHMARK=true ./gradlew :protomolt-repo-container:test --tests '*DocumentStagingBenchmarkIT'`.
+It bypasses Gradle's test cache and up-to-date results and writes raw samples to
+`repo/container/build/reports/document-staging-benchmark.csv`. It compares legacy
+upload-only work with managed staging, not equivalent end-to-end save semantics.
+Both paths validate actual stored bytes outside the timer; managed staging also
+performs its required read-back verification inside the timer. Payloads are
+synthetic protobuf fragments, not schema-admission fixtures. Provider timings are
+cumulative call durations and may exceed wall time when calls overlap.
+
+The [October 3 diagnostic samples](../evidence/repository/2026-10-03-document-staging.csv)
+were captured on host `krick`, with PostgreSQL 18 and LocalStack 3.8 containers,
+an unversioned namespace, and the implementation at `bd3e4bbf` plus the benchmark
+harness. Each size/count/path has 12 measured samples after two warmups; path
+order alternates. The host was not idle (roughly 25 percent CPU use), and p95
+with 12 samples is the largest sample, so these are investigation evidence only.
+Using nearest-rank percentiles, 32 parts of 262148 bytes each had managed p50 of 964 ms and legacy
+upload-only work was 51 ms. Mean cumulative managed GET time was 740 ms, compared
+with 120 ms for PUTs. Sequential read-back is therefore a concrete optimization
+target in this environment; this does not establish its production contribution
+or the speedup achievable through parallelism. Before enabling managed saves,
+compare sequential and bounded-parallel managed staging with identical checks,
+including cancellation, worker draining, memory bounds, lease loss and recovery.
+
 - Keep the active attempt reference in a separate publication table keyed by
   document node, with a unique attempt reference. `saveIfRevision` already flushes
   and refreshes the document before running its callback. Updating the document
