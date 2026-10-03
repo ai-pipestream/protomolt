@@ -1438,6 +1438,30 @@ The race tests independently prove removal of reader-reader serialization. The
 benchmark does not establish a production speedup; client statement/transaction
 counts remain seven/two per pinned read, and crash-pin recovery is still pending.
 
+V30 consolidates managed archive pin admission and release into one client SQL
+statement each, retaining two separate short transactions around provider I/O.
+The VOLATILE PL/pgSQL admission function executes separate lock and lookup commands
+under READ COMMITTED, resolves the exact original readable snapshot, inserts the
+pin and returns that snapshot. Missing or retired references return no row before
+any pin is inserted. Existing native/common triggers remain authoritative.
+Release checks the pin, reader incarnation and object identity, preserving retry
+after a committed release whose acknowledgement was lost. No SECURITY DEFINER
+privilege is added. These internal calls change no protobuf contracts or caller
+authorization. No transaction spans provider I/O.
+
+`ArchiveReadCallIT` verifies exact returned identity, rollback, invalid entry,
+version and object, wrong release ownership, idempotent release and an explicit
+two-client-statement/two-transaction budget. Database trigger and internal function
+statements are not counted as client round trips. This does not make admission
+free, remove SQL work or implement crash-pin recovery.
+
+The [V30 rerun](../evidence/repository/2026-10-03-archive-read-calls/README.md)
+confirms two client statements/two transactions in every pinned scenario. Latency
+was mixed, with several regressions versus the preceding run and variation in
+the unsafe baseline too. Reduced client statements are verified; a production
+latency improvement is not. Raw measurements and limitations are retained rather
+than using statement count as a substitute for performance qualification.
+
 `ArchiveReadLifetimeIT` uses real PostgreSQL and S3 plus a delayed provider-call
 decorator. Local and in-process gRPC cases prove logical deletion completes while
 the provider call remains active, cleanup skips it, and reclamation proceeds after

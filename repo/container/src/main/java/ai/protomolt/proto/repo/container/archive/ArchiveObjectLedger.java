@@ -57,11 +57,14 @@ public final class ArchiveObjectLedger {
                 """).setParameter("entry", entryUuid).setParameter("version", version)
                 .setParameter("id", objectId).getResultList();
         if (rows.isEmpty()) return Optional.empty();
-        var row = (Object[]) rows.getFirst();
+        return Optional.of(decodeReadable((Object[]) rows.getFirst()));
+    }
+
+    static Readable decodeReadable(Object[] row) {
         var binding = new Binding((UUID) row[0], new Location((UUID) row[1],
                 (String) row[2], (String) row[3], (String) row[4], (String) row[5], (String) row[6]),
                 (String) row[7]);
-        return Optional.of(new Readable(binding, ((Number) row[8]).longValue(), (String) row[9], (String) row[10]));
+        return new Readable(binding, ((Number) row[8]).longValue(), (String) row[9], (String) row[10]);
     }
 
     /**

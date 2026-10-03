@@ -26,22 +26,14 @@ public final class ArchiveReadLedger {
         Objects.requireNonNull(object);
         if (version <= 0) throw new IllegalArgumentException("A retained version is required");
         return tx.inTransaction(em -> {
-            // All lifecycle paths lock the source owner before common retention.
-            if (em.createNativeQuery("SELECT object_id FROM archive_object_uploads WHERE object_id=:id FOR SHARE")
-                    .setParameter("id", object).getResultList().isEmpty()) return Optional.empty();
-            boolean retiring = (Boolean) em.createNativeQuery(
-                    "SELECT retiring FROM repository_object_retention WHERE object_id=:id FOR SHARE")
-                    .setParameter("id", object).getSingleResult();
-            if (retiring) return Optional.empty();
-            var readable = ArchiveObjectLedger.readable(em, entry, version, object);
-            if (readable.isEmpty()) return Optional.empty();
             UUID id = UUID.randomUUID();
-            em.createNativeQuery("""
-                    INSERT INTO archive_read_pins(pin_id,reader_incarnation,object_id,entry_uuid,version)
-                    VALUES(:pin,:reader,:object,:entry,:version)
+            var rows = em.createNativeQuery("""
+                    SELECT * FROM acquire_archive_read_pin(:pin,:reader,:entry,:version,:object)
                     """).setParameter("pin", id).setParameter("reader", incarnation)
-                    .setParameter("object", object).setParameter("entry", entry).setParameter("version", version).executeUpdate();
-            return Optional.of(new Pin(id, readable.orElseThrow()));
+                    .setParameter("entry", entry).setParameter("version", version).setParameter("object", object).getResultList();
+            if (rows.isEmpty()) return Optional.empty();
+            if (rows.size() != 1) throw new IllegalStateException("Archive read admission returned multiple identities");
+            return Optional.of(new Pin(id, ArchiveObjectLedger.decodeReadable((Object[]) rows.getFirst())));
         });
     }
 
@@ -65,18 +57,10 @@ public final class ArchiveReadLedger {
         @Override public synchronized void close() {
             if (closed) return;
             tx.inTransaction(em -> {
-                // Lock order must precede DELETE's tuple lock as well as its trigger.
-                em.createNativeQuery("SELECT object_id FROM archive_object_uploads WHERE object_id=:id FOR SHARE")
-                        .setParameter("id", readable.binding().objectId()).getSingleResult();
-                em.createNativeQuery("SELECT object_id FROM repository_object_retention WHERE object_id=:id FOR SHARE")
-                        .setParameter("id", readable.binding().objectId()).getSingleResult();
-                int deleted = em.createNativeQuery("DELETE FROM archive_read_pins WHERE pin_id=:pin AND reader_incarnation=:reader")
-                        .setParameter("pin", id).setParameter("reader", incarnation).executeUpdate();
-                // An earlier close may have committed despite a lost acknowledgement.
-                // Absence is idempotent; another incarnation owning this ID is not.
-                if (deleted != 1 && !em.createNativeQuery("SELECT pin_id FROM archive_read_pins WHERE pin_id=:pin")
-                        .setParameter("pin", id).getResultList().isEmpty())
-                    throw new IllegalStateException("Archive read pin belongs to another incarnation");
+                boolean released = (Boolean) em.createNativeQuery("SELECT release_archive_read_pin(:pin,:reader,:object)")
+                        .setParameter("pin", id).setParameter("reader", incarnation)
+                        .setParameter("object", readable.binding().objectId()).getSingleResult();
+                if (!released) throw new IllegalStateException("Archive read release was not acknowledged");
             });
             closed = true;
         }
