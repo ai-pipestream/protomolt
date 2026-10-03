@@ -1404,6 +1404,16 @@ read adds one short acquisition transaction and one release transaction; these
 include native/common reference maintenance. Their latency and contention costs
 remain to be qualified under representative load; they are not a performance win.
 
+An opt-in real-adapter read diagnostic is recorded in
+[`2026-10-03-archive-read`](../evidence/repository/2026-10-03-archive-read/README.md).
+It preserves raw per-operation and batch measurements, including warmups, and
+compares pinned reads against a test-only unsafe unpinned baseline. This shared-host
+run records seven client SQL statements and two transactions per pinned read, with
+larger coordination cost for sixteen readers of one object. It motivates reviewing
+shared admission/release locks and reducing client round trips; it does not prove
+SQL lock-wait dominance or qualify production latency. Lifetime and recovery
+guarantees remain mandatory for any optimization.
+
 `ArchiveReadLifetimeIT` uses real PostgreSQL and S3 plus a delayed provider-call
 decorator. Local and in-process gRPC cases prove logical deletion completes while
 the provider call remains active, cleanup skips it, and reclamation proceeds after
