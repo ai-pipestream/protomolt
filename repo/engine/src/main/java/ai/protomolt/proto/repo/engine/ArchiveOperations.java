@@ -130,6 +130,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     private final BlobStore blobStore;
     private final BridgeEngine bridgeEngine;
     private final ArchiveObjectReader objectReader;
+    private final ArchiveObjectWriter objectWriter;
 
     public ArchiveOperations(ArchiveLedger ledger, DriveLedger drives, BlobStore blobStore) {
         this(ledger, drives, blobStore, BridgeEngine.standard());
@@ -142,11 +143,19 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
 
     public ArchiveOperations(ArchiveLedger ledger, DriveLedger drives, BlobStore blobStore,
                       BridgeEngine bridgeEngine, ArchiveObjectReader objectReader) {
+        this(ledger, drives, blobStore, bridgeEngine, objectReader, null);
+    }
+
+    public ArchiveOperations(ArchiveLedger ledger, DriveLedger drives, BlobStore blobStore,
+                      BridgeEngine bridgeEngine, ArchiveObjectReader objectReader, ArchiveObjectWriter objectWriter) {
+        if (objectWriter != null && objectReader == null)
+            throw new IllegalArgumentException("Managed archive writes require original-backend reads");
         this.ledger = ledger;
         this.drives = drives;
         this.blobStore = blobStore;
         this.bridgeEngine = bridgeEngine;
         this.objectReader = objectReader;
+        this.objectWriter = objectWriter;
     }
 
     // ------------------------------------------------------------------
@@ -319,6 +328,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             }
             List<ArchiveVersionRecord> retained = existing.isEmpty()
                     ? List.of() : ledger.allVersions(entryUuid);
+            if (objectWriter == null) requireLegacyDestructivePath(retained);
             VersionManifest current = base == 0 ? null : manifestOf(retained, base);
 
             // The new manifest: the current renditions carried by reference,
@@ -357,6 +367,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             // manifest references yet are physically written.
             Map<String, RenditionManifestEntry> before =
                     ArchiveManifests.referencedObjects(manifests(retained));
+            Map<UUID, UUID> uploadTokens = new HashMap<>();
             for (RenditionContent content : request.getRenditionsList()) {
                 RenditionDescriptor descriptor = content.getRendition();
                 RenditionManifestEntry written =
@@ -364,11 +375,19 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                 if (written.getState() == RenditionState.RENDITION_STATE_PRESENT
                         && !before.containsKey(written.getObjectKey())) {
                     byte[] data = content.getData().toByteArray();
-                    blobStore.put(new BlobStore.PutSpec(drive.bucket, written.getObjectKey(),
+                    if (objectWriter != null) {
+                        var staged = objectWriter.stage(entryUuid, address.getAccountId(), address.getArchive(),
+                                drive.bucket, written, contentTypeOf(descriptor), data);
+                        slots.put(new Slot(descriptor.getName(), descriptor.getSubKey()), staged.rendition());
+                        uploadTokens.put(staged.objectId(), staged.leaseToken());
+                    } else {
+                        blobStore.put(new BlobStore.PutSpec(drive.bucket, written.getObjectKey(),
                                     contentTypeOf(descriptor), null, written.getSha256()),
                             data);
+                    }
                 }
             }
+            ordered = new ArrayList<>(slots.values());
 
             long newVersion = base + 1;
             long dropVersion = !archive.retainsVersions() && base != 0 ? base : 0;
@@ -386,20 +405,22 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                     totalBytes - (current == null ? 0 : ArchiveManifests.totalBytes(
                             current.getRenditionsList())));
             try {
-                ledger.commitSave(entry, base, versionRow, dropVersion, delta);
+                ledger.commitSave(entry, base, versionRow, dropVersion, delta, uploadTokens);
             } catch (ArchiveLedger.VersionConflictException e) {
                 if (attempt >= CONFLICT_RETRIES) {
                     throw aborted(e.getMessage());
                 }
                 continue;
             } catch (PersistenceException e) {
+                if (objectWriter != null) throw e;
                 if (attempt >= CONFLICT_RETRIES) {
                     throw aborted("entry '" + address.getEntryId()
                             + "' is being written concurrently");
                 }
                 continue;
             }
-            deleteQuietly(drive, ArchiveManifests.unreferencedKeys(before, after));
+            if (objectWriter == null)
+                deleteQuietly(drive, ArchiveManifests.unreferencedKeys(before, after));
             return putResponse(entryUuid, newVersion, root, totalBytes, false, manifest);
         }
     }
@@ -430,6 +451,8 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                               FormatFact rawDeclaredFormat, ObjectStoreOrigin rawOrigin,
                               InputStream body)
             throws IOException {
+        if (objectWriter != null)
+            throw failedPrecondition("Managed archive streaming admission is not configured");
         EntryAddress address = ArchiveRequests.address(true, rawAddress);
         RenditionDescriptor descriptor = ArchiveRequests.rendition(true, rawDescriptor);
         if (declaredSize <= 0) {
@@ -446,6 +469,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
         DriveRecord drive = driveOrThrow(archive);
         UUID entryUuid = ArchiveIds.entryUuid(address);
 
+        requireLegacyDestructivePath(ledger.allVersions(entryUuid));
         // Phase 1 — land the bytes, digest computed while streaming. With a
         // declared hash a fresh final key can be allocated immediately and
         // the store's checksum trailer enforces it; without one the bytes
@@ -500,6 +524,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                     ? List.of() : ledger.allVersions(entryUuid);
             VersionManifest current = base == 0 ? null : manifestOf(retained, base);
 
+            requireLegacyDestructivePath(retained);
             TreeMap<Slot, RenditionManifestEntry> slots = slotsOf(current);
             Instant now = Instant.now();
             RenditionManifestEntry.Builder written = RenditionManifestEntry.newBuilder()
@@ -928,10 +953,13 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     }
 
     private BridgeEntryResponse bridgeEntryImpl(BridgeEntryRequest request) {
+        if (objectWriter != null)
+            throw failedPrecondition("Managed archive bridge admission is not configured");
         EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
         ArchiveRecord archive = archiveOrThrow(address.getAccountId(), address.getArchive());
         ArchiveEntryRecord entry = entryOrThrow(address);
 
+        requireLegacyDestructivePath(ledger.allVersions(entry.entryUuid));
         Classification classification = ArchiveClassifications.fromJson(entry.classification);
         ClassificationState state = classification == null
                 ? ClassificationState.CLASSIFICATION_STATE_UNCLASSIFIED
@@ -1054,6 +1082,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             ArchiveEntryRecord entry = entryOrThrow(address);
             long base = entry.currentVersion;
             List<ArchiveVersionRecord> retained = ledger.allVersions(entryUuid);
+            requireLegacyDestructivePath(retained);
             VersionManifest current = manifestOf(retained, base);
 
             TreeMap<Slot, RenditionManifestEntry> slots = slotsOf(current);

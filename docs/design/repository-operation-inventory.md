@@ -368,6 +368,20 @@ historical snapshots or hydration behavior; those require new red/green tests.
 
 ### Bound archive reads (internal composition)
 
+Unary PutEntry has an internal managed composition using ArchiveObjectWriter.
+Fresh candidates receive a durable reservation before checksummed provider I/O;
+successful writes record byte identity and provider revision. The owning version
+publishes object references and lease tokens in the same SQL transaction. Identical
+content reuses its retained binding without another upload. Known revision
+conflicts may retry with fresh reservations; arbitrary persistence failures and
+lost provider acknowledgements propagate, leaving recorded candidates for recovery.
+Managed mode does not physically delete superseded objects after publication.
+Streaming and bridge writes reject managed mode until they have admission; legacy
+writers reject existing bound versions. Current coverage uses real PostgreSQL/S3
+and local/in-process gRPC, plus provider acknowledgement and SQL failure injection.
+Production remains disabled pending cleanup/recovery and complete write-path
+integration. This verifies byte admission, not schema validity or semantic review.
+
 Backend identity persistence is extended without protobuf changes. V17 preserves
 existing generations, realms, profile values and foreign keys; legacy S3 rows
 decode to the same canonical s3/v1 identity as new provider-produced descriptors.
