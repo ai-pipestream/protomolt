@@ -95,8 +95,13 @@ extension even where the message shape remains unchanged.
   lifecycle port on an opened byte store. S3 advertises PHYSICAL_RECLAMATION and
   removes exact-key versions and delete markers in bounded passes, then checks
   absence. Ordinary raw delete APIs do not acquire this authority. Other providers
-  report unsupported; cache composition and the managed recovery worker remain
-  pending. A successful pass does not rule out a later completion of an old PUT.
+  report unsupported; cache and production composition remain pending. A successful
+  pass does not rule out a later completion of an old PUT.
+- **New, library recovery implementation under test:** `RawObjectRecovery` claims
+  eligible ledger records, resolves their original backend profiles and performs
+  reclamation outside SQL. Failures remain durable and propagate; stale cleanup
+  tokens cannot complete a newer claim. Tombstones remain available for subsequent
+  late-writer reconciliation. The production scheduling loop is not yet connected.
 - **New:** library repository interface and remote implementation, reusing the
   existing request/response vocabulary rather than creating a second wire model.
 - **New:** provider factory discovery and explicit capability selection.
