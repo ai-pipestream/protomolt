@@ -326,11 +326,32 @@ class DocumentPartStagerIT {
     @Test void byteLimitRefusesAdmissionBeforeCopyingOrWriting() {
         var input = input();
         long bytes = input.payloads().stream().mapToLong(p -> p.bytes().length).sum();
-        try (var stager = serialStager(tx, GENERATION, identity, opened, bytes - 1)) {
+        // Input copies alone fit, but verification results must fit as well.
+        try (var stager = serialStager(tx, GENERATION, identity, opened, 2 * bytes - 1)) {
             assertThatThrownBy(() -> stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(5), Map.of()))
                     .isInstanceOf(IllegalStateException.class).hasMessageContaining("byte capacity exhausted");
         }
         assertThat(new DocumentPartAttemptLedger(tx).find(input.plan().attemptId())).isEmpty();
+    }
+
+    @Test void exactCombinedBudgetIsReusableAfterSuccessAndFailure() {
+        var input = input();
+        long bytes = input.payloads().stream().mapToLong(p -> p.bytes().length).sum();
+        var fail = new java.util.concurrent.atomic.AtomicBoolean(true);
+        var store = intercept((method, args, result) -> {
+            if (method.equals("getBounded") && fail.getAndSet(false))
+                throw new IllegalStateException("injected verification failure");
+            return result;
+        });
+        try (var stager = serialStager(tx, GENERATION, identity, borrowed(store), 2 * bytes)) {
+            assertThatThrownBy(() -> stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(5), Map.of()))
+                    .isInstanceOf(DocumentPartStager.StageFailure.class);
+            for (int i = 0; i < 2; i++) {
+                var next = input();
+                assertThat(stager.stage(next.plan(), next.payloads(), Duration.ofSeconds(5), Map.of())
+                        .attempt().state()).isEqualTo("VERIFIED");
+            }
+        }
     }
 
     @Test void recoveryReclaimsExactVersionsAndRechecksLateWrites() {
@@ -574,7 +595,7 @@ class DocumentPartStagerIT {
             return result;
         });
         long bytes = input.payloads().stream().mapToLong(p -> p.bytes().length).sum();
-        try (var stager = serialStager(tx, GENERATION, identity, borrowed(store), bytes);
+        try (var stager = serialStager(tx, GENERATION, identity, borrowed(store), 2 * bytes);
                 var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
             var pending = executor.submit(() -> stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(5), Map.of()));
             try {

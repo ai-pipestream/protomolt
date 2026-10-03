@@ -556,6 +556,12 @@ was derived from the declared source; the shared engine owns that preparation.
 The selected-byte limit is per call;
 it does not account for returned buffers retained by callers. The composition
 must bound total source bytes held across concurrent read-to-stage operations.
+The stager's existing shared active-payload budget now reserves twice the total
+input length before cloning or admitting an attempt: one allowance for private
+input copies and one for bounded verification results. It reserves all parts
+conservatively even when only a subset runs concurrently, and releases only after
+started workers drain. This budget excludes caller-owned inputs, SDK internal
+buffers and object overhead; it does not measure live JVM heap or force collection.
 Hard aggregate memory guarantees require composition accounting in addition to
 the individual provider response limits.
 The byte SPI now has an explicit `getBounded` operation, implemented by the direct
@@ -575,6 +581,29 @@ treated as capabilities of the cache decorator itself.
 The managed-publication reader continues using retained backend and per-part
 provider identities. Both paths preserve fragment order and copy provider
 buffers before measuring or returning bytes, without decoding and reserializing.
+
+### Shared payload ownership: next integration requirement
+
+The reader currently returns raw fragment lists, which have no release point.
+Replace that managed API with an ordered, closeable fragment batch and inject a
+single host-owned payload budget into both reader and stager. The composing engine
+must keep the batch open through staging; typed reads close it after assembly.
+Budget acquisition is nonblocking and overflow-safe, before GET or copying.
+Reader reservations cover both the bounded provider result and detached copy
+while they coexist; the batch retains the detached-copy reservation. Staging
+reserves its input copy and verification output against the same shared budget.
+Source and staging reservations overlap deliberately; saturation fails explicitly
+rather than waiting while holding another reservation.
+
+Cancellation closes ownership of completed results but must not release leases
+held by running provider calls. Late worker results release their leases on actual
+exit; cancelling a Future does not prove that exit. The reader also needs a close
+and drain barrier before the host releases its borrowed backend. Tests must cover
+concurrent saturation before I/O, partial fan-out failure, uncooperative reads,
+batch ownership through staging, repeated close, and release after success/error.
+Arrays retained by a caller after closing its batch and SDK-internal buffering are
+outside the guarantee. This shared batch/budget API is designed, not implemented;
+the per-stager budget above is not yet a host-wide memory bound.
 
 Performance qualification remains required before switching application writes.
 The first stager performed each part's PUT, exact read-back and SQL verification

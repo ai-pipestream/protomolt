@@ -53,7 +53,10 @@ final class DocumentPartStager implements AutoCloseable {
         this(tx, generation, identity, opened, 256L * 1024 * 1024);
     }
 
-    /** The byte budget covers private payload copies across all concurrent stages. */
+    /**
+     * Shared active-payload budget: private input copies plus one bounded verification
+     * result per part. Caller-owned inputs, SDK buffering and object overhead are separate.
+     */
     DocumentPartStager(Tx tx, String generation, BackendIdentity identity, OpenedBlobStore opened, long maxBufferedBytes) {
         this(tx, generation, identity, opened, maxBufferedBytes, 4);
     }
@@ -96,6 +99,10 @@ final class DocumentPartStager implements AutoCloseable {
             var stable = List.copyOf(payloads);
             long size = 0;
             for (var part : stable) size = Math.addExact(size, part.bytes().length);
+            // Reserve verification bytes before admission/PUT, so saturation cannot strand
+            // an admitted attempt waiting for another allocation. Conservatively reserve
+            // all parts even when only a subset can be read concurrently.
+            size = Math.multiplyExact(size, 2);
             while (true) {
                 long current = bufferedBytes.get();
                 if (size > maxBufferedBytes - current) throw new IllegalStateException("Staging byte capacity exhausted");
