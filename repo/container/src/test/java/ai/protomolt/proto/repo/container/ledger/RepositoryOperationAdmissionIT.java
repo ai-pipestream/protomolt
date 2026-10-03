@@ -1,6 +1,8 @@
 package ai.protomolt.proto.repo.container.ledger;
 
 import com.google.protobuf.ByteString;
+import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
+import ai.protomolt.proto.repo.v1.*;
 import java.sql.Connection;
 import java.time.Duration;
 import java.util.UUID;
@@ -15,7 +17,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import static org.assertj.core.api.Assertions.*;
 
-/** Opaque fixture bytes test storage identity, not semantic validation or authorization. */
+/** Admission identity fixtures; neither typed nor opaque fixtures establish authorization. */
 @Testcontainers
 class RepositoryOperationAdmissionIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
@@ -29,6 +31,51 @@ class RepositoryOperationAdmissionIT {
         tx = new Tx(database.entityManagerFactory()); ledger = new RepositoryOperationLedger(tx);
     }
     @AfterAll static void close() { if (database != null) database.close(); }
+
+    @Test void typedAdmissionBindsCanonicalIntentToScopeAndSurvivesReplay() {
+        var key = key();
+        var intent = typedIntent(key);
+        var command = new DocumentPublicationCommand(intent);
+        var nonce = UUID.randomUUID();
+        var admitted = ledger.admit(key, command, nonce, LEASE);
+        assertThat(admitted.snapshot().command().codec()).isEqualTo(DocumentPublicationCommand.CODEC);
+        assertThat(admitted.snapshot().command().version()).isEqualTo(1);
+        assertThat(admitted.snapshot().command().bytes()).isEqualTo(command.canonical());
+        var reconnected = new RepositoryOperationLedger(new Tx(database.entityManagerFactory()));
+        assertThat(reconnected.admit(key, new DocumentPublicationCommand(intent), nonce, LEASE)).isEqualTo(admitted);
+        var changed = new DocumentPublicationCommand(intent.toBuilder().setMembers(0, intent.getMembers(0).toBuilder()
+                .setCrawlId("different-semantic-intent")).build());
+        assertThatThrownBy(() -> reconnected.admit(key, changed, nonce, LEASE))
+                .isInstanceOf(RepositoryOperationLedger.CommandConflictException.class);
+    }
+
+    @Test void typedAdmissionRejectsScopeMismatchWithoutCreatingRow() {
+        var key = key();
+        var command = new DocumentPublicationCommand(typedIntent(key));
+        var otherAccount = new RepositoryOperationLedger.Key("other", key.principal(), key.operationId());
+        var otherOperation = new RepositoryOperationLedger.Key(key.account(), key.principal(), UUID.randomUUID());
+        for (var wrong : new RepositoryOperationLedger.Key[]{otherAccount, otherOperation}) {
+            assertThatThrownBy(() -> ledger.admit(wrong, command, UUID.randomUUID(), LEASE))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("scope");
+            assertThat(ledger.find(wrong)).isEmpty();
+        }
+    }
+
+    private static DocumentPublicationIntent typedIntent(RepositoryOperationLedger.Key key) {
+        return DocumentPublicationIntent.newBuilder().setEncodingVersion(1).setAccountId(key.account())
+                .setOperationId(key.operationId().toString()).addMembers(DocumentPublicationMember.newBuilder()
+                        .setMemberId("member").setDriveId(UUID.randomUUID().toString())
+                        .setRowKind(DocumentPublicationRowKind.DOCUMENT_PUBLICATION_ROW_KIND_PIPELINE)
+                        .setDestination(DocumentRevisionCondition.newBuilder().setIfAbsent(true).setAddress(
+                                NodeAddress.newBuilder().setAccountId(key.account()).setDocId("doc")
+                                        .setGraphId("graph").setGraphAddressId("node")))
+                        .setOwnership(OwnershipContext.newBuilder().setAccountId(key.account()).setDatasourceId("source")
+                                .setSecurity(DocumentSecurity.getDefaultInstance()))
+                        .addParts(DocumentPublicationPart.newBuilder().setSlot(DocumentPublicationSlot.newBuilder()
+                                        .setPart(DocumentPart.DOCUMENT_PART_CORE))
+                                .setUpload(PublicationUpload.newBuilder().setSha256("a".repeat(64))
+                                        .setContentType("application/protobuf")))).build();
+    }
 
     @Test void exactReplaySurvivesNewLedgerWithoutRenewalOrExposingAnotherOwner() {
         var key = key(); var command = command("one"); var nonce = UUID.randomUUID();

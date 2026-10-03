@@ -425,7 +425,7 @@ and the executable replay API remain unimplemented.
 under `(account, trusted principal, operation UUID)`, observes it, renews its owner,
 and performs generation-fenced takeover after expiry. It has no production caller,
 public SPI method, RPC or terminal-outcome operation. Its package-private encoded
-byte input is storage plumbing for a future typed codec, not an executable command
+byte input is storage plumbing, not an executable command
 API. Existing document/archive operations and protobuf names/tags remain unchanged.
 
 V34 separates immutable `repository_operations` command rows from narrow mutable
@@ -438,8 +438,8 @@ at one day. Generation overflow fails rather than wrapping.
 
 Admission compares codec, version, exact immutable bytes and their SHA-256 after
 the conflict insert, using a separate locked read under READ COMMITTED. The stored
-digest verifies encoded bytes; it is not yet a complete semantic-command digest.
-The future reviewed encoder must include its version and all semantic fields.
+digest verifies encoded bytes. The typed document codec below includes its version
+and semantic fields; opaque storage fixtures establish no semantic proof.
 Exact retry does not renew a lease or steal another worker's token. The coordinator
 retains its nonce across uncertain admission/takeover acknowledgement; matching
 live ownership can be recovered without extending the lease. Lookup omits tokens,
@@ -1262,3 +1262,119 @@ arguments. Remote namespace provisioning remains unfinished. Direct self-routing
 at listener startup for in-process names and local TCP addresses on the bound
 port. Proxy and multi-node cycle detection is not implemented. This work does
 not establish complete remote repository parity.
+
+### Typed document publication intent and admission
+
+**New standalone contract:** `repo/v1/document_publication.proto` and the
+`repo/spi` value `DocumentPublicationCommand`. **Extended internal operation:**
+`RepositoryOperationLedger.admit` accepts that value, checks account/operation
+binding, and stores its codec/version/canonical bytes through V34 admission.
+**Unchanged:** all existing RPCs, document/archive requests, responses, protobuf
+names, tags, imports and Any URLs. No publication RPC, executor or terminal
+outcome is introduced. Admission still does not authorize provider I/O: durable
+upload scope must be integrated first.
+
+The intent describes 1–64 complete document revisions. It reuses `NodeAddress`,
+`OwnershipContext`, `DocumentSecurity`, `DocumentPart` and `WriteProvenance`.
+New fields name stable drive UUIDs, explicit row kind, crawl/cluster association
+and source-blob lifecycle policy. `ownership.connector_id` is the sole connector
+value; there is no competing legacy override. Filename derives from admitted
+CORE content; current timestamps, root checksum, storage coordinates and provider
+observations remain execution evidence. Creation/reprocess history is retained
+server state, not a caller-authored replacement. Generic metadata is caller data;
+it must never be interpreted as an undocumented override of typed fields.
+
+New bytes specify size, lowercase SHA-256, representation type and optional
+provenance. Explicit EMPTY is distinct from a zero-byte stored object and pending
+hydration. Retained reuse specifies the original physical object UUID, backend
+generation, realm, namespace, key, optional provider object version, size, digest
+and content type, plus source address/revision/slot. Source and destination slot
+must match; this operation does not rename chunk sets or cast one part into another.
+Retained provenance and timestamps carry forward. A source that is also a batch
+destination binds its pre-change revision. This shape supports future reuse; the
+current attempt-owned publication adapter still cannot execute it.
+
+The exact schema condition copies the type/descriptor-closure identity semantics
+of mesh `SchemaReference` without importing its workflow/artifact dependencies.
+Its closure is the defining file and transitive imports, sorted by file name and
+serialized deterministically. Existing mesh identity stays unchanged. This is a
+condition, not a registry locator or evidence of descriptor retention/validation.
+Requested schema omission never disables a repository's required admission policy.
+
+**Validation boundary.** The real runtime validator checks required messages,
+version, UUID shape, explicit alternatives, positive revisions, digest/MIME shape,
+metadata/count bounds, row-kind/lifecycle rules, CORE selection, chunk keys and
+account equality. Fixtures use both generated and dynamic messages. The immutable
+Java command additionally rejects unknown fields/enums recursively, NUL and
+malformed UTF-16, duplicate members/destinations/slots, malformed legacy ACL/source
+principals, conflicting source conditions and arithmetic overflow. Unknown fields
+are not assumed rejected by ordinary protobuf parsing or the annotation validator.
+All invocation paths must construct this value before durable typed admission.
+
+A command is at most 1 MiB including its operation UUID, with at most 10,000 total
+slots and 10,000 source checks across members (each reuse counts as one source
+check). These ceilings apply together. Hash-based duplicate/condition checks are
+linear in input count; only at most 64 members are sorted. No per-part SQL/provider
+call occurs during construction. Declared content bytes are overflow-checked, not
+capped at 1 MiB: transport, per-object size, active byte budget, provider capability
+and deadline limits remain coordinator obligations. This is not a qualified
+bounded upload plan or a measured latency guarantee.
+
+**Canonical version 1.** Normalize operation UUID spelling and sort members by
+stable ASCII member ID in the immutable executable intent. Exclude operation UUID
+from canonical bytes; retain encoding version and every other field. Serialize
+protobuf deterministically, including map keys. Preserve part order, explicit
+source order, ACL order and optional presence. Do not trim coordinates, collapse
+empty/absent optionals, reorder chunks, or substitute generated staging identities.
+Noncanonical drive/object UUID spellings are rejected. Pin wire bytes and SHA-256
+with the independently assembled `document-publication-v1.hex` fixture. Future
+encoders must preserve v1, not silently reinterpret already admitted commands.
+
+**Stateful checks and remaining implementation backlog:**
+
+- Bind durable allowed upload scope and each member/slot/attempt generation to
+  this command before provider I/O. Verify bytes and exact target configuration;
+  reject stale owners and contradictory evidence. Test takeover and late evidence.
+- Decode assembled content and enforce address, ownership, layout and exact schema
+  conditions before semantic review/publication. Retain descriptor closure and
+  admission evidence; test wrong Any type, missing imports, unsupported validation
+  rules, descriptor drift and registry outage.
+- Fence current authorization, requested ACL changes, source access and policy
+  races for library and transport. Constructing ownership or a physical identity
+  grants no permission. Test revoked historical/replay access and cross-account
+  attempts; reject forbidden requested changes rather than silently rewriting them.
+- Integrate retained physical references into native/common retention and the
+  document batch. Test source/destination overlap, original provider versions,
+  zero-copy updates, pruning races and original provenance retention.
+- Commit domain rows, refs, outbox and immutable logical outcome together under
+  the operation owner fence. Add reviewed successful-response/error contracts,
+  lookup, cancellation and replay fixtures; no publication response exists yet.
+- Qualify configured payload/concurrency limits and latency distributions against
+  representative providers; retain the existing conditional payload bound.
+
+**JSON Schema/OpenAPI:** generated schema records ordinary field/count rules and
+CEL as `x-protomolt-cel`. CEL extensions are documentation, not executable JSON
+Schema constraints. Cross-message uniqueness, aggregate limits, unknown-field
+policy, canonical encoding, current authorization and byte/schema verification
+require runtime/handler enforcement. Existing optional/oneof/numeric/format
+translation gaps remain tracked generator work; no generator parity is claimed
+or changed here. No service descriptor means no new OpenAPI operation.
+
+**JCR assessment:** this intent is a document-domain composition of the bounded
+multi-object foundation, not its universal transaction model. Stable JCR node
+identity across moves, session changes, workspace semantics, references and
+restoration remain in the optional content extension described in
+[the compatibility assessment](repository-jcr-compatibility.md). No JCR types or
+mesh/workflow runtime dependency enter the base SPI.
+
+Local validation on 2026-10-03: all repo/proto and repo/spi tests plus
+`RepositoryOperationAdmissionIT` passed: 28 + 17 + 30 cases, zero failures,
+errors or skips. The admission cases use real PostgreSQL 18 in Testcontainers.
+The initial combined run completed in 17 seconds; a final rerun after narrowing
+the schema-projection assertions completed in 3 seconds with unchanged tasks
+up-to-date. Full `bufLint`, complete-descriptor compatibility against `15e25698`,
+and the repo/spi runtime dependency gate pass. Sol reviewed the contract, codec,
+typed admission and remaining obligations without a blocking finding. These are
+local contract/admission results, not provider performance qualification or proof
+that the full repository goal is complete. No push, hosted CI, merge or deployment
+is part of this checkpoint.

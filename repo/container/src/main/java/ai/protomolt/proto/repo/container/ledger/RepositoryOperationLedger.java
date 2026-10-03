@@ -1,5 +1,6 @@
 package ai.protomolt.proto.repo.container.ledger;
 
+import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
 import com.google.protobuf.ByteString;
 import jakarta.persistence.EntityManager;
 import java.security.MessageDigest;
@@ -13,7 +14,7 @@ import java.util.UUID;
 
 /**
  * Internal durable command identity and owner fencing. This is not an executable
- * repository API: typed encoding, upload scope, policy authorization, publication
+ * repository API: upload scope, policy authorization, publication
  * and terminal outcomes must be integrated before a public port can use it.
  * No transaction here spans provider I/O. The trusted coordinator supplies scope.
  */
@@ -30,7 +31,7 @@ final class RepositoryOperationLedger {
         }
     }
 
-    /** Storage input from a future reviewed typed codec, never a public command. */
+    /** Internal storage input from a typed codec, never a public command. */
     record EncodedCommand(String codec, int version, ByteString bytes) {
         EncodedCommand {
             if (codec == null || !codec.matches("[a-z][a-z0-9_.-]{0,127}") || version < 1)
@@ -64,6 +65,15 @@ final class RepositoryOperationLedger {
 
     static final class OwnerFencedException extends RuntimeException {
         OwnerFencedException() { super("Repository operation owner is absent, expired or replaced"); }
+    }
+
+    /** Typed document admission; scope binding is checked before opening a transaction. */
+    Admission admit(Key key, DocumentPublicationCommand command, UUID ownerNonce, Duration lease) {
+        Objects.requireNonNull(key); Objects.requireNonNull(command);
+        if (!key.account.equals(command.intent().getAccountId()) || !key.operationId.equals(command.operationId()))
+            throw new IllegalArgumentException("Publication command differs from operation scope");
+        return admit(key, new EncodedCommand(DocumentPublicationCommand.CODEC,
+                DocumentPublicationCommand.ENCODING_VERSION, command.canonical()), ownerNonce, lease);
     }
 
     /**

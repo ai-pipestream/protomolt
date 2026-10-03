@@ -2131,3 +2131,21 @@ tests, dependency exclusions, compatibility checks and an archival restore proof
 Local tests, hosted CI, merge, publication and deployment are separate outcomes.
 Azure, new search integrations, archive Kafka events, unbounded streaming reads,
 compliance certification and a broad service redesign are not hidden prerequisites.
+
+### Typed publication command checkpoint
+
+The [operation inventory](repository-operation-inventory.md#typed-document-publication-intent-and-admission)
+now records the additive `DocumentPublicationIntent` and immutable
+`DocumentPublicationCommand`: complete imports, runtime shape validation,
+linear aggregate checks, versioned canonical bytes, original physical reuse
+identity and stable drive lookup. Internal V34 admission binds that command to
+account/operation scope. This does not implement upload scope, current-policy
+fencing, descriptor retention, retained-part publication, terminal outcomes,
+lookup/replay authorization or an RPC. Those remain prerequisites to executing
+or advertising the new boundary.
+
+Content-size and active-resource policy still needs a coordinator decision;
+the 1 MiB command bound is not a bound on declared content bytes. Correctness
+includes meeting the operation-count and latency gates above, not merely passing
+these command fixtures. JCR sessions must compose the repository foundation;
+this document-specific command is not the universal content transaction API.
