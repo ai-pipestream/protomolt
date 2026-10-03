@@ -135,6 +135,31 @@ class RepoServiceIT {
     }
 
     @Test
+    void libraryAndGrpcShareDriveProvisioningAndPagination() {
+        var local = services.driveRepository();
+        var caller = new ai.protomolt.proto.repo.spi.RepositoryCaller("drive-test", true);
+        var create = CreateDriveRequest.newBuilder().setAccountId("acct-drive-shared")
+                .setName("first").setDriveType(DriveType.DRIVE_TYPE_CUSTOM)
+                .putMetadata("purpose", "shared-library").build();
+        var first = local.createDrive(caller, create);
+        assertThat(drives.createDrive(create)).isEqualTo(first);
+        var second = create.toBuilder().setName("second").build();
+        assertThat(local.createDrive(caller, second)).isEqualTo(drives.createDrive(second));
+        var byId = GetDriveRequest.newBuilder().setDriveId(first.getDrive().getDriveId()).build();
+        assertThat(local.getDrive(caller, byId)).isEqualTo(drives.getDrive(byId));
+        var byName = GetDriveRequest.newBuilder().setAccountId("acct-drive-shared").setName("first").build();
+        assertThat(local.getDrive(caller, byName)).isEqualTo(drives.getDrive(byName));
+        var list = ListDrivesRequest.newBuilder().setAccountId("acct-drive-shared").setLimit(1).build();
+        var page = local.listDrives(caller, list);
+        assertThat(page).isEqualTo(drives.listDrives(list));
+        assertThat(page.getDrivesList()).extracting(Drive::getName).containsExactly("first");
+        var next = list.toBuilder().setContinuationToken(page.getNextContinuationToken()).build();
+        assertThat(local.listDrives(caller, next)).isEqualTo(drives.listDrives(next));
+        assertThat(local.listDrives(caller, next).getDrivesList())
+                .extracting(Drive::getName).containsExactly("second");
+    }
+
+    @Test
     void libraryAndGrpcShareDocumentSaveReadManifestAndListBehavior() {
         var local = services.repository();
         var caller = new ai.protomolt.proto.repo.spi.RepositoryCaller("integration-test", true);

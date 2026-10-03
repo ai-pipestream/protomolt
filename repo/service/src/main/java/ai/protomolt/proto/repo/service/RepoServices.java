@@ -1,5 +1,7 @@
 package ai.protomolt.proto.repo.service;
 
+import ai.protomolt.proto.repo.engine.DriveProvisioner;
+
 import ai.protomolt.proto.repo.spi.ArchiveRepository;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.engine.ArchiveOperations;
@@ -102,6 +104,7 @@ public final class RepoServices implements AutoCloseable {
     private final DocumentGrpcService documentService;
     private final ArchiveOperations archiveOperations;
     private final DriveProvisioner driveProvisioner;
+    private final ai.protomolt.proto.repo.spi.DriveRepository driveOperations;
     private final List<BindableService> services;
     private final S3Purger s3Purger;
     private final PurgeSweeper purgeSweeper;
@@ -210,10 +213,11 @@ public final class RepoServices implements AutoCloseable {
             this.archiveOperations = new ArchiveOperations(
                     new ai.protomolt.proto.repo.container.archive.ArchiveLedger(tx),
                     driveLedger, blobStore, bridges);
+            this.driveOperations = new ai.protomolt.proto.repo.engine.DriveOperations(driveLedger, driveProvisioner);
             this.services = List.of(
                     documentService,
                     new ArchiveGrpcService(archiveOperations),
-                    new DriveGrpcService(driveLedger, driveProvisioner));
+                    new DriveGrpcService(driveOperations));
             // The lifecycle engine (two-phase delete): stateless workers over the
             // same ledgers/queue, driven by startLifecycle()'s loops or, in tests,
             // by hand via the accessors below.
@@ -254,6 +258,12 @@ public final class RepoServices implements AutoCloseable {
     public ArchiveRepository archiveRepository() {
         requireOpen();
         return archiveOperations;
+    }
+
+    /** Drive operations sharing this composition's storage lifetime. */
+    public ai.protomolt.proto.repo.spi.DriveRepository driveRepository() {
+        requireOpen();
+        return driveOperations;
     }
 
     /** Shared document operations; this composition retains ownership of storage resources. */

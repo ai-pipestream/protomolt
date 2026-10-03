@@ -1,4 +1,4 @@
-package ai.protomolt.proto.repo.service;
+package ai.protomolt.proto.repo.engine;
 
 import ai.protomolt.proto.repo.container.ledger.DriveLedger;
 import ai.protomolt.proto.repo.container.ledger.DriveRecord;
@@ -7,32 +7,14 @@ import ai.protomolt.proto.repo.v1.DriveType;
 import jakarta.persistence.PersistenceException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import software.amazon.awssdk.services.s3.S3Client;
 import ai.protomolt.proto.repo.blob.spi.NamespaceProvisioner;
-import ai.protomolt.proto.repo.blob.s3.S3NamespaceProvisioner;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.UUID;
 
-/**
- * The reusable core of drive provisioning, shared by the wire path
- * ({@link DriveGrpcService}, which adds request validation and gRPC error
- * mapping) and the boot path ({@link RepoServices#seedAccountDrives()}, the
- * standalone default account's intake/pipeline drives).
- *
- * <p>Provisioning is idempotent by construction: the drive id is a
- * deterministic UUIDv5 over {@code "drive|<accountId>|<name>"}, so a
- * re-provision of the same (account, name) finds the existing row and returns
- * it instead of failing on the unique constraint — and losing a concurrent
- * create race means the winner's row IS the answer.
- *
- * <p>Bucket creation is the ONE admin-plane call made on the raw
- * {@link S3Client} — the {@code BlobStore} port is deliberately
- * object-operations-only, so bucket lifecycle lives here, at the provisioning
- * call site.
- */
-final class DriveProvisioner {
+/** Drive provisioning using the selected provider's namespace port and compatibility gate. */
+public final class DriveProvisioner {
 
     private static final Logger LOG = LoggerFactory.getLogger(DriveProvisioner.class);
 
@@ -46,24 +28,12 @@ final class DriveProvisioner {
     private final String defaultBucketBase;
     private final String defaultRegion;
 
-    /**
-     * @param drives the drive-row ledger
-     * @param s3 the raw S3 client — used ONLY for bucket lifecycle
-     *        (create/verify) during provisioning, never for object IO
-     * @param defaultBucketBase bucket-name base for drives created without an
-     *        explicit bucket: {@code <base>-<accountId>-<name>}
-     * @param defaultRegion region stamped on drives that don't name one
-     */
-    DriveProvisioner(DriveLedger drives, S3Client s3, String defaultBucketBase, String defaultRegion) {
-        this(drives, new S3NamespaceProvisioner(s3), defaultBucketBase, defaultRegion, DEFAULT_PROVIDER);
-    }
-
-    DriveProvisioner(DriveLedger drives, NamespaceProvisioner namespaces, String defaultBucketBase,
+    public DriveProvisioner(DriveLedger drives, NamespaceProvisioner namespaces, String defaultBucketBase,
             String defaultRegion, String defaultProvider) {
         this(drives, namespaces, defaultBucketBase, defaultRegion, defaultProvider, record -> {});
     }
 
-    DriveProvisioner(DriveLedger drives, NamespaceProvisioner namespaces, String defaultBucketBase,
+    public DriveProvisioner(DriveLedger drives, NamespaceProvisioner namespaces, String defaultBucketBase,
             String defaultRegion, String defaultProvider, java.util.function.Consumer<DriveRecord> recordGate) {
         this.drives = drives;
         this.namespaces = java.util.Objects.requireNonNull(namespaces);
@@ -83,7 +53,7 @@ final class DriveProvisioner {
      * @param driveType the drive flavor
      * @return the existing or newly created row
      */
-    DriveRecord ensureDrive(String accountId, String name, DriveType driveType) {
+    public DriveRecord ensureDrive(String accountId, String name, DriveType driveType) {
         return ensureDrive(accountId, name, driveType, null, null, null, null, null, null, null);
     }
 
@@ -105,7 +75,7 @@ final class DriveProvisioner {
      * @param providerConfig the provider config to persist, or null
      * @return the existing or newly created row
      */
-    DriveRecord ensureDrive(String accountId, String name, DriveType driveType,
+    public DriveRecord ensureDrive(String accountId, String name, DriveType driveType,
             String bucket, String prefix, String provider, String region,
             String credentialsRef, String metadataJson, DriveProviderConfig providerConfig) {
         requireSelectedProvider(isBlank(provider) ? defaultProvider : provider, providerConfig);
@@ -155,14 +125,17 @@ final class DriveProvisioner {
         }
         LOG.info("Created drive {}/{} (id={}, bucket={}, prefix='{}')",
                 accountId, name, driveId, resolvedBucket, resolvedPrefix);
-        return record;
+        // Return persisted values, including database timestamp precision, so
+        // the first response agrees with later lookup and idempotent retries.
+        return drives.findById(driveId).orElseThrow(() ->
+                new IllegalStateException("Created drive is missing from the ledger: " + driveId));
     }
 
     private void requireSelectedProvider(String provider, DriveProviderConfig config) {
         requireSelectedProvider(defaultProvider, provider, config);
     }
 
-    static void requireSelectedProvider(String defaultProvider, String provider, DriveProviderConfig config) {
+    public static void requireSelectedProvider(String defaultProvider, String provider, DriveProviderConfig config) {
         if (!defaultProvider.equals(provider)) {
             throw new ai.protomolt.proto.repo.spi.RepositoryException(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION, "Drive provider does not match the selected storage backend");
         }
@@ -178,7 +151,7 @@ final class DriveProvisioner {
 
     /**
      * Create the drive's bucket when absent, then verify reachability. The one
-     * admin-plane call site allowed on the raw client (see class Javadoc).
+     * admin-plane operation is delegated to the selected namespace provider.
      */
     private void ensureBucket(String bucket) {
         namespaces.ensureNamespace(bucket);

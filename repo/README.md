@@ -54,8 +54,8 @@ around that rule.
 | `repo/blob/spi` | `:protomolt-repo-blob-spi` | JDK-only byte storage contracts and provider discovery |
 | `repo/blob/s3`, `repo/blob/redis`, `repo/blob/cache` | `:protomolt-repo-blob-s3`, `:protomolt-repo-blob-redis`, `:protomolt-repo-blob-cache` | Object storage providers and cache decorator |
 | `repo/blob/grpc` | `:protomolt-repo-blob-grpc` | Remote byte storage client using a borrowed gRPC stub |
-| `repo/spi` | `:protomolt-repo-spi` | Shared document, archive and raw-blob invocation contracts, caller identity and domain errors |
-| `repo/engine` | `:protomolt-repo-engine` | Shared document, archive and raw-blob operations over ledgers and selected byte storage |
+| `repo/spi` | `:protomolt-repo-spi` | Shared document, archive, drive and raw-blob invocation contracts, caller identity and domain errors |
+| `repo/engine` | `:protomolt-repo-engine` | Shared document, archive, drive and raw-blob operations over ledgers and selected byte storage |
 | `repo/container` | `:protomolt-repo-container` | The storage engine: part fan-out IO and the Postgres ledger (Hibernate + HikariCP + Flyway) |
 | `repo/service` | `:protomolt-repo-service` | The service set: gRPC impls, the streaming HTTP upload route, `RepoServices` wiring |
 

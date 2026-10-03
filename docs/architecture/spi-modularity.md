@@ -541,3 +541,24 @@ Existing archive versioning, redaction, pruning and HTTP tests remain regression
 coverage. Additional cases compare local and gRPC current/historical reads and
 version listings over SQL and object storage. These cases do not establish the
 future typed-admission, ownership, retry or metadata snapshot guarantees.
+
+## Shared drive operations
+
+`DriveRepository` covers create, lookup by ID/name and account listings, with the
+same trusted caller requirement as document and archive operations. The temporary
+process-authority boundary rejects scoped callers before provisioning or lookup;
+per-account grants remain part of the ownership work.
+
+`DriveOperations` and `DriveProvisioner` live in `repo/engine`. Provisioning uses
+the selected provider's `NamespaceProvisioner`; the engine does not import the
+S3 implementation. The existing public `DriveGrpcService` constructor accepting
+an S3 client adapts it inside the service module and retains caller ownership of
+that client. `RepoServices.driveRepository()` exposes the same operations used by
+the gRPC adapter. Boot-time seeding continues through the shared provisioner.
+
+The move preserves drive identities, provider compatibility checks, metadata and
+name-based continuation tokens. The provisioner's package-private unit tests moved
+with it. Conformance cases exercise local/gRPC create retries, lookup and pagination
+using the real SQL ledger and object-store namespace provider.
+The initial create response now reads the committed row, so its timestamp uses
+the same database precision as subsequent reads and retries.

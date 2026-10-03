@@ -10,6 +10,13 @@ import java.util.List;
 
 /** Runs from published artifacts, with no project dependency substitution. */
 public final class RepositoryConsumer {
+    static ai.protomolt.proto.repo.v1.GetDriveResponse readDrive(
+            ai.protomolt.proto.repo.spi.DriveRepository repository,
+            ai.protomolt.proto.repo.spi.RepositoryCaller caller,
+            ai.protomolt.proto.repo.v1.GetDriveRequest request) {
+        return repository.getDrive(caller, request);
+    }
+
     /** Compile the archive API using published metadata without any storage implementation. */
     static ai.protomolt.proto.repo.archive.v1.GetEntryResponse readArchive(
             ai.protomolt.proto.repo.spi.ArchiveRepository repository,
