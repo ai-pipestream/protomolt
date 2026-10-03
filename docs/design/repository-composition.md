@@ -276,6 +276,20 @@ fails the whole request, including when encountered beyond the returned page.
 Offsets count visible rows, and policy changes between requests can shift pages;
 tokens do not pin an old authorization snapshot. Count overflow fails explicitly.
 
+Document writes now land under a unique attempt prefix beneath the stable node
+root. Full saves and partial-copy destinations therefore do not overwrite objects
+referenced by the previous manifest before the new row commits. Stored manifests
+continue naming exact object keys, so existing layouts remain readable and the
+reported storage prefix remains the stable node root. A carried CORE is read back
+to verify its checksum and capture destination ETag/version metadata; this adds
+one object read when a partial save copies CORE.
+
+This is a prerequisite for commit-time authorization, not a concurrency guarantee.
+The final row update still needs a locked policy/version comparison. Failed or
+superseded attempts leave unreferenced objects for lifecycle reconciliation; the
+new paths do not promise permanent historical retention. Scoped mutations remain
+disabled until those commit guards are implemented.
+
 The complete ownership work remains unfinished: resolve inherited policy and
 atomically guard policy revision with every mutation. Mutations still require
 process authority. Named

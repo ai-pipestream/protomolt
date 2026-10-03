@@ -221,6 +221,50 @@ class RepoServiceIT {
     }
 
     @Test
+    void rewritingADocumentDoesNotOverwriteObjectsInItsPreviousManifest() {
+        String account = "acct-write-isolation";
+        var drive = createDrive("write-isolation", account);
+        var original = fixture("write-isolation-doc", account, "source");
+        var saved = documents.saveDocument(intakeSave(original, "write-isolation", account).build());
+        var oldManifest = documents.getDocumentManifest(GetDocumentManifestRequest.newBuilder()
+                .setNodeId(saved.getNodeId()).build()).getManifest();
+        var oldBytes = new java.util.HashMap<String, byte[]>();
+        for (var part : oldManifest.getPartsList()) {
+            if (part.getState() == PartState.PART_STATE_PRESENT)
+                oldBytes.put(part.getObjectKey(), services.blobStore().get(drive.getBucket(), part.getObjectKey()).data());
+        }
+        var replacement = original.toBuilder();
+        replacement.getSearchMetadataBuilder().setTitle("replacement");
+        documents.saveDocument(intakeSave(replacement.build(), "write-isolation", account).build());
+        for (var part : oldBytes.entrySet()) {
+            assertThat(services.blobStore().get(drive.getBucket(), part.getKey()).data()).isEqualTo(part.getValue());
+        }
+        assertThat(documents.getDocument(GetDocumentRequest.newBuilder().setNodeId(saved.getNodeId()).build())
+                .getDocument()).isEqualTo(replacement.build());
+        var beforePartial = documents.getDocumentManifest(GetDocumentManifestRequest.newBuilder()
+                .setNodeId(saved.getNodeId()).build()).getManifest();
+        var beforePartialBytes = new java.util.HashMap<String, byte[]>();
+        for (var part : beforePartial.getPartsList()) {
+            if (part.getState() == PartState.PART_STATE_PRESENT)
+                beforePartialBytes.put(part.getObjectKey(), services.blobStore().get(drive.getBucket(), part.getObjectKey()).data());
+        }
+        replacement.getBlobBagBuilder().getBlobBuilder().setData(ByteString.copyFromUtf8("new partial bytes"));
+        documents.saveDocument(intakeSave(replacement.build(), "write-isolation", account)
+                .addPartsWritten(DocumentPart.DOCUMENT_PART_BLOBS)
+                .setCopyUnwrittenPartsFrom(saved.getAddress()).build());
+        for (var part : beforePartialBytes.entrySet())
+            assertThat(services.blobStore().get(drive.getBucket(), part.getKey()).data()).isEqualTo(part.getValue());
+        var afterPartial = documents.getDocument(GetDocumentRequest.newBuilder().setNodeId(saved.getNodeId()).build());
+        assertThat(afterPartial.getDocument()).isEqualTo(replacement.build());
+        var core = afterPartial.getManifest().getPartsList().stream()
+                .filter(part -> part.getPart() == DocumentPart.DOCUMENT_PART_CORE).findFirst().orElseThrow();
+        var storedCore = services.blobStore().get(drive.getBucket(), core.getObjectKey());
+        var row = services.documentLedger().findByNodeId(UUID.fromString(saved.getNodeId())).orElseThrow();
+        assertThat(row.etag).isEqualTo(storedCore.eTag());
+        assertThat(row.versionId).isEqualTo(storedCore.versionId());
+    }
+
+    @Test
     void boundDocumentReaderUsesCurrentAclAndCannotCrossAccounts() throws Exception {
         String account = "acct-document-policy";
         createDrive("policy", account);

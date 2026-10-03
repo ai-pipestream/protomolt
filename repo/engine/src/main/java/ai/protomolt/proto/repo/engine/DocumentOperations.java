@@ -282,7 +282,8 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         // revive — the staleness guard then voids any purge queued against
         // the earlier body. force_save flips verifyChecksums on so the store
         // rejects a PUT whose landed bytes mismatch the part hash.
-        PartStorage.WriteResult written = partStorage.writeParts(blobStore, drive.bucket, basePrefix,
+        String writePrefix = writeAttemptPrefix(basePrefix);
+        PartStorage.WriteResult written = partStorage.writeParts(blobStore, drive.bucket, writePrefix,
                 r.doc(), layout, r.address(),
                 request.hasWrittenBy() ? request.getWrittenBy() : null,
                 PART_CONTENT_TYPE, SaveResolution.s3Metadata(r), request.getForceSave(), decision.nextDocVersion());
@@ -357,7 +358,8 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
             }
         }
 
-        PartStorage.WriteResult written = partStorage.writePartObjects(blobStore, drive.bucket, basePrefix,
+        String writePrefix = writeAttemptPrefix(basePrefix);
+        PartStorage.WriteResult written = partStorage.writePartObjects(blobStore, drive.bucket, writePrefix,
                 toWrite, r.address(),
                 request.hasWrittenBy() ? request.getWrittenBy() : null,
                 PART_CONTENT_TYPE, SaveResolution.s3Metadata(r), request.getForceSave(), docVersion);
@@ -366,14 +368,12 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         // service), so this is always a server-side copy — the bytes never
         // transit this service. Carried entries keep their original
         // sha256/size/updated_at/written_by stamps; only the object key moves.
-        // An in-place partial save (copy source == destination address, e.g.
-        // the parsing coordinator re-staging PARSED+CORE onto the same row)
-        // carries a part to the key it already lives at: nothing to copy, and
-        // S3 rejects a metadata-unchanged self-copy outright.
+        // Even in-place partial saves copy into this attempt's namespace, so
+        // writes and copies cannot alter objects referenced by the old manifest.
         List<PartStorage.CopySpec> copies = new ArrayList<>(carried.size());
         List<PartManifestEntry> carriedAtDest = new ArrayList<>(carried.size());
         for (PartManifestEntry e : carried) {
-            String destKey = DocumentPartCodec.objectKey(basePrefix, e.getPart(), e.getSubKey());
+            String destKey = DocumentPartCodec.objectKey(writePrefix, e.getPart(), e.getSubKey());
             if (!(srcDrive.bucket.equals(drive.bucket) && destKey.equals(e.getObjectKey()))) {
                 copies.add(new PartStorage.CopySpec(e, destKey));
             }
@@ -395,12 +395,21 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
                 .filter(e -> e.getState() == PartState.PART_STATE_PRESENT)
                 .mapToLong(PartManifestEntry::getSizeBytes).sum();
 
-        // CORE is not always in a partial write; keep the row's representative
-        // etag/version pointing at the live CORE object.
-        String coreEtag = !written.coreEtag().isBlank() ? written.coreEtag()
-                : (destExisting != null ? destExisting.etag : "");
-        String coreVersionId = written.coreVersionId() != null ? written.coreVersionId()
-                : (destExisting != null ? destExisting.versionId : null);
+        // A carried CORE has a new object identity. Resolve the destination's
+        // metadata rather than retaining the source object's version ID.
+        String coreEtag = written.coreEtag();
+        String coreVersionId = written.coreVersionId();
+        var carriedCore = carriedAtDest.stream()
+                .filter(part -> part.getPart() == DocumentPart.DOCUMENT_PART_CORE).findFirst();
+        if (carriedCore.isPresent()) {
+            var core = carriedCore.get();
+            var copied = blobStore.get(drive.bucket, core.getObjectKey());
+            if (copied.data().length != core.getSizeBytes()
+                    || !DocumentPartCodec.sha256Hex(copied.data()).equals(core.getSha256()))
+                throw failedPrecondition("Copied CORE does not match the source manifest");
+            coreEtag = copied.eTag() == null ? "" : copied.eTag();
+            coreVersionId = copied.versionId();
+        }
 
         DocumentRecord row = upsertRow(r, request, drive, nodeId, basePrefix, combined,
                 rootChecksum, totalSize, coreEtag, coreVersionId, destExisting);
@@ -917,6 +926,10 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
 
 
     // ------------------------------------------------------------------ plumbing
+
+    private static String writeAttemptPrefix(String documentPrefix) {
+        return documentPrefix + "/attempts/" + UUID.randomUUID();
+    }
 
     /**
      * Insert-or-update the ledger row for a landed body. The body is already
