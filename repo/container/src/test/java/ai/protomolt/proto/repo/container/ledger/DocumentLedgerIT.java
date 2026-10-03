@@ -7,6 +7,7 @@ import ai.protomolt.proto.repo.v1.PartManifestEntry;
 import ai.protomolt.proto.repo.v1.PartState;
 import ai.protomolt.proto.repo.v1.WriteProvenance;
 import jakarta.persistence.PersistenceException;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
@@ -35,16 +36,17 @@ class DocumentLedgerIT {
     private static final String ACCOUNT = "acct-1";
 
     private static DocumentLedger ledger;
+    private static LedgerDatabase database;
 
     @BeforeAll
     static void boot() {
         LedgerConfig config = new LedgerConfig(
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
-        LedgerDatabase database = new LedgerDatabase(config);
+        database = new LedgerDatabase(config);
         ledger = new DocumentLedger(new Tx(database.entityManagerFactory()));
-        // Deliberately never closed: the container dies with the JVM and the
-        // shared pool/EMF serve every test in the class.
     }
+
+    @AfterAll static void close() { if (database != null) database.close(); }
 
     private static DocumentRecord intakeRow(UUID nodeId, String docId, String datasourceId) {
         DocumentRecord record = new DocumentRecord();
@@ -91,6 +93,23 @@ class DocumentLedgerIT {
                 .setAccountId(record.accountId)
                 .setGraphId(record.graphId)
                 .build();
+    }
+
+    @Test
+    void saveReturnsDatabaseRevisionForInsertAndUpdate() {
+        var input = intakeRow(UUID.randomUUID(), "returned-revision", "ds-revision");
+        var inserted = ledger.save(input);
+        assertThat(inserted.mutationRevision).isPositive()
+                .isEqualTo(ledger.findByNodeId(input.nodeId).orElseThrow().mutationRevision);
+        long insertedRevision = inserted.mutationRevision;
+        inserted.filename = "updated.pdf";
+        var updated = ledger.save(inserted);
+        assertThat(updated.mutationRevision).isGreaterThan(insertedRevision)
+                .isEqualTo(ledger.findByNodeId(input.nodeId).orElseThrow().mutationRevision);
+        updated.filename = "guarded.pdf";
+        var guarded = ledger.saveIfRevision(updated, updated.mutationRevision, (em, row) -> {});
+        assertThat(guarded.filename).isEqualTo("guarded.pdf");
+        assertThat(guarded.mutationRevision).isGreaterThan(updated.mutationRevision);
     }
 
     @Test

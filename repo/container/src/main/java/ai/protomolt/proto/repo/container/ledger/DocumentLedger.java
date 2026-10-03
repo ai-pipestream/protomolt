@@ -67,10 +67,14 @@ public final class DocumentLedger {
      * @return the stored row (detached)
      */
     public DocumentRecord save(DocumentRecord record) {
-        // Cast disambiguates the Function overload (merge's return value also
-        // matches the Consumer overload's expression-lambda shape).
-        return tx.inTransaction((Function<jakarta.persistence.EntityManager, DocumentRecord>)
-                em -> em.merge(record));
+        return tx.inTransaction(em -> {
+            var stored = em.merge(record);
+            em.flush();
+            // Mutation revision is assigned by PostgreSQL, including on updates.
+            // Return the stored revision so it can fence the caller's next write.
+            em.refresh(stored);
+            return stored;
+        });
     }
 
     /** A candidate was prepared against a different row revision or existence state. */
@@ -196,7 +200,7 @@ public final class DocumentLedger {
      * @return the row, or empty (detached)
      */
     public Optional<DocumentRecord> findByNodeIdForUpdate(UUID nodeId) {
-        // Cast disambiguates the Function overload (see DocumentLedger.save).
+        // The expression lambda also matches the Consumer overload without a cast.
         return tx.inTransaction((java.util.function.Function<jakarta.persistence.EntityManager, Optional<DocumentRecord>>)
                 em -> Optional.ofNullable(
                         em.find(DocumentRecord.class, nodeId, LockModeType.PESSIMISTIC_WRITE)));
