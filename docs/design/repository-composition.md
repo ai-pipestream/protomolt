@@ -1414,6 +1414,30 @@ shared admission/release locks and reducing client round trips; it does not prov
 SQL lock-wait dominance or qualify production latency. Lifetime and recovery
 guarantees remain mandatory for any optimization.
 
+V29 changes only archive reader acquisition/release to shared source-owner and
+retention row locks, including native pin and common-reference triggers. Distinct
+reader pins for one object can therefore admit and release concurrently. Logical
+mutation, cleanup, and other reference owners retain exclusive locks in the same
+source-before-retention order. No shared-to-exclusive upgrade is permitted inside
+a reader transaction. Native/common reader rows remain private to each pin.
+
+Retention relies on fresh statement snapshots after lock waits. The Java ledger
+pool explicitly selects READ COMMITTED, and SQL retention boundaries reject other
+isolation modes, including direct SQL overrides. Tests cover rejected REPEATABLE
+READ pin admission, state transitions, document cleanup and archive cleanup.
+Reader-reader admission/release tests fail with the prior exclusive locks and pass
+with V29. Additional races observe PostgreSQL lock waits and verify cleanup sees
+the committed or rolled-back release; populated V28 migration fixtures preserve
+existing pins and their reclamation protection. Drain older readers before this
+lock-mode migration. Protobuf operations and payload-validation rules are unchanged.
+
+The [V29 diagnostic rerun](../evidence/repository/2026-10-03-archive-read-shared-locks/README.md)
+retains the same workload and all raw results. Sixteen-reader same-object medians
+were lower, but some other cases regressed and host load differed substantially.
+The race tests independently prove removal of reader-reader serialization. The
+benchmark does not establish a production speedup; client statement/transaction
+counts remain seven/two per pinned read, and crash-pin recovery is still pending.
+
 `ArchiveReadLifetimeIT` uses real PostgreSQL and S3 plus a delayed provider-call
 decorator. Local and in-process gRPC cases prove logical deletion completes while
 the provider call remains active, cleanup skips it, and reclamation proceeds after

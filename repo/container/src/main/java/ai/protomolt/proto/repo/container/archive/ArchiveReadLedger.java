@@ -27,10 +27,10 @@ public final class ArchiveReadLedger {
         if (version <= 0) throw new IllegalArgumentException("A retained version is required");
         return tx.inTransaction(em -> {
             // All lifecycle paths lock the source owner before common retention.
-            if (em.createNativeQuery("SELECT object_id FROM archive_object_uploads WHERE object_id=:id FOR UPDATE")
+            if (em.createNativeQuery("SELECT object_id FROM archive_object_uploads WHERE object_id=:id FOR SHARE")
                     .setParameter("id", object).getResultList().isEmpty()) return Optional.empty();
             boolean retiring = (Boolean) em.createNativeQuery(
-                    "SELECT retiring FROM repository_object_retention WHERE object_id=:id FOR UPDATE")
+                    "SELECT retiring FROM repository_object_retention WHERE object_id=:id FOR SHARE")
                     .setParameter("id", object).getSingleResult();
             if (retiring) return Optional.empty();
             var readable = ArchiveObjectLedger.readable(em, entry, version, object);
@@ -66,9 +66,9 @@ public final class ArchiveReadLedger {
             if (closed) return;
             tx.inTransaction(em -> {
                 // Lock order must precede DELETE's tuple lock as well as its trigger.
-                em.createNativeQuery("SELECT object_id FROM archive_object_uploads WHERE object_id=:id FOR UPDATE")
+                em.createNativeQuery("SELECT object_id FROM archive_object_uploads WHERE object_id=:id FOR SHARE")
                         .setParameter("id", readable.binding().objectId()).getSingleResult();
-                em.createNativeQuery("SELECT object_id FROM repository_object_retention WHERE object_id=:id FOR UPDATE")
+                em.createNativeQuery("SELECT object_id FROM repository_object_retention WHERE object_id=:id FOR SHARE")
                         .setParameter("id", readable.binding().objectId()).getSingleResult();
                 int deleted = em.createNativeQuery("DELETE FROM archive_read_pins WHERE pin_id=:pin AND reader_incarnation=:reader")
                         .setParameter("pin", id).setParameter("reader", incarnation).executeUpdate();

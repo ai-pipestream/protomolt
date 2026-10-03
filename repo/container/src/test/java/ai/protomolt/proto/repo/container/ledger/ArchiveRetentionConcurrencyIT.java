@@ -29,6 +29,70 @@ class ArchiveRetentionConcurrencyIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
     private record ObjectFixture(UUID objectId, UUID entryId, String generation) {}
 
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void cleanupWaitsForReaderReleaseCommitOrRollback(boolean commitRelease) throws Exception {
+        try (var database = database(); var owner = connection();
+                var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var tx = new Tx(database.entityManagerFactory());
+            var object = liveObject(tx);
+            insertReference(owner, object);
+            var pin = new ArchiveReadLedger(tx, UUID.randomUUID()).acquire(object.entryId(), 1, object.objectId()).orElseThrow();
+            deleteVersion(owner, object);
+            insertTarget(owner, object);
+            owner.setAutoCommit(false);
+            try {
+                try (var statement = owner.prepareStatement("DELETE FROM archive_read_pins WHERE object_id=?")) {
+                    statement.setObject(1, object.objectId()); assertThat(statement.executeUpdate()).isEqualTo(1);
+                }
+                int pid = backendPid(owner);
+                var cleanup = executor.submit(() -> new ArchiveCleanupLedger(tx).claim(object.objectId(), Instant.now().plusSeconds(60)));
+                awaitDatabaseWait(pid);
+                if (commitRelease) owner.commit(); else owner.rollback();
+                assertThat(cleanup.get(10, TimeUnit.SECONDS).isPresent()).isEqualTo(commitRelease);
+                assertThat(readerCount(object)).isEqualTo(commitRelease ? 0 : 1);
+                assertThat(reclaiming(object)).isEqualTo(commitRelease);
+            } finally {
+                owner.rollback();
+                // Also exercises retry after release committed without this handle seeing it.
+                pin.close();
+            }
+        }
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void independentReadersOfOneObjectDoNotSerializeTheirAdmissionOrRelease(boolean releasing) throws Exception {
+        try (var database = database(); var owner = connection();
+                var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var tx = new Tx(database.entityManagerFactory());
+            var object = liveObject(tx);
+            insertReference(owner, object);
+            var reader = new ArchiveReadLedger(tx, UUID.randomUUID());
+            var existing = reader.acquire(object.entryId(), 1, object.objectId()).orElseThrow();
+            owner.setAutoCommit(false);
+            try {
+                try (var statement = owner.prepareStatement("INSERT INTO archive_read_pins(pin_id,reader_incarnation,object_id,entry_uuid,version) VALUES(?,?,?,?,1)")) {
+                    statement.setObject(1, UUID.randomUUID()); statement.setObject(2, UUID.randomUUID());
+                    statement.setObject(3, object.objectId()); statement.setObject(4, object.entryId());
+                    statement.executeUpdate();
+                }
+                // The first admission stays uncommitted. A distinct reader of the
+                // same object must finish without waiting for that transaction.
+                var contender = executor.submit(() -> {
+                    if (releasing) existing.close();
+                    else try (var pin = reader.acquire(object.entryId(), 1, object.objectId()).orElseThrow()) {
+                        assertThat(pin.readable().binding().objectId()).isEqualTo(object.objectId());
+                    }
+                    return true;
+                });
+                assertThat(contender.get(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(owner.getAutoCommit()).isFalse();
+            } finally {
+                owner.rollback();
+                existing.close();
+            }
+        }
+    }
+
     @ParameterizedTest @ValueSource(booleans = {true, false})
     void committedReadPinSurvivesARacingLogicalMutation(boolean commitPin) throws Exception {
         try (var database = database(); var owner = connection();

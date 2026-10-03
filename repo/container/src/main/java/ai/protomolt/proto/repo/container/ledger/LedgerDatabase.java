@@ -45,6 +45,8 @@ public final class LedgerDatabase implements AutoCloseable {
         hikari.setUsername(config.username());
         hikari.setPassword(config.password());
         hikari.setMaximumPoolSize(config.maxPoolSize());
+        // Retention checks must see commits that complete while row locks wait.
+        hikari.setTransactionIsolation("TRANSACTION_READ_COMMITTED");
         // Fail fast when the pool is exhausted: a caller on a virtual thread
         // costs nothing to queue, but a wedged database should surface as an
         // error quickly, not as a silent hang.
