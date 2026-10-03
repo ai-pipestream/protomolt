@@ -195,6 +195,36 @@ operation-count targets and diagnostic evidence; no production speed guarantee
 has been established. The V25 reference-table experiment is set aside and does
 not constitute the generic retention foundation.
 
+### Archive mechanisms available for reuse
+
+The generic foundation should extract the archive mechanisms and their tests,
+without exposing entry-specific ledger types as a universal repository contract:
+
+- V14/ArchiveObjectLedger: immutable object UUID and original backend generation,
+  realm, namespace/key identity, with unique physical coordinates.
+- V15/ArchiveUploadLedger: durable pre-upload admission, database-clock lease
+  fencing and immutable verified byte/provider identity.
+- V16/ArchiveVersionBindings: retained-version references acquired before dropping
+  superseded references during publication.
+- V18/ArchiveCleanupLedger: reference acquisition and cleanup share an object
+  lock; durable claims and tombstone reconciliation handle failed or late writes.
+- ArchiveMutationLedger: scoped command fingerprint, immutable logical outcome
+  and separate durable physical-cleanup observation.
+
+Current archive identities require entry/account/archive scope and reference
+triggers restrict ownership to that entry. Generic ownership must preserve those
+checks through a domain adapter. Do not create independent catalogs that can each
+reclaim the same physical coordinates: migrate or alias existing object IDs to a
+shared object lock, or extend the existing cleanup authority to include all owners.
+Migration needs exact evidence and race tests; duplicated liveness decisions are
+not a safe transitional state.
+
+ArchiveObjectReader resolves original versions but currently uses unbounded GET
+and has no durable active-read pin. Reusing that code does not satisfy the new
+reader lifetime or memory bounds. ArchiveObjectWriter's checksum request does not
+supply the proposed verified-write receipt. Preserve tested lifecycle behavior
+while replacing these limits through the shared foundation.
+
 ## Existing identities to reuse
 
 `grpc.service.v1.SchemaSource` accepts exactly one of a type name, inline sources,
@@ -728,7 +758,7 @@ Direct SQL that locks versions before entries can also deadlock with an engine
 save; PostgreSQL aborts a participant. Consistent application lock ordering and
 explicit retry/error coverage remain part of destructive admission.
 
-#### Reviewed deletion implementation boundary (not available yet)
+#### Archive deletion and binding foundation
 
 Physical key separation is implemented as a prerequisite: newly written rendition
 objects receive unique write UUIDs, with the content hash retained in the key and
@@ -736,8 +766,9 @@ manifest. Unary saves and bridge output reuse a matching current rendition's
 physical reference. Streamed dedupe returns the retained key and deletes only its
 unused unique candidate; cleanup errors propagate. Delete/recreate at the same
 address gets different keys in library and gRPC integration tests. Existing
-manifest keys remain readable. Failed candidate registration/recovery, immutable
-backend bindings and durable deletion below are still unfinished.
+manifest keys remain readable. Managed candidate registration/recovery, immutable
+backend bindings and identified destructive admission are described below; these
+are domain-specific foundations, not a completed generic repository transaction.
 
 V14 and `ArchiveObjectLedger` provide the binding reservation foundation used by
 managed archive uploads and reads. A binding records entry/account/
@@ -780,7 +811,7 @@ the CEL extension still requires runtime execution. Standard JSON Schema format
 handling also does not establish validate.v1 `ignore_if_zero` parity for an
 explicit empty string. Generator parity is not claimed or changed here.
 
-No writer populates this field yet. Publication must validate the complete
+Managed archive writers populate this field. Publication must validate the complete
 manifest, compare bound entry/account/archive/key and verified hash/size under
 locks, require the active attempt token for first publication, and commit object
 references with the version. Reusing already published content requires retained
@@ -854,7 +885,8 @@ after admission, lost cleanup acknowledgement, restart through the original
 backend, stale worker completion, delayed PUT after cleanup, delete/recreate at
 the same address, identical-content rewrite during cleanup, shared retained
 objects, and same-ID/different-command rejection. Run the shared operations over
-both library and gRPC. This design adds no available RPC or runtime capability.
+both library and gRPC. The identified ArchiveMutationService is implemented for
+qualified bindings; the general retention/commit redesign remains planned.
 
 After destructive admission, add historical metadata/schema/policy snapshots.
 Current historical archive reads expose current entry
