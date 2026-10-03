@@ -477,6 +477,43 @@ extraction. Tests run identical put/get/delete cases locally and over real gRPC
 against SQL and object storage, plus scoped-caller denial before writes.
 
 The engine still depends on `repo/container`, including its current ledger and
-optional messaging code. Document/archive operations, HTTP delegation, ledger
+optional messaging code. Archive operations, ledger
 extraction, messaging separation and complete ownership enforcement remain open.
 Do not interpret the raw-byte extraction as full repository conformance.
+
+## Shared document operations
+
+`DocumentRepository` now covers save, node/reference reads, manifest reads, list
+and delete. `DocumentOperations` in the engine owns those implementations;
+`DocumentGrpcService` adapts calls and errors. Its existing public constructors
+remain available. HTTP document uploads invoke the same repository interface,
+with `UploadHttpServer.forRepository(...)` available for library composition.
+HTTP still stages the body before the document save. It currently supports only
+operator-token or trusted open operation; scoped HTTP access must authorize before
+staging when account policy is implemented.
+
+Document library calls require an explicit trusted `RepositoryCaller`. Until the
+account-policy implementation is installed, scoped principals fail closed rather
+than running with ignored identity. This is a temporary process-authority boundary,
+not completed per-account ownership enforcement. Open listeners retain their
+existing operator default and require the trusted-network deployment boundary.
+
+Remote byte-client transport failures now use `BlobStoreException`, retaining the
+original cause without exposing gRPC as the top-level library exception. The
+engine translates these into repository errors; gRPC translates them back to the
+corresponding status, including transient `UNAVAILABLE` and `DEADLINE_EXCEEDED`.
+Clients that previously caught gRPC failures directly from `RemoteBlobStore` must
+handle provider-neutral errors instead. Not-found and conditional conflict
+specializations on the byte interface remain unchanged.
+
+This translation preserves status codes and descriptions, but does not forward
+downstream gRPC trailers. Library callers can inspect the retained cause for
+diagnostics; transport-independent structured error details need an explicit
+contract before clients can rely on them across a repository proxy.
+
+Tests compare document save, dedupe, both read forms, manifest, list and deletion
+through library and real gRPC paths against SQL and object storage. Existing HTTP,
+part/version, conditional-write and deletion suites remain regression coverage.
+Legacy destructive-operation failure handling is unchanged by extraction and
+remains part of the durability work; this does not complete archival admission,
+metadata snapshots, ownership policy or progressive hydration.

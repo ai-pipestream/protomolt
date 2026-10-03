@@ -67,7 +67,10 @@ final class GrpcErrors {
                 case PERMISSION_DENIED -> Status.PERMISSION_DENIED;
                 case CONFLICT -> Status.ABORTED;
                 case UNSUPPORTED -> Status.UNIMPLEMENTED;
+                case UNAVAILABLE -> Status.UNAVAILABLE;
                 case INTERNAL -> Status.INTERNAL;
+                case CANCELLED, UNKNOWN, DEADLINE_EXCEEDED, ALREADY_EXISTS, RESOURCE_EXHAUSTED,
+                        OUT_OF_RANGE, DATA_LOSS, UNAUTHENTICATED -> Status.fromCode(Status.Code.valueOf(failure.code().name()));
             };
 
             case IllegalArgumentException _ -> Status.INVALID_ARGUMENT;

@@ -246,6 +246,12 @@ public final class RepoServices implements AutoCloseable {
         return new RepoServices(config, bridges);
     }
 
+    /** Shared document operations; this composition retains ownership of storage resources. */
+    public ai.protomolt.proto.repo.spi.DocumentRepository repository() {
+        requireOpen();
+        return documentService.repository();
+    }
+
     /**
      * The wired gRPC services (document + archive + drive), for hosts that register
      * them on their own server builder.

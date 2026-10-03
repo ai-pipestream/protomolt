@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.blob.grpc;
 
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
+import ai.protomolt.proto.repo.blob.spi.BlobStoreException;
 import ai.protomolt.proto.repo.codec.DocumentPartCodec;
 import ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest;
 import ai.protomolt.proto.repo.v1.ConditionalBlobKey;
@@ -133,7 +134,7 @@ public final class RemoteBlobStore implements BlobStore {
         if (outgoing.getSerializedSize() > MAX_RPC_BYTES) {
             throw new IllegalArgumentException("blob request exceeds 10 MiB RPC limit");
         }
-        PutBlobResponse response = callStub().putBlob(outgoing);
+        PutBlobResponse response = rpc(() -> callStub().putBlob(outgoing));
         // Verified write: the server computed the SHA-256 and made its store
         // verify the landed bytes against it, so a returned response is proof.
         return new PutResult(null, versionOf(response.getStorageRef()));
@@ -242,7 +243,7 @@ public final class RemoteBlobStore implements BlobStore {
             if (failure.getStatus().getCode() == Status.Code.UNIMPLEMENTED) {
                 throw new UnsupportedOperationException("conditional blob write is unsupported", failure);
             }
-            throw failure;
+            throw providerFailure(failure);
         }
     }
 
@@ -357,7 +358,17 @@ public final class RemoteBlobStore implements BlobStore {
         if (e.getStatus().getCode() == Status.Code.NOT_FOUND) {
             return new BlobNotFoundException("blob not found at key " + key, e);
         }
-        return e;
+        return providerFailure(e);
+    }
+
+    private static BlobStoreException providerFailure(StatusRuntimeException failure) {
+        return new BlobStoreException(BlobStoreException.Code.valueOf(failure.getStatus().getCode().name()),
+                failure.getStatus().getDescription(), failure);
+    }
+
+    private static <T> T rpc(java.util.function.Supplier<T> call) {
+        try { return call.get(); }
+        catch (StatusRuntimeException failure) { throw providerFailure(failure); }
     }
 
     private static String versionOf(FileStorageReference ref) {

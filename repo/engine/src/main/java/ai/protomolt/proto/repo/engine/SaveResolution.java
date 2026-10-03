@@ -1,4 +1,4 @@
-package ai.protomolt.proto.repo.service;
+package ai.protomolt.proto.repo.engine;
 
 import ai.protomolt.proto.repo.engine.DriveKeys;
 
@@ -15,7 +15,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-import static ai.protomolt.proto.repo.service.GrpcErrors.invalidArgument;
+import static ai.protomolt.proto.repo.engine.RepositoryErrors.invalidArgument;
 
 /**
  * Where a save lands, decided from the request alone. Nothing here touches the ledger,
@@ -48,7 +48,7 @@ final class SaveResolution {
      * and the {@code graph_address} oneof arm is the EXPLICIT origin discriminator with
      * {@code graph_id} required on both arms.
      *
-     * @throws io.grpc.StatusRuntimeException INVALID_ARGUMENT naming the offending field
+     * @throws ai.protomolt.proto.repo.spi.RepositoryException INVALID_ARGUMENT naming the offending field
      */
     static Resolved resolve(SaveDocumentRequest request) {
         if (!request.hasDocument()) {

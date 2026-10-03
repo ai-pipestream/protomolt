@@ -64,8 +64,8 @@ class RemoteBlobStoreDeadlineTest {
             var store = new RemoteBlobStore(DocumentServiceGrpc.newBlockingStub(channel),
                     "drive", Duration.ofMillis(100));
             assertThatThrownBy(() -> store.get("drive", "key"))
-                    .isInstanceOfSatisfying(StatusRuntimeException.class,
-                            error -> assertThat(error.getStatus().getCode()).isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.blob.spi.BlobStoreException.class,
+                            error -> assertThat(error.code()).isEqualTo(ai.protomolt.proto.repo.blob.spi.BlobStoreException.Code.DEADLINE_EXCEEDED));
         } finally {
             channel.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
             server.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
@@ -74,7 +74,7 @@ class RemoteBlobStoreDeadlineTest {
 
     private static void failsUnavailable(BlobStore store) {
         assertThatThrownBy(() -> store.get("drive", "key"))
-                .isInstanceOfSatisfying(StatusRuntimeException.class,
-                        error -> assertThat(error.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+                .isInstanceOfSatisfying(ai.protomolt.proto.repo.blob.spi.BlobStoreException.class,
+                        error -> assertThat(error.code()).isEqualTo(ai.protomolt.proto.repo.blob.spi.BlobStoreException.Code.UNAVAILABLE));
     }
 }

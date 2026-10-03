@@ -134,6 +134,78 @@ class RepoServiceIT {
         services.close();
     }
 
+    @Test
+    void libraryAndGrpcShareDocumentSaveReadManifestAndListBehavior() {
+        var local = services.repository();
+        var caller = new ai.protomolt.proto.repo.spi.RepositoryCaller("integration-test", true);
+        for (boolean grpc : new boolean[] {false, true}) {
+            String account = "parity-account-" + grpc;
+            String drive = "parity-drive-" + grpc;
+            createDrive(drive, account);
+            var doc = fixture("parity-doc-" + grpc, account, "source");
+            var save = intakeSave(doc, drive, account).build();
+            var saved = grpc ? documents.saveDocument(save) : local.saveDocument(caller, save);
+            var get = GetDocumentRequest.newBuilder().setNodeId(saved.getNodeId()).build();
+            var read = grpc ? documents.getDocument(get) : local.getDocument(caller, get);
+            assertThat(read.getDocument()).isEqualTo(doc);
+            var manifestRequest = GetDocumentManifestRequest.newBuilder().setNodeId(saved.getNodeId()).build();
+            var manifest = grpc ? documents.getDocumentManifest(manifestRequest) : local.getDocumentManifest(caller, manifestRequest);
+            assertThat(manifest.getManifest()).isEqualTo(read.getManifest());
+            var listRequest = ListDocumentsRequest.newBuilder().setAccountId(account).build();
+            var listed = grpc ? documents.listDocuments(listRequest) : local.listDocuments(caller, listRequest);
+            assertThat(listed.getTotalCount()).isEqualTo(1);
+            var again = grpc ? documents.saveDocument(save) : local.saveDocument(caller, save);
+            assertThat(again.getNodeId()).isEqualTo(saved.getNodeId());
+            assertThat(again.getDeduplicated()).isTrue();
+            var byReference = GetDocumentByReferenceRequest.newBuilder().setAddress(saved.getAddress()).build();
+            assertThat((grpc ? documents.getDocumentByReference(byReference) : local.getDocumentByReference(caller, byReference))
+                    .getDocument()).isEqualTo(doc);
+            var delete = DeleteDocumentRequest.newBuilder().setByReference(
+                    DeleteDocumentByReferenceCommand.newBuilder().setAddress(saved.getAddress())).build();
+            var deleted = grpc ? documents.deleteDocument(delete) : local.deleteDocument(caller, delete);
+            assertThat(deleted.getOutcome()).isNotEqualTo(DeleteDocumentOutcome.DELETE_DOCUMENT_OUTCOME_UNSPECIFIED);
+
+        }
+        assertThatThrownBy(() -> local.listDocuments(
+                new ai.protomolt.proto.repo.spi.RepositoryCaller("scoped", false), ListDocumentsRequest.getDefaultInstance()))
+                .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.PERMISSION_DENIED));
+    }
+
+    @Test
+    void remoteOutageHasDomainFailureLocallyAndSameGrpcStatus() throws Exception {
+        String account = "remote-outage-account";
+        String drive = "remote-outage-drive";
+        createDrive(drive, account);
+        var saved = documents.saveDocument(intakeSave(fixture("outage-doc", account, "source"), drive, account).build());
+        var row = services.driveLedger().findByName(account, drive).orElseThrow();
+        var absentChannel = InProcessChannelBuilder.forName(java.util.UUID.randomUUID().toString()).build();
+        var unavailable = new ai.protomolt.proto.repo.blob.grpc.RemoteBlobStore(
+                DocumentServiceGrpc.newBlockingStub(absentChannel), java.util.Map.of(row.bucket, drive), java.time.Duration.ofSeconds(1));
+        var local = new ai.protomolt.proto.repo.engine.DocumentOperations(services.documentLedger(), services.driveLedger(),
+                null, unavailable, new ai.protomolt.proto.repo.container.blob.PartStorage(), null);
+        var request = GetDocumentRequest.newBuilder().setNodeId(saved.getNodeId()).build();
+        String serverName = io.grpc.inprocess.InProcessServerBuilder.generateName();
+        var server = io.grpc.inprocess.InProcessServerBuilder.forName(serverName).directExecutor()
+                .addService(new DocumentGrpcService(local,
+                        new ai.protomolt.proto.repo.engine.BlobOperations(unavailable, services.driveLedger())))
+                .build().start();
+        var testChannel = InProcessChannelBuilder.forName(serverName).build();
+        try {
+            assertThatThrownBy(() -> local.getDocument(new ai.protomolt.proto.repo.spi.RepositoryCaller("test", true), request))
+                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.UNAVAILABLE))
+                    .hasCauseInstanceOf(ai.protomolt.proto.repo.blob.spi.BlobStoreException.class);
+            assertThatThrownBy(() -> DocumentServiceGrpc.newBlockingStub(testChannel).getDocument(request))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class,
+                            failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+        } finally {
+            testChannel.shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            server.shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            absentChannel.shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+        }
+    }
+
     // --------------------------------------------------------- authentication
 
     /**

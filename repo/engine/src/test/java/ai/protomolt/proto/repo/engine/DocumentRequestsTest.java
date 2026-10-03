@@ -1,4 +1,4 @@
-package ai.protomolt.proto.repo.service;
+package ai.protomolt.proto.repo.engine;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -7,7 +7,7 @@ import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.v1.DocumentPart;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
+import ai.protomolt.proto.repo.spi.RepositoryException;
 import java.io.IOException;
 import java.util.List;
 import java.util.UUID;
@@ -19,9 +19,9 @@ class DocumentRequestsTest {
 
     private static void assertRefusesNaming(ThrowingCallable call, String... fragments) {
         assertThatThrownBy(call)
-                .isInstanceOf(StatusRuntimeException.class)
-                .satisfies(t -> assertThat(Status.fromThrowable(t).getCode())
-                        .isEqualTo(Status.Code.INVALID_ARGUMENT))
+                .isInstanceOf(RepositoryException.class)
+                .satisfies(t -> assertThat(((RepositoryException) t).code())
+                        .isEqualTo(RepositoryException.Code.INVALID_ARGUMENT))
                 .hasMessageContainingAll(fragments);
     }
 

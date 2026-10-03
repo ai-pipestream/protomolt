@@ -1,4 +1,4 @@
-package ai.protomolt.proto.repo.service;
+package ai.protomolt.proto.repo.engine;
 
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.v1.DocumentPart;
@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
-import static ai.protomolt.proto.repo.service.GrpcErrors.invalidArgument;
+import static ai.protomolt.proto.repo.engine.RepositoryErrors.invalidArgument;
 
 /**
  * Reading the arguments of a document request: the small conversions every RPC does before

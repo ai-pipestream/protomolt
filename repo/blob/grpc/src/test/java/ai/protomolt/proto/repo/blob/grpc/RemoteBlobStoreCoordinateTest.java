@@ -34,8 +34,8 @@ class RemoteBlobStoreCoordinateTest {
             assertThatThrownBy(() -> store.copy("local", "key", "other", "copy"))
                     .isInstanceOf(IllegalArgumentException.class);
             assertThatThrownBy(() -> store.get("local", "key"))
-                    .isInstanceOfSatisfying(StatusRuntimeException.class,
-                            failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
+                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.blob.spi.BlobStoreException.class,
+                            failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.blob.spi.BlobStoreException.Code.UNIMPLEMENTED));
         } finally {
             channel.shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
             server.shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);

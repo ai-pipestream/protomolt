@@ -31,7 +31,7 @@ class UploadHttpServerContractTest {
 
     @BeforeEach
     void start() {
-        server = new UploadHttpServer(null, null, null);
+        server = new UploadHttpServer(new DocumentGrpcService(null, null, null, null, null, null), null, null);
         url = "http://127.0.0.1:" + server.start(0) + UploadHttpServer.UPLOAD_PATH;
         client = HttpClient.newHttpClient();
     }
@@ -46,7 +46,7 @@ class UploadHttpServerContractTest {
 
     @Test
     void portBeforeStartAndDoubleStartAreIllegalState() {
-        UploadHttpServer fresh = new UploadHttpServer(null, null, null);
+        UploadHttpServer fresh = new UploadHttpServer(new DocumentGrpcService(null, null, null, null, null, null), null, null);
         assertThatThrownBy(fresh::port)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("not started");

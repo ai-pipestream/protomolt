@@ -49,96 +49,104 @@ public final class BlobOperations implements ai.protomolt.proto.repo.spi.BlobRep
 
     @Override public GetBlobResponse get(RepositoryCaller caller, GetBlobRequest request) {
         requireAdministrator(caller);
-        FileStorageReference ref = storageRef(request.hasStorageRef(), request.getStorageRef());
-        DriveRecord drive = driveOrThrow(ref.getDriveName());
-        BlobStore.GetResult got = missingAsRepositoryError(() -> blobStore.get(drive.bucket, ref.getObjectKey(),
-                ref.hasVersionId() && !ref.getVersionId().isBlank() ? ref.getVersionId() : null));
-        GetBlobResponse.Builder response = GetBlobResponse.newBuilder()
-                .setData(ByteString.copyFrom(got.data()))
-                .setSizeBytes(got.data().length)
-                .setRetrievedAtEpochMs(System.currentTimeMillis());
-        if (got.contentType() != null) {
-            response.setMimeType(got.contentType());
-        }
-        return response.build();
+        return RepositoryErrors.call(() -> {
+            FileStorageReference ref = storageRef(request.hasStorageRef(), request.getStorageRef());
+            DriveRecord drive = driveOrThrow(ref.getDriveName());
+            BlobStore.GetResult got = missingAsRepositoryError(() -> blobStore.get(drive.bucket, ref.getObjectKey(),
+                    ref.hasVersionId() && !ref.getVersionId().isBlank() ? ref.getVersionId() : null));
+            GetBlobResponse.Builder response = GetBlobResponse.newBuilder()
+                    .setData(ByteString.copyFrom(got.data()))
+                    .setSizeBytes(got.data().length)
+                    .setRetrievedAtEpochMs(System.currentTimeMillis());
+            if (got.contentType() != null) {
+                response.setMimeType(got.contentType());
+            }
+            return response.build();
+        });
     }
 
     @Override public PutBlobResponse put(RepositoryCaller caller, PutBlobRequest request) {
         requireAdministrator(caller);
-        if (request.getDriveName().isBlank()) {
-            throw invalidArgument("drive_name is required");
-        }
-        DriveRecord drive = driveOrThrow(request.getDriveName());
-        byte[] data = request.getData().toByteArray();
-        String sha256 = DocumentPartCodec.sha256Hex(data);
-        String objectKey = request.getObjectKey().isBlank()
-                ? DriveKeys.blob(drive.prefix, sha256)
-                : request.getObjectKey();
-        String contentType = request.getMimeType().isBlank()
-                ? DEFAULT_CONTENT_TYPE : request.getMimeType();
-        // Verified write: the store's checksum trailer makes it reject the PUT when the
-        // landed bytes mismatch the computed digest.
-        blobStore.put(new BlobStore.PutSpec(drive.bucket, objectKey, contentType, null, sha256),
-                data);
-        return PutBlobResponse.newBuilder()
-                .setStorageRef(FileStorageReference.newBuilder()
-                        .setDriveName(request.getDriveName())
-                        .setObjectKey(objectKey))
-                .setSizeBytes(data.length)
-                .setSha256(sha256)
-                .build();
+        return RepositoryErrors.call(() -> {
+            if (request.getDriveName().isBlank()) {
+                throw invalidArgument("drive_name is required");
+            }
+            DriveRecord drive = driveOrThrow(request.getDriveName());
+            byte[] data = request.getData().toByteArray();
+            String sha256 = DocumentPartCodec.sha256Hex(data);
+            String objectKey = request.getObjectKey().isBlank()
+                    ? DriveKeys.blob(drive.prefix, sha256)
+                    : request.getObjectKey();
+            String contentType = request.getMimeType().isBlank()
+                    ? DEFAULT_CONTENT_TYPE : request.getMimeType();
+            // Verified write: the store's checksum trailer makes it reject the PUT when the
+            // landed bytes mismatch the computed digest.
+            blobStore.put(new BlobStore.PutSpec(drive.bucket, objectKey, contentType, null, sha256),
+                    data);
+            return PutBlobResponse.newBuilder()
+                    .setStorageRef(FileStorageReference.newBuilder()
+                            .setDriveName(request.getDriveName())
+                            .setObjectKey(objectKey))
+                    .setSizeBytes(data.length)
+                    .setSha256(sha256)
+                    .build();
+        });
     }
 
     @Override public GetBlobForUpdateResponse getForUpdate(RepositoryCaller caller, GetBlobForUpdateRequest request) {
         requireAdministrator(caller);
-        request(request);
-        ConditionalBlobKey key = request.getKey();
-        DriveRecord drive = driveOrThrow(key.getDriveName());
-        BlobStore.GetResult got;
-        try {
-            got = missingAsRepositoryError(() -> blobStore.getForUpdate(drive.bucket, key.getObjectKey()));
-        } catch (UnsupportedOperationException unsupported) {
-            throw new RepositoryException(UNSUPPORTED, "authoritative blob read is unsupported", unsupported);
-        }
-        if (got == null || got.data() == null || got.data().length > BlobStore.MAX_CONDITIONAL_BYTES) {
-            throw new RepositoryException(INTERNAL, "authoritative blob read is invalid");
-        }
-        String tag = backendTag(got.eTag());
-        ConditionalBlobVersion version = version(key, tag, got.data());
-        var response = GetBlobForUpdateResponse.newBuilder().setVersion(version)
-                .setData(ByteString.copyFrom(got.data()));
-        if (got.contentType() != null) response.setMimeType(got.contentType());
-        GetBlobForUpdateResponse result = response.build();
-        response(result);
-        return result;
+        return RepositoryErrors.call(() -> {
+            request(request);
+            ConditionalBlobKey key = request.getKey();
+            DriveRecord drive = driveOrThrow(key.getDriveName());
+            BlobStore.GetResult got;
+            try {
+                got = missingAsRepositoryError(() -> blobStore.getForUpdate(drive.bucket, key.getObjectKey()));
+            } catch (UnsupportedOperationException unsupported) {
+                throw new RepositoryException(UNSUPPORTED, "authoritative blob read is unsupported", unsupported);
+            }
+            if (got == null || got.data() == null || got.data().length > BlobStore.MAX_CONDITIONAL_BYTES) {
+                throw new RepositoryException(INTERNAL, "authoritative blob read is invalid");
+            }
+            String tag = backendTag(got.eTag());
+            ConditionalBlobVersion version = version(key, tag, got.data());
+            var response = GetBlobForUpdateResponse.newBuilder().setVersion(version)
+                    .setData(ByteString.copyFrom(got.data()));
+            if (got.contentType() != null) response.setMimeType(got.contentType());
+            GetBlobForUpdateResponse result = response.build();
+            response(result);
+            return result;
+        });
     }
 
     @Override public CompareAndPutBlobResponse compareAndPut(RepositoryCaller caller, CompareAndPutBlobRequest request) {
         requireAdministrator(caller);
-        request(request);
-        ConditionalBlobKey key = request.getKey();
-        DriveRecord drive = driveOrThrow(key.getDriveName());
-        byte[] data = request.getData().toByteArray();
-        var condition = request.hasIfAbsent() ? BlobStore.WriteCondition.absent()
-                : BlobStore.WriteCondition.matching(request.getExpectedEtag());
-        String contentType = request.hasMimeType() ? request.getMimeType() : DEFAULT_CONTENT_TYPE;
-        String digest = DocumentPartCodec.sha256Hex(data);
-        BlobStore.PutResult stored;
-        try {
-            stored = blobStore.conditionalPut(new BlobStore.PutSpec(drive.bucket,
-                    key.getObjectKey(), contentType, null, digest), data, condition);
-        } catch (BlobStore.BlobConflictException conflict) {
-            throw new RepositoryException(CONFLICT, "conditional blob precondition failed", conflict);
-        } catch (UnsupportedOperationException unsupported) {
-            throw new RepositoryException(UNSUPPORTED, "conditional blob write is unsupported", unsupported);
-        }
-        if (stored == null) {
-            throw new RepositoryException(INTERNAL, "conditional blob write is invalid");
-        }
-        var result = CompareAndPutBlobResponse.newBuilder()
-                .setVersion(version(key, committedTag(stored.eTag()), data)).build();
-        response(result);
-        return result;
+        return RepositoryErrors.call(() -> {
+            request(request);
+            ConditionalBlobKey key = request.getKey();
+            DriveRecord drive = driveOrThrow(key.getDriveName());
+            byte[] data = request.getData().toByteArray();
+            var condition = request.hasIfAbsent() ? BlobStore.WriteCondition.absent()
+                    : BlobStore.WriteCondition.matching(request.getExpectedEtag());
+            String contentType = request.hasMimeType() ? request.getMimeType() : DEFAULT_CONTENT_TYPE;
+            String digest = DocumentPartCodec.sha256Hex(data);
+            BlobStore.PutResult stored;
+            try {
+                stored = blobStore.conditionalPut(new BlobStore.PutSpec(drive.bucket,
+                        key.getObjectKey(), contentType, null, digest), data, condition);
+            } catch (BlobStore.BlobConflictException conflict) {
+                throw new RepositoryException(CONFLICT, "conditional blob precondition failed", conflict);
+            } catch (UnsupportedOperationException unsupported) {
+                throw new RepositoryException(UNSUPPORTED, "conditional blob write is unsupported", unsupported);
+            }
+            if (stored == null) {
+                throw new RepositoryException(INTERNAL, "conditional blob write is invalid");
+            }
+            var result = CompareAndPutBlobResponse.newBuilder()
+                    .setVersion(version(key, committedTag(stored.eTag()), data)).build();
+            response(result);
+            return result;
+        });
     }
 
     private static <T> T missingAsRepositoryError(java.util.function.Supplier<T> operation) {
@@ -207,12 +215,14 @@ public final class BlobOperations implements ai.protomolt.proto.repo.spi.BlobRep
 
     @Override public DeleteBlobResponse delete(RepositoryCaller caller, DeleteBlobRequest request) {
         requireAdministrator(caller);
-        FileStorageReference ref = storageRef(request.hasStorageRef(), request.getStorageRef());
-        DriveRecord drive = driveOrThrow(ref.getDriveName());
-        // Idempotent: delete-of-absent reports deleted=false, not an error.
-        return DeleteBlobResponse.newBuilder()
-                .setDeleted(blobStore.delete(drive.bucket, ref.getObjectKey()))
-                .build();
+        return RepositoryErrors.call(() -> {
+            FileStorageReference ref = storageRef(request.hasStorageRef(), request.getStorageRef());
+            DriveRecord drive = driveOrThrow(ref.getDriveName());
+            // Idempotent: delete-of-absent reports deleted=false, not an error.
+            return DeleteBlobResponse.newBuilder()
+                    .setDeleted(blobStore.delete(drive.bucket, ref.getObjectKey()))
+                    .build();
+        });
     }
 
     /** A storage reference is a drive and a key; neither has a sensible default. */

@@ -80,7 +80,7 @@ import java.util.concurrent.Executors;
  * in place instead of orphaning a randomly-keyed object. The assembled
  * Document (ownership + blob_bag with a {@code FileStorageReference} and the
  * computed SHA-256) then runs through the SAME intake-save path as gRPC
- * {@code SaveDocument} ({@link DocumentGrpcService#saveBlocking},
+ * {@code SaveDocument} ({@link ai.protomolt.proto.repo.spi.DocumentRepository#saveDocument},
  * use_datasource_id arm, graph {@code "intake:<accountId>"}), whose
  * root-checksum dedupe answers an identical re-upload with
  * {@code deduplicated=true} and skips the part re-write.
@@ -112,7 +112,7 @@ public final class UploadHttpServer implements AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(UploadHttpServer.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private final DocumentGrpcService documentService;
+    private final ai.protomolt.proto.repo.spi.DocumentRepository documentService;
     private final DriveLedger drives;
     private final BlobStore blobStore;
     private final byte[] expectedToken;
@@ -161,7 +161,19 @@ public final class UploadHttpServer implements AutoCloseable {
      */
     public UploadHttpServer(DocumentGrpcService documentService, DriveLedger drives,
             BlobStore blobStore, String apiToken, ArchiveOperations archiveOperations) {
-        this.documentService = documentService;
+        this(documentService.repository(), drives, blobStore, apiToken, archiveOperations);
+    }
+
+    /** Hosts the document upload route over the shared library boundary. */
+    public static UploadHttpServer forRepository(ai.protomolt.proto.repo.spi.DocumentRepository documents,
+            DriveLedger drives, BlobStore blobStore, String apiToken) {
+        return new UploadHttpServer(documents, drives, blobStore, apiToken, null);
+    }
+
+    private UploadHttpServer(ai.protomolt.proto.repo.spi.DocumentRepository documents,
+            DriveLedger drives, BlobStore blobStore, String apiToken, ArchiveOperations archiveOperations) {
+        this.documentService = java.util.Objects.requireNonNull(documents);
+
         this.drives = drives;
         this.blobStore = blobStore;
         this.expectedToken = apiToken == null
@@ -271,7 +283,16 @@ public final class UploadHttpServer implements AutoCloseable {
             writeJson(exchange, 200, upload(exchange));
         } catch (HttpError e) {
             writeError(exchange, e.status, e.getMessage());
+        } catch (ai.protomolt.proto.repo.spi.RepositoryException e) {
+            int status = switch (e.code()) {
+                case INVALID_ARGUMENT -> 400;
+                case NOT_FOUND -> 404;
+                case PERMISSION_DENIED -> 403;
+                default -> 502;
+            };
+            writeError(exchange, status, e.getMessage());
         } catch (StatusRuntimeException e) {
+
             // The intake save's gRPC status vocabulary, flattened onto HTTP.
             Status.Code code = e.getStatus().getCode();
             int status = switch (code) {
@@ -398,7 +419,7 @@ public final class UploadHttpServer implements AutoCloseable {
         if (crawlId != null && !crawlId.isBlank()) {
             save.setCrawlId(crawlId);
         }
-        SaveDocumentResponse saved = documentService.saveBlocking(save.build());
+        SaveDocumentResponse saved = documentService.saveDocument(new ai.protomolt.proto.repo.spi.RepositoryCaller("http-upload", true), save.build());
         LOG.debug("Uploaded doc_id={} to {} ({} bytes, sha256={}, deduplicated={})",
                 docId, objectKey, contentLength, sha256, saved.getDeduplicated());
 

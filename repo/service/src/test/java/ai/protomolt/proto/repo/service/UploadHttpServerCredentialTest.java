@@ -28,7 +28,7 @@ class UploadHttpServerCredentialTest {
 
     @BeforeEach
     void start() {
-        server = new UploadHttpServer(null, null, null, TOKEN);
+        server = new UploadHttpServer(new DocumentGrpcService(null, null, null, null, null, null), null, null, TOKEN);
         base = "http://127.0.0.1:" + server.start(0);
         client = HttpClient.newHttpClient();
     }
@@ -90,7 +90,7 @@ class UploadHttpServerCredentialTest {
 
     @Test
     void anOpenServerServesWithoutACredential() throws Exception {
-        try (UploadHttpServer open = new UploadHttpServer(null, null, null)) {
+        try (UploadHttpServer open = new UploadHttpServer(new DocumentGrpcService(null, null, null, null, null, null), null, null)) {
             String url = "http://127.0.0.1:" + open.start(0)
                     + UploadHttpServer.UPLOAD_PATH + "/probe";
             HttpResponse<String> response = client.send(
