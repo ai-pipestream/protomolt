@@ -54,6 +54,30 @@ final class ManagedRawBindings {
         return prepare(readVerifiedBag(store, drive, source.readManifest()), destinationAccount, source, true, Map.of(), Map.of());
     }
 
+    /** Managed composition reuses the already-read source batch; no current-drive lookup or second GET. */
+    Plan copying(DocumentReadBatch batch, DocumentRecord source, String destinationAccount) {
+        return prepare(readVerifiedBag(batch), destinationAccount, source, true, Map.of(), Map.of());
+    }
+
+    static BlobBag readVerifiedBag(DocumentReadBatch batch) {
+        // The batch retains two payload allowances after reads finish. Serialize this
+        // temporary copy with close and other batch parses so that allowance stays valid.
+        synchronized (batch) {
+        var parts = batch.parts().stream().filter(p -> p.part() == DocumentPart.DOCUMENT_PART_BLOBS).toList();
+        if (parts.size() > 1) throw RepositoryErrors.failedPrecondition("Source has duplicate BLOBS fragments");
+        if (parts.isEmpty()) return BlobBag.getDefaultInstance();
+        var part = parts.getFirst();
+        byte[] bytes = part.bytes().clone();
+        if (!DocumentPartCodec.sha256Hex(bytes).equals(part.sha256()))
+            throw RepositoryErrors.failedPrecondition("Source BLOBS changed after verification");
+        try { return Document.parseFrom(bytes).getBlobBag(); }
+        catch (com.google.protobuf.InvalidProtocolBufferException invalid) {
+            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Source BLOBS cannot be decoded", invalid);
+        }
+        }
+    }
+
     /** Copy completion must be verified too; a source can change between GET and COPY. */
     static void verifyCopy(BlobStore store, DriveRecord drive, ai.protomolt.proto.repo.v1.DocumentManifest manifest) {
         readVerifiedBag(store, drive, manifest);

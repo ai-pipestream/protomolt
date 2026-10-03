@@ -651,14 +651,15 @@ Managed routing must preserve these behaviors explicitly:
 - The shared candidate builder feeds the managed writer. Raw-binding publication
   and the saved outbox event run on the writer's supplied EntityManager in its
   atomic publication transaction, never as a second transaction.
-- Before composing that callback, acquire the union of target, source and raw
-  drive locks in one global order. The current writer locks target/source drives
-  before `ManagedRawBindings.Plan.publish` locks its raw-drive subset; opposing
-  target-X/raw-Y and target-Y/raw-X saves can deadlock. Sorting each group alone
-  does not fix their combined ordering.
+- Target/source and raw-drive validation both acquire PESSIMISTIC_READ locks.
+  Opposing shared drive locks are compatible; the earlier proposed X/Y deadlock
+  does not justify a union-order refactor. Preserve the sorted validation and
+  reassess ordering if a future path adds exclusive drive mutation or upgrades.
 - Carried BLOBS bindings must derive from the exact verified source batch.
-  `ManagedRawBindings.copying` still uses an ordinary read and current source
-  drive, so it cannot be reused unchanged for managed partial saves.
+  `ManagedRawBindings.copying(batch, source, account)` now parses that batch
+  without another provider GET, rejects duplicate/changed/malformed BLOBS, then
+  runs the existing exact-reference admission checks. The older store/drive
+  overload remains for legacy saves and must not be used for managed composition.
 - Capacity, cancellation, deadline and revision errors wrapped by WriteFailure
   retain domain meaning and attempt identity. An ambiguous commit is reconciled,
   not blindly retried.
