@@ -117,8 +117,13 @@ public final class DriveLedger {
     }
 
     private DriveRecord checked(DriveRecord record) {
-        readGate.accept(record);
+        validateBackend(record);
         return record;
+    }
+
+    /** Apply the composition's backend gate to a row already locked by a caller's transaction. */
+    public void validateBackend(DriveRecord record) {
+        readGate.accept(java.util.Objects.requireNonNull(record, "record"));
     }
 
     /** Legacy blob coordinates omit the account; never choose arbitrarily between tenants. */

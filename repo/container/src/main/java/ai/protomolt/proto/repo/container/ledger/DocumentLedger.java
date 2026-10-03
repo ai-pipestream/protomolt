@@ -39,6 +39,9 @@ public final class DocumentLedger {
         this.tx = tx;
     }
 
+    /** Uses the same persistence unit as document publication and its outbox. */
+    public RawObjectLedger rawObjects() { return new RawObjectLedger(tx); }
+
     /**
      * Insert-or-update by {@code node_id}. The service pre-populates the
      * record (including the caller-minted nodeId); an existing row with the
@@ -231,10 +234,16 @@ public final class DocumentLedger {
      */
     public <T> T withLockedReference(NodeAddress address,
             Function<Optional<DocumentRecord>, T> work) {
+        return withLockedReference(address, (em, row) -> work.apply(row));
+    }
+
+    /** Transaction-aware variant for reference bindings and other atomic commit obligations. */
+    public <T> T withLockedReference(NodeAddress address,
+            java.util.function.BiFunction<jakarta.persistence.EntityManager, Optional<DocumentRecord>, T> work) {
         return tx.inTransaction(em -> {
             TypedQuery<DocumentRecord> query = referenceQuery(em, address);
             query.setLockMode(LockModeType.PESSIMISTIC_WRITE);
-            return work.apply(query.getResultStream().findFirst());
+            return work.apply(em, query.getResultStream().findFirst());
         });
     }
 

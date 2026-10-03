@@ -229,7 +229,8 @@ public final class RawObjectLedger {
         });
     }
 
-    private static List<UUID> references(EntityManager em, UUID nodeId) {
+    /** Read bindings inside an existing transaction while its document lock is held. */
+    public static List<UUID> references(EntityManager em, UUID nodeId) {
         return em.unwrap(org.hibernate.Session.class).createNativeQuery("SELECT raw_id FROM document_raw_refs WHERE node_id = :node ORDER BY raw_id", UUID.class)
                 .setParameter("node", nodeId).getResultList();
     }

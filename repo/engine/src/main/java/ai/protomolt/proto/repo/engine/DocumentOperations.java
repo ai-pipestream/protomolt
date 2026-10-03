@@ -149,6 +149,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
     private final PartLayout layout;
     private final PurgeQueue purgeQueue;
     private final JdbcEventOutbox events;
+    private final ManagedRawBindings rawBindings;
 
     /**
      * @param documents the document-row ledger
@@ -186,6 +187,17 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
     public DocumentOperations(DocumentLedger documents, DriveLedger drives, Tx tx,
             BlobStore blobStore, PartStorage partStorage, PurgeQueue purgeQueue,
             JdbcEventOutbox events) {
+        this(documents, drives, tx, blobStore, partStorage, purgeQueue, events, null);
+    }
+
+    /**
+     * The host may supply a qualified, non-secret identity for the selected physical
+     * backend. Without it, unmanaged documents work as before but managed references
+     * are rejected. This does not by itself enable managed ingestion or qualify TTLs.
+     */
+    public DocumentOperations(DocumentLedger documents, DriveLedger drives, Tx tx,
+            BlobStore blobStore, PartStorage partStorage, PurgeQueue purgeQueue,
+            JdbcEventOutbox events, String managedBackendIdentity) {
         this.documents = documents;
         this.drives = drives;
         this.tx = tx;
@@ -194,6 +206,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         this.layout = PartLayouts.document();
         this.purgeQueue = purgeQueue;
         this.events = events;
+        this.rawBindings = new ManagedRawBindings(documents, drives, managedBackendIdentity);
     }
 
     // ------------------------------------------------------------------ save
@@ -239,6 +252,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
      */
     private SaveDocumentResponse saveFull(RepositoryCaller caller, SaveResolution.Resolved r, SaveDocumentRequest request,
             DriveRecord drive, UUID nodeId, String basePrefix, DocumentRecord destination) {
+        var bindings = rawBindings.writing(r.doc().getBlobBag(), r.address().getAccountId(), destination);
         List<PartObject> split = DocumentPartCodec.split(r.doc(), layout);
         String rootChecksum = DocumentPartCodec.rootChecksum(split);
 
@@ -251,7 +265,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         record Decision(boolean deduplicated, DocumentRecord existing, long nextDocVersion) {
         }
         boolean intake = DocumentRowKind.INTAKE.equals(r.rowKind());
-        Decision decision = documents.withLockedReference(r.address(), existing -> {
+        Decision decision = documents.withLockedReference(r.address(), (em, existing) -> {
             // Authorization covered this exact revision. Check before dedupe,
             // which itself mutates bookkeeping even without writing object bytes.
             if (destination == null ? existing.isPresent()
@@ -265,6 +279,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
             if (intake && !request.getForceSave()
                     && DocumentStatus.AVAILABLE.equals(row.status)
                     && rootChecksum.equals(row.checksum)) {
+                bindings.publish(em, row);
                 row.reprocessCount = row.reprocessCount + 1;
                 row.lastReprocessedAt = Instant.now();
                 return new Decision(true, row, nextVersion);
@@ -301,7 +316,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
 
         DocumentRecord row = upsertRow(caller, r, request, drive, nodeId, basePrefix, written.manifest(),
                 written.rootChecksum(), written.totalSizeBytes(), written.coreEtag(),
-                written.coreVersionId(), decision.existing(), Map.of());
+                written.coreVersionId(), decision.existing(), Map.of(), bindings);
         LOG.debug("Saved {} at {} (node_id={}, version={}, bytes={})",
                 r.address().getDocId(), r.address().getGraphAddressId(), nodeId,
                 decision.nextDocVersion(), written.totalSizeBytes());
@@ -374,6 +389,9 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
             }
         }
 
+        var bindings = partsWritten.contains(DocumentPart.DOCUMENT_PART_BLOBS)
+                ? rawBindings.writing(r.doc().getBlobBag(), r.address().getAccountId(), destExisting)
+                : rawBindings.copying(blobStore, srcDrive, srcRow, r.address().getAccountId());
         String writePrefix = writeAttemptPrefix(basePrefix);
         PartStorage.WriteResult written = partStorage.writePartObjects(blobStore, drive.bucket, writePrefix,
                 toWrite, r.address(),
@@ -406,6 +424,8 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         }
 
         DocumentManifest combined = combineManifests(written.manifest(), carriedAtDest, srcManifest, docVersion);
+        if (!partsWritten.contains(DocumentPart.DOCUMENT_PART_BLOBS))
+            ManagedRawBindings.verifyCopy(blobStore, drive, combined);
         String rootChecksum = DocumentPartCodec.rootChecksumFromManifest(combined);
         long totalSize = combined.getPartsList().stream()
                 .filter(e -> e.getState() == PartState.PART_STATE_PRESENT)
@@ -429,7 +449,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
 
         DocumentRecord row = upsertRow(caller, r, request, drive, nodeId, basePrefix, combined,
                 rootChecksum, totalSize, coreEtag, coreVersionId, destExisting,
-                Map.of(srcRow.nodeId, srcRow.mutationRevision));
+                Map.of(srcRow.nodeId, srcRow.mutationRevision), bindings);
         LOG.debug("Partial save {} at {} (node_id={}, version={}, parts={}, copied={})",
                 r.address().getDocId(), r.address().getGraphAddressId(), nodeId, docVersion,
                 partsWritten, carried.size());
@@ -918,7 +938,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
     private DocumentRecord upsertRow(RepositoryCaller caller, SaveResolution.Resolved r, SaveDocumentRequest request, DriveRecord drive,
             UUID nodeId, String basePrefix, DocumentManifest manifest, String rootChecksum,
             long totalSize, String coreEtag, String coreVersionId, DocumentRecord existing,
-            Map<UUID, Long> sourceRevisions) {
+            Map<UUID, Long> sourceRevisions, ManagedRawBindings.Plan bindings) {
         OwnershipContext ownership = r.doc().getOwnership();
         DocumentRecord row = new DocumentRecord();
         row.nodeId = nodeId;
@@ -964,6 +984,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         try {
             return documents.saveIfRevision(row, existing == null ? null : existing.mutationRevision, sourceRevisions,
                     (em, committed) -> {
+                        bindings.publish(em, committed);
                         if (events != null) events.enqueue(em, DocumentEventFactory.saved(committed, now));
                     });
         } catch (DocumentLedger.RevisionConflictException conflict) {

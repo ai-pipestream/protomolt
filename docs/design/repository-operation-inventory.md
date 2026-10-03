@@ -70,6 +70,11 @@ extension even where the message shape remains unchanged.
   raw-object references transactionally. Caller-supplied storage coordinates never
   grant deletion authority. Shared objects require zero-reference cleanup, and
   legacy deterministic keys require explicit migration before immutable guarantees.
+- **Extended, implemented for qualified managed records:** full saves and partial
+  BLOBS copies retain/release admitted raw references atomically with document
+  publication; dedupe validates them before updating its counter. Source fragment
+  checksums and commit-time binding/backend checks reject corrupt or stale copies.
+  Acquiring a fresh managed reference still requires the planned ingestion path.
 - **Extended, implemented:** PutBlob, CompareAndPutBlob and DeleteBlob reject keys
   containing the reserved `.protomolt-managed` segment, including generated put
   keys. Read operations retain their existing authority requirements. The guard

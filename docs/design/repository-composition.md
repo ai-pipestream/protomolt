@@ -403,6 +403,27 @@ reconciliation of late writes. These are internal coordination primitives: no
 upload route or physical cleanup worker uses them yet, and the HTTP regressions
 below remain red.
 
+The document engine now maintains those references during qualified full saves,
+partial copies and dedupe. Ordinary requests can retain their destination's
+admitted objects or inherit an authorized copy source's objects; naming a managed
+key does not create a binding. The engine compares storage coordinates, version,
+size, SHA-256 and MIME type with the retained record. Copy preparation verifies
+the source BLOBS fragment against its manifest, and copy completion verifies the
+destination bytes too. Publication rechecks the source reference set, backend
+identity and locked drive configuration before replacing references in the same
+transaction as the document and outbox. Dedupe performs these checks before
+incrementing its counter. Removing BLOBS releases the current document's refs;
+deleting one owner leaves shared raw objects pinned by the others.
+
+Existing engine constructors continue supporting unmanaged documents. Managed
+references require the host to supply an explicit qualified backend identity;
+without it they fail as unsupported. This enables reference-preserving operations
+over already admitted records, not ingestion. The shared ingestion operation and
+production composition still need to establish that identity and enforce provider
+retention, leases and admission. Real SQL/object-store tests cover library/gRPC
+parity, metadata mismatch, unadmitted refs, cross-drive copies, shared retention,
+corrupt fragments, and binding/provider changes during copying.
+
 The real HTTP regression `rejectedReplacementPreservesCommittedDocumentAndRawBytes`
 demonstrates that a bad-checksum replacement deletes the previously committed raw
 object while GetDocument still returns its metadata and claim check. The accepted-replacement regression
