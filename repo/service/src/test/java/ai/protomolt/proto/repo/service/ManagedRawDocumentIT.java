@@ -258,6 +258,77 @@ class ManagedRawDocumentIT {
         assertThat(budget.reservedBytes()).isZero();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"false,false,false", "true,false,false", "false,true,false", "true,true,false",
+            "false,false,true", "true,false,true", "false,true,true", "true,true,true"})
+    void managedPartialCopyRejectsSourceRevisionChangedAfterRead(boolean transport, boolean managedSource, boolean afterWrite) throws Exception {
+        var seeded = seed();
+        var profile = new ManagedBackendLedger.Profile(new BackendIdentity("s3", "s3/v1", Map.of(
+                "endpoint", S3.getEndpoint().toString(), "region", S3.getRegion(), "path-style", "true")), "raw-test-realm");
+        new ManagedBackendLedger(tx).bind(BACKEND, profile);
+        var armed = new java.util.concurrent.atomic.AtomicBoolean();
+        var changed = new java.util.concurrent.atomic.AtomicBoolean();
+        BlobStore racing = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
+                new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
+                    try {
+                        var result = method.invoke(store, args);
+                        if (method.getName().equals(afterWrite ? "put" : "getBounded") && armed.get() && changed.compareAndSet(false, true)) {
+                            var current = documents.findByNodeId(seeded.row().nodeId).orElseThrow();
+                            current.reprocessCount++;
+                            documents.saveIfRevision(current, current.mutationRevision, (em, row) -> {});
+                        }
+                        return result;
+                    } catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                });
+        var budget = new PayloadBudget(1024 * 1024);
+        var reader = new DocumentPartReader((generation, retained) -> racing, 4, 1024 * 1024, budget);
+        // Borrow the real provider lifetime; this wrapper only injects the race.
+        var intercepted = new OpenedBlobStore(racing, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer());
+        var writer = new DocumentAttemptWriter(tx, drives, BACKEND, profile.identity(), intercepted, budget);
+        var operations = new DocumentOperations(documents, drives, tx, racing, new PartStorage(),
+                new JdbcPurgeQueue(tx), null, BACKEND, reader, writer);
+        String name = "managed-source-race-" + UUID.randomUUID();
+        var host = InProcessServerBuilder.forName(name).addService(new DocumentGrpcService(operations,
+                new BlobOperations(racing, drives))).build().start();
+        var connection = InProcessChannelBuilder.forName(name).build();
+        try {
+            if (managedSource) operations.saveDocument(CALLER,
+                    save(seeded.document(), primary).toBuilder().setForceSave(true).build());
+            var before = documents.findByNodeId(seeded.row().nodeId).orElseThrow();
+            var candidate = seeded.document().toBuilder().setDocId("stale-copy-" + UUID.randomUUID()).clearBlobBag().build();
+            var request = save(candidate, secondary).toBuilder().addPartsWritten(DocumentPart.DOCUMENT_PART_CORE)
+                    .setCopyUnwrittenPartsFrom(seeded.address()).build();
+            armed.set(true);
+            if (transport) assertThatThrownBy(() -> DocumentServiceGrpc.newBlockingStub(connection).saveDocument(request))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class,
+                            error -> assertThat(error.getStatus().getCode()).isEqualTo(Status.Code.ABORTED));
+            else assertThatThrownBy(() -> operations.saveDocument(CALLER, request))
+                    .isInstanceOfSatisfying(RepositoryException.class,
+                            error -> assertThat(error.code()).isEqualTo(RepositoryException.Code.CONFLICT));
+            assertThat(changed).isTrue();
+            var destination = seeded.address().toBuilder().setDocId(candidate.getDocId()).build();
+            assertThat(documents.findByReference(destination)).isEmpty();
+            assertThat(raw.references(DocumentIds.nodeId(destination))).isEmpty();
+            assertThat(documents.hasPartPublication(DocumentIds.nodeId(destination))).isFalse();
+            long attempts = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM document_part_attempts WHERE node_id=:node")
+                    .setParameter("node", DocumentIds.nodeId(destination)).getSingleResult()).longValue());
+            assertThat(attempts).isEqualTo(afterWrite ? 1 : 0);
+
+            var after = documents.findByNodeId(before.nodeId).orElseThrow();
+            assertThat(after.mutationRevision).isGreaterThan(before.mutationRevision);
+            assertThat(after.reprocessCount).isEqualTo(before.reprocessCount + 1);
+            assertThat(raw.references(before.nodeId)).containsExactly(seeded.raw().rawId);
+        } finally {
+            connection.shutdownNow(); host.shutdownNow();
+            writer.close(); reader.close();
+            assertThat(writer.awaitIdle(Duration.ofSeconds(5))).isTrue();
+            assertThat(reader.awaitIdle(Duration.ofSeconds(5))).isTrue();
+            intercepted.close();
+        }
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
     @Test void corruptedSourceFragmentCannotTransferRawBindings() {
         for (boolean transport : List.of(false, true)) {
             var seeded = seed();

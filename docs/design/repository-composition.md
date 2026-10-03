@@ -657,7 +657,12 @@ cleanup records. Retained publication history also causes refusal. Tests verify
 that refusal preserves revision, status, raw references and source readability.
 Legacy-source deletion proves the destination alone retains its copied raw bytes;
 managed-source cases retain both references and do not establish physical purge.
-Source-policy race coverage also remains qualification work.
+Source revision races are exercised after the real source GET and after a
+destination PUT, for legacy/managed sources through library and gRPC calls.
+Preflight refusal admits no attempt; the later race leaves one unpublished attempt
+for recovery. Neither exposes a destination row, publication or raw reference.
+These cases change reprocessing metadata to advance the source revision; they do
+not establish scoped ACL revocation behavior, which remains qualification work.
 This is not yet the production host default or a complete managed-save feature.
 
 Partial saves currently copy unchanged bytes. Before production wiring, measure
