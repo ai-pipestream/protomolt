@@ -415,8 +415,65 @@ Follow-up validation on 2026-10-03 ran the same document-focused container/servi
 command after the revision-return fix and added race/boundary fixtures. It completed
 in 1m16s: JUnit XML reports 207 container and 87 service cases, 292 passed,
 zero failures/errors, and two opt-in benchmarks skipped. Sol reviewed the replay
-design and the revision-return fix. No new replay API or SQL operation ledger is
-implemented by this change; durable admission/outcome implementation is next.
+design and the revision-return fix. That checkpoint had no replay API or SQL
+operation ledger. The V34 slice below adds admission storage; terminal outcomes
+and the executable replay API remain unimplemented.
+
+### Internal operation admission storage (V34)
+
+**New, internal only:** `RepositoryOperationLedger` reserves one encoded command
+under `(account, trusted principal, operation UUID)`, observes it, renews its owner,
+and performs generation-fenced takeover after expiry. It has no production caller,
+public SPI method, RPC or terminal-outcome operation. Its package-private encoded
+byte input is storage plumbing for a future typed codec, not an executable command
+API. Existing document/archive operations and protobuf names/tags remain unchanged.
+
+V34 separates immutable `repository_operations` command rows from narrow mutable
+`repository_operation_owners` rows. Foreign-key and deferred required-owner guards
+make their first admission atomic; neither identity can be deleted or rewritten.
+Owner renewal/takeover queries and triggers do not load, compare or hash command
+bytes. One command is bounded to 1 MiB, account/principal to 200 characters, and
+leases to one second through one day at the Java boundary. SQL also caps leases
+at one day. Generation overflow fails rather than wrapping.
+
+Admission compares codec, version, exact immutable bytes and their SHA-256 after
+the conflict insert, using a separate locked read under READ COMMITTED. The stored
+digest verifies encoded bytes; it is not yet a complete semantic-command digest.
+The future reviewed encoder must include its version and all semantic fields.
+Exact retry does not renew a lease or steal another worker's token. The coordinator
+retains its nonce across uncertain admission/takeover acknowledgement; matching
+live ownership can be recovered without extending the lease. Lookup omits tokens,
+but still requires coordinator authorization before any public exposure. Scope
+isolation tests are not authorization tests.
+
+The owner generation and token fence renewals, and takeover increments generation
+while rotating the token. Lease checks use database time after row-lock waits.
+Both initial admission and a conflict retry enforce READ COMMITTED; a focused test
+first demonstrated that the retry path could bypass an owner-only isolation guard.
+The command INSERT trigger now enforces the guard even on `ON CONFLICT DO NOTHING`.
+
+Fixtures use opaque synthetic bytes to test storage identity only. Real PostgreSQL
+cases cover conflicting/same-command admission waits with winner commit/rollback,
+independent-key progress, exact replay through a fresh ledger, expired renewal,
+takeover retry, renewal-versus-takeover waits, immutable SQL guards, incomplete
+admission rollback, size/lease bounds and populated V33 migration. A maximum-size
+command heartbeat has a client-statement/transaction budget; that is not provider
+latency qualification. SQL trigger internals are outside the client-statement count.
+
+This row pair does **not** record allowed upload scope, validate protobuf semantics,
+authorize resources, bind evidence to members, publish domain rows or persist a
+terminal outcome. Keep it disconnected from provider I/O until typed command and
+upload-intent integration exist. The subsequent coordinator must publish domain
+changes, native references, outbox and immutable outcome in the same transaction;
+missing lookup results remain inconclusive during in-flight admission/commit.
+
+Local V34 validation on 2026-10-03: `:protomolt-repo-container:test
+:protomolt-repo-spi:checkRuntimeBoundaries` completed in 1m55s. JUnit XML contains
+60 suites, 427 cases: 426 passed, zero failures/errors and one opt-in benchmark
+skipped. All 28 admission cases passed; the maximum-payload renewal stayed within
+one transaction and four prepared client statements. Sol reviewed the final
+command/owner split and isolation guard. This is local validation, not hosted CI,
+publication, deployment or a production latency claim.
 
 Required cases before wiring production consumers:
 
