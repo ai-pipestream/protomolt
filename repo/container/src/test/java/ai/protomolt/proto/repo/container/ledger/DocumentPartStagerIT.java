@@ -75,6 +75,34 @@ class DocumentPartStagerIT {
                 });
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void explicitCancellationStopsAdmissionOrVerification(boolean afterPut) {
+        var input = input();
+        var cancelled = new java.util.concurrent.atomic.AtomicBoolean(!afterPut);
+        var gets = new java.util.concurrent.atomic.AtomicInteger();
+        var provider = intercept((method, args, result) -> {
+            if (method.equals("put")) cancelled.set(true);
+            if (method.equals("get")) gets.incrementAndGet();
+            return result;
+        });
+        var signal = new java.util.concurrent.CancellationException("Cancelled by caller");
+        try (var stager = new DocumentPartStager(tx, GENERATION, identity, borrowed(provider))) {
+            var failure = catchThrowable(() -> stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(5), Map.of(), () -> {
+                if (cancelled.get()) throw signal;
+            }));
+            if (afterPut) {
+                assertThat(failure).isInstanceOf(DocumentPartStager.StageFailure.class).hasCause(signal);
+                assertThat(new DocumentPartAttemptLedger(tx).find(input.plan().attemptId()).orElseThrow().state()).isEqualTo("STAGING");
+                assertThat(opened.store().get(NAMESPACE, input.plan().objects().getFirst().objectKey()).data()).isNotEmpty();
+            } else {
+                assertThat(failure).isSameAs(signal);
+                assertThat(new DocumentPartAttemptLedger(tx).find(input.plan().attemptId())).isEmpty();
+            }
+            assertThat(gets.get()).isZero();
+        }
+    }
+
     @Test void completePlanExistsBeforePutAndVerifiedBytesRemainUnpublished() {
         var input = input();
         var seen = new java.util.concurrent.atomic.AtomicBoolean();

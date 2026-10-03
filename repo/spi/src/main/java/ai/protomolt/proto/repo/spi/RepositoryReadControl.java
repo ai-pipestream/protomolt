@@ -4,7 +4,7 @@ package ai.protomolt.proto.repo.spi;
  * Host-supplied cancellation and monotonic deadline for a read. Implementations
  * must be thread-safe and nonblocking; they carry no authorization decisions.
  */
-public interface RepositoryReadControl {
+public interface RepositoryReadControl extends RepositoryOperationControl {
     RepositoryReadControl NONE = new RepositoryReadControl() {
         @Override public boolean isCancelled() { return false; }
         @Override public long remainingNanos() { return Long.MAX_VALUE; }

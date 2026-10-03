@@ -53,7 +53,12 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
     }
 
     @Override public void saveDocument(SaveDocumentRequest request, StreamObserver<SaveDocumentResponse> observer) {
-        GrpcErrors.run(observer, () -> documents.saveDocument(caller(), request));
+        var read = readControl();
+        var control = new ai.protomolt.proto.repo.spi.RepositoryOperationControl() {
+            @Override public boolean isCancelled() { return read.isCancelled(); }
+            @Override public long remainingNanos() { return read.remainingNanos(); }
+        };
+        GrpcErrors.run(observer, () -> documents.saveDocument(caller(), request, control));
     }
 
     @Override public void getDocument(GetDocumentRequest request, StreamObserver<GetDocumentResponse> observer) {

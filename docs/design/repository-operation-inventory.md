@@ -572,10 +572,35 @@ must stage the complete plan and use `saveVerifiedAttempt`, retaining the engine
 destination/source authorization, sampled revisions, raw-reference publication and
 outbox in the guarded transaction. A same-body managed deduplication should retain
 its current publication pin. A transport-neutral write control must check
-cancellation before admission, between provider calls and immediately before SQL
-publication. Cancellation or a lost acknowledgement after commit is attempted is
+cancellation in the eventual managed publication facade before its SQL commit.
+Cancellation or a lost acknowledgement after commit is attempted is
 ambiguous; do not create another attempt automatically. Host shutdown must also
 wait for actual staging completion before releasing the borrowed database/provider.
+
+`RepositoryOperationControl` now supplies cancellation and monotonic deadlines to
+the existing document-save API; `RepositoryReadControl` extends it without changing
+the read signatures. Two-argument Java saves remain available and delegate with
+`NONE`; repository implementations must implement the controlled three-argument
+method. Protobuf services and messages are unchanged. gRPC supplies the request's
+captured context/deadline. Legacy saves check around provider calls, inside the
+deduplication transaction, and inside the final row/raw-reference/outbox transaction.
+No cancellation check runs after that transaction returns. Tests cover refusal
+before PUT, cancellation/deadline after real PUT, and gRPC cancellation with the
+server handler completing before the assertion that no row was published.
+The gRPC case uses the host's virtual-thread executor model. A single-thread
+embedding executor blocked in synchronous storage can delay cancellation dispatch
+itself; hosts must leave executor capacity for transport cancellation callbacks.
+
+The internal managed stager accepts a nonblocking cancellation check before
+admission and around provider/verification boundaries. A cancellation after PUT
+retains the admitted attempt and original cause for recovery. The future public
+writer must preserve the cancellation/deadline code when unwrapping `StageFailure`.
+These controls do not abort synchronous provider calls already in progress, and
+legacy fan-out still waits for its outstanding calls. Explicit library controls
+do not change a remote provider's RPC timeout. HTTP raw ingestion has not acquired
+an HTTP cancellation signal in this change. Concurrent cancellation while waiting
+for final publication locks and cancellation around commit still need dedicated
+managed-writer tests.
 
 Repository host shutdown interrupts lifecycle workers and gives them a shared
 ten-second join budget. A timeout or interrupted join leaves providers, the ledger,

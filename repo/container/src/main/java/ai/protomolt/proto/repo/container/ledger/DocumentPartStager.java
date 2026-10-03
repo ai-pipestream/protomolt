@@ -69,6 +69,13 @@ final class DocumentPartStager implements AutoCloseable {
     }
 
     Staged stage(DocumentPartAttemptLedger.Plan plan, List<PartObject> payloads, Duration lease, Map<String, String> metadata) {
+        return stage(plan, payloads, lease, metadata, () -> {});
+    }
+
+    /** Host cancellation check is nonblocking and may throw; it carries no authorization decision. */
+    Staged stage(DocumentPartAttemptLedger.Plan plan, List<PartObject> payloads, Duration lease,
+            Map<String, String> metadata, Runnable check) {
+        Objects.requireNonNull(check).run();
         checkInterrupted();
         synchronized (lifecycle) {
             if (closed.get()) throw new IllegalStateException("Document stager is closed");
@@ -85,14 +92,15 @@ final class DocumentPartStager implements AutoCloseable {
                 if (size > maxBufferedBytes - current) throw new IllegalStateException("Staging byte capacity exhausted");
                 if (bufferedBytes.compareAndSet(current, current + size)) { reserved = size; break; }
             }
-            return stageReserved(plan, stable, lease, metadata);
+            return stageReserved(plan, stable, lease, metadata, check);
         } finally {
             bufferedBytes.addAndGet(-reserved);
             slots.release();
         }
     }
 
-    private Staged stageReserved(DocumentPartAttemptLedger.Plan plan, List<PartObject> payloads, Duration lease, Map<String, String> metadata) {
+    private Staged stageReserved(DocumentPartAttemptLedger.Plan plan, List<PartObject> payloads, Duration lease,
+            Map<String, String> metadata, Runnable check) {
         Objects.requireNonNull(plan, "plan");
         if (!generation.equals(plan.location().backendGeneration()))
             throw new IllegalArgumentException("Plan belongs to another backend generation");
@@ -109,6 +117,7 @@ final class DocumentPartStager implements AutoCloseable {
             bodies.add(body);
         }
         var attributes = Map.copyOf(metadata);
+        check.run();
         checkInterrupted();
         DocumentPartAttemptLedger.Attempt attempt;
         try { attempt = attempts.begin(plan, lease); }
@@ -127,34 +136,37 @@ final class DocumentPartStager implements AutoCloseable {
             var verified = new ArrayList<DocumentPublicationLedger.Part>();
             for (int i = 0; i < plan.objects().size(); i++) {
                 var expected = plan.objects().get(i);
-                checkActive(renewalFailure);
+                checkActive(renewalFailure, check);
                 phase = "lease check";
                 attempts.renew(attempt.id(), attempt.token(), lease);
                 phase = "PUT";
+                checkActive(renewalFailure, check);
                 var put = store.put(new BlobStore.PutSpec(plan.location().namespace(), expected.objectKey(),
                         expected.contentType(), attributes, expected.sha256()), bodies.get(i));
-                checkActive(renewalFailure);
+                checkActive(renewalFailure, check);
                 if (put == null) throw new IllegalStateException("Provider did not return a PUT receipt");
                 // The same live token must survive every provider call. Never reacquire an expired lease.
                 attempts.renew(attempt.id(), attempt.token(), lease);
                 phase = "read-back verification";
+                checkActive(renewalFailure, check);
                 var actual = store.get(plan.location().namespace(), expected.objectKey(), put.versionId());
-                checkActive(renewalFailure);
+                checkActive(renewalFailure, check);
                 if (actual == null || actual.data() == null || actual.data().length != expected.size()
                         || !DocumentPartCodec.sha256Hex(actual.data()).equals(expected.sha256())
                         || !Objects.equals(expected.contentType(), actual.contentType())
                         || !Objects.equals(put.versionId(), actual.versionId()) || !Objects.equals(put.eTag(), actual.eTag()))
                     throw new IllegalStateException("Read-back differs from planned bytes or PUT identity");
                 phase = "verification record";
+                checkActive(renewalFailure, check);
                 attempt = attempts.verify(attempt.id(), attempt.token(), expected.objectKey(), actual.data().length,
                         DocumentPartCodec.sha256Hex(actual.data()), actual.versionId(), actual.eTag());
                 verified.add(new DocumentPublicationLedger.Part(expected.part(), expected.subKey(), expected.objectKey(),
                         expected.size(), expected.sha256(), actual.versionId(), actual.eTag()));
             }
-            checkActive(renewalFailure);
+            checkActive(renewalFailure, check);
             phase = "final lease check";
             attempt = attempts.renew(attempt.id(), attempt.token(), lease);
-            checkActive(renewalFailure);
+            checkActive(renewalFailure, check);
             if (!attempt.state().equals("VERIFIED")) throw new IllegalStateException("Document attempt is not fully verified");
             return new Staged(attempt, verified);
         } catch (RuntimeException failure) {
@@ -172,7 +184,8 @@ final class DocumentPartStager implements AutoCloseable {
         if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException("Document staging interrupted");
     }
 
-    private void checkActive(AtomicReference<Throwable> renewalFailure) {
+    private void checkActive(AtomicReference<Throwable> renewalFailure, Runnable check) {
+        check.run();
         checkInterrupted();
         if (closed.get()) throw new java.util.concurrent.CancellationException("Document stager closed during staging");
         var failure = renewalFailure.get();

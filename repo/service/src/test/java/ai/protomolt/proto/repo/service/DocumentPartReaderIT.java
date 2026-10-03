@@ -143,6 +143,99 @@ class DocumentPartReaderIT {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"before", "after_put", "deadline"})
+    void controlledSaveDoesNotPublishAfterCancellation(String point) {
+        var seed = bound();
+        var cancelled = new java.util.concurrent.atomic.AtomicBoolean(point.equals("before"));
+        var writes = new java.util.concurrent.atomic.AtomicInteger();
+        var control = new ai.protomolt.proto.repo.spi.RepositoryOperationControl() {
+            @Override public boolean isCancelled() { return cancelled.get(); }
+            @Override public long remainingNanos() { return point.equals("deadline") && cancelled.get() ? 0 : Long.MAX_VALUE; }
+        };
+        BlobStore observed = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
+                new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
+                    Object result;
+                    try { result = method.invoke(store, args); }
+                    catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                    if (method.getName().equals("put")) { writes.incrementAndGet(); cancelled.set(true); }
+                    return result;
+                });
+        var engine = new ai.protomolt.proto.repo.engine.DocumentOperations(documents, drives, tx, observed,
+                new ai.protomolt.proto.repo.container.blob.PartStorage(),
+                new ai.protomolt.proto.repo.container.lifecycle.JdbcPurgeQueue(tx), null);
+        var doc = seed.expected().toBuilder().setDocId("cancel-" + UUID.randomUUID()).build();
+        var request = SaveDocumentRequest.newBuilder().setDocument(doc).setDrive(seed.drive().name)
+                .setUseDatasourceId(true).setGraphId("intake:account").build();
+        assertThatThrownBy(() -> engine.saveDocument(new ai.protomolt.proto.repo.spi.RepositoryCaller("test", true), request, control))
+                .isInstanceOfSatisfying(RepositoryException.class, error -> assertThat(error.code()).isEqualTo(
+                        point.equals("deadline") ? RepositoryException.Code.DEADLINE_EXCEEDED : RepositoryException.Code.CANCELLED));
+        var address = seed.row().readManifest().getAddress().toBuilder().setDocId(doc.getDocId()).build();
+        assertThat(documents.findByReference(address)).isEmpty();
+        assertThat(writes.get()).isEqualTo(point.equals("before") ? 0 : 1);
+    }
+
+    @Test void grpcSaveCancellationAfterRealPutPreventsPublication() throws Exception {
+        var seed = bound();
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var serverContext = new java.util.concurrent.atomic.AtomicReference<io.grpc.Context>();
+        BlobStore delayed = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
+                new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
+                    try {
+                        Object result = method.invoke(store, args);
+                        if (method.getName().equals("put")) {
+                            entered.countDown();
+                            if (!release.await(10, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("PUT gate timed out");
+                        }
+                        return result;
+                    } catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                });
+        var engine = new ai.protomolt.proto.repo.engine.DocumentOperations(documents, drives, tx, delayed,
+                new ai.protomolt.proto.repo.container.blob.PartStorage(),
+                new ai.protomolt.proto.repo.container.lifecycle.JdbcPurgeQueue(tx), null);
+        var finished = new java.util.concurrent.CountDownLatch(1);
+        var monitored = (ai.protomolt.proto.repo.spi.DocumentRepository) java.lang.reflect.Proxy.newProxyInstance(
+                ai.protomolt.proto.repo.spi.DocumentRepository.class.getClassLoader(),
+                new Class<?>[] {ai.protomolt.proto.repo.spi.DocumentRepository.class}, (proxy, method, args) -> {
+                    try { return method.invoke(engine, args); }
+                    catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                    finally { if (method.getName().equals("saveDocument")) finished.countDown(); }
+                });
+        var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+        String name = "cancel-save-" + UUID.randomUUID();
+        var server = io.grpc.inprocess.InProcessServerBuilder.forName(name).executor(executor)
+                .addService(new DocumentGrpcService(monitored, new ai.protomolt.proto.repo.engine.BlobOperations(store, drives), caller -> {
+                    serverContext.set(io.grpc.Context.current());
+                    return new ai.protomolt.proto.repo.spi.RepositoryCaller(caller.name(), caller.unrestricted());
+                })).build().start();
+        var channel = io.grpc.inprocess.InProcessChannelBuilder.forName(name).directExecutor().build();
+        var context = io.grpc.Context.current().withCancellation();
+        var doc = seed.expected().toBuilder().setDocId("grpc-cancel-" + UUID.randomUUID()).build();
+        var request = SaveDocumentRequest.newBuilder().setDocument(doc).setDrive(seed.drive().name)
+                .setUseDatasourceId(true).setGraphId("intake:account").build();
+        try {
+            var reply = context.call(() -> DocumentServiceGrpc.newFutureStub(channel).saveDocument(request));
+            assertThat(entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            context.cancel(null);
+            assertThatThrownBy(() -> reply.get(5, java.util.concurrent.TimeUnit.SECONDS))
+                    .hasCauseInstanceOf(io.grpc.StatusRuntimeException.class);
+            long deadline = System.nanoTime() + java.time.Duration.ofSeconds(5).toNanos();
+            while (!serverContext.get().isCancelled() && System.nanoTime() < deadline) Thread.sleep(10);
+            assertThat(serverContext.get().isCancelled()).isTrue();
+            release.countDown();
+            assertThat(finished.await(5, java.util.concurrent.TimeUnit.SECONDS)).as("server save returned").isTrue();
+            var address = seed.row().readManifest().getAddress().toBuilder().setDocId(doc.getDocId()).build();
+            assertThat(documents.findByReference(address)).isEmpty();
+        } finally {
+            release.countDown(); context.close(); channel.shutdownNow(); server.shutdownNow();
+            assertThat(channel.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(server.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
     void legacyWriterCannotRewriteOrCopyBoundPublication(boolean copy) {
         var seeded = bound();
