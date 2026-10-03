@@ -444,6 +444,63 @@ class DocumentPartStagerIT {
                 "access-key", S3.getAccessKey(), "secret-key", S3.getSecretKey(), "path-style", "true", "conditional-writes", "false"));
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"put", "cleanup"})
+    void abruptJvmExitLeavesDurableWorkRecoverable(String mode, @org.junit.jupiter.api.io.TempDir java.nio.file.Path temp) throws Exception {
+        UUID attempt = UUID.randomUUID(), node = UUID.randomUUID();
+        String generation = "crash-" + attempt;
+        var profile = new ManagedBackendLedger.Profile(identity, "stager-realm");
+        new ManagedBackendLedger(tx).bind(generation, profile);
+        var output = temp.resolve("worker.log");
+        var builder = new ProcessBuilder(java.nio.file.Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-cp", java.util.Objects.requireNonNull(System.getProperty("protomolt.test.runtimeClasspath")),
+                DocumentCrashWorker.class.getName(), mode, attempt.toString(), node.toString())
+                .redirectErrorStream(true).redirectOutput(output.toFile());
+        builder.environment().putAll(Map.of("TEST_DB_URL", POSTGRES.getJdbcUrl(), "TEST_DB_USER", POSTGRES.getUsername(),
+                "TEST_DB_PASSWORD", POSTGRES.getPassword(), "TEST_ENDPOINT", S3.getEndpoint().toString(), "TEST_REGION", S3.getRegion(),
+                "TEST_ACCESS", S3.getAccessKey(), "TEST_SECRET", S3.getSecretKey(), "TEST_GENERATION", generation, "TEST_NAMESPACE", NAMESPACE));
+        var process = builder.start();
+        try {
+            assertThat(process.waitFor(45, java.util.concurrent.TimeUnit.SECONDS)).as("fault worker exits; log: %s", output).isTrue();
+            assertThat(process.exitValue()).as("deliberate halt reached; log: %s", output).isEqualTo(mode.equals("put") ? 71 : 73);
+        } finally {
+            if (process.isAlive()) {
+                process.destroyForcibly();
+                assertThat(process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            }
+        }
+        var retained = new DocumentPartAttemptLedger(tx).find(attempt).orElseThrow();
+        assertThat(retained.state()).isEqualTo(mode.equals("put") ? "STAGING" : "VERIFIED");
+        @SuppressWarnings("unchecked")
+        List<String> keys = tx.readOnly(em -> em.createNativeQuery(
+                "SELECT object_key FROM document_part_attempt_objects WHERE attempt_id=:id ORDER BY ordinal")
+                .setParameter("id", attempt).getResultList());
+        assertThat(keys).hasSizeGreaterThan(1);
+        if (mode.equals("put")) {
+            assertThat(opened.store().get(NAMESPACE, keys.getFirst()).data()).isNotEmpty();
+            assertThatThrownBy(() -> opened.store().get(NAMESPACE, keys.getLast())).isInstanceOf(BlobStore.BlobNotFoundException.class);
+        } else {
+            assertThatThrownBy(() -> opened.store().get(NAMESPACE, keys.getFirst())).isInstanceOf(BlobStore.BlobNotFoundException.class);
+            assertThat(opened.store().get(NAMESPACE, keys.getLast()).data()).isNotEmpty();
+            tx.readOnly(em -> em.createNativeQuery("""
+                    SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM claim_until-clock_timestamp()))+0.05)
+                    FROM document_part_attempt_cleanup WHERE attempt_id=:id
+                    """).setParameter("id", attempt).getSingleResult());
+        }
+        expire(attempt);
+        try (var freshDatabase = restartDatabase(); var freshStore = restartStore()) {
+            var freshTx = new Tx(freshDatabase.entityManagerFactory());
+            var recovery = new DocumentAttemptRecoveryService(freshTx, generation, profile, freshStore, freshStore.reclaimer());
+            var results = recovery.reconcilePass(Duration.ZERO, Duration.ofSeconds(5), 1);
+            assertThat(results).hasSize(1);
+            assertThat(results.getFirst().attemptId()).isEqualTo(attempt);
+            assertThat(results.getFirst().outcome()).isEqualTo(DocumentAttemptRecoveryService.Outcome.ABSENT);
+            for (String key : keys) assertThatThrownBy(() -> freshStore.store().get(NAMESPACE, key))
+                    .isInstanceOf(BlobStore.BlobNotFoundException.class);
+            assertThat(new DocumentPartAttemptLedger(freshTx).find(attempt)).isPresent();
+        }
+    }
+
     @Test void closeReportsBusyUntilProviderReturnsAndReleasesBorrowedResources() throws Exception {
         var input = input();
         var entered = new java.util.concurrent.CountDownLatch(1);

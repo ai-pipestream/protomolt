@@ -30,3 +30,9 @@ dependencies {
     testImplementation libs.testcontainers.junit.jupiter
     testRuntimeOnly libs.slf4j.simple
 }
+
+tasks.named('test') {
+    doFirst {
+        systemProperty 'protomolt.test.runtimeClasspath', sourceSets.test.runtimeClasspath.asPath
+    }
+}

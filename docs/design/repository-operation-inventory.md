@@ -528,10 +528,16 @@ exercise physical deletion, unrelated-key preservation, late writes, unavailable
 backends, unconfirmed deletion and lost acknowledgements. A client-reopen test
 closes the database pool/entity manager and provider client after partial cleanup,
 then opens fresh clients and resumes the expired claim from durable state. This
-does not establish recovery after a process or host crash. A separate host test
+alone does not establish recovery after a process or host crash. Separate forked
+JVM tests halt without shutdown hooks after a real first PUT returns (before its
+verification record), and after a real first deletion (before recording cleanup
+completion). The parent verifies the deliberate exit code, durable attempt state
+and partial bytes, then recovers through fresh database/provider clients. These
+tests qualify those two process-loss points; they do not simulate storage-server
+failure, machine power loss, or a crash around SQL publication. A separate host test
 closes and rebuilds `RepoServices`, enters through `repository()`, and verifies
-scheduled cleanup against real SQL and storage. Process-crash qualification and
-public writer integration remain outstanding. No managed document write endpoint
+scheduled cleanup against real SQL and storage. Publication crash qualification
+and public writer integration remain outstanding. No managed document write endpoint
 is enabled by this checkpoint.
 
 `DocumentAttemptRecoveryService` provides bounded passes for a configured backend
@@ -549,6 +555,18 @@ with a ten-minute cleanup lease. First cleanup is eligible after writer expiry;
 repeat checks wait one hour. Passes run on the configured sweep interval. Retry
 and lost-claim outcomes are logged, including original failures. There is no
 current-drive fallback and no adoption or deletion of legacy untracked parts.
+
+Before public writer integration, the engine must acquire carried partial-save
+fragments as exact verified bytes from their original binding; assembling and
+splitting a message again is not proof of byte preservation. The container writer
+must stage the complete plan and use `saveVerifiedAttempt`, retaining the engine's
+destination/source authorization, sampled revisions, raw-reference publication and
+outbox in the guarded transaction. A same-body managed deduplication should retain
+its current publication pin. A transport-neutral write control must check
+cancellation before admission, between provider calls and immediately before SQL
+publication. Cancellation or a lost acknowledgement after commit is attempted is
+ambiguous; do not create another attempt automatically. Host shutdown must also
+wait for actual staging completion before releasing the borrowed database/provider.
 
 Repository host shutdown interrupts lifecycle workers and gives them a shared
 ten-second join budget. A timeout or interrupted join leaves providers, the ledger,
