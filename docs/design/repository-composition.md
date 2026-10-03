@@ -648,7 +648,16 @@ legacy and managed sources: it captures the authorized source, reads selected
 unchanged parts under the shared byte budget, and stages the complete revision
 under fresh attempt keys. Source revision checks precede atomic publication.
 Integration cases cover chunk-set order and preservation of unchanged provenance.
-Carried raw-reference and source-policy race coverage remain qualification work.
+Real SQL/provider tests cover preserved raw references across drives for legacy
+and managed sources, through library and in-process gRPC calls. They verify
+managed publication, returned blob metadata and cleanup refusal while referenced.
+Managed deletion remains unavailable: both delete modes now fail with
+FAILED_PRECONDITION under the document row lock before admitting tombstones or
+cleanup records. Retained publication history also causes refusal. Tests verify
+that refusal preserves revision, status, raw references and source readability.
+Legacy-source deletion proves the destination alone retains its copied raw bytes;
+managed-source cases retain both references and do not establish physical purge.
+Source-policy race coverage also remains qualification work.
 This is not yet the production host default or a complete managed-save feature.
 
 Partial saves currently copy unchanged bytes. Before production wiring, measure
@@ -1016,6 +1025,28 @@ swallowed. Export/import must preserve content, descriptors, manifests, provenan
 and available metadata snapshots, verify checksums, and report missing artifacts.
 Restore into an authorized destination under current access policy. Include a
 backup/restore rehearsal against real storage in implementation acceptance.
+
+### Managed deletion implementation requirements
+
+Current publication history permanently protects published attempts from recovery
+cleanup. Removing a current row cannot be treated as permission to erase history.
+The managed deletion implementation must first define and test:
+
+- Atomic logical deletion of the current row/publication and current raw bindings,
+  preserving separately recorded historical part and raw-object ownership.
+- Explicit version retention/release decisions, including authorization and
+  concurrent readers/restoration. A deletion request must not silently discard
+  retained history or report physical purge while any protected bytes remain.
+- Durable reclamation claims for released objects using the retained backend
+  generation/profile and exact identities, independent of current drive config.
+- Retry, restart and cancellation behavior across logical commit and physical
+  reclamation, including cleanup failure and shared objects retained by another
+  document or version. Preserve existing wire contracts; assess whether their
+  outcomes can represent these states before adding an operation.
+
+The legacy purger's admitted-key refusal stays as defense in depth. Replacing it
+with direct object deletion is not a managed-deletion implementation. Complete
+these semantics before enabling managed saves in the production host.
 
 Retention periods, legal holds, WORM enforcement, signatures and trusted timestamp
 services are separate future capabilities. Retained versioning alone is not a

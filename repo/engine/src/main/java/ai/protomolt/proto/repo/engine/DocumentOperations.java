@@ -909,6 +909,14 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
                 DocumentRecord current = em.find(DocumentRecord.class, sampled.nodeId, LockModeType.PESSIMISTIC_WRITE);
                 if (current == null || current.mutationRevision != sampled.mutationRevision)
                     throw RepositoryErrors.aborted("Document changed before deletion was admitted");
+                // Both synchronous and queued legacy cleanup lack retained-version reclamation.
+                // Reject the whole selection before admitting any tombstones or queue entries.
+                if (!em.createNativeQuery("""
+                        SELECT 1 FROM document_part_publications WHERE node_id=:node
+                        UNION ALL
+                        SELECT 1 FROM document_part_publication_history WHERE node_id=:node
+                        """).setParameter("node", current.nodeId).setMaxResults(1).getResultList().isEmpty())
+                    throw failedPrecondition("Managed document deletion requires retention-aware reclamation");
                 if (current.pendingPurgeId == null && !DocumentStatus.AVAILABLE.equals(current.status)) {
                     long legacyPending = em.createQuery("SELECT count(p) FROM DocumentPurgeRecord p WHERE p.nodeId = :node"
                                     + " AND p.generationId IS NULL AND p.status = :pending", Long.class)
