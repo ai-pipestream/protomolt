@@ -65,8 +65,13 @@ extension even where the message shape remains unchanged.
 - **New, Java byte SPI:** `PayloadBudget.reserve` returns an idempotent closeable
   lease or throws explicit capacity exhaustion without waiting. The document
   writer accepts a shared budget for active staging inputs and verification
-  results. The default writer constructor uses a private budget. Reader-batch
-  ownership and host-wide composition are still pending; no protobuf change.
+  results. Readers accept the same budget. Default constructors use private budgets;
+  host-wide composition remains pending. No protobuf change.
+- **Changed Java return type:** `DocumentPartReader.readFragments` and
+  `readLegacyFragments` return `DocumentReadBatch`. Use `parts()` inside
+  try-with-resources, keeping the batch open through reuse. Typed `read` closes its
+  batch after assembly. Cancellation retains its reservation until entered provider
+  workers exit. Existing protobuf names and responses remain unchanged.
 - **New, Java byte SPI:** `BlobStore.getBounded` reads a complete selected object
   version within a caller-supplied payload limit. Unsupported adapters fail
   explicitly; no ordinary-read fallback is permitted. The direct S3 adapter

@@ -408,13 +408,15 @@ class DocumentPartReaderIT {
         opened.store().put(new ai.protomolt.proto.repo.blob.spi.BlobStore.PutSpec(NAMESPACE,
                 publication.parts().getFirst().key(), "application/protobuf", java.util.Map.of(), null),
                 Document.newBuilder().setDocId("replacement").build().toByteArray());
-        var fragments = reader().readFragments(publication, Set.of(), Set.of(),
-                ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+        try (var batch = reader().readFragments(publication, Set.of(), Set.of(),
+                ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+        var fragments = batch.parts();
         assertThat(fragments).hasSize(1);
         assertThat(fragments.getFirst().bytes()).containsExactly(bytes);
         assertThat(fragments.getFirst().sha256()).isEqualTo(publication.parts().getFirst().sha256());
         assertThat(fragments.getFirst().part()).isEqualTo(DocumentPart.DOCUMENT_PART_CORE);
         assertThat(fragments.getFirst().subKey()).isEmpty();
+        }
     }
 
     @Test void carriedFragmentsOwnTheirBytesIndependentlyOfProviderBuffer() {
@@ -429,11 +431,13 @@ class DocumentPartReaderIT {
                         return result;
                     } catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
                 });
-        var fragments = new DocumentPartReader((generation, retained) -> observed).readFragments(publication,
-                Set.of(), Set.of(), ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+        try (var batch = new DocumentPartReader((generation, retained) -> observed).readFragments(publication,
+                Set.of(), Set.of(), ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+        var fragments = batch.parts();
         java.util.Arrays.fill(providerBuffer.get(), (byte) 0);
         assertThat(fragments.getFirst().bytes()).containsExactly(expected);
         assertThat(DocumentPartCodec.sha256Hex(fragments.getFirst().bytes())).isEqualTo(fragments.getFirst().sha256());
+        }
     }
 
     @Test void readsRecordedVersionAfterLatestBytesAreReplaced() {
@@ -497,7 +501,9 @@ class DocumentPartReaderIT {
                         return result;
                     } catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
                 });
-        var reader = new DocumentPartReader((g, p) -> delayed, 2);
+        long reservation = 2L * expected.toByteArray().length;
+        var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(2 * reservation);
+        var reader = new DocumentPartReader((g, p) -> delayed, 2, 256L * 1024 * 1024, budget);
         var first = new java.util.concurrent.FutureTask<Document>(() -> reader.read(publication, Set.of(), Set.of(), Document.getDefaultInstance()));
         var second = new java.util.concurrent.FutureTask<Document>(() -> reader.read(publication, Set.of(), Set.of(), Document.getDefaultInstance()));
         var one = Thread.ofVirtual().start(first);
@@ -509,6 +515,7 @@ class DocumentPartReaderIT {
             assertThat(one.isAlive()).isFalse(); assertThat(two.isAlive()).isFalse();
             assertThatThrownBy(() -> first.get()).hasCauseInstanceOf(RepositoryException.class);
             assertThatThrownBy(() -> second.get()).hasCauseInstanceOf(RepositoryException.class);
+            assertThat(budget.reservedBytes()).isEqualTo(2 * reservation);
             assertThatThrownBy(() -> reader.read(publication, Set.of(), Set.of(), Document.getDefaultInstance()))
                     .isInstanceOfSatisfying(RepositoryException.class,
                             e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.RESOURCE_EXHAUSTED));
@@ -523,12 +530,40 @@ class DocumentPartReaderIT {
         while (true) {
             try {
                 assertThat(reader.read(publication, Set.of(), Set.of(), Document.getDefaultInstance())).isEqualTo(expected);
+                // The other cancelled worker can finish just after the replacement read.
                 break;
             } catch (RepositoryException contention) {
                 if (contention.code() != RepositoryException.Code.RESOURCE_EXHAUSTED || System.nanoTime() >= until) throw contention;
                 Thread.sleep(10);
             }
         }
+        long drained = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (budget.reservedBytes() != 0 && System.nanoTime() < drained) Thread.sleep(10);
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    @Test void fragmentBatchOwnsSharedReservationUntilClosed() {
+        var expected = Document.newBuilder().setDocId("batch-owner").build();
+        var publication = publish(expected.toByteArray());
+        long reservation = 2L * expected.toByteArray().length;
+        var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(reservation);
+        var reader = new DocumentPartReader((g, p) -> store, 2, 256L * 1024 * 1024, budget);
+        var batch = reader.readFragments(publication, Set.of(), Set.of(),
+                ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+        try {
+            assertThat(budget.reservedBytes()).isEqualTo(reservation);
+            assertThat(batch.parts().getFirst().bytes()).containsExactly(expected.toByteArray());
+            assertThatThrownBy(() -> reader.read(publication, Set.of(), Set.of(), Document.getDefaultInstance()))
+                    .isInstanceOfSatisfying(RepositoryException.class,
+                            e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.RESOURCE_EXHAUSTED));
+            assertThatThrownBy(() -> budget.reserve(1))
+                    .isInstanceOf(ai.protomolt.proto.repo.blob.spi.PayloadBudget.CapacityExceededException.class);
+        } finally { batch.close(); }
+        batch.close();
+        assertThat(budget.reservedBytes()).isZero();
+        assertThatThrownBy(batch::parts).isInstanceOf(IllegalStateException.class);
+        assertThat(reader.read(publication, Set.of(), Set.of(), Document.getDefaultInstance())).isEqualTo(expected);
+        assertThat(budget.reservedBytes()).isZero();
     }
 
     @Test void smallConcurrencyLimitPreservesMultiPartOrderAndSelection() {

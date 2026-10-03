@@ -553,9 +553,9 @@ These are physical source fences, not an authorization decision or a substitute
 for policy-revision checks. They also do not establish that a supplied payload
 was derived from the declared source; the shared engine owns that preparation.
 
-The selected-byte limit is per call;
-it does not account for returned buffers retained by callers. The composition
-must bound total source bytes held across concurrent read-to-stage operations.
+The legacy selection limit is per call. The reader also reserves against a shared
+payload budget, retained by returned batches until closed. The host composition
+must supply the same budget to readers and writers across read-to-stage operations.
 The stager's existing shared active-payload budget now reserves twice the total
 input length before cloning or admitting an attempt: one allowance for private
 input copies and one for bounded verification results. It reserves all parts
@@ -575,7 +575,7 @@ An oversized stored version leaves the attempt unverified. Document publication
 reads and legacy source reuse now bound each provider read by its recorded size.
 Oversize is DATA_LOSS; unsupported bounded reads are FAILED_PRECONDITION with no
 unbounded fallback. A part larger than the Java byte-array API can represent is
-RESOURCE_EXHAUSTED. Budgeting retained source buffers remains an integration gate.
+RESOURCE_EXHAUSTED. Supplying a common host budget remains an integration gate.
 A cache's backing-provider capabilities must not be
 treated as capabilities of the cache decorator itself.
 The managed-publication reader continues using retained backend and per-part
@@ -591,27 +591,27 @@ constructor retains a private 256 MiB budget; using it does not establish a
 host-wide cap. Staging now uses these leases for its combined input and
 verification allowance. Capacity exhaustion occurs before attempt admission.
 
-The reader currently returns raw fragment lists, which have no release point.
-Replace that managed API with an ordered, closeable fragment batch and inject a
-single host-owned payload budget into both reader and stager. The composing engine
-must keep the batch open through staging; typed reads close it after assembly.
-Budget acquisition is nonblocking and overflow-safe, before GET or copying.
-Reader reservations cover both the bounded provider result and detached copy
-while they coexist; the batch retains the detached-copy reservation. Staging
-reserves its input copy and verification output against the same shared budget.
+The Java fragment methods now return `DocumentReadBatch` instead of a raw list.
+Callers use `batch.parts()` and must close the batch after source reuse/staging;
+typed reads close their batch after assembly. The reader accepts a borrowed budget,
+with a private 256 MiB default. Before dispatching any GET it reserves twice the
+selected recorded sizes, covering provider results and detached copies. Both
+allowances are conservatively retained until batch close and all entered workers
+exit. Acquisition is nonblocking and overflow-safe. Staging reserves its input
+copy and verification output against its supplied budget.
 Source and staging reservations overlap deliberately; saturation fails explicitly
 rather than waiting while holding another reservation.
 
-Cancellation closes ownership of completed results but must not release leases
-held by running provider calls. Late worker results release their leases on actual
-exit; cancelling a Future does not prove that exit. The reader also needs a close
+Cancellation closes batch ownership but does not release its lease while entered
+workers remain. Late results release on actual exit, and closed batches reject
+workers that have not yet entered; cancelling a Future does not prove exit.
+The reader still needs a close
 and drain barrier before the host releases its borrowed backend. Tests must cover
 concurrent saturation before I/O, partial fan-out failure, uncooperative reads,
 batch ownership through staging, repeated close, and release after success/error.
 Arrays retained by a caller after closing its batch and SDK-internal buffering are
-outside the guarantee. Reader batches, shared reader reservations and the host
-composition remain unimplemented; the budget primitive and writer injection alone
-do not establish the cross-operation memory guarantee.
+outside the guarantee. The batch and reservation mechanisms are implemented;
+production host composition and source-batch-to-writer integration remain pending.
 
 Performance qualification remains required before switching application writes.
 The first stager performed each part's PUT, exact read-back and SQL verification

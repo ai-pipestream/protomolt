@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.engine;
 
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
+import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
 import ai.protomolt.proto.repo.codec.DocumentPartCodec;
 import ai.protomolt.proto.repo.codec.PartObject;
 import ai.protomolt.proto.repo.container.ledger.DocumentPublicationLedger;
@@ -34,6 +35,7 @@ public final class DocumentPartReader {
     private final java.util.concurrent.Semaphore readSlots;
     private final int maxConcurrentReads;
     private final long maxLegacyReuseBytes;
+    private final PayloadBudget payloadBudget;
 
     public DocumentPartReader(BackendResolver backends) { this(backends, 32); }
 
@@ -42,9 +44,16 @@ public final class DocumentPartReader {
         this(backends, maxConcurrentReads, 256L * 1024 * 1024);
     }
 
-    /** Per-selection legacy reuse bound; returned buffers belong to the caller, not this budget. */
+    /** Per-selection legacy reuse bound with a private active-payload budget. */
     public DocumentPartReader(BackendResolver backends, int maxConcurrentReads, long maxLegacyReuseBytes) {
+        this(backends, maxConcurrentReads, maxLegacyReuseBytes, new PayloadBudget(256L * 1024 * 1024));
+    }
+
+    /** Borrow the host budget also supplied to writers; returned batches own reservations until closed. */
+    public DocumentPartReader(BackendResolver backends, int maxConcurrentReads, long maxLegacyReuseBytes,
+            PayloadBudget payloadBudget) {
         this.backends = Objects.requireNonNull(backends);
+        this.payloadBudget = Objects.requireNonNull(payloadBudget);
         if (maxConcurrentReads <= 0) throw new IllegalArgumentException("Concurrent read limit must be positive");
         if (maxLegacyReuseBytes <= 0) throw new IllegalArgumentException("Legacy reuse byte limit must be positive");
         this.maxLegacyReuseBytes = maxLegacyReuseBytes;
@@ -59,10 +68,9 @@ public final class DocumentPartReader {
 
     public <T extends Message> T read(DocumentPublicationLedger.Publication publication,
             Set<DocumentPart> mask, Set<String> chunkSets, T prototype, RepositoryReadControl control) {
-        var fragments = readFragments(publication, mask, chunkSets, control);
-        control.check();
-        try {
-            T result = DocumentPartCodec.assemble(fragments.stream()
+        try (var batch = readFragments(publication, mask, chunkSets, control)) {
+            control.check();
+            T result = DocumentPartCodec.assemble(batch.parts().stream()
                     .map(PartObject::bytes).toList(), prototype);
             control.check();
             return result;
@@ -75,9 +83,10 @@ public final class DocumentPartReader {
      * Exact verified bytes in publication order, without protobuf decoding or reserialization.
      * Intended for carrying unchanged parts from an already-authorized snapshot into a new
      * attempt. The caller must still fence the source revision and access at publication.
-     * This checks storage integrity, not schema validity. Returned byte arrays belong to the caller.
+     * This checks storage integrity, not schema validity. Close the returned batch only
+     * after finishing with its bytes, including any source reuse in a writer.
      */
-    public List<PartObject> readFragments(
+    public DocumentReadBatch readFragments(
             DocumentPublicationLedger.Publication publication, Set<DocumentPart> mask,
             Set<String> chunkSets, RepositoryReadControl control) {
         control.check();
@@ -97,7 +106,7 @@ public final class DocumentPartReader {
      * Missing checksums are rejected; current bytes must match the recorded size and digest.
      * A recorded CORE version/ETag is honored; null or blank means unknown, never inferred.
      */
-    public List<PartObject> readLegacyFragments(BlobStore store, String namespace,
+    public DocumentReadBatch readLegacyFragments(BlobStore store, String namespace,
             List<PartManifestEntry> selected, String coreVersion, String coreEtag, RepositoryReadControl control) {
         control.check();
         Objects.requireNonNull(store, "store");
@@ -130,8 +139,22 @@ public final class DocumentPartReader {
 
     private static String known(String identity) { return identity == null || identity.isBlank() ? null : identity; }
 
-    private List<PartObject> readFragments(BlobStore store, String namespace,
+    private DocumentReadBatch readFragments(BlobStore store, String namespace,
             List<DocumentPublicationLedger.Part> wanted, RepositoryReadControl control, boolean legacy) {
+        long total = 0;
+        for (var part : wanted) {
+            if (part.size() < 0) throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Negative document part size");
+            if (part.size() > Integer.MAX_VALUE || part.size() > Long.MAX_VALUE / 2 - total)
+                throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED, "Document selection exceeds read capacity");
+            total += part.size();
+        }
+        DocumentReadBatch batch;
+        try { batch = new DocumentReadBatch(payloadBudget.reserve(total * 2)); }
+        catch (PayloadBudget.CapacityExceededException exhausted) {
+            throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED, "Document payload capacity exhausted", exhausted);
+        }
+        boolean complete = false;
+        try {
         var fragments=new ArrayList<byte[]>(java.util.Collections.nCopies(wanted.size(),null));
         if (!wanted.isEmpty()) {
             int parallelism = Math.min(Math.min(32, maxConcurrentReads), wanted.size());
@@ -145,7 +168,7 @@ public final class DocumentPartReader {
                     while (submitted<parallelism) {
                         control.check();
                         final int index=submitted++;
-                        pending.add(completions.submit(() -> new Fragment(index,readBounded(store,namespace,wanted.get(index),control,legacy))));
+                        pending.add(completions.submit(() -> new Fragment(index,readOwned(batch,store,namespace,wanted.get(index),control,legacy))));
                     }
                     int completed=0;
                     while (completed<wanted.size()) {
@@ -160,7 +183,7 @@ public final class DocumentPartReader {
                         completed++;
                         if (submitted<wanted.size()) {
                             final int index=submitted++;
-                            pending.add(completions.submit(() -> new Fragment(index,readBounded(store,namespace,wanted.get(index),control,legacy))));
+                            pending.add(completions.submit(() -> new Fragment(index,readOwned(batch,store,namespace,wanted.get(index),control,legacy))));
                         }
                     }
                 } catch (InterruptedException interrupted) {
@@ -185,7 +208,17 @@ public final class DocumentPartReader {
             result.add(new PartObject(part.part(), part.subKey(), fragments.get(i), part.sha256()));
         }
         control.check();
-        return List.copyOf(result);
+        batch.complete(result);
+        complete = true;
+        return batch;
+        } finally { if (!complete) batch.close(); }
+    }
+
+    private byte[] readOwned(DocumentReadBatch batch, BlobStore store, String namespace,
+            DocumentPublicationLedger.Part part, RepositoryReadControl control, boolean legacy) {
+        batch.enterWorker();
+        try { return readBounded(store, namespace, part, control, legacy); }
+        finally { batch.exitWorker(); }
     }
 
     private byte[] readBounded(BlobStore store, String namespace, DocumentPublicationLedger.Part part,

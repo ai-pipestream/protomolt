@@ -69,12 +69,14 @@ class LegacyDocumentPartReaderIT {
         var core = source(DocumentPart.DOCUMENT_PART_CORE, "");
         var chunk = source(DocumentPart.DOCUMENT_PART_CHUNKS, "set-a");
         opened.store().put(new BlobStore.PutSpec(NAMESPACE, core.entry.getObjectKey(), "application/protobuf", Map.of(), null), new byte[] {1, 2});
-        var result = reader().readLegacyFragments(opened.store(), NAMESPACE, List.of(chunk.entry, core.entry),
-                core.put.versionId(), core.put.eTag(), RepositoryReadControl.NONE);
+        try (var batch = reader().readLegacyFragments(opened.store(), NAMESPACE, List.of(chunk.entry, core.entry),
+                core.put.versionId(), core.put.eTag(), RepositoryReadControl.NONE)) {
+        var result = batch.parts();
         assertThat(result).extracting(p -> p.part()).containsExactly(DocumentPart.DOCUMENT_PART_CHUNKS, DocumentPart.DOCUMENT_PART_CORE);
         assertThat(result.get(0).bytes()).containsExactly(chunk.bytes);
         assertThat(result.get(1).bytes()).containsExactly(core.bytes);
         assertThat(Document.parseFrom(core.bytes).toByteArray()).isNotEqualTo(core.bytes);
+        }
     }
 
     @Test void noRecordedNonCoreVersionCannotSilentlyChooseHistoricalBytes() throws Exception {
