@@ -1537,6 +1537,66 @@ class RepoServiceIT {
     }
 
     @Test
+    void managedRawKeysRejectAdministrativeMutationLocallyAndOverGrpc() {
+        var caller = new ai.protomolt.proto.repo.spi.RepositoryCaller("managed-key-test", true);
+        var local = new ai.protomolt.proto.repo.engine.BlobOperations(services.blobStore(), services.driveLedger());
+        for (boolean rpc : List.of(false, true)) {
+            String driveName = "managed-key-" + UUID.randomUUID();
+            String account = "managed-key-account";
+            createDrive(driveName, account);
+            var drive = services.driveLedger().findByName(account, driveName).orElseThrow();
+            String key = drive.prefix + "/blobs/.protomolt-managed/v1/" + UUID.randomUUID() + ".bin";
+            byte[] original = "retained managed bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            services.blobStore().put(new ai.protomolt.proto.repo.blob.spi.BlobStore.PutSpec(
+                    drive.bucket, key, "application/octet-stream", null, null), original);
+            var ref = FileStorageReference.newBuilder().setDriveName(driveName).setObjectKey(key).build();
+            var put = PutBlobRequest.newBuilder().setDriveName(driveName).setObjectKey(key)
+                    .setData(ByteString.copyFromUtf8("overwrite")).build();
+            var conditional = CompareAndPutBlobRequest.newBuilder()
+                    .setKey(ConditionalBlobKey.newBuilder().setDriveName(driveName).setObjectKey(key))
+                    .setIfAbsent(true).setData(ByteString.copyFromUtf8("overwrite")).build();
+            var delete = DeleteBlobRequest.newBuilder().setStorageRef(ref).build();
+            List<Runnable> mutations = rpc
+                    ? List.of(() -> documents.putBlob(put), () -> documents.compareAndPutBlob(conditional),
+                            () -> documents.deleteBlob(delete))
+                    : List.of(() -> local.put(caller, put), () -> local.compareAndPut(caller, conditional),
+                            () -> local.delete(caller, delete));
+            for (Runnable mutation : mutations) {
+                if (rpc) assertThatThrownBy(mutation::run).isInstanceOfSatisfying(StatusRuntimeException.class,
+                        error -> assertThat(error.getStatus().getCode()).isEqualTo(Status.Code.PERMISSION_DENIED));
+                else assertThatThrownBy(mutation::run).isInstanceOfSatisfying(
+                        ai.protomolt.proto.repo.spi.RepositoryException.class,
+                        error -> assertThat(error.code()).isEqualTo(
+                                ai.protomolt.proto.repo.spi.RepositoryException.Code.PERMISSION_DENIED));
+                assertThat(services.blobStore().get(drive.bucket, key).data()).isEqualTo(original);
+            }
+            // Reserving mutations must not break administrative reads of the bytes.
+            assertThat(documents.getBlob(GetBlobRequest.newBuilder().setStorageRef(ref).build())
+                    .getData().toByteArray()).isEqualTo(original);
+
+            // An omitted key must not bypass the reservation through a drive's
+            // configured prefix. This path checks the generated effective key.
+            String prefixedName = "managed-prefix-" + UUID.randomUUID();
+            drives.createDrive(CreateDriveRequest.newBuilder().setName(prefixedName).setAccountId(account)
+                    .setDriveType(DriveType.DRIVE_TYPE_INTAKE).setPrefix("root/.protomolt-managed/v1").build());
+            var generatedPut = PutBlobRequest.newBuilder().setDriveName(prefixedName)
+                    .setData(ByteString.copyFromUtf8("generated key")).build();
+            if (rpc) assertThatThrownBy(() -> documents.putBlob(generatedPut))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class,
+                            error -> assertThat(error.getStatus().getCode()).isEqualTo(Status.Code.PERMISSION_DENIED));
+            else assertThatThrownBy(() -> local.put(caller, generatedPut))
+                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            error -> assertThat(error.code()).isEqualTo(
+                                    ai.protomolt.proto.repo.spi.RepositoryException.Code.PERMISSION_DENIED));
+            var prefixedDrive = services.driveLedger().findByName(account, prefixedName).orElseThrow();
+            String generatedKey = ai.protomolt.proto.repo.engine.DriveKeys.blob(prefixedDrive.prefix,
+                    DocumentPartCodec.sha256Hex(generatedPut.getData().toByteArray()));
+            assertThatThrownBy(() -> services.blobStore().get(prefixedDrive.bucket, generatedKey))
+                    .isInstanceOf(BlobStore.BlobNotFoundException.class);
+        }
+    }
+
+    @Test
     void putBlobGeneratedKeyIsContentAddressedAndIdempotent() {
         String account = "acct-blobgen";
         createDrive("gen", account);

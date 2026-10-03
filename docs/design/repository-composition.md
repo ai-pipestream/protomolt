@@ -436,13 +436,27 @@ source access and revision; byte references must match the bound record. Retaine
 versions and pending revisions will need their own foreign-key reference tables
 before their retention features are enabled.
 
-Managed keys must be reserved from arbitrary-key raw mutation APIs, including
-PutBlob, conditional put and deletion. Process authority does not make an
-uncoordinated overwrite safe. Remote repository providers need an explicit trusted
+The shared raw-blob operations now reserve the exact slash-delimited
+`.protomolt-managed` key segment. PutBlob (including generated effective keys),
+conditional put and deletion reject it with PERMISSION_DENIED, including for
+process-authority callers; administrative reads remain available. New managed
+attempt keys use `<drive-prefix>/blobs/.protomolt-managed/v1/<uuid>.bin`. This is an
+API mutation boundary, not a claim that direct provider users already honor the
+managed lifecycle. Existing arbitrary keys using that segment become read-only
+through these raw APIs and require an explicit migration path if present.
+Remote repository providers need an explicit trusted
 managed-write path through this reservation; until that exists, managed ingestion
 on those backends must fail as unsupported. Providers must also guarantee that
 referenced objects do not expire independently through a TTL. Redis/cache modes
 with automatic expiry are not suitable without an explicit retention capability.
+
+The byte-provider capability NON_EXPIRING_WRITES describes only ordinary adapter
+PUT/COPY behavior: S3 advertises it, and Redis advertises it only with configured
+TTL zero. Redis non-expiring rewrites clear inherited metadata expiry as well as
+byte expiry. This capability alone does not qualify durability: external lifecycle
+policies, Redis eviction/persistence and administrative mutation remain separate
+deployment obligations. Cache compositions qualify the authoritative backing
+store; cache entry expiry does not determine retention of backing bytes.
 
 Identical reuploads compare computed content identity and all relevant document
 metadata against the current managed binding. Normalize to the retained reference

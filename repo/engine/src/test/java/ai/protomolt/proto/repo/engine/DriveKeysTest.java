@@ -75,4 +75,13 @@ class DriveKeysTest {
         assertThat(DriveKeys.blob(drive("t").prefix, "abc"))
                 .isNotEqualTo(SaveResolution.basePrefix(drive("t"), "acct-1", node));
     }
+
+    @Test
+    void managedReservationDoesNotDecodeOrReserveSimilarOpaqueKeys() {
+        UUID attempt = UUID.randomUUID();
+        assertThat(DriveKeys.isManaged(DriveKeys.managedRaw("tenant/", attempt))).isTrue();
+        for (String key : java.util.List.of(".protomolt-managed-backup/key", "prefix/x.protomolt-managed/a",
+                "prefix/%2Eprotomolt-managed/a", "prefix/.PROTOMOLT-MANAGED/a"))
+            assertThat(DriveKeys.isManaged(key)).as(key).isFalse();
+    }
 }

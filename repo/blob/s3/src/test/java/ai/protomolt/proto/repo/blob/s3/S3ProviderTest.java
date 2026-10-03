@@ -19,6 +19,8 @@ class S3ProviderTest {
         assertThat(providers.providerIds()).containsExactly("s3");
         try (var opened = providers.open("s3", options())) {
             assertThat(opened.store()).isInstanceOf(S3BlobStore.class);
+            assertThat(opened.capabilities()).contains(
+                    ai.protomolt.proto.repo.blob.spi.BlobCapability.NON_EXPIRING_WRITES);
         }
     }
 

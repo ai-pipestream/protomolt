@@ -70,6 +70,13 @@ extension even where the message shape remains unchanged.
   raw-object references transactionally. Caller-supplied storage coordinates never
   grant deletion authority. Shared objects require zero-reference cleanup, and
   legacy deterministic keys require explicit migration before immutable guarantees.
+- **Extended, implemented:** PutBlob, CompareAndPutBlob and DeleteBlob reject keys
+  containing the reserved `.protomolt-managed` segment, including generated put
+  keys. Read operations retain their existing authority requirements. The guard
+  is shared by library and gRPC calls; it does not enable managed ingestion.
+- **Extended, implemented:** provider discovery reports NON_EXPIRING_WRITES for
+  S3 and TTL-zero Redis. This reports adapter expiry behavior, not a deployment
+  durability guarantee. Existing protobuf descriptors remain unchanged.
 - **New:** library repository interface and remote implementation, reusing the
   existing request/response vocabulary rather than creating a second wire model.
 - **New:** provider factory discovery and explicit capability selection.

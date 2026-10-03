@@ -58,7 +58,8 @@ public final class S3BlobStoreProvider implements BlobStoreProvider {
             if (endpoint != null) builder.endpointOverride(endpoint);
             acquired = builder.build();
             S3Client client = acquired;
-            var capabilities = EnumSet.of(BlobCapability.LIST, BlobCapability.SERVER_SIDE_COPY, BlobCapability.STREAMING_WRITE);
+            var capabilities = EnumSet.of(BlobCapability.LIST, BlobCapability.SERVER_SIDE_COPY,
+                    BlobCapability.STREAMING_WRITE, BlobCapability.NON_EXPIRING_WRITES);
             if (conditional) capabilities.addAll(Set.of(BlobCapability.AUTHORITATIVE_CONDITIONAL_READ,
                     BlobCapability.ATOMIC_CONDITIONAL_WRITE));
             return new OpenedBlobStore(new S3BlobStore(client, conditional),

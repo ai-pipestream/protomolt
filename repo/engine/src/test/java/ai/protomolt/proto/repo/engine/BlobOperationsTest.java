@@ -30,6 +30,25 @@ class BlobOperationsTest {
     private final BlobOperations blobs = new BlobOperations(null, null);
 
     @Test
+    void managedMutationsAreRejectedBeforeDriveLookupForEverySegmentPosition() {
+        var caller = new RepositoryCaller("operator", true);
+        for (String key : java.util.List.of(".protomolt-managed", ".protomolt-managed/v1/a",
+                "/.protomolt-managed/", "prefix//.protomolt-managed//v1/a", "prefix/.protomolt-managed")) {
+            for (Runnable call : java.util.List.<Runnable>of(
+                    () -> blobs.put(caller, PutBlobRequest.newBuilder().setDriveName("unknown")
+                            .setObjectKey(key).build()),
+                    () -> blobs.compareAndPut(caller, CompareAndPutBlobRequest.newBuilder()
+                            .setKey(ConditionalBlobKey.newBuilder().setDriveName("unknown").setObjectKey(key))
+                            .setIfAbsent(true).build()),
+                    () -> blobs.delete(caller, DeleteBlobRequest.newBuilder().setStorageRef(
+                            FileStorageReference.newBuilder().setDriveName("unknown").setObjectKey(key)).build()))) {
+                assertThatThrownBy(call::run).isInstanceOfSatisfying(RepositoryException.class,
+                        error -> assertThat(error.code()).isEqualTo(RepositoryException.Code.PERMISSION_DENIED));
+            }
+        }
+    }
+
+    @Test
     void rawOperationsRejectNonAdministrativeCallersBeforeStorageAccess() {
         var caller = new RepositoryCaller("reader", false);
         for (Runnable call : java.util.List.<Runnable>of(

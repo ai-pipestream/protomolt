@@ -118,6 +118,7 @@ public final class RedisBlobStore implements ExpiringBlobStore, AutoCloseable {
     }
 
     private PutResult doPut(PutSpec spec, byte[] body, int ttl) {
+        if (ttl < 0) throw new IllegalArgumentException("ttlSeconds must be nonnegative");
         if (maxObjectBytes > 0 && body.length > maxObjectBytes) {
             throw new IllegalArgumentException("object of " + body.length + " bytes exceeds "
                     + "maxObjectBytes=" + maxObjectBytes + " (redis://" + spec.bucket() + "/" + spec.key() + ")");
@@ -140,6 +141,10 @@ public final class RedisBlobStore implements ExpiringBlobStore, AutoCloseable {
             meta.put(bytes("content_type"), bytes(spec.contentType() == null ? "" : spec.contentType()));
             meta.put(bytes("etag"), bytes(etag));
             meta.put(bytes("last_modified_ms"), bytes(Long.toString(System.currentTimeMillis())));
+            // Clear expiry before HSET: a previous hash could otherwise expire
+            // between HSET and PERSIST. If already expired, HSET recreates it
+            // without a TTL. SET has already cleared the body's previous TTL.
+            if (ttl == 0) jedis.persist(metaKey);
             jedis.hset(metaKey, meta);
             if (ttl > 0) {
                 jedis.expire(dataKey, ttl);
@@ -189,6 +194,7 @@ public final class RedisBlobStore implements ExpiringBlobStore, AutoCloseable {
             dstMeta.put(bytes("content_type"), bytes(contentType == null ? "" : contentType));
             dstMeta.put(bytes("etag"), bytes("\"" + sha256Hex(data) + "\""));
             dstMeta.put(bytes("last_modified_ms"), bytes(Long.toString(System.currentTimeMillis())));
+            if (ttlSeconds == 0) jedis.persist(dstMetaKey);
             jedis.hset(dstMetaKey, dstMeta);
             if (ttlSeconds > 0) {
                 jedis.expire(dstDataKey, ttlSeconds);

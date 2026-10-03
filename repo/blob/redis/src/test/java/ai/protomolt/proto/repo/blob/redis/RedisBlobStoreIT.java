@@ -67,6 +67,36 @@ class RedisBlobStoreIT {
     }
 
     @Test
+    void nonExpiringWritesClearPriorMetadataExpiryForPutAndCopy() {
+        assertThat(handle.capabilities()).contains(
+                ai.protomolt.proto.repo.blob.spi.BlobCapability.NON_EXPIRING_WRITES);
+        byte[] original = "temporary".getBytes(StandardCharsets.UTF_8);
+        byte[] replacement = "retained".getBytes(StandardCharsets.UTF_8);
+        String bucket = "retention-test";
+        String source = "source-" + java.util.UUID.randomUUID();
+        store.put(new BlobStore.PutSpec(bucket, source, "text/plain", null, null), replacement);
+        try (var redis = new redis.clients.jedis.Jedis(REDIS.getHost(), REDIS.getMappedPort(6379))) {
+            for (boolean copy : List.of(false, true)) {
+                String key = "retention-" + java.util.UUID.randomUUID();
+                var spec = new BlobStore.PutSpec(bucket, key, "text/plain", null, null);
+                store.put(spec, original, 300);
+                String physical = "it:" + bucket + "/" + key;
+                assertThat(redis.ttl(physical)).isPositive();
+                assertThat(redis.ttl(physical + RedisBlobStore.META_SUFFIX)).isPositive();
+                if (copy) store.copy(bucket, source, bucket, key);
+                else store.put(spec, replacement);
+                assertThat(redis.ttl(physical)).isEqualTo(-1);
+                assertThat(redis.ttl(physical + RedisBlobStore.META_SUFFIX)).isEqualTo(-1);
+                assertThat(store.get(bucket, key).data()).isEqualTo(replacement);
+                assertThat(store.get(bucket, key).contentType()).isEqualTo("text/plain");
+                assertThatThrownBy(() -> store.put(spec, original, -1))
+                        .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("ttlSeconds");
+                assertThat(store.get(bucket, key).data()).isEqualTo(replacement);
+            }
+        }
+    }
+
+    @Test
     void verifiedPutWithMatchingChecksumSucceedsAndMismatchIsRejected() {
         byte[] body = "verified".getBytes(StandardCharsets.UTF_8);
         String sha = DocumentPartCodec.sha256Hex(body);

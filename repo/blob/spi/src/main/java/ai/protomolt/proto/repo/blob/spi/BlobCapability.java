@@ -7,5 +7,10 @@ public enum BlobCapability {
     LIST,
     SERVER_SIDE_COPY,
     STREAMING_WRITE,
-    OBJECT_EXPIRY
+    OBJECT_EXPIRY,
+    /**
+     * Normal PUT/COPY does not apply an object TTL. This does not qualify external
+     * lifecycle policies, eviction, persistence settings or administrative deletion.
+     */
+    NON_EXPIRING_WRITES
 }

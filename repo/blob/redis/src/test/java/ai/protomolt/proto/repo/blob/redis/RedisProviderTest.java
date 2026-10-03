@@ -52,4 +52,18 @@ class RedisProviderTest {
                 .isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(actual::store).isInstanceOf(IllegalStateException.class);
     }
+
+    @Test void nonExpiringCapabilityDependsOnConfiguredTtl() throws Exception {
+        var capability = ai.protomolt.proto.repo.blob.spi.BlobCapability.NON_EXPIRING_WRITES;
+        var options = new java.util.HashMap<>(options("redis://127.0.0.1:1"));
+        try (var persistent = BlobStores.discover().open("redis", options)) {
+            assertThat(persistent.capabilities()).contains(capability);
+        }
+        options.put("ttl-seconds", "300");
+        try (var expiring = BlobStores.discover().open("redis", options)) {
+            assertThat(expiring.capabilities()).doesNotContain(capability);
+        }
+        assertThatThrownBy(() -> BlobStores.discover().open("redis", options, java.util.Set.of(capability)))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
 }

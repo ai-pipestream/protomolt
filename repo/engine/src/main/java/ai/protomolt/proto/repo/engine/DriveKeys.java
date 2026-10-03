@@ -11,6 +11,8 @@ import java.util.UUID;
  */
 public final class DriveKeys {
 
+    private static final String MANAGED_SEGMENT = ".protomolt-managed";
+
     private DriveKeys() {
     }
 
@@ -32,5 +34,20 @@ public final class DriveKeys {
         UUID nameUuid = UUID.nameUUIDFromBytes(
                 ("blob-content|" + sha256Hex).getBytes(StandardCharsets.UTF_8));
         return under(drivePrefix, "blobs/" + nameUuid);
+    }
+
+    /** A unique attempt key; its lifetime belongs to the managed raw-object ledger. */
+    public static String managedRaw(String drivePrefix, UUID attemptId) {
+        java.util.Objects.requireNonNull(attemptId, "attemptId");
+        return under(drivePrefix, "blobs/" + MANAGED_SEGMENT + "/v1/" + attemptId + ".bin");
+    }
+
+    /** Keys are opaque: reserve the exact path segment without decoding or normalizing. */
+    public static boolean isManaged(String objectKey) {
+        if (objectKey == null) return false;
+        for (String segment : objectKey.split("/", -1)) {
+            if (MANAGED_SEGMENT.equals(segment)) return true;
+        }
+        return false;
     }
 }

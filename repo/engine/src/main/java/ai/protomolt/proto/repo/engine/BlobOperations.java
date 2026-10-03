@@ -71,12 +71,14 @@ public final class BlobOperations implements ai.protomolt.proto.repo.spi.BlobRep
             if (request.getDriveName().isBlank()) {
                 throw invalidArgument("drive_name is required");
             }
+            requireUnmanaged(request.getObjectKey());
             DriveRecord drive = driveOrThrow(request.getDriveName());
             byte[] data = request.getData().toByteArray();
             String sha256 = DocumentPartCodec.sha256Hex(data);
             String objectKey = request.getObjectKey().isBlank()
                     ? DriveKeys.blob(drive.prefix, sha256)
                     : request.getObjectKey();
+            requireUnmanaged(objectKey);
             String contentType = request.getMimeType().isBlank()
                     ? DEFAULT_CONTENT_TYPE : request.getMimeType();
             // Verified write: the store's checksum trailer makes it reject the PUT when the
@@ -124,6 +126,7 @@ public final class BlobOperations implements ai.protomolt.proto.repo.spi.BlobRep
         return RepositoryErrors.call(() -> {
             request(request);
             ConditionalBlobKey key = request.getKey();
+            requireUnmanaged(key.getObjectKey());
             DriveRecord drive = driveOrThrow(key.getDriveName());
             byte[] data = request.getData().toByteArray();
             var condition = request.hasIfAbsent() ? BlobStore.WriteCondition.absent()
@@ -217,12 +220,19 @@ public final class BlobOperations implements ai.protomolt.proto.repo.spi.BlobRep
         requireAdministrator(caller);
         return RepositoryErrors.call(() -> {
             FileStorageReference ref = storageRef(request.hasStorageRef(), request.getStorageRef());
+            requireUnmanaged(ref.getObjectKey());
             DriveRecord drive = driveOrThrow(ref.getDriveName());
             // Idempotent: delete-of-absent reports deleted=false, not an error.
             return DeleteBlobResponse.newBuilder()
                     .setDeleted(blobStore.delete(drive.bucket, ref.getObjectKey()))
                     .build();
         });
+    }
+
+    private static void requireUnmanaged(String objectKey) {
+        if (DriveKeys.isManaged(objectKey))
+            throw new RepositoryException(PERMISSION_DENIED,
+                    "Managed object mutations require the repository lifecycle");
     }
 
     /** A storage reference is a drive and a key; neither has a sensible default. */

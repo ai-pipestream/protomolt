@@ -36,8 +36,10 @@ public final class RedisBlobStoreProvider implements BlobStoreProvider {
         }
         var config = new RedisBlobStoreConfig(uri.toString(), ttl, max, options.get("key-prefix"));
         RedisBlobStore store = new RedisBlobStore(config);
-        return new OpenedBlobStore(store, store, Set.of(
+        var capabilities = java.util.EnumSet.of(
                 ai.protomolt.proto.repo.blob.spi.BlobCapability.LIST,
-                ai.protomolt.proto.repo.blob.spi.BlobCapability.OBJECT_EXPIRY), store::headBucket);
+                ai.protomolt.proto.repo.blob.spi.BlobCapability.OBJECT_EXPIRY);
+        if (ttl == 0) capabilities.add(ai.protomolt.proto.repo.blob.spi.BlobCapability.NON_EXPIRING_WRITES);
+        return new OpenedBlobStore(store, store, capabilities, store::headBucket);
     }
 }
