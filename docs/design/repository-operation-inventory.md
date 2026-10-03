@@ -219,9 +219,11 @@ shared object lock, or extend the existing cleanup authority to include all owne
 Migration needs exact evidence and race tests; duplicated liveness decisions are
 not a safe transitional state.
 
-ArchiveObjectReader resolves original versions but currently uses unbounded GET
-and has no durable active-read pin. Reusing that code does not satisfy the new
-reader lifetime or memory bounds. ArchiveObjectWriter's checksum request does not
+At `3cdd28e4`, ArchiveObjectReader uses bounded GET with retained size and durable
+reader pins. V28-V33 add lifetime protection, incarnation fencing, verified local
+shutdown and bounded recovery traversal. Unproven crashed incarnations remain
+protected; legacy unbound reads and aggregate response memory still need work.
+ArchiveObjectWriter's checksum request does not
 supply the proposed verified-write receipt. Preserve tested lifecycle behavior
 while replacing these limits through the shared foundation.
 
@@ -246,7 +248,9 @@ DocumentSecurity; reuse those identities for policy and historical provenance.
 `receipt.v1.WorkRecord` already binds subjects, steps and content-addressed
 artifacts, and supports prior-manifest revision links. Its signed-record issuer
 and key requirements must not be fabricated for an unsigned admission result.
-Use an optional receipt projection from persisted admission/provenance facts.
+Its subject alternatives currently cover workflow runs and delegation tasks,
+not repository commits. An optional repository receipt projection requires an
+explicitly reviewed subject extension; do not relabel a commit as a workflow.
 Review delegation's existing candidate/attempt/contract/evidence bindings before
 introducing another semantic-review identity.
 
@@ -254,6 +258,140 @@ Archive content-root equality currently elides saves. It is not evidence of
 metadata/schema/policy-aware dedupe. Expected-version checks prevent stale updates
 but do not recover a lost acknowledgement. These distinctions need acceptance
 tests before extending retry contracts.
+
+## Shared commit foundation: source inventory at 3cdd28e4
+
+This is the implementation inventory for composition-design slice 2, not an
+available multi-object API. Sol independently reviewed the existing contracts.
+No new protobuf fields are introduced by this inventory.
+
+### Existing boundaries and exact reuse
+
+- [DocumentLedger](../../repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentLedger.java)
+  `saveGuarded` locks source revisions and one destination, including a missing
+  destination using sorted advisory-lock keys, then merges and runs its callback.
+  `saveVerifiedAttempt` specifically adds the attempt-token, selected
+  drive/backend, source-snapshot and next-manifest-version checks. Its history,
+  current publication, native/common retention references and
+  the caller's outbox callback participate in that one SQL transaction.
+  `DocumentAtomicPublicationIT` already exercises rollback and reference guards.
+  Preserve these checks; repeated calls to this method are separate commits.
+- [DocumentPartPublication](../../repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPartPublication.java)
+  `validate` checks complete ordered PRESENT slots,
+  counts, size, root checksum and CORE provider identity. It currently requires
+  the manifest to match one verified attempt's objects. Immutable reuse needs
+  an ordered revision-reference relation; simply allowing an old object key in
+  the manifest would bypass the existing proof.
+- [DocumentPublicationLedger](../../repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationLedger.java)
+  `findForRead` rechecks the sampled document revision
+  and returns original physical bindings. It is not a consistent read of several
+  independently sampled current pointers. A multi-object commit needs a matching
+  read-snapshot contract before claiming atomic visibility to callers.
+- [ArchiveMutationCommand](../../repo/container/src/main/java/ai/protomolt/proto/repo/container/archive/ArchiveMutationCommand.java)
+  supplies deterministic semantic command encoding;
+  `ArchiveMutationLedger` scopes operation UUIDs to account and trusted principal,
+  compares both canonical bytes and SHA-256 on replay, then commits logical
+  mutation, immutable receipt and cleanup targets together. Its callback is
+  entry-scoped. Reuse the identity/replay rules, not its deletion-specific kinds,
+  counters or receipt states for a publication transaction.
+- `JdbcEventOutbox.enqueue(EntityManager, DocumentEventRecord)` participates in
+  the caller's transaction. `EventRelay` delivery is separate. Keep persistence
+  atomic with publication while excluding Kafka delivery, provider I/O, model
+  calls and schema-registry network access from the commit transaction.
+
+### Wire and identity gaps that must remain explicit
+
+- **Unchanged:** `SaveDocumentRequest` selectors, copy source and partial-save
+  semantics; it currently has no operation UUID or expected revision. Its
+  response has no recoverable commit receipt. Deterministic document identity
+  and content dedupe are not substitutes for a lost-acknowledgement protocol.
+- **Unchanged:** archive `PutEntryRequest.expected_version`, where zero retains
+  its existing last-write-wins meaning. It has no operation UUID. Do not silently
+  reinterpret zero as must-create or introduce stronger retry semantics under
+  that field. Omitted renditions already reuse archive references within their
+  existing entry/version rules.
+- **Unchanged:** document manifest version, archive version, mutation revision,
+  upload attempt/token, physical object UUID and reader incarnation. Each has a
+  distinct lifetime. A generic commit ID must not replace any of them.
+- **Unchanged:** archive rendition `schema_subject` is recorded but unenforced;
+  it does not establish immutable schema admission. Mesh `SchemaReference`
+  supplies type plus canonical descriptor-closure digest. Registry Java
+  `SchemaReference` instead describes an imported file's subject/version. The
+  new boundary must distinguish acquisition, immutable binding and import lookup.
+- **New, pending review:** an internal unsigned multi-object logical outcome and
+  authorized lookup by scoped operation identity. Neither ArchiveMutationReceipt
+  nor WorkRecord can represent it unchanged. Any later protobuf envelope must
+  be additive and compile with complete imports; preserve existing Any URLs.
+
+### Adapter boundary and first acceptance unit
+
+The minimal port belongs in `repo/spi`, which currently depends on `repo/proto`
+and rejects SQL, Kafka and provider SDKs in its runtime gate. Immutable input
+values describe a bounded change set, operation identity, expected revisions and
+verified physical-reference/evidence identities. They must not expose Hibernate
+entities, EntityManager, SQL callbacks, provider clients or executable closures.
+Construction validates shape; the adapter still checks current authorization,
+state, physical admission and evidence bindings inside the commit boundary.
+
+The PostgreSQL implementation may initially reside in `repo/container` while
+that existing module still owns the domain tables. This does not make the
+adapter a minimal consumer: the module exposes Hibernate and includes Kafka.
+Extraction needs published-POM/runtime gates before claiming dependency isolation.
+Domain-specific transaction handlers belong behind that adapter, not in the port.
+Use the existing native document/archive tables and retention authority; do not
+create an unrelated generic shadow store that can disagree with those rows.
+
+The first adapter acceptance unit is two verified document attempts, their two
+destinations and a retained source revision, using existing publication validation.
+Extract a transaction-scoped internal publication routine: the current
+`saveVerifiedAttempt` starts its own transaction, so two calls cannot satisfy
+this acceptance case. One outer transaction acquires the union of destination
+and source locks in global order, then publishes both. Shared immutable part
+references remain a separate integration after this atomic foundation.
+One short transaction must verify
+all expected revisions and current policies, publish both revisions and their
+references, persist their outbox records and the scoped logical outcome, or roll
+back every change. Upload/validation work completes before that transaction.
+Missing-row creation uses the same advisory-lock protocol as current writers;
+lock-order interoperability must be tested with existing single-object paths.
+
+Required cases before wiring production consumers:
+
+- A stale second destination, changed source/policy, invalid reference or outbox
+  failure leaves both destinations, references and logical outcome unchanged.
+- Reversed input ordering cannot deadlock; independent change sets progress;
+  create/create conflicts use the same durable identity checks as ordinary saves.
+- Exact replay after a lost acknowledgement returns the stored logical result;
+  reused operation identity with different semantic bytes conflicts. Lookup and
+  replay reauthorize the current caller. No post-commit cancellation reports
+  that the transaction rolled back.
+- A concurrent reader obtains one consistent committed set. Choosing a snapshot
+  and acquiring physical lifetime protection must not accidentally mix revisions
+  or permit cleanup between sampling and use. Qualify this against the existing
+  READ COMMITTED retention guards before fixing the read-port signature.
+- A failure after one domain handler runs still rolls back both handlers, their
+  references, outbox and receipt. Recovery handles staged bytes separately.
+- Check minimal-port runtime and published metadata, complete proto imports,
+  lint and compatibility; measure statement counts and same-object versus
+  disjoint-object contention. Passing a two-row fixture is not scale qualification.
+
+For the optional JCR extension, this supplies reusable atomic publication and
+snapshot primitives only. Stable movable-node identity, session pending changes,
+workspaces, types, graph references and version restoration remain extension
+responsibilities under the existing compatibility assessment. Existing
+address-derived document/archive IDs retain their current meaning.
+
+Baseline verification on 2026-10-03: 64 existing document publication/part and
+archive mutation tests passed. `bufLint` passed; repository, mesh and receipt
+Java compilation was up to date. `scripts/check-proto-compatibility.sh 3cdd28e4`
+freshly built the complete current/baseline descriptor sets and passed FILE
+compatibility. This proves the inventory change preserves that starting wire
+surface, not that a future commit API already passes compatibility.
+`repo-spi:checkRuntimeBoundaries` passed. Generated Maven POM and Gradle API/runtime
+metadata list only `protomolt-repo-proto` as a direct dependency; these were
+generated locally, not published. The existing runtime gate checks transitive
+forbidden modules. No implementation or conformance claim is made for the new
+multi-object port.
 
 ## Regression evidence to preserve
 
