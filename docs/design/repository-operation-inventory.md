@@ -379,8 +379,13 @@ changed drive, previously claimed cleanup, duplicate/oversized batches, and
 opposing overlapping batches with an observed database wait. An independent
 single publication completes while the overlapping batch remains blocked, in
 both first-batch commit and rollback cases. This is concurrency evidence, not a
-latency benchmark. Concurrent cleanup races, overlapping batch/single creation,
-policy races, durable outcome/idempotent replay, consistent multi-object reads,
+latency benchmark. Additional fixtures exercise missing-row batch/single creation
+with observed database waits and both batch commit/rollback, plus cleanup waiting
+on a batch that has published both members before its lease expires. Committed
+history prevents cleanup; rollback lets the expired attempt be claimed. The
+locked-prior aggregate-limit fixture accepts exactly 10,000 combined entries and
+rejects 10,001 using legacy EMPTY-part manifests (no stored bytes are claimed).
+Cleanup-first concurrent interleavings, policy races, durable outcome/idempotent replay, consistent multi-object reads,
 and public-port/provider-neutral conformance remain outstanding.
 
 Local validation on 2026-10-03: `:protomolt-repo-container:test --tests '*Document*'
@@ -388,8 +393,30 @@ Local validation on 2026-10-03: `:protomolt-repo-container:test --tests '*Docume
 reports 200 container cases and 87 service cases: 285 passed, zero failures/errors,
 and two opt-in benchmarks skipped. Sol reviewed the source/trigger lock ordering
 and the implementation. This is local evidence; no CI, push, merge, deployment,
-provider throughput qualification, or JCR compliance is implied. The locked-prior
-aggregate-limit branch still needs its own boundary fixture.
+provider throughput qualification, or JCR compliance is implied.
+
+The [durable command/replay design](repository-composition.md#durable-commit-command-and-replay-design)
+now specifies command identity separately from staging evidence, durable admission
+before provider I/O, immutable unsigned outcomes, and fenced terminal rejection.
+This is reviewed design, not an implemented operation or a new advertised RPC.
+Lease validity is checked at publication admission/history insertion/pointer
+switch. A transaction already past those checks can finish after wall-clock expiry
+while holding its owner fence; cleanup/takeover waits and observes the outcome.
+
+**Extended internal behavior:** ordinary `DocumentLedger.save` now flushes and
+refreshes its returned row inside the existing transaction. Previously it returned
+zero/stale `mutationRevision` despite the database trigger assigning a new revision,
+which could reject a subsequent guarded write. A focused PostgreSQL test failed
+on revision zero before the fix and checks insert, update and follow-up guarded
+save. This adds one same-transaction SELECT; guarded publication already refreshed
+its result. It does not add provider I/O or a second transaction.
+
+Follow-up validation on 2026-10-03 ran the same document-focused container/service
+command after the revision-return fix and added race/boundary fixtures. It completed
+in 1m16s: JUnit XML reports 207 container and 87 service cases, 292 passed,
+zero failures/errors, and two opt-in benchmarks skipped. Sol reviewed the replay
+design and the revision-return fix. No new replay API or SQL operation ledger is
+implemented by this change; durable admission/outcome implementation is next.
 
 Required cases before wiring production consumers:
 

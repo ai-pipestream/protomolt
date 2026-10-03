@@ -639,6 +639,147 @@ class DocumentAtomicPublicationIT {
         }
     }
 
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void batchAndSingleFirstWriteShareMissingRowFence(boolean abortBatch) throws Exception {
+        var first = fixture(null); var other = fixture(null);
+        var contender = fixture(null, Duration.ofMinutes(5), Map.of(), first.row.nodeId);
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var pid = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> hold = (em, row) -> {
+            if (pid.compareAndSet(0, ((Number) em.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue())) {
+                entered.countDown();
+                awaitRelease(release);
+                if (abortBatch) throw new IllegalStateException("abort batch");
+            }
+        };
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var batch = executor.submit(() -> DocumentPublicationBatch.save(tx, List.of(
+                    entry(first, List.of(), hold), entry(other, List.of(), hold))));
+            try {
+                assertThat(entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                var single = executor.submit(() -> publish(contender, (em, row) -> {}));
+                awaitDatabaseWait(pid.get());
+                release.countDown();
+                if (abortBatch) {
+                    assertThatThrownBy(() -> batch.get(5, java.util.concurrent.TimeUnit.SECONDS))
+                            .hasCauseInstanceOf(IllegalStateException.class);
+                    assertThat(single.get(5, java.util.concurrent.TimeUnit.SECONDS).nodeId).isEqualTo(first.row.nodeId);
+                    assertThat(pin(first.row.nodeId)).isEqualTo(contender.attempt.id());
+                    assertThat(documents.findByNodeId(other.row.nodeId)).isEmpty();
+                    assertThat(historyCount(first.attempt.id())).isZero();
+                    assertThat(historyCount(other.attempt.id())).isZero();
+                } else {
+                    assertThat(batch.get(5, java.util.concurrent.TimeUnit.SECONDS)).hasSize(2);
+                    assertThatThrownBy(() -> single.get(5, java.util.concurrent.TimeUnit.SECONDS))
+                            .hasCauseInstanceOf(DocumentLedger.RevisionConflictException.class);
+                    assertThat(pin(first.row.nodeId)).isEqualTo(first.attempt.id());
+                    assertThat(pin(other.row.nodeId)).isEqualTo(other.attempt.id());
+                    assertThat(historyCount(contender.attempt.id())).isZero();
+                }
+            } finally { release.countDown(); }
+        }
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void cleanupWaitsForWholeBatchOutcome(boolean abortBatch) throws Exception {
+        var first = fixture(null); var expiring = fixture(null, Duration.ofSeconds(3));
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var callbacks = new java.util.concurrent.atomic.AtomicInteger();
+        var pid = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> holdAfterBoth = (em, row) -> {
+            if (callbacks.incrementAndGet() == 2) {
+                pid.set(((Number) em.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue());
+                entered.countDown();
+                awaitRelease(release);
+                if (abortBatch) throw new IllegalStateException("abort batch");
+            }
+        };
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var batch = executor.submit(() -> DocumentPublicationBatch.save(tx, List.of(
+                    entry(first, List.of(), holdAfterBoth), entry(expiring, List.of(), holdAfterBoth))));
+            try {
+                assertThat(entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                expireAttempt(expiring.attempt.id());
+                var claim = executor.submit(() -> new DocumentAttemptCleanupLedger(tx)
+                        .claim(expiring.attempt.id(), Duration.ofSeconds(10)));
+                awaitDatabaseWait(pid.get());
+                release.countDown();
+                if (abortBatch) {
+                    assertThatThrownBy(() -> batch.get(5, java.util.concurrent.TimeUnit.SECONDS))
+                            .hasCauseInstanceOf(IllegalStateException.class);
+                    assertThat(claim.get(5, java.util.concurrent.TimeUnit.SECONDS)).isPresent();
+                    for (var f : List.of(first, expiring)) {
+                        assertThat(documents.findByNodeId(f.row.nodeId)).isEmpty();
+                        assertThat(historyCount(f.attempt.id())).isZero();
+                        assertThat(sharedReferences(f.attempt.id())).isZero();
+                    }
+                } else {
+                    assertThat(batch.get(5, java.util.concurrent.TimeUnit.SECONDS)).hasSize(2);
+                    assertThat(claim.get(5, java.util.concurrent.TimeUnit.SECONDS)).isEmpty();
+                    for (var f : List.of(first, expiring)) {
+                        assertThat(pin(f.row.nodeId)).isEqualTo(f.attempt.id());
+                        assertThat(sharedReferences(f.attempt.id())).isEqualTo(2);
+                    }
+                }
+            } finally { release.countDown(); }
+        }
+    }
+
+    private static void awaitRelease(java.util.concurrent.CountDownLatch release) {
+        try { assertThat(release.await(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue(); }
+        catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new AssertionError(interrupted); }
+    }
+
+    private static void awaitDatabaseWait(int blockerPid) throws InterruptedException {
+        boolean waiting = false;
+        long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+        while (!waiting && System.nanoTime() < deadline) {
+            waiting = tx.readOnly(em -> (Boolean) em.createNativeQuery(
+                    "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE :pid=ANY(pg_blocking_pids(pid)))")
+                    .setParameter("pid", blockerPid).getSingleResult());
+            if (!waiting) Thread.sleep(10);
+        }
+        assertThat(waiting).as("contender is waiting on the held PostgreSQL transaction").isTrue();
+    }
+
+    @ParameterizedTest @ValueSource(ints = {9998, 9999})
+    void aggregateBudgetIncludesLockedLegacyManifest(int priorParts) {
+        // Real legacy metadata: every part is EMPTY, so no physical bytes or
+        // provider verification are claimed by this fixture.
+        var legacy = fixture(null).row;
+        var manifest = legacy.readManifest().toBuilder().clearParts()
+                .addParts(PartManifestEntry.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE)
+                        .setState(PartState.PART_STATE_EMPTY));
+        for (int i = 1; i < priorParts; i++) manifest.addParts(PartManifestEntry.newBuilder()
+                .setPart(DocumentPart.DOCUMENT_PART_CHUNKS).setSubKey("empty-" + i).setState(PartState.PART_STATE_EMPTY));
+        legacy.writeManifest(manifest.build());
+        legacy.objectKey = "documents/account/legacy-" + legacy.nodeId + "/";
+        legacy.versionId = ""; legacy.etag = ""; legacy.sizeBytes = 0L;
+        legacy.checksum = DocumentPartCodec.rootChecksumFromManifest(manifest.build());
+        documents.save(legacy);
+        var previous = documents.findByNodeId(legacy.nodeId).orElseThrow();
+        var replacement = fixture(previous); var additional = fixture(null);
+        var callbacks = new java.util.concurrent.atomic.AtomicInteger();
+        var batch = List.of(entry(replacement, List.of(), (em, row) -> callbacks.incrementAndGet()),
+                entry(additional, List.of(), (em, row) -> callbacks.incrementAndGet()));
+        if (priorParts == 9998) {
+            assertThat(DocumentPublicationBatch.save(tx, batch)).hasSize(2);
+            assertThat(callbacks.get()).isEqualTo(2);
+            assertThat(pin(previous.nodeId)).isEqualTo(replacement.attempt.id());
+            assertThat(pin(additional.row.nodeId)).isEqualTo(additional.attempt.id());
+        } else {
+            assertThatThrownBy(() -> DocumentPublicationBatch.save(tx, batch))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("10000 new and prior parts");
+            assertThat(callbacks.get()).isZero();
+            assertThat(documents.findByNodeId(previous.nodeId).orElseThrow().mutationRevision).isEqualTo(previous.mutationRevision);
+            assertThat(documents.findByNodeId(additional.row.nodeId)).isEmpty();
+            assertThat(historyCount(replacement.attempt.id())).isZero();
+            assertThat(historyCount(additional.attempt.id())).isZero();
+        }
+    }
+
     private static DocumentPublicationBatch.Publication entry(Fixture f, List<DocumentSourceSnapshot> snapshots,
             java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> callback) {
         var sources = snapshots.stream().collect(java.util.stream.Collectors.toMap(

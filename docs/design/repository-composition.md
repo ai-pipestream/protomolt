@@ -1223,7 +1223,14 @@ abort. Retry/lookup reconciles the same operation identity.
 
 Lease renewal or takeover must fence stale owners. A newer attempt cannot publish
 an earlier command result without verifying the persisted fingerprint and current
-commit conditions. An expired token cannot commit, even if storage finishes later.
+commit conditions. An expired token cannot newly pass publication admission,
+even if storage finishes later. Expiry does not preempt a transaction that already
+passed its publication checks while holding the database owner fence: it may
+finish, and takeover/cleanup waits for its commit or rollback before deciding.
+Document history insertion and current-pointer switching each check a live lease;
+expiry before either check aborts publication. Expiry after both checks does not
+retroactively undo it. Keep transactions short and explicitly bounded rather than
+using lease expiry as a substitute for transaction timeout/cancellation.
 New physical attempts use fresh keys; expired upload keys cannot be reassigned.
 A retry after commit returns the recorded outcome without repeating a mutation;
 cleanup observation can advance independently of that immutable logical outcome.
@@ -1240,6 +1247,120 @@ identities and any mutable policy records. Atomic change sets have explicit coun
 and byte limits. Readers must see a committed revision or a consistent committed
 snapshot of the change set, never a mixture assembled from separately sampled
 current pointers. The chosen snapshot/isolation protocol needs concurrency tests.
+
+### Durable commit command and replay design
+
+This design extends the internal document batch; it is not an available API.
+`DocumentPublicationBatch` currently has neither durable operation identity nor
+an outcome lookup. Its callbacks are internal SQL participants. The eventual
+`repo/spi` port must use immutable values and existing trusted `RepositoryCaller`
+and operation-control types, with no SQL callbacks, Hibernate entities, Kafka,
+provider SDKs or JCR dependencies. Ordinary document/archive methods retain
+their current wire semantics until an additive reviewed boundary is implemented.
+
+**One executable command.** A command contains an encoding version, one account,
+an operation UUID and bounded changes with stable per-command member identities.
+Every change specifies destination identity, explicit expected-absent or expected
+revision, mutation kind, requested metadata/ownership, ordered part slots and
+source revision dependencies. Do not overload a numeric zero across APIs whose
+current zero semantics differ. Schema and policy preconditions are explicit
+when requested. Unsupported change kinds and unknown semantic fields fail closed.
+The implementation derives canonical bytes from this same validated immutable
+model and executes it. Never accept a free-standing caller fingerprint or opaque
+canonical byte array alongside a different executable command.
+
+Canonical identity excludes the operation UUID itself and includes the encoding
+version. The storage key is `(account, trusted stable principal, operation UUID)`;
+the principal never comes from the payload. Store and compare both SHA-256 and
+the exact canonical bytes, following the archive mutation precedent. Define field
+normalization and ordering in the encoder specification with golden fixtures:
+member ordering may be normalized by stable member identity, while part/chunk
+order remains semantic. Each supported encoder version must retain its original
+byte representation; an exact retry uses that version. Do not silently re-encode
+old records using new rules.
+
+For new bytes, semantic input includes slot, declared size/digest/content type,
+requested logical content and any caller-selected placement. Server-generated
+attempt UUID/token, physical object UUID/key, observed provider version/ETag,
+lease and verification times are execution evidence. Bind that evidence durably
+to the operation, member and attempt generation, and verify it against the
+command before publication. Restarting staging does not change command identity.
+New uploads cannot request arbitrary existing physical keys as an adoption shortcut.
+
+Explicit reuse is different: the caller-selected immutable object identity,
+original placement, qualified provider version (when present), size, digest and
+content type are semantic, together with the authorized source revision and
+destination slot. Reuse still requires native retention and permission; constructing
+`PhysicalObjectIdentity` grants neither. A changed selected source version is a
+different command even if its bytes happen to match.
+
+Caller-supplied timestamps, metadata and explicit expected policy/admission
+versions are semantic. Server commit/observation timestamps and the policy snapshot
+resolved during execution are evidence. An exact schema condition uses a full
+message type and canonical descriptor-closure fingerprint; a registry subject alone
+is insufficient. Preserve recorded evidence independently of future registry access.
+
+**Durable admission before staging.** Persist command identity and allowed upload
+scope before provider I/O. A repeated key must compare against that admitted
+command even before there is a terminal outcome. This prevents a failed or
+abandoned attempt from freeing the key for a different command. Persisted ownership
+generations fence takeover, late verification and publication by old workers.
+Different commands conflict; an exact pending retry resumes or observes the same
+operation rather than minting another logical operation.
+
+**One atomic outcome.** The commit transaction locks the scoped operation record
+before domain locks, checks the current owner generation and command/evidence
+bindings, and rechecks mutable authorization and revision preconditions. It then
+publishes the revisions, native/common references, transactional outbox and one
+immutable logical outcome together. The internal batch needs a transaction-scoped
+entry used by this coordinator; nesting calls to its current `save(Tx, ...)` would
+open a second transaction and is prohibited. Operation tracking is not a shadow
+document store: existing domain rows and retention tables remain authoritative.
+
+The unsigned logical outcome records the scoped operation identity, command
+encoding version/digest, terminal disposition, a server publication timestamp
+assigned inside the successful transaction (not an exact wall-clock commit instant),
+and a bounded per-member result with exact destination revision/domain version
+and retained admission/evidence identities. It must not contain lease tokens or
+provider credentials. Physical cleanup observations are separate mutable state.
+Archive deletion receipt enums and signed workflow/delegation `WorkRecord` subjects
+cannot represent this outcome unchanged; do not invent a workflow subject or
+signature. Final Java/wire types require their own reviewed contract and fixtures.
+
+**Replay and uncertain observations.** A committed exact retry reauthorizes the
+caller and returns the stored outcome without rerunning domain mutations or outbox
+effects. It must not fail merely because the old staging lease expired or because
+the current document has a later revision. Authorization for the original targets
+and retained revisions still applies; outcome lookup must not disclose targets
+whose access was revoked. The adapter must lock and recheck mutable policy facts
+in a deterministic order, including policies changing independently of document
+rows, and authorize historical targets/results before returning them. The exact
+policy lock integration and races remain implementation prerequisites.
+
+A lookup with no visible row means only that no record was visible at that instant.
+It does not prove rollback while another transaction is committing. A lost commit
+acknowledgement remains an unknown observation until reconciliation through the
+same operation fence resolves it. No cancellation check after SQL commit may
+report that publication rolled back. Pre-admission malformed requests can fail
+without creating an operation; known post-admission rejection or cancellation is
+terminal only when recorded under the operation fence after proving no commit
+won. If publication fails after writes, roll back that transaction first. In a
+fresh transaction, reacquire the operation-row fence and compare current state
+and owner generation before recording rejection. A competing retry may commit
+or take ownership in the gap; the rejected worker must return/observe that result
+instead of overwriting it. A rejected worker cannot overwrite a commit or a newer
+owner's decision.
+Transient provider/SQL failures and disconnected clients do not establish rejection.
+
+Implementation acceptance must cover response loss and exact replay; conflicting
+commands under one key before and after staging; concurrent same-key callers;
+rollback of every member/outbox/outcome; owner expiry/takeover and late evidence;
+revoked lookup/replay access and policy races; replay after later revisions;
+and lookup during an uncommitted operation. Command byte size, change/part/source
+counts, outcome size, SQL statements and held-lock latency require explicit budgets
+before public adoption. Current document batch limits are a starting guard, not
+qualification of these new operations. Consistent multi-object read snapshots
+remain separate work and must retain physical lifetime protection.
 
 ### Operation-count acceptance targets
 
