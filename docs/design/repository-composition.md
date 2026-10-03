@@ -514,6 +514,24 @@ only after these gates pass; do not re-enable snapshot-based deletion.
 
 Publication implementation decisions:
 
+The low-level `DocumentAttemptWriter` composes staging and atomic publication.
+It validates the selected drive, backend generation, address and every planned
+key before attempt admission. Its shutdown barrier counts the complete operation,
+including candidate construction and SQL publication. The host must close it and
+successfully await idle before releasing its borrowed provider or database.
+Failed writes retain their attempt ID and cause for recovery and commit-outcome
+reconciliation. Engine integration must preserve cancellation, deadline and
+revision-conflict status through that failure wrapper. This seam does not enable
+managed saves or supply authorization, schema admission, or source-part planning.
+
+Performance qualification remains required before switching application writes.
+The current stager performs each part's PUT, exact read-back and SQL verification
+sequentially; legacy part uploads use concurrent fan-out. Measure latency
+(including p50/p95), throughput, SQL work and buffered bytes with representative
+part counts and sizes on the same backend. The read-back and lease guarantees
+must survive any bounded-concurrency or batching change. No performance parity
+claim is supported by the correctness integration tests.
+
 - Keep the active attempt reference in a separate publication table keyed by
   document node, with a unique attempt reference. `saveIfRevision` already flushes
   and refreshes the document before running its callback. Updating the document

@@ -18,11 +18,7 @@ public final class DriveKeys {
 
     /** {@code <drive.prefix>/<suffix>}, with the prefix normalized and omitted when empty. */
     public static String under(String drivePrefix, String suffix) {
-        String prefix = drivePrefix == null ? "" : drivePrefix;
-        if (prefix.endsWith("/")) {
-            prefix = prefix.substring(0, prefix.length() - 1);
-        }
-        return (prefix.isBlank() ? "" : prefix + "/") + suffix;
+        return ai.protomolt.proto.repo.codec.RepositoryNamespaces.under(drivePrefix, suffix);
     }
 
     /**

@@ -2,6 +2,12 @@ package ai.protomolt.proto.repo.codec;
 
 /** Reserved storage namespaces shared by repository admission and cleanup. */
 public final class RepositoryNamespaces {
+    /** Apply the existing drive-prefix normalization consistently in planning and validation. */
+    public static String under(String drivePrefix, String suffix) {
+        String prefix = drivePrefix == null ? "" : drivePrefix;
+        if (prefix.endsWith("/")) prefix = prefix.substring(0, prefix.length() - 1);
+        return (prefix.isBlank() ? "" : prefix + "/") + suffix;
+    }
     private RepositoryNamespaces() {}
 
     public static boolean isManagedRaw(String objectKey) {
