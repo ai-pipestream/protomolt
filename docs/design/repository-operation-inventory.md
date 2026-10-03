@@ -337,6 +337,37 @@ purge or recovery yet and is not advertised as an available managed-write API.
 Those integrations and their concurrency tests remain required before document
 cleanup can resume.
 
+V22 adds immutable document publication history and an active attempt reference,
+without adopting existing rows. The package-private `saveVerifiedAttempt` now
+shares the existing document/source revision locks and commits its document row,
+publication and callback in one transaction. It checks the sampled drive and
+selected provider identity, exact verified manifest and next document version.
+Deferred database guards reject changed bound bodies, surviving-row unbinding,
+invalid physical part sets, false aggregate fields, unbound saves naming admitted
+objects and reuse of retired
+publication facts. Status-only changes retain the binding. Tests prove rollback
+of the row, binding, history and outbox together, including failure after the
+callback, plus concurrent writers against the same revision.
+
+The coherence probe reports missing bound parts without changing their manifests.
+Legacy purge refuses admitted part keys before provider deletion and records the
+failure. That refusal conservatively matches physical namespace and key across
+registered realms because legacy commands do not carry a qualified realm.
+PostgreSQL/LocalStack fixtures admit before PUT, read and hash the resulting bytes,
+then publish through the internal transaction to exercise these guards. Public
+full/partial save, original-profile reads, raw-reference integration and managed
+reclamation remain unwired. These internal checks do not qualify a managed
+document API, authorization, crash recovery or end-to-end transport behavior.
+
+Before enabling the writer, close admission versus legacy-key collisions in both
+directions. V22 refuses ordinary rows naming already admitted keys; V21 does not
+yet serialize admission against preexisting or concurrently saved legacy
+manifests. A caller-supplied reused attempt UUID can therefore name an old key.
+Fresh UUID generation is not a proof of exclusion. The next unit must either
+establish a namespace demonstrably unavailable to historical writes or serialize
+key reservation against legacy manifest references, with concurrent regressions.
+No writer may PUT/COPY under the new admission path until that gate passes.
+
 Keep archive operations process-authorized until current-policy guards support
 scoped callers. Legacy write/staging cleanup remains separate follow-up work;
 removing destructive RPCs does not qualify those older write paths.

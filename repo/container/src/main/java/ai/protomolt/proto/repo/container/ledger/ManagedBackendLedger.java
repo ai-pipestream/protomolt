@@ -67,11 +67,13 @@ public final class ManagedBackendLedger {
 
     public Optional<Profile> find(String generation) {
         requireIdentifier(generation, "backend generation");
-        return tx.inTransaction(em -> {
-            var rows = em.createNativeQuery("SELECT provider,endpoint,region,path_style,storage_realm,identity_schema,CAST(identity_json AS text) FROM managed_backend_profiles WHERE generation=:id")
-                    .setParameter("id", generation).getResultList();
-            return rows.isEmpty() ? Optional.empty() : Optional.of(decode((Object[]) rows.getFirst()));
-        });
+        return tx.inTransaction(em -> { return find(em, generation); });
+    }
+
+    static Optional<Profile> find(jakarta.persistence.EntityManager em, String generation) {
+        var rows = em.createNativeQuery("SELECT provider,endpoint,region,path_style,storage_realm,identity_schema,CAST(identity_json AS text) FROM managed_backend_profiles WHERE generation=:id")
+                .setParameter("id", generation).getResultList();
+        return rows.isEmpty() ? Optional.empty() : Optional.of(decode((Object[]) rows.getFirst()));
     }
 
     private static Profile decode(Object[] row) {

@@ -37,6 +37,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Testcontainers(disabledWithoutDocker = true)
 class CoherenceProbeIT extends AbstractLifecycleIT {
 
+    @Test void missingManagedPartIsReportedWithoutRewritingItsPublication() {
+        var drive = createDrive("managed-probe", "managed-probe", "managed-probe", "");
+        var row = managedDocument(drive);
+        var core = row.readManifest().getParts(0);
+        assertThat(store.delete(drive.bucket,core.getObjectKey())).isTrue();
+        var report = probe.probe(store,1000);
+        assertThat(report.totalMissing()).isPositive();
+        assertThat(report.repairsSkipped()).isPositive();
+        var retained = documents.findByNodeId(row.nodeId).orElseThrow();
+        assertThat(retained.readManifest()).isEqualTo(row.readManifest());
+        assertThat(retained.mutationRevision).isEqualTo(row.mutationRevision);
+        assertThat(documents.hasPartPublication(row.nodeId)).isTrue();
+        documents.deleteByNodeId(row.nodeId);
+    }
+
     @Test
     void missingPartObjectIsTombstonedInTheManifestAndReadsStayHonest() {
         String account = "acct-probe";

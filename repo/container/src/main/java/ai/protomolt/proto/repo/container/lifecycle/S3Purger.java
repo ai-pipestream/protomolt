@@ -118,6 +118,13 @@ public final class S3Purger {
         }
         DriveRecord drive = drives.findByName(record.accountId, record.driveName)
                 .orElseThrow(() -> new IllegalStateException("Document drive is unavailable for purge " + record.purgeId));
+        var keys = record.readObjectKeys();
+        if (!keys.isEmpty() && tx.readOnly(em -> !em.createNativeQuery("""
+                SELECT 1 FROM jsonb_array_elements_text(CAST(:keys AS jsonb)) requested(key)
+                JOIN document_part_attempt_objects admitted ON admitted.key_digest=sha256(convert_to(requested.key,'UTF8'))
+                AND admitted.object_key=requested.key WHERE admitted.storage_namespace=:namespace LIMIT 1
+                """).setParameter("namespace", drive.bucket).setParameter("keys", record.objectKeys).getResultList().isEmpty()))
+            throw new IllegalStateException("Admitted document parts require managed reclamation; legacy purge is refused");
         deleteObjects(store, drive.bucket, record.readObjectKeys(), record);
         boolean transitioned = tx.inTransaction(em -> {
             // A competing drain may already have settled this command. Never

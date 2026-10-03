@@ -83,6 +83,50 @@ public final class DocumentLedger {
     public DocumentRecord saveIfRevision(DocumentRecord candidate, Long expectedRevision,
             Map<UUID, Long> sourceRevisions,
             java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> committed) {
+        return saveGuarded(candidate, expectedRevision, sourceRevisions, (em, prior) -> {}, committed);
+    }
+
+    /** Internal until provider writes, reads and recovery use the same attempt boundary. */
+    DocumentRecord saveVerifiedAttempt(DocumentRecord candidate, Long expectedRevision,
+            Map<UUID, Long> sourceRevisions, UUID attemptId, UUID token, DocumentPublicationTarget target,
+            java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> committed) {
+        java.util.Objects.requireNonNull(committed, "committed");
+        Map<UUID, Long> sources = Map.copyOf(sourceRevisions);
+        return saveGuarded(candidate, expectedRevision, sources, (em, prior) -> {
+            target.lock(em);
+            var attempt = DocumentPartAttemptLedger.requirePublishable(em, attemptId, token, candidate, expectedRevision, sources);
+            target.requireMatches(em, candidate, attempt);
+            var previousManifest = prior == null ? null : prior.readManifest();
+            if (prior != null && (previousManifest == null || previousManifest.getDocVersion() <= 0))
+                throw new DocumentPartAttemptLedger.FenceException("Existing document requires an explicit versioned manifest");
+            long previousVersion = prior == null ? 0 : previousManifest.getDocVersion();
+            long nextVersion = Math.addExact(previousVersion, 1);
+            if (candidate.readManifest().getDocVersion() != nextVersion)
+                throw new DocumentPartAttemptLedger.FenceException("Document manifest version is not the next locked version");
+        }, (em, row) -> {
+            em.createNativeQuery("""
+                    INSERT INTO document_part_publication_history(attempt_id,node_id,publication_revision,body)
+                    SELECT :attempt,node_id,mutation_revision,document_publication_body(documents)
+                    FROM documents WHERE node_id=:node
+                    """).setParameter("attempt", attemptId).setParameter("node", row.nodeId).executeUpdate();
+            em.createNativeQuery("""
+                    INSERT INTO document_part_publications(node_id,attempt_id) VALUES (:node,:attempt)
+                    ON CONFLICT(node_id) DO UPDATE SET attempt_id=EXCLUDED.attempt_id
+                    """).setParameter("node", row.nodeId).setParameter("attempt", attemptId).executeUpdate();
+            committed.accept(em, row);
+        });
+    }
+
+    /** Whether this document has an active managed part publication. */
+    public boolean hasPartPublication(UUID nodeId) {
+        return tx.readOnly(em -> !em.createNativeQuery("SELECT 1 FROM document_part_publications WHERE node_id=:id")
+                .setParameter("id", nodeId).getResultList().isEmpty());
+    }
+
+    private DocumentRecord saveGuarded(DocumentRecord candidate, Long expectedRevision,
+            Map<UUID, Long> sourceRevisions,
+            java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> beforeMerge,
+            java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> committed) {
         java.util.Objects.requireNonNull(committed, "committed");
         Map<UUID, Long> sources = Map.copyOf(sourceRevisions);
         var identities = new java.util.TreeSet<>(sources.keySet());
@@ -108,6 +152,7 @@ public final class DocumentLedger {
             if (expectedRevision == null ? current != null
                     : current == null || current.mutationRevision != expectedRevision.longValue())
                 throw new RevisionConflictException();
+            beforeMerge.accept(em, current);
             DocumentRecord merged = em.merge(candidate);
             em.flush();
             em.refresh(merged);

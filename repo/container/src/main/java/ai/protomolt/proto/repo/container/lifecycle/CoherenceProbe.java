@@ -141,6 +141,12 @@ public final class CoherenceProbe {
                 }
             }
             if (dirty) {
+                if (documents.hasPartPublication(row.nodeId)) {
+                    repairsSkipped++;
+                    LOG.warn("Coherence probe found missing managed parts for node_id={}; explicit managed repair is required",
+                            row.nodeId);
+                    continue;
+                }
                 row.writeManifest(repaired.build());
                 try {
                     documents.saveIfRevision(row, row.mutationRevision, (em, committed) -> {});

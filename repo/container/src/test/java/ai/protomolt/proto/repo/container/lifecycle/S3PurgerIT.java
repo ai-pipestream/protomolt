@@ -24,6 +24,22 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Testcontainers(disabledWithoutDocker = true)
 class S3PurgerIT extends AbstractLifecycleIT {
 
+    @Test void legacyPurgeRefusesAdmittedPartsAndRecordsTheFailure() {
+        var drive = createDrive("managed-purge", "managed-purge", "managed-purge", "");
+        var row = managedDocument(drive);
+        row.status = DocumentStatus.PENDING_PURGE;
+        documents.saveIfRevision(row,row.mutationRevision,(em,committed)->{});
+        var command = enqueuePurge(row,"",Instant.now());
+        assertThatThrownBy(() -> purger.purgeNow(store,command.purgeId))
+                .hasMessageContaining("require managed reclamation");
+        assertThat(findPurge(command.purgeId).orElseThrow().lastError).contains("require managed reclamation");
+        assertThat(documents.hasPartPublication(row.nodeId)).isTrue();
+        for (var entry : row.readManifest().getPartsList()) if (entry.getState()==ai.protomolt.proto.repo.v1.PartState.PART_STATE_PRESENT)
+            assertThat(objectExists(drive.bucket,entry.getObjectKey())).isTrue();
+        queue.markVoid(command.purgeId);
+        documents.deleteByNodeId(row.nodeId);
+    }
+
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.CsvSource({"false,archive", "true,archive", "false,.protomolt-managed", "true,.protomolt-managed"})
     void persistedPurgeCannotDeleteReservedKeysEvenWhenMixedWithDocumentKeys(boolean identifiedGeneration, String namespace) {
