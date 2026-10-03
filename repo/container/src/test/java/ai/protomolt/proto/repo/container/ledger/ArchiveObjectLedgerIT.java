@@ -20,7 +20,7 @@ class ArchiveObjectLedgerIT {
             var objects = new ArchiveObjectLedger(tx);
             String generation = "race-" + UUID.randomUUID();
             new ManagedBackendLedger(tx).bind(generation, new ManagedBackendLedger.Profile(
-                    "s3", "https://storage.example", "us-east-1", true, generation));
+                    ai.protomolt.proto.repo.blob.s3.S3BackendIdentity.of("https://storage.example", "us-east-1", true), generation));
             var start = new java.util.concurrent.CountDownLatch(1);
             var futures = new java.util.ArrayList<java.util.concurrent.Future<ArchiveObjectLedger.Binding>>();
             for (int i = 0; i < 2; i++) {
@@ -55,7 +55,7 @@ class ArchiveObjectLedgerIT {
             var tx = new Tx(database.entityManagerFactory());
             var profiles = new ManagedBackendLedger(tx);
             String generation = "archive-" + UUID.randomUUID();
-            profiles.bind(generation, new ManagedBackendLedger.Profile("s3", "https://storage.example", "us-east-1", true, "archive"));
+            profiles.bind(generation, new ManagedBackendLedger.Profile(ai.protomolt.proto.repo.blob.s3.S3BackendIdentity.of("https://storage.example", "us-east-1", true), "archive"));
             var objects = new ArchiveObjectLedger(tx);
             UUID entry = UUID.randomUUID();
             var location = new ArchiveObjectLedger.Location(entry, "account", "records", generation, "original-bucket", "unique-key");

@@ -82,7 +82,7 @@ class ManagedBackendLedgerIT {
 
     @Test void sdkDefaultIsPinnedSeparatelyFromAnExplicitEndpoint() {
         String id = UUID.randomUUID().toString();
-        var defaults = profile(ManagedBackendLedger.SDK_DEFAULT);
+        var defaults = profile(ai.protomolt.proto.repo.blob.s3.S3BackendIdentity.SDK_DEFAULT);
         ledger.bind(id, defaults);
         ledger.bind(id, defaults);
         assertThatThrownBy(() -> ledger.bind(id, profile("https://s3.us-east-1.amazonaws.com")))
@@ -108,6 +108,6 @@ class ManagedBackendLedgerIT {
     }
 
     private static ManagedBackendLedger.Profile profile(String endpoint) {
-        return new ManagedBackendLedger.Profile("s3", endpoint, "us-east-1", true, "test-realm");
+        return new ManagedBackendLedger.Profile(ai.protomolt.proto.repo.blob.s3.S3BackendIdentity.of(endpoint, "us-east-1", true), "test-realm");
     }
 }

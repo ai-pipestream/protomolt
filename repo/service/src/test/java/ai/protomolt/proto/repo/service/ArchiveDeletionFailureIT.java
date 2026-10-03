@@ -76,7 +76,7 @@ class ArchiveDeletionFailureIT {
         var objects = new ai.protomolt.proto.repo.container.archive.ArchiveObjectLedger(tx);
         var profiles = new ManagedBackendLedger(tx);
         String generation = "bound-read-" + UUID.randomUUID();
-        var profile = new ManagedBackendLedger.Profile("s3", S3.getEndpoint().toString(), S3.getRegion(), true, generation);
+        var profile = new ManagedBackendLedger.Profile(ai.protomolt.proto.repo.blob.s3.S3BackendIdentity.of(S3.getEndpoint().toString(), S3.getRegion(), true), generation);
         profiles.bind(generation, profile);
         var entry = ledger.findEntry(UUID.fromString(saved.getEntryUuid())).orElseThrow();
         var item = saved.getManifest().getRenditions(0);

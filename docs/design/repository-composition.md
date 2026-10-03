@@ -108,6 +108,12 @@ must not be inferred from the document store's outbox and purge implementation.
 
 ## Composition boundaries
 
+Pre-release design policy: there are no external users requiring Java API or wire
+compatibility shims. Prefer clean, usable boundaries and efficient execution over
+preserving obsolete interfaces. Update all in-tree callers and fixtures together.
+Stored-data integrity and explicit migration/recovery behavior remain requirements;
+permission to break an API does not authorize silent redirection or data loss.
+
 Use these dependency boundaries; module names below are proposed paths, not
 published artifacts. Final moves must follow ADR-002 without split packages.
 

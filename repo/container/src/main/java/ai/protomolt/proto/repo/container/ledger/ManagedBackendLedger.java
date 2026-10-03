@@ -13,7 +13,7 @@ import java.util.HashMap;
 /** Durable generation bindings. Provider credentials and clients belong to the host. */
 public final class ManagedBackendLedger {
     /** Delegates endpoint resolution to the SDK; never synthesize an AWS hostname. */
-    public static final String SDK_DEFAULT = "SDK_DEFAULT";
+    private static final String SDK_DEFAULT = "SDK_DEFAULT";
     private final Tx tx;
     public ManagedBackendLedger(Tx tx) { this.tx = Objects.requireNonNull(tx); }
 
@@ -24,12 +24,7 @@ public final class ManagedBackendLedger {
             requireIdentifier(storageRealm, "storage realm");
         }
 
-        /** Legacy Java compatibility; new callers obtain identity from their provider. */
-        @Deprecated
-        public Profile(String provider, String endpoint, String region, boolean pathStyle, String storageRealm) {
-            this(legacyIdentity(provider, endpoint, region, pathStyle), storageRealm);
-        }
-
+        // Decodes only the immutable pre-V17 SQL shape. New identities come from providers.
         private static BackendIdentity legacyIdentity(String provider, String endpoint, String region, boolean pathStyle) {
             if (!"s3".equals(provider)) throw new IllegalArgumentException("Unsupported managed backing provider");
             requireIdentifier(region, "region");
@@ -81,7 +76,7 @@ public final class ManagedBackendLedger {
 
     private static Profile decode(Object[] row) {
         if (row[5] == null)
-            return new Profile((String) row[0], (String) row[1], (String) row[2], (Boolean) row[3], (String) row[4]);
+            return new Profile(Profile.legacyIdentity((String) row[0], (String) row[1], (String) row[2], (Boolean) row[3]), (String) row[4]);
         var fields = Struct.newBuilder();
         try { JsonFormat.parser().merge((String) row[6], fields); }
         catch (com.google.protobuf.InvalidProtocolBufferException invalid) {

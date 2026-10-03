@@ -35,7 +35,7 @@ class RawObjectRecoveryIT {
         tx = new Tx(database.entityManagerFactory());
         raw = new RawObjectLedger(tx);
         backends = new ManagedBackendLedger(tx);
-        profile = new ManagedBackendLedger.Profile("s3", S3.getEndpoint().toString(), S3.getRegion(), true, "test-realm");
+        profile = new ManagedBackendLedger.Profile(ai.protomolt.proto.repo.blob.s3.S3BackendIdentity.of(S3.getEndpoint().toString(), S3.getRegion(), true), "test-realm");
         backends.bind(GENERATION, profile);
         opened = BlobStores.discover().open("s3", Map.of("endpoint", S3.getEndpoint().toString(),
                 "region", S3.getRegion(), "access-key", S3.getAccessKey(), "secret-key", S3.getSecretKey(),

@@ -104,7 +104,7 @@ class ArchiveUploadLedgerIT {
     private static ArchiveObjectLedger.Location location(Tx tx) {
         String generation = "upload-" + UUID.randomUUID();
         new ManagedBackendLedger(tx).bind(generation, new ManagedBackendLedger.Profile(
-                "s3", "https://storage.example", "us-east-1", true, generation));
+                ai.protomolt.proto.repo.blob.s3.S3BackendIdentity.of("https://storage.example", "us-east-1", true), generation));
         return new ArchiveObjectLedger.Location(UUID.randomUUID(), "account", "records", generation, "bucket", "unique-key");
     }
 }

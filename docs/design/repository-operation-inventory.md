@@ -379,9 +379,8 @@ must still check retention capabilities. No other provider gains managed recover
 support merely because its identity can be persisted.
 
 Java callers of ManagedBackendLedger.Profile should now use
-Profile(BackendIdentity, storageRealm). The former S3 constructor remains as a
-deprecated compatibility entry point; S3-specific record accessors are replaced
-by identity().location(). Provider modules own canonicalization and validation;
+Profile(BackendIdentity, storageRealm). The former S3 constructor and S3-specific
+record accessors are removed; use identity().location(). Provider modules own canonicalization and validation;
 the generic value is a trusted provider descriptor, not a credential sanitizer
 for arbitrary user maps. Production composition uses the S3 provider factory.
 

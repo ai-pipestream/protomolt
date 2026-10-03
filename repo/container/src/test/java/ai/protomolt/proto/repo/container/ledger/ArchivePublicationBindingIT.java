@@ -117,7 +117,7 @@ class ArchivePublicationBindingIT {
     private static ArchiveUploadLedger.Admission admission(Tx tx, ArchiveEntryRecord entry) {
         String generation = "publication-" + UUID.randomUUID();
         new ManagedBackendLedger(tx).bind(generation, new ManagedBackendLedger.Profile(
-                "s3", "https://storage.example", "us-east-1", true, generation));
+                ai.protomolt.proto.repo.blob.s3.S3BackendIdentity.of("https://storage.example", "us-east-1", true), generation));
         return new ArchiveUploadLedger(tx).begin(new ArchiveObjectLedger.Location(entry.entryUuid,
                 entry.accountId, entry.archive, generation, "bucket", "unique-key"), 7, "text/plain", Duration.ofMinutes(1));
     }
