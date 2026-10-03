@@ -46,6 +46,12 @@ final class ArchiveKeys {
                 + "/" + entryUuid + "/staging/" + uploadId);
     }
 
+    /** Final immutable key allocated before a managed stream's digest is known. */
+    static String streamed(DriveRecord drive, String accountId, String archive, UUID entryUuid) {
+        return DriveKeys.under(drive.prefix, "archive/" + sanitize(accountId) + "/" + archive
+                + "/" + entryUuid + "/writes/" + UUID.randomUUID());
+    }
+
     /** Path-segment sanitization: anything outside {@code [A-Za-z0-9._-]} becomes {@code _}. */
     static String sanitize(String segment) {
         StringBuilder out = new StringBuilder(segment.length());

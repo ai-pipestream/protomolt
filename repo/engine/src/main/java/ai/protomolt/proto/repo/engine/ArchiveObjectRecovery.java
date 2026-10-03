@@ -26,9 +26,13 @@ public final class ArchiveObjectRecovery {
     }
 
     public Outcome recover(UUID object, Instant inactiveBefore) {
+        return recover(object, inactiveBefore, inactiveBefore);
+    }
+
+    public Outcome recover(UUID object, Instant inactiveBefore, Instant abandonedBefore) {
         if (Thread.currentThread().isInterrupted())
             throw new IllegalStateException("Archive recovery interrupted before claiming work");
-        var claimed = cleanup.claim(object, inactiveBefore);
+        var claimed = cleanup.claim(object, inactiveBefore, abandonedBefore);
         if (claimed.isEmpty()) return Outcome.SKIPPED;
         var claim = claimed.get();
         var location = claim.binding().location();

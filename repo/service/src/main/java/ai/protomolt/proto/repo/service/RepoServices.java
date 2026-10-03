@@ -106,6 +106,7 @@ public final class RepoServices implements AutoCloseable {
     private final ai.protomolt.proto.repo.engine.RawObjectRecovery rawRecovery;
     private boolean lifecycleStarted;
     private final ArchiveOperations archiveOperations;
+    private final ManagedArchiveServices managedArchive;
     private final DriveProvisioner driveProvisioner;
     private final ai.protomolt.proto.repo.spi.DriveRepository driveOperations;
     private final List<BindableService> services;
@@ -222,6 +223,7 @@ public final class RepoServices implements AutoCloseable {
                     blobStore, partStorage, purgeQueue, eventOutbox, generation);
             this.documentService = new DocumentGrpcService(documents,
                     new ai.protomolt.proto.repo.engine.BlobOperations(blobStore, driveLedger));
+            var archiveLedger = new ai.protomolt.proto.repo.container.archive.ArchiveLedger(tx);
             if (generation != null) {
                 if (!managedCapabilities.containsAll(java.util.Set.of(
                         ai.protomolt.proto.repo.blob.spi.BlobCapability.STREAMING_WRITE,
@@ -241,21 +243,27 @@ public final class RepoServices implements AutoCloseable {
                         });
                 this.rawIngestion = new ai.protomolt.proto.repo.engine.RawIngestionOperations(documents, documentLedger,
                         driveLedger, blobStore, generation, managedCapabilities);
+                this.managedArchive = new ManagedArchiveServices(tx, archiveLedger, blobStore,
+                        managedCapabilities, generation, profile, reclaimer);
             } else {
                 this.rawIngestion = null;
                 this.rawRecovery = null;
+                this.managedArchive = null;
             }
             this.driveProvisioner = new DriveProvisioner(driveLedger,
                     namespaces,
                     config.defaultBucketBase(), config.s3Region(), selectedDriveProvider, driveGate);
             this.archiveOperations = new ArchiveOperations(
-                    new ai.protomolt.proto.repo.container.archive.ArchiveLedger(tx),
-                    driveLedger, blobStore, bridges);
+                    archiveLedger, driveLedger, blobStore, bridges,
+                    managedArchive == null ? null : managedArchive.reader,
+                    managedArchive == null ? null : managedArchive.writer);
             this.driveOperations = new ai.protomolt.proto.repo.engine.DriveOperations(driveLedger, driveProvisioner);
-            this.services = List.of(
+            var configuredServices = new java.util.ArrayList<BindableService>(List.of(
                     documentService,
                     new ArchiveGrpcService(archiveOperations),
-                    new DriveGrpcService(driveOperations));
+                    new DriveGrpcService(driveOperations)));
+            if (managedArchive != null) configuredServices.add(new ArchiveMutationGrpcService(managedArchive.mutations));
+            this.services = List.copyOf(configuredServices);
             // The lifecycle engine (two-phase delete): stateless workers over the
             // same ledgers/queue, driven by startLifecycle()'s loops or, in tests,
             // by hand via the accessors below.
@@ -295,7 +303,16 @@ public final class RepoServices implements AutoCloseable {
     /** Archive operations sharing this composition's storage lifetime. */
     public ArchiveRepository archiveRepository() {
         requireOpen();
+        if (managedArchive != null) startLifecycle();
         return archiveOperations;
+    }
+
+    /** Identified mutations require qualified storage and running recovery. */
+    public ai.protomolt.proto.repo.spi.ArchiveMutationRepository archiveMutationRepository() {
+        requireOpen();
+        if (managedArchive == null) throw new IllegalStateException("Managed archive storage is not configured");
+        startLifecycle();
+        return managedArchive.mutations;
     }
 
     /** Drive operations sharing this composition's storage lifetime. */
@@ -311,12 +328,17 @@ public final class RepoServices implements AutoCloseable {
     }
 
     /**
-     * The wired gRPC services (document + archive + drive), for hosts that register
-     * them on their own server builder.
+     * The wired gRPC services for hosts that register them on their own builder.
+     * Qualified managed storage also mounts ArchiveMutationService. Starts managed
+     * recovery before returning; the embedding host must close this composition
+     * if its own server startup fails. The mutation adapter requires an explicit
+     * authenticated CallerContexts entry.
      *
      * @return the service implementations, unmodifiable
      */
     public List<BindableService> services() {
+        requireOpen();
+        if (managedArchive != null) startLifecycle();
         return services;
     }
 
@@ -403,17 +425,24 @@ public final class RepoServices implements AutoCloseable {
 
     private Server registerAndStart(io.grpc.ServerBuilder<?> builder,
                                     java.util.function.Consumer<Server> routingCheck) throws IOException {
-        services.forEach(builder::addService);
-        GrpcServerLifetime transport = GrpcServerLifetime.start(builder);
-        try { routingCheck.accept(transport.server()); }
-        catch (RuntimeException | Error failure) {
-            try { transport.close(); }
+        GrpcServerLifetime transport = null;
+        try {
+            services().forEach(builder::addService);
+            transport = GrpcServerLifetime.start(builder);
+            routingCheck.accept(transport.server());
+            servers.add(transport);
+            return transport.server();
+        } catch (IOException | RuntimeException | Error failure) {
+            if (transport != null) {
+                try { transport.close(); }
+                catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
+            }
+            // services() may have started durable recovery before binding.
+            // A failed listener must not leave that composition running unseen.
+            try { close(); }
             catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
             throw failure;
         }
-
-        servers.add(transport);
-        return transport.server();
     }
 
     /**
@@ -501,6 +530,16 @@ public final class RepoServices implements AutoCloseable {
             return;
         }
         try {
+            if (managedArchive != null) {
+                startLifecycleThread("repo-archive-mutation-recovery", () -> {
+                    managedArchive.recoverMutations(java.time.Instant.now().minusMillis(config.purgeIntervalMs()), 100);
+                    sleep(config.purgeIntervalMs());
+                });
+                startLifecycleThread("repo-archive-reconciliation", () -> {
+                    managedArchive.reconcile(java.time.Instant.now().minusMillis(config.reconcileMinAgeMs()), 100);
+                    sleep(config.sweepIntervalMs());
+                });
+            }
             if (rawRecovery != null) {
                 startLifecycleThread("repo-raw-recovery", () -> {
                     var cutoff = java.time.Instant.now().minus(java.time.Duration.ofHours(1));

@@ -249,11 +249,21 @@ concurrent status lookup and late-write reconciliation. A PostgreSQL test verifi
 cancellation during the logical callback rolls back admission. Runtime fixtures
 validate missing and malformed successful response receipts.
 
-`RepoServices` does not mount the new adapter or enable managed archive writes
-yet. Production composition/recovery scheduling, complete write-path coverage,
-ownership enforcement, legacy identity migration and destructive RPC cutover
-remain unfinished. The existing unsafe legacy deletion regressions below are
-still relevant; the new path does not make those old handlers safe.
+`RepoServices` now mounts the mutation adapter and managed archive writes when
+`ManagedStoragePolicy` qualifies the configured backend. The reader and recovery
+resolver require the exact original generation/profile/realm. Unary, streaming
+and bridge writes use durable admission. Managed library access and gRPC service
+exposure start lifecycle workers first; listener startup failure closes the
+composition, including workers and providers. A real Netty/PostgreSQL/S3 test
+admits an authenticated mutation, closes the host, and verifies cleanup after
+restart through in-process startup without a separate lifecycle call.
+
+Ownership enforcement, legacy identity migration and destructive RPC cutover
+remain unfinished. The three old destructive RPCs and their response types are
+scheduled for removal; their request messages remain the selected command
+payloads. Do not add a second optional-id mutation dialect or generated retry IDs.
+The existing unsafe legacy deletion regressions below are still relevant; the
+new path does not make those old handlers safe. No live deployment is claimed.
 
 `ArchiveDeletionFailureIT` now reproduces swallowed delete failures over both the
 library and real in-process gRPC transport with PostgreSQL and S3. Both cases are
@@ -316,8 +326,8 @@ address gets different keys in library and gRPC integration tests. Existing
 manifest keys remain readable. Failed candidate registration/recovery, immutable
 backend bindings and durable deletion below are still unfinished.
 
-V14 and `ArchiveObjectLedger` provide an internal binding reservation foundation,
-not yet connected to archive uploads or reads. A binding records entry/account/
+V14 and `ArchiveObjectLedger` provide the binding reservation foundation used by
+managed archive uploads and reads. A binding records entry/account/
 archive and original backend generation, storage realm, bucket and object key.
 The profile supplies the realm; a composite foreign key prevents mismatching it.
 Realm/bucket/key uniqueness prevents generation rotation from assigning the same
@@ -329,9 +339,9 @@ cannot identify a binding across different storage realms. The engine must check
 entry/account/archive and selected backend before registration; a binding ID is
 not an authorization grant.
 
-Production integration remains required: reserve before PUT, fence upload leases,
-verify bytes, bind version references transactionally, resolve original bindings
-for reads as well as cleanup, and recover abandoned candidates. The reused managed
+Managed composition reserves before PUT, fences upload leases, verifies consumed
+bytes, binds version references transactionally, resolves original bindings for
+reads and cleanup, and schedules abandoned-candidate recovery. The reused managed
 profile implementation currently qualifies only S3; other providers need explicit
 qualification without falling back to a current drive or S3 client.
 
@@ -377,28 +387,25 @@ lose its binding ID. Reference insertion failure rolls back the entry, version,
 references and upload transition together. This is archive byte publication,
 not typed payload admission or a universal content/JCR transaction boundary.
 
-Until durable archive deletion is implemented, bound destructive operations fail
-before provider I/O. Ledger deletion/pruning/rewriting rechecks authoritative
+The old destructive methods refuse bound content before provider I/O; use the
+identified mutation API. Legacy ledger deletion/pruning/rewriting rechecks authoritative
 references and bound manifests under the entry lock, covering a concurrent bound
 save after preflight. Existing legacy deletion failures remain intentionally red.
-Managed unary upload/read routing and original-profile recovery now exist as
-internal composition. Production wiring and the remaining write paths still need
-integration. Carry-forward helpers preserve the binding ID when sharing its key.
+Managed upload/read routing and original-profile recovery are wired by qualified
+host composition. Carry-forward helpers preserve the binding ID when sharing its key.
 
-- **Extended requests:** DeleteEntry currently has only address (tag 1);
+- **Reused command payloads:** DeleteEntry has only address (tag 1);
   DeleteRendition has address/rendition/reason (tags 1–3); PruneVersions has
-  address/keep_latest (tags 1–2). None has an idempotency key. Add optional operation
-  identity using new tags, preserving all existing identities. Normalize the
+  address/keep_latest (tags 1–2). The enclosing ArchiveMutationRequest requires
+  operation identity. Normalize the
   command and bind its fingerprint to trusted caller, account and operation ID.
   Reusing that identity with a different command must conflict. An address cannot
   be the replay key because deletion and recreation can reuse it.
-- **Extended responses and new lookup:** persist logical version/tombstone counts
-  and the terminal response, so an identified retry returns the original outcome
-  after a lost acknowledgement. Add operation identity/status without changing
-  the meaning of existing final counters. Legacy calls without an ID may use an
-  internal identity for recovery but cannot promise caller-level replay; retain
-  the existing absent-entry result. Explicit operation lookup is needed when a
-  caller has an ID and the request ends before a response arrives.
+- **New receipt and lookup:** persist logical version/tombstone counts and the
+  admission receipt, so an identified retry returns the original logical outcome
+  after a lost acknowledgement, with a current durable cleanup observation.
+  Retire calls without caller-supplied operation identity. Explicit lookup serves
+  callers whose request ended before a response arrived.
 - **New durable archive operation ledger:** store normalized command scope,
   fingerprint, sampled revision, admission state, claim token, attempts, bounded
   error, final response and exact target objects. Reuse immutable backend profile
@@ -415,8 +422,8 @@ integration. Carry-forward helpers preserve the binding ID when sharing its key.
   I/O starts only after admission commits and runs outside SQL transactions.
   Count physical objects only after confirmed absence. Failed cleanup remains
   discoverable and retryable with its original coordinates.
-- **New archive object generation/reference fence:** current rendition keys are
-  content-addressed and can be reused by a later write. A pre-delete reference
+- **Archive object generation/reference fence:** legacy deterministic rendition
+  keys could be reused by a later write. A pre-delete reference
   check cannot stop an in-flight PUT finishing after cleanup or a new save
   publishing the same key during cleanup. Track immutable physical generations
   and admission leases before PUT; a deleting generation cannot gain references.
@@ -470,15 +477,19 @@ DELETING work can be reclaimed by another worker; DELETED objects remain eligibl
 for periodic reconciliation because a late provider PUT can recreate bytes.
 ArchiveObjectRecovery uses the original persisted backend profile and physical
 reclaimer outside SQL transactions. Failures remain recorded and propagate.
-This is an internal recovery operation; production scheduling, destructive
-operation integration and lifecycle qualification remain unfinished.
+Qualified host composition schedules recovery in two independent bounded loops.
+Admitted mutation targets use the purge interval for retry; in-flight claims
+without an error have a separate one-hour abandonment timeout. Failed claims
+rotate by updated time so later targets can progress. The aged orphan/tombstone
+loop uses reconcileMinAgeMs and the sweep interval, retaining capacity even while
+mutations arrive. Workers stop before owned provider/database resources close.
 
 Archive references are the complete pin set only for current archive objects.
 Future JCR graph/frozen-version/restore references must join the liveness decision
 or own separate physical objects. These entry-scoped commits do not implement a
 general JCR session transaction.
 
-Unary PutEntry has an internal managed composition using ArchiveObjectWriter.
+Unary PutEntry has a managed composition using ArchiveObjectWriter.
 Fresh candidates receive a durable reservation before checksummed provider I/O;
 successful writes record byte identity and provider revision. The owning version
 publishes object references and lease tokens in the same SQL transaction. Identical
@@ -486,11 +497,16 @@ content reuses its retained binding without another upload. Known revision
 conflicts may retry with fresh reservations; arbitrary persistence failures and
 lost provider acknowledgements propagate, leaving recorded candidates for recovery.
 Managed mode does not physically delete superseded objects after publication.
-Streaming and bridge writes reject managed mode until they have admission; legacy
-writers reject existing bound versions. Current coverage uses real PostgreSQL/S3
-and local/in-process gRPC, plus provider acknowledgement and SQL failure injection.
-Production remains disabled pending cleanup/recovery and complete write-path
-integration. This verifies byte admission, not schema validity or semantic review.
+Streaming writes reserve a final immutable key before consuming input. They
+measure exact length and digest, renew the lease during consumption and verify
+before publication, without staging-copy or whole-body buffering. Invalid and
+deduplicated candidates stay recorded for recovery. Bridge writes admit generated
+bytes and preserve the sampled source revision. Streaming dedupe and unchanged
+bridge results confirm the retained version under an entry lock before returning;
+real PostgreSQL races fail without those guards and pass with them. Legacy writers
+still reject bound versions. Coverage uses real PostgreSQL/S3, library/in-process
+gRPC, provider acknowledgement and SQL failure injection. This verifies byte
+admission, not schema validity or semantic review.
 
 Backend identity persistence is extended without protobuf changes. V17 preserves
 existing generations, realms, profile values and foreign keys; legacy S3 rows
@@ -516,8 +532,9 @@ revision and verify returned bytes. Missing published bytes report DATA_LOSS;
 missing resolver configuration fails explicitly. The host owns provider clients
 and historical configuration lookup. Legacy renditions still use the current
 drive because their original backend identity is unknown; this is not a verified
-migration. Production composition has not yet enabled bound archive admission or
-the resolver. Do not advertise these as deployed capabilities.
+migration. Qualified host composition enables bound admission and the resolver;
+legacy migration remains explicit. This is locally tested behavior, not evidence
+of a live deployment.
 
 The PostgreSQL lifecycle test covers unpublished, wrong-entry/wrong-version,
 carried and removed references. The service regression uses real PostgreSQL and

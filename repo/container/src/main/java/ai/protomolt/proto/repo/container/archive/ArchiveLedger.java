@@ -443,6 +443,26 @@ public final class ArchiveLedger {
         });
     }
 
+    /** Linearization point for a no-op result derived from a sampled version. */
+    public void confirmRetainedVersion(ArchiveEntryRecord sampled) {
+        tx.inTransaction(em -> {
+            var entry = em.find(ArchiveEntryRecord.class, sampled.entryUuid, LockModeType.PESSIMISTIC_WRITE);
+            if (entry == null || entry.mutationRevision != sampled.mutationRevision || entry.currentVersion != sampled.currentVersion)
+                throw new VersionConflictException("Archive entry changed before confirming unchanged content");
+            var version = em.find(ArchiveVersionRecord.class, new ArchiveVersionRecord.Key(entry.entryUuid, entry.currentVersion));
+            if (version == null) throw new VersionConflictException("Archive version is no longer retained");
+            var ids = ArchiveManifests.fromJson(version.manifest).getRenditionsList().stream()
+                    .filter(item -> item.getState() == ai.protomolt.proto.repo.archive.v1.RenditionState.RENDITION_STATE_PRESENT)
+                    .map(ai.protomolt.proto.repo.archive.v1.RenditionManifestEntry::getStorageObjectId)
+                    .filter(id -> !id.isEmpty()).map(UUID::fromString).collect(java.util.stream.Collectors.toSet());
+            var pins = new java.util.HashSet<>(em.unwrap(org.hibernate.Session.class).createNativeQuery("""
+                    SELECT r.object_id FROM archive_version_object_refs r JOIN archive_object_uploads u USING(object_id)
+                    WHERE r.entry_uuid=:entry AND r.version=:version AND u.state='LIVE'
+                    """, UUID.class).setParameter("entry", entry.entryUuid).setParameter("version", entry.currentVersion).getResultList());
+            if (!ids.equals(pins)) throw new IllegalStateException("Archive version references do not match its retained manifest");
+        });
+    }
+
     /** Called with the owning entry locked; preflight checks alone cannot fence a concurrent save. */
     private static void requireUnboundDestruction(EntityManager em, UUID entry, List<Long> selected) {
         var versions = em.createQuery("SELECT v FROM ArchiveVersionRecord v WHERE v.entryUuid=:entry", ArchiveVersionRecord.class)

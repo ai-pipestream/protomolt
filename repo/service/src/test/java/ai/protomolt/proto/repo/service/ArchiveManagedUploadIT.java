@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.asset.bridge.BridgeEngine;
+import ai.protomolt.proto.asset.v1.BridgeStatus;
 import ai.protomolt.proto.repo.archive.v1.*;
 import ai.protomolt.proto.repo.blob.spi.*;
 import ai.protomolt.proto.repo.container.archive.*;
@@ -162,17 +163,125 @@ class ArchiveManagedUploadIT {
         }
     }
 
-    @Test void managedModeRefusesUnintegratedWritePathsBeforeReadingInput() {
+    @Test void invalidManagedStreamingRequestDoesNotConsumeInput() {
         var request = request("unused");
         assertThatThrownBy(() -> managed.uploadStream(CALLER, request.getAddress(), request.getRenditions(0).getRendition(),
-                1, "", null, "", null, null, new java.io.InputStream() {
+                0, "", null, "", null, null, new java.io.InputStream() {
                     @Override public int read() { throw new AssertionError("Unadmitted input was consumed"); }
                 })).isInstanceOfSatisfying(RepositoryException.class,
-                        failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
-        assertThatThrownBy(() -> managed.bridgeEntry(CALLER, BridgeEntryRequest.newBuilder().setAddress(request.getAddress()).build()))
-                .isInstanceOfSatisfying(RepositoryException.class,
-                        failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+                        failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.INVALID_ARGUMENT));
         assertThat(uploadCount(ArchiveIds.entryUuid(request.getAddress()))).isZero();
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void managedStreamingPublishesAndDeduplicatesThroughLibraryAndGrpc(boolean knownHash) throws Exception {
+        byte[] bytes = "streamed original".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        var request = request("unused");
+        String checksum = knownHash ? ArchiveManifests.sha256Hex(bytes) : "";
+        var descriptor = request.getRenditions(0).getRendition();
+        var first = managed.uploadStream(CALLER, request.getAddress(), descriptor, bytes.length, checksum,
+                null, "stream.txt", null, null, new java.io.ByteArrayInputStream(bytes));
+        var manifest = ledger.findVersion(ArchiveIds.entryUuid(request.getAddress()), first.version()).orElseThrow();
+        var original = ArchiveManifests.fromJson(manifest.manifest).getRenditions(0);
+        assertThat(original.getStorageObjectId()).isNotBlank();
+        String name = "managed-stream-" + UUID.randomUUID();
+        var server = InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(managed)).build().start();
+        var channel = InProcessChannelBuilder.forName(name).build();
+        try {
+            var result = new java.util.concurrent.CompletableFuture<UploadRenditionResponse>();
+            var sink = ArchiveServiceGrpc.newStub(channel).uploadRendition(new io.grpc.stub.StreamObserver<UploadRenditionResponse>() {
+                @Override public void onNext(UploadRenditionResponse value) { result.complete(value); }
+                @Override public void onError(Throwable failure) { result.completeExceptionally(failure); }
+                @Override public void onCompleted() {}
+            });
+            sink.onNext(UploadRenditionRequest.newBuilder().setHeader(UploadRenditionHeader.newBuilder()
+                    .setAddress(request.getAddress()).setRendition(descriptor).setSizeBytes(bytes.length).setExpectedSha256(checksum)).build());
+            sink.onNext(UploadRenditionRequest.newBuilder().setChunk(ByteString.copyFrom(bytes)).build());
+            sink.onCompleted();
+            assertThat(result.get(10, java.util.concurrent.TimeUnit.SECONDS).getVersion()).isEqualTo(first.version());
+            assertThat(uploadCount(ArchiveIds.entryUuid(request.getAddress()))).isEqualTo(2);
+            assertThat(managed.getEntry(CALLER, GetEntryRequest.newBuilder().setAddress(request.getAddress()).build())
+                    .getRenditions(0).getData().toByteArray()).isEqualTo(bytes);
+            var retained = ArchiveManifests.fromJson(ledger.findVersion(ArchiveIds.entryUuid(request.getAddress()), first.version()).orElseThrow().manifest);
+            assertThat(retained.getRenditions(0).getStorageObjectId()).isEqualTo(original.getStorageObjectId());
+            tx.readOnly(em -> {
+                assertThat(((Number) em.createNativeQuery("SELECT count(*) FROM archive_object_uploads u JOIN archive_object_bindings b USING(object_id) WHERE b.entry_uuid=:entry AND u.state='VERIFIED'")
+                        .setParameter("entry", ArchiveIds.entryUuid(request.getAddress())).getSingleResult()).longValue()).isEqualTo(1);
+                return null;
+            });
+        } finally { channel.shutdownNow(); server.shutdownNow(); }
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"short", "long", "checksum"})
+    void rejectedManagedStreamLeavesRecoverableCandidateAndNoEntry(String failure) {
+        byte[] bytes = "wrong sized input".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        var request = request("unused");
+        long length = failure.equals("short") ? bytes.length + 1 : failure.equals("long") ? bytes.length - 1 : bytes.length;
+        String hash = failure.equals("checksum") ? "a".repeat(64) : "";
+        assertThatThrownBy(() -> managed.uploadStream(CALLER, request.getAddress(), request.getRenditions(0).getRendition(),
+                length, hash, null, "", null, null, new java.io.ByteArrayInputStream(bytes))).isInstanceOf(Exception.class);
+        UUID entry = ArchiveIds.entryUuid(request.getAddress());
+        assertThat(ledger.findEntry(entry)).isEmpty();
+        assertThat(uploadCount(entry)).isEqualTo(1);
+    }
+
+    @Test void managedBridgePublishesBoundDerivedContentAndReusesTheOriginal() {
+        var request = request("id;label\n1;first\n2;second\n").toBuilder().setFilename("rows.csv")
+                .setDeclared(ai.protomolt.proto.asset.v1.FormatFact.newBuilder().setDelimited(ai.protomolt.proto.asset.v1.DelimitedTable.newBuilder()
+                        .setFilename("rows.csv").setDelimiter(";")
+                        .setHeader(ai.protomolt.proto.asset.v1.HeaderPresence.HEADER_PRESENCE_PRESENT))).build();
+        var first = managed.putEntry(CALLER, request);
+        var response = managed.bridgeEntry(CALLER, BridgeEntryRequest.newBuilder().setAddress(request.getAddress()).build());
+        assertThat(response.getOutcomesList()).anySatisfy(outcome ->
+                assertThat(outcome.getStatus()).isEqualTo(BridgeStatus.BRIDGE_STATUS_PRODUCED));
+        var manifest = ArchiveManifests.fromJson(ledger.findVersion(UUID.fromString(first.getEntryUuid()), response.getVersion()).orElseThrow().manifest);
+        assertThat(manifest.getRenditionsList()).allSatisfy(item -> assertThat(item.getStorageObjectId()).isNotBlank());
+        assertThat(manifest.getRenditionsList().stream().filter(r -> r.getRendition().getName().equals("original")).findFirst().orElseThrow()
+                .getStorageObjectId()).isEqualTo(first.getManifest().getRenditions(0).getStorageObjectId());
+        var read = managed.getEntry(CALLER, GetEntryRequest.newBuilder().setAddress(request.getAddress()).build());
+        assertThat(read.getRenditionsList()).anySatisfy(item -> assertThat(item.getRendition().getName()).isEqualTo("schema"));
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void unchangedResultsWaitForTheEntryLockAndRejectConcurrentChanges(boolean bridge) throws Exception {
+        var request = request("id;label\n1;first\n").toBuilder().setFilename("rows.csv")
+                .setDeclared(ai.protomolt.proto.asset.v1.FormatFact.newBuilder().setDelimited(ai.protomolt.proto.asset.v1.DelimitedTable.newBuilder()
+                        .setFilename("rows.csv").setDelimiter(";")
+                        .setHeader(ai.protomolt.proto.asset.v1.HeaderPresence.HEADER_PRESENCE_PRESENT))).build();
+        var saved = managed.putEntry(CALLER, request);
+        if (bridge) managed.bridgeEntry(CALLER, BridgeEntryRequest.newBuilder().setAddress(request.getAddress()).build());
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            java.util.concurrent.Future<?> pending;
+            try (var em = database.entityManagerFactory().createEntityManager()) {
+                em.getTransaction().begin();
+                try {
+                    var entry = em.find(ArchiveEntryRecord.class, UUID.fromString(saved.getEntryUuid()), jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
+                    int blocker = ((Number) em.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue();
+                    pending = executor.submit(() -> {
+                        if (bridge) return managed.bridgeEntry(CALLER, BridgeEntryRequest.newBuilder().setAddress(request.getAddress()).build());
+                        var data = request.getRenditions(0).getData();
+                        return managed.uploadStream(CALLER, request.getAddress(), request.getRenditions(0).getRendition(), data.size(), "",
+                                null, "rows.csv", null, null, data.newInput());
+                    });
+                    long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+                    boolean waiting = false;
+                    while (!pending.isDone() && System.nanoTime() < deadline) {
+                        waiting = tx.readOnly(other -> ((Number) other.createNativeQuery(
+                                "SELECT count(*) FROM pg_stat_activity WHERE :blocker=ANY(pg_blocking_pids(pid))")
+                                .setParameter("blocker", blocker).getSingleResult()).longValue() > 0);
+                        if (waiting) break;
+                        Thread.sleep(10);
+                    }
+                    assertThat(waiting).as("unchanged result must wait for the retained-version lock").isTrue();
+                    if (bridge) entry.title = "changed source metadata";
+                    else em.remove(entry);
+                    em.getTransaction().commit();
+                } finally { if (em.getTransaction().isActive()) em.getTransaction().rollback(); }
+            }
+            assertThatThrownBy(() -> pending.get(10, java.util.concurrent.TimeUnit.SECONDS))
+                    .hasCauseInstanceOf(RepositoryException.class)
+                    .satisfies(failure -> assertThat(((RepositoryException) failure.getCause()).code()).isEqualTo(RepositoryException.Code.CONFLICT));
+        }
     }
 
     @Test void latestOnlyPublicationDropsTheOldReferenceWithoutDeletingBytesInline() {
@@ -404,6 +513,27 @@ class ArchiveManagedUploadIT {
         assertThat(recovery().recover(objectId, cutoff)).isEqualTo(ArchiveObjectRecovery.Outcome.RECLAIMED);
         assertThat(observe.get().getStatusRevision()).isGreaterThan(reopened.getStatusRevision());
         assertThat(execute(command)).isEqualTo(admission); // Logical record remains immutable.
+    }
+
+    @Test void mutationRecoverySeparatesFailedClaimsFromActiveWorkAndReconciliation() {
+        var first = request("first cleanup");
+        var second = request("second cleanup");
+        UUID firstId = UUID.fromString(managed.putEntry(CALLER, first).getManifest().getRenditions(0).getStorageObjectId());
+        UUID secondId = UUID.fromString(managed.putEntry(CALLER, second).getManifest().getRenditions(0).getStorageObjectId());
+        execute(mutation(ArchiveMutationRequest.newBuilder().setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(first.getAddress()))));
+        execute(mutation(ArchiveMutationRequest.newBuilder().setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(second.getAddress()))));
+        var cleanup = new ArchiveCleanupLedger(tx);
+        var cutoff = java.time.Instant.now().plusSeconds(60);
+        var active = cleanup.claim(firstId, cutoff, java.time.Instant.EPOCH).orElseThrow();
+        assertThat(cleanup.claim(firstId, cutoff, java.time.Instant.EPOCH)).isEmpty();
+        assertThat(cleanup.mutationCandidates(cutoff, java.time.Instant.EPOCH, 1000)).doesNotContain(firstId).contains(secondId);
+        assertThat(cleanup.failed(firstId, active.token(), "PROVIDER_UNAVAILABLE")).isTrue();
+        var candidates = cleanup.mutationCandidates(cutoff, java.time.Instant.EPOCH, 1000);
+        assertThat(candidates).contains(firstId, secondId);
+        assertThat(candidates.indexOf(firstId)).isGreaterThan(candidates.indexOf(secondId));
+        assertThat(recovery().recover(secondId, cutoff, java.time.Instant.EPOCH)).isEqualTo(ArchiveObjectRecovery.Outcome.RECLAIMED);
+        assertThat(cleanup.mutationCandidates(cutoff, java.time.Instant.EPOCH, 1000)).doesNotContain(secondId);
+        assertThat(cleanup.candidates(cutoff, 1000)).contains(secondId);
     }
 
     @ParameterizedTest @ValueSource(strings = {"header", "bytes", "key", "pin"})
