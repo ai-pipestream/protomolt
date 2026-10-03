@@ -667,15 +667,31 @@ public final class RepoServices implements AutoCloseable {
     /** Stops lifecycle workers and transports before releasing providers, messaging clients and the ledger. */
     @Override
     public synchronized void close() {
-        lifecycleClosed = true;
-        LifecycleShutdown.stopBeforeRelease(lifecycleThreads, java.time.Duration.ofSeconds(10), this::releaseAfterWorkersStop);
+        close(java.time.Duration.ofSeconds(10));
     }
 
-    private void releaseAfterWorkersStop() {
+    synchronized void close(java.time.Duration timeout) {
+        java.util.Objects.requireNonNull(timeout);
+        if (timeout.isNegative() || timeout.isZero()) throw new IllegalArgumentException("Shutdown timeout must be positive");
+        lifecycleClosed = true;
+        if (managedArchive != null) managedArchive.reader.close();
+        LifecycleShutdown.stopBeforeRelease(lifecycleThreads, timeout, () -> releaseAfterWorkersStop(timeout));
+    }
+
+    private void releaseAfterWorkersStop(java.time.Duration timeout) {
         var transports = new java.util.ArrayList<AutoCloseable>();
         transports.addAll(httpServers);
         transports.addAll(servers);
         ShutdownBarrier.releaseAfter(transports, () -> {
+            if (managedArchive != null) {
+                try {
+                    if (!managedArchive.reader.awaitIdle(timeout))
+                        throw new IllegalStateException("Managed archive reads still active; shared resources retained");
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Archive reader drain interrupted; shared resources retained", interrupted);
+                }
+            }
             lifecycleThreads.clear();
             httpServers.clear();
             servers.clear();

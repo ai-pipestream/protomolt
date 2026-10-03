@@ -12,7 +12,7 @@ import java.util.UUID;
 import static ai.protomolt.proto.repo.engine.RepositoryErrors.failedPrecondition;
 
 /** Reads published objects by immutable backend identity after caller authorization. */
-public final class ArchiveObjectReader {
+public final class ArchiveObjectReader implements AutoCloseable {
     /**
      * Host-owned clients are borrowed, never closed by the reader. Resolve the exact
      * persisted generation and realm, or fail. Current defaults are not substitutes.
@@ -25,6 +25,9 @@ public final class ArchiveObjectReader {
 
     private final ArchiveReadLedger reads;
     private final BackendResolver backends;
+    private final Object lifecycle = new Object();
+    private boolean closed;
+    private int activeReads;
 
     public ArchiveObjectReader(ArchiveReadLedger reads, BackendResolver backends) {
         this.reads = Objects.requireNonNull(reads);
@@ -32,6 +35,42 @@ public final class ArchiveObjectReader {
     }
 
     public BlobStore.GetResult read(ArchiveEntryRecord entry, long version, RenditionManifestEntry manifest) {
+        synchronized (lifecycle) {
+            if (closed) throw new RepositoryException(RepositoryException.Code.CANCELLED, "Archive reader is closed");
+            activeReads++;
+        }
+        try { return readPinned(entry, version, manifest); }
+        finally {
+            synchronized (lifecycle) { activeReads--; lifecycle.notifyAll(); }
+        }
+    }
+
+    /** Stop admission. Borrowed clients and the ledger must stay open until awaitIdle succeeds. */
+    @Override public void close() {
+        synchronized (lifecycle) { closed = true; lifecycle.notifyAll(); }
+    }
+
+    /**
+     * Wait for entered reads, including resolver, provider I/O, verification and
+     * attempted pin release. This proves local quiescence, not absence of durable
+     * pins after a failed release. Timeout or interruption grants no cleanup rights.
+     */
+    public boolean awaitIdle(java.time.Duration timeout) throws InterruptedException {
+        Objects.requireNonNull(timeout);
+        if (timeout.isNegative()) throw new IllegalArgumentException("Drain timeout must not be negative");
+        long budget = timeout.toNanos(), remaining = budget, started = System.nanoTime();
+        synchronized (lifecycle) {
+            if (!closed) throw new IllegalStateException("Close the reader before awaiting idle");
+            while (activeReads != 0) {
+                if (remaining <= 0) return false;
+                java.util.concurrent.TimeUnit.NANOSECONDS.timedWait(lifecycle, remaining);
+                remaining = budget - (System.nanoTime() - started);
+            }
+            return true;
+        }
+    }
+
+    private BlobStore.GetResult readPinned(ArchiveEntryRecord entry, long version, RenditionManifestEntry manifest) {
         if (manifest.getState() != RenditionState.RENDITION_STATE_PRESENT)
             throw failedPrecondition("Only present archive objects may be read");
         UUID objectId;

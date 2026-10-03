@@ -1382,6 +1382,31 @@ needs explicit evidence that the owning incarnation and its provider work have
 stopped; no automatic crash-pin release API is implemented. Operators must not
 delete pins based on elapsed time or a request timeout.
 
+Managed archive readers also have a local shutdown barrier. `close()` stops new
+reader admission; `awaitIdle(timeout)` waits for entered reads through their pin
+release attempt. Host shutdown closes admission before draining workers and
+transports, then waits for the reader before releasing shared providers and SQL.
+A timeout or interruption retains those resources so shutdown can be retried.
+No monitor is held across SQL, provider I/O or byte verification; the read path
+adds only entry/exit accounting and no database or network calls.
+
+Real PostgreSQL and S3-adapter integration cases retain an escaped library handle,
+delay its provider read, and check timeout, interruption inside the reader drain,
+and successful retry. Injected SQL release failure demonstrates that local
+quiescence does not mean durable pins are absent: shutdown may finish while that
+failed-release pin remains. This barrier covers managed archive object reads,
+not whole multi-rendition operations, writes or legacy unbound reads. It is a
+prerequisite for incarnation recovery, not an automatic crash recovery mechanism.
+
+Operation inventory for reader shutdown: Java `ArchiveObjectReader.close()` and
+`awaitIdle(Duration)` are new; host shutdown is extended. Protobuf operations,
+names, tags, imports, Any URLs and receipt/idempotency bindings are unchanged.
+Validation: `:protomolt-repo-service:test --tests '*Archive*' --tests
+'*LifecycleShutdownTest' --tests '*UploadHttpShutdownTest'` passed 110 tests on
+2026-10-03; the opt-in archive benchmark was skipped. All three reader shutdown
+cases passed against PostgreSQL 18 and LocalStack 3.8. Sol reviewed the production
+barrier, failure injection and scope statements with no remaining blocker.
+
 V27 separates logical retirement from physical reclamation. An admitted archive
 mutation closes reference acquisition with a permanent retiring flag; the later
 cleanup claim sets the permanent reclaiming flag. Reclaiming always implies
