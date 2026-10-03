@@ -139,6 +139,27 @@ public final class CachingBlobStore implements BlobStore, AutoCloseable {
         return deleted;
     }
 
+    /**
+     * Compose lifecycle reclamation with strict cache eviction. The supplied port
+     * must belong to this instance's authoritative backing store. Unlike ordinary
+     * cache operations, eviction failures propagate so durable cleanup is retried.
+     * Late in-flight cache fills require subsequent tombstone reconciliation.
+     */
+    public ai.protomolt.proto.repo.blob.spi.ObjectReclaimer reclaimer(
+            ai.protomolt.proto.repo.blob.spi.ObjectReclaimer backingReclaimer) {
+        java.util.Objects.requireNonNull(backingReclaimer, "backingReclaimer");
+        return (bucket, key) -> {
+            boolean absent = backingReclaimer.reclaim(bucket, key);
+            cache.delete(bucket, key);
+            try {
+                cache.headObject(bucket, key);
+                return false;
+            } catch (BlobStore.BlobNotFoundException missing) {
+                return absent;
+            }
+        };
+    }
+
     @Override
     public BatchDeleteResult deleteAll(String bucket, List<String> keys) {
         BatchDeleteResult result = backing.deleteAll(bucket, keys);
