@@ -29,6 +29,15 @@ class ArchiveRetentionConcurrencyIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
     private record ObjectFixture(UUID objectId, UUID entryId, String generation) {}
 
+    private static UUID registerReader(java.sql.Connection connection) throws java.sql.SQLException {
+        UUID id = UUID.randomUUID();
+        try (var statement = connection.prepareStatement("INSERT INTO repository_reader_incarnations VALUES(?,'ACTIVE')")) {
+            statement.setObject(1, id);
+            statement.executeUpdate();
+        }
+        return id;
+    }
+
     @ParameterizedTest @ValueSource(booleans = {false, true})
     void cleanupWaitsForReaderReleaseCommitOrRollback(boolean commitRelease) throws Exception {
         try (var database = database(); var owner = connection();
@@ -71,7 +80,7 @@ class ArchiveRetentionConcurrencyIT {
             owner.setAutoCommit(false);
             try {
                 try (var statement = owner.prepareStatement("INSERT INTO archive_read_pins(pin_id,reader_incarnation,object_id,entry_uuid,version) VALUES(?,?,?,?,1)")) {
-                    statement.setObject(1, UUID.randomUUID()); statement.setObject(2, UUID.randomUUID());
+                    statement.setObject(1, UUID.randomUUID()); statement.setObject(2, registerReader(owner));
                     statement.setObject(3, object.objectId()); statement.setObject(4, object.entryId());
                     statement.executeUpdate();
                 }
@@ -104,7 +113,7 @@ class ArchiveRetentionConcurrencyIT {
             owner.setAutoCommit(false);
             try {
                 try (var statement = owner.prepareStatement("INSERT INTO archive_read_pins(pin_id,reader_incarnation,object_id,entry_uuid,version) VALUES(?,?,?,?,1)")) {
-                    statement.setObject(1, pin); statement.setObject(2, UUID.randomUUID());
+                    statement.setObject(1, pin); statement.setObject(2, registerReader(owner));
                     statement.setObject(3, object.objectId()); statement.setObject(4, object.entryId());
                     statement.executeUpdate();
                 }

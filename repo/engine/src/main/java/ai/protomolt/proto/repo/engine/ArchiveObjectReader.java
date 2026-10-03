@@ -27,6 +27,7 @@ public final class ArchiveObjectReader implements AutoCloseable {
     private final BackendResolver backends;
     private final Object lifecycle = new Object();
     private boolean closed;
+    private boolean fenceComplete;
     private int activeReads;
 
     public ArchiveObjectReader(ArchiveReadLedger reads, BackendResolver backends) {
@@ -45,9 +46,15 @@ public final class ArchiveObjectReader implements AutoCloseable {
         }
     }
 
-    /** Stop admission. Borrowed clients and the ledger must stay open until awaitIdle succeeds. */
+    /**
+     * Stop local admission, then persist its fence. SQL failure leaves local
+     * admission closed and must be retried before releasing borrowed resources.
+     * The ledger and clients must stay open until awaitIdle succeeds.
+     */
     @Override public void close() {
         synchronized (lifecycle) { closed = true; lifecycle.notifyAll(); }
+        reads.fence();
+        synchronized (lifecycle) { fenceComplete = true; lifecycle.notifyAll(); }
     }
 
     /**
@@ -61,6 +68,7 @@ public final class ArchiveObjectReader implements AutoCloseable {
         long budget = timeout.toNanos(), remaining = budget, started = System.nanoTime();
         synchronized (lifecycle) {
             if (!closed) throw new IllegalStateException("Close the reader before awaiting idle");
+            if (!fenceComplete) throw new IllegalStateException("Complete the reader fence before awaiting idle");
             while (activeReads != 0) {
                 if (remaining <= 0) return false;
                 java.util.concurrent.TimeUnit.NANOSECONDS.timedWait(lifecycle, remaining);

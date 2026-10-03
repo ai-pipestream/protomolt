@@ -165,6 +165,42 @@ class ArchiveReadLifetimeIT {
         }
     }
 
+    @org.junit.jupiter.api.Test
+    void idleReaderCannotClaimQuiescenceWhileItsFenceIsBlocked() throws Exception {
+        UUID incarnation = UUID.randomUUID();
+        var reader = new ArchiveObjectReader(new ArchiveReadLedger(tx, incarnation), (generation, realm) -> opened.store());
+        try (var owner = java.sql.DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+                var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            owner.setAutoCommit(false);
+            try {
+                int pid;
+                try (var statement = owner.createStatement(); var result = statement.executeQuery("SELECT pg_backend_pid()")) {
+                    assertThat(result.next()).isTrue(); pid = result.getInt(1);
+                }
+                try (var statement = owner.prepareStatement("SELECT incarnation FROM repository_reader_incarnations WHERE incarnation=? FOR UPDATE")) {
+                    statement.setObject(1, incarnation);
+                    try (var result = statement.executeQuery()) { assertThat(result.next()).isTrue(); }
+                }
+                var closing = executor.submit(reader::close);
+                long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+                boolean blocked = false;
+                while (System.nanoTime() < deadline) {
+                    blocked = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                            "SELECT count(*) FROM pg_stat_activity WHERE :pid = ANY(pg_blocking_pids(pid))")
+                            .setParameter("pid", pid).getSingleResult()).longValue()) > 0;
+                    if (blocked) break;
+                    Thread.sleep(10);
+                }
+                assertThat(blocked).isTrue();
+                assertThatThrownBy(() -> reader.awaitIdle(Duration.ZERO))
+                        .isInstanceOf(IllegalStateException.class).hasMessageContaining("Complete the reader fence");
+                owner.rollback();
+                closing.get(10, TimeUnit.SECONDS);
+                assertThat(reader.awaitIdle(Duration.ZERO)).isTrue();
+            } finally { owner.rollback(); }
+        }
+    }
+
     private static long pinCount(UUID object) {
         return tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM archive_read_pins WHERE object_id=:id")
                 .setParameter("id", object).getSingleResult()).longValue());

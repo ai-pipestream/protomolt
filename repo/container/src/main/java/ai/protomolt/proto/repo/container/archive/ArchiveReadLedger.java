@@ -14,10 +14,27 @@ import java.util.UUID;
 public final class ArchiveReadLedger {
     private final Tx tx;
     private final UUID incarnation;
+    private boolean fenced;
 
+    /** Registers a fresh identity before any admission; duplicate identities fail, never reactivate. */
     public ArchiveReadLedger(Tx tx, UUID incarnation) {
         this.tx = Objects.requireNonNull(tx);
         this.incarnation = Objects.requireNonNull(incarnation);
+        tx.inTransaction(em -> {
+            em.createNativeQuery("INSERT INTO repository_reader_incarnations(incarnation,state) VALUES(:id,'ACTIVE')")
+                    .setParameter("id", incarnation).executeUpdate();
+        });
+    }
+
+    /** Permanently stops new pin admission. Does not prove that existing reads stopped. */
+    public synchronized void fence() {
+        if (fenced) return;
+        tx.inTransaction(em -> {
+            if (!Boolean.TRUE.equals(em.createNativeQuery("SELECT fence_repository_reader(:id)")
+                    .setParameter("id", incarnation).getSingleResult()))
+                throw new IllegalStateException("Reader fence was not acknowledged");
+        });
+        fenced = true;
     }
 
     /** Acquires before returning coordinates. Provider I/O must occur after commit. */

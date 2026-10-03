@@ -38,7 +38,7 @@ class ManagedArchiveReadShutdownIT {
     @Container static final LocalStackContainer S3 = new LocalStackContainer(
             DockerImageName.parse("localstack/localstack:3.8")).withServices("s3");
 
-    enum Failure { TIMEOUT, INTERRUPTED, PIN_RELEASE }
+    enum Failure { TIMEOUT, INTERRUPTED, PIN_RELEASE, FENCE }
 
     @ParameterizedTest @EnumSource(Failure.class)
     void hostRetainsBorrowedResourcesUntilEscapedReaderActuallyFinishes(Failure scenario) throws Exception {
@@ -101,7 +101,21 @@ class ManagedArchiveReadShutdownIT {
                 var result = executor.submit(() -> repository.getEntry(caller, get));
                 assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
                 assertThat(pins(object)).isEqualTo(1);
-                if (scenario == Failure.INTERRUPTED) {
+                if (scenario == Failure.FENCE) {
+                    sql("CREATE FUNCTION reject_shutdown_fence() RETURNS trigger LANGUAGE plpgsql AS $$ "
+                            + "BEGIN IF EXISTS(SELECT 1 FROM archive_read_pins WHERE object_id='" + object
+                            + "'::uuid AND reader_incarnation=OLD.incarnation) THEN "
+                            + "RAISE EXCEPTION 'injected fence failure'; END IF; RETURN NEW; END $$");
+                    try {
+                        sql("CREATE TRIGGER reject_shutdown_fence BEFORE UPDATE ON repository_reader_incarnations "
+                                + "FOR EACH ROW EXECUTE FUNCTION reject_shutdown_fence()");
+                        assertThatThrownBy(() -> host.close(Duration.ofSeconds(1)))
+                                .hasStackTraceContaining("injected fence failure");
+                    } finally {
+                        sql("DROP TRIGGER IF EXISTS reject_shutdown_fence ON repository_reader_incarnations");
+                        sql("DROP FUNCTION reject_shutdown_fence()");
+                    }
+                } else if (scenario == Failure.INTERRUPTED) {
                     var closeFailure = new java.util.concurrent.CompletableFuture<Throwable>();
                     var interruptPreserved = new AtomicBoolean();
                     var closer = Thread.ofPlatform().start(() -> {

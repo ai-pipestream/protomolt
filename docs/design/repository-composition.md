@@ -1407,7 +1407,7 @@ Validation: `:protomolt-repo-service:test --tests '*Archive*' --tests
 cases passed against PostgreSQL 18 and LocalStack 3.8. Sol reviewed the production
 barrier, failure injection and scope statements with no remaining blocker.
 
-#### Reader incarnation recovery design (not implemented)
+#### Reader incarnation recovery protocol (recovery not implemented)
 
 The local reader barrier is necessary but insufficient for recovery. At V30,
 `ArchiveReadLedger` accepts a caller-supplied UUID without durable registration;
@@ -1512,8 +1512,29 @@ Acceptance before enabling recovery:
 Implement durable registration/fencing and its migration/race tests first, then
 bind local quiescence and bounded recovery. External crash authority is a separate
 deliverable; incomplete deployment proof must not be hidden behind a TTL policy.
-Sol reviewed this protocol on 2026-10-03; the implementation and acceptance
-evidence remain outstanding.
+Sol reviewed this protocol on 2026-10-03. Quiescence attestation, bounded pin
+recovery and their acceptance evidence remain outstanding.
+
+V31 implements the registration and fencing portion. New `ArchiveReadLedger`
+instances register a fresh identity; duplicate or migrated UNKNOWN identities
+fail construction. SQL admission and direct pin insertion require an ACTIVE row
+under a shared lock before object locks. The permanent FENCED state blocks new
+pins but leaves ordinary release legal. No QUIESCED state or recovery deletion
+API is enabled. Migration preserves existing pins as UNKNOWN, and processes from
+before V31 must be drained before rollout.
+
+`ArchiveObjectReader.close()` now stops local admission and persists the fence
+outside its lifecycle monitor. Failed SQL leaves admission closed and the host's
+shared resources retained for retry. A successfully acknowledged fence is cached
+so repeated shutdown remains safe after the ledger closes. `awaitIdle()` rejects
+an incomplete fence, including a concurrent close still waiting on SQL. These
+transitions add startup/shutdown SQL, not extra client calls per object read.
+The constructor change is a Java lifecycle change; wire contracts, schema
+references, receipt bindings and existing release idempotency remain unchanged.
+The [V31 diagnostic](../evidence/repository/2026-10-03-reader-incarnation/README.md)
+records the affected tests and raw latency/throughput measurements. Client SQL
+counts remain two statements/two transactions per read. Shared-host timing is
+not production latency qualification; quiet paired measurements remain pending.
 
 V27 separates logical retirement from physical reclamation. An admitted archive
 mutation closes reference acquisition with a permanent retiring flag; the later

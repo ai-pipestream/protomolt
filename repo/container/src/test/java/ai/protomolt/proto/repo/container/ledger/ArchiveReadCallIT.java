@@ -53,7 +53,7 @@ class ArchiveReadCallIT {
 
     @Test void admissionReturnsOriginalIdentityAndRollsBackThePinWithTheTransaction() throws Exception {
         try (var connection = connection()) {
-            UUID object = archive(connection, false), entry = entry(connection, object), pin = UUID.randomUUID(), reader = UUID.randomUUID();
+            UUID object = archive(connection, false), entry = entry(connection, object), pin = UUID.randomUUID(), reader = registeredReader(connection);
             connection.setAutoCommit(false);
             try {
                 assertThat(acquire(connection, pin, reader, entry, 1, object)).isTrue();
@@ -70,7 +70,7 @@ class ArchiveReadCallIT {
 
     @Test void unavailableIdentitiesNeverCreatePins() throws Exception {
         try (var connection = connection()) {
-            UUID object = archive(connection, false), entry = entry(connection, object), pin = UUID.randomUUID(), reader = UUID.randomUUID();
+            UUID object = archive(connection, false), entry = entry(connection, object), pin = UUID.randomUUID(), reader = registeredReader(connection);
             assertThat(acquire(connection, pin, reader, UUID.randomUUID(), 1, object)).isFalse();
             assertThat(acquire(connection, pin, reader, entry, 2, object)).isFalse();
             assertThat(acquire(connection, pin, reader, entry, 1, UUID.randomUUID())).isFalse();
@@ -85,7 +85,7 @@ class ArchiveReadCallIT {
     @Test void releaseChecksIncarnationAndObjectAndCanRepeatAfterACommittedRelease() throws Exception {
         try (var connection = connection()) {
             UUID object = archive(connection, false), other = archive(connection, false), entry = entry(connection, object);
-            UUID pin = UUID.randomUUID(), reader = UUID.randomUUID();
+            UUID pin = UUID.randomUUID(), reader = registeredReader(connection);
             assertThat(acquire(connection, pin, reader, entry, 1, object)).isTrue();
             assertThatThrownBy(() -> release(connection, pin, UUID.randomUUID(), object)).hasMessageContaining("another incarnation or object");
             assertThatThrownBy(() -> release(connection, pin, reader, other)).hasMessageContaining("another incarnation or object");
@@ -95,6 +95,12 @@ class ArchiveReadCallIT {
             assertThat(release(connection, pin, reader, object)).isTrue();
             assertThat(number(connection, "SELECT count(*) FROM repository_object_references WHERE object_id='" + object + "'")).isEqualTo(1);
         }
+    }
+
+    private static UUID registeredReader(Connection connection) throws Exception {
+        UUID id = UUID.randomUUID();
+        execute(connection, "INSERT INTO repository_reader_incarnations VALUES('" + id + "','ACTIVE')");
+        return id;
     }
 
     private static boolean acquire(Connection connection, UUID pin, UUID reader, UUID entry, long version, UUID object) throws SQLException {
