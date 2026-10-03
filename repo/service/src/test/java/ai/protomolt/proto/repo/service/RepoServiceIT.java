@@ -265,6 +265,58 @@ class RepoServiceIT {
     }
 
     @Test
+    void sourcePolicyEditDuringCopyRejectsPartialCandidate() throws Exception {
+        String account = "acct-copy-policy";
+        createDrive("copy-policy", account);
+        var original = fixture("copy-policy-doc", account, "source");
+        var source = documents.saveDocument(SaveDocumentRequest.newBuilder().setDocument(original)
+                .setDrive("copy-policy").setGraphId("graph-copy").setGraphLocationId("source").build());
+        var destination = SaveDocumentRequest.newBuilder().setDocument(original).setDrive("copy-policy")
+                .setGraphId("graph-copy").setGraphLocationId("destination").build();
+        var saved = documents.saveDocument(destination);
+        var before = services.documentLedger().findByNodeId(UUID.fromString(saved.getNodeId())).orElseThrow();
+        var sourceId = UUID.fromString(source.getNodeId());
+        var injected = new java.util.concurrent.atomic.AtomicBoolean();
+        var real = services.blobStore();
+        var store = (ai.protomolt.proto.repo.blob.spi.BlobStore) java.lang.reflect.Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[] {ai.protomolt.proto.repo.blob.spi.BlobStore.class},
+                (proxy, method, args) -> {
+                    Object result;
+                    try { result = method.invoke(real, args); }
+                    catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                    if (method.getName().equals("copy") && injected.compareAndSet(false, true)) {
+                        var row = services.documentLedger().findByNodeId(sourceId).orElseThrow();
+                        row.writeSecurity(DocumentSecurity.newBuilder().addPermissions(AccessRule.newBuilder()
+                                .setIdentityType("public").setIdentity("public").setAccess(Access.ACCESS_DENY)).build());
+                        services.documentLedger().save(row);
+                    }
+                    return result;
+                });
+        var engine = new ai.protomolt.proto.repo.engine.DocumentOperations(services.documentLedger(), services.driveLedger(),
+                null, store, new ai.protomolt.proto.repo.container.blob.PartStorage(), null);
+        String endpoint = "copy-policy-" + UUID.randomUUID();
+        var server = io.grpc.inprocess.InProcessServerBuilder.forName(endpoint)
+                .addService(new DocumentGrpcService(engine,
+                        new ai.protomolt.proto.repo.engine.BlobOperations(store, services.driveLedger()))).build().start();
+        var connection = InProcessChannelBuilder.forName(endpoint).build();
+        try {
+            var candidate = destination.toBuilder().addPartsWritten(DocumentPart.DOCUMENT_PART_BLOBS)
+                    .setCopyUnwrittenPartsFrom(source.getAddress()).build();
+            assertThatThrownBy(() -> DocumentServiceGrpc.newBlockingStub(connection).saveDocument(candidate))
+                    .satisfies(error -> assertThat(Status.fromThrowable(error).getCode()).isEqualTo(Status.Code.ABORTED));
+            assertThat(injected).isTrue();
+            var after = services.documentLedger().findByNodeId(before.nodeId).orElseThrow();
+            assertThat(after.mutationRevision).isEqualTo(before.mutationRevision);
+            assertThat(after.readManifest()).isEqualTo(before.readManifest());
+            assertThat(services.documentLedger().findByNodeId(sourceId).orElseThrow().readSecurity()
+                    .getPermissions(0).getAccess()).isEqualTo(Access.ACCESS_DENY);
+        } finally {
+            connection.shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            server.shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     void policyEditDuringObjectWritesRejectsCandidateWithoutChangingVisibleBody() throws Exception {
         String account = "acct-commit-policy";
         createDrive("commit-policy", account);

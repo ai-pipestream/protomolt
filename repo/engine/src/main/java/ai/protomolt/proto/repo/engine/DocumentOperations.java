@@ -65,6 +65,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.Set;
@@ -290,7 +291,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
 
         DocumentRecord row = upsertRow(r, request, drive, nodeId, basePrefix, written.manifest(),
                 written.rootChecksum(), written.totalSizeBytes(), written.coreEtag(),
-                written.coreVersionId(), decision.existing());
+                written.coreVersionId(), decision.existing(), Map.of());
         LOG.debug("Saved {} at {} (node_id={}, version={}, bytes={})",
                 r.address().getDocId(), r.address().getGraphAddressId(), nodeId,
                 decision.nextDocVersion(), written.totalSizeBytes());
@@ -412,7 +413,8 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         }
 
         DocumentRecord row = upsertRow(r, request, drive, nodeId, basePrefix, combined,
-                rootChecksum, totalSize, coreEtag, coreVersionId, destExisting);
+                rootChecksum, totalSize, coreEtag, coreVersionId, destExisting,
+                Map.of(srcRow.nodeId, srcRow.mutationRevision));
         LOG.debug("Partial save {} at {} (node_id={}, version={}, parts={}, copied={})",
                 r.address().getDocId(), r.address().getGraphAddressId(), nodeId, docVersion,
                 partsWritten, carried.size());
@@ -940,7 +942,8 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
      */
     private DocumentRecord upsertRow(SaveResolution.Resolved r, SaveDocumentRequest request, DriveRecord drive,
             UUID nodeId, String basePrefix, DocumentManifest manifest, String rootChecksum,
-            long totalSize, String coreEtag, String coreVersionId, DocumentRecord existing) {
+            long totalSize, String coreEtag, String coreVersionId, DocumentRecord existing,
+            Map<UUID, Long> sourceRevisions) {
         OwnershipContext ownership = r.doc().getOwnership();
         DocumentRecord row = new DocumentRecord();
         row.nodeId = nodeId;
@@ -983,7 +986,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         // nothing else bumps updated_at (see DocumentRecord's class Javadoc).
         row.updatedAt = now;
         try {
-            return documents.saveIfRevision(row, existing == null ? null : existing.mutationRevision,
+            return documents.saveIfRevision(row, existing == null ? null : existing.mutationRevision, sourceRevisions,
                     (em, committed) -> {
                         if (events != null) events.enqueue(em, DocumentEventFactory.saved(committed, now));
                     });

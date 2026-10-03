@@ -216,6 +216,58 @@ class DocumentLedgerIT {
     }
 
     @Test
+    void guardedCopyRequiresEverySourceAndConsistentSameNodeRevision() {
+        var source = ledger.saveIfRevision(intakeRow(UUID.randomUUID(), "copy-source", "ds"), null, (em, row) -> {});
+        var dest = intakeRow(UUID.randomUUID(), "copy-destination", "ds");
+        var dependencies = java.util.Map.of(source.nodeId, source.mutationRevision);
+        var saved = ledger.saveIfRevision(dest, null, dependencies, (em, row) -> {});
+        assertThat(ledger.findByNodeId(source.nodeId).orElseThrow().mutationRevision).isEqualTo(source.mutationRevision);
+        assertThatThrownBy(() -> ledger.saveIfRevision(saved, saved.mutationRevision,
+                java.util.Map.of(saved.nodeId, saved.mutationRevision + 1), (em, row) -> {}))
+                .isInstanceOf(DocumentLedger.RevisionConflictException.class);
+        saved.filename = "self-copy";
+        var self = ledger.saveIfRevision(saved, saved.mutationRevision,
+                java.util.Map.of(saved.nodeId, saved.mutationRevision), (em, row) -> {});
+        assertThat(self.mutationRevision).isGreaterThan(saved.mutationRevision);
+        ledger.deleteByReference(addressOf(source));
+        assertThatThrownBy(() -> ledger.saveIfRevision(self, self.mutationRevision, dependencies, (em, row) -> {}))
+                .isInstanceOf(DocumentLedger.RevisionConflictException.class);
+        ledger.saveIfRevision(source, null, (em, row) -> {});
+        assertThatThrownBy(() -> ledger.saveIfRevision(self, self.mutationRevision, dependencies, (em, row) -> {
+            throw new AssertionError("Replaced source reached publication");
+        })).isInstanceOf(DocumentLedger.RevisionConflictException.class);
+        assertThat(ledger.findByNodeId(self.nodeId).orElseThrow().mutationRevision).isEqualTo(self.mutationRevision);
+    }
+
+    @Test
+    void opposingGuardedCopiesSerializeWithoutDeadlock() throws Exception {
+        var first = ledger.saveIfRevision(intakeRow(UUID.randomUUID(), "copy-first", "ds"), null, (em, row) -> {});
+        var second = ledger.saveIfRevision(intakeRow(UUID.randomUUID(), "copy-second", "ds"), null, (em, row) -> {});
+        var start = new java.util.concurrent.CountDownLatch(1);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var futures = new java.util.ArrayList<java.util.concurrent.Future<Boolean>>();
+            for (var destination : List.of(first, second)) {
+                var source = destination == first ? second : first;
+                destination.filename = "copied-from-" + source.nodeId;
+                futures.add(executor.submit(() -> {
+                    start.await();
+                    try {
+                        ledger.saveIfRevision(destination, destination.mutationRevision,
+                                java.util.Map.of(source.nodeId, source.mutationRevision), (em, row) -> {});
+                        return true;
+                    } catch (DocumentLedger.RevisionConflictException expected) {
+                        return false;
+                    }
+                }));
+            }
+            start.countDown();
+            int winners = 0;
+            for (var future : futures) if (future.get(10, java.util.concurrent.TimeUnit.SECONDS)) winners++;
+            assertThat(winners).isEqualTo(1);
+        }
+    }
+
+    @Test
     void duplicateStorageIdentityIsRejected() {
         String docId = "doc-dupe";
         DocumentRecord first = intakeRow(UUID.randomUUID(), docId, "ds-dupe");

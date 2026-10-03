@@ -69,14 +69,39 @@ public final class DocumentLedger {
      */
     public DocumentRecord saveIfRevision(DocumentRecord candidate, Long expectedRevision,
             java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> committed) {
+        return saveIfRevision(candidate, expectedRevision, Map.of(), committed);
+    }
+
+    /**
+     * Also requires every copy source to retain its sampled revision until commit.
+     * Lock ordering is shared with ordinary guarded saves, including missing rows.
+     * Dependencies must exist; they are never updated by this operation.
+     */
+    public DocumentRecord saveIfRevision(DocumentRecord candidate, Long expectedRevision,
+            Map<UUID, Long> sourceRevisions,
+            java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> committed) {
         java.util.Objects.requireNonNull(committed, "committed");
+        Map<UUID, Long> sources = Map.copyOf(sourceRevisions);
+        var identities = new java.util.TreeSet<>(sources.keySet());
+        identities.add(candidate.nodeId);
         return tx.inTransaction(em -> {
             // A row lock cannot serialize two first writes to a missing identity.
             // Hash collisions only serialize unrelated writers; they cannot grant access.
-            long lockKey = candidate.nodeId.getMostSignificantBits() ^ candidate.nodeId.getLeastSignificantBits();
-            em.createNativeQuery("SELECT 1 FROM pg_advisory_xact_lock(:key)", Integer.class)
-                    .setParameter("key", lockKey).getSingleResult();
-            DocumentRecord current = em.find(DocumentRecord.class, candidate.nodeId, LockModeType.PESSIMISTIC_WRITE);
+            // Sort the actual keys too: UUID ordering alone is insufficient when
+            // unrelated UUIDs alias the same advisory lock.
+            identities.stream().mapToLong(id -> id.getMostSignificantBits() ^ id.getLeastSignificantBits())
+                    .distinct().sorted().forEach(key ->
+                            em.createNativeQuery("SELECT 1 FROM pg_advisory_xact_lock(:key)", Integer.class)
+                                    .setParameter("key", key).getSingleResult());
+            Map<UUID, DocumentRecord> locked = new HashMap<>();
+            for (UUID id : identities) {
+                DocumentRecord row = em.find(DocumentRecord.class, id, LockModeType.PESSIMISTIC_WRITE);
+                locked.put(id, row);
+                Long sourceRevision = sources.get(id);
+                if (sourceRevision != null && (row == null || row.mutationRevision != sourceRevision.longValue()))
+                    throw new RevisionConflictException();
+            }
+            DocumentRecord current = locked.get(candidate.nodeId);
             if (expectedRevision == null ? current != null
                     : current == null || current.mutationRevision != expectedRevision.longValue())
                 throw new RevisionConflictException();

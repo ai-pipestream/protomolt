@@ -296,6 +296,13 @@ revision, so maintenance cannot overwrite a concurrent policy edit. A conflict
 leaves the current row unchanged and is reported as a skipped repair for a
 subsequent probe; missing-object counts describe observations, not committed repairs.
 
+Partial saves also hold the copy source's sampled revision through publication.
+Source and destination locks use a consistent order, and a missing, replaced or
+changed source aborts publication even if its bytes were already copied. Same-row
+copies require both snapshots to agree. Failed attempts leave the committed
+destination unchanged; their staged objects remain cleanup work. This checks source
+stability, not a source READ grant.
+
 This destination revision check is a prerequisite for complete authorization.
 Scoped writes still need current WRITE-policy evaluation and source authorization
 for partial copies. Raw ledger maintenance writes remain administrative and do
