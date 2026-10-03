@@ -323,6 +323,20 @@ required interleavings are specified in `repository-composition.md` under
 Document part publication and reclamation. Existing exact document purge remains
 active; its other races are not declared resolved by the sweep quarantine.
 
+The internal `DocumentPartAttemptLedger` now admits a complete ordered plan under
+a fresh caller-minted attempt UUID, original registered provider generation and
+physical namespace. V21 preserves existing document rows and objects unchanged.
+Admission, token-fenced lease renewal and measured-byte verification are new
+internal operations; they perform no provider I/O. Immutable plans include source
+revisions, expected digests/sizes and chunk order. Database guards reject unsealed
+commits, plan edits and premature verification. Bounded SHA-256 reservation
+indexes retain the exact storage coordinates; a digest collision refuses admission.
+`VERIFIED` records byte verification reported by a trusted writer, not schema or
+semantic acceptance. This foundation is not wired into document saves, publication,
+purge or recovery yet and is not advertised as an available managed-write API.
+Those integrations and their concurrency tests remain required before document
+cleanup can resume.
+
 Keep archive operations process-authorized until current-policy guards support
 scoped callers. Legacy write/staging cleanup remains separate follow-up work;
 removing destructive RPCs does not qualify those older write paths.
