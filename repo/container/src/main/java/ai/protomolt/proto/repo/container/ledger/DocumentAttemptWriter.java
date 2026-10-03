@@ -71,11 +71,20 @@ public final class DocumentAttemptWriter implements AutoCloseable {
             List<PartObject> payloads, Duration lease, Map<String, String> metadata,
             Function<List<DocumentPublicationLedger.Part>, DocumentRecord> candidateFactory,
             Runnable check, BiConsumer<EntityManager, DocumentRecord> published) {
+        return write(plan, address, drive, payloads, lease, metadata, List.of(), candidateFactory, check, published);
+    }
+
+    /** Every plan source requires a snapshot sampled from its authorized row before reading source bytes. */
+    public DocumentRecord write(DocumentPartAttemptLedger.Plan plan, NodeAddress address, DriveRecord drive,
+            List<PartObject> payloads, Duration lease, Map<String, String> metadata, List<DocumentSourceSnapshot> sourceSnapshots,
+            Function<List<DocumentPublicationLedger.Part>, DocumentRecord> candidateFactory,
+            Runnable check, BiConsumer<EntityManager, DocumentRecord> published) {
         Objects.requireNonNull(plan);
         Objects.requireNonNull(address);
         Objects.requireNonNull(candidateFactory);
         Objects.requireNonNull(check);
         Objects.requireNonNull(published);
+        var sources = DocumentSourceSnapshot.matching(plan.sources(), sourceSnapshots);
         var target = new DocumentPublicationTarget(drives, drive, generation, identity);
         synchronized (lifecycle) {
             if (closed) throw new IllegalStateException("Document writer is closed");
@@ -88,7 +97,11 @@ public final class DocumentAttemptWriter implements AutoCloseable {
         };
         try {
             active.run();
-            tx.inTransaction(em -> { target.requirePlan(em, plan, address); });
+            tx.inTransaction(em -> {
+                for (var source : sources) source.requireCurrent(em);
+                DocumentSourceSnapshot.lockDrives(em, target, sources);
+                target.requirePlan(em, plan, address);
+            });
             active.run();
             String phase = "staging";
             try {
@@ -101,7 +114,7 @@ public final class DocumentAttemptWriter implements AutoCloseable {
                     throw new IllegalArgumentException("Candidate differs from authorized address");
                 phase = "publication";
                 return documents.saveVerifiedAttempt(candidate, plan.sampledRevision() == 0 ? null : plan.sampledRevision(),
-                        plan.sources(), staged.attempt().id(), staged.attempt().token(), target, active, published);
+                        plan.sources(), staged.attempt().id(), staged.attempt().token(), target, sources, active, published);
             } catch (RuntimeException failure) {
                 throw new WriteFailure(plan.attemptId(), phase, failure);
             }

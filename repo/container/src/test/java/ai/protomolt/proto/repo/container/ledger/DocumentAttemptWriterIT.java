@@ -88,6 +88,92 @@ class DocumentAttemptWriterIT {
         assertThat(new DocumentLedger(tx).hasPartPublication(f.plan.location().nodeId())).isFalse();
     }
 
+    private record Legacy(Input input, DocumentRecord row) {}
+    private static Legacy legacy() {
+        var f = input();
+        var ledger = new DocumentLedger(tx);
+        ledger.reserveLegacyPartKeys(f.plan.objects().stream().map(DocumentPartAttemptLedger.PlannedObject::objectKey).toList());
+        var stored = new java.util.ArrayList<DocumentPublicationLedger.Part>();
+        for (int i = 0; i < f.parts.size(); i++) {
+            var planned = f.plan.objects().get(i);
+            var put = opened.store().put(new BlobStore.PutSpec(NAMESPACE, planned.objectKey(), planned.contentType(), Map.of(), planned.sha256()),
+                    f.parts.get(i).bytes());
+            stored.add(new DocumentPublicationLedger.Part(planned.part(), planned.subKey(), planned.objectKey(), planned.size(), planned.sha256(), put.versionId(), put.eTag()));
+        }
+        ledger.save(candidate(f, stored));
+        return new Legacy(f, ledger.findByNodeId(f.plan.location().nodeId()).orElseThrow());
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"namespace", "prefix", "credentials", "revision"})
+    void sourceChangesAfterStagingRollBackPublication(String change) throws Exception {
+        var source = legacy(); var f = input();
+        var snapshot = DocumentSourceSnapshot.legacy(tx, new DriveLedger(tx), source.row, source.input.drive);
+        var plan = new DocumentPartAttemptLedger.Plan(f.plan.attemptId(), f.plan.location(), 0,
+                Map.of(snapshot.nodeId(), snapshot.revision()), f.plan.objects());
+        var writer = writer();
+        try {
+            assertThatThrownBy(() -> writer.write(plan, f.address, f.drive, f.parts, Duration.ofMinutes(1), Map.of(), List.of(snapshot), parts -> {
+                tx.inTransaction(em -> {
+                    switch (change) {
+                        case "namespace" -> em.createNativeQuery("UPDATE drives SET bucket='changed' WHERE drive_id=:id").setParameter("id", source.input.drive.driveId).executeUpdate();
+                        case "prefix" -> em.createNativeQuery("UPDATE drives SET prefix='changed' WHERE drive_id=:id").setParameter("id", source.input.drive.driveId).executeUpdate();
+                        case "credentials" -> em.createNativeQuery("UPDATE drives SET credentials_ref='changed' WHERE drive_id=:id").setParameter("id", source.input.drive.driveId).executeUpdate();
+                        case "revision" -> em.createNativeQuery("UPDATE documents SET etag='changed' WHERE node_id=:id").setParameter("id", source.row.nodeId).executeUpdate();
+                    }
+                });
+                return candidate(f, parts);
+            }, () -> {}, (em, row) -> { throw new AssertionError("Must fail before publication callback"); }))
+                    .isInstanceOf(DocumentAttemptWriter.WriteFailure.class);
+            assertUnpublished(f);
+            assertThat(new DocumentPartAttemptLedger(tx).find(plan.attemptId()).orElseThrow().state()).isEqualTo("VERIFIED");
+        } finally { writer.close(); assertThat(writer.awaitIdle(Duration.ofSeconds(5))).isTrue(); }
+    }
+
+    @Test void missingSourceSnapshotFailsBeforeAdmission() throws Exception {
+        var source = legacy(); var f = input();
+        var plan = new DocumentPartAttemptLedger.Plan(f.plan.attemptId(), f.plan.location(), 0,
+                Map.of(source.row.nodeId, source.row.mutationRevision), f.plan.objects());
+        var writer = writer();
+        try {
+            assertThatThrownBy(() -> writer.write(plan, f.address, f.drive, f.parts, Duration.ofMinutes(1), Map.of(),
+                    parts -> candidate(f, parts), () -> {}, (em, row) -> {}))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Source snapshots differ");
+            assertThat(new DocumentPartAttemptLedger(tx).find(plan.attemptId())).isEmpty();
+        } finally { writer.close(); assertThat(writer.awaitIdle(Duration.ofSeconds(5))).isTrue(); }
+    }
+
+    @Test void sourceCaptureParsesPersistedManifestStrictly() {
+        var source = legacy();
+        tx.inTransaction(em -> {
+            em.createNativeQuery("UPDATE documents SET part_manifest=part_manifest || '{\"unknownField\":1}'::jsonb WHERE node_id=:id")
+                    .setParameter("id", source.row.nodeId).executeUpdate();
+        });
+        var current = new DocumentLedger(tx).findByNodeId(source.row.nodeId).orElseThrow();
+        assertThatThrownBy(() -> DocumentSourceSnapshot.legacy(tx, new DriveLedger(tx), current, source.input.drive))
+                .isInstanceOf(DocumentPartAttemptLedger.FenceException.class).hasMessageContaining("manifest is invalid");
+    }
+
+    @Test void boundSourceRetainsPublicationIdentityAfterDriveChanges() throws Exception {
+        var source = input(); var destination = input(); var writer = writer();
+        try {
+            var saved = writer.write(source.plan, source.address, source.drive, source.parts, Duration.ofMinutes(1), Map.of(),
+                    parts -> candidate(source, parts), () -> {}, (em, row) -> {});
+            assertThatThrownBy(() -> DocumentSourceSnapshot.legacy(tx, new DriveLedger(tx), saved, source.drive))
+                    .isInstanceOf(DocumentPartAttemptLedger.FenceException.class).hasMessageContaining("managed publication");
+            var snapshot = DocumentSourceSnapshot.bound(tx, saved);
+            assertThat(snapshot.publication().orElseThrow().attemptId()).isEqualTo(source.plan.attemptId());
+            tx.inTransaction(em -> {
+                em.createNativeQuery("UPDATE drives SET bucket='changed' WHERE drive_id=:id")
+                        .setParameter("id", source.drive.driveId).executeUpdate();
+            });
+            var plan = new DocumentPartAttemptLedger.Plan(destination.plan.attemptId(), destination.plan.location(), 0,
+                    Map.of(snapshot.nodeId(), snapshot.revision()), destination.plan.objects());
+            var result = writer.write(plan, destination.address, destination.drive, destination.parts, Duration.ofMinutes(1), Map.of(),
+                    List.of(snapshot), parts -> candidate(destination, parts), () -> {}, (em, row) -> {});
+            assertThat(new DocumentPublicationLedger(tx).findForRead(result)).isPresent();
+        } finally { writer.close(); assertThat(writer.awaitIdle(Duration.ofSeconds(5))).isTrue(); }
+    }
+
     @Test void realBytesRowPublicationAndOutboxCommitTogether() throws Exception {
         var f = input(); var writer = writer();
         try {

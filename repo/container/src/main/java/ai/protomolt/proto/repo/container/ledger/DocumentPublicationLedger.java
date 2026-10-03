@@ -28,7 +28,11 @@ public final class DocumentPublicationLedger {
      */
     public Optional<Publication> findForRead(DocumentRecord sampled) {
         Objects.requireNonNull(sampled, "sampled");
-        return tx.inTransaction(em -> {
+        return tx.inTransaction(em -> { return findForRead(em, sampled); });
+    }
+
+    /** Same-transaction lookup for source capture; caller retains the row lock. */
+    static Optional<Publication> findForRead(jakarta.persistence.EntityManager em, DocumentRecord sampled) {
             var current = em.find(DocumentRecord.class, sampled.nodeId, LockModeType.PESSIMISTIC_READ);
             if (current == null || current.mutationRevision != sampled.mutationRevision)
                 throw new DocumentLedger.RevisionConflictException();
@@ -64,6 +68,5 @@ public final class DocumentPublicationLedger {
                 throw new IllegalStateException("Published document part plan is incomplete");
             DocumentPartPublication.validate(current,verified);
             return Optional.of(new Publication(attempt,generation,profile,(String)binding[2],current.readManifest(),parts));
-        });
     }
 }

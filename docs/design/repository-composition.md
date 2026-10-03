@@ -537,7 +537,23 @@ causes historical-version guessing or empty-content substitution.
 This byte reader does not adopt an old row as a managed publication. Before
 wiring it into saves, strictly parse the source manifest, authorize its sampled
 row, confirm the same revision remains unbound, and retain source revision and
-drive-state checks through publication. The selected-byte limit is per call;
+drive-state checks through publication. `DocumentSourceSnapshot` supplies the
+physical-state portion: it reloads the authorized revision, requires an available
+row and strictly parses the persisted manifest in one transaction. Legacy capture
+checks the unbound state and selected drive; bound capture resolves its actual
+publication and retained provider/part identities through the ledger in that
+same transaction. It does not accept a caller-constructed publication record.
+
+The writer requires exactly one matching snapshot for each planned source before
+staging. Publication repeats the source revision, status and binding checks
+under the existing sorted document locks, then locks the destination and legacy
+source drives in UUID order and compares their full sampled routing/configuration
+state. Bound sources use their retained publication rather than current drives.
+These are physical source fences, not an authorization decision or a substitute
+for policy-revision checks. They also do not establish that a supplied payload
+was derived from the declared source; the shared engine owns that preparation.
+
+The selected-byte limit is per call;
 it does not account for returned buffers retained by callers. The composition
 must bound total source bytes held across concurrent read-to-stage operations.
 The byte SPI also materializes a provider response before its actual size is

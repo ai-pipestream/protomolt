@@ -110,12 +110,21 @@ public final class DocumentLedger {
     DocumentRecord saveVerifiedAttempt(DocumentRecord candidate, Long expectedRevision,
             Map<UUID, Long> sourceRevisions, UUID attemptId, UUID token, DocumentPublicationTarget target,
             Runnable check, java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> committed) {
+        return saveVerifiedAttempt(candidate, expectedRevision, sourceRevisions, attemptId, token, target, List.of(), check, committed);
+    }
+
+    DocumentRecord saveVerifiedAttempt(DocumentRecord candidate, Long expectedRevision,
+            Map<UUID, Long> sourceRevisions, UUID attemptId, UUID token, DocumentPublicationTarget target,
+            List<DocumentSourceSnapshot> sourceSnapshots, Runnable check,
+            java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> committed) {
         java.util.Objects.requireNonNull(check, "check").run();
         java.util.Objects.requireNonNull(committed, "committed");
         Map<UUID, Long> sources = Map.copyOf(sourceRevisions);
+        var snapshots = DocumentSourceSnapshot.matching(sources, sourceSnapshots);
         return saveGuarded(candidate, expectedRevision, sources, (em, prior) -> {
             check.run();
-            target.lock(em);
+            for (var source : snapshots) source.requireCurrent(em);
+            DocumentSourceSnapshot.lockDrives(em, target, snapshots);
             var attempt = DocumentPartAttemptLedger.requirePublishable(em, attemptId, token, candidate, expectedRevision, sources);
             target.requireMatches(em, candidate, attempt);
             var previousManifest = prior == null ? null : prior.readManifest();
