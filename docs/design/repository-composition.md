@@ -1312,9 +1312,10 @@ operation rather than minting another logical operation.
 before domain locks, checks the current owner generation and command/evidence
 bindings, and rechecks mutable authorization and revision preconditions. It then
 publishes the revisions, native/common references, transactional outbox and one
-immutable logical outcome together. The internal batch needs a transaction-scoped
-entry used by this coordinator; nesting calls to its current `save(Tx, ...)` would
-open a second transaction and is prohibited. Operation tracking is not a shadow
+immutable logical outcome together. The internal batch now has a transaction-scoped
+entry for this coordinator; nesting calls to `save(Tx, ...)` would open a second
+transaction and is prohibited. The coordinator's binding and outcome work remains
+unimplemented. Operation tracking is not a shadow
 document store: existing domain rows and retention tables remain authoritative.
 
 The unsigned logical outcome records the scoped operation identity, command

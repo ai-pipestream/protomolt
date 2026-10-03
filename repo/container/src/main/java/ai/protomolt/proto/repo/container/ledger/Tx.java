@@ -60,13 +60,18 @@ public final class Tx implements AutoCloseable {
             tx.begin();
             try {
                 T result = work.apply(em);
+                // Some RESOURCE_LOCAL implementations silently roll back on
+                // commit() when marked rollback-only. Never return a successful
+                // result after an internal participant has vetoed the commit.
+                if (tx.getRollbackOnly())
+                    throw new jakarta.persistence.RollbackException("Transaction was marked rollback-only");
                 tx.commit();
                 return result;
-            } catch (RuntimeException e) {
-                rollbackIfActive(tx);
+            } catch (RuntimeException | Error e) {
+                rollbackIfActive(tx, e);
                 throw e;
             } catch (Exception e) {
-                rollbackIfActive(tx);
+                rollbackIfActive(tx, e);
                 throw new LedgerException("transactional work failed", e);
             }
         } finally {
@@ -123,14 +128,14 @@ public final class Tx implements AutoCloseable {
         }
     }
 
-    private static void rollbackIfActive(EntityTransaction tx) {
+    private static void rollbackIfActive(EntityTransaction tx, Throwable failure) {
         try {
             if (tx.isActive()) {
                 tx.rollback();
             }
         } catch (RuntimeException rollbackFailure) {
-            // The original failure is the one that matters; a rollback
-            // failure on top of it must not mask it.
+            // Preserve the initiating failure and the recovery evidence.
+            if (rollbackFailure != failure) failure.addSuppressed(rollbackFailure);
         }
     }
 

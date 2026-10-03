@@ -1437,3 +1437,83 @@ merge, deployment, complete owner-binding integration or latency qualification
 is implied. The measured two-second maximum-count case also exceeds the minimum
 one-second lease: a future coordinator must choose adequate leases and recheck
 ownership after admission, not assume the minimum works for every plan.
+
+### Coordinator transaction participation and rollback reporting
+
+**New internal entry:** `DocumentPublicationBatch.saveInTransaction` joins an
+already-active writable transaction. It opens no transaction and does not commit.
+**Extended internal helper:** `RepositoryOperationLedger.lockLiveOwner` locks the
+owner row before domain locks, compares generation/token and checks database time
+after any wait. Renewal reuses the helper without changing its SQL statement
+budget. **Unchanged:** existing standalone publication, all public SPI/wire
+contracts, physical retention and cleanup semantics. No operation-to-upload or
+terminal-outcome binding is established by calling these helpers alone.
+
+The participant performs the same preflight, sorted revision/drive locks,
+verification, history/current-reference insertion, outbox callback and cancellation
+checks as the standalone path. Candidates remain thread-confined. An exception
+or Error marks the outer transaction rollback-only; an internal caller catching
+the error cannot then commit partial results. Owner-fence failure similarly
+vetoes the transaction. The coordinator remains responsible for acquiring the
+owner fence first, binding the exact command/evidence, checking authorization,
+choosing lease checkpoints and persisting the immutable outcome in this transaction.
+Provider I/O remains outside it.
+
+**Fixed transaction behavior:** real PostgreSQL tests exposed that Hibernate's
+RESOURCE_LOCAL commit could silently roll back a transaction marked rollback-only,
+while `Tx.inTransaction` returned its callback's result as success. `Tx` now checks
+the rollback-only flag before commit and throws `RollbackException`. It explicitly
+rolls back on Error, and preserves rollback failures as suppressed exceptions on
+the initiating failure. This changes false-success reporting into explicit failure;
+it does not imply that a connection failure during COMMIT proves rollback.
+
+Fixtures verify two real document publications plus references/outbox commit or
+roll back with one outer SQL transaction, rejection of a transactionless manager,
+and caught participant/owner failures that still veto commit. Independent real
+PostgreSQL tests cover a callback marking rollback-only and returning a value,
+an Error after SQL writes, and server termination of only the test transaction's
+backend connection to force rollback failure. They assert no committed probe rows
+and preservation of the original plus rollback failures. No success-shaped
+provider mock is used for these claims.
+
+### Required storage facts for partial publication
+
+Sol's source review found that permitting a CORE-less upload plan is insufficient:
+V22 publication history/current pins treat an attempt as a complete revision;
+V26 native reference proof retains the objects of that attempt. The next
+implementation must separate upload ownership from complete revision ownership.
+
+- Extend existing attempt admission with an explicit new-content plan kind and
+  operation/member/owner-generation binding. Preserve full-revision admission
+  for current callers and its exactly-one-uploaded-CORE rule. New-content attempts
+  contain 1–10,000 new objects, possibly no CORE. Zero-upload revisions have no
+  attempt. Bind the exact ordered upload subset and selected placement before I/O.
+- A complete revision owns ordered physical-object references drawn from verified
+  new objects and authorized retained source slots. Reuse the physical catalogue
+  and common retention authority; do not manufacture copied attempt-object rows
+  or introduce a second upload ledger. Preserve a present CORE and provenance.
+- Extend native-reference proof for these revision/slot owners. V22's deferred
+  consistency guard must recognize the exact new revision/current pin; V25's
+  quarantine checks must recognize its legitimate registered keys; V24 cleanup
+  must see newly published upload ownership. Preserve existing legacy guards.
+  Current-policy authorization, metadata snapshots and source-revision fencing
+  must apply to both new and reused content.
+- Verify/renew new-content attempts under the operation generation fence in
+  owner-before-attempt order. Define takeover/resume explicitly; an unexpired
+  attempt lease does not authorize an old operation owner. Assess every SQL
+  mutation path and recovery lock order before adding cross-table triggers.
+
+These are identified implementation prerequisites, not completed behavior or a
+new RPC. The foundation remains composable for the optional JCR extension;
+no document-specific attempt identity becomes a universal content-repository
+transaction or node identity.
+
+Local validation on 2026-10-03: full `:protomolt-repo-container:test` and
+`:protomolt-repo-service:test` completed in 2m56s. JUnit XML records 443 container
+cases and 331 service cases: 771 passed, zero failures/errors and three skips.
+The motivating caught-failure fixtures failed before the `Tx` fix because no
+exception escaped the rollback-only transaction, then passed with it. The
+independent connection-loss/Error/rollback-only PostgreSQL fixtures also pass.
+Sol reviewed the participant, owner helper, transaction fix and required partial
+publication facts without a blocking finding. No push, hosted CI, merge,
+deployment or completion of the full eight-stage goal is claimed.

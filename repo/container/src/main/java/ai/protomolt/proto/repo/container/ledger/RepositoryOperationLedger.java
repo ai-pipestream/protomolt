@@ -114,13 +114,33 @@ final class RepositoryOperationLedger {
         return tx.readOnly(em -> read(em, key, false).map(Row::snapshot));
     }
 
+    /**
+     * First lock in a coordinator transaction, before any domain/attempt locks.
+     * Checks database time after waiting. It grants no policy or command binding;
+     * those checks and the terminal outcome must join this same transaction.
+     */
+    static Owner lockLiveOwner(EntityManager em, Owner expected) {
+        Objects.requireNonNull(expected);
+        if (!em.getTransaction().isActive() || em.getTransaction().getRollbackOnly())
+            throw new IllegalStateException("Operation fence requires an active writable transaction");
+        try {
+            var current = readOwner(em, expected.key, true).orElseThrow(OwnerFencedException::new);
+            if (current.generation != expected.generation || !current.token.equals(expected.token) || !live(em, expected.key))
+                throw new OwnerFencedException();
+            return current;
+        } catch (RuntimeException | Error failure) {
+            // A caller catching a fence failure cannot commit later domain work.
+            try { em.getTransaction().setRollbackOnly(); }
+            catch (RuntimeException rollbackFailure) { failure.addSuppressed(rollbackFailure); }
+            throw failure;
+        }
+    }
+
     Owner renew(Owner owner, Duration lease) {
         Objects.requireNonNull(owner);
         long millis = leaseMillis(lease);
         return tx.inTransaction(em -> {
-            var row = readOwner(em, owner.key, true).orElseThrow(OwnerFencedException::new);
-            if (row.generation != owner.generation || !row.token.equals(owner.token) || !live(em, owner.key))
-                throw new OwnerFencedException();
+            lockLiveOwner(em, owner);
             int changed = bind(em.createNativeQuery("""
                     UPDATE repository_operation_owners SET lease_until=GREATEST(lease_until,
                         clock_timestamp()+(:millis * interval '1 millisecond'))

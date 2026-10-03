@@ -462,6 +462,66 @@ class DocumentAtomicPublicationIT {
         assertThat(eventCount(f.row.docId)).isZero();
     }
 
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void publicationParticipantCommitsOrRollsBackWithItsOuterTransaction(boolean commit) {
+        var first = fixture(null);
+        var second = fixture(null);
+        var ledger = new RepositoryOperationLedger(tx);
+        var key = new RepositoryOperationLedger.Key(first.row.accountId, "test-coordinator", UUID.randomUUID());
+        // Opaque operation tests only transaction composition, not command-to-upload binding.
+        var owner = ledger.admit(key, new RepositoryOperationLedger.EncodedCommand("test-composition", 1,
+                com.google.protobuf.ByteString.copyFromUtf8("fixture")), UUID.randomUUID(), Duration.ofMinutes(5))
+                .owner().orElseThrow();
+        var stats = database.entityManagerFactory().unwrap(org.hibernate.SessionFactory.class).getStatistics();
+        stats.setStatisticsEnabled(true); stats.clear();
+        try {
+            java.util.function.Supplier<List<DocumentRecord>> work = () -> tx.inTransaction(em -> {
+                RepositoryOperationLedger.lockLiveOwner(em, owner);
+                var result = DocumentPublicationBatch.saveInTransaction(em, List.of(
+                        entry(first, List.of(), (same, row) -> new JdbcEventOutbox(tx).enqueue(same,
+                                DocumentEventFactory.saved(row, Instant.now()))),
+                        entry(second, List.of(), (same, row) -> new JdbcEventOutbox(tx).enqueue(same,
+                                DocumentEventFactory.saved(row, Instant.now())))));
+                if (!commit) throw new IllegalStateException("outer coordinator failed after publication");
+                return result;
+            });
+            if (commit) assertThat(work.get()).extracting(row -> row.nodeId).containsExactly(first.row.nodeId, second.row.nodeId);
+            else assertThatThrownBy(work::get).hasMessage("outer coordinator failed after publication");
+            assertThat(stats.getTransactionCount()).isEqualTo(1);
+        } finally { stats.setStatisticsEnabled(false); }
+        for (var f : List.of(first, second)) {
+            assertThat(documents.findByNodeId(f.row.nodeId).isPresent()).isEqualTo(commit);
+            assertThat(historyCount(f.attempt.id())).isEqualTo(commit ? 1 : 0);
+            assertThat(sharedReferences(f.attempt.id())).isEqualTo(commit ? 2 : 0);
+            assertThat(eventCount(f.row.docId)).isEqualTo(commit ? 1 : 0);
+        }
+        assertThat(ledger.find(key)).isPresent(); // Admission pre-exists; it is not a terminal outcome.
+    }
+
+    @Test void caughtParticipantFailureStillRollsBackPublicationAndOutbox() {
+        var f = fixture(null);
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            assertThatThrownBy(() -> DocumentPublicationBatch.saveInTransaction(em, List.of(entry(f, List.of(), (same, row) -> {
+                new JdbcEventOutbox(tx).enqueue(same, DocumentEventFactory.saved(row, Instant.now()));
+                throw new IllegalStateException("participant failed");
+            })))).hasMessage("participant failed");
+            assertThat(em.getTransaction().getRollbackOnly()).isTrue();
+            return null; // Deliberately catch the failure and attempt to commit.
+        })).isInstanceOf(jakarta.persistence.RollbackException.class);
+        assertThat(documents.findByNodeId(f.row.nodeId)).isEmpty();
+        assertThat(historyCount(f.attempt.id())).isZero();
+        assertThat(sharedReferences(f.attempt.id())).isZero();
+        assertThat(eventCount(f.row.docId)).isZero();
+    }
+
+    @Test void participantRefusesAnEntityManagerWithoutTransaction() {
+        var f = fixture(null);
+        assertThatThrownBy(() -> tx.readOnly(em -> DocumentPublicationBatch.saveInTransaction(em,
+                List.of(entry(f, List.of(), (same, row) -> {})))))
+                .hasMessageContaining("active writable transaction");
+        assertThat(documents.findByNodeId(f.row.nodeId)).isEmpty();
+    }
+
     @Test void batchCommitsTwoPublicationsWithRetainedSourceAndOutbox() {
         var source = publish(fixture(null), (em, row) -> {});
         var snapshot = DocumentSourceSnapshot.bound(tx, source);

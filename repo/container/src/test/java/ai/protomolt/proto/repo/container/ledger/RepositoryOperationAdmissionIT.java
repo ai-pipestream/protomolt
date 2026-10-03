@@ -147,6 +147,21 @@ class RepositoryOperationAdmissionIT {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test void liveOwnerFenceRequiresTransactionAndPoisonsCaughtFailures() {
+        var key = key();
+        var owner = ledger.admit(key, command("fence-participant"), UUID.randomUUID(), LEASE).owner().orElseThrow();
+        assertThatThrownBy(() -> tx.readOnly(em -> RepositoryOperationLedger.lockLiveOwner(em, owner)))
+                .hasMessageContaining("active writable transaction");
+        var wrong = new RepositoryOperationLedger.Owner(key, owner.generation(), UUID.randomUUID(), owner.leaseUntil());
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            assertThatThrownBy(() -> RepositoryOperationLedger.lockLiveOwner(em, wrong))
+                    .isInstanceOf(RepositoryOperationLedger.OwnerFencedException.class);
+            assertThat(em.getTransaction().getRollbackOnly()).isTrue();
+            return null;
+        })).isInstanceOf(jakarta.persistence.RollbackException.class);
+        assertThat(ledger.admit(key, command("fence-participant"), owner.token(), LEASE).owner()).contains(owner);
+    }
+
     @ParameterizedTest @CsvSource({"true,true", "true,false", "false,true", "false,false"})
     void admissionWaitSeesWinnerCommitOrRollback(boolean commit, boolean sameBytes) throws Exception {
         var key = key(); var first = command("first"); var requested = sameBytes ? first : command("second");

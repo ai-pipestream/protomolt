@@ -38,6 +38,35 @@ final class DocumentPublicationBatch {
     }
 
     static List<DocumentRecord> save(Tx tx, List<Publication> publications) {
+        var prepared = prepare(publications);
+        return tx.inTransaction(em -> { return execute(em, prepared); });
+    }
+
+    /**
+     * Participate in an existing coordinator transaction. Acquire its operation
+     * owner fence before entry; this method then acquires domain locks. No commit,
+     * nested transaction or provider I/O occurs here. Failure marks the entire
+     * transaction rollback-only even if an internal caller catches the exception.
+     * Returned rows are provisional managed state until the outer commit succeeds;
+     * do not expose them as a successful publication before that commit.
+     * This method does not itself establish command, upload or outcome bindings.
+     */
+    static List<DocumentRecord> saveInTransaction(EntityManager em, List<Publication> publications) {
+        if (!em.getTransaction().isActive() || em.getTransaction().getRollbackOnly())
+            throw new IllegalStateException("Publication requires an active writable transaction");
+        try {
+            return execute(em, prepare(publications));
+        } catch (RuntimeException | Error failure) {
+            try { em.getTransaction().setRollbackOnly(); }
+            catch (RuntimeException rollbackFailure) { failure.addSuppressed(rollbackFailure); }
+            throw failure;
+        }
+    }
+
+    private record Prepared(List<Publication> batch, List<Publication> ordered,
+            java.util.Set<UUID> destinations, Map<UUID, Long> sources, long candidateParts) {}
+
+    private static Prepared prepare(List<Publication> publications) {
         var batch = List.copyOf(publications);
         // Internal guard against accidentally unbounded lock/transaction growth.
         // The eventual public commit contract must specify its own full budgets.
@@ -68,36 +97,44 @@ final class DocumentPublicationBatch {
             throw new IllegalArgumentException("Batch exceeds 10000 parts or source checks");
         final long candidateParts = newParts;
         var ordered = batch.stream().sorted(java.util.Comparator.comparing(p -> p.candidate.nodeId)).toList();
-        return tx.inTransaction(em -> {
-            var locked = DocumentLedger.lockRevisions(em, destinations, sources);
-            if (batch.size() > 1) {
-                long affectedParts = candidateParts;
-                for (var id : destinations) {
-                    var prior = locked.get(id);
-                    var manifest = prior == null ? null : prior.readManifest();
-                    if (manifest != null) affectedParts += manifest.getPartsCount();
-                }
-                if (affectedParts > 10000)
-                    throw new IllegalArgumentException("Batch exceeds 10000 new and prior parts");
+        return new Prepared(batch, ordered, java.util.Set.copyOf(destinations), Map.copyOf(sources), candidateParts);
+    }
+
+    private static List<DocumentRecord> execute(EntityManager em, Prepared prepared) {
+        var batch = prepared.batch;
+        var ordered = prepared.ordered;
+        var destinations = prepared.destinations;
+        var sources = prepared.sources;
+        long candidateParts = prepared.candidateParts;
+        var locked = DocumentLedger.lockRevisions(em, destinations, sources);
+
+        if (batch.size() > 1) {
+            long affectedParts = candidateParts;
+            for (var id : destinations) {
+                var prior = locked.get(id);
+                var manifest = prior == null ? null : prior.readManifest();
+                if (manifest != null) affectedParts += manifest.getPartsCount();
             }
-            // Validate the original snapshot for every member before any merge.
-            // A destination may also be another member's source at its old revision.
-            for (var publication : ordered) {
-                publication.check.run();
-                DocumentLedger.requireRevision(locked.get(publication.candidate.nodeId), publication.expectedRevision);
-                for (var source : publication.snapshots) source.requireCurrent(em);
-            }
-            DocumentSourceSnapshot.lockDrives(em, ordered.stream().map(Publication::target).toList(),
-                    ordered.stream().flatMap(p -> p.snapshots.stream()).toList());
-            for (var publication : ordered) validate(em, publication, locked.get(publication.candidate.nodeId));
-            var saved = new HashMap<UUID, DocumentRecord>();
-            for (var publication : ordered) saved.put(publication.candidate.nodeId, publish(em, publication));
-            // Cancellation during a later member must also abort earlier members.
-            for (var publication : ordered) publication.check.run();
-            var results = new ArrayList<DocumentRecord>(batch.size());
-            for (var publication : batch) results.add(saved.get(publication.candidate.nodeId));
-            return List.copyOf(results);
-        });
+            if (affectedParts > 10000)
+                throw new IllegalArgumentException("Batch exceeds 10000 new and prior parts");
+        }
+        // Validate the original snapshot for every member before any merge.
+        // A destination may also be another member's source at its old revision.
+        for (var publication : ordered) {
+            publication.check.run();
+            DocumentLedger.requireRevision(locked.get(publication.candidate.nodeId), publication.expectedRevision);
+            for (var source : publication.snapshots) source.requireCurrent(em);
+        }
+        DocumentSourceSnapshot.lockDrives(em, ordered.stream().map(Publication::target).toList(),
+                ordered.stream().flatMap(p -> p.snapshots.stream()).toList());
+        for (var publication : ordered) validate(em, publication, locked.get(publication.candidate.nodeId));
+        var saved = new HashMap<UUID, DocumentRecord>();
+        for (var publication : ordered) saved.put(publication.candidate.nodeId, publish(em, publication));
+        // Cancellation during a later member must also abort earlier members.
+        for (var publication : ordered) publication.check.run();
+        var results = new ArrayList<DocumentRecord>(batch.size());
+        for (var publication : batch) results.add(saved.get(publication.candidate.nodeId));
+        return List.copyOf(results);
     }
 
     private static void validate(EntityManager em, Publication p, DocumentRecord prior) {
