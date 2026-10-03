@@ -7,6 +7,8 @@ import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
  * no framework configuration binding. Production uses {@link #fromEnvironment()};
  * tests construct it directly against their containers.
  *
+ * @param managedStorage explicit managed-byte retention qualification; enabled
+ *        composition remains unavailable until profile binding and recovery are wired
  * @param grpcPort the gRPC listen port ({@code DOCUMENT_PLATFORM_GRPC_PORT},
  *        default 9090; 0 = ephemeral port, for tests that read it back from
  *        the started server)
@@ -139,7 +141,45 @@ public record RepoServiceConfig(
         String purgeQueue,
         String kafkaPurgeTopic,
         boolean s3ConditionalWrites,
+        java.util.Map<String, String> repoBucketBindings,
+        ManagedStoragePolicy managedStorage) {
+
+    /** Compatibility constructor: managed ingestion requires separate explicit qualification. */
+    public RepoServiceConfig(
+        int grpcPort,
+        LedgerConfig ledger,
+        String s3Endpoint,
+        String s3Region,
+        String s3AccessKey,
+        String s3SecretKey,
+        String defaultBucketBase,
+        int httpPort,
+        String blobStore,
+        String repoTarget,
+        String repoDrive,
+        String redisUri,
+        int redisTtlSeconds,
+        long redisMaxObjectBytes,
+        boolean lifecycleEnabled,
+        long purgeIntervalMs,
+        long sweepIntervalMs,
+        boolean reconcileEnabled,
+        boolean reconcileDryRun,
+        long reconcileMinAgeMs,
+        String kafkaBootstrapServers,
+        String kafkaTopic,
+        String schemaRegistryUrl,
+        String seedAccountId,
+        String purgeQueue,
+        String kafkaPurgeTopic,
+        boolean s3ConditionalWrites,
         java.util.Map<String, String> repoBucketBindings) {
+        this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, repoBucketBindings, ManagedStoragePolicy.disabled());
+    }
+
+    public RepoServiceConfig withManagedStorage(ManagedStoragePolicy policy) {
+        return new RepoServiceConfig(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, repoBucketBindings, policy);
+    }
 
 
     /** Compatibility constructor; remote mode requires explicit bindings before startup. */
@@ -176,7 +216,7 @@ public record RepoServiceConfig(
 
     /** Copies this configuration with explicit local-bucket to remote-drive bindings. */
     public RepoServiceConfig withRepoBucketBindings(java.util.Map<String, String> bindings) {
-        return new RepoServiceConfig(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, bindings);
+        return new RepoServiceConfig(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, bindings, managedStorage);
     }
 
     public static final String ENV_REPO_BUCKET_BINDINGS = "DOCUMENT_PLATFORM_REPO_BUCKET_BINDINGS";
@@ -396,6 +436,7 @@ public record RepoServiceConfig(
     }
 
     public RepoServiceConfig {
+        java.util.Objects.requireNonNull(managedStorage, "managedStorage");
         repoBucketBindings = java.util.Map.copyOf(repoBucketBindings);
         var remoteTargets = new java.util.HashSet<String>();
         for (var binding : repoBucketBindings.entrySet()) {
@@ -552,7 +593,8 @@ public record RepoServiceConfig(
                 System.getenv(ENV_SEED_ACCOUNT_ID),
                 envOrDefault(ENV_PURGE_QUEUE, PURGE_QUEUE_JDBC),
                 envOrDefault(ENV_KAFKA_PURGE_TOPIC, DEFAULT_KAFKA_PURGE_TOPIC),
-                parseBoolOrDefault(System.getenv(ENV_S3_CONDITIONAL_WRITES), false), RemoteBucketBindings.parse(System.getenv(ENV_REPO_BUCKET_BINDINGS)));
+                parseBoolOrDefault(System.getenv(ENV_S3_CONDITIONAL_WRITES), false), RemoteBucketBindings.parse(System.getenv(ENV_REPO_BUCKET_BINDINGS)),
+                ManagedStoragePolicy.fromEnvironment(System.getenv()));
     }
 
     /** HTTP port parse: {@code "off"} (and {@code "0"}) disables the HTTP server. */

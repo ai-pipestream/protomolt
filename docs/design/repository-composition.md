@@ -479,6 +479,23 @@ policies, Redis eviction/persistence and administrative mutation remain separate
 deployment obligations. Cache compositions qualify the authoritative backing
 store; cache entry expiry does not determine retention of backing bytes.
 
+Production composition requires an explicit nonsecret backend-generation ID,
+storage realm and retention qualification. Bind the generation in SQL to a
+canonical nonsecret physical profile before enabling uploads. Reusing a generation
+with changed routing must fail startup; credential rotation must not change the
+identity. S3 and S3-cache share the authoritative backing profile. Historical
+profiles distinguish `SDK_DEFAULT` endpoint resolution from an explicit endpoint
+override; no AWS hostname is synthesized from the region. Historical
+generations need an explicit resolver for cleanup; an unavailable original backend
+must produce durable cleanup failure, never redirect deletion to the current one.
+V11 and `ManagedBackendLedger` now provide immutable SQL generation bindings with
+atomic insert-or-check registration. Real PostgreSQL tests exercise restart,
+conflicting registrations and direct mutation refusal. Existing raw rows are not
+automatically adopted or bound by this migration. The composition must register
+its profile and resolve historical generations explicitly before using them.
+The configuration scaffold exists, but qualified startup deliberately refuses
+until profile binding, shared HTTP ingestion and managed cleanup are wired together.
+
 Identical reuploads compare computed content identity and all relevant document
 metadata against the current managed binding. Normalize to the retained reference
 only when they match, with the sampled document revision guarded through dedupe
@@ -492,6 +509,11 @@ transaction it locks the managed object, verifies no live owner references remai
 and claims it for deletion. All binding operations acquire the same lock and
 reject claimed objects, preventing a new reference after the zero-reference check.
 Actual storage deletion is retriable and performed outside the transaction. Shared
+raw cleanup must remove all versions and delete markers for the exact managed key
+on versioned S3, including versions left by ambiguous PUT retries. A key-only delete
+marker is not physical reclamation. Verify absence before recording successful
+cleanup, evict any cache entry, and retain failure state if the provider cannot
+perform or verify that operation. Shared
 raw content survives deletion of any one referencing document. Every future owner
 table must participate in this zero-reference check before accepting references.
 

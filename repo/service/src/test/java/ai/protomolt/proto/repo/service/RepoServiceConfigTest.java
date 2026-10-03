@@ -14,6 +14,21 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class RepoServiceConfigTest {
 
+    @Test void managedQualificationSurvivesConfigurationCopies() {
+        var policy = new ManagedStoragePolicy("nas-v1", "account-a", true);
+        var configured = config(0, "s3", null, null).withManagedStorage(policy);
+        assertThat(configured.withRepoBucketBindings(java.util.Map.of()).managedStorage()).isEqualTo(policy);
+        assertThat(config(0, "s3", null, null).managedStorage()).isEqualTo(ManagedStoragePolicy.disabled());
+    }
+
+    @Test void unfinishedManagedCompositionFailsBeforeOpeningExternalResources() {
+        var configured = config(0, "s3", null, null)
+                .withManagedStorage(new ManagedStoragePolicy("nas-v1", "account-a", true));
+        assertThatThrownBy(() -> RepoServices.build(configured))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessage("Managed storage composition is not yet available");
+    }
+
     private static final LedgerConfig LEDGER =
             new LedgerConfig("jdbc:postgresql://localhost:5432/x", "u", "p");
 

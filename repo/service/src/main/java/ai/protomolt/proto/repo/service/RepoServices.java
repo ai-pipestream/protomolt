@@ -132,6 +132,11 @@ public final class RepoServices implements AutoCloseable {
     RepoServices(RepoServiceConfig config, BridgeEngine bridges, ai.protomolt.proto.repo.blob.spi.BlobStores providers) {
         try {
             this.config = config;
+            // Do not accept qualification while the composition still uses the
+            // legacy HTTP writer. Remove this gate only with profile binding,
+            // shared ingestion and managed-object recovery wired together.
+            if (config.managedStorage().retentionQualified())
+                throw new UnsupportedOperationException("Managed storage composition is not yet available");
             if ((RepoServiceConfig.BLOB_STORE_REPO.equals(config.blobStore())
                     || RepoServiceConfig.BLOB_STORE_REPO_INPROCESS.equals(config.blobStore()))
                     && config.repoBucketBindings().isEmpty())
