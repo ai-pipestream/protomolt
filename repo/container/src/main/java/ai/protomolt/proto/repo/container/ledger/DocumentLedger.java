@@ -103,9 +103,18 @@ public final class DocumentLedger {
     DocumentRecord saveVerifiedAttempt(DocumentRecord candidate, Long expectedRevision,
             Map<UUID, Long> sourceRevisions, UUID attemptId, UUID token, DocumentPublicationTarget target,
             java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> committed) {
+        return saveVerifiedAttempt(candidate, expectedRevision, sourceRevisions, attemptId, token, target, () -> {}, committed);
+    }
+
+    /** Cancellation checks run inside the transaction; no check follows a successful commit. */
+    DocumentRecord saveVerifiedAttempt(DocumentRecord candidate, Long expectedRevision,
+            Map<UUID, Long> sourceRevisions, UUID attemptId, UUID token, DocumentPublicationTarget target,
+            Runnable check, java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> committed) {
+        java.util.Objects.requireNonNull(check, "check").run();
         java.util.Objects.requireNonNull(committed, "committed");
         Map<UUID, Long> sources = Map.copyOf(sourceRevisions);
         return saveGuarded(candidate, expectedRevision, sources, (em, prior) -> {
+            check.run();
             target.lock(em);
             var attempt = DocumentPartAttemptLedger.requirePublishable(em, attemptId, token, candidate, expectedRevision, sources);
             target.requireMatches(em, candidate, attempt);
@@ -116,6 +125,7 @@ public final class DocumentLedger {
             long nextVersion = Math.addExact(previousVersion, 1);
             if (candidate.readManifest().getDocVersion() != nextVersion)
                 throw new DocumentPartAttemptLedger.FenceException("Document manifest version is not the next locked version");
+            check.run();
         }, (em, row) -> {
             em.createNativeQuery("""
                     INSERT INTO document_part_publication_history(attempt_id,node_id,publication_revision,body)
@@ -127,6 +137,7 @@ public final class DocumentLedger {
                     ON CONFLICT(node_id) DO UPDATE SET attempt_id=EXCLUDED.attempt_id
                     """).setParameter("node", row.nodeId).setParameter("attempt", attemptId).executeUpdate();
             committed.accept(em, row);
+            check.run();
         });
     }
 

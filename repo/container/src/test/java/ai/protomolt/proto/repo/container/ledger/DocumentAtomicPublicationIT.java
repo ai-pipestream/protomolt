@@ -333,6 +333,64 @@ class DocumentAtomicPublicationIT {
         assertThat(historyCount(second.attempt.id())).isZero();
     }
 
+    @Test void cancellationWhileWaitingForDriveLockPreventsPublication() throws Exception {
+        var f = fixture(null);
+        var cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        var callback = new java.util.concurrent.atomic.AtomicBoolean();
+        var signal = new java.util.concurrent.CancellationException("Caller cancelled during lock wait");
+        try (var blocker = database.dataSource().getConnection();
+             var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            blocker.setAutoCommit(false);
+            int blockerPid;
+            try (var query = blocker.createStatement(); var rows = query.executeQuery("SELECT pg_backend_pid()")) {
+                assertThat(rows.next()).isTrue(); blockerPid = rows.getInt(1);
+            }
+            try (var lock = blocker.prepareStatement("SELECT drive_id FROM drives WHERE drive_id=? FOR UPDATE")) {
+                lock.setObject(1, f.drive.driveId);
+                try (var rows = lock.executeQuery()) { assertThat(rows.next()).isTrue(); }
+            }
+            var publishing = executor.submit(() -> documents.saveVerifiedAttempt(f.row, f.expected, Map.of(),
+                    f.attempt.id(), f.attempt.token(), f.target, () -> {
+                        if (cancelled.get()) throw signal;
+                    }, (em, row) -> callback.set(true)));
+            try {
+                boolean waiting = false;
+                long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+                while (!waiting && System.nanoTime() < deadline) {
+                    waiting = tx.readOnly(em -> (Boolean) em.createNativeQuery(
+                            "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE :pid=ANY(pg_blocking_pids(pid)))")
+                            .setParameter("pid", blockerPid).getSingleResult());
+                    if (!waiting) Thread.sleep(10);
+                }
+                assertThat(waiting).as("publication is actually blocked on the held database lock").isTrue();
+                cancelled.set(true);
+            } finally { blocker.rollback(); }
+            assertThatThrownBy(() -> publishing.get(5, java.util.concurrent.TimeUnit.SECONDS)).hasCause(signal);
+        }
+        assertThat(callback).isFalse();
+        assertThat(documents.findByNodeId(f.row.nodeId)).isEmpty();
+        assertThat(historyCount(f.attempt.id())).isZero();
+        assertThat(new DocumentPartAttemptLedger(tx).find(f.attempt.id())).isPresent();
+    }
+
+    @Test void cancellationAfterTransactionalCallbackRollsBackPublicationAndOutbox() {
+        var f = fixture(null);
+        var cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        var signal = new java.util.concurrent.CancellationException("Caller cancelled before commit");
+        assertThatThrownBy(() -> documents.saveVerifiedAttempt(f.row, f.expected, Map.of(),
+                f.attempt.id(), f.attempt.token(), f.target, () -> {
+                    if (cancelled.get()) throw signal;
+                }, (em, row) -> {
+                    new JdbcEventOutbox(tx).enqueue(em, DocumentEventFactory.saved(row, Instant.now()));
+                    em.flush();
+                    cancelled.set(true);
+                })).isSameAs(signal);
+        assertThat(documents.findByNodeId(f.row.nodeId)).isEmpty();
+        assertThat(historyCount(f.attempt.id())).isZero();
+        assertThat(eventCount(f.row.docId)).isZero();
+        assertThat(new DocumentPartAttemptLedger(tx).find(f.attempt.id())).isPresent();
+    }
+
     @Test void deferredGuardRollsBackAChangeMadeAfterPublicationCallback() {
         var f = fixture(null);
         assertThatThrownBy(() -> publish(f,(em,row)->{

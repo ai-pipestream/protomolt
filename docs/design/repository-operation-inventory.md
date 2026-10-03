@@ -598,9 +598,22 @@ writer must preserve the cancellation/deadline code when unwrapping `StageFailur
 These controls do not abort synchronous provider calls already in progress, and
 legacy fan-out still waits for its outstanding calls. Explicit library controls
 do not change a remote provider's RPC timeout. HTTP raw ingestion has not acquired
-an HTTP cancellation signal in this change. Concurrent cancellation while waiting
-for final publication locks and cancellation around commit still need dedicated
-managed-writer tests.
+an HTTP cancellation signal in this change.
+
+The internal `saveVerifiedAttempt` overload now checks cancellation before
+transaction entry, after document/source locks, after drive/attempt validation,
+and after its transactional callback. PostgreSQL tests observe an actual lock
+wait before cancellation and prove no publication occurs after the lock releases.
+Another test flushes the row/publication/outbox work, then cancels before commit
+and proves all of it rolls back while the admitted attempt remains recoverable.
+Cancellation during commit and lost commit acknowledgements still need dedicated
+managed-writer tests; these checks deliberately do not run after commit returns.
+
+The planned writer facade must validate the plan's account, node, namespace and
+key prefix against its sampled drive and authorized candidate before admission
+or PUT. Final publication guards alone are too late to prevent writes to the
+wrong location. Its active-operation count must cover stage, candidate assembly
+and publication, so shutdown cannot close resources in the gap between them.
 
 Repository host shutdown interrupts lifecycle workers and gives them a shared
 ten-second join budget. A timeout or interrupted join leaves providers, the ledger,
