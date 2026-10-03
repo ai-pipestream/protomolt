@@ -225,6 +225,13 @@ class ArchiveMutationLedgerIT {
                     "SELECT count(*) FROM archive_mutation_targets WHERE operation_id=:id")
                     .setParameter("id", command.operationId()).getSingleResult()).longValue());
             assertThat(targets).isEqualTo(1);
+            assertThat(tx.<String>readOnly(em -> (String) em.createNativeQuery(
+                    "SELECT retiring::text || '/' || reclaiming::text FROM repository_object_retention WHERE object_id=:id")
+                    .setParameter("id", object).getSingleResult())).isEqualTo("true/false");
+            assertThatThrownBy(() -> tx.inTransaction(em -> {
+                em.createNativeQuery("UPDATE repository_object_retention SET retiring=false WHERE object_id=:id")
+                        .setParameter("id", object).executeUpdate();
+            })).hasStackTraceContaining("fence is permanent");
             save(tx, address);
             // Recreating a PRESENT manifest without its retained reference is
             // rejected before it can borrow the old object's known location.
@@ -240,6 +247,11 @@ class ArchiveMutationLedgerIT {
                 em.createNativeQuery("DELETE FROM archive_mutation_targets WHERE operation_id=:id")
                         .setParameter("id", command.operationId()).executeUpdate();
             })).hasStackTraceContaining("admission is immutable");
+            var retiredClaim = cleanup.claim(object, Instant.now().plusSeconds(60)).orElseThrow();
+            assertThat(tx.<String>readOnly(em -> (String) em.createNativeQuery(
+                    "SELECT retiring::text || '/' || reclaiming::text FROM repository_object_retention WHERE object_id=:id")
+                    .setParameter("id", object).getSingleResult())).isEqualTo("true/true");
+            assertThat(cleanup.succeeded(object, retiredClaim.token())).isTrue();
         }
     }
 

@@ -29,6 +29,99 @@ class ArchiveRetentionConcurrencyIT {
 
     @ParameterizedTest
     @ValueSource(booleans = {true, false})
+    void retirementClosesAcquisitionOnlyAfterCommitWithoutStartingPhysicalCleanup(boolean commitRetirement) throws Exception {
+        try (var database = database(); var owner = connection();
+                var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var tx = new Tx(database.entityManagerFactory());
+            var object = liveObject(tx);
+            var independent = liveObject(tx, object.generation());
+            owner.setAutoCommit(false);
+            try {
+                insertTarget(owner, object);
+                int ownerPid = backendPid(owner);
+                var contender = executor.submit(() -> {
+                    try (var writer = connection()) {
+                        insertReference(writer, object);
+                        return true;
+                    } catch (SQLException failure) {
+                        assertThat(failure.getSQLState()).isEqualTo("P0001");
+                        assertThat((Throwable) failure).hasMessageContaining("admitted mutation target");
+                        return false;
+                    }
+                });
+                awaitDatabaseWait(ownerPid);
+                var unrelated = executor.submit(() -> new ArchiveCleanupLedger(tx)
+                        .claim(independent.objectId(), Instant.now().plusSeconds(60)));
+                assertThat(unrelated.get(10, TimeUnit.SECONDS)).isPresent();
+                if (commitRetirement) owner.commit(); else owner.rollback();
+                assertThat(contender.get(10, TimeUnit.SECONDS)).isEqualTo(!commitRetirement);
+                assertThat(referenceCount(object)).isEqualTo(commitRetirement ? 0 : 1);
+                assertThat(state(object)).isEqualTo("LIVE");
+                assertThat(reclaiming(object)).isFalse();
+                assertThat(retiring(object)).isEqualTo(commitRetirement);
+            } finally { owner.rollback(); }
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void referenceOutcomeControlsRetirementAdmission(boolean commitReference) throws Exception {
+        try (var database = database(); var owner = connection();
+                var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var object = liveObject(new Tx(database.entityManagerFactory()));
+            owner.setAutoCommit(false);
+            try {
+                insertReference(owner, object);
+                int ownerPid = backendPid(owner);
+                var contender = executor.submit(() -> {
+                    try (var writer = connection()) {
+                        writer.setAutoCommit(false);
+                        try {
+                            insertTarget(writer, object);
+                            writer.commit();
+                            return true;
+                        } catch (SQLException failure) {
+                            writer.rollback();
+                            assertThat(failure.getSQLState()).isEqualTo("P0001");
+                            assertThat((Throwable) failure).hasMessageContaining("retained references");
+                            return false;
+                        }
+                    }
+                });
+                awaitDatabaseWait(ownerPid);
+                if (commitReference) owner.commit(); else owner.rollback();
+                assertThat(contender.get(10, TimeUnit.SECONDS)).isEqualTo(!commitReference);
+                assertThat(referenceCount(object)).isEqualTo(commitReference ? 1 : 0);
+                assertThat(retiring(object)).isEqualTo(!commitReference);
+                assertThat(reclaiming(object)).isFalse();
+            } finally { owner.rollback(); }
+        }
+    }
+
+    private static void insertTarget(Connection connection, ObjectFixture object) throws SQLException {
+        UUID operation = UUID.randomUUID();
+        try (var statement = connection.prepareStatement("""
+                INSERT INTO archive_mutations(account_id,principal,operation_id,command_sha256,command,admission_receipt,sampled_revision)
+                VALUES('account','sql-fixture',? ,?,decode('01','hex'),decode('01','hex'),0)
+                """)) {
+            statement.setObject(1, operation); statement.setString(2, "a".repeat(64)); statement.executeUpdate();
+        }
+        try (var statement = connection.prepareStatement(
+                "INSERT INTO archive_mutation_targets VALUES('account','sql-fixture',?,?)")) {
+            statement.setObject(1, operation); statement.setObject(2, object.objectId()); statement.executeUpdate();
+        }
+    }
+
+    private static boolean retiring(ObjectFixture object) throws SQLException {
+        try (var reader = connection(); var statement = reader.prepareStatement(
+                "SELECT retiring FROM repository_object_retention WHERE object_id=?")) {
+            statement.setObject(1, object.objectId());
+            try (var result = statement.executeQuery()) { assertThat(result.next()).isTrue(); return result.getBoolean(1); }
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
     void referenceTransactionFencesCleanupWithoutBlockingOtherObjects(boolean commitReference) throws Exception {
         try (var database = database(); var owner = connection();
                 var executor = Executors.newVirtualThreadPerTaskExecutor()) {

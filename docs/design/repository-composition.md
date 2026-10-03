@@ -1375,11 +1375,25 @@ Timeout alone cannot release it. Crash recovery needs explicit evidence that the
 owning incarnation and its provider work have stopped; failed release leaves a
 durable pin for retry, never an age-based deletion permission.
 
-Before enabling reader pins, split logical retirement from physical reclamation.
-An admitted archive mutation must close new acquisition while existing readers
-finish. Only the later cleanup claim, after all pins drain, may mark the physical
-object reclaiming. V26's single fence suffices for native references but must not
-be reused unchanged for readers. No SQL transaction may span a provider read.
+V27 separates logical retirement from physical reclamation. An admitted archive
+mutation closes reference acquisition with a permanent retiring flag; the later
+cleanup claim sets the permanent reclaiming flag. Reclaiming always implies
+retiring. Document cleanup sets both because its eligible attempts are unpublished.
+The migration reclassifies V26 target-only fences only for LIVE archive objects
+with no cleanup claim evidence. DELETING and DELETED objects retain both fences,
+including failed or ambiguous cleanup. Drain old processes and their provider I/O
+before migration; no runtime operation can clear either fence.
+
+Populated migration fixtures cover retained LIVE objects, target-only retirement,
+failed DELETING claims, DELETED tombstones and abandoned document cleanup. Real
+PostgreSQL races cover retirement/reference admission in both orders, commit and
+rollback, and progress on an unrelated object while the target remains locked.
+These are SQL lifecycle fixtures, not provider byte-verification evidence.
+
+Reader pins are still required before a read can claim lifetime protection. Their
+cleanup gate must wait for existing readers to finish after logical retirement.
+No SQL transaction may span a provider read. V27 establishes the two states but
+does not yet add reader ownership, process-drain recovery or a reader cleanup gate.
 
 `ArchiveRetentionConcurrencyIT` supplies the SQL baseline for that fence. It
 observes actual PostgreSQL lock waits for reference-first and cleanup-first

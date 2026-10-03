@@ -47,7 +47,7 @@ class RepositoryRetentionMigrationIT {
         }
     }
 
-    private static UUID archive(Connection connection, boolean deleted) throws Exception {
+    static UUID archive(Connection connection, boolean deleted) throws Exception {
         UUID object = UUID.randomUUID(), entry = UUID.randomUUID();
         try (var insert = connection.prepareStatement("""
                 INSERT INTO archive_object_bindings(object_id,entry_uuid,account_id,archive,backend_generation,storage_realm,bucket,object_key)
@@ -69,7 +69,7 @@ class RepositoryRetentionMigrationIT {
         return object;
     }
 
-    private static UUID abandonedDocument(Connection connection) throws Exception {
+    static UUID abandonedDocument(Connection connection) throws Exception {
         UUID attempt = UUID.randomUUID(), node = UUID.randomUUID();
         connection.setAutoCommit(false);
         try {
@@ -95,11 +95,11 @@ class RepositoryRetentionMigrationIT {
         return attempt;
     }
 
-    private static void execute(Connection connection, String sql) throws Exception {
+    static void execute(Connection connection, String sql) throws Exception {
         try (var statement = connection.createStatement()) { statement.executeUpdate(sql); }
     }
 
-    private static long number(Connection connection, String sql) throws Exception {
+    static long number(Connection connection, String sql) throws Exception {
         try (var statement = connection.createStatement(); var result = statement.executeQuery(sql)) {
             assertThat(result.next()).isTrue(); return result.getLong(1);
         }
