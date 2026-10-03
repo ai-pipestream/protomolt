@@ -259,6 +259,66 @@ class UploadHttpServerIT {
                         .build()));
     }
 
+    @Test
+    void rejectedReplacementPreservesCommittedDocumentAndRawBytes() throws Exception {
+        String docId = "doc-http-" + UUID.randomUUID();
+        int originalSize = 4096;
+        var accepted = client.send(uploadRequest(docId, originalSize,
+                        patternPublisher(originalSize), null).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(accepted.statusCode()).isEqualTo(200);
+        JsonNode receipt = MAPPER.readTree(accepted.body());
+        String nodeId = receipt.get("node_id").asText();
+        var before = documents.getDocument(
+                GetDocumentRequest.newBuilder().setNodeId(nodeId).build());
+        var originalRef = before.getDocument().getBlobBag().getBlob().getStorageRef();
+
+        var rejected = client.send(uploadRequest(docId, 8192,
+                        patternPublisher(8192), "0".repeat(64)).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(rejected.statusCode()).isEqualTo(400);
+        assertThat(rejected.body()).contains("X-Content-Sha256");
+        var after = documents.getDocument(
+                GetDocumentRequest.newBuilder().setNodeId(nodeId).build());
+        assertThat(after.getDocument()).isEqualTo(before.getDocument());
+        var bytes = documents.getBlob(GetBlobRequest.newBuilder()
+                .setStorageRef(originalRef).build()).getData();
+        assertThat(bytes.size()).isEqualTo(originalSize);
+        assertThat(sha256(bytes.toByteArray())).isEqualTo(sha256OfPattern(originalSize));
+    }
+
+    @Test
+    void acceptedReplacementDoesNotOverwritePreviousRawReference() throws Exception {
+        String docId = "doc-http-" + UUID.randomUUID();
+        var accepted = client.send(uploadRequest(docId, 4096,
+                        patternPublisher(4096), null).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(accepted.statusCode()).isEqualTo(200);
+        String nodeId = MAPPER.readTree(accepted.body()).get("node_id").asText();
+        var before = documents.getDocument(
+                GetDocumentRequest.newBuilder().setNodeId(nodeId).build());
+        var originalRef = before.getDocument().getBlobBag().getBlob().getStorageRef();
+
+        var replacement = client.send(uploadRequest(docId, 8192,
+                        patternPublisher(8192), null).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(replacement.statusCode()).isEqualTo(200);
+        var after = documents.getDocument(
+                GetDocumentRequest.newBuilder().setNodeId(nodeId).build());
+        var replacementRef = after.getDocument().getBlobBag().getBlob().getStorageRef();
+        assertThat(replacementRef).isNotEqualTo(originalRef);
+        // No raw-object GC runs in this fixture. Replacement must not overwrite
+        // the old bytes; later reclamation of an unreferenced object is allowed.
+        var originalBytes = documents.getBlob(GetBlobRequest.newBuilder()
+                .setStorageRef(originalRef).build()).getData();
+        assertThat(originalBytes.size()).isEqualTo(4096);
+        assertThat(sha256(originalBytes.toByteArray())).isEqualTo(sha256OfPattern(4096));
+        var replacementBytes = documents.getBlob(GetBlobRequest.newBuilder()
+                .setStorageRef(replacementRef).build()).getData();
+        assertThat(replacementBytes.size()).isEqualTo(8192);
+        assertThat(sha256(replacementBytes.toByteArray())).isEqualTo(sha256OfPattern(8192));
+    }
+
     // ------------------------------------------------------------- fixtures
 
     private static HttpRequest.Builder uploadRequest(String docId, long length,

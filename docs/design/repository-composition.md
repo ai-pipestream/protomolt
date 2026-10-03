@@ -385,9 +385,77 @@ error instead of manufacturing a cleanup scope.
 The async raw-blob path still has an unresolved physical-data race: its upload
 key is deterministic and may be overwritten between purge eligibility checking
 and key-based deletion. Generation checks protect row removal, not a newer raw
-upload at that key. Immutable raw versions or conditional deletion are required
-before claiming complete async purge safety. Scoped deletion remains disabled
+upload at that key. Immutable raw objects and reference-aware cleanup are required
+before claiming complete async purge safety. ETag-only conditional deletion is
+insufficient: another upload of identical content can reuse the same ETag.
+Scoped deletion remains disabled
 while its authorization and raw-byte protection are unfinished.
+
+### Managed raw uploads (planned, not implemented)
+
+The real HTTP regression `rejectedReplacementPreservesCommittedDocumentAndRawBytes`
+demonstrates that a bad-checksum replacement deletes the previously committed raw
+object while GetDocument still returns its metadata and claim check. The accepted-replacement regression
+also requires distinct physical keys and unchanged old bytes before reclamation.
+This is not indefinite retention: garbage collection may remove an unreferenced
+old object. A retained version or another document must pin it when continued
+readability is required. Staging only until
+checksum verification would fix the first case but leave publication and purge
+races unresolved; the complete fix uses immutable per-attempt keys.
+
+Move raw ingestion behind the shared repository engine. The engine mints a unique
+key for both supplied and content-derived document IDs, records the attempt before
+storage I/O, streams and hashes the bytes, verifies the declared checksum, and
+publishes through the guarded document-save transaction. HTTP parses the request
+and renders the resulting committed receipt. Logical document and blob IDs remain
+stable; physical keys are not derived from those IDs. Existing protobuf identities
+and public storage-reference fields remain unchanged.
+
+Persist a managed raw-object record with its account, immutable storage location,
+provider/configuration identity, size, computed checksum and attempt state. The
+location includes the original bucket and key; later drive reconfiguration must
+not redirect cleanup. Store provider version identity when available. Missing
+original provider configuration fails cleanup explicitly rather than selecting a
+replacement backend. Do not persist provider secrets in these records.
+
+Use a document-to-raw-object reference table with real foreign keys. A storage
+reference supplied in a protobuf payload does not confer deletion authority.
+Only trusted ingestion or an authorized copy of an existing managed reference can
+establish a binding. Copied BLOBS parts share the source binding after checking
+source access and revision; byte references must match the bound record. Retained
+versions and pending revisions will need their own foreign-key reference tables
+before their retention features are enabled.
+
+Identical reuploads compare computed content identity and all relevant document
+metadata against the current managed binding. Normalize to the retained reference
+only when they match, with the sampled document revision guarded through dedupe
+and publication. Return the committed reference, which may differ from the upload
+candidate. An ambiguous commit outcome must never trigger blind candidate deletion.
+Legacy deterministic keys require explicit migration; they do not acquire an
+immutability guarantee simply because new writers use unique keys.
+
+Raw garbage collection is separate from document-part purge snapshots. In one SQL
+transaction it locks the managed object, verifies no live owner references remain,
+and claims it for deletion. All binding operations acquire the same lock and
+reject claimed objects, preventing a new reference after the zero-reference check.
+Actual storage deletion is retriable and performed outside the transaction. Shared
+raw content survives deletion of any one referencing document. Every future owner
+table must participate in this zero-reference check before accepting references.
+
+An expiring upload lease fences publication, not physical storage completion.
+After expiry, a late PUT may still finish after cleanup has deleted its key. Keep
+expired attempt identities and reconcile their keys repeatedly so those late bytes
+are eventually removed; do not report expiry as proof that the writer stopped.
+The managed namespace needs an explicit reconciliation policy because the current
+general reconciler excludes raw blobs. Cleanup failures remain durable and visible.
+
+Acceptance includes both HTTP regressions, identical reupload dedupe, derived IDs,
+concurrent replacement and purge, shared-reference deletion, failed checksums,
+failed/ambiguous publication, restart recovery, late PUT after expiry, cleanup
+failure, drive reconfiguration, and explicit legacy migration. Exercise ingestion
+through the shared library and HTTP with real SQL and object storage. This work
+does not enable scoped creation or deletion before their authorization contracts
+are complete.
 
 ## Partial updates and progressive hydration
 

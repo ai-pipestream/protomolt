@@ -61,6 +61,15 @@ extension even where the message shape remains unchanged.
 
 - **Extended:** HTTP document/archive uploads use the same engine boundaries as
   their gRPC counterparts, including streaming limits and staged publication.
+- **New, planned:** shared raw-ingestion library operation for the existing HTTP
+  document-upload route. It owns immutable upload attempts, checksum verification,
+  trusted managed-object bindings and committed-reference receipts. No new public
+  RPC is required for this extraction. See the managed raw uploads design; the
+  two replacement regression cases currently fail against the existing handler.
+- **Extended, planned:** document save/copy/delete and raw cleanup maintain managed
+  raw-object references transactionally. Caller-supplied storage coordinates never
+  grant deletion authority. Shared objects require zero-reference cleanup, and
+  legacy deterministic keys require explicit migration before immutable guarantees.
 - **New:** library repository interface and remote implementation, reusing the
   existing request/response vocabulary rather than creating a second wire model.
 - **New:** provider factory discovery and explicit capability selection.
