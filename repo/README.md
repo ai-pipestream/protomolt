@@ -50,8 +50,12 @@ around that rule.
 | Module | Gradle project | Role |
 |--------|----------------|------|
 | `repo/proto` | `:protomolt-repo-proto` | The wire contract: `Document`, manifest, `DocumentService`, `DriveService` |
-| `repo/container` | `:protomolt-repo-container` | The storage engine: part codec, `BlobStore` port + `S3BlobStore`/`RedisBlobStore`/`CachingBlobStore`, part fan-out IO, the Postgres ledger (Hibernate + HikariCP + Flyway) |
-| `repo/service` | `:protomolt-repo-service` | The service set: gRPC impls, the streaming HTTP upload route, `RepoServices` wiring, the dogfood `RemoteBlobStore` |
+| `repo/codec` | `:protomolt-repo-codec` | Document part layouts, splitting and typed assembly |
+| `repo/blob/spi` | `:protomolt-repo-blob-spi` | JDK-only byte storage contracts and provider discovery |
+| `repo/blob/s3`, `repo/blob/redis`, `repo/blob/cache` | `:protomolt-repo-blob-s3`, `:protomolt-repo-blob-redis`, `:protomolt-repo-blob-cache` | Object storage providers and cache decorator |
+| `repo/blob/grpc` | `:protomolt-repo-blob-grpc` | Remote byte storage client using a borrowed gRPC stub |
+| `repo/container` | `:protomolt-repo-container` | The storage engine: part fan-out IO and the Postgres ledger (Hibernate + HikariCP + Flyway) |
+| `repo/service` | `:protomolt-repo-service` | The service set: gRPC impls, the streaming HTTP upload route, `RepoServices` wiring |
 
 ## Storage model
 
@@ -492,7 +496,7 @@ Errors: 400 (names the offending parameter, or a checksum mismatch), 404
 
 ## The dogfood blob store
 
-`RemoteBlobStore` (`repo/service/.../client`) implements the
+`RemoteBlobStore` (`ai.protomolt.proto.repo.blob.grpc`, artifact `protomolt-repo-blob-grpc`) implements the
 `BlobStore` port over a `DocumentService` gRPC stub: any protomolt consumer
 that speaks the port can use a repo-service as its byte store instead of
 carrying an S3 SDK. `put`→`PutBlob`, `get`→`GetBlob` (NOT_FOUND maps to

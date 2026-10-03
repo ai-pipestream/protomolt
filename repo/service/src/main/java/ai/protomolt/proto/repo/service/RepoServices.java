@@ -20,7 +20,7 @@ import ai.protomolt.proto.repo.container.lifecycle.PurgeQueue;
 import ai.protomolt.proto.repo.container.lifecycle.PurgeSweeper;
 import ai.protomolt.proto.repo.container.lifecycle.S3Purger;
 import ai.protomolt.proto.repo.container.lifecycle.StorageReconciler;
-import ai.protomolt.proto.repo.service.client.RemoteBlobStore;
+import ai.protomolt.proto.repo.blob.grpc.RemoteBlobStore;
 import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v1.DriveType;
 import io.grpc.BindableService;

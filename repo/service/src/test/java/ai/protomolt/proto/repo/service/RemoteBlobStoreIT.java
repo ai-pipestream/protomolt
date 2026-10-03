@@ -2,7 +2,7 @@ package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
-import ai.protomolt.proto.repo.service.client.RemoteBlobStore;
+import ai.protomolt.proto.repo.blob.grpc.RemoteBlobStore;
 import ai.protomolt.proto.repo.v1.CreateDriveRequest;
 import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v1.DriveServiceGrpc;

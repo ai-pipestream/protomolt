@@ -18,6 +18,13 @@ The service assembly uses this factory API for S3 and Redis, including the two
 handles in its cache composition. It registers each acquired resource immediately;
 failed construction releases earlier resources in reverse order. Shutdown attempts
 all owned resources and reports failures with secondary failures suppressed.
+`RemoteBlobStore` now lives in `protomolt-repo-blob-grpc`. Update its import
+from `ai.protomolt.proto.repo.service.client.RemoteBlobStore` to
+`ai.protomolt.proto.repo.blob.grpc.RemoteBlobStore` and recompile. Its public
+constructor borrows a generated blocking stub; the caller owns the channel.
+The client artifact excludes the repository server, SQL, Kafka and provider SDKs.
+Its existing single-drive mapping and unary buffering limits remain unchanged;
+this extraction does not add multi-drive routing or streaming RPCs.
 Remote gRPC storage still uses its explicitly owned channel and is not yet a
 discovered provider.
 

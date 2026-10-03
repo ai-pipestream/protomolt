@@ -1,0 +1,14 @@
+description = 'Repository byte storage client over gRPC without server or provider SDKs'
+dependencies {
+    api project(':protomolt-repo-blob-spi')
+    api project(':protomolt-repo-proto')
+    implementation project(':protomolt-repo-codec')
+    implementation project(':protomolt-protobuf-validation')
+    testImplementation libs.grpc.inprocess
+}
+ext.forbiddenRuntimeModules = [
+        'protomolt-repo-service', 'protomolt-repo-container',
+        's3', 'jedis', 'hibernate-core', 'HikariCP', 'postgresql',
+        'flyway-core', 'kafka-clients'
+]
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

@@ -15,17 +15,20 @@ repositories {
     mavenCentral()
 }
 java { toolchain { languageVersion = JavaLanguageVersion.of(25) } }
-configurations { blobSpiOnly; s3Only; redisOnly; cacheOnly }
+sourceSets { grpcClient }
+configurations { blobSpiOnly; s3Only; redisOnly; cacheOnly; grpcOnly }
 dependencies {
+    grpcClientImplementation "ai.pipestream:protomolt-repo-blob-grpc:${providers.gradleProperty('candidateVersion').get()}"
     blobSpiOnly "ai.pipestream:protomolt-repo-blob-spi:${providers.gradleProperty('candidateVersion').get()}"
     s3Only "ai.pipestream:protomolt-repo-blob-s3:${providers.gradleProperty('candidateVersion').get()}"
     redisOnly "ai.pipestream:protomolt-repo-blob-redis:${providers.gradleProperty('candidateVersion').get()}"
+    grpcOnly "ai.pipestream:protomolt-repo-blob-grpc:${providers.gradleProperty('candidateVersion').get()}"
     cacheOnly "ai.pipestream:protomolt-repo-blob-cache:${providers.gradleProperty('candidateVersion').get()}"
     implementation "ai.pipestream:protomolt-repo-codec:${providers.gradleProperty('candidateVersion').get()}"
     implementation "ai.pipestream:protomolt-repo-blob-spi:${providers.gradleProperty('candidateVersion').get()}"
 }
 tasks.register('verifyConsumer', JavaExec) {
-    dependsOn classes
+    dependsOn classes, grpcClientClasses
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'RepositoryConsumer'
     doFirst {
@@ -34,7 +37,7 @@ tasks.register('verifyConsumer', JavaExec) {
         if (spiModules != ['protomolt-repo-blob-spi']) {
             throw new GradleException('Byte SPI must be JDK-only: ' + spiModules)
         }
-        [s3Only: ['jedis'], redisOnly: ['s3'], cacheOnly: ['s3', 'jedis']].each { name, excluded ->
+        [grpcOnly: ['s3', 'jedis'], s3Only: ['jedis'], redisOnly: ['s3'], cacheOnly: ['s3', 'jedis']].each { name, excluded ->
             def providerNames = configurations.getByName(name).incoming.resolutionResult.allComponents
                     .collect { it.moduleVersion?.name }.findAll { it != null }
             def forbiddenProvider = excluded + ['protomolt-repo-container', 'protomolt-repo-service',

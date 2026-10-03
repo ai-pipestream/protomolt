@@ -1,4 +1,4 @@
-package ai.protomolt.proto.repo.service.client;
+package ai.protomolt.proto.repo.blob.grpc;
 
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest;

@@ -26,14 +26,17 @@ pipeline document parts into archive renditions or redesign every service.
 ## What exists, and what needs work
 
 The following are source observations, not a new conformance or deployment claim.
-Paths link to the implementation at the source baseline.
+These observations describe the baseline above; source links follow files as they
+move. Implemented module extraction and lifecycle changes are recorded in
+[the SPI composition notes](../architecture/spi-modularity.md). The remaining
+contract and behavior requirements below still apply.
 
 - [BlobStore](../../repo/blob/spi/src/main/java/ai/protomolt/proto/repo/blob/spi/BlobStore.java)
   already supplies an object-storage interface with explicit unsupported
   conditional operations. S3, Redis and cache adapters exist. Its
   [module](../../repo/container/build.gradle) also brings S3, Redis, SQL and Kafka
   dependencies; the interface is not yet a lightweight published dependency.
-- [RemoteBlobStore](../../repo/service/src/main/java/ai/protomolt/proto/repo/service/client/RemoteBlobStore.java)
+- [RemoteBlobStore](../../repo/blob/grpc/src/main/java/ai/protomolt/proto/repo/blob/grpc/RemoteBlobStore.java)
   implements that interface through DocumentService. It is packaged with the
   service, uses one configured drive, ignores the bucket argument, buffers unary
   content, and does not implement all BlobStore operations. A remote blob client

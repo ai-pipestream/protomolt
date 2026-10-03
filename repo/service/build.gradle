@@ -20,6 +20,7 @@ dependencies {
     implementation project(':protomolt-repo-blob-s3')
     implementation project(':protomolt-repo-blob-redis')
     implementation project(':protomolt-repo-blob-cache')
+    implementation project(':protomolt-repo-blob-grpc')
     implementation project(':protomolt-schema-registry-git')
     api project(':protomolt-composer')
     implementation project(':protomolt-repo-proto')
