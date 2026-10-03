@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.blob.s3;
 
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
+import ai.protomolt.proto.repo.blob.spi.BlobStoreException;
 
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.core.ResponseBytes;
@@ -222,7 +223,32 @@ public final class S3BlobStore implements BlobStore {
                 throw new BlobNotFoundException("blob version not found: s3://" + bucket + "/" + key
                         + "@" + versionId, failure);
             }
-            throw failure;
+            String errorCode = failure.awsErrorDetails() == null ? "" : failure.awsErrorDetails().errorCode();
+            var code = "RequestTimeout".equals(errorCode) ? BlobStoreException.Code.DEADLINE_EXCEEDED : switch (failure.statusCode()) {
+                case 400 -> BlobStoreException.Code.INVALID_ARGUMENT;
+                case 401 -> BlobStoreException.Code.UNAUTHENTICATED;
+                case 403 -> BlobStoreException.Code.PERMISSION_DENIED;
+                case 301, 307, 404 -> BlobStoreException.Code.FAILED_PRECONDITION;
+                case 408, 504 -> BlobStoreException.Code.DEADLINE_EXCEEDED;
+                case 429 -> BlobStoreException.Code.RESOURCE_EXHAUSTED;
+                default -> failure.statusCode() >= 500 ? BlobStoreException.Code.UNAVAILABLE : BlobStoreException.Code.UNKNOWN;
+            };
+            throw new BlobStoreException(code, "Object provider rejected the read", failure);
+        } catch (software.amazon.awssdk.core.exception.ApiCallTimeoutException
+                | software.amazon.awssdk.core.exception.ApiCallAttemptTimeoutException timeout) {
+            throw new BlobStoreException(BlobStoreException.Code.DEADLINE_EXCEEDED, "Object provider read timed out", timeout);
+        } catch (software.amazon.awssdk.core.exception.SdkClientException failure) {
+            var code = Thread.currentThread().isInterrupted()
+                    ? BlobStoreException.Code.CANCELLED : BlobStoreException.Code.UNAVAILABLE;
+            if (code != BlobStoreException.Code.CANCELLED) {
+                for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+                    if (cause instanceof java.net.SocketTimeoutException) {
+                        code = BlobStoreException.Code.DEADLINE_EXCEEDED;
+                        break;
+                    }
+                }
+            }
+            throw new BlobStoreException(code, "Object provider read could not complete", failure);
         }
     }
 
