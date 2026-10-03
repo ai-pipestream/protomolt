@@ -279,7 +279,7 @@ reclamation. ArchiveServiceIT uses managed composition for all archive operation
 and checks logical targets separately from physical completion.
 
 **Generic byte-mutation guard:** BlobRepository PUT, conditional PUT and DELETE
-reject the exact opaque path segments `archive` and `.protomolt-managed` before
+reject the exact opaque path segments `archive`, `documents` and `.protomolt-managed` before
 provider mutation. The effective generated PUT key is checked too. The archive
 reservation covers keys already stored under earlier layouts, including drive
 aliases sharing the namespace; it performs no data rewrite or SQL lookup.
@@ -311,9 +311,17 @@ explicit repair rather than bypassing the guard. The general reconciler also
 explicitly excludes managed-raw keys; a real armed-sweep test still deletes an
 ordinary orphan while leaving both reserved namespaces intact.
 
-The legacy document orphan sweep still uses a manifest snapshot and minimum-age
-grace period, not a transaction fence against arbitrarily slow document writes.
-Its broader publication-race qualification remains outstanding.
+Document parts are now excluded from that general sweep as well. Real local and
+gRPC regressions paused after PUT but before SQL publication; previously an armed
+sweep deleted the part and the save still returned success. Both now preserve
+the part and normal reads. Current and historical document namespace keys are
+quarantined without rewriting them. Generic blob mutation tests also cover
+explicit document keys and generated keys under a reserved drive prefix.
+This is a temporary safety boundary: abandoned-part cleanup is not implemented
+by this change. The dedicated attempt ledger, publication/cleanup fence and
+required interleavings are specified in `repository-composition.md` under
+Document part publication and reclamation. Existing exact document purge remains
+active; its other races are not declared resolved by the sweep quarantine.
 
 Keep archive operations process-authorized until current-policy guards support
 scoped callers. Legacy write/staging cleanup remains separate follow-up work;

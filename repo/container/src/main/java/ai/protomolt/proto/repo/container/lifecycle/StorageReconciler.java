@@ -35,10 +35,10 @@ import java.util.UUID;
  * content-addressed and deliberately untracked by the ledger, so the
  * reconciler never flags them; their lifecycle is DeleteBlob's, not this
  * sweep's.
- * Archive and managed-raw namespaces are also explicitly excluded, including
- * unbound historical keys and in-flight uploads. Their ownership and cleanup
- * belong to separate ledgers, which this document sweep cannot infer from a
- * manifest snapshot.
+ * Archive, managed-raw and document-part namespaces are explicitly excluded,
+ * including unbound historical keys and in-flight uploads. A manifest snapshot
+ * cannot authorize deletion in those namespaces. Archive/raw ledgers own their
+ * cleanup; document-part orphan reclamation awaits its dedicated attempt ledger.
  * <p>
  * Two operational safeguards limit this legacy sweep's scope:
  * <ul>
@@ -109,7 +109,8 @@ public final class StorageReconciler {
             scanned++;
             if (owned.contains(object.key()) || isRawBlobKey(object.key())
                     || ai.protomolt.proto.repo.codec.RepositoryNamespaces.isArchive(object.key())
-                    || ai.protomolt.proto.repo.codec.RepositoryNamespaces.isManagedRaw(object.key())) {
+                    || ai.protomolt.proto.repo.codec.RepositoryNamespaces.isManagedRaw(object.key())
+                    || ai.protomolt.proto.repo.codec.RepositoryNamespaces.isDocumentPart(object.key())) {
                 continue;
             }
             if (object.lastModifiedEpochMs() > cutoff) {

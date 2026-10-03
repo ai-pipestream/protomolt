@@ -371,13 +371,16 @@ under the old id. Pick it once and keep it.
   (`deleted=false` when absent).
 
 Generic blob PUT, conditional PUT and DELETE reject keys containing the exact
-path segment `archive` or `.protomolt-managed`, including keys generated from a
+path segment `archive`, `documents` or `.protomolt-managed`, including keys generated from a
 drive prefix. These namespaces belong to repository publication and cleanup.
 The reservation protects historical archive keys and applies through drive
 aliases as well. Administrative reads remain available. Keys are opaque:
 `archive-backup` is not reserved, and percent-encoded text is not decoded.
-This intentionally makes any pre-release loose blob under an exact `archive`
-segment read-only through the generic API; existing bytes are not rewritten.
+This intentionally makes any pre-release loose blob under those exact reserved
+segments read-only through the generic API; existing bytes are not rewritten.
+The general orphan sweep also excludes these namespaces. Archive and managed-raw
+recovery use their own ledgers; abandoned document-part cleanup is awaiting its
+write-attempt ledger. Explicit document purge still processes admitted snapshots.
 
 ### gRPC `ArchiveService` (`repo/proto`, `archive/v1`)
 

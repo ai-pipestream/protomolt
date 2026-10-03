@@ -431,14 +431,89 @@ Restore must preserve both the row generation and
 its purge records; a generation without a durable admission is reported as an
 error instead of manufacturing a cleanup scope.
 
-The async raw-blob path still has an unresolved physical-data race: its upload
+The legacy async raw-blob path has an unresolved physical-data race: its upload
 key is deterministic and may be overwritten between purge eligibility checking
 and key-based deletion. Generation checks protect row removal, not a newer raw
 upload at that key. Immutable raw objects and reference-aware cleanup are required
-before claiming complete async purge safety. ETag-only conditional deletion is
+for legacy objects; the managed raw path below uses those mechanisms. ETag-only conditional deletion is
 insufficient: another upload of identical content can reuse the same ETag.
 Scoped deletion remains disabled
 while its authorization and raw-byte protection are unfinished.
+
+### Document part publication and reclamation
+
+The current full and partial save paths write fresh part keys before
+`DocumentLedger.saveIfRevision` publishes their manifest. Partial saves also copy
+carried parts into the fresh attempt prefix. A document-manifest snapshot is not
+authority to delete objects absent from that snapshot: a concurrent write can
+land after the snapshot, be deleted by the sweep, and then publish successfully.
+Increasing the sweep age or probing storage immediately before commit does not
+fence the subsequent delete.
+
+Two real PostgreSQL/S3 regressions pause after a successful provider PUT and
+before publication, run an armed zero-age sweep, then resume the save. Both Java
+and gRPC previously returned success after the part had been deleted. The
+`documents` namespace is now quarantined from the general orphan sweep and from
+generic blob mutations. It covers historical fixed keys and current attempt
+keys. Exact document purge snapshots remain active. This removes the demonstrated
+sweep race but **does not implement abandoned-part reclamation** or qualify the
+remaining document purge/publication races. Unrelated loose keys under an exact
+`documents` segment are also reserved by this pre-release API change.
+
+The next implementation uses a dedicated document-part attempt ledger. Reuse the
+raw/archive implementations' transaction, immutable backend-profile, lease-token,
+reclaimer and late-write reconciliation patterns; do not put document parts into
+tables whose owner identity is a raw upload or archive entry.
+
+Managed document writes require an explicitly qualified composition with a
+persisted immutable provider identity and an exact-object reclamation capability.
+If either is unavailable, admission fails UNSUPPORTED before provider writes;
+there is no automatic legacy-write path or current-backend recovery fallback.
+Each additional provider must qualify this contract independently. This gate
+applies when admission is wired, not to the quarantine-only implementation today.
+Historical reads retain their explicit existing behavior; legacy adoption is a
+separate operation and cannot infer coordinates from mutable drive configuration.
+
+1. Register an immutable attempt UUID, destination node/account, sampled document
+   and source revisions, original backend generation/realm and namespace before
+   any PUT or COPY. Persist the exact planned part keys, part/sub-key identity,
+   expected size and digest. Keys must be unique to this attempt. The complete
+   plan includes copied parts; a prefix alone is not a physical cleanup scope.
+2. Record verification for every planned PRESENT object. A successful COPY
+   acknowledgement alone is not proof that its bytes match the sampled source
+   manifest. Verify the required byte identity, including provider version where
+   available. Renew a token-fenced lease during long writes and copies; expired
+   or superseded attempts cannot publish. No SQL transaction spans provider I/O.
+3. In the existing `saveIfRevision` transaction, lock the attempt, check its lease
+   and complete verification, recheck destination/source revisions and applicable
+   policy, and bind the exact manifest/object set to the document. Switch the
+   document's attempt reference and its raw references atomically with its row and
+   outbox event. There is one publication decision, not a second post-commit
+   binding transaction. Preserve revision-conflict and ambiguous-commit behavior.
+4. Cleanup locks that same attempt identity and checks references before claiming
+   it DELETING. Publication cannot bind a claimed attempt. Perform exact-key
+   physical reclamation outside SQL, persist failures and confirm absence before
+   completion. Keep cleanup tombstones and reconcile late PUT/COPY completions.
+   Thread interruption and lease expiry are not proof of physical cancellation.
+5. Route document purge and superseded-attempt cleanup through this same ownership
+   boundary. Define how already-started reads and copy sources are protected or
+   fail explicitly during concurrent retirement; never turn missing bytes into
+   successful empty content. Historical unbound part keys require explicit
+   verified adoption or remain quarantined. Restore must preserve attempt rows,
+   bindings, references and cleanup state together.
+
+The first implementation unit is SQL attempt admission, immutable planned objects
+and fenced verification, with migration/rollback/lease tests. It does not enable a
+cleanup worker. Subsequent units wire full and partial publication, then guarded
+reclamation and host recovery. Acceptance must cover snapshot-before-publication,
+cleanup-claim-before-publication, publication-before-claim, expired/lost leases,
+source changes during COPY, failed part writes, failed SQL publication, ambiguous
+commit acknowledgements, cancellation, restart and late writes. Test both local
+and transport paths against real storage. Remove the quarantine-only limitation
+only after these gates pass; do not re-enable snapshot-based deletion.
+
+This is one document publication boundary. It does not supply JCR session saves,
+multi-object content transactions, JCR workspaces, or version restoration.
 
 ### Managed raw uploads
 

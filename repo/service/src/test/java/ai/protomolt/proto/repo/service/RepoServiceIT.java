@@ -1537,7 +1537,8 @@ class RepoServiceIT {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.CsvSource({"false,.protomolt-managed", "true,.protomolt-managed", "false,archive", "true,archive"})
+    @org.junit.jupiter.params.provider.CsvSource({"false,.protomolt-managed", "true,.protomolt-managed", "false,archive", "true,archive",
+            "false,documents", "true,documents"})
     void reservedKeysRejectAdministrativeMutationLocallyAndOverGrpc(boolean rpc, String reservedSegment) {
         var caller = new ai.protomolt.proto.repo.spi.RepositoryCaller("managed-key-test", true);
         var local = new ai.protomolt.proto.repo.engine.BlobOperations(services.blobStore(), services.driveLedger());

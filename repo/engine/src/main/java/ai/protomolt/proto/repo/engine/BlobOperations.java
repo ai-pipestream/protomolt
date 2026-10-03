@@ -230,7 +230,8 @@ public final class BlobOperations implements ai.protomolt.proto.repo.spi.BlobRep
     }
 
     private static void requireUnmanaged(String objectKey) {
-        if (DriveKeys.isManaged(objectKey) || DriveKeys.isArchiveOwned(objectKey))
+        if (DriveKeys.isManaged(objectKey) || DriveKeys.isArchiveOwned(objectKey)
+                || ai.protomolt.proto.repo.codec.RepositoryNamespaces.isDocumentPart(objectKey))
             throw new RepositoryException(PERMISSION_DENIED,
                     "Reserved object mutations require the owning repository lifecycle");
     }

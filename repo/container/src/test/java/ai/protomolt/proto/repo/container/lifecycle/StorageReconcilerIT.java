@@ -28,15 +28,17 @@ class StorageReconcilerIT extends AbstractLifecycleIT {
         var drive = createDrive("reserved-" + id, "docs", "reconcile-" + id, "scope");
         String archive = "scope/archive/legacy-key";
         String managedRaw = "scope/.protomolt-managed/candidate";
+        String document = "scope/documents/old-fixed-key/core.pb";
         String orphan = "scope/archive-backup/unowned";
-        for (String key : List.of(archive, managedRaw, orphan)) putObject(drive.bucket, key);
+        for (String key : List.of(archive, managedRaw, document, orphan)) putObject(drive.bucket, key);
         var report = new StorageReconciler(documents).reconcile(store, drive.bucket, "scope/", Duration.ZERO, false);
-        assertThat(report.scanned()).isEqualTo(3);
+        assertThat(report.scanned()).isEqualTo(4);
         assertThat(report.orphans()).isEqualTo(1);
         assertThat(report.deleted()).isEqualTo(1);
         assertThat(report.orphanKeys()).containsExactly(orphan);
         assertThat(objectExists(drive.bucket, archive)).isTrue();
         assertThat(objectExists(drive.bucket, managedRaw)).isTrue();
+        assertThat(objectExists(drive.bucket, document)).isTrue();
         assertThat(objectExists(drive.bucket, orphan)).isFalse();
     }
 
@@ -114,8 +116,8 @@ class StorageReconcilerIT extends AbstractLifecycleIT {
                 List.of(ownedKey));
         documents.save(row);
 
-        String oldOrphan = "pfx/documents/" + account + "/ghost-node/core.pb";
-        String youngOrphan = "pfx/documents/" + account + "/fresh-node/core.pb";
+        String oldOrphan = "pfx/unmanaged/" + account + "/ghost-node/core.pb";
+        String youngOrphan = "pfx/unmanaged/" + account + "/fresh-node/core.pb";
         String rawBlob = "pfx/blobs/" + account + "/" + UUID.randomUUID() + ".bin";
         putObject(bucket, ownedKey);
         putObject(bucket, oldOrphan);

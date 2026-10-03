@@ -13,6 +13,11 @@ public final class RepositoryNamespaces {
         return hasSegment(objectKey, "archive");
     }
 
+    /** Includes both historical fixed part keys and current write-attempt keys. */
+    public static boolean isDocumentPart(String objectKey) {
+        return hasSegment(objectKey, "documents");
+    }
+
     /** Keys are opaque: never decode, normalize, or infer identity from a current drive. */
     private static boolean hasSegment(String objectKey, String reserved) {
         if (objectKey == null) return false;

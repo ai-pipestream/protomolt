@@ -79,6 +79,50 @@ class ManagedRawDocumentIT {
         if (database != null) database.close();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void orphanSweepCannotDeletePartsBetweenProviderWriteAndPublication(boolean transport) throws Exception {
+        var doc = Document.newBuilder().setDocId("sweep-race-" + UUID.randomUUID())
+                .setOwnership(OwnershipContext.newBuilder().setAccountId(ACCOUNT).setDatasourceId("source")).build();
+        var request = save(doc, primary);
+        var landed = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var key = new java.util.concurrent.atomic.AtomicReference<String>();
+        BlobStore gated = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
+                new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
+                    try {
+                        var result = method.invoke(store, args);
+                        if (method.getName().equals("put")) {
+                            key.set(((BlobStore.PutSpec) args[0]).key());
+                            landed.countDown();
+                            if (!release.await(15, java.util.concurrent.TimeUnit.SECONDS))
+                                throw new AssertionError("Timed out waiting for sweep between write and publication");
+                        }
+                        return result;
+                    } catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                });
+        var writer = engine(gated, BACKEND);
+        String name = "document-sweep-race-" + UUID.randomUUID();
+        var host = InProcessServerBuilder.forName(name).addService(new DocumentGrpcService(writer, new BlobOperations(store, drives))).build().start();
+        var connection = InProcessChannelBuilder.forName(name).build();
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var pending = executor.submit(() -> transport ? DocumentServiceGrpc.newBlockingStub(connection).saveDocument(request)
+                    : writer.saveDocument(CALLER, request));
+            try {
+                assertThat(landed.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                assertThat(store.get(primary.bucket, key.get()).data()).isNotEmpty();
+                var report = new ai.protomolt.proto.repo.container.lifecycle.StorageReconciler(documents)
+                        .reconcile(store, primary.bucket, key.get(), Duration.ZERO, false);
+                release.countDown();
+                var saved = pending.get(10, java.util.concurrent.TimeUnit.SECONDS);
+                assertThat(report.deleted()).as("an uncommitted document part is not an orphan").isZero();
+                assertThat(documents.findByNodeId(UUID.fromString(saved.getNodeId()))).isPresent();
+                assertThat(writer.getDocument(CALLER, GetDocumentRequest.newBuilder().setNodeId(saved.getNodeId()).build()).getDocument())
+                        .isEqualTo(doc);
+            } finally { release.countDown(); }
+        } finally { connection.shutdownNow(); host.shutdownNow(); }
+    }
+
     @Test void dedupeChecksIdentityAndFullRewriteCanReleaseReferences() {
         for (boolean transport : List.of(false, true)) {
             var seeded = seed();
