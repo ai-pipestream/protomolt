@@ -1,0 +1,118 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.archive.v1;
+
+import "ai/protomolt/proto/repo/archive/v1/archive_service.proto";
+import "ai/protomolt/proto/repo/archive/v1/entry.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.archive.v1";
+
+// Reviewed admission contracts. No RPC is registered for these messages yet.
+// The operation key is (account, trusted stable caller principal, operation_id).
+// The principal never comes from the payload. Normalize the selected command,
+// persist its fingerprint, and reject key reuse with a different command.
+message ArchiveMutationRequest {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "archive-mutation-selection"
+    message: "exactly one archive mutation is required"
+    expression: "has(this.delete_entry) || has(this.delete_rendition) || has(this.prune_versions)"
+  };
+  // Caller-minted UUID, stable across retries, including absent-entry no-ops.
+  string operation_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  // Protobuf enforces exclusivity. CEL requires a selection.
+  oneof mutation {
+    // Remove the entry and all retained versions.
+    DeleteEntryRequest delete_entry = 2;
+    // Tombstone one rendition across retained versions.
+    DeleteRenditionRequest delete_rendition = 3;
+    // Preserve the requested newest versions.
+    PruneVersionsRequest prune_versions = 4;
+  }
+}
+
+// The logical operation admitted against one archive entry, not a JCR session.
+enum ArchiveMutationKind {
+  // Invalid in a receipt.
+  ARCHIVE_MUTATION_KIND_UNSPECIFIED = 0;
+  // Entire-entry logical removal.
+  ARCHIVE_MUTATION_KIND_DELETE_ENTRY = 1;
+  // Rendition redaction with retained provenance.
+  ARCHIVE_MUTATION_KIND_DELETE_RENDITION = 2;
+  // Retained-version pruning.
+  ARCHIVE_MUTATION_KIND_PRUNE_VERSIONS = 3;
+}
+
+// Logical admission is durable in every state. Physical state is observational.
+enum ArchiveMutationState {
+  // Invalid in a receipt.
+  ARCHIVE_MUTATION_STATE_UNSPECIFIED = 0;
+  // Logical result committed; every physical target still pending.
+  ARCHIVE_MUTATION_STATE_ADMITTED = 1;
+  // Physical cleanup is in progress.
+  ARCHIVE_MUTATION_STATE_RECLAIMING = 2;
+  // Cleanup failed and durable retry remains necessary.
+  ARCHIVE_MUTATION_STATE_RETRY_REQUIRED = 3;
+  // All targets were confirmed absent as of observed_at. A detected late PUT
+  // may reopen cleanup; retained object tombstones remain reconcilable.
+  ARCHIVE_MUTATION_STATE_COMPLETED = 4;
+}
+
+// Persist logical results, including no-ops, before acknowledging admission.
+// Replays return the same logical outcome with a current physical observation;
+// they never resample the address or affect an entry recreated after admission.
+message ArchiveMutationReceipt {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "archive-mutation-target-accounting"
+    message: "pending and confirmed objects must partition the admitted targets"
+    expression: "this.objects_confirmed_absent <= this.objects_targeted && this.objects_pending == this.objects_targeted - this.objects_confirmed_absent"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "archive-mutation-state-accounting"
+    message: "cleanup state must match pending targets and diagnostic state"
+    expression: "(this.state == 4 ? this.objects_pending == 0 : this.objects_pending > 0) && (this.state == 3 ? has(this.error_code) && this.error_code != '' : !has(this.error_code)) && (this.state != 1 || this.objects_confirmed_absent == 0)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "archive-mutation-logical-outcome"
+    message: "logical counters must match the operation kind"
+    expression: "(this.kind == 1 ? this.entry_deleted || this.versions_removed == 0 : !this.entry_deleted) && (this.kind == 2 ? this.versions_removed == 0 : this.versions_tombstoned == 0) && (this.versions_removed > 0 || this.versions_tombstoned > 0 || this.objects_targeted == 0)"
+  };
+  // Caller operation identity, scoped to account and trusted principal.
+  string operation_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+  // Address recorded at admission; never resampled on replay.
+  EntryAddress address = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true}];
+  // The admitted command kind.
+  ArchiveMutationKind kind = 3 [(ai.protomolt.proto.validate.v1.field) = {required: true, enum: {defined_only: true, not_in: 0}}];
+  // Physical cleanup observation, not a new logical execution.
+  ArchiveMutationState state = 4 [(ai.protomolt.proto.validate.v1.field) = {required: true, enum: {defined_only: true, not_in: 0}}];
+  // SHA-256 of the canonical command, excluding runtime revisions/timestamps.
+  string command_sha256 = 5 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {pattern: "^[0-9a-f]{64}$"}}];
+  // True only when this command removed the entry.
+  bool entry_deleted = 6;
+  // Versions logically removed by delete or prune.
+  int64 versions_removed = 7 [(ai.protomolt.proto.validate.v1.field) = {int64: {gte: 0}}];
+  // Versions whose rendition was redacted.
+  int64 versions_tombstoned = 8 [(ai.protomolt.proto.validate.v1.field) = {int64: {gte: 0}}];
+  // Distinct physical objects, not the number of references or versions.
+  int64 objects_targeted = 9 [(ai.protomolt.proto.validate.v1.field) = {int64: {gte: 0}}];
+  // Targets without current confirmed absence.
+  int64 objects_pending = 10 [(ai.protomolt.proto.validate.v1.field) = {int64: {gte: 0}}];
+  // Targets confirmed absent at the recorded observation.
+  int64 objects_confirmed_absent = 11 [(ai.protomolt.proto.validate.v1.field) = {int64: {gte: 0}}];
+  // Bounded diagnostic category, never a provider exception or credential.
+  optional string error_code = 12 [(ai.protomolt.proto.validate.v1.field) = {string: {pattern: "^[A-Z][A-Z0-9_]{0,127}$"}}];
+  // Server-assigned observation time. Admission time for an identified no-op.
+  google.protobuf.Timestamp observed_at = 13 [(ai.protomolt.proto.validate.v1.field) = {required: true}];
+  // Monotonic within this operation. Reject stale worker observations in SQL.
+  int64 status_revision = 14 [(ai.protomolt.proto.validate.v1.field) = {required: true, int64: {gt: 0}}];
+}
+
+// Lookup is scoped to the authenticated stable principal as well as account.
+message GetArchiveMutationRequest {
+  // Account scope; caller identity comes from trusted transport context.
+  string account_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {min_len: 1, max_len: 200}}];
+  // The original caller-minted UUID.
+  string operation_id = 2 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
+}

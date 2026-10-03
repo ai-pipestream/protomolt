@@ -161,6 +161,46 @@ tests before extending retry contracts.
 
 ### Next boundary: archive destructive admission
 
+The new `archive_mutation.proto` defines reviewed request/receipt/lookup messages,
+without registering a service or adding ignored fields to the existing RPCs.
+`ArchiveMutationRequest` wraps exactly one existing destructive request and a
+required operation UUID. `ArchiveMutationReceipt` separates immutable logical
+counts from observed physical cleanup, with a command fingerprint, observation
+time and monotonic status revision. `COMPLETED` means confirmed absence at that
+observation; detected late writes can reopen physical cleanup with a newer status
+revision. Targets partition into pending and confirmed-absent objects. No-op
+operations have a completed, zero-target receipt.
+
+Handler obligations, beyond annotations:
+
+- Use `(account, trusted stable principal, operation UUID)` as the exact lookup
+  and idempotency key. Never accept the principal from the request. Reauthorize
+  lookup under current policy; an operation UUID is not a bearer credential.
+- Validate before admission, reject unknown command fields, normalize using the
+  same address/rendition rules as execution, and fingerprint the deterministic
+  selected-command encoding including its kind. Exclude operation ID, observed
+  timestamps and runtime sampled revisions. Persist the normalized command too.
+- Lock the entry and compare its sampled mutation revision, then commit the
+  logical result, distinct cleanup targets and receipt together. Persist absent
+  entry and other no-op results so replay cannot affect a later recreated entry.
+- Replay never reruns the command. Return the original logical outcome with the
+  latest physical observation. Same key/different command is CONFLICT. Enforce
+  receipt address/kind/fingerprint equality with the admitted command in SQL.
+- Cancellation before admission commits has no logical effect. Cancellation or
+  lost acknowledgement after commit does not cancel cleanup; query or retry the
+  same ID. Do not blindly rerun uncertain transactions. Stale cleanup claims
+  cannot overwrite newer status observations or move confirmed counters backward
+  without a newly recorded reconciliation observation.
+- Invalid contracts are INVALID_ARGUMENT; unsupported annotation rules fail
+  closed; policy denial is PERMISSION_DENIED. Storage outages remain discoverable
+  as RETRY_REQUIRED with bounded error categories, never fabricated completion.
+
+Runtime fixtures cover generated and dynamic messages, required/exclusive action
+selection, nested request rules, bounds and receipt cross-field accounting. JSON
+Schema exposes UUID format and CEL metadata; CEL accounting is runtime-only.
+No portable OpenAPI parity or implemented mutation RPC is claimed. Operation
+persistence, execution, lookup, policy and crash/replay tests remain to implement.
+
 `ArchiveDeletionFailureIT` now reproduces swallowed delete failures over both the
 library and real in-process gRPC transport with PostgreSQL and S3. Both cases are
 intentionally red: injecting UNAVAILABLE into physical deletion still produces a
@@ -287,9 +327,9 @@ Until durable archive deletion is implemented, bound destructive operations fail
 before provider I/O. Ledger deletion/pruning/rewriting rechecks authoritative
 references and bound manifests under the entry lock, covering a concurrent bound
 save after preflight. Existing legacy deletion failures remain intentionally red.
-Engine upload/read routing, original-profile resolution and recovery still need
-integration; ordinary writers do not yet create bound uploads. Carry-forward
-helpers preserve an existing binding ID when sharing its object key.
+Managed unary upload/read routing and original-profile recovery now exist as
+internal composition. Production wiring and the remaining write paths still need
+integration. Carry-forward helpers preserve the binding ID when sharing its key.
 
 - **Extended requests:** DeleteEntry currently has only address (tag 1);
   DeleteRendition has address/rendition/reason (tags 1–3); PruneVersions has
