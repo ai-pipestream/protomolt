@@ -7,6 +7,25 @@ Source baseline: `fd0cf28769494b281e5ca3963bff1844b22be193`, whose tree matches
 the merged delegation extraction at `528117a2d48cda3b3abedadd75b5706d7ac68ca7`.
 Recheck main and affected contracts before implementation.
 
+## Definition of completion
+
+Correctness includes speed and latency, resource bounds, integrity, authorization
+and recovery. Passing functional tests is insufficient if a small update causes
+unnecessary full-document copying or repeated per-part coordination. Evaluate
+these properties together before treating a component as complete.
+
+Acceptance evidence must cover representative latency distributions and throughput,
+provider call/byte counts, database transactions and waits, bounded memory and
+queues, fairness under load, and behavior during contention and failure. Record
+workload, provider, machine load and verification policy with results. Separate
+measured outcomes from hypotheses. Preserve mandatory validation and durability;
+reduce unnecessary work instead of removing guarantees.
+
+The operation-count targets below are part of the design contract. Production
+latency targets remain to be established on representative storage. The current
+copy-based partial-save path is an experimental baseline and does not meet the
+intended efficiency requirements.
+
 ## Purpose
 
 Architectural requirement: support a future optional ProtoMolt-owned JCR 2.0
