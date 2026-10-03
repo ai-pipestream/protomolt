@@ -219,6 +219,25 @@ address gets different keys in library and gRPC integration tests. Existing
 manifest keys remain readable. Failed candidate registration/recovery, immutable
 backend bindings and durable deletion below are still unfinished.
 
+V14 and `ArchiveObjectLedger` provide an internal binding reservation foundation,
+not yet connected to archive uploads or reads. A binding records entry/account/
+archive and original backend generation, storage realm, bucket and object key.
+The profile supplies the realm; a composite foreign key prevents mismatching it.
+Realm/bucket/key uniqueness prevents generation rotation from assigning the same
+physical object twice. Bindings are immutable even through direct SQL and survive
+entry deletion. Migration deliberately leaves legacy objects unbound. A stable
+realm must identify one physical storage namespace across profile rotations.
+Future version references must carry the binding's object ID; entry/key alone
+cannot identify a binding across different storage realms. The engine must check
+entry/account/archive and selected backend before registration; a binding ID is
+not an authorization grant.
+
+Production integration remains required: reserve before PUT, fence upload leases,
+verify bytes, bind version references transactionally, resolve original bindings
+for reads as well as cleanup, and recover abandoned candidates. The reused managed
+profile implementation currently qualifies only S3; other providers need explicit
+qualification without falling back to a current drive or S3 client.
+
 - **Extended requests:** DeleteEntry currently has only address (tag 1);
   DeleteRendition has address/rendition/reason (tags 1–3); PruneVersions has
   address/keep_latest (tags 1–2). None has an idempotency key. Add optional operation

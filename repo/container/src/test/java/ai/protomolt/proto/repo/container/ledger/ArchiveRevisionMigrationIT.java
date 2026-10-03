@@ -32,6 +32,11 @@ class ArchiveRevisionMigrationIT {
             long entry = revision(connection, "archive_entries", id);
             long version = revision(connection, "archive_versions", id);
             assertThat(entry).isPositive();
+            try (var query = connection.createStatement(); var rows = query.executeQuery(
+                    "SELECT count(*) FROM archive_object_bindings")) {
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getLong(1)).isZero();
+            }
             assertThat(version).isGreaterThan(entry);
             try (var sql = connection.createStatement()) {
                 sql.executeUpdate("UPDATE archive_entries SET title='Metadata edit'");
