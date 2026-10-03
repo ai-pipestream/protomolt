@@ -1517,3 +1517,44 @@ independent connection-loss/Error/rollback-only PostgreSQL fixtures also pass.
 Sol reviewed the participant, owner helper, transaction fix and required partial
 publication facts without a blocking finding. No push, hosted CI, merge,
 deployment or completion of the full eight-stage goal is claimed.
+
+### New-upload selection from the admitted command
+
+`DocumentUploadPlan` is a new internal, pure preparation operation. It retains
+the complete validated publication command and each member's full ordered
+revision while selecting only slots that declare new bytes. Retained and empty
+slots do not create uploads. An upload keeps its original revision ordinal;
+a member with no uploads has no attempt. Stable drive UUIDs select immutable
+placement snapshots, and coordinator-minted attempt UUIDs do not change the
+canonical command. Provider I/O, SQL admission, authorization, retention and
+publication are outside this mapper.
+
+Preparation rejects extraneous drive/attempt selections before copying maps
+larger than the bounded member count. Placement coordinates are validated even
+for reuse-only members. Work is proportional to command members, source checks
+and parts, plus generated key lengths; it does not fetch content or descriptors.
+The command's existing count and encoded command-byte bounds still apply; these
+do not impose a declared-content byte cap. Tests cover 4,096 new
+chunk slots alongside a retained CORE, exact 64-bit sizes, immutable snapshots,
+shared-drive/shared-source members, zero-upload members and invalid selections.
+These are pure synthetic mapping fixtures, not verified provider uploads or a
+latency qualification. No database lock is acquired during preparation.
+
+The legacy node ID encoding concatenates address coordinates with `|`, so
+distinct tuples containing that delimiter can collide. This new path refuses
+such addresses for destinations and sources instead of silently changing stored
+identity. The legacy paths remain unchanged; a repository-wide identity encoding
+and migration decision is outstanding. This guard is not JCR stable identity.
+
+Before execution, implement durable NEW_CONTENT attempt admission bound to the
+operation/member/owner generation, exact upload subset and original placement.
+Recheck sampled drive/backend state under the admission transaction. Legacy
+full-revision admission still requires an uploaded CORE and must not consume
+these partial plans. Revision ownership, publication and terminal outcomes
+remain separate unfinished work. No public API availability is claimed.
+
+Local validation on 2026-10-03: the ten mapper tests, six real PostgreSQL batch
+admission cases and 52 real PostgreSQL atomic publication cases passed, with no
+skips, failures or errors (28-second Gradle run). Sol reviewed the mapper, tests
+and inventory without a blocking finding. No hosted CI, push, deployment or
+end-to-end performance qualification is claimed for this checkpoint.
