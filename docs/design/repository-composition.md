@@ -1073,9 +1073,11 @@ or history contracts. Reuse is not implemented by this diagnostic.
 
 ## Transaction and concurrency design review
 
-Status: architecture review requested before further implementation. The local
-V25 reference-table patch is an uncommitted experiment, not an approved foundation.
-Design choices below take priority over fitting a new API to that patch.
+Status: the reviewed design now has initial Java physical-object value contracts
+in repo/spi. Database integration and the concurrency acceptance cases remain
+unfinished. The local V25 reference-table patch is a stashed experiment, not an
+approved foundation. Design choices below take priority over fitting a new API
+to that patch.
 
 Measured evidence establishes excessive storage I/O for partial updates. It does
 not establish a database lock-wait percentage or connection-pool bottleneck.
@@ -1271,6 +1273,19 @@ do not derive production promises from the LocalStack diagnostic.
 These slices preserve the eight-stage objective. They do not declare the current
 implementation complete or permit skipping ownership, typed admission, historical
 metadata, recovery, or progressive-hydration gates.
+
+The first slice has two initial Java values in repo/spi:
+`PhysicalObjectLocation` retains the stable object ID and original generation,
+realm, namespace and key; `PhysicalObjectIdentity` adds exact provider version
+when qualified, measured size, SHA-256 and stored content type. They validate
+shape only. They do not reserve storage, qualify a provider, authorize access,
+publish content or retain objects. An absent version requires explicit immutable
+key qualification and cannot represent unknown legacy data. The future ledger
+must enforce coordinate uniqueness across profile generations within a realm.
+These types add no dependencies to repo/spi; its existing protobuf dependency
+remains. Four value-contract tests and the runtime dependency gate pass, and
+generated Maven/Gradle metadata still declares only repo-proto directly. This
+does not prove the later database adapter or published-consumer acceptance cases.
 
 1. Define immutable physical identity and reference ownership before stabilizing
    the generic commit API. Build a small provider-neutral port and PostgreSQL
