@@ -1378,3 +1378,62 @@ typed admission and remaining obligations without a blocking finding. These are
 local contract/admission results, not provider performance qualification or proof
 that the full repository goal is complete. No push, hosted CI, merge or deployment
 is part of this checkpoint.
+
+### Bounded document-attempt admission statements
+
+**Extended implementation, unchanged operation:** `DocumentPartAttemptLedger.begin`
+now prepares immutable JSON statement inputs before opening its transaction and
+inserts parts/source dependencies in batches of at most 256 rows. All numbers are
+encoded as decimal strings and parsed directly into PostgreSQL INTEGER/BIGINT;
+no value passes through a floating-point JSON number. Ordered part ordinals,
+source revisions, physical location registration, key reservation, unverified
+state and the final atomic seal retain their existing meaning. The existing
+conditional payload bound and public protobuf contracts are unchanged.
+
+Client statement count is now `5 + ceil(parts/256) + ceil(sources/256)` in one
+transaction. The five fixed calls resolve the original profile, insert the
+attempt, reserve keys, seal the plan and read its result. A regression test first
+observed 1,031 statements for 513 parts and 513 sources, failing a budget of 11.
+The new path passes that budget. No schema migration or database guard was removed.
+Permanent key reservation still runs in database digest order, and per-row
+reservation/plan/catalogue triggers still enforce direct-SQL writes. Their work
+remains proportional to row count and is not included in the client statement
+count. This change reduces round trips, not the number of retained objects or
+required integrity checks.
+
+Real PostgreSQL fixtures cover 1/0, 256/256, 513/513 and 10,000/10,000 part/source
+counts, including exact values above 2^53 and at Long.MAX_VALUE, escaped Unicode
+coordinates, ordered slots and unverified catalogue identities. Injected database
+failures during a later object or source batch roll back the attempt, all earlier
+rows, physical locations and key reservations. These are synthetic metadata
+claims, not verified provider bytes. Existing provider/publication tests remain
+necessary.
+
+One local diagnostic run measured 8.773, 59.768, 118.907 and 2,082.556 ms respectively
+for those four cases, with 6, 7, 11 and 85 client statements. Timing includes Java
+encoding and transaction completion but not test profile creation. This is a
+single uncontrolled-host run, not an interleaved baseline comparison, lock-wait
+measurement, production latency target or speedup claim. Count ceilings bound
+metadata volume; the encoded strings are retained until admission returns and
+heap/resource qualification at worst-case coordinate lengths remains outstanding.
+
+Before adding the operation-owner lock, preserve this batch behavior and qualify
+its transaction/lock duration. Operation ownership must be locked before any
+attempt lock. The existing attempt plan requires an uploaded CORE; the typed
+intent instead allows a retained CORE and may contain no new uploads. Do not
+force an unchanged CORE upload or create an empty dummy attempt to bridge that
+mismatch. Generalize upload admission to new bytes only, keep complete revision
+validation at publication, and separately fence retained source references.
+A reused CORE must still be present; an EMPTY CORE remains invalid.
+
+Local regression validation on 2026-10-03:
+`:protomolt-repo-container:test --tests '*Document*'
+ :protomolt-repo-service:test --tests '*Document*'` completed in 1m09s.
+JUnit XML reports 213 container and 87 service cases: 298 passed, zero
+failures/errors, and two opt-in benchmark skips. This includes the new six
+batch-admission cases and existing document staging/publication/cleanup/provider
+fixtures. Sol reviewed the batching and retained SQL guards. No push, hosted CI,
+merge, deployment, complete owner-binding integration or latency qualification
+is implied. The measured two-second maximum-count case also exceeds the minimum
+one-second lease: a future coordinator must choose adequate leases and recheck
+ownership after admission, not assume the minimum works for every plan.

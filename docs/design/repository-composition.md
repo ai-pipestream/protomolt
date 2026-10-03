@@ -2149,3 +2149,21 @@ the 1 MiB command bound is not a bound on declared content bytes. Correctness
 includes meeting the operation-count and latency gates above, not merely passing
 these command fixtures. JCR sessions must compose the repository foundation;
 this document-specific command is not the universal content transaction API.
+
+### Admission batching before operation ownership integration
+
+The existing document-attempt path now uses bounded 256-row object/source SQL
+batches, with JSON preparation before the transaction. Its client statement
+budget is five fixed calls plus one per batch, preserving all row-level SQL
+guards and sealing in one transaction. The operation inventory records the red
+statement-count regression, boundary/failure fixtures and diagnostic timings.
+This is a prerequisite improvement, not owner-bound upload admission itself.
+
+The next binding must match only new-upload slots to the admitted command's
+member, operation owner generation and selected original placement. Existing
+attempts require an uploaded CORE, while the reviewed intent permits retained
+CORE and zero-upload revisions. Generalize that admission constraint deliberately;
+never satisfy it by copying unchanged content. Attempt verification/renewal and
+publication must all fence operation takeover in owner-before-attempt lock order.
+A document batch's transaction participant must accept that already-held owner
+fence before taking revision locks, without starting a nested transaction.

@@ -12,17 +12,24 @@ final class DocumentKeyReservations {
     private DocumentKeyReservations() {}
 
     static void reserve(EntityManager em, List<String> keys, UUID attempt) {
+        reserveEncoded(em, encode(keys), attempt);
+    }
+
+    /** Prepare bounded caller input before opening the admission transaction. */
+    static String encode(List<String> keys) {
         var values = ListValue.newBuilder();
         for (String key : keys) {
             if (key == null || !ai.protomolt.proto.repo.codec.RepositoryNamespaces.isDocumentPart(key))
                 throw new IllegalArgumentException("Document reservation requires document part keys");
             values.addValues(Value.newBuilder().setStringValue(key));
         }
-        String json;
-        try { json = JsonFormat.printer().omittingInsignificantWhitespace().print(values); }
+        try { return JsonFormat.printer().omittingInsignificantWhitespace().print(values); }
         catch (com.google.protobuf.InvalidProtocolBufferException invalid) {
             throw new IllegalArgumentException("Cannot encode document key reservation", invalid);
         }
+    }
+
+    static void reserveEncoded(EntityManager em, String json, UUID attempt) {
         em.createNativeQuery("SELECT 1 FROM reserve_document_keys(CAST(:keys AS jsonb),CAST(:attempt AS uuid),false)",Integer.class)
                 .setParameter("keys",json).setParameter("attempt",attempt).getSingleResult();
     }
