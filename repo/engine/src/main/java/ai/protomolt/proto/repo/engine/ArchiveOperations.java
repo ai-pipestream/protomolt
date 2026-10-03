@@ -730,9 +730,9 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                 ArchiveManifests.referencedObjects(manifests(retained));
         VersionManifest current = manifestOf(retained, entry.get().currentVersion);
 
-        // Objects first (the manifests' exact key list, never a prefix
-        // sweep), then the rows. A failed object delete leaves an orphan for
-        // the reconciler, never a row pointing at nothing.
+        // Legacy object-first ordering is unsafe if the following SQL commit
+        // fails: retained rows can then reference deleted bytes. The deletion
+        // failure regressions track replacement with durable admission.
         deleteQuietly(drive, List.copyOf(owned.keySet()));
         StatsDelta delta = delta(-1, -retained.size(), owned, Map.of(),
                 current == null ? 0

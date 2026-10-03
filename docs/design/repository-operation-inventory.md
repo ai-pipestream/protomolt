@@ -163,6 +163,12 @@ library and real in-process gRPC transport with PostgreSQL and S3. Both cases ar
 intentionally red: injecting UNAVAILABLE into physical deletion still produces a
 successful response. Do not describe these paths as recovered or retry-safe yet.
 
+Two additional cases inject a PostgreSQL serialization failure before entry
+deletion commits, using the real S3 adapter. Both library and gRPC calls fail,
+and SQL restores the entry/version rows, but the referenced object is missing.
+These cases are also intentionally red. A storage-error propagation fix alone
+cannot repair this rollback window.
+
 The next implementation must cover DeleteEntry, DeleteRendition and PruneVersions:
 
 - Lock and compare sampled entry/version state before admitting deletion.
@@ -201,6 +207,58 @@ interval and prevent later writes from reviving references selected for cleanup.
 Direct SQL that locks versions before entries can also deadlock with an engine
 save; PostgreSQL aborts a participant. Consistent application lock ordering and
 explicit retry/error coverage remain part of destructive admission.
+
+#### Reviewed deletion implementation boundary (not available yet)
+
+- **Extended requests:** DeleteEntry currently has only address (tag 1);
+  DeleteRendition has address/rendition/reason (tags 1–3); PruneVersions has
+  address/keep_latest (tags 1–2). None has an idempotency key. Add optional operation
+  identity using new tags, preserving all existing identities. Normalize the
+  command and bind its fingerprint to trusted caller, account and operation ID.
+  Reusing that identity with a different command must conflict. An address cannot
+  be the replay key because deletion and recreation can reuse it.
+- **Extended responses and new lookup:** persist logical version/tombstone counts
+  and the terminal response, so an identified retry returns the original outcome
+  after a lost acknowledgement. Add operation identity/status without changing
+  the meaning of existing final counters. Legacy calls without an ID may use an
+  internal identity for recovery but cannot promise caller-level replay; retain
+  the existing absent-entry result. Explicit operation lookup is needed when a
+  caller has an ID and the request ends before a response arrives.
+- **New durable archive operation ledger:** store normalized command scope,
+  fingerprint, sampled revision, admission state, claim token, attempts, bounded
+  error, final response and exact target objects. Reuse immutable backend profile
+  generations and original-profile resolution from managed raw recovery. Reuse
+  the document purge admission/drain pattern, not its document-specific table or
+  drive-name-only addressing. Resolve credentials in the host, never in receipts.
+  Existing archive manifests retain an object key but no original bucket/backend
+  binding; copying today's mutable drive configuration is insufficient. Persist
+  an immutable storage binding for each new physical object. Legacy objects need
+  verified binding backfill before physical deletion, or fail closed.
+- **Admission and visibility:** in one transaction under the entry lock, compare
+  the sampled revision, persist cleanup targets, and hide affected content from
+  ordinary reads. Save the logical removal/tombstone outcome for replay. Provider
+  I/O starts only after admission commits and runs outside SQL transactions.
+  Count physical objects only after confirmed absence. Failed cleanup remains
+  discoverable and retryable with its original coordinates.
+- **New archive object generation/reference fence:** current rendition keys are
+  content-addressed and can be reused by a later write. A pre-delete reference
+  check cannot stop an in-flight PUT finishing after cleanup or a new save
+  publishing the same key during cleanup. Track immutable physical generations
+  and admission leases before PUT; a deleting generation cannot gain references.
+  Later valid writes need a distinct generation. Retain cleanup tombstones for
+  late writes, as in managed raw ingestion. Legacy referenced keys need explicit
+  migration/adoption; never pretend they already have these guarantees.
+  Prefer unique per-write keys for new physical objects while carrying forward
+  existing manifest references for unchanged content. Stop minting legacy
+  deterministic keys after cutover. Content hashes remain dedupe/integrity facts,
+  independent of physical identity.
+
+Acceptance must include commit rollback before admission (no object I/O), crash
+after admission, lost cleanup acknowledgement, restart through the original
+backend, stale worker completion, delayed PUT after cleanup, delete/recreate at
+the same address, identical-content rewrite during cleanup, shared retained
+objects, and same-ID/different-command rejection. Run the shared operations over
+both library and gRPC. This design adds no available RPC or runtime capability.
 
 After destructive admission, add historical metadata/schema/policy snapshots.
 Current historical archive reads expose current entry

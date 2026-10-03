@@ -65,6 +65,57 @@ class ArchiveDeletionFailureIT {
     @Test void libraryDeletePropagatesStorageFailure() throws Exception { assertDeleteFailure(false); }
     @Test void grpcDeletePropagatesStorageFailure() throws Exception { assertDeleteFailure(true); }
 
+    @Test void librarySqlFailureDoesNotDestroyRetainedBytes() throws Exception { assertSqlFailure(false); }
+    @Test void grpcSqlFailureDoesNotDestroyRetainedBytes() throws Exception { assertSqlFailure(true); }
+
+    private static void assertSqlFailure(boolean transport) throws Exception {
+        var address = EntryAddress.newBuilder().setAccountId("account").setArchive("records")
+                .setEntryId(UUID.randomUUID().toString()).build();
+        var saved = normal.putEntry(CALLER, PutEntryRequest.newBuilder().setAddress(address)
+                .addRenditions(RenditionContent.newBuilder()
+                        .setRendition(RenditionDescriptor.newBuilder().setName("original").setMediaType("text/plain"))
+                        .setData(ByteString.copyFromUtf8("retain on rollback"))).build());
+        var manifest = normal.getManifest(CALLER, GetEntryManifestRequest.newBuilder().setAddress(address).build()).getManifest();
+        String key = manifest.getRenditions(0).getObjectKey();
+        // Fault only this entry, inside real PostgreSQL after the version DELETE
+        // but before entry deletion can commit. All object calls use the real S3 adapter.
+        String function = "reject_archive_delete_" + UUID.randomUUID().toString().replace("-", "");
+        UUID entryId = UUID.fromString(saved.getEntryUuid());
+        var tx = new Tx(database.entityManagerFactory());
+        tx.inTransaction(em -> {
+            em.createNativeQuery("CREATE FUNCTION " + function + "() RETURNS trigger LANGUAGE plpgsql AS $$ "
+                    + "BEGIN RAISE EXCEPTION 'injected archive SQL failure' USING ERRCODE = '40001'; END; $$")
+                    .executeUpdate();
+            em.createNativeQuery("CREATE TRIGGER " + function + " BEFORE DELETE ON archive_entries "
+                    + "FOR EACH ROW WHEN (OLD.entry_uuid = '" + entryId + "'::uuid) EXECUTE FUNCTION " + function + "()")
+                    .executeUpdate();
+        });
+        try {
+            var request = DeleteEntryRequest.newBuilder().setAddress(address).build();
+            if (!transport) {
+                assertThatThrownBy(() -> normal.deleteEntry(CALLER, request))
+                        .hasStackTraceContaining("injected archive SQL failure");
+            } else {
+                String name = "archive-sql-failure-" + UUID.randomUUID();
+                var server = InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(normal)).build().start();
+                var channel = InProcessChannelBuilder.forName(name).build();
+                try {
+                    assertThatThrownBy(() -> ArchiveServiceGrpc.newBlockingStub(channel).deleteEntry(request))
+                            .isInstanceOf(StatusRuntimeException.class);
+                } finally { channel.shutdownNow(); server.shutdownNow(); }
+            }
+            assertThat(ledger.findEntry(entryId)).isPresent();
+            assertThat(ledger.findVersion(entryId, 1)).isPresent();
+            assertThat(opened.store().get("archive-failures", key).data())
+                    .isEqualTo("retain on rollback".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } finally {
+            tx.inTransaction(em -> {
+                em.createNativeQuery("DROP TRIGGER " + function + " ON archive_entries").executeUpdate();
+                em.createNativeQuery("DROP FUNCTION " + function + "()").executeUpdate();
+            });
+        }
+    }
+
     private static void assertDeleteFailure(boolean transport) throws Exception {
         var address = EntryAddress.newBuilder().setAccountId("account").setArchive("records")
                 .setEntryId(UUID.randomUUID().toString()).build();
