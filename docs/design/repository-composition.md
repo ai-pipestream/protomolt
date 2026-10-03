@@ -582,7 +582,14 @@ The managed-publication reader continues using retained backend and per-part
 provider identities. Both paths preserve fragment order and copy provider
 buffers before measuring or returning bytes, without decoding and reserializing.
 
-### Shared payload ownership: next integration requirement
+### Shared payload ownership
+
+`PayloadBudget` in the byte SPI provides a nonblocking, overflow-safe byte
+reservation with an idempotent closeable lease. `DocumentAttemptWriter` accepts
+a borrowed budget so multiple writers can share a host limit. The convenience
+constructor retains a private 256 MiB budget; using it does not establish a
+host-wide cap. Staging now uses these leases for its combined input and
+verification allowance. Capacity exhaustion occurs before attempt admission.
 
 The reader currently returns raw fragment lists, which have no release point.
 Replace that managed API with an ordered, closeable fragment batch and inject a
@@ -602,8 +609,9 @@ and drain barrier before the host releases its borrowed backend. Tests must cove
 concurrent saturation before I/O, partial fan-out failure, uncooperative reads,
 batch ownership through staging, repeated close, and release after success/error.
 Arrays retained by a caller after closing its batch and SDK-internal buffering are
-outside the guarantee. This shared batch/budget API is designed, not implemented;
-the per-stager budget above is not yet a host-wide memory bound.
+outside the guarantee. Reader batches, shared reader reservations and the host
+composition remain unimplemented; the budget primitive and writer injection alone
+do not establish the cross-operation memory guarantee.
 
 Performance qualification remains required before switching application writes.
 The first stager performed each part's PUT, exact read-back and SQL verification

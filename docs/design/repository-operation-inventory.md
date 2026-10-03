@@ -62,6 +62,11 @@ extension even where the message shape remains unchanged.
 
 ## Other entry points and unchanged semantics
 
+- **New, Java byte SPI:** `PayloadBudget.reserve` returns an idempotent closeable
+  lease or throws explicit capacity exhaustion without waiting. The document
+  writer accepts a shared budget for active staging inputs and verification
+  results. The default writer constructor uses a private budget. Reader-batch
+  ownership and host-wide composition are still pending; no protobuf change.
 - **New, Java byte SPI:** `BlobStore.getBounded` reads a complete selected object
   version within a caller-supplied payload limit. Unsupported adapters fail
   explicitly; no ordinary-read fallback is permitted. The direct S3 adapter

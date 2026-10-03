@@ -334,6 +334,23 @@ class DocumentPartStagerIT {
         assertThat(new DocumentPartAttemptLedger(tx).find(input.plan().attemptId())).isEmpty();
     }
 
+    @Test void sharedExternalReservationPreventsAdmissionUntilReleased() {
+        var input = input();
+        long bytes = input.payloads().stream().mapToLong(p -> p.bytes().length).sum();
+        var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(2 * bytes);
+        try (var stager = new DocumentPartStager(tx, GENERATION, identity, opened, budget, 1)) {
+            try (var sourceReservation = budget.reserve(1)) {
+                assertThatThrownBy(() -> stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(5), Map.of()))
+                        .isInstanceOf(ai.protomolt.proto.repo.blob.spi.PayloadBudget.CapacityExceededException.class);
+                assertThat(new DocumentPartAttemptLedger(tx).find(input.plan().attemptId())).isEmpty();
+                assertThat(budget.reservedBytes()).isEqualTo(1);
+            }
+            assertThat(stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(5), Map.of())
+                    .attempt().state()).isEqualTo("VERIFIED");
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
     @Test void exactCombinedBudgetIsReusableAfterSuccessAndFailure() {
         var input = input();
         long bytes = input.payloads().stream().mapToLong(p -> p.bytes().length).sum();

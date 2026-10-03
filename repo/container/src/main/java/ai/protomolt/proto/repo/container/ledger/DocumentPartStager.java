@@ -4,6 +4,7 @@ import ai.protomolt.proto.repo.blob.spi.BackendIdentity;
 import ai.protomolt.proto.repo.blob.spi.BlobCapability;
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.blob.spi.OpenedBlobStore;
+import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
 import ai.protomolt.proto.repo.codec.DocumentPartCodec;
 import ai.protomolt.proto.repo.codec.PartObject;
 import java.time.Duration;
@@ -43,10 +44,9 @@ final class DocumentPartStager implements AutoCloseable {
     private final java.util.concurrent.Semaphore slots = new java.util.concurrent.Semaphore(32);
     private final java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
     private final Object lifecycle = new Object();
-    private final long maxBufferedBytes;
+    private final PayloadBudget payloadBudget;
     private final int parallelism;
     private final java.util.concurrent.Semaphore partSlots = new java.util.concurrent.Semaphore(32, true);
-    private final java.util.concurrent.atomic.AtomicLong bufferedBytes = new java.util.concurrent.atomic.AtomicLong();
 
     /** The opened backend is borrowed. Capability flags do not qualify external retention policies. */
     DocumentPartStager(Tx tx, String generation, BackendIdentity identity, OpenedBlobStore opened) {
@@ -62,10 +62,14 @@ final class DocumentPartStager implements AutoCloseable {
     }
 
     DocumentPartStager(Tx tx, String generation, BackendIdentity identity, OpenedBlobStore opened, long maxBufferedBytes, int parallelism) {
-        if (maxBufferedBytes <= 0) throw new IllegalArgumentException("Staging byte budget must be positive");
+        this(tx, generation, identity, opened, new PayloadBudget(maxBufferedBytes), parallelism);
+    }
+
+    DocumentPartStager(Tx tx, String generation, BackendIdentity identity, OpenedBlobStore opened,
+            PayloadBudget payloadBudget, int parallelism) {
         if (parallelism < 1 || parallelism > 32) throw new IllegalArgumentException("Part parallelism must be between one and 32");
         this.parallelism = parallelism;
-        this.maxBufferedBytes = maxBufferedBytes;
+        this.payloadBudget = Objects.requireNonNull(payloadBudget);
         Objects.requireNonNull(opened, "opened");
         if (!opened.capabilities().containsAll(Set.of(BlobCapability.NON_EXPIRING_WRITES,
                 BlobCapability.PHYSICAL_RECLAMATION, BlobCapability.BOUNDED_READ)))
@@ -93,7 +97,6 @@ final class DocumentPartStager implements AutoCloseable {
             if (closed.get()) throw new IllegalStateException("Document stager is closed");
             if (!slots.tryAcquire()) throw new IllegalStateException("Concurrent document staging capacity exhausted");
         }
-        long reserved = 0;
         try {
             if (payloads.size() != plan.objects().size()) throw new IllegalArgumentException("Payload count differs from plan");
             var stable = List.copyOf(payloads);
@@ -103,14 +106,10 @@ final class DocumentPartStager implements AutoCloseable {
             // an admitted attempt waiting for another allocation. Conservatively reserve
             // all parts even when only a subset can be read concurrently.
             size = Math.multiplyExact(size, 2);
-            while (true) {
-                long current = bufferedBytes.get();
-                if (size > maxBufferedBytes - current) throw new IllegalStateException("Staging byte capacity exhausted");
-                if (bufferedBytes.compareAndSet(current, current + size)) { reserved = size; break; }
+            try (var reservation = payloadBudget.reserve(size)) {
+                return stageReserved(plan, stable, lease, metadata, check);
             }
-            return stageReserved(plan, stable, lease, metadata, check);
         } finally {
-            bufferedBytes.addAndGet(-reserved);
             slots.release();
         }
     }

@@ -2,6 +2,7 @@ package ai.protomolt.proto.repo.container.ledger;
 
 import ai.protomolt.proto.repo.blob.spi.BackendIdentity;
 import ai.protomolt.proto.repo.blob.spi.OpenedBlobStore;
+import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
 import ai.protomolt.proto.repo.codec.PartObject;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import jakarta.persistence.EntityManager;
@@ -51,12 +52,18 @@ public final class DocumentAttemptWriter implements AutoCloseable {
 
     public DocumentAttemptWriter(Tx tx, DriveLedger drives, String generation,
             BackendIdentity identity, OpenedBlobStore opened) {
+        this(tx, drives, generation, identity, opened, new PayloadBudget(256L * 1024 * 1024));
+    }
+
+    /** Hosts may share this budget with source readers and other writers; it is borrowed. */
+    public DocumentAttemptWriter(Tx tx, DriveLedger drives, String generation,
+            BackendIdentity identity, OpenedBlobStore opened, PayloadBudget payloadBudget) {
         this.tx = Objects.requireNonNull(tx);
         this.drives = Objects.requireNonNull(drives);
         this.generation = Objects.requireNonNull(generation);
         this.identity = Objects.requireNonNull(identity);
         this.documents = new DocumentLedger(tx);
-        this.stager = new DocumentPartStager(tx, generation, identity, opened);
+        this.stager = new DocumentPartStager(tx, generation, identity, opened, payloadBudget, 4);
     }
 
     /**
