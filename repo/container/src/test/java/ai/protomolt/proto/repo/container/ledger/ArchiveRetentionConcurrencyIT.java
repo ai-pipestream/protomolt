@@ -49,6 +49,7 @@ class ArchiveRetentionConcurrencyIT {
                 assertThat(contender.get(10, TimeUnit.SECONDS).isPresent()).isEqualTo(!commitReference);
                 assertThat(referenceCount(retained)).isEqualTo(commitReference ? 1 : 0);
                 assertThat(state(retained)).isEqualTo(commitReference ? "LIVE" : "DELETING");
+                assertThat(reclaiming(retained)).isEqualTo(!commitReference);
             } finally {
                 owner.rollback();
             }
@@ -88,6 +89,7 @@ class ArchiveRetentionConcurrencyIT {
                 assertThat(contender.get(10, TimeUnit.SECONDS)).isEqualTo(!commitCleanup);
                 assertThat(referenceCount(object)).isEqualTo(commitCleanup ? 0 : 1);
                 assertThat(state(object)).isEqualTo(commitCleanup ? "DELETING" : "LIVE");
+                assertThat(reclaiming(object)).isEqualTo(commitCleanup);
             } finally {
                 owner.rollback();
             }
@@ -192,6 +194,14 @@ class ArchiveRetentionConcurrencyIT {
                 "SELECT state FROM archive_object_uploads WHERE object_id=?")) {
             statement.setObject(1, object.objectId());
             try (var result = statement.executeQuery()) { result.next(); return result.getString(1); }
+        }
+    }
+
+    private static boolean reclaiming(ObjectFixture object) throws SQLException {
+        try (var reader = connection(); var statement = reader.prepareStatement(
+                "SELECT reclaiming FROM repository_object_retention WHERE object_id=?")) {
+            statement.setObject(1, object.objectId());
+            try (var result = statement.executeQuery()) { assertThat(result.next()).isTrue(); return result.getBoolean(1); }
         }
     }
 }

@@ -156,8 +156,12 @@ class ArchivePublicationBindingIT {
         }
     }
     private static long referenceCount(Tx tx, UUID objectId) {
-        return tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM archive_version_object_refs WHERE object_id=:id")
+        long nativeCount = tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM archive_version_object_refs WHERE object_id=:id")
                 .setParameter("id", objectId).getSingleResult()).longValue());
+        long sharedCount = tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM repository_object_references WHERE object_id=:id AND owner_kind='ARCHIVE_VERSION'")
+                .setParameter("id", objectId).getSingleResult()).longValue());
+        assertThat(sharedCount).isEqualTo(nativeCount);
+        return nativeCount;
     }
 
     @Test void publicationReferenceLockPreventsConcurrentCleanupClaim() throws Exception {

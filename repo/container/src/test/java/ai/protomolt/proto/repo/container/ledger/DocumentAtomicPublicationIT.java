@@ -31,6 +31,64 @@ class DocumentAtomicPublicationIT {
     }
     @AfterAll static void close() { if (database != null) database.close(); }
 
+    @Test void sharedRetentionTracksExactHistoryAndCurrentOwners() {
+        var first = fixture(null);
+        var saved = publish(first, (em,row) -> {});
+        assertThat(sharedReferences(first.attempt.id())).isEqualTo(2);
+        var next = fixture(saved);
+        var replaced = publish(next, (em,row) -> {});
+        assertThat(sharedReferences(first.attempt.id())).isEqualTo(1);
+        assertThat(sharedReferences(next.attempt.id())).isEqualTo(2);
+        documents.deleteByNodeId(replaced.nodeId);
+        assertThat(sharedReferences(first.attempt.id())).isEqualTo(1);
+        assertThat(sharedReferences(next.attempt.id())).isEqualTo(1);
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            em.createNativeQuery("DELETE FROM repository_object_references WHERE owner_kind='DOCUMENT_HISTORY' AND owner_id=:id")
+                    .setParameter("id", first.attempt.id()).executeUpdate();
+        })).hasStackTraceContaining("cannot release a retained native owner");
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            em.createNativeQuery("""
+                    INSERT INTO repository_object_references(object_id,owner_kind,owner_id,owner_revision)
+                    SELECT physical_object_id,'DOCUMENT_CURRENT',:owner,1 FROM document_part_attempt_objects WHERE attempt_id=:id
+                    """).setParameter("owner", UUID.randomUUID()).setParameter("id", first.attempt.id()).executeUpdate();
+        })).hasStackTraceContaining("requires its exact durable native owner");
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            em.createNativeQuery("""
+                    UPDATE repository_object_retention SET reclaiming=true WHERE object_id IN
+                    (SELECT physical_object_id FROM document_part_attempt_objects WHERE attempt_id=:id)
+                    """).setParameter("id", first.attempt.id()).executeUpdate();
+        })).hasStackTraceContaining("Retained repository objects cannot be reclaimed");
+    }
+
+    @Test void failedPublicationRollsBackSharedReferencesAndCleanupFencesRemainPermanent() {
+        var f = fixture(null, Duration.ofSeconds(2));
+        assertThatThrownBy(() -> publish(f, (em,row) -> { throw new IllegalStateException("abort publication"); }))
+                .hasMessage("abort publication");
+        assertThat(sharedReferences(f.attempt.id())).isZero();
+        expireAttempt(f.attempt.id());
+        var cleanup = new DocumentAttemptCleanupLedger(tx);
+        var claim = cleanup.claim(f.attempt.id(), Duration.ofSeconds(5)).orElseThrow();
+        assertThat(cleanup.finish(claim, true, null)).isTrue();
+        long fenced = tx.readOnly(em -> ((Number) em.createNativeQuery("""
+                SELECT count(*) FROM repository_object_retention r JOIN document_part_attempt_objects o ON o.physical_object_id=r.object_id
+                WHERE o.attempt_id=:id AND r.reclaiming
+                """).setParameter("id", f.attempt.id()).getSingleResult()).longValue());
+        assertThat(fenced).isEqualTo(1);
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            em.createNativeQuery("""
+                    UPDATE repository_object_retention SET reclaiming=false WHERE object_id IN
+                    (SELECT physical_object_id FROM document_part_attempt_objects WHERE attempt_id=:id)
+                    """).setParameter("id", f.attempt.id()).executeUpdate();
+        })).hasStackTraceContaining("fence is permanent");
+    }
+
+    private static long sharedReferences(UUID attempt) {
+        return tx.readOnly(em -> ((Number) em.createNativeQuery("""
+                SELECT count(*) FROM repository_object_references r JOIN document_part_attempt_objects o ON o.physical_object_id=r.object_id
+                WHERE o.attempt_id=:id
+                """).setParameter("id", attempt).getSingleResult()).longValue());
+    }
+
     @Test void readSnapshotRetainsOriginalBindingAfterDriveChanges() {
         var f = fixture(null);
         var saved = publish(f, (em, row) -> {});

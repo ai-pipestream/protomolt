@@ -1073,8 +1073,9 @@ or history contracts. Reuse is not implemented by this diagnostic.
 
 ## Transaction and concurrency design review
 
-Status: Java physical-object values and the V25 location catalog are implemented.
-Shared retention, cleanup authority and immutable-part reuse remain unfinished.
+Status: Java physical-object values, the V25 location catalog and the V26 native
+retention bridge are implemented. Independent cross-domain references, reader
+pins, common cleanup orchestration and immutable-part reuse remain unfinished.
 The earlier V25 reference-table experiment remains stashed; it is not the V25
 location migration now in the tree. Design choices below take priority over
 fitting a new API to that experiment.
@@ -1331,6 +1332,31 @@ without creating a reference. An unproved occurrence cannot borrow another
 rendition's known location. Document lookups use the existing digest index plus
 exact key comparison. These checks establish registration behavior, not provider
 qualification, shared retention, or a latency target.
+
+V26 mirrors existing `ARCHIVE_VERSION`, `DOCUMENT_HISTORY` and `DOCUMENT_CURRENT`
+owners into `repository_object_references`. The mirror requires the exact native
+owner; it cannot mint ownership from an object UUID. Native insertion, replacement
+and release update the mirror in the same transaction. A retained native owner
+prevents direct mirror release. No public reference API or independent reader,
+raw or schema owner is enabled by this migration.
+
+Existing archive cleanup, archive mutation targets and abandoned-document cleanup
+set a permanent `repository_object_retention` fence. They lock the source owner
+before the shared retention row; document changes lock their part rows in object
+ID order. Native reference deletion follows that order too. Existing cleanup
+tombstones are fenced during backfill. Failed publication rolls back reference
+changes; a successful cleanup observation does not clear the fence. Old cleanup
+ledgers still schedule and perform reclamation, and provider I/O stays outside SQL.
+
+`RepositoryRetentionMigrationIT` checks populated archive reference and archive/
+document cleanup upgrades. Publication tests check mirror replacement, rollback,
+forged-owner rejection and history preservation when the current document is
+removed. Archive race tests check the shared fence alongside native outcomes.
+The abandoned-document cleanup path still excludes published attempts, so these
+tests do not claim a reachable published-reference versus abandoned-cleanup race.
+Document mirrors use set-based SQL within the publication transaction, adding one
+history and one current reference per part, with row guards. Their statement and
+lock costs must be measured before any performance acceptance or speedup claim.
 
 `ArchiveRetentionConcurrencyIT` supplies the SQL baseline for that fence. It
 observes actual PostgreSQL lock waits for reference-first and cleanup-first
