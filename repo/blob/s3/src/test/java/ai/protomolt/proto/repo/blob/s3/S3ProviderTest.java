@@ -49,4 +49,45 @@ class S3ProviderTest {
             assertThat(opened.store()).isInstanceOf(S3BlobStore.class);
         }
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"0", "-1", "forever", "2147483648", "9223372036854775808"})
+    void rejectsInvalidTimeoutsBeforeAcquisition(String value) {
+        var options = options();
+        options.put("api-call-timeout-ms", value);
+        assertThatThrownBy(() -> BlobStores.discover().open("s3", options))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("positive milliseconds");
+    }
+
+    @Test void rejectsInconsistentTimeoutBudget() {
+        var options = options();
+        options.put("api-call-timeout-ms", "1000");
+        assertThatThrownBy(() -> BlobStores.discover().open("s3", options))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("API attempt <= API call");
+    }
+
+    @Test void providerAppliesFiniteTimeoutToStalledHttpRead() throws Exception {
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            entered.countDown();
+            try { release.await(10, java.util.concurrent.TimeUnit.SECONDS); }
+            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+            finally { exchange.close(); }
+        });
+        server.start();
+        var options = options();
+        options.put("endpoint", "http://127.0.0.1:" + server.getAddress().getPort());
+        options.put("api-call-timeout-ms", "1500");
+        options.put("api-attempt-timeout-ms", "1000");
+        options.put("connection-timeout-ms", "500");
+        options.put("socket-timeout-ms", "1000");
+        try (var opened = BlobStores.discover().open("s3", options)) {
+            assertThatThrownBy(() -> opened.store().get("bucket", "key"))
+                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.blob.spi.BlobStoreException.class,
+                            e -> assertThat(e.code()).isEqualTo(ai.protomolt.proto.repo.blob.spi.BlobStoreException.Code.DEADLINE_EXCEEDED));
+            assertThat(entered.getCount()).isZero();
+        } finally { release.countDown(); server.stop(0); }
+    }
 }

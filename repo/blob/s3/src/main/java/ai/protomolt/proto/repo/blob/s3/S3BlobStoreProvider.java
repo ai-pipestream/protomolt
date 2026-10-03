@@ -18,6 +18,9 @@ import software.amazon.awssdk.services.s3.S3Client;
 
 /** S3 factory with explicitly selected static credentials or the AWS default chain. */
 public final class S3BlobStoreProvider implements BlobStoreProvider {
+    private static final Map<String, Long> TIMEOUT_DEFAULTS = Map.of(
+            "api-call-timeout-ms", 300_000L, "api-attempt-timeout-ms", 60_000L,
+            "connection-timeout-ms", 10_000L, "socket-timeout-ms", 60_000L);
     @Override public String id() { return "s3"; }
 
     @Override public ai.protomolt.proto.repo.blob.spi.BackendIdentity managedIdentity(Map<String, String> options) {
@@ -34,6 +37,7 @@ public final class S3BlobStoreProvider implements BlobStoreProvider {
             throw new IllegalArgumentException("S3 credentials-mode must be static or default-chain");
         }
         var keys = new HashSet<>(Set.of("endpoint", "region", "path-style", "conditional-writes"));
+        for (String key : TIMEOUT_DEFAULTS.keySet()) if (options.containsKey(key)) keys.add(key);
         if (options.containsKey("credentials-mode")) keys.add("credentials-mode");
         if (mode.equals("static")) keys.addAll(Set.of("access-key", "secret-key"));
         if (!options.keySet().equals(keys)) throw new IllegalArgumentException("Invalid S3 option set");
@@ -54,6 +58,13 @@ public final class S3BlobStoreProvider implements BlobStoreProvider {
         }
         boolean pathStyle = bool(options, "path-style");
         boolean conditional = bool(options, "conditional-writes");
+        var callTimeout = timeout(options, "api-call-timeout-ms");
+        var attemptTimeout = timeout(options, "api-attempt-timeout-ms");
+        var connectionTimeout = timeout(options, "connection-timeout-ms");
+        var socketTimeout = timeout(options, "socket-timeout-ms");
+        if (attemptTimeout.compareTo(callTimeout) > 0 || connectionTimeout.compareTo(attemptTimeout) > 0
+                || socketTimeout.compareTo(attemptTimeout) > 0)
+            throw new IllegalArgumentException("S3 timeouts must satisfy connection/socket <= API attempt <= API call");
         Region region = Region.of(options.get("region"));
         AwsCredentialsProvider credentials = mode.equals("static")
                 ? StaticCredentialsProvider.create(AwsBasicCredentials.create(options.get("access-key"), options.get("secret-key")))
@@ -61,7 +72,9 @@ public final class S3BlobStoreProvider implements BlobStoreProvider {
         S3Client acquired = null;
         try {
             var builder = S3Client.builder().region(region).credentialsProvider(credentials)
-                    .forcePathStyle(pathStyle).httpClientBuilder(UrlConnectionHttpClient.builder());
+                    .forcePathStyle(pathStyle).httpClientBuilder(UrlConnectionHttpClient.builder()
+                            .connectionTimeout(connectionTimeout).socketTimeout(socketTimeout))
+                    .overrideConfiguration(config -> config.apiCallTimeout(callTimeout).apiCallAttemptTimeout(attemptTimeout));
             if (endpoint != null) builder.endpointOverride(endpoint);
             acquired = builder.build();
             S3Client client = acquired;
@@ -75,6 +88,15 @@ public final class S3BlobStoreProvider implements BlobStoreProvider {
             try { close(acquired, credentials); } catch (Exception cleanup) { failure.addSuppressed(cleanup); }
             throw failure;
         }
+    }
+
+    private static java.time.Duration timeout(Map<String, String> options, String key) {
+        long millis;
+        try { millis = options.containsKey(key) ? Long.parseLong(options.get(key)) : TIMEOUT_DEFAULTS.get(key); }
+        catch (NumberFormatException invalid) { throw new IllegalArgumentException("S3 " + key + " must be positive milliseconds"); }
+        if (millis <= 0 || millis > Integer.MAX_VALUE)
+            throw new IllegalArgumentException("S3 " + key + " must be positive milliseconds no greater than 2147483647");
+        return java.time.Duration.ofMillis(millis);
     }
 
     private static void close(S3Client client, AwsCredentialsProvider credentials) throws Exception {

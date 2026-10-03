@@ -72,6 +72,15 @@ The original key-pair option form selects static credentials. Alternatively,
 `credentials-mode=static` requires that pair, while `credentials-mode=default-chain`
 forbids it and explicitly selects the AWS credential chain. An empty `endpoint`
 selects the regional AWS endpoint; it is not a fallback for malformed input.
+The factory sets finite timeouts. Optional millisecond settings are
+`api-call-timeout-ms` (default 300000), `api-attempt-timeout-ms` (60000),
+`connection-timeout-ms` (10000), and `socket-timeout-ms` (60000). Values must be
+positive integers no greater than 2147483647, with connection and socket timeouts
+no greater than the attempt timeout, and the attempt timeout no greater than the
+whole-call timeout. These budgets apply to SDK operations, including writes;
+large transfers may need explicit tuning. They are operational settings and do
+not change a backend's physical identity. Hosts supplying an already-constructed
+client remain responsible for that client's timeouts.
 The factory owns the client and any closeable credential provider. Setting
 `conditional-writes=true` is an operator assertion that the endpoint has been
 qualified; discovery does not establish remote atomicity. The tests qualify the
