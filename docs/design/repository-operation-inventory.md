@@ -556,9 +556,18 @@ repeat checks wait one hour. Passes run on the configured sweep interval. Retry
 and lost-claim outcomes are logged, including original failures. There is no
 current-drive fallback and no adoption or deletion of legacy untracked parts.
 
-Before public writer integration, the engine must acquire carried partial-save
-fragments as exact verified bytes from their original binding; assembling and
-splitting a message again is not proof of byte preservation. The container writer
+`DocumentPartReader.readFragments` now provides carried partial-save fragments as
+exact verified bytes from their original binding. It detaches provider buffers
+before measuring size/hash and returns the selected slots in publication order,
+using the same bounded fetches and cancellation checks as typed reads. Tests retain
+noncanonical valid protobuf wire bytes that parsing and serialization normalize,
+read the recorded version after a latest-version overwrite, and prove provider
+buffer mutation cannot change returned fragments. This is storage-integrity
+verification, not protobuf/schema admission or source authorization.
+
+Before public writer integration, the engine must use these exact fragments;
+assembling and splitting a message again is not proof of byte preservation.
+Legacy carried fragments still need their own verified source path. The container writer
 must stage the complete plan and use `saveVerifiedAttempt`, retaining the engine's
 destination/source authorization, sampled revisions, raw-reference publication and
 outbox in the guarded transaction. A same-body managed deduplication should retain

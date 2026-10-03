@@ -2,6 +2,7 @@ package ai.protomolt.proto.repo.engine;
 
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.codec.DocumentPartCodec;
+import ai.protomolt.proto.repo.codec.PartObject;
 import ai.protomolt.proto.repo.container.ledger.DocumentPublicationLedger;
 import ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger;
 import ai.protomolt.proto.repo.spi.RepositoryException;
@@ -9,6 +10,7 @@ import ai.protomolt.proto.repo.spi.RepositoryReadControl;
 import ai.protomolt.proto.repo.v1.DocumentPart;
 import com.google.protobuf.Message;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
@@ -47,6 +49,27 @@ public final class DocumentPartReader {
 
     public <T extends Message> T read(DocumentPublicationLedger.Publication publication,
             Set<DocumentPart> mask, Set<String> chunkSets, T prototype, RepositoryReadControl control) {
+        var fragments = readFragments(publication, mask, chunkSets, control);
+        control.check();
+        try {
+            T result = DocumentPartCodec.assemble(fragments.stream()
+                    .map(PartObject::bytes).toList(), prototype);
+            control.check();
+            return result;
+        } catch (com.google.protobuf.InvalidProtocolBufferException invalid) {
+            throw new RepositoryException(RepositoryException.Code.DATA_LOSS,"Published document fragments cannot be decoded",invalid);
+        }
+    }
+
+    /**
+     * Exact verified bytes in publication order, without protobuf decoding or reserialization.
+     * Intended for carrying unchanged parts from an already-authorized snapshot into a new
+     * attempt. The caller must still fence the source revision and access at publication.
+     * This checks storage integrity, not schema validity. Returned byte arrays belong to the caller.
+     */
+    public List<PartObject> readFragments(
+            DocumentPublicationLedger.Publication publication, Set<DocumentPart> mask,
+            Set<String> chunkSets, RepositoryReadControl control) {
         control.check();
         var store=backends.resolve(publication.generation(),publication.profile());
         control.check();
@@ -100,14 +123,13 @@ public final class DocumentPartReader {
             }
         }
         control.check();
-        try {
-            T result = DocumentPartCodec.assemble(fragments,prototype);
-            control.check();
-            return result;
+        var result = new ArrayList<PartObject>(wanted.size());
+        for (int i = 0; i < wanted.size(); i++) {
+            var part = wanted.get(i);
+            result.add(new PartObject(part.part(), part.subKey(), fragments.get(i), part.sha256()));
         }
-        catch (com.google.protobuf.InvalidProtocolBufferException invalid) {
-            throw new RepositoryException(RepositoryException.Code.DATA_LOSS,"Published document fragments cannot be decoded",invalid);
-        }
+        control.check();
+        return List.copyOf(result);
     }
 
     private byte[] readBounded(BlobStore store, String namespace, DocumentPublicationLedger.Part part,
@@ -131,11 +153,13 @@ public final class DocumentPartReader {
         catch (BlobStore.BlobNotFoundException missing) {
             throw new RepositoryException(RepositoryException.Code.DATA_LOSS,"Published document part is missing from its original backend",missing);
         }
-        if (result==null || result.data()==null || result.data().length!=part.size()
-                || !DocumentPartCodec.sha256Hex(result.data()).equals(part.sha256())
+        // Detach before measuring: the byte SPI does not promise ownership of its result buffer.
+        byte[] bytes = result == null || result.data() == null ? null : result.data().clone();
+        if (bytes==null || bytes.length!=part.size()
+                || !DocumentPartCodec.sha256Hex(bytes).equals(part.sha256())
                 || (part.providerVersion()!=null && !part.providerVersion().equals(result.versionId()))
                 || (part.etag()!=null && !part.etag().equals(result.eTag())))
             throw new RepositoryException(RepositoryException.Code.DATA_LOSS,"Document part disagrees with its published byte or provider identity");
-        return result.data();
+        return bytes;
     }
 }

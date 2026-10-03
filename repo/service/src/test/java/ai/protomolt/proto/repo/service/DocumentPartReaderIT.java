@@ -301,6 +301,48 @@ class DocumentPartReaderIT {
             assertThat(server.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
         }
     }
+    @Test void carriedFragmentsPreserveWireBytesThatParsingWouldNormalize() throws Exception {
+        var output = new java.io.ByteArrayOutputStream();
+        var coded = com.google.protobuf.CodedOutputStream.newInstance(output);
+        coded.writeString(Document.DOC_ID_FIELD_NUMBER, "earlier");
+        coded.writeString(Document.DOC_ID_FIELD_NUMBER, "final");
+        coded.flush();
+        byte[] bytes = output.toByteArray();
+        assertThat(Document.parseFrom(bytes).getDocId()).isEqualTo("final");
+        assertThat(Document.parseFrom(bytes).toByteArray()).isNotEqualTo(bytes);
+        var publication = publish(bytes);
+        // A replacement at the same key must not change the recorded version being carried.
+        opened.store().put(new ai.protomolt.proto.repo.blob.spi.BlobStore.PutSpec(NAMESPACE,
+                publication.parts().getFirst().key(), "application/protobuf", java.util.Map.of(), null),
+                Document.newBuilder().setDocId("replacement").build().toByteArray());
+        var fragments = reader().readFragments(publication, Set.of(), Set.of(),
+                ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+        assertThat(fragments).hasSize(1);
+        assertThat(fragments.getFirst().bytes()).containsExactly(bytes);
+        assertThat(fragments.getFirst().sha256()).isEqualTo(publication.parts().getFirst().sha256());
+        assertThat(fragments.getFirst().part()).isEqualTo(DocumentPart.DOCUMENT_PART_CORE);
+        assertThat(fragments.getFirst().subKey()).isEmpty();
+    }
+
+    @Test void carriedFragmentsOwnTheirBytesIndependentlyOfProviderBuffer() {
+        byte[] expected = Document.newBuilder().setDocId("detached").build().toByteArray();
+        var publication = publish(expected);
+        var providerBuffer = new java.util.concurrent.atomic.AtomicReference<byte[]>();
+        BlobStore observed = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
+                new Class<?>[] {BlobStore.class}, (proxy, method, arguments) -> {
+                    try {
+                        Object result = method.invoke(store, arguments);
+                        if (method.getName().equals("get")) providerBuffer.set(((BlobStore.GetResult) result).data());
+                        return result;
+                    } catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                });
+        var fragments = new DocumentPartReader((generation, retained) -> observed).readFragments(publication,
+                Set.of(), Set.of(), ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+        java.util.Arrays.fill(providerBuffer.get(), (byte) 0);
+        assertThat(fragments.getFirst().bytes()).containsExactly(expected);
+        assertThat(DocumentPartCodec.sha256Hex(fragments.getFirst().bytes())).isEqualTo(fragments.getFirst().sha256());
+    }
+
     @Test void readsRecordedVersionAfterLatestBytesAreReplaced() {
         var expected = Document.newBuilder().setDocId("original").build();
         var publication = publish(expected.toByteArray());
