@@ -36,6 +36,50 @@ class ArchiveReadQuiescenceIT {
 
     @AfterAll static void closeDatabase() { if (database != null) database.close(); }
 
+    @Test void failingFirstPageDoesNotStarveLaterPinsAndIsRetriedAfterWrap() throws Exception {
+        UUID id = UUID.randomUUID();
+        var ledger = new ArchiveReadLedger(tx(), id);
+        var recovery = new ArchiveReadRecovery(tx());
+        try (var connection = connection()) {
+            UUID object = archive(connection, false), entry = entry(connection, object);
+            var handles = java.util.List.of(ledger.acquire(entry, 1, object).orElseThrow(),
+                    ledger.acquire(entry, 1, object).orElseThrow(), ledger.acquire(entry, 1, object).orElseThrow());
+            String trigger = "fair_release_" + id.toString().replace("-", "");
+            execute(connection, "CREATE FUNCTION " + trigger + "() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN "
+                    + "IF OLD.reader_incarnation='" + id + "' THEN RAISE EXCEPTION 'injected fairness failure'; END IF; RETURN OLD; END $$");
+            execute(connection, "CREATE TRIGGER " + trigger + " BEFORE DELETE ON archive_read_pins FOR EACH ROW EXECUTE FUNCTION " + trigger + "()");
+            try {
+                ledger.fence();
+                for (var handle : handles) assertThatThrownBy(handle::close).hasStackTraceContaining("injected fairness failure");
+                ledger.attestLocalQuiescence();
+                UUID first;
+                try (var statement = connection.createStatement(); var result = statement.executeQuery(
+                        "SELECT pin_id FROM archive_read_pins WHERE reader_incarnation='" + id + "' ORDER BY object_id,pin_id LIMIT 1")) {
+                    assertThat(result.next()).isTrue(); first = result.getObject(1, UUID.class);
+                }
+                execute(connection, "CREATE OR REPLACE FUNCTION " + trigger + "() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN "
+                        + "IF OLD.pin_id='" + first + "' THEN RAISE EXCEPTION 'injected fairness failure'; END IF; RETURN OLD; END $$");
+                assertThatThrownBy(() -> recovery.recover(1)).hasStackTraceContaining("injected fairness failure");
+                assertThat(pinCount(connection, id)).isEqualTo(3);
+                assertThat(recovery.recover(1)).isEqualTo(1);
+                assertThat(pinCount(connection, id)).isEqualTo(2);
+                assertThat(recovery.recover(1)).isEqualTo(1);
+                assertThat(pinCount(connection, id)).isEqualTo(1);
+                assertThatThrownBy(() -> recovery.recover(1)).hasStackTraceContaining("injected fairness failure");
+                assertThat(pinCount(connection, id)).isEqualTo(1);
+                // A restart resets scheduling, not durable retention or failure state.
+                assertThatThrownBy(() -> new ArchiveReadRecovery(tx()).recover(1))
+                        .hasStackTraceContaining("injected fairness failure");
+                assertThat(pinCount(connection, id)).isEqualTo(1);
+            } finally {
+                execute(connection, "DROP TRIGGER " + trigger + " ON archive_read_pins");
+                execute(connection, "DROP FUNCTION " + trigger + "()");
+            }
+            assertThat(recovery.recover(1)).isEqualTo(1);
+            assertThat(pinCount(connection, id)).isZero();
+        }
+    }
+
     @Test void emptyAndSqlFailedAcquisitionsCompleteTheirLocalLifetimes() throws Exception {
         UUID id = UUID.randomUUID();
         var ledger = new ArchiveReadLedger(tx(), id);
@@ -148,7 +192,8 @@ class ArchiveReadQuiescenceIT {
             execute(connection, "CREATE TRIGGER " + trigger + " BEFORE DELETE ON archive_read_pins "
                     + "FOR EACH ROW EXECUTE FUNCTION " + trigger + "()");
             try {
-                assertThatThrownBy(() -> recovery.recover(2)).satisfies(error ->
+                // A fresh pass selects both pins to exercise partial-batch failure.
+                assertThatThrownBy(() -> new ArchiveReadRecovery(tx()).recover(2)).satisfies(error ->
                         assertThat(rootCause(error)).hasMessageContaining("one object still fails"));
                 assertThat(pinCount(connection, id)).isEqualTo(1);
                 assertThat(mirrorCount(connection, first, second)).isEqualTo(1);

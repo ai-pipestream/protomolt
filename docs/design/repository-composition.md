@@ -1575,6 +1575,35 @@ records 178 passing regression cases, the separate real-provider benchmark and
 Sol review. Measured reads retain two client statements/two transactions;
 uncontrolled host timing remains diagnostic rather than latency qualification.
 
+V33 prevents a permanently failing first recovery page from monopolizing a
+running recovery instance. A keyset cursor advances past every attempted batch,
+including failed releases, using immutable `(object_id,pin_id)` order. An empty
+page after the cursor causes one query from the beginning; a short nonempty page
+is not filled by wrapping. A call therefore selects at most its limit, issues
+at most two candidate queries and never retries a selected pin twice. The
+composite index replaces the existing object-only index, preserving its lookup
+prefix without increasing the steady-state index count.
+
+The cursor is instance-local scheduling state, not cleanup authority. All
+releases still check durable QUIESCED state and exact identity. Failed pins
+remain retained and are retried on later traversals. A restart begins again at
+the first page. This proves progress through a finite or stable eligible set
+while the instance lives; it does not promise a retry deadline under continuous
+arrivals, repeated restarts or competing hosts. Join/filter scan cost at large
+scale remains unqualified. No protobuf or public operation contract changes.
+The real PostgreSQL test
+`failingFirstPageDoesNotStarveLaterPinsAndIsRetriedAfterWrap` failed against
+`b78ca15a` because its second pass reselected the poisoned first pin. With V33
+and the cursor, it passes: two later pins are released, the failed pin is retried
+after wrap and a fresh recovery instance still observes its durable failure.
+The affected suite passed 66 container and 113 service tests on 2026-10-03; the
+opt-in benchmark was skipped. Sol reviewed the cursor and index replacement
+with no correctness blocker. This is scheduling/concurrency evidence, not a
+new throughput or latency measurement.
+Operation inventory: internal recovery scheduling is extended; registration,
+fencing, attestation, release identity, wire schemas and receipt bindings are
+unchanged. V33 changes only the database index supporting recovery order.
+
 V27 separates logical retirement from physical reclamation. An admitted archive
 mutation closes reference acquisition with a permanent retiring flag; the later
 cleanup claim sets the permanent reclaiming flag. Reclaiming always implies
