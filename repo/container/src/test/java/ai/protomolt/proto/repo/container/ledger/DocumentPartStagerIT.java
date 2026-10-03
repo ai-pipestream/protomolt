@@ -269,6 +269,89 @@ class DocumentPartStagerIT {
         assertThat(new DocumentPartAttemptLedger(tx).find(input.plan().attemptId())).isEmpty();
     }
 
+    @Test void recoveryReclaimsExactVersionsAndRechecksLateWrites() {
+        var input = input();
+        try (var stager = new DocumentPartStager(tx, GENERATION, identity, opened)) {
+            stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(1), Map.of());
+        }
+        expire(input.plan().attemptId());
+        String unrelated = "unrelated/" + UUID.randomUUID();
+        opened.store().put(new BlobStore.PutSpec(NAMESPACE, unrelated, "text/plain", Map.of(), null), new byte[] {1});
+        var recovery = new DocumentAttemptRecovery(new DocumentAttemptCleanupLedger(tx), (generation, profile) -> {
+            assertThat(generation).isEqualTo(GENERATION);
+            assertThat(profile.identity()).isEqualTo(identity);
+            assertThat(profile.storageRealm()).isEqualTo("stager-realm");
+            return opened.reclaimer();
+        });
+        assertThat(recovery.recover(input.plan().attemptId(), Duration.ofSeconds(5)).outcome()).isEqualTo(DocumentAttemptRecovery.Outcome.ABSENT);
+        for (var object : input.plan().objects())
+            assertThatThrownBy(() -> opened.store().get(NAMESPACE, object.objectKey())).isInstanceOf(BlobStore.BlobNotFoundException.class);
+        // Simulate a late provider commit after the first absence observation.
+        var object = input.plan().objects().getFirst();
+        opened.store().put(new BlobStore.PutSpec(NAMESPACE, object.objectKey(), object.contentType(), Map.of(), object.sha256()),
+                input.payloads().getFirst().bytes());
+        assertThat(recovery.recover(input.plan().attemptId(), Duration.ofSeconds(5)).outcome()).isEqualTo(DocumentAttemptRecovery.Outcome.ABSENT);
+        assertThatThrownBy(() -> opened.store().get(NAMESPACE, object.objectKey())).isInstanceOf(BlobStore.BlobNotFoundException.class);
+        assertThat(opened.store().get(NAMESPACE, unrelated).data()).containsExactly((byte) 1);
+        assertThat(new DocumentPartAttemptLedger(tx).find(input.plan().attemptId())).isPresent();
+    }
+
+    @Test void recoveryKeepsFailuresAndRetriesAfterBackendReturns() {
+        var input = input();
+        try (var stager = new DocumentPartStager(tx, GENERATION, identity, opened)) {
+            stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(1), Map.of());
+        }
+        expire(input.plan().attemptId());
+        var cleanup = new DocumentAttemptCleanupLedger(tx);
+        var unavailable = new DocumentAttemptRecovery(cleanup, (generation, profile) -> null);
+        var failed = unavailable.recover(input.plan().attemptId(), Duration.ofSeconds(5));
+        assertThat(failed.outcome()).isEqualTo(DocumentAttemptRecovery.Outcome.RETRY);
+        assertThat(failed.failure()).isInstanceOf(IllegalStateException.class);
+        String diagnostic = tx.readOnly(em -> (String) em.createNativeQuery(
+                "SELECT last_error FROM document_part_attempt_cleanup WHERE attempt_id=:id")
+                .setParameter("id", input.plan().attemptId()).getSingleResult());
+        assertThat(diagnostic).contains("IllegalStateException");
+        assertThat(opened.store().get(NAMESPACE, input.plan().objects().getFirst().objectKey()).data()).isNotEmpty();
+        var recovered = new DocumentAttemptRecovery(cleanup, (generation, profile) -> opened.reclaimer());
+        assertThat(recovered.recover(input.plan().attemptId(), Duration.ofSeconds(5)).outcome()).isEqualTo(DocumentAttemptRecovery.Outcome.ABSENT);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void recoveryDoesNotTurnUnconfirmedOrLostDeletionAcknowledgementIntoSuccess(boolean lostAcknowledgement) {
+        var input = input();
+        try (var stager = new DocumentPartStager(tx, GENERATION, identity, opened)) {
+            stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(1), Map.of());
+        }
+        expire(input.plan().attemptId());
+        var cleanup = new DocumentAttemptCleanupLedger(tx);
+        var fault = new IllegalStateException("Injected lost deletion acknowledgement");
+        var visited = new java.util.ArrayList<String>();
+        var recovery = new DocumentAttemptRecovery(cleanup, (generation, profile) -> (namespace, key) -> {
+            visited.add(key);
+            opened.reclaimer().reclaim(namespace, key);
+            if (lostAcknowledgement) throw fault;
+            return false; // Real deletion occurred, but the caller cannot confirm absence.
+        });
+        var result = recovery.recover(input.plan().attemptId(), Duration.ofSeconds(5));
+        assertThat(result.outcome()).isEqualTo(DocumentAttemptRecovery.Outcome.RETRY);
+        if (lostAcknowledgement) assertThat(result.failure()).isSameAs(fault);
+        else {
+            assertThat(result.failure()).isNull();
+            assertThat(visited).containsExactlyElementsOf(input.plan().objects().stream().map(DocumentPartAttemptLedger.PlannedObject::objectKey).toList());
+        }
+        assertThat(cleanup.candidates(Duration.ZERO, 1000)).contains(input.plan().attemptId());
+        var retried = new DocumentAttemptRecovery(cleanup, (generation, profile) -> opened.reclaimer());
+        assertThat(retried.recover(input.plan().attemptId(), Duration.ofSeconds(5)).outcome()).isEqualTo(DocumentAttemptRecovery.Outcome.ABSENT);
+    }
+
+    private static void expire(UUID attempt) {
+        tx.readOnly(em -> em.createNativeQuery("""
+                SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM lease_until-clock_timestamp()))+0.05)
+                FROM document_part_attempts WHERE attempt_id=:id
+                """).setParameter("id", attempt).getSingleResult());
+    }
+
     @Test void closeReportsBusyUntilProviderReturnsAndReleasesBorrowedResources() throws Exception {
         var input = input();
         var entered = new java.util.concurrent.CountDownLatch(1);

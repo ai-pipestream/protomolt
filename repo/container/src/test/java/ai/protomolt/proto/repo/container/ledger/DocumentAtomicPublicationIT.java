@@ -77,6 +77,131 @@ class DocumentAtomicPublicationIT {
         assertThat(revision).isEqualTo(saved.mutationRevision);
     }
 
+    @Test void abandonedCleanupClaimsExpireAndAbsenceRemainsEligible() {
+        var f = fixture(null, Duration.ofSeconds(1));
+        var cleanup = new DocumentAttemptCleanupLedger(tx);
+        assertThat(cleanup.claim(f.attempt.id(), Duration.ofSeconds(5))).isEmpty();
+        expireAttempt(f.attempt.id());
+        var claim = cleanup.claim(f.attempt.id(), Duration.ofSeconds(5)).orElseThrow();
+        assertThat(claim.keys()).containsExactly(f.row.readManifest().getParts(0).getObjectKey());
+        assertThat(claim.generation()).isEqualTo(f.attempt.location().backendGeneration());
+        assertThat(claim.namespace()).isEqualTo(f.attempt.location().namespace());
+        assertThat(cleanup.claim(f.attempt.id(), Duration.ofSeconds(5))).isEmpty();
+        assertThat(cleanup.candidates(Duration.ZERO, 1000)).doesNotContain(f.attempt.id());
+        assertThat(cleanup.finish(claim, true, null)).isTrue();
+        assertThat(cleanup.candidates(Duration.ZERO, 1000)).contains(f.attempt.id());
+        assertThat(cleanup.candidates(Duration.ofHours(1), 1000)).doesNotContain(f.attempt.id());
+        var again = cleanup.claim(f.attempt.id(), Duration.ofSeconds(5)).orElseThrow();
+        assertThat(again.token()).isNotEqualTo(claim.token());
+        assertThat(cleanup.finish(claim, true, null)).isFalse();
+        assertThat(cleanup.renew(claim, Duration.ofSeconds(5))).isFalse();
+        assertThat(cleanup.finish(again, false, "Provider cleanup failed")).isTrue();
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            em.createNativeQuery("DELETE FROM document_part_attempt_cleanup WHERE attempt_id=:id")
+                    .setParameter("id", f.attempt.id()).executeUpdate();
+        })).hasStackTraceContaining("tombstone cannot be deleted");
+        assertThatThrownBy(() -> publish(f, (em, row) -> {}))
+                .isInstanceOf(DocumentPartAttemptLedger.FenceException.class);
+    }
+
+    @Test void cleanupNeverClaimsPublishedHistoryEvenAfterRowDeletion() {
+        var f = fixture(null, Duration.ofSeconds(1));
+        var saved = publish(f, (em, row) -> {});
+        expireAttempt(f.attempt.id());
+        documents.deleteByNodeId(saved.nodeId);
+        var cleanup = new DocumentAttemptCleanupLedger(tx);
+        assertThat(cleanup.claim(f.attempt.id(), Duration.ofSeconds(5))).isEmpty();
+        assertThat(cleanup.candidates(Duration.ZERO, 1000)).doesNotContain(f.attempt.id());
+        assertThatThrownBy(() -> insertCleanup(f.attempt.id())).hasStackTraceContaining("Published document attempts are retained");
+    }
+
+    @Test void expiredCleanupOwnerCannotRecordResultAndCanBeReplaced() {
+        var f = fixture(null, Duration.ofSeconds(1));
+        expireAttempt(f.attempt.id());
+        var cleanup = new DocumentAttemptCleanupLedger(tx);
+        var old = cleanup.claim(f.attempt.id(), Duration.ofSeconds(1)).orElseThrow();
+        tx.readOnly(em -> em.createNativeQuery("""
+                SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM claim_until-clock_timestamp()))+0.05)
+                FROM document_part_attempt_cleanup WHERE attempt_id=:id
+                """).setParameter("id", f.attempt.id()).getSingleResult());
+        assertThat(cleanup.finish(old, true, null)).isFalse();
+        assertThat(cleanup.renew(old, Duration.ofSeconds(5))).isFalse();
+        var replacement = cleanup.claim(f.attempt.id(), Duration.ofSeconds(5)).orElseThrow();
+        assertThat(cleanup.finish(replacement, true, null)).isTrue();
+    }
+
+    @Test void directSqlCannotClaimALiveWriter() {
+        var f = fixture(null);
+        assertThatThrownBy(() -> insertCleanup(f.attempt.id())).hasStackTraceContaining("expired sealed attempt");
+    }
+
+    @Test void publicationHoldingAttemptLockWinsAgainstExpiredCleanupScan() throws Exception {
+        var f = fixture(null, Duration.ofSeconds(1));
+        var publishing = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var claiming = new java.util.concurrent.CountDownLatch(1);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var publication = executor.submit(() -> publish(f, (em, row) -> {
+                publishing.countDown();
+                try { assertThat(release.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue(); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException(e); }
+            }));
+            try {
+                assertThat(publishing.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                expireAttempt(f.attempt.id());
+                var cleanup = executor.submit(() -> {
+                    claiming.countDown();
+                    return new DocumentAttemptCleanupLedger(tx).claim(f.attempt.id(), Duration.ofSeconds(5));
+                });
+                assertThat(claiming.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                assertThatThrownBy(() -> cleanup.get(200, java.util.concurrent.TimeUnit.MILLISECONDS))
+                        .isInstanceOf(java.util.concurrent.TimeoutException.class);
+                release.countDown();
+                publication.get(5, java.util.concurrent.TimeUnit.SECONDS);
+                assertThat(cleanup.get(5, java.util.concurrent.TimeUnit.SECONDS)).isEmpty();
+                assertThat(pin(f.row.nodeId)).isEqualTo(f.attempt.id());
+            } finally { release.countDown(); }
+        }
+    }
+
+    @Test void concurrentCleanupClaimsHaveOnlyOneOwnerAndFenceDirectPublication() throws Exception {
+        var f = fixture(null, Duration.ofSeconds(1));
+        expireAttempt(f.attempt.id());
+        var start = new java.util.concurrent.CountDownLatch(1);
+        var cleanup = new DocumentAttemptCleanupLedger(tx);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            java.util.concurrent.Callable<Boolean> compete = () -> {
+                start.await();
+                return cleanup.claim(f.attempt.id(), Duration.ofSeconds(5)).isPresent();
+            };
+            var one = executor.submit(compete); var two = executor.submit(compete); start.countDown();
+            assertThat(List.of(one.get(5, java.util.concurrent.TimeUnit.SECONDS), two.get(5, java.util.concurrent.TimeUnit.SECONDS)))
+                    .containsExactlyInAnyOrder(true, false);
+        }
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            em.createNativeQuery("""
+                    INSERT INTO document_part_publication_history(attempt_id,node_id,publication_revision,body)
+                    VALUES (:attempt,:node,1,CAST('{}' AS jsonb))
+                    """).setParameter("attempt", f.attempt.id()).setParameter("node", f.row.nodeId).executeUpdate();
+        })).hasStackTraceContaining("permanently fenced");
+    }
+
+    private static void insertCleanup(UUID attempt) {
+        tx.inTransaction(em -> {
+            em.createNativeQuery("""
+                    INSERT INTO document_part_attempt_cleanup(attempt_id,cleanup_token,claim_until,state)
+                    VALUES (:id,:token,clock_timestamp()+interval '5 seconds','DELETING')
+                    """).setParameter("id", attempt).setParameter("token", UUID.randomUUID()).executeUpdate();
+        });
+    }
+
+    private static void expireAttempt(UUID attempt) {
+        tx.readOnly(em -> em.createNativeQuery("""
+                SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM lease_until-clock_timestamp()))+0.05)
+                FROM document_part_attempts WHERE attempt_id=:id
+                """).setParameter("id", attempt).getSingleResult());
+    }
+
     @Test void callbackFailureRollsBackRowPinHistoryAndOutboxAndAllowsRetry() {
         var f = fixture(null);
         assertThatThrownBy(() -> publish(f, (em, row) -> {
@@ -224,6 +349,9 @@ class DocumentAtomicPublicationIT {
     private record Fixture(DocumentRecord row, Long expected, DocumentPartAttemptLedger.Attempt attempt,
             DriveRecord drive, DocumentPublicationTarget target) {}
     private static Fixture fixture(DocumentRecord previous) {
+        return fixture(previous, Duration.ofMinutes(5));
+    }
+    private static Fixture fixture(DocumentRecord previous, Duration lease) {
         UUID node = previous == null ? UUID.randomUUID() : previous.nodeId;
         String generation = "atomic-" + UUID.randomUUID();
         var backend = new BackendIdentity("test-location", "test-location/v1", Map.of("endpoint", "https://storage.example"));
@@ -238,7 +366,7 @@ class DocumentAtomicPublicationIT {
                 new DocumentPartAttemptLedger.Location(node,"account",generation,"container"),
                 previous == null ? 0 : previous.mutationRevision, Map.of(), List.of(object));
         var attempts = new DocumentPartAttemptLedger(tx);
-        var attempt = attempts.begin(plan, Duration.ofMinutes(5));
+        var attempt = attempts.begin(plan, lease);
         attempts.verify(attempt.id(),attempt.token(),object.objectKey(),3,SHA,"v1","etag");
         var row = new DocumentRecord(); row.nodeId=node; row.accountId="account"; row.docId="doc-"+node;
         row.createdAt = previous == null ? Instant.now() : previous.createdAt;

@@ -317,9 +317,10 @@ sweep deleted the part and the save still returned success. Both now preserve
 the part and normal reads. Current and historical document namespace keys are
 quarantined without rewriting them. Generic blob mutation tests also cover
 explicit document keys and generated keys under a reserved drive prefix.
-This is a temporary safety boundary: abandoned-part cleanup is not implemented
-by this change. The dedicated attempt ledger, publication/cleanup fence and
-required interleavings are specified in `repository-composition.md` under
+This is a temporary safety boundary: the internal cleanup described below only
+covers admitted, never-published attempts. Legacy abandoned parts remain excluded.
+The dedicated attempt ledger, publication/cleanup fence and required interleavings
+are specified in `repository-composition.md` under
 Document part publication and reclamation. Existing exact document purge remains
 active; its other races are not declared resolved by the sweep quarantine.
 
@@ -332,10 +333,10 @@ revisions, expected digests/sizes and chunk order. Database guards reject unseal
 commits, plan edits and premature verification. Bounded SHA-256 reservation
 indexes retain the exact storage coordinates; a digest collision refuses admission.
 `VERIFIED` records byte verification reported by a trusted writer, not schema or
-semantic acceptance. This foundation is not wired into document saves, publication,
-purge or recovery yet and is not advertised as an available managed-write API.
-Those integrations and their concurrency tests remain required before document
-cleanup can resume.
+semantic acceptance. Internal publication and recovery now consume this foundation,
+but public document saves and host recovery are not wired to it. It is not an
+available managed-write API. End-to-end integration remains required before public
+managed writes and scheduled document cleanup can be enabled.
 
 V22 adds immutable document publication history and an active attempt reference,
 without adopting existing rows. The package-private `saveVerifiedAttempt` now
@@ -463,8 +464,9 @@ models; they do not require a replacement document RPC:
    margin. Renewal only before a long call is insufficient. Check the token after
    every call; expired ownership cannot be reacquired for publication. Cancellation
    leaves durable attempted-object records for cleanup rather than deleting inline.
-4. Extend recovery with a persisted deletion claim fenced against publication on
-   the same attempt lock. Resolve original profiles, verify no live reference,
+4. Compose the internal recovery worker with a persisted deletion claim fenced
+   against publication on the same attempt lock. Resolve original profiles,
+   require no publication history,
    reclaim only exact admitted keys, retain failures and confirm physical absence.
    Permanent identity reservations and tombstones must support repeated checks for
    a late write after lease expiry. Test cleanup racing publication, lost provider
@@ -501,8 +503,31 @@ physical service an arbitrary borrowed client reaches.
 Real PostgreSQL and versioned-storage tests cover admission before PUT, exact-version
 verification, partial progress after a lost acknowledgement, corrupt reads, caller
 payload mutation, lease expiry, slow-call renewal, budget contention and shutdown.
-These tests do not implement abandoned-attempt recovery, typed validation, copy-source
-authorization or public write idempotency. The stager does not publish documents.
+These staging tests do not establish typed validation, copy-source authorization
+or public write idempotency. The stager does not publish documents.
+
+V24 adds internal abandoned-attempt recovery through `DocumentAttemptCleanupLedger`
+and `DocumentAttemptRecovery`. A claim locks the attempt before checking lease
+expiry and publication history. Publication takes the same lock and refuses any
+cleanup tombstone. Every published attempt remains retained, even after deletion
+of the current document; historical retention and reclamation are separate work.
+Cleanup renews a token-fenced lease before each provider call and records a result
+only while that claim remains current. An expired claim cannot report success.
+
+The worker resolves the persisted backend generation and original profile, then
+reclaims each exact admitted key, including unverified PUT outcomes. It uses the
+provider's physical reclamation capability to remove versions and delete markers.
+False results and exceptions remain retryable; original exceptions are returned,
+while stored diagnostics omit provider messages. `ABSENT` records an observation,
+not a permanent guarantee: immutable tombstones remain eligible for repeated
+checks to remove late writes. Candidate filtering precedes the bounded scan limit.
+
+PostgreSQL tests cover publication/cleanup contention, competing claims, expired
+owners, direct SQL guards, and migration preservation. Versioned-storage tests
+exercise physical deletion, unrelated-key preservation, late writes, unavailable
+backends, unconfirmed deletion and lost acknowledgements. Host scheduling, restart
+qualification, exact-profile resolver composition, and public writer integration
+remain outstanding. No managed document endpoint is enabled by this checkpoint.
 
 Keep archive operations process-authorized until current-policy guards support
 scoped callers. Legacy write/staging cleanup remains separate follow-up work;
