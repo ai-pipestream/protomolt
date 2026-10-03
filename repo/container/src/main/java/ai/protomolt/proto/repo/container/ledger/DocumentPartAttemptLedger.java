@@ -110,6 +110,7 @@ public final class DocumentPartAttemptLedger {
                     .setParameter("realm", realm).setParameter("namespace", location.namespace()).setParameter("count", plan.objects().size())
                     .setParameter("sources", plan.sources().size()).setParameter("token", UUID.randomUUID())
                     .setParameter("millis", lease.toMillis()).executeUpdate();
+            DocumentKeyReservations.reserve(em, plan.objects().stream().map(PlannedObject::objectKey).toList(), id);
             for (int ordinal = 0; ordinal < plan.objects().size(); ordinal++) {
                 var object = plan.objects().get(ordinal);
                 em.createNativeQuery("""

@@ -359,14 +359,28 @@ full/partial save, original-profile reads, raw-reference integration and managed
 reclamation remain unwired. These internal checks do not qualify a managed
 document API, authorization, crash recovery or end-to-end transport behavior.
 
-Before enabling the writer, close admission versus legacy-key collisions in both
-directions. V22 refuses ordinary rows naming already admitted keys; V21 does not
-yet serialize admission against preexisting or concurrently saved legacy
-manifests. A caller-supplied reused attempt UUID can therefore name an old key.
-Fresh UUID generation is not a proof of exclusion. The next unit must either
-establish a namespace demonstrably unavailable to historical writes or serialize
-key reservation against legacy manifest references, with concurrent regressions.
-No writer may PUT/COPY under the new admission path until that gate passes.
+V23 reserves document keys permanently before provider I/O. Both attempt admission
+and the existing full/partial save paths acquire the same digest-indexed key
+reservation, with exact-key comparison on collision. Full saves reserve every
+PUT destination; partial saves reserve PUT and COPY destinations together before
+either starts. Reservation batches use a common digest/key order. A legacy key
+cannot become a managed attempt key after a failed save, row deletion or queued
+purge; reservations are not cleanup authority. This deliberately retains rows
+for abandoned legacy attempts. Global exact-key scope is conservative because
+older manifests do not identify an immutable backend realm.
+
+The migration locks writer tables, coalesces duplicate legacy document references
+and reserves document keys in purge snapshots while leaving raw blob keys alone.
+Existing managed publications retain their admitted owner. Unbound ownership
+collisions abort migration instead of silently adopting data. Regression tests
+cover existing legacy manifests, both reservation orders, simultaneous contenders,
+reversed batches and migration without changing existing document rows. Real
+library/gRPC tests assert a committed reservation exists before PUT and COPY.
+
+Deployment must drain pre-V23 writers and their provider I/O before managed writes
+are enabled. Database migration locks protect the reference scan and trigger
+installation; they cannot cancel a PUT already started by an older binary.
+The public managed writer/read/recovery integration is still not enabled.
 
 Keep archive operations process-authorized until current-policy guards support
 scoped callers. Legacy write/staging cleanup remains separate follow-up work;

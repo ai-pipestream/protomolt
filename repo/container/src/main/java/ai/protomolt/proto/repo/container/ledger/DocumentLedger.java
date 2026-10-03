@@ -43,6 +43,16 @@ public final class DocumentLedger {
     public RawObjectLedger rawObjects() { return new RawObjectLedger(tx); }
 
     /**
+     * Reserve every legacy PUT/COPY destination before provider I/O. These
+     * reservations survive failed saves and row deletion; they grant no cleanup
+     * authority and cannot be converted into managed attempts.
+     */
+    public void reserveLegacyPartKeys(List<String> keys) {
+        List<String> immutableKeys = List.copyOf(keys);
+        tx.inTransaction(em -> { DocumentKeyReservations.reserve(em, immutableKeys, null); });
+    }
+
+    /**
      * Insert-or-update by {@code node_id}. The service pre-populates the
      * record (including the caller-minted nodeId); an existing row with the
      * same nodeId is overwritten with the supplied state. For a body rewrite,

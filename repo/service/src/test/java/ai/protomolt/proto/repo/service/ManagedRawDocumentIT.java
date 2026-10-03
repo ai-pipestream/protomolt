@@ -91,6 +91,7 @@ class ManagedRawDocumentIT {
         BlobStore gated = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
                 new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
                     try {
+                        if (method.getName().equals("put")) assertLegacyReservation(((BlobStore.PutSpec)args[0]).key());
                         var result = method.invoke(store, args);
                         if (method.getName().equals("put")) {
                             key.set(((BlobStore.PutSpec) args[0]).key());
@@ -273,10 +274,20 @@ class ManagedRawDocumentIT {
     private static BlobStore aroundCopies(Runnable beforeCopy) {
         return (BlobStore) java.lang.reflect.Proxy.newProxyInstance(ManagedRawDocumentIT.class.getClassLoader(),
                 new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
-                    if (method.getName().equals("copy")) beforeCopy.run();
+                    if (method.getName().equals("copy")) {
+                        assertLegacyReservation((String)args[3]);
+                        beforeCopy.run();
+                    }
                     try { return method.invoke(store, args); }
                     catch (java.lang.reflect.InvocationTargetException error) { throw error.getCause(); }
                 });
+    }
+
+    private static void assertLegacyReservation(String key) {
+        long count = tx.readOnly(em -> ((Number)em.createNativeQuery("""
+                SELECT count(*) FROM document_part_key_reservations WHERE object_key=:key AND attempt_id IS NULL
+                """).setParameter("key",key).getSingleResult()).longValue());
+        assertThat(count).as("destination is reserved before provider I/O: %s",key).isEqualTo(1);
     }
 
     private static void assertRacingCopyRejected(boolean transport, BlobStore racing, SaveDocumentRequest request,

@@ -328,8 +328,10 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         // the earlier body. force_save flips verifyChecksums on so the store
         // rejects a PUT whose landed bytes mismatch the part hash.
         String writePrefix = writeAttemptPrefix(basePrefix);
-        PartStorage.WriteResult written = partStorage.writeParts(blobStore, drive.bucket, writePrefix,
-                r.doc(), layout, r.address(),
+        documents.reserveLegacyPartKeys(split.stream()
+                .map(part -> DocumentPartCodec.objectKey(writePrefix, part.part(), part.subKey())).toList());
+        PartStorage.WriteResult written = partStorage.writePartObjects(blobStore, drive.bucket, writePrefix,
+                split, r.address(),
                 request.hasWrittenBy() ? request.getWrittenBy() : null,
                 PART_CONTENT_TYPE, SaveResolution.s3Metadata(r), request.getForceSave(), decision.nextDocVersion());
 
@@ -412,6 +414,10 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
                 ? rawBindings.writing(r.doc().getBlobBag(), r.address().getAccountId(), destExisting)
                 : rawBindings.copying(blobStore, srcDrive, srcRow, r.address().getAccountId());
         String writePrefix = writeAttemptPrefix(basePrefix);
+        var destinationKeys = new ArrayList<String>();
+        for (var part : toWrite) destinationKeys.add(DocumentPartCodec.objectKey(writePrefix, part.part(), part.subKey()));
+        for (var part : carried) destinationKeys.add(DocumentPartCodec.objectKey(writePrefix, part.getPart(), part.getSubKey()));
+        documents.reserveLegacyPartKeys(destinationKeys);
         PartStorage.WriteResult written = partStorage.writePartObjects(blobStore, drive.bucket, writePrefix,
                 toWrite, r.address(),
                 request.hasWrittenBy() ? request.getWrittenBy() : null,
