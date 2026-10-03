@@ -40,7 +40,7 @@ import java.util.Objects;
  * <p>Size bound: unary gRPC carries the whole payload in one message, so
  * every byte of a put/get transits BOTH the channel and this process in
  * memory (and the streaming {@link #put(PutSpec, InputStream, long)} variant
- * reads its stream fully, bounded by the gRPC message limit). Huge payloads
+ * accepts at most 9 MiB and verifies the declared length before making an RPC). Huge payloads
  * belong on the repo-service's streaming HTTP upload route
  * ({@code POST /v1/documents:upload}), which never buffers.
  *
@@ -57,6 +57,10 @@ import java.util.Objects;
  * </ul>
  */
 public final class RemoteBlobStore implements BlobStore {
+
+    /** Payload bound leaves room for protobuf framing within the service's 10 MiB RPC limit. */
+    public static final int MAX_UNARY_BYTES = 9 * 1024 * 1024;
+    private static final int MAX_RPC_BYTES = 10 * 1024 * 1024;
 
     private static final ProtoValidator VALIDATOR = ProtoValidator.create();
 
@@ -81,6 +85,12 @@ public final class RemoteBlobStore implements BlobStore {
 
     @Override
     public PutResult put(PutSpec spec, byte[] body) {
+        Objects.requireNonNull(spec, "spec");
+        Objects.requireNonNull(body, "body");
+        requireLength(body.length);
+        if (spec.sha256Hex() != null && !spec.sha256Hex().equals(DocumentPartCodec.sha256Hex(body))) {
+            throw new IllegalArgumentException("blob digest differs from body");
+        }
         PutBlobRequest.Builder request = PutBlobRequest.newBuilder()
                 .setDriveName(driveName)
                 .setObjectKey(spec.key())
@@ -88,21 +98,32 @@ public final class RemoteBlobStore implements BlobStore {
         if (spec.contentType() != null && !spec.contentType().isBlank()) {
             request.setMimeType(spec.contentType());
         }
-        PutBlobResponse response = documents.putBlob(request.build());
+        var outgoing = request.build();
+        if (outgoing.getSerializedSize() > MAX_RPC_BYTES) {
+            throw new IllegalArgumentException("blob request exceeds 10 MiB RPC limit");
+        }
+        PutBlobResponse response = documents.putBlob(outgoing);
         // Verified write: the server computed the SHA-256 and made its store
         // verify the landed bytes against it, so a returned response is proof.
         return new PutResult(null, versionOf(response.getStorageRef()));
     }
 
     /**
-     * Reads the stream fully, then delegates to {@link #put(PutSpec, byte[])}.
+     * Reads at most the declared length plus one byte, then delegates to {@link #put(PutSpec, byte[])}.
      * The whole payload sits in memory (see the class Javadoc): this variant
      * exists for port compatibility, not for large bodies.
      */
     @Override
     public PutResult put(PutSpec spec, InputStream body, long contentLength) {
+        Objects.requireNonNull(spec, "spec");
+        Objects.requireNonNull(body, "body");
+        requireLength(contentLength);
         try {
-            return put(spec, body.readAllBytes());
+            byte[] bytes = body.readNBytes((int) contentLength + 1);
+            if (bytes.length != contentLength) {
+                throw new IllegalArgumentException("blob body length differs from declared content length");
+            }
+            return put(spec, bytes);
         } catch (IOException e) {
             throw new UncheckedIOException("failed to read blob body stream for key " + spec.key(), e);
         }
@@ -190,6 +211,12 @@ public final class RemoteBlobStore implements BlobStore {
                 throw new UnsupportedOperationException("conditional blob write is unsupported", failure);
             }
             throw failure;
+        }
+    }
+
+    private static void requireLength(long length) {
+        if (length < 0 || length > MAX_UNARY_BYTES) {
+            throw new IllegalArgumentException("unary blob length must be between 0 and 9 MiB");
         }
     }
 

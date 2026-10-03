@@ -23,8 +23,13 @@ from `ai.protomolt.proto.repo.service.client.RemoteBlobStore` to
 `ai.protomolt.proto.repo.blob.grpc.RemoteBlobStore` and recompile. Its public
 constructor borrows a generated blocking stub; the caller owns the channel.
 The client artifact excludes the repository server, SQL, Kafka and provider SDKs.
-Its existing single-drive mapping and unary buffering limits remain unchanged;
-this extraction does not add multi-drive routing or streaming RPCs.
+The client still uses a single configured drive and unary RPCs. Uploads accept
+at most 9 MiB of data and a 10 MiB serialized request, leaving room for protobuf
+fields within the service limit. Stream uploads require an exact nonnegative
+length and read at most that length plus one byte; a mismatch, oversized body
+or supplied checksum mismatch fails before the RPC. The caller owns the stream.
+The existing 9 MiB conditional-write limit is unchanged. This does not add
+multi-drive routing or streaming RPCs.
 Remote gRPC storage still uses its explicitly owned channel and is not yet a
 discovered provider.
 

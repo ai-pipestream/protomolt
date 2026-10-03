@@ -120,6 +120,21 @@ class RemoteBlobStoreIT {
     }
 
     @Test
+    void exactUnaryLimitAndEmptyStreamRoundTrip() {
+        var largeStore = new RemoteBlobStore(DocumentServiceGrpc.newBlockingStub(channel)
+                .withMaxInboundMessageSize(10 * 1024 * 1024), DRIVE);
+        for (int size : new int[] {0, RemoteBlobStore.MAX_UNARY_BYTES}) {
+            byte[] data = new byte[size];
+            String key = "rt/bound-" + size;
+            var spec = new BlobStore.PutSpec("ignored-bucket", key, null, null,
+                    ai.protomolt.proto.repo.codec.DocumentPartCodec.sha256Hex(data));
+            largeStore.put(spec, new ByteArrayInputStream(data), size);
+            assertThat(largeStore.get("ignored-bucket", key).data()).isEqualTo(data);
+            assertThat(largeStore.delete("ignored-bucket", key)).isTrue();
+        }
+    }
+
+    @Test
     void copyIsAClientSideGetPlusPut() {
         byte[] data = "copy-source".getBytes(StandardCharsets.UTF_8);
         store.put(new BlobStore.PutSpec("b", "cp/src.bin", "text/plain", null, null), data);

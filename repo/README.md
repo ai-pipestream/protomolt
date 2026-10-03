@@ -504,7 +504,7 @@ carrying an S3 SDK. `put`→`PutBlob`, `get`→`GetBlob` (NOT_FOUND maps to
 `headObject` is a full fetch whose bytes are discarded (the v1 API has no
 cheaper probe), `copy` is a client-side get+put (no server-side copy across
 the API yet), and `list`/`deleteAll`/`headBucket` throw
-`UnsupportedOperationException`. Unary gRPC means the payload is in memory on
+`UnsupportedOperationException`. Uploads are limited to 9 MiB of data and a 10 MiB serialized request. Stream\nuploads verify the declared length and optional checksum before RPC. Unary gRPC\nmeans the payload is in memory on
 both ends — huge payloads belong on the HTTP upload route.
 
 `DOCUMENT_PLATFORM_BLOB_STORE` picks the deployment shape:
