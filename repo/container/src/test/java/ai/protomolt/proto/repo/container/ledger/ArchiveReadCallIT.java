@@ -99,7 +99,7 @@ class ArchiveReadCallIT {
 
     private static UUID registeredReader(Connection connection) throws Exception {
         UUID id = UUID.randomUUID();
-        execute(connection, "INSERT INTO repository_reader_incarnations VALUES('" + id + "','ACTIVE')");
+        execute(connection, "INSERT INTO repository_reader_incarnations(incarnation,state) VALUES('" + id + "','ACTIVE')");
         return id;
     }
 

@@ -1407,7 +1407,7 @@ Validation: `:protomolt-repo-service:test --tests '*Archive*' --tests
 cases passed against PostgreSQL 18 and LocalStack 3.8. Sol reviewed the production
 barrier, failure injection and scope statements with no remaining blocker.
 
-#### Reader incarnation recovery protocol (recovery not implemented)
+#### Reader incarnation recovery protocol
 
 The local reader barrier is necessary but insufficient for recovery. At V30,
 `ArchiveReadLedger` accepts a caller-supplied UUID without durable registration;
@@ -1512,8 +1512,8 @@ Acceptance before enabling recovery:
 Implement durable registration/fencing and its migration/race tests first, then
 bind local quiescence and bounded recovery. External crash authority is a separate
 deliverable; incomplete deployment proof must not be hidden behind a TTL policy.
-Sol reviewed this protocol on 2026-10-03. Quiescence attestation, bounded pin
-recovery and their acceptance evidence remain outstanding.
+Sol reviewed this protocol on 2026-10-03. External termination attestation and
+recovery for unproven crashed owners remain outstanding.
 
 V31 implements the registration and fencing portion. New `ArchiveReadLedger`
 instances register a fresh identity; duplicate or migrated UNKNOWN identities
@@ -1535,6 +1535,45 @@ The [V31 diagnostic](../evidence/repository/2026-10-03-reader-incarnation/README
 records the affected tests and raw latency/throughput measurements. Client SQL
 counts remain two statements/two transactions per read. Shared-host timing is
 not production latency qualification; quiet paired measurements remain pending.
+
+V32 adds local quiescence attestation and bounded recovery. The uniquely
+registered `ArchiveReadLedger` instance counts acquisition from entry through
+the first completed `Pin.close()` attempt, including SQL release failure.
+Successful admission transfers that lifetime to the returned pin; empty or
+failed admission releases the local count without erasing any durable pin left
+by an ambiguous commit. Fencing closes local admission before SQL. Only that
+owning ledger may attest after its acknowledged fence and zero local lifetimes.
+This also covers multiple object readers sharing a ledger. `Pin.close()` retains
+its trusted contract: provider work must actually have finished before calling it.
+
+The host persists QUIESCED after its reader drain, before closing shared SQL and
+provider resources. Attestation failure retains those resources for retry. SQL
+records immutable LOCAL_DRAIN provenance and a timestamp; repeated attestation
+observes the same terminal state. UNKNOWN and FENCED owners remain ineligible
+for recovery, and SQL has no timeout-based state transition. Privileged SQL
+callers are trusted: a database function enforces state sequencing, not physical
+proof of remote process termination.
+
+`ArchiveReadRecovery.recover(limit)` selects at most 1,000 eligible pins and
+processes each in a separate transaction using the existing exact-identity
+release and mirrored-reference guards. One failed release does not undo earlier
+commits or stop other selected candidates; failures are aggregated and reported.
+The host logs failed recovery with durable pins still pending, then continues
+unrelated archive cleanup. Remaining pins are selected again on later passes.
+This bounds returned candidates and transactions, not the cost of scanning a
+large registry; production-scale query and fairness qualification remain work.
+
+Operation inventory: owning-ledger and reader local attestation, bounded reader
+recovery and its SQL helpers are new. Host shutdown/reconciliation and local
+acquisition/close accounting are extended. Protobuf operations, Any URLs,
+schema references and receipt bindings are unchanged. Read admission/release
+still use two client statements and two short transactions per successful read;
+registration, fencing and attestation occur outside that steady path. Recovery
+does not delete payloads directly or authorize access to retained content.
+The [V32 evidence](../evidence/repository/2026-10-03-reader-quiescence/README.md)
+records 178 passing regression cases, the separate real-provider benchmark and
+Sol review. Measured reads retain two client statements/two transactions;
+uncontrolled host timing remains diagnostic rather than latency qualification.
 
 V27 separates logical retirement from physical reclamation. An admitted archive
 mutation closes reference acquisition with a permanent retiring flag; the later

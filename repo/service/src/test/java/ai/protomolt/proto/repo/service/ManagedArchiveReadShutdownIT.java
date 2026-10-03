@@ -38,7 +38,7 @@ class ManagedArchiveReadShutdownIT {
     @Container static final LocalStackContainer S3 = new LocalStackContainer(
             DockerImageName.parse("localstack/localstack:3.8")).withServices("s3");
 
-    enum Failure { TIMEOUT, INTERRUPTED, PIN_RELEASE, FENCE }
+    enum Failure { TIMEOUT, INTERRUPTED, PIN_RELEASE, FENCE, QUIESCENCE }
 
     @ParameterizedTest @EnumSource(Failure.class)
     void hostRetainsBorrowedResourcesUntilEscapedReaderActuallyFinishes(Failure scenario) throws Exception {
@@ -101,6 +101,7 @@ class ManagedArchiveReadShutdownIT {
                 var result = executor.submit(() -> repository.getEntry(caller, get));
                 assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
                 assertThat(pins(object)).isEqualTo(1);
+                UUID incarnation = incarnation(object);
                 if (scenario == Failure.FENCE) {
                     sql("CREATE FUNCTION reject_shutdown_fence() RETURNS trigger LANGUAGE plpgsql AS $$ "
                             + "BEGIN IF EXISTS(SELECT 1 FROM archive_read_pins WHERE object_id='" + object
@@ -164,21 +165,61 @@ class ManagedArchiveReadShutdownIT {
                         assertThat(pins(object)).isEqualTo(1);
                         host.close(Duration.ofSeconds(5));
                         assertThat(providerClosed).isTrue();
-                        // Local drain does not grant permission to erase failed durable releases.
+                        // Durable quiescence does not itself delete failed releases.
                         assertThat(pins(object)).isEqualTo(1);
+                        assertThat(state(incarnation)).isEqualTo("QUIESCED");
                     } finally {
                         sql("DROP TRIGGER IF EXISTS reject_shutdown_pin_release ON archive_read_pins");
                         sql("DROP FUNCTION reject_shutdown_pin_release()");
+                    }
+                    try (var recoveryDatabase = new ai.protomolt.proto.repo.container.ledger.LedgerDatabase(
+                            new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()))) {
+                        var recovery = new ai.protomolt.proto.repo.container.archive.ArchiveReadRecovery(
+                                new ai.protomolt.proto.repo.container.ledger.Tx(recoveryDatabase.entityManagerFactory()));
+                        assertThat(recovery.recover(100)).isGreaterThanOrEqualTo(1);
+                        assertThat(pins(object)).isZero();
                     }
                 } else {
                     release.countDown();
                     assertThat(result.get(10, TimeUnit.SECONDS).getRenditions(0).getData()).isEqualTo(data);
                     assertThat(pins(object)).isZero();
+                    if (scenario == Failure.QUIESCENCE) {
+                        sql("CREATE FUNCTION reject_shutdown_quiescence() RETURNS trigger LANGUAGE plpgsql AS $$ "
+                                + "BEGIN RAISE EXCEPTION 'injected quiescence failure'; END $$");
+                        try {
+                            sql("CREATE TRIGGER reject_shutdown_quiescence BEFORE UPDATE ON repository_reader_incarnations "
+                                    + "FOR EACH ROW WHEN (OLD.incarnation='" + incarnation + "'::uuid AND NEW.state='QUIESCED') "
+                                    + "EXECUTE FUNCTION reject_shutdown_quiescence()");
+                            assertThatThrownBy(() -> host.close(Duration.ofSeconds(5)))
+                                    .hasStackTraceContaining("injected quiescence failure");
+                            assertThat(providerClosed).isFalse();
+                            assertThat(state(incarnation)).isEqualTo("FENCED");
+                        } finally {
+                            sql("DROP TRIGGER IF EXISTS reject_shutdown_quiescence ON repository_reader_incarnations");
+                            sql("DROP FUNCTION reject_shutdown_quiescence()");
+                        }
+                    }
                     host.close(Duration.ofSeconds(5));
                     assertThat(providerClosed).isTrue();
+                    assertThat(state(incarnation)).isEqualTo("QUIESCED");
                 }
             } finally { release.countDown(); }
         } finally { host.close(); }
+    }
+
+    private static UUID incarnation(UUID object) throws Exception {
+        return UUID.fromString(scalar("SELECT reader_incarnation FROM archive_read_pins WHERE object_id='" + object + "'"));
+    }
+
+    private static String state(UUID incarnation) throws Exception {
+        return scalar("SELECT state FROM repository_reader_incarnations WHERE incarnation='" + incarnation + "'");
+    }
+
+    private static String scalar(String sql) throws Exception {
+        try (var connection = DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+                var statement = connection.createStatement(); var result = statement.executeQuery(sql)) {
+            assertThat(result.next()).isTrue(); return result.getString(1);
+        }
     }
 
     private static long pins(UUID object) throws Exception {

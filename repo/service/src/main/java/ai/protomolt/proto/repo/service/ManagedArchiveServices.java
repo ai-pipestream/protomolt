@@ -21,6 +21,7 @@ final class ManagedArchiveServices {
     final ArchiveMutationOperations mutations;
     private final ArchiveCleanupLedger cleanup;
     private final ArchiveObjectRecovery recovery;
+    private final ArchiveReadRecovery readRecovery;
 
     ManagedArchiveServices(Tx tx, ArchiveLedger archive, BlobStore store, Set<BlobCapability> capabilities,
             String generation, ManagedBackendLedger.Profile profile, ObjectReclaimer reclaimer) {
@@ -35,6 +36,7 @@ final class ManagedArchiveServices {
         writer = new ArchiveObjectWriter(new ArchiveUploadLedger(tx), store, generation, capabilities, Duration.ofMinutes(5));
         mutations = new ArchiveMutationOperations(archive, new ArchiveMutationLedger(tx), new ArchiveMutationObservations(tx));
         cleanup = new ArchiveCleanupLedger(tx);
+        readRecovery = new ArchiveReadRecovery(tx);
         recovery = new ArchiveObjectRecovery(cleanup, profiles, (original, originalProfile) -> {
             if (!generation.equals(original) || !profile.equals(originalProfile))
                 throw new IllegalStateException("Original archive backend is not configured on this host");
@@ -49,6 +51,10 @@ final class ManagedArchiveServices {
     }
 
     void reconcile(Instant inactiveBefore, int limit) {
+        try { readRecovery.recover(limit); }
+        catch (RuntimeException failure) {
+            LOG.warn("Reader pin recovery failed; retained pins remain pending for retry", failure);
+        }
         recover(cleanup.candidates(inactiveBefore, limit), inactiveBefore, Instant.now().minus(ABANDONED_CLAIM_AGE));
     }
 

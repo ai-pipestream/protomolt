@@ -31,7 +31,7 @@ class ArchiveRetentionConcurrencyIT {
 
     private static UUID registerReader(java.sql.Connection connection) throws java.sql.SQLException {
         UUID id = UUID.randomUUID();
-        try (var statement = connection.prepareStatement("INSERT INTO repository_reader_incarnations VALUES(?,'ACTIVE')")) {
+        try (var statement = connection.prepareStatement("INSERT INTO repository_reader_incarnations(incarnation,state) VALUES(?,'ACTIVE')")) {
             statement.setObject(1, id);
             statement.executeUpdate();
         }

@@ -687,6 +687,7 @@ public final class RepoServices implements AutoCloseable {
                 try {
                     if (!managedArchive.reader.awaitIdle(timeout))
                         throw new IllegalStateException("Managed archive reads still active; shared resources retained");
+                    managedArchive.reader.attestLocalQuiescence();
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
                     throw new IllegalStateException("Archive reader drain interrupted; shared resources retained", interrupted);

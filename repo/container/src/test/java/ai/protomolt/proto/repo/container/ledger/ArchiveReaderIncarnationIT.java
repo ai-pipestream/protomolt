@@ -57,7 +57,7 @@ class ArchiveReaderIncarnationIT {
                 assertThat(number(connection, "SELECT count(*) FROM archive_version_object_refs WHERE object_id='" + object + "'")).isEqualTo(1);
                 assertThat(state(connection, reader)).isEqualTo("UNKNOWN");
                 assertThatThrownBy(() -> execute(connection,
-                        "INSERT INTO repository_reader_incarnations VALUES ('" + reader + "','ACTIVE')"))
+                        "INSERT INTO repository_reader_incarnations(incarnation,state) VALUES ('" + reader + "','ACTIVE')"))
                         .hasMessageContaining("duplicate key");
                 assertThatThrownBy(() -> fence(connection, reader)).hasMessageContaining("unknown");
                 assertThatThrownBy(() -> execute(connection,

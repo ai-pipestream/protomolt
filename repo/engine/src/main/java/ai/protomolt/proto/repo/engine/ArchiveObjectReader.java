@@ -78,6 +78,15 @@ public final class ArchiveObjectReader implements AutoCloseable {
         }
     }
 
+    /** Persist local drain evidence before the host releases its shared resources. */
+    public void attestLocalQuiescence() {
+        synchronized (lifecycle) {
+            if (!closed || !fenceComplete || activeReads != 0)
+                throw new IllegalStateException("Reader must finish shutdown before attesting quiescence");
+        }
+        reads.attestLocalQuiescence();
+    }
+
     private BlobStore.GetResult readPinned(ArchiveEntryRecord entry, long version, RenditionManifestEntry manifest) {
         if (manifest.getState() != RenditionState.RENDITION_STATE_PRESENT)
             throw failedPrecondition("Only present archive objects may be read");
