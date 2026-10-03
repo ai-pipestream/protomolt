@@ -643,9 +643,19 @@ alongside the reader and retained generation. In that configuration, full saves
 use the existing authorization and locked dedupe checks, then build an admitted
 attempt and publish verified parts through `ManagedDocumentSave`. Raw references
 and the saved event run in the writer's publication transaction. Existing host
-constructors remain unchanged. Managed partial saves are explicitly refused by
-this configuration until their composition is qualified; this is not yet the
-production host default or a complete managed-save feature.
+constructors remain unchanged. This composition also supports partial saves from
+legacy and managed sources: it captures the authorized source, reads selected
+unchanged parts under the shared byte budget, and stages the complete revision
+under fresh attempt keys. Source revision checks precede atomic publication.
+Integration cases cover chunk-set order and preservation of unchanged provenance.
+Carried raw-reference and source-policy race coverage remain qualification work.
+This is not yet the production host default or a complete managed-save feature.
+
+Partial saves currently copy unchanged bytes. Before production wiring, measure
+small updates to large documents, including bytes read/written and peak reserved
+bytes. Reusing immutable objects could reduce this cost, but requires explicit
+shared retention and reclamation rules; do not bypass integrity or recovery checks
+to obtain lower latency.
 
 Managed routing must preserve these behaviors explicitly:
 

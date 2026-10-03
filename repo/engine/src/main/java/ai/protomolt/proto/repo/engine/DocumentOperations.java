@@ -212,7 +212,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         this(documents, drives, tx, blobStore, partStorage, purgeQueue, events, managedBackendIdentity, managedParts, null);
     }
 
-    /** Explicit library composition; host must qualify and drain the borrowed reader/writer. Partial saves remain gated. */
+    /** Explicit library composition; host must qualify and drain the borrowed reader/writer. */
     public DocumentOperations(DocumentLedger documents, DriveLedger drives, Tx tx,
             BlobStore blobStore, PartStorage partStorage, PurgeQueue purgeQueue,
             JdbcEventOutbox events, String managedBackendIdentity, DocumentPartReader managedParts,
@@ -277,8 +277,6 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
                 || request.getPartsWrittenList().contains(DocumentPart.DOCUMENT_PART_CORE);
         requireWrite(caller, destination, r.doc(), request, writesCore);
         if (managedWriter == null) requireLegacyWriteTarget(destination);
-        else if (!request.getPartsWrittenList().isEmpty())
-            throw failedPrecondition("Managed partial-save composition is not configured");
         DriveRecord drive = drives.findByName(r.address().getAccountId(), request.getDrive())
                 .orElseThrow(() -> readMissing(caller, "drive '" + request.getDrive() + "' not found for account '"
                         + r.address().getAccountId() + "'"));
@@ -418,14 +416,20 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
             throw failedPrecondition("partial-save copy source row is " + srcRow.status
                     + " (need AVAILABLE): " + DocumentRequests.describe(srcRef));
         }
-        requireLegacyWriteTarget(srcRow);
+        if (managedWriter == null) requireLegacyWriteTarget(srcRow);
         DocumentManifest srcManifest = srcRow.readManifest();
         if (srcManifest == null) {
             throw failedPrecondition("partial-save copy source row has no manifest: " + DocumentRequests.describe(srcRef));
         }
-        DriveRecord srcDrive = drives.findByName(srcRow.accountId, srcRow.driveName)
+        boolean boundSource = managedWriter != null && documents.hasPartPublication(srcRow.nodeId);
+        DriveRecord srcDrive = boundSource ? null : drives.findByName(srcRow.accountId, srcRow.driveName)
                 .orElseThrow(() -> failedPrecondition("partial-save copy source drive '"
                         + srcRow.driveName + "' not found for account '" + srcRow.accountId + "'"));
+
+        var sourceSnapshot = managedWriter == null ? null : boundSource
+                ? ai.protomolt.proto.repo.container.ledger.DocumentSourceSnapshot.bound(tx, srcRow)
+                : ai.protomolt.proto.repo.container.ledger.DocumentSourceSnapshot.legacy(tx, drives, srcRow, srcDrive);
+        if (sourceSnapshot != null) srcManifest = sourceSnapshot.manifest();
 
         long docVersion = SaveResolution.manifestVersion(destExisting) + 1;
 
@@ -452,6 +456,23 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
                 throw failedPrecondition("partial-save copy source entry " + e.getPart()
                         + (e.getSubKey().isEmpty() ? "" : "/" + e.getSubKey())
                         + " is PRESENT but carries a blank object_key: " + DocumentRequests.describe(srcRef));
+            }
+        }
+
+        if (managedWriter != null) {
+            var readControl = new ai.protomolt.proto.repo.spi.RepositoryReadControl() {
+                @Override public boolean isCancelled() { return control.isCancelled(); }
+                @Override public long remainingNanos() { return control.remainingNanos(); }
+            };
+            var keys = carried.stream().map(PartManifestEntry::getObjectKey).collect(java.util.stream.Collectors.toSet());
+            try (var batch = managedParts.readSourceKeys(sourceSnapshot, this.blobStore, keys, readControl)) {
+                var managedBindings = partsWritten.contains(DocumentPart.DOCUMENT_PART_BLOBS)
+                        ? rawBindings.writing(r.doc().getBlobBag(), r.address().getAccountId(), destExisting)
+                        : rawBindings.copying(batch, srcRow, r.address().getAccountId());
+                var saved = ManagedDocumentSave.partial(managedWriter, managedGeneration, caller, r, request, drive,
+                        nodeId, basePrefix, toWrite, batch.parts(), carried, destExisting, sourceSnapshot,
+                        docVersion, managedBindings, events, control);
+                return SaveResolution.saveResponse(saved, saved.checksum);
             }
         }
 
@@ -534,7 +555,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
      * its ORIGINAL position (source order rules the zone); brand-new sets
      * append after it. Parts neither written nor carried are recorded EMPTY.
      */
-    private static DocumentManifest combineManifests(DocumentManifest written,
+    static DocumentManifest combineManifests(DocumentManifest written,
             List<PartManifestEntry> carried, DocumentManifest source, long docVersion) {
         List<PartManifestEntry> writtenPresent = written.getPartsList().stream()
                 .filter(e -> e.getState() == PartState.PART_STATE_PRESENT)

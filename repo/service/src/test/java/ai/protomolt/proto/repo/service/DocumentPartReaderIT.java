@@ -234,6 +234,67 @@ class DocumentPartReaderIT {
         assertThat(budget.reservedBytes()).isZero();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"false,false", "true,false", "false,true", "true,true"})
+    void managedPartialSavePreservesSourceOrderAndProvenance(boolean legacySource, boolean rewriteAll) throws Exception {
+        var fixture = bound();
+        var budget = new PayloadBudget(1024 * 1024);
+        var reader = new DocumentPartReader((g, p) -> store, 4, 1024 * 1024, budget);
+        var writer = new DocumentAttemptWriter(tx, drives, GENERATION, profile.identity(), opened, budget);
+        var engine = new ai.protomolt.proto.repo.engine.DocumentOperations(documents, drives, tx, store,
+                new ai.protomolt.proto.repo.container.blob.PartStorage(),
+                new ai.protomolt.proto.repo.container.lifecycle.JdbcPurgeQueue(tx), null, GENERATION, reader, writer);
+        var caller = new ai.protomolt.proto.repo.spi.RepositoryCaller("operator", true);
+        var firstWriter = WriteProvenance.newBuilder().setModuleId("first").build();
+        var nextWriter = WriteProvenance.newBuilder().setModuleId("next").build();
+        var original = fixture.expected.toBuilder().setDocId(UUID.randomUUID().toString()).setSearchMetadata(
+                SearchMetadata.newBuilder().addSemanticResults(SemanticProcessingResult.newBuilder().setResultId("b"))
+                        .addSemanticResults(SemanticProcessingResult.newBuilder().setResultId("a"))).build();
+        var seed = SaveDocumentRequest.newBuilder().setDocument(original).setDrive(fixture.drive.name)
+                .setGraphId(fixture.row.graphId).setUseDatasourceId(true).setWrittenBy(firstWriter).build();
+        try {
+            var initial = (legacySource ? engine(reader) : engine).saveDocument(caller, seed);
+            var before = documents.findByNodeId(UUID.fromString(initial.getNodeId())).orElseThrow();
+            var oldCore = before.readManifest().getPartsList().stream().filter(p -> p.getPart() == DocumentPart.DOCUMENT_PART_CORE).findFirst().orElseThrow();
+            var oldA = before.readManifest().getPartsList().stream().filter(p -> p.getSubKey().equals("a")).findFirst().orElseThrow();
+            var changed = original.toBuilder().setSearchMetadata(SearchMetadata.newBuilder()
+                    .addSemanticResults(SemanticProcessingResult.newBuilder().setResultId("b").setChunkerConfigId("updated"))
+                    .addSemanticResults(SemanticProcessingResult.newBuilder().setResultId("c"))).build();
+            var request = seed.toBuilder().setDocument(changed).setWrittenBy(nextWriter)
+                    .addPartsWritten(DocumentPart.DOCUMENT_PART_CHUNKS).addChunkSetsWritten("b").addChunkSetsWritten("c")
+                    .setCopyUnwrittenPartsFrom(before.readManifest().getAddress()).build();
+            if (rewriteAll) {
+                request = request.toBuilder().addPartsWritten(DocumentPart.DOCUMENT_PART_CORE)
+                        .addChunkSetsWritten("a").setDocument(changed.toBuilder().setSearchMetadata(
+                                changed.getSearchMetadata().toBuilder().addSemanticResults(
+                                        original.getSearchMetadata().getSemanticResults(1)))).build();
+            }
+            engine.saveDocument(caller, request);
+            var saved = documents.findByNodeId(before.nodeId).orElseThrow();
+            var publication = new DocumentPublicationLedger(tx).findForRead(saved).orElseThrow();
+            assertThat(publication.manifest().getDocVersion()).isEqualTo(2);
+            var assembled = reader.read(publication, Set.of(), Set.of(), Document.getDefaultInstance());
+            assertThat(assembled.getSearchMetadata().getSemanticResultsList()).extracting(SemanticProcessingResult::getResultId)
+                    .containsExactly("b", "a", "c");
+            assertThat(assembled.getSearchMetadata().getSemanticResults(0).getChunkerConfigId()).isEqualTo("updated");
+            for (var old : List.of(oldCore, oldA)) {
+                var current = publication.manifest().getPartsList().stream().filter(p -> p.getPart() == old.getPart()
+                        && p.getSubKey().equals(old.getSubKey())).findFirst().orElseThrow();
+                assertThat(current.getSha256()).isEqualTo(old.getSha256());
+                assertThat(current.getWrittenBy()).isEqualTo(rewriteAll ? nextWriter : firstWriter);
+                if (!rewriteAll) assertThat(current.getUpdatedAt()).isEqualTo(old.getUpdatedAt());
+                assertThat(current.getObjectKey()).isNotEqualTo(old.getObjectKey());
+            }
+            assertThat(publication.manifest().getPartsList().stream().filter(p -> p.getSubKey().equals("b") || p.getSubKey().equals("c")))
+                    .allSatisfy(p -> assertThat(p.getWrittenBy()).isEqualTo(nextWriter));
+        } finally {
+            writer.close(); reader.close();
+            assertThat(writer.awaitIdle(java.time.Duration.ofSeconds(5))).isTrue();
+            assertThat(reader.awaitIdle(java.time.Duration.ofSeconds(5))).isTrue();
+        }
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
     private static ai.protomolt.proto.repo.engine.DocumentOperations engine(DocumentPartReader reader) {
         return new ai.protomolt.proto.repo.engine.DocumentOperations(documents, drives, tx, store,
                 new ai.protomolt.proto.repo.container.blob.PartStorage(),

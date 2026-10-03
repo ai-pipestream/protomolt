@@ -27,10 +27,12 @@ extension even where the message shape remains unchanged.
 - **Extended: SaveDocument.** Shared ownership and contract gate; retain partial
   part/chunk-set saves and copy-forward. Typed content admission must apply to
   local, gRPC and HTTP paths. Define retry identity beyond deterministic doc IDs.
-  Explicit library composition can now route full saves through the managed
-  attempt writer with same-transaction raw references/outbox and existing locked
-  dedupe. This opt-in mode refuses partial saves; existing production host wiring
-  remains unchanged until partial saves and lifecycle qualification are complete.
+  Explicit library composition can route full and partial saves through the
+  managed attempt writer with same-transaction raw references/outbox and existing
+  full-save locked dedupe. Partial saves capture legacy or managed sources and
+  preserve unchanged provenance and chunk-set order. Existing production host
+  wiring remains unchanged pending broader partial-save, performance and lifecycle
+  qualification.
 - **Extended: GetDocument, GetDocumentByReference, GetDocumentManifest.** Shared
   current-access checks, integrity and explicit completeness semantics. Existing
   requested-part reads do not establish a hydration session.

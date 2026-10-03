@@ -178,6 +178,26 @@ public final class DocumentPartReader implements AutoCloseable {
                 source.legacyNamespace(), selected, source.coreVersion(), source.coreEtag(), control);
     }
 
+    /** Internal partial-save selection, including no reused objects, from the captured source. */
+    DocumentReadBatch readSourceKeys(ai.protomolt.proto.repo.container.ledger.DocumentSourceSnapshot source,
+            BlobStore qualifiedLegacyStore, Set<String> keys, RepositoryReadControl control) {
+        enterOperation();
+        try {
+            checkActive(control);
+            var selected = source.manifest().getPartsList().stream()
+                    .filter(p -> p.getState() == PartState.PART_STATE_PRESENT && keys.contains(p.getObjectKey())).toList();
+            if (selected.size() != keys.size()) throw RepositoryErrors.failedPrecondition("Source selection differs from captured manifest");
+            if (source.legacy()) return readLegacySelection(qualifiedLegacyStore, source.legacyNamespace(), selected,
+                    source.coreVersion(), source.coreEtag(), control);
+            var publication = source.publication().orElseThrow();
+            var store = backends.resolve(publication.generation(), publication.profile());
+            checkActive(control);
+            if (store == null) throw RepositoryErrors.failedPrecondition("Original document backend is unavailable");
+            return readFragments(store, publication.namespace(), publication.parts().stream()
+                    .filter(p -> keys.contains(p.key())).toList(), control, false);
+        } finally { exitOperation(); }
+    }
+
     /** Low-level legacy read; callers supplying a source fence should prefer readSource. */
     public DocumentReadBatch readLegacyFragments(BlobStore store, String namespace,
             List<PartManifestEntry> selected, String coreVersion, String coreEtag, RepositoryReadControl control) {
