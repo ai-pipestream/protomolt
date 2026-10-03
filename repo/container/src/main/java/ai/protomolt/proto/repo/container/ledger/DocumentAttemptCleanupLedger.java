@@ -85,19 +85,26 @@ final class DocumentAttemptCleanupLedger {
     }
 
     List<UUID> candidates(Duration recheckDelay, int limit) {
+        return candidates(recheckDelay, limit, null);
+    }
+
+    List<UUID> candidates(Duration recheckDelay, int limit, String generation) {
         if (recheckDelay.isNegative() || recheckDelay.compareTo(Duration.ofDays(1)) > 0 || limit < 1 || limit > 1000)
             throw new IllegalArgumentException("Invalid document cleanup scan bounds");
         return tx.readOnly(em -> {
             @SuppressWarnings("unchecked")
-            List<UUID> ids = em.createNativeQuery("""
+            var query = em.createNativeQuery("""
                     SELECT a.attempt_id FROM document_part_attempts a
                     LEFT JOIN document_part_attempt_cleanup c ON c.attempt_id=a.attempt_id
                     WHERE a.lease_until <= clock_timestamp() AND a.state<>'PLANNING'
+                        AND (CAST(:generation AS text) IS NULL OR a.backend_generation=CAST(:generation AS text))
                         AND NOT EXISTS (SELECT 1 FROM document_part_publication_history h WHERE h.attempt_id=a.attempt_id)
                         AND (c.attempt_id IS NULL OR (c.claim_until <= clock_timestamp()
                             AND c.last_checked_at <= clock_timestamp()-(:delay * interval '1 millisecond')))
                     ORDER BY COALESCE(c.last_checked_at,a.lease_until),a.attempt_id LIMIT :limit
-                    """).setParameter("delay", recheckDelay.toMillis()).setParameter("limit", limit).getResultList();
+                    """).setParameter("delay", recheckDelay.toMillis()).setParameter("limit", limit)
+                    .setParameter("generation", generation);
+            List<UUID> ids = query.getResultList();
             return List.copyOf(ids);
         });
     }

@@ -50,6 +50,9 @@ class DocumentPartStagerIT {
     }
     private record Input(DocumentPartAttemptLedger.Plan plan, List<PartObject> payloads) {}
     private static Input input() {
+        return input(GENERATION);
+    }
+    private static Input input(String generation) {
         UUID node = UUID.randomUUID(), attempt = UUID.randomUUID();
         var parts = DocumentPartCodec.split(Document.newBuilder().setDocId(node.toString())
                 .setSearchMetadata(ai.protomolt.proto.repo.v1.SearchMetadata.newBuilder().addSemanticResults(
@@ -58,7 +61,7 @@ class DocumentPartStagerIT {
         var objects = parts.stream().map(p -> new DocumentPartAttemptLedger.PlannedObject(p.part(), p.subKey(),
                 DocumentPartCodec.objectKey(prefix, p.part(), p.subKey()), p.bytes().length, p.sha256(), "application/protobuf")).toList();
         return new Input(new DocumentPartAttemptLedger.Plan(attempt,
-                new DocumentPartAttemptLedger.Location(node, "account", GENERATION, NAMESPACE), 0, Map.of(), objects), parts);
+                new DocumentPartAttemptLedger.Location(node, "account", generation, NAMESPACE), 0, Map.of(), objects), parts);
     }
     private static OpenedBlobStore borrowed(BlobStore store) {
         return new OpenedBlobStore(store, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer());
@@ -394,6 +397,46 @@ class DocumentPartStagerIT {
 
     private static LedgerDatabase restartDatabase() {
         return new LedgerDatabase(new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()));
+    }
+
+    @Test void boundedRecoveryPassFiltersBackendBeforeLimitAndPreservesFailures() {
+        String generation = "pass-" + UUID.randomUUID();
+        var profile = new ManagedBackendLedger.Profile(identity, "stager-realm");
+        new ManagedBackendLedger(tx).bind(generation, profile);
+        var other = input();
+        try (var stager = new DocumentPartStager(tx, GENERATION, identity, opened)) {
+            stager.stage(other.plan(), other.payloads(), Duration.ofSeconds(1), Map.of());
+        }
+        expire(other.plan().attemptId());
+        var target = input(generation);
+        try (var stager = new DocumentPartStager(tx, generation, identity, opened)) {
+            stager.stage(target.plan(), target.payloads(), Duration.ofSeconds(1), Map.of());
+        }
+        expire(target.plan().attemptId());
+        var fault = new IllegalStateException("Injected cleanup failure");
+        var service = new DocumentAttemptRecoveryService(tx, generation, profile, opened, (namespace, key) -> {
+            opened.reclaimer().reclaim(namespace, key);
+            throw fault;
+        });
+        var failed = service.reconcilePass(Duration.ZERO, Duration.ofSeconds(5), 1);
+        assertThat(failed).hasSize(1);
+        assertThat(failed.getFirst().attemptId()).isEqualTo(target.plan().attemptId());
+        assertThat(failed.getFirst().outcome()).isEqualTo(DocumentAttemptRecoveryService.Outcome.RETRY);
+        assertThat(failed.getFirst().failure()).isSameAs(fault);
+        var retry = new DocumentAttemptRecoveryService(tx, generation, profile, opened, opened.reclaimer());
+        var recovered = retry.reconcilePass(Duration.ZERO, Duration.ofSeconds(5), 1);
+        assertThat(recovered).hasSize(1);
+        assertThat(recovered.getFirst().outcome()).isEqualTo(DocumentAttemptRecoveryService.Outcome.ABSENT);
+        assertThat(retry.reconcilePass(Duration.ofHours(1), Duration.ofSeconds(5), 1)).isEmpty();
+        assertThat(opened.store().get(NAMESPACE, other.plan().objects().getFirst().objectKey()).data()).isNotEmpty();
+        assertThatThrownBy(() -> new DocumentAttemptRecoveryService(tx, generation,
+                new ManagedBackendLedger.Profile(identity, "wrong-realm"), opened, opened.reclaimer()))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("profile");
+        var unqualified = new OpenedBlobStore(opened.store(), () -> {});
+        assertThatThrownBy(() -> new DocumentAttemptRecoveryService(tx, generation, profile, unqualified, opened.reclaimer()))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("physical reclamation");
+        assertThatThrownBy(() -> retry.reconcilePass(Duration.ZERO, Duration.ZERO, 1))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     private static OpenedBlobStore restartStore() {

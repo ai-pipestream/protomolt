@@ -104,6 +104,7 @@ public final class RepoServices implements AutoCloseable {
     private final DocumentGrpcService documentService;
     private final ai.protomolt.proto.repo.spi.RawIngestionRepository rawIngestion;
     private final ai.protomolt.proto.repo.engine.RawObjectRecovery rawRecovery;
+    private final ai.protomolt.proto.repo.container.ledger.DocumentAttemptRecoveryService documentRecovery;
     private boolean lifecycleStarted;
     private final ArchiveOperations archiveOperations;
     private final ManagedArchiveServices managedArchive;
@@ -170,12 +171,14 @@ public final class RepoServices implements AutoCloseable {
             ai.protomolt.proto.repo.blob.spi.NamespaceProvisioner namespaces;
             java.util.Set<ai.protomolt.proto.repo.blob.spi.BlobCapability> managedCapabilities = java.util.Set.of();
             ai.protomolt.proto.repo.blob.spi.ObjectReclaimer managedReclaimer = null;
+            ai.protomolt.proto.repo.blob.spi.OpenedBlobStore managedBacking = null;
             switch (config.blobStore()) {
                 case RepoServiceConfig.BLOB_STORE_S3 -> {
                     var selected = owned.add(providers.open("s3", s3Options(config)));
                     this.blobStore = selected.store();
                     managedCapabilities = selected.capabilities();
                     managedReclaimer = selected.reclaimer();
+                    managedBacking = selected;
                     namespaces = selected::ensureNamespace;
                     this.remoteChannel = null;
                 }
@@ -192,6 +195,7 @@ public final class RepoServices implements AutoCloseable {
                             config.redisTtlSeconds(), config.redisMaxObjectBytes());
                     managedCapabilities = backing.capabilities();
                     managedReclaimer = ((CachingBlobStore) blobStore).reclaimer(backing.reclaimer());
+                    managedBacking = backing;
                     namespaces = backing::ensureNamespace;
                     this.remoteChannel = null;
                 }
@@ -235,6 +239,8 @@ public final class RepoServices implements AutoCloseable {
                         providers.managedIdentity("s3", s3Options(config)), config.managedStorage().storageRealm());
                 profiles.bind(generation, profile);
                 var reclaimer = java.util.Objects.requireNonNull(managedReclaimer);
+                this.documentRecovery = new ai.protomolt.proto.repo.container.ledger.DocumentAttemptRecoveryService(
+                        tx, generation, profile, java.util.Objects.requireNonNull(managedBacking), reclaimer);
                 this.rawRecovery = new ai.protomolt.proto.repo.engine.RawObjectRecovery(documentLedger.rawObjects(), profiles,
                         (originalGeneration, originalProfile) -> {
                             if (!generation.equals(originalGeneration) || !profile.equals(originalProfile))
@@ -248,6 +254,7 @@ public final class RepoServices implements AutoCloseable {
             } else {
                 this.rawIngestion = null;
                 this.rawRecovery = null;
+                this.documentRecovery = null;
                 this.managedArchive = null;
             }
             this.driveProvisioner = new DriveProvisioner(driveLedger,
@@ -324,6 +331,7 @@ public final class RepoServices implements AutoCloseable {
     /** Shared document operations; this composition retains ownership of storage resources. */
     public ai.protomolt.proto.repo.spi.DocumentRepository repository() {
         requireOpen();
+        if (documentRecovery != null) startLifecycle();
         return documentService.repository();
     }
 
@@ -550,6 +558,20 @@ public final class RepoServices implements AutoCloseable {
                         catch (RuntimeException failure) {
                             LOG.warn("Managed raw cleanup failed for {}; durable retry remains pending", candidate.rawId, failure);
                         }
+                    }
+                    sleep(config.sweepIntervalMs());
+                });
+            }
+            if (documentRecovery != null) {
+                startLifecycleThread("repo-document-attempt-recovery", () -> {
+                    var results = documentRecovery.reconcilePass(java.time.Duration.ofHours(1),
+                            java.time.Duration.ofMinutes(10), 100);
+                    for (var result : results) {
+                        if (result.failure() != null)
+                            LOG.warn("Document attempt cleanup failed for {}; durable retry remains pending", result.attemptId(), result.failure());
+                        else if (result.outcome() == ai.protomolt.proto.repo.container.ledger.DocumentAttemptRecoveryService.Outcome.RETRY
+                                || result.outcome() == ai.protomolt.proto.repo.container.ledger.DocumentAttemptRecoveryService.Outcome.LOST_CLAIM)
+                            LOG.warn("Document attempt cleanup for {} returned {}; another pass is required", result.attemptId(), result.outcome());
                     }
                     sleep(config.sweepIntervalMs());
                 });

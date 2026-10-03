@@ -334,9 +334,9 @@ commits, plan edits and premature verification. Bounded SHA-256 reservation
 indexes retain the exact storage coordinates; a digest collision refuses admission.
 `VERIFIED` records byte verification reported by a trusted writer, not schema or
 semantic acceptance. Internal publication and recovery now consume this foundation,
-but public document saves and host recovery are not wired to it. It is not an
-available managed-write API. End-to-end integration remains required before public
-managed writes and scheduled document cleanup can be enabled.
+and qualified hosts now schedule recovery for abandoned attempts. Public document
+saves are not wired to it, and it is not an available managed-write API.
+End-to-end writer integration remains required before public managed writes.
 
 V22 adds immutable document publication history and an active attempt reference,
 without adopting existing rows. The package-private `saveVerifiedAttempt` now
@@ -528,10 +528,27 @@ exercise physical deletion, unrelated-key preservation, late writes, unavailable
 backends, unconfirmed deletion and lost acknowledgements. A client-reopen test
 closes the database pool/entity manager and provider client after partial cleanup,
 then opens fresh clients and resumes the expired claim from durable state. This
-does not establish recovery after a process or host crash. Host scheduling,
-process-restart qualification, exact-profile resolver composition, and public
-writer integration remain outstanding. No managed document endpoint is enabled
-by this checkpoint.
+does not establish recovery after a process or host crash. A separate host test
+closes and rebuilds `RepoServices`, enters through `repository()`, and verifies
+scheduled cleanup against real SQL and storage. Process-crash qualification and
+public writer integration remain outstanding. No managed document write endpoint
+is enabled by this checkpoint.
+
+`DocumentAttemptRecoveryService` provides bounded passes for a configured backend
+generation. Candidate selection filters that generation before the batch limit;
+unconfigured historical generations remain untouched. Construction checks the
+retained profile and backing capabilities. The host must derive the supplied
+identity and reclaimer from the same opened provider: the borrowed handle does
+not itself expose a verifiable backend identity. Each result preserves its
+original failure, if any. Shutdown interruption stops subsequent work.
+
+Qualified `RepoServices` composition starts a separate document recovery loop
+through library or transport access. It uses the selected backing handle and,
+when configured, its cache-aware reclaimer. Each pass admits at most 100 attempts
+with a ten-minute cleanup lease. First cleanup is eligible after writer expiry;
+repeat checks wait one hour. Passes run on the configured sweep interval. Retry
+and lost-claim outcomes are logged, including original failures. There is no
+current-drive fallback and no adoption or deletion of legacy untracked parts.
 
 Repository host shutdown interrupts lifecycle workers and gives them a shared
 ten-second join budget. A timeout or interrupted join leaves providers, the ledger,

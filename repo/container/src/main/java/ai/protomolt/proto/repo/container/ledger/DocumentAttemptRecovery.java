@@ -30,6 +30,7 @@ final class DocumentAttemptRecovery {
             if (reclaimer == null) throw new IllegalStateException("Original document cleanup backend is unavailable");
             boolean absent = true;
             for (String key : claim.keys()) {
+                if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException("Document cleanup interrupted");
                 if (!cleanup.renew(claim, lease)) return new Result(id, Outcome.LOST_CLAIM, null);
                 // Every call uses an immutable exact admitted key, including unverified PUT outcomes.
                 boolean observed = reclaimer.reclaim(claim.namespace(), key);
