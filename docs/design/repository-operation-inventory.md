@@ -76,6 +76,11 @@ extension even where the message shape remains unchanged.
   `awaitIdle` waits for entered resolver/read operations and actual provider
   workers. Timeout retains borrowed resources. Returned batches have independent
   caller-owned lifetimes and must still be closed.
+- **New, Java source composition:** `DocumentPartReader.readSource` reads from a
+  captured `DocumentSourceSnapshot`. Managed sources resolve their retained backend;
+  legacy sources use the captured namespace and supplied qualified store. The
+  returned batch remains open through writer publication. This helper does not
+  authorize access or enable the public managed-save route.
 - **New, Java byte SPI:** `BlobStore.getBounded` reads a complete selected object
   version within a caller-supplied payload limit. Unsupported adapters fail
   explicitly; no ordinary-read fallback is permitted. The direct S3 adapter

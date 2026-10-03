@@ -154,13 +154,31 @@ public final class DocumentPartReader implements AutoCloseable {
     }
 
     /**
-     * Verify selected legacy PRESENT fragments without decoding or changing their bytes.
+     * Read selected fragments from a captured physical source fence. Managed sources
+     * use their retained publication and original-backend resolver; the legacy store
+     * argument is ignored. Legacy sources use the captured namespace and supplied
+     * host-qualified legacy store, without re-reading current drive configuration.
      * The caller must strictly parse and authorize the snapshot, establish that it has no managed publication,
      * resolve its drive, and fence the source revision and drive at publication. This is
      * not historical-backend recovery: legacy manifests retain no non-CORE provider versions.
      * Missing checksums are rejected; current bytes must match the recorded size and digest.
      * A recorded CORE version/ETag is honored; null or blank means unknown, never inferred.
      */
+    public DocumentReadBatch readSource(ai.protomolt.proto.repo.container.ledger.DocumentSourceSnapshot source,
+            BlobStore qualifiedLegacyStore, Set<DocumentPart> mask, Set<String> chunkSets, RepositoryReadControl control) {
+        Objects.requireNonNull(source);
+        if (!source.legacy())
+            return readFragments(source.publication().orElseThrow(), mask, chunkSets, control);
+        var selected = source.manifest().getPartsList().stream()
+                .filter(p -> p.getState() == PartState.PART_STATE_PRESENT)
+                .filter(p -> mask.isEmpty() || mask.contains(p.getPart()))
+                .filter(p -> p.getPart() != DocumentPart.DOCUMENT_PART_CHUNKS
+                        || chunkSets.isEmpty() || chunkSets.contains(p.getSubKey())).toList();
+        return readLegacyFragments(Objects.requireNonNull(qualifiedLegacyStore, "Qualified legacy source store"),
+                source.legacyNamespace(), selected, source.coreVersion(), source.coreEtag(), control);
+    }
+
+    /** Low-level legacy read; callers supplying a source fence should prefer readSource. */
     public DocumentReadBatch readLegacyFragments(BlobStore store, String namespace,
             List<PartManifestEntry> selected, String coreVersion, String coreEtag, RepositoryReadControl control) {
         enterOperation();

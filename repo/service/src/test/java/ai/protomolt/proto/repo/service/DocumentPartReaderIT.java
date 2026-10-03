@@ -136,6 +136,64 @@ class DocumentPartReaderIT {
         return new Bound(doc, saved, drive);
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void sourceBatchSharesBudgetThroughActualWriterPublication(boolean enoughCapacity) throws Exception {
+        var original = bound();
+        var source = DocumentSourceSnapshot.bound(tx, original.row);
+        long bytes = source.manifest().getPartsList().stream().mapToLong(PartManifestEntry::getSizeBytes).sum();
+        var budget = new PayloadBudget(4 * bytes - (enoughCapacity ? 0 : 1));
+        var reader = new DocumentPartReader((generation, retained) -> {
+            assertThat(generation).isEqualTo(GENERATION);
+            assertThat(retained).isEqualTo(profile);
+            return store;
+        }, 2, 256L * 1024 * 1024, budget);
+        var writer = new DocumentAttemptWriter(tx, drives, GENERATION, profile.identity(), opened, budget);
+        UUID attemptId = UUID.randomUUID();
+        String prefix = "documents/account/" + source.nodeId() + "/attempts/" + attemptId + "/";
+        try (var batch = reader.readSource(source, null, Set.of(), Set.of(),
+                ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+            assertThat(budget.reservedBytes()).isEqualTo(2 * bytes);
+            var planned = batch.parts().stream().map(p -> new DocumentPartAttemptLedger.PlannedObject(
+                    p.part(), p.subKey(), DocumentPartCodec.objectKey(prefix, p.part(), p.subKey()),
+                    p.bytes().length, p.sha256(), "application/protobuf")).toList();
+            var plan = new DocumentPartAttemptLedger.Plan(attemptId,
+                    new DocumentPartAttemptLedger.Location(source.nodeId(), "account", GENERATION, NAMESPACE),
+                    source.revision(), Map.of(source.nodeId(), source.revision()), planned);
+            java.util.concurrent.Callable<DocumentRecord> write = () -> writer.write(plan, source.manifest().getAddress(),
+                    original.drive, batch.parts(), java.time.Duration.ofMinutes(1), Map.of(), List.of(source), parts -> {
+                        assertThat(budget.reservedBytes()).isEqualTo(2 * bytes); // staging workers have drained
+                        var row = original.row;
+                        var core = parts.getFirst();
+                        row.objectKey = prefix; row.versionId = core.providerVersion(); row.etag = core.etag();
+                        var manifest = source.manifest().toBuilder().setDocVersion(2).clearParts();
+                        for (var p : parts) manifest.addParts(PartManifestEntry.newBuilder().setPart(p.part()).setSubKey(p.subKey())
+                                .setObjectKey(p.key()).setSizeBytes(p.size()).setSha256(p.sha256()).setState(PartState.PART_STATE_PRESENT));
+                        row.writeManifest(manifest.build()); row.checksum = DocumentPartCodec.rootChecksumFromManifest(manifest.build());
+                        return row;
+                    }, () -> {}, (em, saved) -> {});
+            if (enoughCapacity) {
+                var saved = write.call();
+                assertThat(saved.mutationRevision).isGreaterThan(source.revision());
+                var publication = new DocumentPublicationLedger(tx).findForRead(saved).orElseThrow();
+                assertThat(publication.manifest().getDocVersion()).isEqualTo(2);
+                assertThat(store.getBounded(NAMESPACE, publication.parts().getFirst().key(),
+                        publication.parts().getFirst().providerVersion(), (int) bytes).data())
+                        .containsExactly(batch.parts().getFirst().bytes());
+            } else {
+                assertThatThrownBy(write::call).hasRootCauseInstanceOf(PayloadBudget.CapacityExceededException.class);
+                assertThat(new DocumentPartAttemptLedger(tx).find(attemptId)).isEmpty();
+                assertThat(documents.findByNodeId(source.nodeId()).orElseThrow().mutationRevision).isEqualTo(source.revision());
+            }
+            assertThat(budget.reservedBytes()).isEqualTo(2 * bytes);
+        } finally {
+            writer.close(); reader.close();
+            assertThat(writer.awaitIdle(java.time.Duration.ofSeconds(5))).isTrue();
+            assertThat(reader.awaitIdle(java.time.Duration.ofSeconds(5))).isTrue();
+        }
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
     private static ai.protomolt.proto.repo.engine.DocumentOperations engine(DocumentPartReader reader) {
         return new ai.protomolt.proto.repo.engine.DocumentOperations(documents, drives, tx, store,
                 new ai.protomolt.proto.repo.container.blob.PartStorage(),

@@ -617,7 +617,16 @@ concurrent saturation before I/O, partial fan-out failure, uncooperative reads,
 batch ownership through staging, repeated close, and release after success/error.
 Arrays retained by a caller after closing its batch and SDK-internal buffering are
 outside the guarantee. The batch and reservation mechanisms are implemented;
-production host composition and source-batch-to-writer integration remain pending.
+production host composition remains pending. `readSource` selects bytes from the
+captured source snapshot, using retained publication identity for managed sources
+and captured namespace/core identity plus a host-qualified store for legacy ones.
+It makes no new authorization decision. The library integration test now carries
+a managed source batch through a real writer publication with one shared budget:
+exact combined capacity publishes version 2, while one byte less rejects before
+attempt admission and preserves version 1. The batch reservation survives through
+publication and releases on close. This proves the component handoff, not the
+public SaveDocument composition: raw references, outbox, ownership fences, metadata
+and host lifecycle still need to be integrated before that route is enabled.
 
 Performance qualification remains required before switching application writes.
 The first stager performed each part's PUT, exact read-back and SQL verification

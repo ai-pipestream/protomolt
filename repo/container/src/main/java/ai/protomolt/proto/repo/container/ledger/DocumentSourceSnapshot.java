@@ -79,6 +79,11 @@ public final class DocumentSourceSnapshot {
     public String coreVersion() { return coreVersion; }
     public String coreEtag() { return coreEtag; }
     public boolean legacy() { return legacyDrive != null; }
+    /** Captured namespace; never re-resolve it from the current drive during source reads. */
+    public String legacyNamespace() {
+        if (legacyDrive == null) throw new IllegalStateException("Managed source uses its retained publication namespace");
+        return legacyDrive.namespace();
+    }
     public java.util.Optional<DocumentPublicationLedger.Publication> publication() { return java.util.Optional.ofNullable(retainedPublication); }
 
     static java.util.List<DocumentSourceSnapshot> matching(java.util.Map<UUID, Long> expected,
