@@ -43,6 +43,7 @@ class RustFsConditionalBlobStoreIT {
 
     static S3BlobStore store;
     static S3Client client;
+    static ai.protomolt.proto.repo.blob.spi.OpenedBlobStore handle;
 
     @BeforeAll
     static void setup() {
@@ -55,12 +56,17 @@ class RustFsConditionalBlobStoreIT {
                 .httpClient(UrlConnectionHttpClient.create())
                 .forcePathStyle(true).build();
         client.createBucket(builder -> builder.bucket(BUCKET));
-        store = new S3BlobStore(client, true);
+        handle = ai.protomolt.proto.repo.blob.spi.BlobStores.discover().open("s3", java.util.Map.of(
+                "endpoint", "http://" + RUSTFS.getHost() + ":" + RUSTFS.getMappedPort(9000),
+                "region", "us-east-1", "access-key", "conditional-test",
+                "secret-key", "conditional-test-secret", "path-style", "true", "conditional-writes", "true"));
+        store = (S3BlobStore) handle.store();
     }
 
     @AfterAll
-    static void closeClient() {
-        if (client != null) client.close();
+    static void closeClient() throws Exception {
+        try { if (handle != null) handle.close(); }
+        finally { if (client != null) client.close(); }
     }
 
     @Test

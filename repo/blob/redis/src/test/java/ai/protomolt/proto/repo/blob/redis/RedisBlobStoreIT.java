@@ -37,17 +37,19 @@ class RedisBlobStoreIT {
             .withExposedPorts(6379);
 
     static RedisBlobStore store;
+    static ai.protomolt.proto.repo.blob.spi.OpenedBlobStore handle;
 
     @BeforeAll
     static void setUp() {
-        store = new RedisBlobStore(new RedisBlobStoreConfig(
-                "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379),
-                0, 0L, "it:"));
+        handle = ai.protomolt.proto.repo.blob.spi.BlobStores.discover().open("redis", java.util.Map.of(
+                "uri", "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379),
+                "ttl-seconds", "0", "max-object-bytes", "0", "key-prefix", "it:"));
+        store = (RedisBlobStore) handle.store();
     }
 
     @AfterAll
-    static void tearDown() {
-        store.close();
+    static void tearDown() throws Exception {
+        if (handle != null) handle.close();
     }
 
     @Test

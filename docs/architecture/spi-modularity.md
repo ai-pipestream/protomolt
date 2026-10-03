@@ -13,7 +13,26 @@ Provider implementations live in `protomolt-repo-blob-s3`,
 to `.repo.blob.s3`, `.repo.blob.redis` and `.repo.blob.cache` respectively.
 The cache uses the optional `ExpiringBlobStore` capability instead of depending
 on Redis. The existing service assembly explicitly composes these providers; provider
-factory discovery is separate work.
+factory discovery is available through `BlobStores.discover()` in the byte SPI.
+The service assembly has not yet switched its construction to this factory API.
+
+Discovery opens no stores. `open(id, options, requiredCapabilities)` requires an
+installed provider and returns an `OpenedBlobStore` whose lifetime belongs to the
+caller. Missing or duplicate IDs and invalid options fail explicitly. An
+incompatible capability selection closes the acquired handle and fails, retaining
+any cleanup failure. Closing a handle attempts cleanup once and forbids further
+access through that handle; previously obtained store references must not be used
+after closure. Factory-created clients are owned, not borrowed.
+
+The Redis factory requires `uri`, `ttl-seconds`, `max-object-bytes`, and `key-prefix`.
+The S3 factory requires `endpoint`, `region`, `access-key`, `secret-key`,
+`path-style`, and `conditional-writes`. Booleans accept only `true` or `false`.
+S3 factory credentials are explicitly static in this first implementation; direct
+client construction remains available for other credential providers. Setting
+`conditional-writes=true` is an operator assertion that the endpoint has been
+qualified; discovery does not establish remote atomicity. The tests qualify the
+existing pinned RustFS endpoint with competing conditional writes. Redis does not
+advertise conditional writes. The cache remains an explicitly composed decorator.
 
 `protomolt-repo-codec` owns descriptor-driven document splitting, part layouts,
 manifest encoding and typed reassembly. It depends on repository protobuf
