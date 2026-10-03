@@ -33,6 +33,15 @@ class ManagedBackendMigrationIT {
                 insert.setObject(2, entry);
                 insert.executeUpdate();
             }
+            try (var insert = connection.prepareStatement("""
+                    INSERT INTO archive_object_uploads(object_id,expected_size,content_type,lease_token,lease_until,state,sha256,provider_version)
+                    VALUES (?,7,'text/plain',?,clock_timestamp()+interval '1 hour','VERIFIED',?,'original-version')
+                    """)) {
+                insert.setObject(1, object);
+                insert.setObject(2, UUID.randomUUID());
+                insert.setString(3, "a".repeat(64));
+                insert.executeUpdate();
+            }
         }
         try (var database = new LedgerDatabase(new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()))) {
             var tx = new Tx(database.entityManagerFactory());
@@ -45,6 +54,13 @@ class ManagedBackendMigrationIT {
                 var row = (Object[]) em.createNativeQuery("SELECT endpoint,region,path_style,identity_schema,identity_json FROM managed_backend_profiles WHERE generation='legacy'")
                         .getSingleResult();
                 assertThat(row).containsExactly("https://original.example", "us-east-1", true, null, null);
+                var upload = (Object[]) em.createNativeQuery("SELECT state,sha256,provider_version,cleanup_attempts,cleanup_token FROM archive_object_uploads WHERE object_id=:id")
+                        .setParameter("id", object).getSingleResult();
+                assertThat(upload[0]).isEqualTo("VERIFIED");
+                assertThat(upload[1]).isEqualTo("a".repeat(64));
+                assertThat(upload[2]).isEqualTo("original-version");
+                assertThat(((Number) upload[3]).longValue()).isZero();
+                assertThat(upload[4]).isNull();
                 return null;
             });
             assertThatThrownBy(() -> tx.inTransaction(em -> {

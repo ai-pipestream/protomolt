@@ -194,6 +194,55 @@ class ArchiveManagedUploadIT {
         assertThat(new ArchiveObjectLedger(tx).readable(entry, first.getVersion(), UUID.fromString(object.getStorageObjectId()))).isEmpty();
         assertThat(opened.store().get("managed-archive", object.getObjectKey()).data())
                 .isEqualTo(ByteString.copyFromUtf8("original").toByteArray());
+        var recovery = recovery();
+        assertThat(recovery.recover(UUID.fromString(second.getManifest().getRenditions(0).getStorageObjectId()),
+                java.time.Instant.now().plusSeconds(60))).isEqualTo(ArchiveObjectRecovery.Outcome.SKIPPED);
+        assertThat(recovery.recover(UUID.fromString(object.getStorageObjectId()), java.time.Instant.now().plusSeconds(60)))
+                .isEqualTo(ArchiveObjectRecovery.Outcome.RECLAIMED);
+        assertThatThrownBy(() -> opened.store().get("managed-archive", object.getObjectKey()))
+                .isInstanceOf(BlobStore.BlobNotFoundException.class);
+    }
+
+    static ArchiveObjectRecovery recovery() {
+        return new ArchiveObjectRecovery(new ArchiveCleanupLedger(tx), new ManagedBackendLedger(tx), (generation, profile) -> {
+            assertThat(generation).isEqualTo("original");
+            assertThat(profile.storageRealm()).isEqualTo("original-realm");
+            assertThat(profile.identity().location().get("endpoint")).isEqualTo(S3.getEndpoint().toString());
+            return opened.reclaimer();
+        });
+    }
+
+    @Test void failedCleanupRetriesOriginalBackendAndReconcilesLateWrites() {
+        byte[] bytes = ByteString.copyFromUtf8("abandoned bytes").toByteArray();
+        String key = "abandoned/" + UUID.randomUUID();
+        var rendition = RenditionManifestEntry.newBuilder().setRendition(RenditionDescriptor.newBuilder().setName("original"))
+                .setState(RenditionState.RENDITION_STATE_PRESENT).setObjectKey(key).setSizeBytes(bytes.length)
+                .setSha256(ArchiveManifests.sha256Hex(bytes)).build();
+        var staged = new ArchiveObjectWriter(new ArchiveUploadLedger(tx), opened.store(), "original", opened.capabilities(), Duration.ofMinutes(1))
+                .stage(UUID.randomUUID(), "account", "records", "managed-archive", rendition, "text/plain", bytes);
+        tx.inTransaction(em -> {
+            em.createNativeQuery("UPDATE archive_object_uploads SET lease_until=clock_timestamp()-interval '1 second' WHERE object_id=:id")
+                    .setParameter("id", staged.objectId()).executeUpdate();
+        });
+        var offline = new ArchiveObjectRecovery(new ArchiveCleanupLedger(tx), new ManagedBackendLedger(tx), (generation, profile) -> {
+            throw new IllegalStateException("Original backend offline");
+        });
+        var cutoff = java.time.Instant.now().plusSeconds(60);
+        assertThatThrownBy(() -> offline.recover(staged.objectId(), cutoff)).hasRootCauseMessage("Original backend offline");
+        tx.readOnly(em -> {
+            var row = (Object[]) em.createNativeQuery("SELECT state,cleanup_error FROM archive_object_uploads WHERE object_id=:id")
+                    .setParameter("id", staged.objectId()).getSingleResult();
+            assertThat(row).containsExactly("DELETING", "BACKEND_RECLAMATION_FAILED");
+            return null;
+        });
+        assertThat(opened.store().get("managed-archive", key).data()).isEqualTo(bytes);
+        assertThat(recovery().recover(staged.objectId(), cutoff)).isEqualTo(ArchiveObjectRecovery.Outcome.RECLAIMED);
+        assertThatThrownBy(() -> opened.store().get("managed-archive", key)).isInstanceOf(BlobStore.BlobNotFoundException.class);
+        // Simulate an expired upload whose provider request completes after reclamation.
+        opened.store().put(new BlobStore.PutSpec("managed-archive", key, "text/plain", Map.of(), rendition.getSha256()), bytes);
+        assertThat(new ArchiveCleanupLedger(tx).candidates(cutoff, 1000)).contains(staged.objectId());
+        assertThat(recovery().recover(staged.objectId(), cutoff)).isEqualTo(ArchiveObjectRecovery.Outcome.RECLAIMED);
+        assertThatThrownBy(() -> opened.store().get("managed-archive", key)).isInstanceOf(BlobStore.BlobNotFoundException.class);
     }
 
     static PutEntryRequest request(String value) {

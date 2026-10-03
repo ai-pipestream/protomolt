@@ -47,6 +47,9 @@ class ArchivePublicationBindingIT {
             assertThat(ledger.findEntry(entry.entryUuid)).isEmpty();
             ledger.commitSave(entry, 0, first, 0, ArchiveLedger.StatsDelta.none(), Map.of(upload.objectId(), upload.leaseToken()));
             assertThat(referenceCount(tx, upload.objectId())).isEqualTo(1);
+            var cleanup = new ArchiveCleanupLedger(tx);
+            assertThat(cleanup.claim(upload.objectId(), Instant.now().plusSeconds(60))).isEmpty();
+            assertThat(cleanup.candidates(Instant.now().plusSeconds(60), 1000)).doesNotContain(upload.objectId());
             var readable = objects.readable(entry.entryUuid, 1, upload.objectId()).orElseThrow();
             assertThat(readable.binding()).isEqualTo(admission.binding());
             assertThat(readable.size()).isEqualTo(7);
@@ -160,6 +163,45 @@ class ArchivePublicationBindingIT {
     private static long referenceCount(Tx tx, UUID objectId) {
         return tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM archive_version_object_refs WHERE object_id=:id")
                 .setParameter("id", objectId).getSingleResult()).longValue());
+    }
+
+    @Test void publicationReferenceLockPreventsConcurrentCleanupClaim() throws Exception {
+        try (var database = database()) {
+            var tx = new Tx(database.entityManagerFactory());
+            var ledger = new ArchiveLedger(tx);
+            var entry = entry();
+            var upload = admission(tx, entry).upload();
+            new ArchiveUploadLedger(tx).verify(upload.objectId(), upload.leaseToken(), 7, "a".repeat(64), null, null);
+            ledger.commitSave(entry, 0, version(entry, upload.objectId()), 0, ArchiveLedger.StatsDelta.none(),
+                    Map.of(upload.objectId(), upload.leaseToken()));
+            tx.inTransaction(em -> {
+                em.createNativeQuery("DELETE FROM archive_version_object_refs WHERE object_id=:id")
+                        .setParameter("id", upload.objectId()).executeUpdate();
+            });
+            var cleanup = new ArchiveCleanupLedger(tx);
+            try (var connection = java.sql.DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+                 var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+                connection.setAutoCommit(false);
+                try {
+                    try (var insert = connection.prepareStatement("INSERT INTO archive_version_object_refs(entry_uuid,version,object_id) VALUES (?,1,?)")) {
+                        insert.setObject(1, entry.entryUuid);
+                        insert.setObject(2, upload.objectId());
+                        insert.executeUpdate();
+                    }
+                    var started = new java.util.concurrent.CountDownLatch(1);
+                    var attempt = executor.submit(() -> {
+                        started.countDown();
+                        return cleanup.claim(upload.objectId(), Instant.now().plusSeconds(60));
+                    });
+                    assertThat(started.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                    assertThatThrownBy(() -> attempt.get(200, java.util.concurrent.TimeUnit.MILLISECONDS))
+                            .isInstanceOf(java.util.concurrent.TimeoutException.class);
+                    connection.commit();
+                    assertThat(attempt.get(5, java.util.concurrent.TimeUnit.SECONDS)).isEmpty();
+                    assertThat(referenceCount(tx, upload.objectId())).isEqualTo(1);
+                } finally { connection.rollback(); }
+            }
+        }
     }
 
     private static LedgerDatabase database() {

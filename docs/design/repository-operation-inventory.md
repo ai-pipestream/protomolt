@@ -368,6 +368,22 @@ historical snapshots or hydration behavior; those require new red/green tests.
 
 ### Bound archive reads (internal composition)
 
+V18 adds durable archive cleanup claims with fenced completion, bounded candidate
+selection and retained tombstones. Publication and cleanup serialize on the same
+upload row; SQL also refuses non-LIVE references and reclamation of referenced
+objects. Unexpired uploads and retained version references are ineligible. Stale
+DELETING work can be reclaimed by another worker; DELETED objects remain eligible
+for periodic reconciliation because a late provider PUT can recreate bytes.
+ArchiveObjectRecovery uses the original persisted backend profile and physical
+reclaimer outside SQL transactions. Failures remain recorded and propagate.
+This is an internal recovery operation; production scheduling, destructive
+operation integration and lifecycle qualification remain unfinished.
+
+Archive references are the complete pin set only for current archive objects.
+Future JCR graph/frozen-version/restore references must join the liveness decision
+or own separate physical objects. These entry-scoped commits do not implement a
+general JCR session transaction.
+
 Unary PutEntry has an internal managed composition using ArchiveObjectWriter.
 Fresh candidates receive a durable reservation before checksummed provider I/O;
 successful writes record byte identity and provider revision. The owning version
