@@ -249,6 +249,27 @@ length mismatch, verification replay and direct SQL mutation. Bare V14 bindings
 are not promoted to upload admissions. No archive engine path uses this ledger
 yet; transactional publication references and cleanup claims remain required.
 
+**Extended manifest contract:** `RenditionManifestEntry.storage_object_id` is an
+additive UUID string at tag 10. Existing field tags, imports, package and Any URL
+are unchanged. Legacy absence remains valid and means unknown/unmanaged, never
+an inferred current-drive binding. Runtime validate.v1 checks UUID syntax and a
+CEL rule allowing an ID only for PRESENT content or DELETED provenance; EMPTY
+and unspecified states cannot carry it. A tombstone's ID is provenance, not a
+live byte reference. JSON Schema emits a UUID-format string and CEL extension;
+the CEL extension still requires runtime execution. Standard JSON Schema format
+handling also does not establish validate.v1 `ignore_if_zero` parity for an
+explicit empty string. Generator parity is not claimed or changed here.
+
+No writer populates this field yet. Publication must validate the complete
+manifest, compare bound entry/account/archive/key and verified hash/size under
+locks, require the active attempt token for first publication, and commit object
+references with the version. Reusing already published content requires retained
+reference ownership, not an indefinitely live upload lease. A byte-dedupe result
+keeps the committed manifest's object ID/key and leaves the unused candidate for
+cleanup. Normal reads must resolve the ID's original backend binding. Full proto
+imports, lint, FILE compatibility and generated/dynamic runtime fixtures cover
+the contract addition; they do not establish engine integration.
+
 - **Extended requests:** DeleteEntry currently has only address (tag 1);
   DeleteRendition has address/rendition/reason (tags 1–3); PruneVersions has
   address/keep_latest (tags 1–2). None has an idempotency key. Add optional operation

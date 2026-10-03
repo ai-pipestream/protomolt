@@ -126,6 +126,11 @@ message RenditionDescriptor {
 // One rendition object in a version's manifest: what it is, what state it
 // is in, and exactly where and what its bytes are.
 message RenditionManifestEntry {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "archive-storage-binding-state"
+    message: "a storage binding requires PRESENT content or DELETED provenance"
+    expression: "this.storage_object_id == '' || this.state == 1 || this.state == 3"
+  };
   // What the object is.
   RenditionDescriptor rendition = 1 [
     (ai.protomolt.proto.validate.v1.field) = {required: true}
@@ -141,8 +146,8 @@ message RenditionManifestEntry {
       ignore_if_zero: true
     }
   ];
-  // Repository-internal storage object key. Content-derived and
-  // entry-local: unchanged bytes across versions share one object.
+  // Repository-internal storage object key. New writes use unique physical
+  // identities; unchanged bytes share retained manifest references.
   string object_key = 5 [
     (ai.protomolt.proto.validate.v1.field) = {
       string: {max_len: 1024}
@@ -165,6 +170,17 @@ message RenditionManifestEntry {
   // What this rendition's content is, when a profile was measured
   // (typically on derived renditions; OCR text always carries one).
   ai.protomolt.proto.asset.v1.ContentProfile content_profile = 9;
+  // Durable original storage binding. Absent on legacy/unmanaged manifests;
+  // absence must not be interpreted as a verified binding to the current drive.
+  // PRESENT publication verifies ownership, key and byte identity against this
+  // binding. EMPTY has no physical binding; DELETED may retain it as provenance.
+  // This identifier is not an authorization grant or proof of schema validity.
+  string storage_object_id = 10 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {uuid: true}
+      ignore_if_zero: true
+    }
+  ];
 }
 
 // The machine-readable map of one immutable stored state: which renditions
