@@ -296,6 +296,25 @@ prefixes, raw-key regression, and ordinary loose-blob round trips. Reserving an
 exact `archive` segment makes unrelated pre-release loose blobs under that segment
 read-only through this API; similar names and encoded text are not interpreted.
 
+The document orphan reconciler now excludes that same archive namespace before
+orphan classification, even for an armed zero-age sweep. It has no authority to
+infer archive ownership from document rows. A real regression keeps a published
+object, a verified candidate and unbound historical bytes intact, then proves
+archive recovery can still reclaim the expired candidate. Namespace predicates
+live in the provider-free codec module and are shared by engine and container.
+The document purge consumer also refuses persisted batches containing archive
+or managed-raw keys before deleting any key; tests cover both legacy and
+generation-bound queued commands with mixed document/reserved targets. Failure remains recorded
+with an explicit repair diagnostic. Document configurations must use prefixes
+outside the reserved archive namespace; older conflicting purge records require
+explicit repair rather than bypassing the guard. The general reconciler also
+explicitly excludes managed-raw keys; a real armed-sweep test still deletes an
+ordinary orphan while leaving both reserved namespaces intact.
+
+The legacy document orphan sweep still uses a manifest snapshot and minimum-age
+grace period, not a transaction fence against arbitrarily slow document writes.
+Its broader publication-race qualification remains outstanding.
+
 Keep archive operations process-authorized until current-policy guards support
 scoped callers. Legacy write/staging cleanup remains separate follow-up work;
 removing destructive RPCs does not qualify those older write paths.

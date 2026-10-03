@@ -35,14 +35,19 @@ import java.util.UUID;
  * content-addressed and deliberately untracked by the ledger, so the
  * reconciler never flags them; their lifecycle is DeleteBlob's, not this
  * sweep's.
+ * Archive and managed-raw namespaces are also explicitly excluded, including
+ * unbound historical keys and in-flight uploads. Their ownership and cleanup
+ * belong to separate ledgers, which this document sweep cannot infer from a
+ * manifest snapshot.
  * <p>
- * Two safety rails make deletion safe despite the non-ACID model:
+ * Two operational safeguards limit this legacy sweep's scope:
  * <ul>
  *   <li><b>dry-run by default</b> — pass {@code dryRun=true} and the sweep
  *       only reports;</li>
  *   <li><b>min-age guard</b> — an object modified more recently than
  *       {@code minAge} is never swept, so an in-flight upload that has
- *       written its bytes but not yet committed its row is protected.</li>
+ *       written its bytes but not yet committed its row has a grace period.
+ *       This is not a transactional fence for arbitrarily slow writes.</li>
  * </ul>
  */
 public final class StorageReconciler {
@@ -102,7 +107,9 @@ public final class StorageReconciler {
         List<String> sample = new ArrayList<>();
         for (BlobStore.ListedObject object : objects) {
             scanned++;
-            if (owned.contains(object.key()) || isRawBlobKey(object.key())) {
+            if (owned.contains(object.key()) || isRawBlobKey(object.key())
+                    || ai.protomolt.proto.repo.codec.RepositoryNamespaces.isArchive(object.key())
+                    || ai.protomolt.proto.repo.codec.RepositoryNamespaces.isManagedRaw(object.key())) {
                 continue;
             }
             if (object.lastModifiedEpochMs() > cutoff) {

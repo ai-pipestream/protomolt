@@ -222,6 +222,11 @@ public final class S3Purger {
         if (keys.isEmpty()) {
             return;
         }
+        // Validate the entire persisted batch, including commands queued before
+        // this guard existed. Never partly delete a mixed-ownership snapshot.
+        if (keys.stream().anyMatch(key -> ai.protomolt.proto.repo.codec.RepositoryNamespaces.isArchive(key)
+                || ai.protomolt.proto.repo.codec.RepositoryNamespaces.isManagedRaw(key)))
+            throw new IllegalStateException("Document purge contains an archive or managed-raw key; explicit repair is required");
         BlobStore.BatchDeleteResult result = store.deleteAll(bucket, keys);
         if (!result.allSucceeded()) {
             throw new ai.protomolt.proto.repo.blob.spi.BlobStoreException(ai.protomolt.proto.repo.blob.spi.BlobStoreException.Code.UNAVAILABLE, "batch delete of purge " + record.purgeId

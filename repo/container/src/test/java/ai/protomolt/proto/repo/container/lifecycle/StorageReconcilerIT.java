@@ -22,6 +22,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Testcontainers(disabledWithoutDocker = true)
 class StorageReconcilerIT extends AbstractLifecycleIT {
 
+    @Test
+    void reservedNamespacesSurviveAnArmedSweepWhileOrdinaryOrphansAreDeleted() {
+        String id = UUID.randomUUID().toString();
+        var drive = createDrive("reserved-" + id, "docs", "reconcile-" + id, "scope");
+        String archive = "scope/archive/legacy-key";
+        String managedRaw = "scope/.protomolt-managed/candidate";
+        String orphan = "scope/archive-backup/unowned";
+        for (String key : List.of(archive, managedRaw, orphan)) putObject(drive.bucket, key);
+        var report = new StorageReconciler(documents).reconcile(store, drive.bucket, "scope/", Duration.ZERO, false);
+        assertThat(report.scanned()).isEqualTo(3);
+        assertThat(report.orphans()).isEqualTo(1);
+        assertThat(report.deleted()).isEqualTo(1);
+        assertThat(report.orphanKeys()).containsExactly(orphan);
+        assertThat(objectExists(drive.bucket, archive)).isTrue();
+        assertThat(objectExists(drive.bucket, managedRaw)).isTrue();
+        assertThat(objectExists(drive.bucket, orphan)).isFalse();
+    }
+
     /** Real store, but list() backdates one key — S3 cannot age objects. */
     private static final class AgingStore implements BlobStore {
         private final BlobStore delegate;

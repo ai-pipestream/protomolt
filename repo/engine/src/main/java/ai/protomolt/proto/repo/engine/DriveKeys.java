@@ -44,7 +44,7 @@ public final class DriveKeys {
 
     /** Keys are opaque: reserve the exact path segment without decoding or normalizing. */
     public static boolean isManaged(String objectKey) {
-        return hasSegment(objectKey, MANAGED_SEGMENT);
+        return ai.protomolt.proto.repo.codec.RepositoryNamespaces.isManagedRaw(objectKey);
     }
 
     /**
@@ -53,19 +53,6 @@ public final class DriveKeys {
      * Do not infer ownership from the current drive: aliases can share a namespace.
      */
     public static boolean isArchiveOwned(String objectKey) {
-        return hasSegment(objectKey, "archive");
-    }
-
-    private static boolean hasSegment(String objectKey, String reserved) {
-        if (objectKey == null) return false;
-        int start = 0;
-        while (start <= objectKey.length()) {
-            int end = objectKey.indexOf('/', start);
-            if (end < 0) end = objectKey.length();
-            if (end - start == reserved.length() && objectKey.startsWith(reserved, start)) return true;
-            if (end == objectKey.length()) break;
-            start = end + 1;
-        }
-        return false;
+        return ai.protomolt.proto.repo.codec.RepositoryNamespaces.isArchive(objectKey);
     }
 }

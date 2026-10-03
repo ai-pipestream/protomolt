@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The Phase B drain against real PostgreSQL + LocalStack: happy path, the
@@ -22,6 +23,37 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @Testcontainers(disabledWithoutDocker = true)
 class S3PurgerIT extends AbstractLifecycleIT {
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"false,archive", "true,archive", "false,.protomolt-managed", "true,.protomolt-managed"})
+    void persistedPurgeCannotDeleteReservedKeysEvenWhenMixedWithDocumentKeys(boolean identifiedGeneration, String namespace) {
+        String identity = UUID.randomUUID().toString();
+        var drive = createDrive("archive-guard-" + identity, "docs", "purge-guard-" + identity, "pfx");
+        String documentKey = "pfx/documents/" + identity;
+        String archiveKey = "pfx/" + namespace + "/account/records/" + identity;
+        putObject(drive.bucket, documentKey);
+        putObject(drive.bucket, archiveKey);
+        var row = intakeRow(UUID.randomUUID(), drive.accountId, "guard", "ds", drive.name, List.of(documentKey));
+        row.status = DocumentStatus.PENDING_PURGE;
+        if (identifiedGeneration) row.pendingPurgeId = UUID.randomUUID();
+        documents.save(row);
+        var command = enqueuePurge(row, drive.prefix, Instant.now());
+        // Exercise already persisted queue payloads, not only admission-time snapshot creation.
+        tx.inTransaction(em -> {
+            var record = em.find(DocumentPurgeRecord.class, command.purgeId);
+            record.generationId = row.pendingPurgeId;
+            record.writeObjectKeys(List.of(documentKey, archiveKey));
+        });
+        assertThatThrownBy(() -> purger.purgeNow(store, command.purgeId))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("archive");
+        var failed = findPurge(command.purgeId).orElseThrow();
+        assertThat(failed.status).isEqualTo(DocumentPurgeRecord.STATUS_PENDING);
+        assertThat(failed.attempts).isEqualTo(1);
+        assertThat(failed.lastError).contains("archive");
+        assertThat(documents.findByNodeId(row.nodeId)).isPresent();
+        assertThat(objectExists(drive.bucket, documentKey)).isTrue();
+        assertThat(objectExists(drive.bucket, archiveKey)).isTrue();
+    }
 
     @Test
     void repeatedSynchronousAdmissionsEmitOneActualRemovalEvent() {

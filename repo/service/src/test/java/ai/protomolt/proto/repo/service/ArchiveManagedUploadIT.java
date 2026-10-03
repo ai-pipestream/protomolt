@@ -106,6 +106,45 @@ class ArchiveManagedUploadIT {
         } finally { channel.shutdownNow(); server.shutdownNow(); }
     }
 
+    @Test void documentOrphanSweepCannotDeleteArchiveObjectsOrUploadCandidates() {
+        var request = request("published archive content");
+        var saved = managed.putEntry(CALLER, request);
+        var live = saved.getManifest().getRenditions(0);
+        String prefix = live.getObjectKey().substring(0, live.getObjectKey().indexOf("/original/"));
+        String legacyKey = prefix + "/legacy-unbound";
+        byte[] legacy = "historical unbound archive content".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        opened.store().put(new BlobStore.PutSpec("managed-archive", legacyKey, "text/plain", Map.of(), null), legacy);
+        byte[] candidate = "unpublished candidate".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        var pending = live.toBuilder().clearStorageObjectId().setObjectKey(prefix + "/writes/" + UUID.randomUUID())
+                .setSizeBytes(candidate.length).setSha256(ArchiveManifests.sha256Hex(candidate)).build();
+        var staged = new ArchiveObjectWriter(new ArchiveUploadLedger(tx), opened.store(), "original",
+                opened.capabilities(), Duration.ofMinutes(5)).stage(UUID.fromString(saved.getEntryUuid()),
+                        "account", "records", "managed-archive", pending, "text/plain", candidate);
+        var reconciler = new ai.protomolt.proto.repo.container.lifecycle.StorageReconciler(new DocumentLedger(tx));
+        // An explicitly armed zero-age sweep must still respect the archive's ownership domain.
+        var report = reconciler.reconcile(opened.store(), "managed-archive", prefix, Duration.ZERO, false);
+        assertThat(report.scanned()).isEqualTo(3);
+        assertThat(report.orphans()).isZero();
+        assertThat(report.deleted()).isZero();
+        assertThat(report.orphanKeys()).isEmpty();
+        assertThat(opened.store().get("managed-archive", live.getObjectKey()).data()).isEqualTo(request.getRenditions(0).getData().toByteArray());
+        assertThat(opened.store().get("managed-archive", pending.getObjectKey()).data()).isEqualTo(candidate);
+        assertThat(opened.store().get("managed-archive", legacyKey).data()).isEqualTo(legacy);
+        assertThat(managed.getEntry(CALLER, GetEntryRequest.newBuilder().setAddress(request.getAddress()).build())
+                .getRenditions(0).getData()).isEqualTo(request.getRenditions(0).getData());
+        // Excluding generic sweeps must not disable the owning lifecycle's reclamation.
+        tx.inTransaction(em -> {
+            em.createNativeQuery("UPDATE archive_object_uploads SET lease_until=clock_timestamp()-interval '1 second' WHERE object_id=:id")
+                    .setParameter("id", staged.objectId()).executeUpdate();
+        });
+        assertThat(recovery().recover(staged.objectId(), java.time.Instant.now().plusSeconds(60)))
+                .isEqualTo(ArchiveObjectRecovery.Outcome.RECLAIMED);
+        assertThatThrownBy(() -> opened.store().get("managed-archive", pending.getObjectKey())).isInstanceOf(BlobStore.BlobNotFoundException.class);
+        assertThat(opened.store().get("managed-archive", legacyKey).data()).isEqualTo(legacy);
+        assertThat(new ArchiveObjectLedger(tx).readable(UUID.fromString(saved.getEntryUuid()), 1,
+                UUID.fromString(live.getStorageObjectId()))).isPresent();
+    }
+
     @Test void lostWriteAcknowledgementLeavesOneStagedObjectAndNoPublishedVersion() {
         var request = request("landed without acknowledgement");
         BlobStore failing = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
