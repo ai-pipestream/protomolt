@@ -147,6 +147,8 @@ def supportedModules = [
         'protomolt-asset-catalog',
         'protomolt-repo-proto',
         'protomolt-repo-container',
+        'protomolt-repo-codec',
+        'protomolt-repo-blob-spi',
         'protomolt-repo-service',
         'protomolt-account-proto',
         'protomolt-account-service',

@@ -1,6 +1,6 @@
 package ai.protomolt.proto.repo.service;
 
-import ai.protomolt.proto.repo.container.blob.BlobStore;
+import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.container.blob.DocumentIds;
 import ai.protomolt.proto.repo.container.ledger.DriveLedger;
 import ai.protomolt.proto.repo.container.ledger.DriveRecord;

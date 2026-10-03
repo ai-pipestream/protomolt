@@ -1,5 +1,7 @@
 package ai.protomolt.proto.repo.container.blob;
 
+import ai.protomolt.proto.repo.blob.spi.BlobStore;
+
 import java.io.InputStream;
 import java.io.ByteArrayInputStream;
 import java.lang.reflect.Proxy;

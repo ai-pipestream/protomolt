@@ -1,0 +1,126 @@
+# Repository operation inventory
+
+Implementation baseline: `528117a2d48cda3b3abedadd75b5706d7ac68ca7`.
+Design: [repository composition](repository-composition.md).
+Classification describes intended behavior, not just protobuf edits. Extended
+operations retain their existing wire identities. New operations listed below
+are proposed responsibilities; names and fields require contract review before
+being added with handlers.
+
+## Existing gRPC operations
+
+Every existing repository RPC is included below. Shared authorization is an
+extension even where the message shape remains unchanged.
+
+### DriveService
+
+- **Extended: CreateDrive.** Account-scoped administrative authorization and
+  provider-specific provisioning. Preserve existing drive identity.
+- **Extended: GetDrive, ListDrives.** Authorized visibility and capability-aware
+  readiness without constructing an unselected provider.
+
+### DocumentService
+
+- **Extended: SaveDocument.** Shared ownership and contract gate; retain partial
+  part/chunk-set saves and copy-forward. Typed content admission must apply to
+  local, gRPC and HTTP paths. Define retry identity beyond deterministic doc IDs.
+- **Extended: GetDocument, GetDocumentByReference, GetDocumentManifest.** Shared
+  current-access checks, integrity and explicit completeness semantics. Existing
+  requested-part reads do not establish a hydration session.
+- **Extended: ListDocuments.** Account and document authorization before returning
+  metadata; pagination must not leak denied records.
+- **Extended: DeleteDocument.** Authorization and race-safe lifecycle checks;
+  preserve existing purge state and exact manifest key ownership.
+- **Extended: GetBlob, PutBlob, DeleteBlob.** Explicit administrative/raw-storage
+  authority; cannot bypass document policy through drive/object coordinates.
+- **Extended: GetBlobForUpdate, CompareAndPutBlob.** Same authority boundary;
+  byte/CAS semantics unchanged. Preserve 9,437,184-byte limit, strong quoted ETags,
+  checksum checks and explicit unsupported-provider failure. These RPCs explicitly
+  do not promise idempotency-key replay; a lost write acknowledgement can conflict.
+
+### ArchiveService
+
+- **Extended: CreateArchive.** Account authorization; explicit admission policy
+  without silently weakening opaque/typed distinctions.
+- **Extended: GetArchive, ListArchives, GetArchiveStats.** Shared authorized
+  visibility; aggregate counters must not expose unauthorized archive data.
+- **Extended: PutEntry, UploadRendition.** Typed admission where required, staged
+  visibility, schema retention, version metadata and durable retry identity.
+  Preserve opaque originals and existing rendition addressing.
+- **Extended: GetEntry, GetEntryManifest, ListEntries, ListVersions.** Current
+  authorization for historical content, retained schema identity and explicit
+  absence of legacy metadata snapshots.
+- **Extended: DeleteEntry, DeleteRendition, PruneVersions.** Authorization,
+  concurrent-reference safety and protected deletion-policy checks. Existing
+  redaction semantics need explicit treatment alongside immutable snapshots;
+  do not assume DeleteRendition creates a new version only.
+- **Extended: ClassifyEntry, BridgeEntry.** Use the same admission/ownership path
+  for derived output, preserving input/output version and policy identity.
+
+## Other entry points and unchanged semantics
+
+- **Extended:** HTTP document/archive uploads use the same engine boundaries as
+  their gRPC counterparts, including streaming limits and staged publication.
+- **New:** library repository interface and remote implementation, reusing the
+  existing request/response vocabulary rather than creating a second wire model.
+- **New:** provider factory discovery and explicit capability selection.
+- **Unchanged:** protobuf packages, existing field tags, import paths and Any URLs;
+  part encoding and current conditional-blob behavior; entry-local byte dedupe;
+  distinction between pipeline document parts and archive renditions.
+- **New:** admitted schema artifact retention and retrieval, version metadata
+  snapshot, operation replay lookup, and archival export/restore support where
+  existing operations cannot express the required guarantee. Decide exact RPC
+  additions after reviewing available registry and receipt contracts.
+- **New:** pending hydration revision begin, patch, inspect, finalize and cancel
+  responsibilities. Named-component replacement only; arbitrary field merging is
+  outside this goal. Normal reads remain on the last committed complete version.
+
+## Existing identities to reuse
+
+`grpc.service.v1.SchemaSource` accepts exactly one of a type name, inline sources,
+or descriptor-set input. It is an acquisition description, not a persisted
+immutable registry identity. `grpc.profile.v1.SchemaSource` records acquisition
+kind, source reference, descriptor fingerprint and artifact reference. Avoid
+pulling the full platform service implementation into repository libraries.
+
+`mesh.v1.SchemaReference` already specifies full type name and a SHA-256 of the
+descriptor closure sorted by file name and deterministically serialized. Reuse
+that canonicalization rather than inventing an incompatible digest. Review the
+dependency cost before importing the mesh message itself into repository proto.
+
+`RenditionDescriptor.schema_subject` records a subject only; it is not enforced
+and does not capture immutable dependency closure. Keep the old field's meaning.
+`OwnershipContext` already names account, datasource, connector, source owner and
+DocumentSecurity; reuse those identities for policy and historical provenance.
+
+`receipt.v1.WorkRecord` already binds subjects, steps and content-addressed
+artifacts, and supports prior-manifest revision links. Its signed-record issuer
+and key requirements must not be fabricated for an unsigned admission result.
+Use an optional receipt projection from persisted admission/provenance facts.
+Review delegation's existing candidate/attempt/contract/evidence bindings before
+introducing another semantic-review identity.
+
+Archive content-root equality currently elides saves. It is not evidence of
+metadata/schema/policy-aware dedupe. Expected-version checks prevent stale updates
+but do not recover a lost acknowledgement. These distinctions need acceptance
+tests before extending retry contracts.
+
+## Regression evidence to preserve
+
+- `DocumentPartCodecTest`: full/core byte round trips, absent field preservation,
+  chunk partitioning, root checksum, manifest JSON and path validation.
+- `ArchiveServiceIT`: retained versions, unchanged rendition sharing, expected
+  version conflict, streaming size validation, HTTP receipt, redaction tombstones,
+  pruning shared objects, delete counters and unversioned archives.
+- `ConditionalBlobContractValidationTest`: annotation and cross-field validation.
+- `ConditionalBlobRpcRustFsIT` and `RemoteBlobStoreConditionalTest`: real storage
+  conditional behavior and client response/identity checks respectively. Inspect
+  individual coverage before claiming concurrent-write or failure recovery proof.
+
+Gradle repo tests and Buf lint succeeded on the unchanged source baseline.
+The forced fresh run of repo-proto, repo-container and repo-service tests also
+passed (212 tasks executed, 1m 47s); log:
+`/tmp/protomolt-repository-baseline-fresh.log` in the implementation workspace.
+`scripts/check-proto-compatibility.sh 528117a2d48cda3b3abedadd75b5706d7ac68ca7`
+passed before any protocol change. These checks do not prove the proposed gates,
+historical snapshots or hydration behavior; those require new red/green tests.

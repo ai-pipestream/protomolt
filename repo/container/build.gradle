@@ -1,6 +1,8 @@
 description = 'The claim-check storage engine: descriptor-driven part codec, S3 blob store with virtual-thread part fan-out, and the Postgres ledger (Hibernate + HikariCP + Flyway)'
 
 dependencies {
+    api project(':protomolt-repo-codec')
+    api project(':protomolt-repo-blob-spi')
     api project(':protomolt-repo-proto')
     api libs.protobuf.java
     api libs.awssdk.s3

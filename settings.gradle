@@ -365,6 +365,12 @@ project(':protomolt-repo-proto').projectDir = file('repo/proto')
 include 'protomolt-repo-container'
 project(':protomolt-repo-container').projectDir = file('repo/container')
 
+include 'protomolt-repo-codec'
+project(':protomolt-repo-codec').projectDir = file('repo/codec')
+
+include 'protomolt-repo-blob-spi'
+project(':protomolt-repo-blob-spi').projectDir = file('repo/blob/spi')
+
 include 'protomolt-repo-service'
 project(':protomolt-repo-service').projectDir = file('repo/service')
 

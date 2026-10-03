@@ -2,7 +2,7 @@ package ai.protomolt.proto.repo.container.lifecycle;
 
 import ai.protomolt.proto.repo.container.blob.DocumentIds;
 import ai.protomolt.proto.repo.container.blob.PartStorage;
-import ai.protomolt.proto.repo.container.codec.PartLayouts;
+import ai.protomolt.proto.repo.codec.PartLayouts;
 import ai.protomolt.proto.repo.container.ledger.DocumentRecord;
 import ai.protomolt.proto.repo.container.ledger.DocumentRowKind;
 import ai.protomolt.proto.repo.container.ledger.DocumentStatus;

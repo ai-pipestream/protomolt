@@ -1,5 +1,7 @@
 package ai.protomolt.proto.repo.container.blob;
 
+import ai.protomolt.proto.repo.blob.spi.BlobStore;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

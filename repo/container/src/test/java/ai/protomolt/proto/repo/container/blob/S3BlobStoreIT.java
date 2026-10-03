@@ -1,5 +1,7 @@
 package ai.protomolt.proto.repo.container.blob;
 
+import ai.protomolt.proto.repo.blob.spi.BlobStore;
+
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.localstack.LocalStackContainer;
@@ -72,7 +74,7 @@ class S3BlobStoreIT {
     @Test
     void verifiedPutWithMatchingChecksumSucceeds() {
         byte[] body = "verified".getBytes(StandardCharsets.UTF_8);
-        String sha = ai.protomolt.proto.repo.container.codec.DocumentPartCodec.sha256Hex(body);
+        String sha = ai.protomolt.proto.repo.codec.DocumentPartCodec.sha256Hex(body);
         BlobStore.PutResult put = store.put(new BlobStore.PutSpec(BUCKET, "it/verified",
                 "application/octet-stream", null, sha), body);
         assertThat(put.eTag()).isNotBlank();

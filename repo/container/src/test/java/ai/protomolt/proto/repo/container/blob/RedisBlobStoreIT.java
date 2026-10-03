@@ -1,6 +1,8 @@
 package ai.protomolt.proto.repo.container.blob;
 
-import ai.protomolt.proto.repo.container.codec.DocumentPartCodec;
+import ai.protomolt.proto.repo.blob.spi.BlobStore;
+
+import ai.protomolt.proto.repo.codec.DocumentPartCodec;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;

@@ -1,7 +1,7 @@
 package ai.protomolt.proto.repo.service;
 
-import ai.protomolt.proto.repo.container.blob.BlobStore;
-import ai.protomolt.proto.repo.container.codec.DocumentPartCodec;
+import ai.protomolt.proto.repo.blob.spi.BlobStore;
+import ai.protomolt.proto.repo.codec.DocumentPartCodec;
 import ai.protomolt.proto.repo.container.ledger.DriveRecord;
 import ai.protomolt.proto.repo.container.ledger.Tx;
 import ai.protomolt.proto.repo.v1.DeleteBlobRequest;

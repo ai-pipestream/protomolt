@@ -1,4 +1,4 @@
-package ai.protomolt.proto.repo.container.codec;
+package ai.protomolt.proto.repo.codec;
 
 import ai.protomolt.proto.repo.v1.Blob;
 import ai.protomolt.proto.repo.v1.BlobBag;

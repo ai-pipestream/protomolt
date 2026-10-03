@@ -1,4 +1,4 @@
-package ai.protomolt.proto.repo.container.blob;
+package ai.protomolt.proto.repo.blob.spi;
 
 import java.io.InputStream;
 import java.util.Map;
@@ -8,7 +8,7 @@ import java.util.regex.Pattern;
 /**
  * Object-storage port: the ONLY surface business code and transport handlers use to touch
  * blob storage. Implementations adapt a concrete provider (today S3/SeaweedFS via
- * {@link S3BlobStore}); callers never see provider SDK types, so a future backend
+ * the S3 adapter); callers never see provider SDK types, so a future backend
  * (Azure Blob, GCS, a packing/columnar decorator) is one new implementation, not a sweep
  * through the handlers.
  *

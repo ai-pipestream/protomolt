@@ -2,7 +2,7 @@ package ai.protomolt.proto.repo.container.ledger;
 
 import ai.protomolt.proto.repo.v1.DocumentManifest;
 import ai.protomolt.proto.repo.v1.DocumentSecurity;
-import ai.protomolt.proto.repo.container.codec.DocumentPartCodec;
+import ai.protomolt.proto.repo.codec.DocumentPartCodec;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
 import jakarta.persistence.Column;

@@ -1,6 +1,6 @@
 package ai.protomolt.proto.repo.service;
 
-import ai.protomolt.proto.repo.container.blob.BlobStore;
+import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.container.blob.PartStorage;
 import io.grpc.Status;
 import io.grpc.StatusException;

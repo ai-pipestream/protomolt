@@ -1,6 +1,6 @@
 package ai.protomolt.proto.repo.service.client;
 
-import ai.protomolt.proto.repo.container.blob.BlobStore;
+import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest;
 import ai.protomolt.proto.repo.v1.CompareAndPutBlobResponse;
 import ai.protomolt.proto.repo.v1.ConditionalBlobKey;

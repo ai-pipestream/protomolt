@@ -1,5 +1,30 @@
 # SPI composition and dependency boundaries
 
+## Repository codec extraction
+
+`protomolt-repo-blob-spi` separately supplies `BlobStore` with JDK-only production
+signatures and no production library dependencies. Callers must change imports
+from `ai.protomolt.proto.repo.container.blob.BlobStore` to
+`ai.protomolt.proto.repo.blob.spi.BlobStore` and recompile. Container adapter APIs
+that mention this interface or moved codec types also require recompilation.
+Provider implementations remain in container until their separate extraction.
+
+`protomolt-repo-codec` owns descriptor-driven document splitting, part layouts,
+manifest encoding and typed reassembly. It depends on repository protobuf
+contracts and protobuf libraries, without storage providers, SQL or Kafka.
+`protomolt-repo-container` selects this library for its storage engine.
+
+Java consumers of `DocumentPartCodec`, `PartLayout`, `PartLayouts` and `PartObject`
+must update imports from `ai.protomolt.proto.repo.container.codec` to
+`ai.protomolt.proto.repo.codec` and recompile. Direct codec consumers should select
+`protomolt-repo-codec`. No protobuf identity or part byte format changes.
+Existing byte-fidelity and edge-case tests move with the implementation. A runtime
+dependency gate rejects repository implementations and storage/database SDKs.
+
+The remaining repository composition work is tracked in
+[the design](../design/repository-composition.md); this extraction does not add
+authorization, typed admission or progressive hydration.
+
 This work separates reusable protocol and dispatch code from optional capabilities.
 Java SPI discovers trusted implementations installed in the application. gRPC remains
 the boundary for services implemented in other languages or running on other nodes.

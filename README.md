@@ -344,7 +344,7 @@ returns its resumption position to the caller rather than persisting it.
 
 | Gradle module | Directory | What it does | Entry point | Status |
 |---|---|---|---|---|
-| `protomolt-repo-container` | `repo/container` | The claim-check storage engine: a descriptor-driven part codec splitting a document into `core.pb`, `blobs.pb`, `parsed.pb` and chunk objects that reassemble by field-level merge, an S3 blob store with virtual-thread part fan-out (Redis and caching variants included), and the Postgres ledger. | `repo/container/src/main/java/ai/protomolt/proto/repo/container/codec/DocumentPartCodec.java` | |
+| `protomolt-repo-container` | `repo/container` | The claim-check storage engine: composes the separate document codec and byte SPI with S3, Redis/cache adapters, virtual-thread part fan-out and the Postgres ledger. | `repo/codec/src/main/java/ai/protomolt/proto/repo/codec/DocumentPartCodec.java` | |
 | `protomolt-parse-document` | `parse/document` | The parser-fleet document model: the canonical docling-core v2 parity `document.proto` that fleet repos re-vendor byte-identical, plus projections between it and the repo document. | `parse/document/src/main/java/ai/protomolt/proto/parse/document/DoclingProjection.java` | |
 
 ## host/config : distributed configuration

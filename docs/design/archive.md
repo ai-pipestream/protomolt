@@ -1,5 +1,10 @@
 # The archive: entries, renditions, and retained versions
 
+The proposed [repository composition and typed admission design](repository-composition.md)
+records the next storage-module boundaries, schema enforcement, ownership checks
+and metadata-versioning work. It distinguishes existing behavior from additions;
+those additions are not yet available APIs.
+
 The archive is the repository family's generic document store: named
 collections of entries, each entry a set of independently addressable
 **renditions** — the raw file, a parsed protobuf, markdown, NDJSON, parquet,

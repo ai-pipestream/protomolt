@@ -1,0 +1,42 @@
+plugins { id 'java' }
+
+repositories {
+    exclusiveContent {
+        forRepository {
+            maven {
+                url = uri(providers.gradleProperty('repositoryConsumerRepository').get())
+                if (providers.gradleProperty('pomOnly').isPresent()) {
+                    metadataSources { mavenPom(); ignoreGradleMetadataRedirection() }
+                }
+            }
+        }
+        filter { includeGroup 'ai.pipestream' }
+    }
+    mavenCentral()
+}
+java { toolchain { languageVersion = JavaLanguageVersion.of(25) } }
+configurations { blobSpiOnly }
+dependencies {
+    blobSpiOnly "ai.pipestream:protomolt-repo-blob-spi:${providers.gradleProperty('candidateVersion').get()}"
+    implementation "ai.pipestream:protomolt-repo-codec:${providers.gradleProperty('candidateVersion').get()}"
+    implementation "ai.pipestream:protomolt-repo-blob-spi:${providers.gradleProperty('candidateVersion').get()}"
+}
+tasks.register('verifyConsumer', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'RepositoryConsumer'
+    doFirst {
+        def spiModules = configurations.blobSpiOnly.incoming.resolutionResult.allComponents
+                .collect { it.moduleVersion?.name }.findAll { it != null && it != project.name }
+        if (spiModules != ['protomolt-repo-blob-spi']) {
+            throw new GradleException('Byte SPI must be JDK-only: ' + spiModules)
+        }
+        def forbidden = ['s3', 'jedis', 'hibernate-core', 'HikariCP', 'postgresql',
+                         'flyway-core', 'kafka-clients', 'protomolt-repo-container', 'protomolt-repo-service']
+        def names = configurations.runtimeClasspath.incoming.resolutionResult.allComponents
+                .collect { it.moduleVersion?.name }.findAll { it != null }
+        def leaked = names.findAll { forbidden.contains(it) }
+        if (!leaked.isEmpty()) throw new GradleException('Repository dependencies leaked: ' + leaked)
+    }
+}
+check { dependsOn 'verifyConsumer' }

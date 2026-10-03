@@ -64,7 +64,7 @@ import ai.protomolt.proto.repo.container.archive.ArchiveRecord;
 import ai.protomolt.proto.repo.container.archive.ArchiveRenditionStatsRecord;
 import ai.protomolt.proto.repo.container.archive.ArchiveStatsRecord;
 import ai.protomolt.proto.repo.container.archive.ArchiveVersionRecord;
-import ai.protomolt.proto.repo.container.blob.BlobStore;
+import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.container.ledger.DriveLedger;
 import ai.protomolt.proto.repo.container.ledger.DriveRecord;
 import com.fasterxml.jackson.core.JsonProcessingException;

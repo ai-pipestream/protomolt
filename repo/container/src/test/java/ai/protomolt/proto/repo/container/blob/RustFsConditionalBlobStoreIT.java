@@ -1,5 +1,7 @@
 package ai.protomolt.proto.repo.container.blob;
 
+import ai.protomolt.proto.repo.blob.spi.BlobStore;
+
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;

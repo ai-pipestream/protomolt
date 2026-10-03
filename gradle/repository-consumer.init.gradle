@@ -1,0 +1,30 @@
+// Publish the minimal repository library graph to a local verification repository.
+gradle.projectsEvaluated {
+    def root = gradle.rootProject
+    def destination = root.providers.gradleProperty('repositoryConsumerRepository').get()
+    def selected = new LinkedHashSet<Project>()
+    def visit
+    visit = { Project project ->
+        if (selected.add(project)) {
+            ['api', 'implementation', 'runtimeOnly'].each { name ->
+                project.configurations.findByName(name)?.allDependencies
+                    ?.withType(ProjectDependency)?.each { dependency ->
+                        visit(root.project(dependency.path))
+                    }
+            }
+        }
+    }
+    ['protomolt-repo-codec', 'protomolt-repo-blob-spi'].each { visit(root.project(':' + it)) }
+    selected.each { project ->
+        project.publishing.repositories.maven {
+            name = 'RepositoryConsumer'
+            url = root.uri(destination)
+        }
+    }
+    root.tasks.register('stageRepositoryConsumer') {
+        group = 'verification'
+        dependsOn selected.collect {
+            it.tasks.named('publishMavenPublicationToRepositoryConsumerRepository')
+        }
+    }
+}

@@ -2,7 +2,7 @@ package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.authz.CallerResolver;
 import ai.protomolt.proto.authz.grpc.ApiTokenServerInterceptor;
-import ai.protomolt.proto.repo.container.blob.BlobStore;
+import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.container.blob.CachingBlobStore;
 import ai.protomolt.proto.repo.container.blob.PartStorage;
 import ai.protomolt.proto.repo.container.blob.RedisBlobStore;
