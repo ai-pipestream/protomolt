@@ -273,6 +273,24 @@ cleanup. Normal reads must resolve the ID's original backend binding. Full proto
 imports, lint, FILE compatibility and generated/dynamic runtime fixtures cover
 the contract addition; they do not establish engine integration.
 
+V16 adds transactional archive version/object references. `commitSave` validates
+bound manifests using the runtime engine, checks binding scope/key and verified
+hash/size, locks upload identities in UUID order, and requires a live token for
+first publication. It changes VERIFIED to LIVE and inserts references in the
+version transaction, before dropping a superseded version. Later versions reuse
+LIVE objects only while retained references exist. A managed key cannot silently
+lose its binding ID. Reference insertion failure rolls back the entry, version,
+references and upload transition together. This is archive byte publication,
+not typed payload admission or a universal content/JCR transaction boundary.
+
+Until durable archive deletion is implemented, bound destructive operations fail
+before provider I/O. Ledger deletion/pruning/rewriting rechecks authoritative
+references and bound manifests under the entry lock, covering a concurrent bound
+save after preflight. Existing legacy deletion failures remain intentionally red.
+Engine upload/read routing, original-profile resolution and recovery still need
+integration; ordinary writers do not yet create bound uploads. Carry-forward
+helpers preserve an existing binding ID when sharing its object key.
+
 - **Extended requests:** DeleteEntry currently has only address (tag 1);
   DeleteRendition has address/rendition/reason (tags 1–3); PruneVersions has
   address/keep_latest (tags 1–2). None has an idempotency key. Add optional operation

@@ -29,6 +29,15 @@ Keep the database where it provides transactions, metadata, version history and
 ownership. Removing dependencies from small consumers does not require removing
 the database from the repository implementation.
 
+Embedding intent is defined by protobuf field annotations, including
+[`index.chunking_policy.embedding`](../../search/index/spi/src/main/proto/ai/protomolt/proto/index/hints/v1/indexing_hints.proto).
+Reuse those definitions; mappings/projections select or reshape annotated data
+without requiring a second embedding declaration. Retained schema descriptors
+must preserve these options. Future repository indexing must bind the admitted
+content revision, annotation policy, projection and resolved model identity,
+enforce current access policy, and recover indexing updates/deletions/restores.
+That end-to-end integration remains unproven; keep search providers optional.
+
 This extends [the archive design](archive.md) and follows
 [the SPI composition rules](../architecture/spi-modularity.md). It does not merge
 pipeline document parts into archive renditions or redesign every service.

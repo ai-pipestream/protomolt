@@ -300,6 +300,14 @@ public final class ArchiveLedger {
     public void commitSave(ArchiveEntryRecord entry, long baseVersion,
                            ArchiveVersionRecord version, long dropVersion,
                            StatsDelta delta) {
+        commitSave(entry, baseVersion, version, dropVersion, delta, Map.of());
+    }
+
+    /** Upload tokens authorize first publication only; retained references carry later versions. */
+    public void commitSave(ArchiveEntryRecord entry, long baseVersion,
+                           ArchiveVersionRecord version, long dropVersion,
+                           StatsDelta delta, Map<UUID, UUID> uploadTokens) {
+        var tokens = Map.copyOf(uploadTokens);
         tx.inTransaction(em -> {
             ArchiveEntryRecord existing = em.find(ArchiveEntryRecord.class,
                     entry.entryUuid, LockModeType.PESSIMISTIC_WRITE);
@@ -322,6 +330,8 @@ public final class ArchiveLedger {
                 managed = em.merge(entry);
             }
             em.persist(version);
+            em.flush();
+            ArchiveVersionBindings.publish(em, managed, version, tokens);
             if (dropVersion != 0) {
                 ArchiveVersionRecord dropped = em.find(ArchiveVersionRecord.class,
                         new ArchiveVersionRecord.Key(entry.entryUuid, dropVersion));
@@ -352,6 +362,7 @@ public final class ArchiveLedger {
             if (entry == null) {
                 return false;
             }
+            requireUnboundDestruction(em, entryUuid, null);
             em.createQuery("DELETE FROM ArchiveVersionRecord v WHERE v.entryUuid = :entry")
                     .setParameter("entry", entryUuid)
                     .executeUpdate();
@@ -373,6 +384,8 @@ public final class ArchiveLedger {
     public void commitPrune(UUID entryUuid, List<Long> versions,
                             String accountId, String archive, StatsDelta delta) {
         tx.inTransaction(em -> {
+            em.find(ArchiveEntryRecord.class, entryUuid, LockModeType.PESSIMISTIC_WRITE);
+            requireUnboundDestruction(em, entryUuid, versions);
             for (long version : versions) {
                 ArchiveVersionRecord row = em.find(ArchiveVersionRecord.class,
                         new ArchiveVersionRecord.Key(entryUuid, version));
@@ -397,7 +410,15 @@ public final class ArchiveLedger {
                                       String accountId, String archive,
                                       StatsDelta delta) {
         tx.inTransaction(em -> {
+            rows.stream().map(row -> row.entryUuid).distinct().sorted().forEach(id ->
+                    em.find(ArchiveEntryRecord.class, id, LockModeType.PESSIMISTIC_WRITE));
             for (ArchiveVersionRecord row : rows) {
+                requireUnboundDestruction(em, row.entryUuid, List.of(row.version));
+                var existing = em.find(ArchiveVersionRecord.class, new ArchiveVersionRecord.Key(row.entryUuid, row.version));
+                if (ArchiveVersionBindings.hasBindings(row.manifest)
+                        || (existing != null && ArchiveVersionBindings.hasBindings(existing.manifest))) {
+                    throw new IllegalArgumentException("Bound manifest rewrites require durable destructive admission");
+                }
                 em.merge(row);
             }
             applyDelta(em, accountId, archive, delta);
@@ -420,6 +441,19 @@ public final class ArchiveLedger {
             em.refresh(managed);
             entry.mutationRevision = managed.mutationRevision;
         });
+    }
+
+    /** Called with the owning entry locked; preflight checks alone cannot fence a concurrent save. */
+    private static void requireUnboundDestruction(EntityManager em, UUID entry, List<Long> selected) {
+        var versions = em.createQuery("SELECT v FROM ArchiveVersionRecord v WHERE v.entryUuid=:entry", ArchiveVersionRecord.class)
+                .setParameter("entry", entry).getResultList();
+        for (var version : versions) {
+            if (selected != null && !selected.contains(version.version)) continue;
+            Number pins = (Number) em.createNativeQuery("SELECT count(*) FROM archive_version_object_refs WHERE entry_uuid=:entry AND version=:version")
+                    .setParameter("entry", entry).setParameter("version", version.version).getSingleResult();
+            if (pins.longValue() != 0 || ArchiveVersionBindings.hasBindings(version.manifest))
+                throw new IllegalArgumentException("Bound archive destruction requires durable admission");
+        }
     }
 
     private static void applyDelta(EntityManager em, String accountId, String archive,

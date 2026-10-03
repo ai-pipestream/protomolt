@@ -65,6 +65,36 @@ class ArchiveDeletionFailureIT {
     @Test void libraryDeletePropagatesStorageFailure() throws Exception { assertDeleteFailure(false); }
     @Test void grpcDeletePropagatesStorageFailure() throws Exception { assertDeleteFailure(true); }
 
+    @Test void legacyDestructivePathsRefuseBoundManifestsBeforeDeletingObjects() {
+        var address = EntryAddress.newBuilder().setAccountId("account").setArchive("records")
+                .setEntryId(UUID.randomUUID().toString()).build();
+        var firstRequest = PutEntryRequest.newBuilder().setAddress(address).addRenditions(RenditionContent.newBuilder()
+                .setRendition(RenditionDescriptor.newBuilder().setName("original"))
+                .setData(ByteString.copyFromUtf8("first bytes"))).build();
+        var first = normal.putEntry(CALLER, firstRequest);
+        normal.putEntry(CALLER, firstRequest.toBuilder().setRenditions(0,
+                firstRequest.getRenditions(0).toBuilder().setData(ByteString.copyFromUtf8("second bytes"))).build());
+        // Even an unresolvable binding must fail before touching storage.
+        new Tx(database.entityManagerFactory()).inTransaction(em -> {
+            em.createNativeQuery("""
+                    UPDATE archive_versions SET manifest=jsonb_set(manifest,'{renditions,0,storageObjectId}',to_jsonb(CAST(:binding AS text)))
+                    WHERE entry_uuid=:entry
+                    """).setParameter("binding", UUID.randomUUID().toString())
+                    .setParameter("entry", UUID.fromString(first.getEntryUuid())).executeUpdate();
+        });
+        for (Runnable operation : new Runnable[] {
+                () -> normal.deleteEntry(CALLER, DeleteEntryRequest.newBuilder().setAddress(address).build()),
+                () -> normal.deleteRendition(CALLER, DeleteRenditionRequest.newBuilder().setAddress(address)
+                        .setRendition("original").setReason("test").build()),
+                () -> normal.pruneVersions(CALLER, PruneVersionsRequest.newBuilder().setAddress(address).setKeepLatest(1).build())}) {
+            assertThatThrownBy(operation::run).isInstanceOfSatisfying(RepositoryException.class,
+                    error -> assertThat(error.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+        }
+        assertThat(opened.store().get("archive-failures", first.getManifest().getRenditions(0).getObjectKey()).data())
+                .isEqualTo("first bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        assertThat(ledger.allVersions(UUID.fromString(first.getEntryUuid()))).hasSize(2);
+    }
+
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
     void streamedDuplicateReportsCandidateCleanupFailureAndPreservesRetainedBytes(boolean lostAcknowledgement) {

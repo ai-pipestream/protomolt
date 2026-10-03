@@ -76,7 +76,7 @@ public final class ArchiveUploadLedger {
         });
     }
 
-    private static Upload lock(EntityManager em, UUID id) {
+    static Upload lock(EntityManager em, UUID id) {
         Objects.requireNonNull(id, "objectId");
         List<?> rows = em.createNativeQuery("""
                 SELECT object_id,lease_token,EXTRACT(EPOCH FROM lease_until),
@@ -92,10 +92,11 @@ public final class ArchiveUploadLedger {
                 ((Number) row[3]).longValue(), (String) row[4], (String) row[5], (String) row[6], (String) row[7]);
     }
 
-    private static void requireOwner(EntityManager em, Upload upload, UUID token) {
+    static void requireOwner(EntityManager em, Upload upload, UUID token) {
         Instant now = em.unwrap(org.hibernate.Session.class)
                 .createNativeQuery("SELECT clock_timestamp()", Instant.class).getSingleResult();
-        if (!upload.leaseToken().equals(token) || !upload.leaseUntil().isAfter(now))
+        if (!("STAGING".equals(upload.state()) || "VERIFIED".equals(upload.state()))
+                || !upload.leaseToken().equals(token) || !upload.leaseUntil().isAfter(now))
             throw new FenceException("Archive upload lease is expired or belongs to another attempt");
     }
 

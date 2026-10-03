@@ -28,6 +28,9 @@ final class RepositoryErrors {
         catch (ai.protomolt.proto.repo.container.archive.ArchiveLedger.VersionConflictException conflict) {
             throw new RepositoryException(CONFLICT, conflict.getMessage(), conflict);
         }
+        catch (ai.protomolt.proto.repo.container.archive.ArchiveUploadLedger.FenceException conflict) {
+            throw new RepositoryException(CONFLICT, conflict.getMessage(), conflict);
+        }
         catch (ai.protomolt.proto.repo.blob.spi.BlobStoreException failure) {
             var code = switch (failure.code()) {
                 case ABORTED -> CONFLICT;

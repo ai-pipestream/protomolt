@@ -734,6 +734,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             return DeleteEntryResponse.newBuilder().setDeleted(false).build();
         }
         List<ArchiveVersionRecord> retained = ledger.allVersions(entryUuid);
+        requireLegacyDestructivePath(retained);
         Map<String, RenditionManifestEntry> owned =
                 ArchiveManifests.referencedObjects(manifests(retained));
         VersionManifest current = manifestOf(retained, entry.get().currentVersion);
@@ -772,6 +773,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
         List<ArchiveVersionRecord> retained = ledger.allVersions(entry.entryUuid);
 
         Set<String> keys = new HashSet<>();
+        requireLegacyDestructivePath(retained);
         Map<String, Long> objectSizes = new HashMap<>();
         List<ArchiveVersionRecord> rewritten = new ArrayList<>();
         long oldCurrentBytes = 0;
@@ -844,6 +846,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
         if (retained.size() <= request.getKeepLatest()) {
             return PruneVersionsResponse.newBuilder().build();
         }
+        requireLegacyDestructivePath(retained);
         int removeCount = retained.size() - request.getKeepLatest();
         List<ArchiveVersionRecord> removed = retained.subList(0, removeCount);
         List<ArchiveVersionRecord> kept = retained.subList(removeCount, retained.size());
@@ -1264,9 +1267,19 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                 && retained.getState() == RenditionState.RENDITION_STATE_PRESENT
                 && candidate.getSha256().equals(retained.getSha256())
                 && candidate.getSizeBytes() == retained.getSizeBytes()) {
-            return candidate.toBuilder().setObjectKey(retained.getObjectKey()).build();
+            return candidate.toBuilder().setObjectKey(retained.getObjectKey())
+                    .setStorageObjectId(retained.getStorageObjectId()).build();
         }
         return candidate;
+    }
+
+    private static void requireLegacyDestructivePath(List<ArchiveVersionRecord> versions) {
+        for (var version : versions) {
+            if (ArchiveManifests.fromJson(version.manifest).getRenditionsList().stream()
+                    .anyMatch(rendition -> !rendition.getStorageObjectId().isEmpty())) {
+                throw failedPrecondition("Bound archive objects require durable destructive admission");
+            }
+        }
     }
 
     private static TreeMap<Slot, RenditionManifestEntry> slotsOf(VersionManifest current) {

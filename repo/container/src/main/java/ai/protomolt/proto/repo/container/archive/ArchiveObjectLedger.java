@@ -61,16 +61,18 @@ public final class ArchiveObjectLedger {
 
     public Optional<Binding> find(UUID objectId) {
         Objects.requireNonNull(objectId, "objectId");
-        return tx.readOnly(em -> {
-            List<?> rows = em.createNativeQuery("""
-                    SELECT object_id,entry_uuid,account_id,archive,backend_generation,bucket,object_key,storage_realm
-                    FROM archive_object_bindings WHERE object_id=:id
-                    """).setParameter("id", objectId).getResultList();
-            if (rows.isEmpty()) return Optional.empty();
-            var row = (Object[]) rows.getFirst();
-            return Optional.of(new Binding((UUID) row[0], new Location((UUID) row[1],
-                    (String) row[2], (String) row[3], (String) row[4], (String) row[5], (String) row[6]), (String) row[7]));
-        });
+        return tx.readOnly(em -> { return find(em, objectId); });
+    }
+
+    static Optional<Binding> find(jakarta.persistence.EntityManager em, UUID objectId) {
+        List<?> rows = em.createNativeQuery("""
+                SELECT object_id,entry_uuid,account_id,archive,backend_generation,bucket,object_key,storage_realm
+                FROM archive_object_bindings WHERE object_id=:id
+                """).setParameter("id", objectId).getResultList();
+        if (rows.isEmpty()) return Optional.empty();
+        var row = (Object[]) rows.getFirst();
+        return Optional.of(new Binding((UUID) row[0], new Location((UUID) row[1],
+                (String) row[2], (String) row[3], (String) row[4], (String) row[5], (String) row[6]), (String) row[7]));
     }
 
     private static void requireText(String value, String field) {
