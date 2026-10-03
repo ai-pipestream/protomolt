@@ -1136,6 +1136,77 @@ pressure. Record operation latency distributions, SQL transaction counts and wai
 times, provider calls/bytes, throughput, and reservation bounds. The design is not
 production-qualified until these results and failure/recovery tests support it.
 
+### Commit identity and state boundaries
+
+This is a semantic design, not a proposed protobuf schema. Review the existing
+ArchiveMutationReceipt, WorkRecord projection and schema-reference inventory
+before selecting transport messages. Preserve established wire names and tags.
+
+Operation identity is distinct from an upload attempt, a physical object and a
+repository revision. Scope an idempotency key to the account and trusted stable
+principal. Persist the normalized semantic command and fingerprint. Client
+expected revisions and requested placement are command inputs; deadlines and
+transport details are not. Reusing a key with another command conflicts. A lookup
+requires current authorization; an operation identifier grants no access.
+
+An admitted operation records upload scope before I/O. Staging collects verified
+inputs. Ready means inputs satisfy the recorded admission requirements, not that
+publication succeeded. Committed means the revision changes, retention references,
+outbox and immutable logical receipt committed together. Rejected/aborted means a
+terminal decision prevented publication. Physical cleanup has separate durable
+state. Known rejection requires a durable terminal receipt under the operation key.
+Record it under the operation fence after ensuring no successful commit occurred.
+A timeout or lost connection is an unknown observation, not proof of an
+abort. Retry/lookup reconciles the same operation identity.
+
+Lease renewal or takeover must fence stale owners. A newer attempt cannot publish
+an earlier command result without verifying the persisted fingerprint and current
+commit conditions. An expired token cannot commit, even if storage finishes later.
+New physical attempts use fresh keys; expired upload keys cannot be reassigned.
+A retry after commit returns the recorded outcome without repeating a mutation;
+cleanup observation can advance independently of that immutable logical outcome.
+
+The commit carries expected revisions for all affected repository objects and
+policy facts needed to authorize the change. Source references are authorized in
+their domain; physical object identifiers are not transferable permissions.
+Default changes stay within one authorized account scope. Cross-account sharing
+requires an explicit policy and acceptance cases, not matching checksums or keys.
+Recheck policy facts that can change independently of a document revision.
+
+Lock ordering applies to destination/source revision records, physical retention
+identities and any mutable policy records. Atomic change sets have explicit count
+and byte limits. Readers must see a committed revision or a consistent committed
+snapshot of the change set, never a mixture assembled from separately sampled
+current pointers. The chosen snapshot/isolation protocol needs concurrency tests.
+
+### Operation-count acceptance targets
+
+For a qualified retained document with 32 chunks and one changed chunk, assuming
+that change produces one new physical fragment:
+
+- Exactly one content PUT, plus verification of that changed object according to
+  provider qualification. No download or upload solely to copy unchanged parts.
+- A complete manifest assembled from verified identities. Additional content I/O
+  required by schema or semantic rules is classified separately and remains
+  subject to limits; omitting validation is not a performance optimization.
+- A metadata-only revision performs no content I/O when the applicable admission
+  policy permits reuse of existing content-validation evidence.
+- Database work consists of operation admission, bounded evidence checkpoints and
+  atomic publication, plus time-based heartbeat work. It does not require a fixed
+  sequence of lease/verification transactions for each part. Bulk SQL still has
+  per-object data volume; count statements and lock waits as well as transactions.
+  Checkpoint count scales with new-part count divided by bounded batch size;
+  heartbeat count scales with operation duration divided by heartbeat interval.
+- A conflict leaves no visible revision changes. Objects uploaded before the
+  conflict remain in durable cleanup scope. A repeated committed command performs
+  no new upload or logical mutation.
+
+These are design acceptance targets, not results of the existing implementation.
+Benchmark independent operations, one contested revision and multi-object changes
+separately. A throughput result cannot substitute for conflict correctness or
+bounded resource use. Choose latency targets after representative provider tests;
+do not derive production promises from the LocalStack diagnostic.
+
 ## Immutable part reuse: implementation design
 
 Status: design for the next ledger change, not available behavior. This follows
