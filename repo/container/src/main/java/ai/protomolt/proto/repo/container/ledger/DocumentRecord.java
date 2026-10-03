@@ -286,7 +286,7 @@ public class DocumentRecord {
         }
         DocumentSecurity.Builder builder = DocumentSecurity.newBuilder();
         try {
-            JsonFormat.parser().ignoringUnknownFields().merge(security, builder);
+            JsonFormat.parser().merge(security, builder);
         } catch (InvalidProtocolBufferException e) {
             throw new LedgerException("unparseable security JSON on document row " + nodeId, e);
         }

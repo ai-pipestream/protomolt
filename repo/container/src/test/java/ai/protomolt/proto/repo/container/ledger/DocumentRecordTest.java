@@ -114,6 +114,15 @@ class DocumentRecordTest {
     }
 
     @Test
+    void unknownSecurityFieldsCannotSilentlyDiscardPolicy() {
+        DocumentRecord record = new DocumentRecord();
+        record.nodeId = UUID.randomUUID();
+        record.security = "{\"permissions\":[],\"denyAll\":true}";
+        assertThatThrownBy(record::readSecurity).isInstanceOf(LedgerException.class)
+                .hasMessageContaining(record.nodeId.toString());
+    }
+
+    @Test
     void prePersistDefaultsBothAuditTimestamps() {
         DocumentRecord record = new DocumentRecord();
 

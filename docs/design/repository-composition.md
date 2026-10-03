@@ -225,6 +225,41 @@ list, write, copy, restore, prune and delete. List responses must not leak denie
 metadata. Test deny precedence, inheritance and policy changes. Raw storage access
 is an administrative capability and must not become a public authorization bypass.
 
+### Trusted caller bindings and ACL decisions
+
+Repository caller bindings carry exact account IDs and typed identities using the
+existing `Principal` message. The host must resolve these from trusted policy or
+credentials. Neither a principal name, an operation scope, a request's account ID,
+nor `source_owner` establishes account membership. The existing two-argument
+`RepositoryCaller` constructor supplies no account or ACL bindings. An operator
+retains explicit process authority, distinct from ordinary account membership.
+
+ACL matching requires both identity type and value, compared without case; account
+IDs remain case-sensitive. Principal and group grants use the same typed identity
+matching. A public rule requires both type and identity to be `public`, and cannot
+grant access across accounts. READ and WRITE remain separate grants. Any matching
+DENY overrides all matching grants, including grants inherited from a parent.
+
+Inheritance must distinguish an unresolved parent from a resolved empty rule set.
+When inheritance is enabled, an unresolved parent fails closed. Missing security
+denies scoped callers; an empty policy grants nothing. Blank identities, missing
+identity types, unknown/unspecified access enums and malformed public rules fail
+closed. Operator bypass does not make malformed ownership or ACL data valid.
+
+Persisted security JSON is parsed strictly. Before enabling scoped repository
+access, operators must inspect missing ownership, unknown JSON fields and malformed
+rules, recover their intended policy from an authoritative source, and explicitly
+repair affected records. Do not backfill permissive ACLs or infer historical
+ownership from a current login. Unknown security fields now raise a ledger error
+instead of being discarded; retained bytes remain unchanged.
+
+The caller binding and evaluator are implementation foundations, not completed
+enforcement. Handler integration must still resolve current policy for reads,
+filter listings before counts and continuation tokens, and atomically guard policy
+revision with every mutation. Named gRPC callers currently carry only name/scopes;
+they remain denied until trusted repository bindings are installed. Open listeners
+retain process authority and require the trusted-network deployment boundary.
+
 ## Partial updates and progressive hydration
 
 Support this as a bounded extension after typed admission, not a prerequisite for
