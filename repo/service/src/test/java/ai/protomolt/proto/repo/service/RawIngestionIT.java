@@ -90,6 +90,59 @@ class RawIngestionIT {
         assertThat(documents.findByNodeId(node).orElseThrow().reprocessCount).isEqualTo(1);
     }
 
+    @Test void emptyBodyHasStableDerivedIdentityAndDeduplicates() {
+        var first = upload(null, "");
+        var duplicate = upload(null, "");
+        String sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        String expected = UUID.nameUUIDFromBytes(("doc-content|" + sha).getBytes(StandardCharsets.UTF_8)).toString();
+        assertThat(first.sha256()).isEqualTo(sha);
+        assertThat(first.document().getAddress().getDocId()).isEqualTo(expected);
+        assertThat(first.sizeBytes()).isZero();
+        assertThat(bytes(first)).isEmpty();
+        assertThat(duplicate.document().getNodeId()).isEqualTo(first.document().getNodeId());
+        assertThat(duplicate.document().getDeduplicated()).isTrue();
+        assertThat(duplicate.storageRef()).isEqualTo(first.storageRef());
+    }
+
+    @Test void failedDuplicatePublicationDoesNotExpireItsUnusedCandidate() {
+        String id = UUID.randomUUID().toString();
+        var first = upload(id, "retained body");
+        UUID node = UUID.fromString(first.document().getNodeId());
+        long revision = documents.findByNodeId(node).orElseThrow().mutationRevision;
+        var attemptedKey = new java.util.concurrent.atomic.AtomicReference<String>();
+        BlobStore racing = afterPut(spec -> {
+            if (!DriveKeys.isManaged(spec.key())) return;
+            attemptedKey.set(spec.key());
+            tx.inTransaction(em -> {
+                em.createQuery("select d from DriveRecord d where d.name = :name", DriveRecord.class)
+                        .setParameter("name", "raw-ingestion").getSingleResult().provider = "redis";
+            });
+        });
+        try {
+            byte[] body = "retained body".getBytes(StandardCharsets.UTF_8);
+            assertThatThrownBy(() -> operations(racing, opened.capabilities()).upload(CALLER,
+                    request(id, null), new ByteArrayInputStream(body), body.length))
+                    .isInstanceOfSatisfying(RepositoryException.class,
+                            error -> assertThat(error.code()).isEqualTo(RepositoryException.Code.CONFLICT));
+            var candidate = tx.inTransaction(em -> { return em.createQuery(
+                    "select r from RawObjectRecord r where r.objectKey = :key", RawObjectRecord.class)
+                    .setParameter("key", attemptedKey.get()).getSingleResult(); });
+            assertThat(candidate.state).isEqualTo(RawObjectRecord.VERIFIED);
+            assertThat(candidate.leaseUntil).isAfter(Instant.now());
+            assertThat(documents.rawObjects().claimCleanup(candidate.rawId, Instant.now().plusSeconds(60))).isEmpty();
+            assertThat(documents.rawObjects().references(node)).containsExactly(first.attemptId());
+            var unchanged = documents.findByNodeId(node).orElseThrow();
+            assertThat(unchanged.mutationRevision).isEqualTo(revision);
+            assertThat(unchanged.reprocessCount).isZero();
+            assertThat(bytes(first)).isEqualTo(body);
+        } finally {
+            tx.inTransaction(em -> {
+                em.createQuery("select d from DriveRecord d where d.name = :name", DriveRecord.class)
+                        .setParameter("name", "raw-ingestion").getSingleResult().provider = "s3";
+            });
+        }
+    }
+
     @Test void checksumFailurePreservesCommittedBodyAndRevision() {
         String id = UUID.randomUUID().toString();
         var first = upload(id, "valid original");

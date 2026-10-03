@@ -69,8 +69,9 @@ extension even where the message shape remains unchanged.
   `RawIngestionRepository` and `RawIngestionOperations` now implement the library
   boundary for process-authorized callers on qualified non-expiring streaming
   stores. SQL/S3 tests cover immutable replacement, dedupe receipts, checksum and
-  length rejection, borrowed streams, drive changes, ambiguous PUT acknowledgement
-  and revision-conflict retries. Candidates remain durable for recovery; physical
+  length rejection, borrowed streams, drive changes, ambiguous PUT acknowledgement,
+  revision-conflict retries, empty content-derived IDs and live candidate leases
+  after failed duplicate publication. Candidates remain durable for recovery; physical
   cleanup and production composition are not yet wired. Attempt IDs are internal
   identities, not client idempotency keys. No public endpoint availability is implied.
 - **Extended, planned:** document save/copy/delete and raw cleanup maintain managed
