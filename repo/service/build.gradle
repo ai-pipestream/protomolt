@@ -77,3 +77,10 @@ dependencies {
 application {
     mainClass = 'ai.protomolt.proto.repo.service.RepoServiceMain'
 }
+
+tasks.named('test') {
+    def partialBenchmark = providers.environmentVariable('PROTOMOLT_PARTIAL_BENCHMARK').map { it == 'true' }.orElse(false)
+    inputs.property('partialBenchmark', partialBenchmark)
+    outputs.upToDateWhen { !partialBenchmark.get() }
+    outputs.cacheIf { !partialBenchmark.get() }
+}

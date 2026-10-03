@@ -1016,6 +1016,42 @@ patches, stale bases, explicit deletion, expiry, restart recovery, invalid assem
 content, revoked access, and atomic reader visibility. Finalization must return
 the same result after an idempotent retry, including a timeout after commit.
 
+## Partial-update performance diagnostic
+
+Run `PROTOMOLT_PARTIAL_BENCHMARK=true ./gradlew :protomolt-repo-service:test --tests '*DocumentPartialBenchmarkIT'`.
+This opt-in task disables cached/up-to-date results. PostgreSQL 18 and LocalStack
+3.8 store synthetic protobuf documents with 32 chunks. A single character changes
+in one chunk. Full and partial updates start from equivalent fresh documents.
+Setup and complete result verification are outside the timer. Execution order
+alternates, with 2 warmups and 12 samples per case. Full requests contain all
+chunks; partial requests contain one, so timing includes request processing.
+
+[October 3 samples](../evidence/repository/2026-10-03-document-partial.csv)
+come from `krick`, a shared 32-CPU host with observed load averages
+14.46/22.86/20.26. Storage was unversioned. CSV chunk size denotes synthetic
+config-string length, not serialized protobuf size. For 262144-character strings,
+final part storage totals 8390579 bytes. Both paths issue 33 PUT calls. Full
+replacement issues 33 verification GET calls totaling 8390579 bytes; partial
+update issues 65 GET calls totaling 16518955 bytes. Nearest-rank p50/p95 were
+326/380 ms for full replacement and 518/610 ms for partial update. With
+4096-character strings, the corresponding times were 128/153 and 163/239 ms.
+The p95 is the largest of 12 samples. These diagnostics do not establish
+production throughput or latency guarantees.
+
+Payload reservations observed during provider calls were 16781158 bytes for the
+large full save and 33037910 bytes for partial save. This excludes request
+messages, SDK buffers and other heap allocations. Results passed complete
+stored-document verification and reservation-release checks.
+
+The copying cost warrants immutable-part reuse design before production wiring.
+Reuse and deletion need a shared retention model: revisions retain references to
+immutable physical parts; attempts track newly written objects. Publication must
+bind reused identities atomically after source revision and authorization checks.
+Reclamation requires release of all current and historical references. Preserve
+original backend/profile, version, digest and size for reused objects. Define
+cross-provider behavior and assess JCR requirements before changing publication
+or history contracts. Reuse is not implemented by this diagnostic.
+
 ## Archival durability and lifecycle
 
 Preserve manifests, checksums, entry-local sharing, version policies and exact-key
