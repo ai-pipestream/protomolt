@@ -9,6 +9,16 @@ Recheck main and affected contracts before implementation.
 
 ## Purpose
 
+Architectural requirement: support a future optional ProtoMolt-owned JCR 2.0
+content repository with standard Java JCR and protobuf/gRPC access to the same
+behavior. Follow the [compatibility and gap assessment](repository-jcr-compatibility.md)
+before extending contracts or choosing document-specific transaction boundaries.
+Keep JCR dependencies out of base storage modules. Existing accounts, workspaces,
+IDs and version numbers are not assumed to have JCR semantics. Preserve current
+protobuf contracts; declare capabilities and establish conformance before any
+compliance claim. The potential gRPC transport must remain usable with other JCR
+implementations. Continue storage correctness and recovery independently.
+
 Make the repository usable as a Java library or a gRPC service with the same
 document behavior. Applications select storage providers without inheriting all
 provider dependencies. Typed protobuf admission adds schema resolution and

@@ -2,6 +2,9 @@
 
 Implementation baseline: `528117a2d48cda3b3abedadd75b5706d7ac68ca7`.
 Design: [repository composition](repository-composition.md).
+Architectural gate: [optional JCR 2.0 compatibility](repository-jcr-compatibility.md).
+Assess new contracts and transaction boundaries against that requirement without
+changing existing protobuf semantics or adding JCR dependencies to storage modules.
 Classification describes intended behavior, not just protobuf edits. Extended
 operations retain their existing wire identities. New operations listed below
 are proposed responsibilities; names and fields require contract review before
