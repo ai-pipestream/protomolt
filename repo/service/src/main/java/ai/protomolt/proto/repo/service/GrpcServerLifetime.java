@@ -10,11 +10,11 @@ import java.util.concurrent.TimeUnit;
 /** Owns both a transport and the executor borrowed by gRPC. */
 final class GrpcServerLifetime implements AutoCloseable {
     private final Server server;
-    private final OwnedResources resources;
+    private final ExecutorService executor;
 
-    private GrpcServerLifetime(Server server, OwnedResources resources) {
+    private GrpcServerLifetime(Server server, ExecutorService executor) {
         this.server = server;
-        this.resources = resources;
+        this.executor = executor;
     }
 
     static GrpcServerLifetime start(ServerBuilder<?> builder) throws IOException {
@@ -23,13 +23,24 @@ final class GrpcServerLifetime implements AutoCloseable {
 
     // Transfers executor ownership, including when build or start fails.
     static GrpcServerLifetime start(ServerBuilder<?> builder, ExecutorService executor) throws IOException {
+        return start(builder, executor, lifetime -> {});
+    }
+
+    static GrpcServerLifetime start(ServerBuilder<?> builder, java.util.function.Consumer<GrpcServerLifetime> retain) throws IOException {
+        return start(builder, Executors.newVirtualThreadPerTaskExecutor(), retain);
+    }
+
+    private static GrpcServerLifetime start(ServerBuilder<?> builder, ExecutorService executor,
+            java.util.function.Consumer<GrpcServerLifetime> retain) throws IOException {
         var resources = new OwnedResources();
-        resources.add(() -> stopExecutor(executor));
+        resources.add(() -> ExecutorShutdown.stop(executor, java.time.Duration.ofSeconds(10)));
         try {
             Server server = builder.executor(executor).build();
-            resources.add(() -> stopServer(server));
+            resources.add(() -> stopServer(server, java.time.Duration.ofSeconds(10)));
+            var lifetime = new GrpcServerLifetime(server, executor);
+            retain.accept(lifetime);
             server.start();
-            return new GrpcServerLifetime(server, resources);
+            return lifetime;
         } catch (IOException | RuntimeException | Error failure) {
             try { resources.close(); }
             catch (Throwable cleanup) { failure.addSuppressed(cleanup); }
@@ -39,12 +50,12 @@ final class GrpcServerLifetime implements AutoCloseable {
 
     Server server() { return server; }
 
-    private static void stopServer(Server server) throws InterruptedException {
+    private static void stopServer(Server server, java.time.Duration timeout) throws InterruptedException {
         server.shutdown();
         try {
-            if (!server.awaitTermination(10, TimeUnit.SECONDS)) {
+            if (!server.awaitTermination(timeout.toNanos(), TimeUnit.NANOSECONDS)) {
                 server.shutdownNow();
-                if (!server.awaitTermination(10, TimeUnit.SECONDS))
+                if (!server.awaitTermination(timeout.toNanos(), TimeUnit.NANOSECONDS))
                     throw new IllegalStateException("gRPC server did not terminate");
             }
         } catch (InterruptedException interrupted) {
@@ -53,19 +64,10 @@ final class GrpcServerLifetime implements AutoCloseable {
         }
     }
 
-    private static void stopExecutor(ExecutorService executor) throws InterruptedException {
-        executor.shutdown();
-        try {
-            if (!executor.awaitTermination(10, TimeUnit.SECONDS)) {
-                executor.shutdownNow();
-                if (!executor.awaitTermination(10, TimeUnit.SECONDS))
-                    throw new IllegalStateException("gRPC executor did not terminate");
-            }
-        } catch (InterruptedException interrupted) {
-            executor.shutdownNow();
-            throw interrupted;
-        }
-    }
+    @Override public void close() { close(java.time.Duration.ofSeconds(10)); }
 
-    @Override public void close() { resources.close(); }
+    synchronized void close(java.time.Duration timeout) {
+        ShutdownBarrier.releaseAfter(java.util.List.of(
+                () -> stopServer(server, timeout), () -> ExecutorShutdown.stop(executor, timeout)), () -> {});
+    }
 }

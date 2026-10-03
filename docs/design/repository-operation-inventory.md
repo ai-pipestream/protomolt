@@ -539,6 +539,16 @@ transports and worker handles retained, reports failure, and keeps the compositi
 closed to new access. Call `close()` again after workers stop to release resources.
 This prevents a slow recovery call from using resources already closed by the host;
 it does not guarantee that an arbitrary provider responds promptly to interruption.
+After workers stop, the host stops every HTTP/gRPC transport before releasing
+shared dependencies. Transport failure preserves their handles for another close
+attempt. Both transports await their handler executors; shutdown requests alone
+do not count as termination. Each executor gets ten seconds for graceful shutdown
+and ten more after interruption. gRPC also awaits server termination. These are
+per-transport waits, not a ten-second bound on the entire host shutdown.
+The host retains transport handles before startup, so a failed bind or routing
+check cannot discard cleanup ownership. HTTP startup failure also closes the host
+composition, including lifecycle workers. Blocked-handler tests use real HTTP
+and in-process gRPC transports and verify failure, resource retention and retry.
 
 Keep archive operations process-authorized until current-policy guards support
 scoped callers. Legacy write/staging cleanup remains separate follow-up work;

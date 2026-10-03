@@ -428,15 +428,10 @@ public final class RepoServices implements AutoCloseable {
         GrpcServerLifetime transport = null;
         try {
             services().forEach(builder::addService);
-            transport = GrpcServerLifetime.start(builder);
+            transport = GrpcServerLifetime.start(builder, servers::add);
             routingCheck.accept(transport.server());
-            servers.add(transport);
             return transport.server();
         } catch (IOException | RuntimeException | Error failure) {
-            if (transport != null) {
-                try { transport.close(); }
-                catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
-            }
             // services() may have started durable recovery before binding.
             // A failed listener must not leave that composition running unseen.
             try { close(); }
@@ -475,9 +470,15 @@ public final class RepoServices implements AutoCloseable {
         requireOpen();
         if (rawIngestion != null) startLifecycle();
         UploadHttpServer http = new UploadHttpServer(rawIngestion, apiToken, archiveOperations);
-        http.start(port);
         httpServers.add(http);
-        return http;
+        try {
+            http.start(port);
+            return http;
+        } catch (RuntimeException | Error failure) {
+            try { close(); }
+            catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        }
     }
 
     /**
@@ -649,16 +650,15 @@ public final class RepoServices implements AutoCloseable {
     }
 
     private void releaseAfterWorkersStop() {
-        var shutdown = new OwnedResources();
-        shutdown.add(owned);
-        for (GrpcServerLifetime server : servers) shutdown.add(server);
-        for (UploadHttpServer http : httpServers) shutdown.add(http);
-        try { shutdown.close(); }
-        finally {
+        var transports = new java.util.ArrayList<AutoCloseable>();
+        transports.addAll(httpServers);
+        transports.addAll(servers);
+        ShutdownBarrier.releaseAfter(transports, () -> {
             lifecycleThreads.clear();
             httpServers.clear();
             servers.clear();
-        }
+            owned.close();
+        });
         LOG.info("repo-service stopped");
     }
 

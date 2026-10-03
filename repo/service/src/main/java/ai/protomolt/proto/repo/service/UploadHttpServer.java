@@ -123,7 +123,7 @@ public final class UploadHttpServer implements AutoCloseable {
      * @return the bound port
      */
     public synchronized int start(int port) {
-        if (server != null) {
+        if (server != null || executor != null) {
             throw new IllegalStateException("HTTP upload server already started");
         }
         HttpServer created;
@@ -133,6 +133,8 @@ public final class UploadHttpServer implements AutoCloseable {
             throw new UncheckedIOException("failed to bind HTTP upload server on port " + port, e);
         }
         ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();
+        this.server = created;
+        this.executor = pool;
         try {
             created.createContext(UPLOAD_PATH, this::handle);
             if (archiveOperations != null) {
@@ -140,13 +142,11 @@ public final class UploadHttpServer implements AutoCloseable {
             }
             created.setExecutor(pool);
             created.start();
-        } catch (RuntimeException e) {
-            created.stop(0);
-            pool.shutdownNow();
+        } catch (RuntimeException | Error e) {
+            try { close(); }
+            catch (RuntimeException | Error cleanup) { e.addSuppressed(cleanup); }
             throw e;
         }
-        this.server = created;
-        this.executor = pool;
         int bound = created.getAddress().getPort();
         LOG.info("HTTP upload route listening on port {} ({})", bound, UPLOAD_PATH);
         return bound;
@@ -166,12 +166,20 @@ public final class UploadHttpServer implements AutoCloseable {
 
     @Override
     public synchronized void close() {
+        close(java.time.Duration.ofSeconds(10));
+    }
+
+    synchronized void close(java.time.Duration timeout) {
         if (server != null) {
             server.stop(1);
             server = null;
         }
         if (executor != null) {
-            executor.shutdown();
+            try { ExecutorShutdown.stop(executor, timeout); }
+            catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("HTTP shutdown interrupted; resources retained", interrupted);
+            }
             executor = null;
         }
     }
