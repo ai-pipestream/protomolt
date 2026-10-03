@@ -8,7 +8,7 @@ import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
  * tests construct it directly against their containers.
  *
  * @param managedStorage explicit managed-byte retention qualification; enabled
- *        composition remains unavailable until profile binding and recovery are wired
+ *        composition requires S3 backing capabilities and enabled lifecycle recovery
  * @param grpcPort the gRPC listen port ({@code DOCUMENT_PLATFORM_GRPC_PORT},
  *        default 9090; 0 = ephemeral port, for tests that read it back from
  *        the started server)

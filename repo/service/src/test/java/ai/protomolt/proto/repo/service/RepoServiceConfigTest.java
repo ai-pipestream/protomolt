@@ -21,12 +21,12 @@ class RepoServiceConfigTest {
         assertThat(config(0, "s3", null, null).managedStorage()).isEqualTo(ManagedStoragePolicy.disabled());
     }
 
-    @Test void unfinishedManagedCompositionFailsBeforeOpeningExternalResources() {
-        var configured = config(0, "s3", null, null)
+    @Test void unsupportedManagedCompositionFailsBeforeOpeningExternalResources() {
+        var configured = config(0, "redis", null, null)
                 .withManagedStorage(new ManagedStoragePolicy("nas-v1", "account-a", true));
         assertThatThrownBy(() -> RepoServices.build(configured))
-                .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessage("Managed storage composition is not yet available");
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Managed storage requires an S3 backing store and enabled lifecycle recovery");
     }
 
     private static final LedgerConfig LEDGER =

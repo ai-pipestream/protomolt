@@ -391,7 +391,7 @@ insufficient: another upload of identical content can reuse the same ETag.
 Scoped deletion remains disabled
 while its authorization and raw-byte protection are unfinished.
 
-### Managed raw uploads (ledger foundation; ingestion not yet wired)
+### Managed raw uploads
 
 V10 adds managed raw-object records and document reference tables without adopting
 existing raw keys. `RawObjectLedger` provides leased STAGING/VERIFIED attempts,
@@ -399,9 +399,9 @@ LIVE bindings in the document publication transaction, and token-fenced cleanup
 claims. Real PostgreSQL cases cover rollback, shared references, cross-account
 rejection, expired leases, immutable metadata, cleanup retries and a collector
 waiting on a publishing transaction's lock. DELETED records remain available for
-reconciliation of late writes. These are internal coordination primitives: no
-upload route or physical cleanup worker uses them yet, and the HTTP regressions
-below remain red.
+reconciliation of late writes. Qualified HTTP ingestion and the managed recovery
+worker now use these coordination primitives. The HTTP replacement regressions
+below pass locally; this is not evidence of deployment.
 
 The document engine now maintains those references during qualified full saves,
 partial copies and dedupe. Ordinary requests can retain their destination's
@@ -418,15 +418,17 @@ deleting one owner leaves shared raw objects pinned by the others.
 Existing engine constructors continue supporting unmanaged documents. Managed
 references require the host to supply an explicit qualified backend identity;
 without it they fail as unsupported. This enables reference-preserving operations
-over already admitted records, not ingestion. The shared ingestion operation and
-production composition still need to establish that identity and enforce provider
-retention, leases and admission. Real SQL/object-store tests cover library/gRPC
+over already admitted records. The shared ingestion operation and qualified service
+composition establish that identity and enforce capability, lease and admission
+requirements. Deployment retention remains an explicit operator obligation.
+Real SQL/object-store tests cover library/gRPC
 parity, metadata mismatch, unadmitted refs, cross-drive copies, shared retention,
 corrupt fragments, and binding/provider changes during copying.
 
 The real HTTP regression `rejectedReplacementPreservesCommittedDocumentAndRawBytes`
-demonstrates that a bad-checksum replacement deletes the previously committed raw
-object while GetDocument still returns its metadata and claim check. The accepted-replacement regression
+originally reproduced a bad-checksum replacement deleting the previously committed
+raw object while GetDocument still returned its metadata. It now verifies the
+committed object survives the rejected replacement. The accepted-replacement regression
 also requires distinct physical keys and unchanged old bytes before reclamation.
 This is not indefinite retention: garbage collection may remove an unreferenced
 old object. A retained version or another document must pin it when continued
@@ -493,8 +495,21 @@ atomic insert-or-check registration. Real PostgreSQL tests exercise restart,
 conflicting registrations and direct mutation refusal. Existing raw rows are not
 automatically adopted or bound by this migration. The composition must register
 its profile and resolve historical generations explicitly before using them.
-The configuration scaffold exists, but qualified startup deliberately refuses
-until profile binding, shared HTTP ingestion and managed cleanup are wired together.
+Qualified service composition now binds the profile, supplies shared HTTP ingestion
+and starts managed recovery before opening the upload listener. Set all three:
+`DOCUMENT_PLATFORM_MANAGED_BACKEND_GENERATION`, `DOCUMENT_PLATFORM_MANAGED_STORAGE_REALM`
+and `DOCUMENT_PLATFORM_MANAGED_RETENTION_QUALIFIED=true`. These are operator
+qualification inputs, not automatic checks of storage lifecycle or durability.
+S3 and S3-cache must advertise streaming, non-expiring writes and physical
+reclamation; lifecycle recovery must be enabled. Redis and remote managed ingestion
+remain unsupported. Missing qualification leaves the service usable but makes valid
+document-upload requests return 503 before reading their body. Archive routing is
+unchanged. Legacy HTTP constructors still compile and use that same refusal; hosts
+must supply the `RawIngestionRepository` constructor to enable document uploads.
+Recovery scans at most 100 records inactive for one hour on each configured sweep
+interval. Tombstones remain for repeated reconciliation. This host resolves only
+its configured generation; other generations remain durable failures requiring
+their original backend configuration to be restored. No legacy key is adopted.
 
 Identical reuploads compare computed content identity and all relevant document
 metadata against the current managed binding. Normalize to the retained reference

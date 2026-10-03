@@ -109,7 +109,7 @@ class RedisServiceCompositionIT {
                 return new ai.protomolt.proto.repo.blob.spi.OpenedBlobStore(real.store(), () -> {
                     closes.incrementAndGet();
                     real.close();
-                }, real.capabilities(), real::ensureNamespace);
+                        }, real.capabilities(), real::ensureNamespace, real.reclaimer());
             }
         };
         var failure = new IllegalStateException("Injected cache acquisition failure");

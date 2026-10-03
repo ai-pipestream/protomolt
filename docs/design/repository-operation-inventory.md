@@ -61,19 +61,20 @@ extension even where the message shape remains unchanged.
 
 - **Extended:** HTTP document/archive uploads use the same engine boundaries as
   their gRPC counterparts, including streaming limits and staged publication.
-- **New, library implementation under test; HTTP integration pending:** shared raw-ingestion operation for the existing HTTP
+- **New, library and HTTP implementation under review:** shared raw-ingestion operation for the existing HTTP
   document-upload route. It owns immutable upload attempts, checksum verification,
   trusted managed-object bindings and committed-reference receipts. No new public
-  RPC is required for this extraction. See the managed raw uploads design; the
-  two replacement regression cases currently fail against the existing handler.
+  RPC is required for this extraction. The two original HTTP replacement
+  regression cases now pass against the shared ingestion handler.
   `RawIngestionRepository` and `RawIngestionOperations` now implement the library
   boundary for process-authorized callers on qualified non-expiring streaming
   stores. SQL/S3 tests cover immutable replacement, dedupe receipts, checksum and
   length rejection, borrowed streams, drive changes, ambiguous PUT acknowledgement,
   revision-conflict retries, empty content-derived IDs and live candidate leases
-  after failed duplicate publication. Candidates remain durable for recovery; physical
-  cleanup and production composition are not yet wired. Attempt IDs are internal
-  identities, not client idempotency keys. No public endpoint availability is implied.
+  after failed duplicate publication. Qualified S3/cache compositions wire physical
+  cleanup and start recovery before serving uploads. Disabled compositions return
+  HTTP 503 for valid upload requests. Attempt IDs are internal identities, not client
+  idempotency keys. This work is locally tested, not deployed.
 - **Extended, planned:** document save/copy/delete and raw cleanup maintain managed
   raw-object references transactionally. Caller-supplied storage coordinates never
   grant deletion authority. Shared objects require zero-reference cleanup, and
@@ -95,13 +96,15 @@ extension even where the message shape remains unchanged.
   lifecycle port on an opened byte store. S3 advertises PHYSICAL_RECLAMATION and
   removes exact-key versions and delete markers in bounded passes, then checks
   absence. Ordinary raw delete APIs do not acquire this authority. Other providers
-  report unsupported; production composition remains pending. A successful
+  report unsupported. Qualified S3/cache service composition supplies this port. A successful
   pass does not rule out a later completion of an old PUT.
 - **New, library recovery implementation under test:** `RawObjectRecovery` claims
   eligible ledger records, resolves their original backend profiles and performs
   reclamation outside SQL. Failures remain durable and propagate; stale cleanup
   tokens cannot complete a newer claim. Tombstones remain available for subsequent
-  late-writer reconciliation. The production scheduling loop is not yet connected.
+  late-writer reconciliation. Service recovery scans at most 100 records older than
+  one hour per configured sweep interval. Unconfigured historical generations fail
+  durably; this host currently resolves only its configured generation.
 - **New, cache reclamation composition:** `CachingBlobStore.reclaimer` combines
   authoritative physical cleanup with strict cache eviction and absence checking.
   Cache failures propagate for durable retry. Real S3/Redis tests cover a lost

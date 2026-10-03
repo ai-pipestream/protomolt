@@ -102,6 +102,9 @@ public final class RepoServices implements AutoCloseable {
     private final ManagedChannel remoteChannel;
     private final PartStorage partStorage;
     private final DocumentGrpcService documentService;
+    private final ai.protomolt.proto.repo.spi.RawIngestionRepository rawIngestion;
+    private final ai.protomolt.proto.repo.engine.RawObjectRecovery rawRecovery;
+    private boolean lifecycleStarted;
     private final ArchiveOperations archiveOperations;
     private final DriveProvisioner driveProvisioner;
     private final ai.protomolt.proto.repo.spi.DriveRepository driveOperations;
@@ -132,11 +135,9 @@ public final class RepoServices implements AutoCloseable {
     RepoServices(RepoServiceConfig config, BridgeEngine bridges, ai.protomolt.proto.repo.blob.spi.BlobStores providers) {
         try {
             this.config = config;
-            // Do not accept qualification while the composition still uses the
-            // legacy HTTP writer. Remove this gate only with profile binding,
-            // shared ingestion and managed-object recovery wired together.
-            if (config.managedStorage().retentionQualified())
-                throw new UnsupportedOperationException("Managed storage composition is not yet available");
+            if (config.managedStorage().retentionQualified()
+                    && (!config.lifecycleEnabled() || !("s3".equals(config.blobStore()) || "s3-redis-cache".equals(config.blobStore()))))
+                throw new IllegalArgumentException("Managed storage requires an S3 backing store and enabled lifecycle recovery");
             if ((RepoServiceConfig.BLOB_STORE_REPO.equals(config.blobStore())
                     || RepoServiceConfig.BLOB_STORE_REPO_INPROCESS.equals(config.blobStore()))
                     && config.repoBucketBindings().isEmpty())
@@ -166,10 +167,14 @@ public final class RepoServices implements AutoCloseable {
                 this.purgeQueue = new JdbcPurgeQueue(tx);
             }
             ai.protomolt.proto.repo.blob.spi.NamespaceProvisioner namespaces;
+            java.util.Set<ai.protomolt.proto.repo.blob.spi.BlobCapability> managedCapabilities = java.util.Set.of();
+            ai.protomolt.proto.repo.blob.spi.ObjectReclaimer managedReclaimer = null;
             switch (config.blobStore()) {
                 case RepoServiceConfig.BLOB_STORE_S3 -> {
                     var selected = owned.add(providers.open("s3", s3Options(config)));
                     this.blobStore = selected.store();
+                    managedCapabilities = selected.capabilities();
+                    managedReclaimer = selected.reclaimer();
                     namespaces = selected::ensureNamespace;
                     this.remoteChannel = null;
                 }
@@ -184,6 +189,8 @@ public final class RepoServices implements AutoCloseable {
                     var cache = owned.add(providers.open("redis", redisOptions(config)));
                     this.blobStore = new CachingBlobStore(backing.store(), cache.store(),
                             config.redisTtlSeconds(), config.redisMaxObjectBytes());
+                    managedCapabilities = backing.capabilities();
+                    managedReclaimer = ((CachingBlobStore) blobStore).reclaimer(backing.reclaimer());
                     namespaces = backing::ensureNamespace;
                     this.remoteChannel = null;
                 }
@@ -210,8 +217,35 @@ public final class RepoServices implements AutoCloseable {
             this.eventProducer = eventOutbox != null
                     ? owned.add(EventRelay.newProducer(config.kafkaBootstrapServers(),
                             config.schemaRegistryUrl())) : null;
-            this.documentService = new DocumentGrpcService(documentLedger, driveLedger, tx,
-                    blobStore, partStorage, purgeQueue, eventOutbox);
+            String generation = config.managedStorage().retentionQualified() ? config.managedStorage().backendGeneration() : null;
+            var documents = new ai.protomolt.proto.repo.engine.DocumentOperations(documentLedger, driveLedger, tx,
+                    blobStore, partStorage, purgeQueue, eventOutbox, generation);
+            this.documentService = new DocumentGrpcService(documents,
+                    new ai.protomolt.proto.repo.engine.BlobOperations(blobStore, driveLedger));
+            if (generation != null) {
+                if (!managedCapabilities.containsAll(java.util.Set.of(
+                        ai.protomolt.proto.repo.blob.spi.BlobCapability.STREAMING_WRITE,
+                        ai.protomolt.proto.repo.blob.spi.BlobCapability.NON_EXPIRING_WRITES,
+                        ai.protomolt.proto.repo.blob.spi.BlobCapability.PHYSICAL_RECLAMATION)))
+                    throw new IllegalArgumentException("Selected backing provider cannot support managed ingestion and reclamation");
+                var profiles = new ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger(tx);
+                var profile = new ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger.Profile("s3",
+                        config.s3Endpoint() == null ? ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger.SDK_DEFAULT : config.s3Endpoint(),
+                        config.s3Region(), config.s3Endpoint() != null, config.managedStorage().storageRealm());
+                profiles.bind(generation, profile);
+                var reclaimer = java.util.Objects.requireNonNull(managedReclaimer);
+                this.rawRecovery = new ai.protomolt.proto.repo.engine.RawObjectRecovery(documentLedger.rawObjects(), profiles,
+                        (originalGeneration, originalProfile) -> {
+                            if (!generation.equals(originalGeneration) || !profile.equals(originalProfile))
+                                throw new IllegalStateException("Original managed backend is not configured on this host");
+                            return reclaimer;
+                        });
+                this.rawIngestion = new ai.protomolt.proto.repo.engine.RawIngestionOperations(documents, documentLedger,
+                        driveLedger, blobStore, generation, managedCapabilities);
+            } else {
+                this.rawIngestion = null;
+                this.rawRecovery = null;
+            }
             this.driveProvisioner = new DriveProvisioner(driveLedger,
                     namespaces,
                     config.defaultBucketBase(), config.s3Region(), selectedDriveProvider, driveGate);
@@ -411,8 +445,8 @@ public final class RepoServices implements AutoCloseable {
      */
     public synchronized UploadHttpServer startHttp(int port, String apiToken) {
         requireOpen();
-        UploadHttpServer http = new UploadHttpServer(documentService, driveLedger,
-                blobStore, apiToken, archiveOperations);
+        if (rawIngestion != null) startLifecycle();
+        UploadHttpServer http = new UploadHttpServer(rawIngestion, apiToken, archiveOperations);
         http.start(port);
         httpServers.add(http);
         return http;
@@ -461,42 +495,63 @@ public final class RepoServices implements AutoCloseable {
      */
     public synchronized void startLifecycle() {
         requireOpen();
+        if (lifecycleStarted) return;
         if (!config.lifecycleEnabled()) {
             LOG.info("repo lifecycle loops disabled ({})",
                     RepoServiceConfig.ENV_LIFECYCLE_ENABLED + "=false");
             return;
         }
-        startLifecycleThread("repo-purger", () -> {
-            int purged = s3Purger.drainOnce(blobStore, PURGE_BATCH_SIZE);
-            // Idle backoff: work left → drain again immediately; empty → wait.
-            if (purged == 0) {
-                sleep(config.purgeIntervalMs());
+        try {
+            if (rawRecovery != null) {
+                startLifecycleThread("repo-raw-recovery", () -> {
+                    var cutoff = java.time.Instant.now().minus(java.time.Duration.ofHours(1));
+                    for (var candidate : documentLedger.rawObjects().cleanupCandidates(cutoff, 100)) {
+                        if (lifecycleClosed || Thread.currentThread().isInterrupted()) break;
+                        try { rawRecovery.recover(candidate.rawId, cutoff); }
+                        catch (RuntimeException failure) {
+                            LOG.warn("Managed raw cleanup failed for {}; durable retry remains pending", candidate.rawId, failure);
+                        }
+                    }
+                    sleep(config.sweepIntervalMs());
+                });
             }
-        });
-        startLifecycleThread("repo-purge-sweeper", () -> {
-            purgeSweeper.sweepOnce();
-            sleep(config.sweepIntervalMs());
-        });
-        if (eventRelay != null) {
-            startLifecycleThread("repo-event-relay", () -> {
-                int published = eventRelay.relayOnce(eventProducer, config.kafkaTopic(),
-                        RELAY_BATCH_SIZE);
+            startLifecycleThread("repo-purger", () -> {
+                int purged = s3Purger.drainOnce(blobStore, PURGE_BATCH_SIZE);
                 // Idle backoff: work left → drain again immediately; empty → wait.
-                if (published == 0) {
+                if (purged == 0) {
                     sleep(config.purgeIntervalMs());
                 }
             });
-        }
-        if (config.reconcileEnabled()) {
-            startLifecycleThread("repo-storage-reconciler", () -> {
-                reconcileAllDrives();
+            startLifecycleThread("repo-purge-sweeper", () -> {
+                purgeSweeper.sweepOnce();
                 sleep(config.sweepIntervalMs());
             });
+            if (eventRelay != null) {
+                startLifecycleThread("repo-event-relay", () -> {
+                    int published = eventRelay.relayOnce(eventProducer, config.kafkaTopic(),
+                            RELAY_BATCH_SIZE);
+                    // Idle backoff: work left → drain again immediately; empty → wait.
+                    if (published == 0) {
+                        sleep(config.purgeIntervalMs());
+                    }
+                });
+            }
+            if (config.reconcileEnabled()) {
+                startLifecycleThread("repo-storage-reconciler", () -> {
+                    reconcileAllDrives();
+                    sleep(config.sweepIntervalMs());
+                });
+            }
+            LOG.info("repo lifecycle loops started (purge interval {} ms, sweep interval {} ms,"
+                            + " reconcile {})", config.purgeIntervalMs(), config.sweepIntervalMs(),
+                    config.reconcileEnabled()
+                            ? "enabled (dryRun=" + config.reconcileDryRun() + ")" : "disabled");
+            lifecycleStarted = true;
+        } catch (RuntimeException | Error failure) {
+            // A partial worker set must not leave a usable upload composition.
+            try { close(); } catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
         }
-        LOG.info("repo lifecycle loops started (purge interval {} ms, sweep interval {} ms,"
-                        + " reconcile {})", config.purgeIntervalMs(), config.sweepIntervalMs(),
-                config.reconcileEnabled()
-                        ? "enabled (dryRun=" + config.reconcileDryRun() + ")" : "disabled");
     }
 
     /** Purge drain batch size per loop iteration. */

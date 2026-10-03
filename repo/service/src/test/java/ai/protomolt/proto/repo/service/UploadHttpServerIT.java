@@ -34,6 +34,7 @@ import java.util.HexFormat;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * End-to-end integration test of the streaming HTTP upload route against
@@ -69,12 +70,13 @@ class UploadHttpServerIT {
     static ManagedChannel channel;
     static DocumentServiceGrpc.DocumentServiceBlockingStub documents;
     static UploadHttpServer http;
+    static RepoServiceConfig config;
     static HttpClient client;
     static String uploadUrl;
 
     @BeforeAll
     static void boot() {
-        RepoServiceConfig config = new RepoServiceConfig(
+        config = new RepoServiceConfig(
                 0,
                 new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
                 LOCALSTACK.getEndpoint().toString(),
@@ -83,7 +85,7 @@ class UploadHttpServerIT {
                 LOCALSTACK.getSecretKey(),
                 "it-http-docs",
                 0, null, null, null, null, 0, 0L);
-        services = RepoServices.build(config);
+        services = RepoServices.build(config.withManagedStorage(new ManagedStoragePolicy("http-test-v1", "test-realm", true)));
         services.startInProcess("it-http");
         http = services.startHttp(0); // ephemeral port
         channel = InProcessChannelBuilder.forName("it-http").build();
@@ -103,6 +105,28 @@ class UploadHttpServerIT {
         services.close();
     }
 
+    @Test void sameGenerationCannotBeReboundToAnotherStorageRealm() {
+        assertThatThrownBy(() -> RepoServices.build(config.withManagedStorage(
+                new ManagedStoragePolicy("http-test-v1", "different-realm", true))))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("another physical profile");
+    }
+
+    @Test void disabledManagedStorageRefusesUploadsWithoutLegacyFallback() throws Exception {
+        try (var disabled = RepoServices.build(config)) {
+            var endpoint = disabled.startHttp(0);
+            var request = HttpRequest.newBuilder(URI.create("http://localhost:" + endpoint.port()
+                    + UploadHttpServer.UPLOAD_PATH + "?account_id=" + ACCOUNT + "&datasource_id=" + DATASOURCE
+                    + "&drive=" + DRIVE + "&filename=disabled.bin&doc_id=disabled-upload"))
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(new byte[] {1})).build();
+            var response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            assertThat(response.statusCode()).isEqualTo(503);
+            assertThat(response.body()).contains("Managed document ingestion is not configured");
+            assertThat(disabled.documentLedger().findByReference(ai.protomolt.proto.repo.v1.NodeAddress.newBuilder()
+                    .setAccountId(ACCOUNT).setDocId("disabled-upload").setGraphId("intake:" + ACCOUNT)
+                    .setGraphAddressId(DATASOURCE).build())).isEmpty();
+        }
+    }
+
     // ------------------------------------------------------------------ tests
 
     @Test
@@ -119,9 +143,8 @@ class UploadHttpServerIT {
         assertThat(receipt.get("deduplicated").asBoolean()).isFalse();
         assertThat(receipt.get("size_bytes").asLong()).isEqualTo(PAYLOAD_SIZE);
         assertThat(receipt.get("sha256").asText()).isEqualTo(expectedSha);
-        String expectedKey = DRIVE + "/blobs/" + ACCOUNT + "/"
-                + DocumentIds.blobId(docId, DATASOURCE, ACCOUNT) + ".bin";
-        assertThat(receipt.get("storage_ref").get("object_key").asText()).isEqualTo(expectedKey);
+        String expectedKey = receipt.get("storage_ref").get("object_key").asText();
+        assertThat(expectedKey).startsWith(DRIVE + "/blobs/.protomolt-managed/v1/");
         String nodeId = receipt.get("node_id").asText();
         assertThat(nodeId).isNotBlank();
 
@@ -237,7 +260,7 @@ class UploadHttpServerIT {
     }
 
     @Test
-    void declaredChecksumMismatchIs400AndDeletesTheLandedObject() throws Exception {
+    void declaredChecksumMismatchIs400WithoutPublishingADocument() throws Exception {
         String docId = "doc-http-" + UUID.randomUUID();
         int size = 64 * 1024;
         HttpResponse<String> response = client.send(uploadRequest(docId, size,
@@ -246,17 +269,11 @@ class UploadHttpServerIT {
         assertThat(response.statusCode()).isEqualTo(400);
         assertThat(response.body()).contains("X-Content-Sha256");
 
-        // The mismatched landing was best-effort deleted, not left posing as
-        // the document's body.
-        String key = DRIVE + "/blobs/" + ACCOUNT + "/"
-                + DocumentIds.blobId(docId, DATASOURCE, ACCOUNT) + ".bin";
-        org.junit.jupiter.api.Assertions.assertThrows(
-                io.grpc.StatusRuntimeException.class,
-                () -> documents.getBlob(GetBlobRequest.newBuilder()
-                        .setStorageRef(ai.protomolt.proto.repo.v1.FileStorageReference.newBuilder()
-                                .setDriveName(DRIVE)
-                                .setObjectKey(key))
-                        .build()));
+        // Failed candidates remain durable for cleanup; they are never published.
+        assertThat(services.documentLedger().findByReference(
+                ai.protomolt.proto.repo.v1.NodeAddress.newBuilder().setAccountId(ACCOUNT)
+                        .setDocId(docId).setGraphAddressId(DATASOURCE).setGraphId("intake:" + ACCOUNT).build()))
+                .isEmpty();
     }
 
     @Test
