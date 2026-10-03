@@ -71,7 +71,7 @@ public final class RemoteBlobStore implements BlobStore {
             "not supported by the repo-backed store: the repo blob API has no operation for this";
 
     private final DocumentServiceGrpc.DocumentServiceBlockingStub documents;
-    private final String driveName;
+    private final java.util.Map<String, String> bucketDrives;
     private final long timeoutNanos;
 
     /**
@@ -90,16 +90,28 @@ public final class RemoteBlobStore implements BlobStore {
      */
     public RemoteBlobStore(DocumentServiceGrpc.DocumentServiceBlockingStub documents,
                            String driveName, Duration timeout) {
+        this(documents, java.util.Map.of(Objects.requireNonNull(driveName, "driveName"), driveName), timeout);
+    }
+
+    /** Binds each local bucket to one remote drive; object keys and version IDs are unchanged. */
+    public RemoteBlobStore(DocumentServiceGrpc.DocumentServiceBlockingStub documents,
+                           java.util.Map<String, String> bucketDrives, Duration timeout) {
         this.documents = Objects.requireNonNull(documents, "documents");
+        this.bucketDrives = java.util.Map.copyOf(bucketDrives);
+        if (this.bucketDrives.isEmpty()) throw new IllegalArgumentException("remote bucket bindings are required");
+        var targets = new java.util.HashSet<String>();
+        for (var binding : this.bucketDrives.entrySet()) {
+            if (binding.getKey().isBlank() || binding.getValue().isBlank())
+                throw new IllegalArgumentException("remote bucket bindings must be nonblank");
+            if (!targets.add(binding.getValue()))
+                throw new IllegalArgumentException("multiple buckets cannot bind the same remote drive");
+        }
+
         Objects.requireNonNull(timeout, "timeout");
         try { this.timeoutNanos = timeout.toNanos(); }
         catch (ArithmeticException overflow) { throw new IllegalArgumentException("RPC timeout is too large", overflow); }
         if (timeoutNanos <= 0) throw new IllegalArgumentException("RPC timeout must be positive");
 
-        if (driveName == null || driveName.isBlank()) {
-            throw new IllegalArgumentException("driveName cannot be null or blank");
-        }
-        this.driveName = driveName;
     }
 
     @Override
@@ -111,7 +123,7 @@ public final class RemoteBlobStore implements BlobStore {
             throw new IllegalArgumentException("blob digest differs from body");
         }
         PutBlobRequest.Builder request = PutBlobRequest.newBuilder()
-                .setDriveName(driveName)
+                .setDriveName(driveFor(spec.bucket()))
                 .setObjectKey(spec.key())
                 .setData(ByteString.copyFrom(body));
         if (spec.contentType() != null && !spec.contentType().isBlank()) {
@@ -136,6 +148,7 @@ public final class RemoteBlobStore implements BlobStore {
     public PutResult put(PutSpec spec, InputStream body, long contentLength) {
         Objects.requireNonNull(spec, "spec");
         Objects.requireNonNull(body, "body");
+        driveFor(spec.bucket());
         requireLength(contentLength);
         try {
             byte[] bytes = body.readNBytes((int) contentLength + 1);
@@ -152,7 +165,7 @@ public final class RemoteBlobStore implements BlobStore {
     public GetResult get(String bucket, String key, String versionId) {
         try {
             GetBlobResponse response = callStub().getBlob(GetBlobRequest.newBuilder()
-                    .setStorageRef(storageRef(key, versionId))
+                    .setStorageRef(storageRef(bucket, key, versionId))
                     .build());
             return new GetResult(response.getData().toByteArray(),
                     response.hasMimeType() ? response.getMimeType() : null, null, versionId);
@@ -163,7 +176,7 @@ public final class RemoteBlobStore implements BlobStore {
 
     @Override
     public GetResult getForUpdate(String bucket, String key) {
-        ConditionalBlobKey address = conditionalKey(key);
+        ConditionalBlobKey address = conditionalKey(bucket, key);
         var request = GetBlobForUpdateRequest.newBuilder().setKey(address).build();
         if (!valid(request)) {
             throw new IllegalArgumentException("authoritative blob read request is invalid");
@@ -200,7 +213,7 @@ public final class RemoteBlobStore implements BlobStore {
                 && !spec.sha256Hex().equals(DocumentPartCodec.sha256Hex(body))) {
             throw new IllegalArgumentException("conditional blob digest differs from body");
         }
-        ConditionalBlobKey address = conditionalKey(spec.key());
+        ConditionalBlobKey address = conditionalKey(spec.bucket(), spec.key());
         var request = CompareAndPutBlobRequest.newBuilder().setKey(address)
                 .setData(ByteString.copyFrom(body));
         if (spec.contentType() != null && !spec.contentType().isBlank()) {
@@ -233,6 +246,12 @@ public final class RemoteBlobStore implements BlobStore {
         }
     }
 
+    private String driveFor(String bucket) {
+        String drive = bucketDrives.get(Objects.requireNonNull(bucket, "bucket"));
+        if (drive == null) throw new IllegalArgumentException("bucket has no configured remote drive binding");
+        return drive;
+    }
+
     private DocumentServiceGrpc.DocumentServiceBlockingStub callStub() {
         Deadline deadline = Deadline.after(timeoutNanos, TimeUnit.NANOSECONDS);
         Deadline supplied = documents.getCallOptions().getDeadline();
@@ -246,8 +265,8 @@ public final class RemoteBlobStore implements BlobStore {
         }
     }
 
-    private ConditionalBlobKey conditionalKey(String key) {
-        var address = ConditionalBlobKey.newBuilder().setDriveName(driveName)
+    private ConditionalBlobKey conditionalKey(String bucket, String key) {
+        var address = ConditionalBlobKey.newBuilder().setDriveName(driveFor(bucket))
                 .setObjectKey(Objects.requireNonNull(key, "key")).build();
         if (!VALIDATOR.validate(address).valid()) {
             throw new IllegalArgumentException("conditional blob key is invalid");
@@ -289,7 +308,7 @@ public final class RemoteBlobStore implements BlobStore {
     public boolean delete(String bucket, String key) {
         try {
             return callStub().deleteBlob(DeleteBlobRequest.newBuilder()
-                    .setStorageRef(storageRef(key, null))
+                    .setStorageRef(storageRef(bucket, key, null))
                     .build()).getDeleted();
         } catch (StatusRuntimeException e) {
             throw mapNotFound(e, key);
@@ -303,6 +322,8 @@ public final class RemoteBlobStore implements BlobStore {
      */
     @Override
     public void copy(String srcBucket, String srcKey, String dstBucket, String dstKey) {
+        driveFor(srcBucket);
+        driveFor(dstBucket);
         GetResult source = get(srcBucket, srcKey, null);
         put(new PutSpec(dstBucket, dstKey, source.contentType(), null, null), source.data());
     }
@@ -322,9 +343,9 @@ public final class RemoteBlobStore implements BlobStore {
         throw new UnsupportedOperationException(UNSUPPORTED);
     }
 
-    private FileStorageReference storageRef(String key, String versionId) {
+    private FileStorageReference storageRef(String bucket, String key, String versionId) {
         FileStorageReference.Builder ref = FileStorageReference.newBuilder()
-                .setDriveName(driveName)
+                .setDriveName(driveFor(bucket))
                 .setObjectKey(key);
         if (versionId != null && !versionId.isBlank()) {
             ref.setVersionId(versionId);

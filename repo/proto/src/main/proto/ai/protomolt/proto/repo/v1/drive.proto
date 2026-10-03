@@ -3,6 +3,7 @@ syntax = "proto3";
 package ai.protomolt.proto.repo.v1;
 
 import "google/protobuf/timestamp.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
 
 option java_multiple_files = true;
 option java_package = "ai.protomolt.proto.repo.v1";
@@ -95,6 +96,20 @@ message RedisDriveConfig {
 }
 
 // Provider-specific configuration for a drive's backing store.
+// Persisted remote storage identity. The drive provider selects repo or repo-inprocess transport.
+// Changing either field requires an explicit storage migration, not configuration-only rebinding.
+message RemoteDriveConfig {
+  // Exact configured remote endpoint or in-process server name.
+  string target = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true, string: {max_len: 4096, pattern: ".*\\S.*"}
+  }];
+  // Remote drive used by raw byte RPCs; existing object keys are preserved.
+  string drive_name = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true, string: {max_len: 1024, pattern: ".*\\S.*"}
+  }];
+}
+
+// Provider-specific drive settings persisted with the drive's storage identity.
 message DriveProviderConfig {
   // The pronounced knobs — exactly one arm matches the drive's provider.
   oneof config {
@@ -102,6 +117,8 @@ message DriveProviderConfig {
     S3DriveConfig s3 = 1;
     // Redis backing store.
     RedisDriveConfig redis = 2;
+    // Remote repository storage identity, validated against service routing configuration.
+    RemoteDriveConfig remote = 3;
   }
   // Long-tail tuning options, passed through to the provider adapter.
   map<string, string> options = 99;

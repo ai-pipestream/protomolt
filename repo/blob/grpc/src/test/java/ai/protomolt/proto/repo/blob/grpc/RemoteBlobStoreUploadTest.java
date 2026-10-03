@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class RemoteBlobStoreUploadTest {
-    private static final BlobStore.PutSpec SPEC = new BlobStore.PutSpec("bucket", "key", null, null, null);
+    private static final BlobStore.PutSpec SPEC = new BlobStore.PutSpec("drive", "key", null, null, null);
 
     @Test void refusesInvalidDeclaredLengthBeforeReading() throws Exception {
         withStore(store -> {
@@ -40,14 +40,14 @@ class RemoteBlobStoreUploadTest {
         withStore(store -> {
             assertThatThrownBy(() -> store.put(SPEC, new byte[9 * 1024 * 1024 + 1]))
                     .isInstanceOf(IllegalArgumentException.class);
-            var verified = new BlobStore.PutSpec("bucket", "key", null, null, "0".repeat(64));
+            var verified = new BlobStore.PutSpec("drive", "key", null, null, "0".repeat(64));
             assertThatThrownBy(() -> store.put(verified, new byte[1])).isInstanceOf(IllegalArgumentException.class);
         });
     }
 
     @Test void boundsTheCompleteSerializedRequestAsWellAsThePayload() throws Exception {
         withStore(store -> {
-            var oversizedHeader = new BlobStore.PutSpec("bucket", "k".repeat(10 * 1024 * 1024), null, null, null);
+            var oversizedHeader = new BlobStore.PutSpec("drive", "k".repeat(10 * 1024 * 1024), null, null, null);
             assertThatThrownBy(() -> store.put(oversizedHeader, new byte[0]))
                     .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("RPC limit");
         });

@@ -125,13 +125,18 @@ passed (212 tasks executed, 1m 47s); log:
 passed before any protocol change. These checks do not prove the proposed gates,
 historical snapshots or hydration behavior; those require new red/green tests.
 
-### Remote byte coordinate migration requirement
+### Remote byte coordinate migration
 
-The extracted byte client still uses the legacy fixed remote drive and ignores
-its bucket argument. Replacing this with `bucket == remoteDrive` alone is unsafe:
-`RepoServices` supplies a configured remote drive, while local ledger records
-use provisioned bucket names. Before enabling rejection, define the local-bucket
-to remote-drive binding in service configuration, validate every loaded drive
-against it, and test existing rows and newly provisioned drives. Do not silently
-rewrite stored object keys or collapse unrelated local buckets into one drive.
-This requirement remains open; client extraction and deadlines do not satisfy it.
+The extracted client and service now require explicit local-bucket to remote-drive
+bindings. The single-drive Java constructor binds only that same logical bucket
+name. The service checks loaded drive buckets against its configured map; startup
+without a remote map fails before database acquisition. Operators must identify
+existing bucket/drive pairs and keep the existing object keys and version IDs.
+The additive `DriveProviderConfig.remote` arm (tag 3) persists endpoint and remote
+drive name; existing tags and names are unchanged. Missing legacy bindings and
+configuration drift fail before returning drive records. Runtime annotations
+validate nonblank, bounded identity fields; equality to configuration is a handler
+obligation. Legacy rows require an explicit verified backfill, not automatic
+adoption. Many-to-one mappings are rejected. This is a deliberate change from ignored bucket
+arguments. Remote namespace provisioning and direct self-routing detection remain
+unfinished; this mapping work does not establish complete remote repository parity.

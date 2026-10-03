@@ -23,7 +23,10 @@ from `ai.protomolt.proto.repo.service.client.RemoteBlobStore` to
 `ai.protomolt.proto.repo.blob.grpc.RemoteBlobStore` and recompile. Its public
 constructor borrows a generated blocking stub; the caller owns the channel.
 The client artifact excludes the repository server, SQL, Kafka and provider SDKs.
-The client still uses a single configured drive and unary RPCs. Uploads accept
+The client uses an immutable one-to-one map from local bucket names to remote
+drive names. Single-drive constructors bind the drive name as the local bucket
+name too; passing arbitrary ignored buckets is no longer supported. Unknown
+buckets fail before RPC. Object keys and version IDs are preserved. Uploads accept
 at most 9 MiB of data and a 10 MiB serialized request, leaving room for protobuf
 fields within the service limit. Stream uploads require an exact nonnegative
 length and read at most that length plus one byte; a mismatch, oversized body
@@ -34,6 +37,17 @@ Each RPC has a fresh 30-second timeout by default; a constructor overload accept
 a positive `Duration`. Any shorter deadline on the supplied stub or current gRPC
 context remains effective. The client does not retry writes after a timeout,
 because a timed-out call may already have committed remotely.
+Service remote modes require `DOCUMENT_PLATFORM_REPO_BUCKET_BINDINGS` as a JSON
+object, for example `{"documents-acct-input":"upstream-input"}`. Embedders use
+`config.withRepoBucketBindings(Map.of(localBucket, remoteDrive))`. The legacy
+`repoDrive` field is retained for Java constructor compatibility but no longer
+selects routing. Operators must map existing ledger buckets to their existing
+remote drives. Each remote drive row must also persist a `RemoteDriveConfig`
+with the exact endpoint and remote drive name. The drive provider records the
+transport. Loaded rows with absent or mismatched binding metadata fail closed;
+changing routing requires an explicit storage migration and verified row update. There is no automatic fallback or key rewriting. Multiple
+local buckets cannot map to the same remote drive. Unmapped persisted drives
+fail with `FAILED_PRECONDITION`. Remote namespace provisioning remains unsupported.
 Remote gRPC storage still uses its explicitly owned channel and is not yet a
 discovered provider.
 

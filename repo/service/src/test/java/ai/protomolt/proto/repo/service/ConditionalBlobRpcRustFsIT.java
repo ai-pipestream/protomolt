@@ -72,12 +72,12 @@ class ConditionalBlobRpcRustFsIT {
                                 assertThat(error.getStatus().getCode()).isEqualTo(Status.Code.ABORTED));
 
                 var remote = new RemoteBlobStore(documents, "state");
-                var spec = new BlobStore.PutSpec("ignored", key.getObjectKey(),
+                var spec = new BlobStore.PutSpec("state", key.getObjectKey(),
                         "application/octet-stream", null, null);
                 assertThatThrownBy(() -> remote.conditionalPut(spec, "late".getBytes(),
                         BlobStore.WriteCondition.matching(first.getVersion().getEtag())))
                         .isInstanceOf(BlobStore.BlobConflictException.class);
-                assertThat(remote.getForUpdate("ignored", key.getObjectKey()).data())
+                assertThat(remote.getForUpdate("state", key.getObjectKey()).data())
                         .isEqualTo("two".getBytes());
 
                 var largeKey = ConditionalBlobKey.newBuilder().setDriveName("state")

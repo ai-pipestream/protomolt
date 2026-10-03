@@ -6,6 +6,8 @@ import java.util.function.Consumer;
 
 /** Verifies stored drive settings describe the one backend this service actually uses. */
 final class SelectedDriveBackend implements Consumer<DriveRecord> {
+    private static final ai.protomolt.proto.validate.ProtoValidator VALIDATOR =
+            ai.protomolt.proto.validate.ProtoValidator.create();
     private final RepoServiceConfig config;
     private final String provider;
 
@@ -16,6 +18,10 @@ final class SelectedDriveBackend implements Consumer<DriveRecord> {
     }
 
     @Override public void accept(DriveRecord drive) {
+        if ((RepoServiceConfig.BLOB_STORE_REPO.equals(provider)
+                || RepoServiceConfig.BLOB_STORE_REPO_INPROCESS.equals(provider))
+                && !config.repoBucketBindings().containsKey(drive.bucket))
+            throw GrpcErrors.failedPrecondition("Drive bucket has no configured remote binding");
         var stored = drive.readProviderConfig();
         DriveProvisioner.requireSelectedProvider(provider, drive.provider, stored);
         if (drive.credentialsRef != null && !drive.credentialsRef.isBlank()) {
@@ -25,7 +31,12 @@ final class SelectedDriveBackend implements Consumer<DriveRecord> {
                 && !drive.region.equals(config.s3Region())) {
             throw GrpcErrors.failedPrecondition("Drive region differs from the selected backend");
         }
+        boolean remote = RepoServiceConfig.BLOB_STORE_REPO.equals(provider)
+                || RepoServiceConfig.BLOB_STORE_REPO_INPROCESS.equals(provider);
+        if (remote && (stored == null || !stored.hasRemote()))
+            throw GrpcErrors.failedPrecondition("Remote drive has no persisted binding; explicit migration is required");
         if (stored == null) return;
+
         if (!stored.getOptionsMap().isEmpty()) {
             throw GrpcErrors.failedPrecondition("Per-drive provider options are not supported by this assembly");
         }
@@ -37,7 +48,11 @@ final class SelectedDriveBackend implements Consumer<DriveRecord> {
                     && stored.getRedis().getTtlSeconds() == config.redisTtlSeconds()
                     && stored.getRedis().getMaxObjectBytes() == config.redisMaxObjectBytes()
                     && stored.getRedis().getKeyPrefix().isEmpty();
+            case REMOTE -> VALIDATOR.validate(stored.getRemote()).valid()
+                    && stored.getRemote().getTarget().equals(config.repoTarget())
+                    && stored.getRemote().getDriveName().equals(config.repoBucketBindings().get(drive.bucket));
             case CONFIG_NOT_SET -> true;
+
         };
         if (!matches) throw GrpcErrors.failedPrecondition("Drive configuration differs from the selected backend");
     }

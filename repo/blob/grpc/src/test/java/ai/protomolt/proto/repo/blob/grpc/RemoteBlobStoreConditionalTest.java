@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class RemoteBlobStoreConditionalTest {
-    private static final String BUCKET = "ignored";
+    private static final String BUCKET = "drive";
     private static final String KEY = "state/current";
 
     @Test void oldServerCannotSilentlyFallBackToUnconditionalOperations() throws Exception {

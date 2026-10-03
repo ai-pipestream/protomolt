@@ -125,6 +125,10 @@ public final class RepoServices implements AutoCloseable {
     RepoServices(RepoServiceConfig config, BridgeEngine bridges, ai.protomolt.proto.repo.blob.spi.BlobStores providers) {
         try {
             this.config = config;
+            if ((RepoServiceConfig.BLOB_STORE_REPO.equals(config.blobStore())
+                    || RepoServiceConfig.BLOB_STORE_REPO_INPROCESS.equals(config.blobStore()))
+                    && config.repoBucketBindings().isEmpty())
+                throw new IllegalArgumentException(RepoServiceConfig.ENV_REPO_BUCKET_BINDINGS + " is required for remote storage");
             this.database = owned.add(new LedgerDatabase(config.ledger()));
             this.tx = new Tx(database.entityManagerFactory());
             this.documentLedger = new DocumentLedger(tx);
@@ -180,7 +184,8 @@ public final class RepoServices implements AutoCloseable {
                         if (!remoteChannel.awaitTermination(10, TimeUnit.SECONDS))
                             throw new IllegalStateException("Repository client channel did not terminate");
                     });
-                    this.blobStore = new RemoteBlobStore(DocumentServiceGrpc.newBlockingStub(remoteChannel), config.repoDrive());
+                    this.blobStore = new RemoteBlobStore(DocumentServiceGrpc.newBlockingStub(remoteChannel),
+                            config.repoBucketBindings(), java.time.Duration.ofSeconds(30));
                     namespaces = blobStore::headBucket;
                 }
             }

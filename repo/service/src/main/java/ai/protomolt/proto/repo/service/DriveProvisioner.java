@@ -170,6 +170,7 @@ final class DriveProvisioner {
         boolean mismatch = switch (config.getConfigCase()) {
             case S3 -> !"s3".equals(defaultProvider);
             case REDIS -> !"redis".equals(defaultProvider);
+            case REMOTE -> !"repo".equals(defaultProvider) && !"repo-inprocess".equals(defaultProvider);
             case CONFIG_NOT_SET -> false;
         };
         if (mismatch) throw GrpcErrors.failedPrecondition("Drive configuration does not match the selected storage backend");
