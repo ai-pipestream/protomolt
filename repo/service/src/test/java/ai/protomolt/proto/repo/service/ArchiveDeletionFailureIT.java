@@ -2,9 +2,9 @@ package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.repo.archive.v1.*;
 import ai.protomolt.proto.repo.blob.spi.*;
-import ai.protomolt.proto.repo.container.archive.ArchiveLedger;
+import ai.protomolt.proto.repo.container.archive.*;
 import ai.protomolt.proto.repo.container.ledger.*;
-import ai.protomolt.proto.repo.engine.ArchiveOperations;
+import ai.protomolt.proto.repo.engine.*;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryException;
 import com.google.protobuf.ByteString;
@@ -34,6 +34,8 @@ class ArchiveDeletionFailureIT {
     static DriveLedger drives;
     static OpenedBlobStore opened;
     static ArchiveOperations normal;
+    static ArchiveOperations managed;
+    static ArchiveMutationOperations mutations;
     static final RepositoryCaller CALLER = new RepositoryCaller("archive-test", true);
 
     @BeforeAll static void boot() {
@@ -53,6 +55,16 @@ class ArchiveDeletionFailureIT {
         drive.driveType = "CUSTOM";
         drives.insert(drive);
         normal = new ArchiveOperations(ledger, drives, opened.store());
+        new ManagedBackendLedger(tx).bind("failure-test", new ManagedBackendLedger.Profile(
+                ai.protomolt.proto.repo.blob.s3.S3BackendIdentity.of(S3.getEndpoint().toString(), S3.getRegion(), true), "failure-realm"));
+        managed = new ArchiveOperations(ledger, drives, opened.store(), ai.protomolt.proto.asset.bridge.BridgeEngine.standard(),
+                new ArchiveObjectReader(new ArchiveObjectLedger(tx), (generation, realm) -> {
+                    assertThat(generation).isEqualTo("failure-test");
+                    assertThat(realm).isEqualTo("failure-realm");
+                    return opened.store();
+                }), new ArchiveObjectWriter(new ArchiveUploadLedger(tx), opened.store(), "failure-test",
+                        opened.capabilities(), java.time.Duration.ofMinutes(5)));
+        mutations = new ArchiveMutationOperations(ledger, new ArchiveMutationLedger(tx), new ArchiveMutationObservations(tx));
         normal.createArchive(CALLER, CreateArchiveRequest.newBuilder().setArchive(Archive.newBuilder()
                 .setAccountId("account").setName("records").setDriveName("archive-drive")
                 .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED)).build());
@@ -62,8 +74,8 @@ class ArchiveDeletionFailureIT {
         finally { if (database != null) database.close(); }
     }
 
-    @Test void libraryDeletePropagatesStorageFailure() throws Exception { assertDeleteFailure(false); }
-    @Test void grpcDeletePropagatesStorageFailure() throws Exception { assertDeleteFailure(true); }
+    @Test void libraryDeleteRecordsStorageFailureWithoutClaimingCompletion() throws Exception { assertDeleteFailure(false); }
+    @Test void grpcDeleteRecordsStorageFailureWithoutClaimingCompletion() throws Exception { assertDeleteFailure(true); }
 
     @Test void boundReadsUseOriginalBackendIdentityAndNeverTheCurrentDrive() throws Exception {
         var address = EntryAddress.newBuilder().setAccountId("account").setArchive("records")
@@ -162,7 +174,9 @@ class ArchiveDeletionFailureIT {
         }
     }
 
-    @Test void legacyDestructivePathsRefuseBoundManifestsBeforeDeletingObjects() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void identifiedMutationsRefuseUnboundContentWithoutChangingRowsOrBytes(boolean transport) throws Exception {
         var address = EntryAddress.newBuilder().setAccountId("account").setArchive("records")
                 .setEntryId(UUID.randomUUID().toString()).build();
         var firstRequest = PutEntryRequest.newBuilder().setAddress(address).addRenditions(RenditionContent.newBuilder()
@@ -171,21 +185,22 @@ class ArchiveDeletionFailureIT {
         var first = normal.putEntry(CALLER, firstRequest);
         normal.putEntry(CALLER, firstRequest.toBuilder().setRenditions(0,
                 firstRequest.getRenditions(0).toBuilder().setData(ByteString.copyFromUtf8("second bytes"))).build());
-        // Even an unresolvable binding must fail before touching storage.
-        new Tx(database.entityManagerFactory()).inTransaction(em -> {
-            em.createNativeQuery("""
-                    UPDATE archive_versions SET manifest=jsonb_set(manifest,'{renditions,0,storageObjectId}',to_jsonb(CAST(:binding AS text)))
-                    WHERE entry_uuid=:entry
-                    """).setParameter("binding", UUID.randomUUID().toString())
-                    .setParameter("entry", UUID.fromString(first.getEntryUuid())).executeUpdate();
-        });
-        for (Runnable operation : new Runnable[] {
-                () -> normal.deleteEntry(CALLER, DeleteEntryRequest.newBuilder().setAddress(address).build()),
-                () -> normal.deleteRendition(CALLER, DeleteRenditionRequest.newBuilder().setAddress(address)
-                        .setRendition("original").setReason("test").build()),
-                () -> normal.pruneVersions(CALLER, PruneVersionsRequest.newBuilder().setAddress(address).setKeepLatest(1).build())}) {
-            assertThatThrownBy(operation::run).isInstanceOfSatisfying(RepositoryException.class,
-                    error -> assertThat(error.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+        try (var client = new MutationClient(transport)) {
+            for (var command : java.util.List.of(
+                    ArchiveMutationRequest.newBuilder().setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(address)),
+                    ArchiveMutationRequest.newBuilder().setDeleteRendition(DeleteRenditionRequest.newBuilder().setAddress(address)
+                            .setRendition("original").setReason("test")),
+                    ArchiveMutationRequest.newBuilder().setPruneVersions(PruneVersionsRequest.newBuilder().setAddress(address).setKeepLatest(1)))) {
+                var request = command.setOperationId(UUID.randomUUID().toString()).build();
+                assertThatThrownBy(() -> client.mutate(request)).satisfies(failure -> {
+                    if (transport) assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+                    else assertThat(((RepositoryException) failure).code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION);
+                });
+                assertThatThrownBy(() -> client.lookup(request)).satisfies(failure -> {
+                    if (transport) assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(Status.Code.NOT_FOUND);
+                    else assertThat(((RepositoryException) failure).code()).isEqualTo(RepositoryException.Code.NOT_FOUND);
+                });
+            }
         }
         assertThat(opened.store().get("archive-failures", first.getManifest().getRenditions(0).getObjectKey()).data())
                 .isEqualTo("first bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -232,14 +247,14 @@ class ArchiveDeletionFailureIT {
     private static void assertSqlFailure(boolean transport) throws Exception {
         var address = EntryAddress.newBuilder().setAccountId("account").setArchive("records")
                 .setEntryId(UUID.randomUUID().toString()).build();
-        var saved = normal.putEntry(CALLER, PutEntryRequest.newBuilder().setAddress(address)
+        var saved = managed.putEntry(CALLER, PutEntryRequest.newBuilder().setAddress(address)
                 .addRenditions(RenditionContent.newBuilder()
                         .setRendition(RenditionDescriptor.newBuilder().setName("original").setMediaType("text/plain"))
                         .setData(ByteString.copyFromUtf8("retain on rollback"))).build());
         var manifest = normal.getManifest(CALLER, GetEntryManifestRequest.newBuilder().setAddress(address).build()).getManifest();
         String key = manifest.getRenditions(0).getObjectKey();
-        // Fault only this entry, inside real PostgreSQL after the version DELETE
-        // but before entry deletion can commit. All object calls use the real S3 adapter.
+        // Fault only this entry at its deletion inside real PostgreSQL, before
+        // the transaction can commit. All object calls use the real S3 adapter.
         String function = "reject_archive_delete_" + UUID.randomUUID().toString().replace("-", "");
         UUID entryId = UUID.fromString(saved.getEntryUuid());
         var tx = new Tx(database.entityManagerFactory());
@@ -251,22 +266,24 @@ class ArchiveDeletionFailureIT {
                     + "FOR EACH ROW WHEN (OLD.entry_uuid = '" + entryId + "'::uuid) EXECUTE FUNCTION " + function + "()")
                     .executeUpdate();
         });
+        var request = deletion(address);
         try {
-            var request = DeleteEntryRequest.newBuilder().setAddress(address).build();
-            if (!transport) {
-                assertThatThrownBy(() -> normal.deleteEntry(CALLER, request))
-                        .hasStackTraceContaining("injected archive SQL failure");
-            } else {
-                String name = "archive-sql-failure-" + UUID.randomUUID();
-                var server = InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(normal)).build().start();
-                var channel = InProcessChannelBuilder.forName(name).build();
-                try {
-                    assertThatThrownBy(() -> ArchiveServiceGrpc.newBlockingStub(channel).deleteEntry(request))
-                            .isInstanceOf(StatusRuntimeException.class);
-                } finally { channel.shutdownNow(); server.shutdownNow(); }
+            try (var client = new MutationClient(transport)) {
+                if (transport) assertThatThrownBy(() -> client.mutate(request))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class, failure -> {
+                            assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.INTERNAL);
+                            assertThat(failure.getStatus().getDescription()).contains("injected archive SQL failure");
+                        });
+                else assertThatThrownBy(() -> client.mutate(request)).hasStackTraceContaining("injected archive SQL failure");
+                assertThatThrownBy(() -> client.lookup(request)).satisfies(failure -> {
+                    if (transport) assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(Status.Code.NOT_FOUND);
+                    else assertThat(((RepositoryException) failure).code()).isEqualTo(RepositoryException.Code.NOT_FOUND);
+                });
             }
             assertThat(ledger.findEntry(entryId)).isPresent();
             assertThat(ledger.findVersion(entryId, 1)).isPresent();
+            assertThat(new ArchiveObjectLedger(tx).readable(entryId, 1,
+                    UUID.fromString(manifest.getRenditions(0).getStorageObjectId()))).isPresent();
             assertThat(opened.store().get("archive-failures", key).data())
                     .isEqualTo("retain on rollback".getBytes(java.nio.charset.StandardCharsets.UTF_8));
         } finally {
@@ -275,42 +292,105 @@ class ArchiveDeletionFailureIT {
                 em.createNativeQuery("DROP FUNCTION " + function + "()").executeUpdate();
             });
         }
+        try (var client = new MutationClient(transport)) {
+            var admitted = client.mutate(request);
+            assertThat(admitted.getEntryDeleted()).isTrue();
+            assertThat(admitted.getVersionsRemoved()).isEqualTo(1);
+            assertThat(admitted.getObjectsPending()).isEqualTo(1);
+            assertThat(client.mutate(request)).isEqualTo(admitted);
+        }
     }
 
     private static void assertDeleteFailure(boolean transport) throws Exception {
         var address = EntryAddress.newBuilder().setAccountId("account").setArchive("records")
                 .setEntryId(UUID.randomUUID().toString()).build();
-        normal.putEntry(CALLER, PutEntryRequest.newBuilder().setAddress(address).addRenditions(RenditionContent.newBuilder()
+        var saved = managed.putEntry(CALLER, PutEntryRequest.newBuilder().setAddress(address).addRenditions(RenditionContent.newBuilder()
                 .setRendition(RenditionDescriptor.newBuilder().setName("original").setMediaType("text/plain"))
                 .setData(ByteString.copyFromUtf8("retained bytes"))).build());
-        var manifest = normal.getManifest(CALLER, GetEntryManifestRequest.newBuilder().setAddress(address).build()).getManifest();
-        String key = manifest.getRenditions(0).getObjectKey();
+        var item = saved.getManifest().getRenditions(0);
+        var objectId = UUID.fromString(item.getStorageObjectId());
+        var tx = new Tx(database.entityManagerFactory());
         var attempted = new AtomicBoolean();
-        BlobStore failing = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(ArchiveDeletionFailureIT.class.getClassLoader(),
-                new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
-                    if (method.getName().equals("delete")) {
-                        attempted.set(true);
+        // Fault injection surrounds the real reclaimer; the retry uses that same adapter.
+        var recovery = new ArchiveObjectRecovery(new ArchiveCleanupLedger(tx), new ManagedBackendLedger(tx),
+                (generation, profile) -> (namespace, key) -> {
+                    assertThat(generation).isEqualTo("failure-test");
+                    if (!attempted.getAndSet(true))
                         throw new BlobStoreException(BlobStoreException.Code.UNAVAILABLE, "injected delete outage", null);
-                    }
-                    try { return method.invoke(opened.store(), args); }
-                    catch (java.lang.reflect.InvocationTargetException error) { throw error.getCause(); }
+                    return opened.reclaimer().reclaim(namespace, key);
                 });
-        var operations = new ArchiveOperations(ledger, drives, failing);
-        var request = DeleteEntryRequest.newBuilder().setAddress(address).build();
-        if (!transport) {
-            assertThatThrownBy(() -> operations.deleteEntry(CALLER, request)).isInstanceOfSatisfying(RepositoryException.class,
-                    error -> assertThat(error.code()).isEqualTo(RepositoryException.Code.UNAVAILABLE));
-        } else {
-            String name = "archive-failure-" + UUID.randomUUID();
-            var server = InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(operations)).build().start();
-            var channel = InProcessChannelBuilder.forName(name).build();
-            try {
-                assertThatThrownBy(() -> ArchiveServiceGrpc.newBlockingStub(channel).deleteEntry(request))
-                        .isInstanceOfSatisfying(StatusRuntimeException.class,
-                                error -> assertThat(error.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
-            } finally { channel.shutdownNow(); server.shutdownNow(); }
+        var request = deletion(address);
+        try (var client = new MutationClient(transport)) {
+            var admitted = client.mutate(request);
+            assertThat(admitted.getEntryDeleted()).isTrue();
+            assertThat(admitted.getState()).isEqualTo(ArchiveMutationState.ARCHIVE_MUTATION_STATE_ADMITTED);
+            assertThat(admitted.getObjectsPending()).isEqualTo(1);
+            assertThat(admitted.getObjectsConfirmedAbsent()).isZero();
+            assertThat(attempted).isFalse();
+            assertThat(ledger.findEntry(UUID.fromString(saved.getEntryUuid()))).isEmpty();
+            var cutoff = java.time.Instant.now().plusSeconds(60);
+            assertThatThrownBy(() -> recovery.recover(objectId, cutoff)).hasStackTraceContaining("injected delete outage");
+            var failed = client.lookup(request);
+            assertThat(failed.getState()).isEqualTo(ArchiveMutationState.ARCHIVE_MUTATION_STATE_RETRY_REQUIRED);
+            assertThat(failed.getObjectsPending()).isEqualTo(1);
+            assertThat(failed.getObjectsConfirmedAbsent()).isZero();
+            assertThat(failed.getErrorCode()).isEqualTo("BACKEND_RECLAMATION_FAILED");
+            assertThat(failed.getStatusRevision()).isGreaterThan(admitted.getStatusRevision());
+            assertThat(client.mutate(request)).isEqualTo(failed);
+            assertThat(opened.store().get("archive-failures", item.getObjectKey()).data())
+                    .isEqualTo("retained bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            assertThat(recovery.recover(objectId, cutoff)).isEqualTo(ArchiveObjectRecovery.Outcome.RECLAIMED);
+            var completed = client.lookup(request);
+            assertThat(completed.getState()).isEqualTo(ArchiveMutationState.ARCHIVE_MUTATION_STATE_COMPLETED);
+            assertThat(completed.getObjectsPending()).isZero();
+            assertThat(completed.getObjectsConfirmedAbsent()).isEqualTo(1);
+            assertThat(completed.hasErrorCode()).isFalse();
+            assertThat(completed.getStatusRevision()).isGreaterThan(failed.getStatusRevision());
+            assertThat(client.mutate(request)).isEqualTo(completed);
+            assertThatThrownBy(() -> opened.store().get("archive-failures", item.getObjectKey()))
+                    .isInstanceOf(BlobStore.BlobNotFoundException.class);
         }
-        assertThat(attempted).isTrue();
-        assertThat(opened.store().get("archive-failures", key).data()).isEqualTo("retained bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    private static ArchiveMutationRequest deletion(EntryAddress address) {
+        return ArchiveMutationRequest.newBuilder().setOperationId(UUID.randomUUID().toString())
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(address)).build();
+    }
+
+    /** The same trusted identity is supplied explicitly on both invocation paths. */
+    private static final class MutationClient implements AutoCloseable {
+        private final boolean transport;
+        private final io.grpc.Server server;
+        private final io.grpc.ManagedChannel channel;
+        private final ArchiveMutationServiceGrpc.ArchiveMutationServiceBlockingStub stub;
+        private final RepositoryCaller caller;
+
+        MutationClient(boolean transport) throws java.io.IOException {
+            this.transport = transport;
+            var operator = ai.protomolt.proto.actions.Caller.operator();
+            caller = new RepositoryCaller(operator.name(), operator.unrestricted());
+            String name = "archive-failure-mutation-" + UUID.randomUUID();
+            server = InProcessServerBuilder.forName(name).addService(io.grpc.ServerInterceptors.intercept(
+                    new ArchiveMutationGrpcService(mutations), new io.grpc.ServerInterceptor() {
+                        @Override public <Q, S> io.grpc.ServerCall.Listener<Q> interceptCall(io.grpc.ServerCall<Q, S> call,
+                                io.grpc.Metadata headers, io.grpc.ServerCallHandler<Q, S> next) {
+                            return io.grpc.Contexts.interceptCall(io.grpc.Context.current()
+                                    .withValue(ai.protomolt.proto.authz.grpc.CallerContexts.CALLER, operator), call, headers, next);
+                        }
+                    })).build().start();
+            channel = InProcessChannelBuilder.forName(name).build();
+            stub = ArchiveMutationServiceGrpc.newBlockingStub(channel);
+        }
+
+        ArchiveMutationReceipt mutate(ArchiveMutationRequest request) {
+            return transport ? stub.archiveMutation(request).getReceipt() : mutations.mutateArchive(caller, request);
+        }
+
+        ArchiveMutationReceipt lookup(ArchiveMutationRequest request) {
+            var lookup = GetArchiveMutationRequest.newBuilder().setAccountId("account").setOperationId(request.getOperationId()).build();
+            return transport ? stub.getArchiveMutation(lookup).getReceipt() : mutations.getArchiveMutation(caller, lookup);
+        }
+
+        @Override public void close() { channel.shutdownNow(); server.shutdownNow(); }
     }
 }

@@ -390,9 +390,25 @@ not typed payload admission or a universal content/JCR transaction boundary.
 The old destructive methods refuse bound content before provider I/O; use the
 identified mutation API. Legacy ledger deletion/pruning/rewriting rechecks authoritative
 references and bound manifests under the entry lock, covering a concurrent bound
-save after preflight. Existing legacy deletion failures remain intentionally red.
+save after preflight. The historical deletion failure regressions now exercise
+the identified API: SQL rollback preserves the entry, retained version, binding
+and bytes without admitting a receipt; retrying the same operation can succeed
+after the fault clears. Provider failure after admission is recorded as
+RETRY_REQUIRED, with physical completion reported only after real reclamation.
+Both cases run through the Java interface and authenticated in-process gRPC.
+These tests qualify the replacement, not the still-present legacy API.
 Managed upload/read routing and original-profile recovery are wired by qualified
 host composition. Carry-forward helpers preserve the binding ID when sharing its key.
+
+The remaining removal boundary is the three old destructive RPCs and response
+messages, their `ArchiveRepository` methods, gRPC delegates, engine bodies, and
+`ArchiveLedger.commitDeleteEntry`, `commitPrune`, and `commitManifestRewrite`.
+Keep the request messages and field tags used by `ArchiveMutationRequest`.
+Migrate the remaining service and publication tests, README and archive design
+documentation in the same cutover. Existing unbound PRESENT content must fail
+closed until verified binding migration; removing an API does not migrate or
+delete persisted data. The replacement refusal is tested for all three commands
+through both library and gRPC paths.
 
 - **Reused command payloads:** DeleteEntry has only address (tag 1);
   DeleteRendition has address/rendition/reason (tags 1–3); PruneVersions has
