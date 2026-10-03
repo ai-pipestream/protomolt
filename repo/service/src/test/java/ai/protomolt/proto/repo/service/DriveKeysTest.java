@@ -1,5 +1,7 @@
 package ai.protomolt.proto.repo.service;
 
+import ai.protomolt.proto.repo.engine.DriveKeys;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 import ai.protomolt.proto.repo.container.ledger.DriveRecord;
@@ -23,27 +25,27 @@ class DriveKeysTest {
 
     @Test
     void aPlainPrefixIsJoinedWithASingleSlash() {
-        assertThat(DriveKeys.under(drive("tenant"), "documents/a/b"))
+        assertThat(DriveKeys.under(drive("tenant").prefix, "documents/a/b"))
                 .isEqualTo("tenant/documents/a/b");
     }
 
     @Test
     void aTrailingSlashDoesNotDoubleUp() {
-        assertThat(DriveKeys.under(drive("tenant/"), "documents/a/b"))
+        assertThat(DriveKeys.under(drive("tenant/").prefix, "documents/a/b"))
                 .isEqualTo("tenant/documents/a/b");
     }
 
     @Test
     void anAbsentPrefixLeavesTheKeyAtTheRoot() {
-        assertThat(DriveKeys.under(drive(null), "documents/a/b")).isEqualTo("documents/a/b");
-        assertThat(DriveKeys.under(drive(""), "documents/a/b")).isEqualTo("documents/a/b");
-        assertThat(DriveKeys.under(drive("   "), "documents/a/b")).isEqualTo("documents/a/b");
-        assertThat(DriveKeys.under(drive("/"), "documents/a/b")).isEqualTo("documents/a/b");
+        assertThat(DriveKeys.under(drive(null).prefix, "documents/a/b")).isEqualTo("documents/a/b");
+        assertThat(DriveKeys.under(drive("").prefix, "documents/a/b")).isEqualTo("documents/a/b");
+        assertThat(DriveKeys.under(drive("   ").prefix, "documents/a/b")).isEqualTo("documents/a/b");
+        assertThat(DriveKeys.under(drive("/").prefix, "documents/a/b")).isEqualTo("documents/a/b");
     }
 
     @Test
     void aNestedPrefixIsKept() {
-        assertThat(DriveKeys.under(drive("a/b/c"), "blobs/x")).isEqualTo("a/b/c/blobs/x");
+        assertThat(DriveKeys.under(drive("a/b/c").prefix, "blobs/x")).isEqualTo("a/b/c/blobs/x");
     }
 
     @Test
@@ -60,17 +62,17 @@ class DriveKeysTest {
     @Test
     void theDefaultBlobKeyIsContentAddressedAndStable() {
         String digest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-        String first = DriveKeys.blob(drive("tenant"), digest);
+        String first = DriveKeys.blob(drive("tenant").prefix, digest);
 
-        assertThat(first).isEqualTo(DriveKeys.blob(drive("tenant"), digest));
+        assertThat(first).isEqualTo(DriveKeys.blob(drive("tenant").prefix, digest));
         assertThat(first).startsWith("tenant/blobs/");
-        assertThat(DriveKeys.blob(drive("tenant"), digest.replace('e', 'f'))).isNotEqualTo(first);
+        assertThat(DriveKeys.blob(drive("tenant").prefix, digest.replace('e', 'f'))).isNotEqualTo(first);
     }
 
     @Test
     void blobsAndDocumentsDoNotShareAKeyspace() {
         UUID node = UUID.fromString("00000000-0000-0000-0000-00000000beef");
-        assertThat(DriveKeys.blob(drive("t"), "abc"))
+        assertThat(DriveKeys.blob(drive("t").prefix, "abc"))
                 .isNotEqualTo(SaveResolution.basePrefix(drive("t"), "acct-1", node));
     }
 }

@@ -1,0 +1,10 @@
+description = 'Shared repository operations over the ledger and byte storage ports'
+dependencies {
+    api project(':protomolt-repo-spi')
+    api project(':protomolt-repo-container')
+    api project(':protomolt-repo-blob-spi')
+    implementation project(':protomolt-repo-codec')
+    implementation project(':protomolt-protobuf-validation')
+}
+ext.forbiddenRuntimeModules = ['protomolt-repo-service', 's3', 'jedis', 'grpc-netty-shaded', 'grpc-inprocess']
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

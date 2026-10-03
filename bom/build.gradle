@@ -153,6 +153,8 @@ def supportedModules = [
         'protomolt-repo-blob-redis',
         'protomolt-repo-blob-cache',
         'protomolt-repo-blob-grpc',
+        'protomolt-repo-spi',
+        'protomolt-repo-engine',
         'protomolt-repo-service',
         'protomolt-account-proto',
         'protomolt-account-service',

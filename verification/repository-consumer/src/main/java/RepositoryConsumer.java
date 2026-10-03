@@ -11,6 +11,8 @@ import java.util.List;
 /** Runs from published artifacts, with no project dependency substitution. */
 public final class RepositoryConsumer {
     public static void main(String[] args) throws Exception {
+        var caller = new ai.protomolt.proto.repo.spi.RepositoryCaller("consumer", false);
+        if (caller.processAuthority()) throw new AssertionError("Unexpected process authority");
         Document original = Document.newBuilder().setDocId("published-consumer")
                 .setStructuredData(Any.pack(StringValue.of("retained payload"))).build();
         List<PartObject> parts = DocumentPartCodec.split(original, PartLayouts.document());

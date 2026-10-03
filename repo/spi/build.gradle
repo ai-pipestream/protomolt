@@ -1,0 +1,5 @@
+description = 'Repository invocation contracts and caller identity without storage implementations'
+dependencies { api project(':protomolt-repo-proto') }
+ext.forbiddenRuntimeModules = ['protomolt-repo-service', 'protomolt-repo-container', 'protomolt-repo-engine',
+        's3', 'jedis', 'hibernate-core', 'HikariCP', 'postgresql', 'kafka-clients']
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

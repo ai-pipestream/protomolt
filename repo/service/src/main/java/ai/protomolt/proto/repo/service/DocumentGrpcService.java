@@ -1,5 +1,9 @@
 package ai.protomolt.proto.repo.service;
 
+import ai.protomolt.proto.repo.engine.BlobOperations;
+import ai.protomolt.proto.repo.spi.BlobRepository;
+import ai.protomolt.proto.repo.spi.RepositoryCaller;
+
 import ai.protomolt.proto.repo.v1.DeleteDocumentOutcome;
 import ai.protomolt.proto.repo.v1.DeleteDocumentRequest;
 import ai.protomolt.proto.repo.v1.DeleteDocumentResponse;
@@ -148,7 +152,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
     private final PartLayout layout;
     private final PurgeQueue purgeQueue;
     private final JdbcEventOutbox events;
-    private final BlobOperations blobs;
+    private final BlobRepository blobs;
 
     /**
      * @param documents the document-row ledger
@@ -852,33 +856,38 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         });
     }
 
+    private static RepositoryCaller repositoryCaller() {
+        var caller = ai.protomolt.proto.authz.grpc.CallerContexts.current();
+        return new RepositoryCaller(caller.name(), caller.unrestricted());
+    }
+
     // ------------------------------------------------------------------ blob
 
     @Override
     public void getBlob(GetBlobRequest request, StreamObserver<GetBlobResponse> observer) {
-        GrpcErrors.run(observer, () -> blobs.get(request));
+        GrpcErrors.run(observer, () -> blobs.get(repositoryCaller(), request));
     }
 
     @Override
     public void putBlob(PutBlobRequest request, StreamObserver<PutBlobResponse> observer) {
-        GrpcErrors.run(observer, () -> blobs.put(request));
+        GrpcErrors.run(observer, () -> blobs.put(repositoryCaller(), request));
     }
 
     @Override
     public void getBlobForUpdate(GetBlobForUpdateRequest request,
             StreamObserver<GetBlobForUpdateResponse> observer) {
-        GrpcErrors.run(observer, () -> blobs.getForUpdate(request));
+        GrpcErrors.run(observer, () -> blobs.getForUpdate(repositoryCaller(), request));
     }
 
     @Override
     public void compareAndPutBlob(CompareAndPutBlobRequest request,
             StreamObserver<CompareAndPutBlobResponse> observer) {
-        GrpcErrors.run(observer, () -> blobs.compareAndPut(request));
+        GrpcErrors.run(observer, () -> blobs.compareAndPut(repositoryCaller(), request));
     }
 
     @Override
     public void deleteBlob(DeleteBlobRequest request, StreamObserver<DeleteBlobResponse> observer) {
-        GrpcErrors.run(observer, () -> blobs.delete(request));
+        GrpcErrors.run(observer, () -> blobs.delete(repositoryCaller(), request));
     }
 
     // ------------------------------------------------------------------ plumbing

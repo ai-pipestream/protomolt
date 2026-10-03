@@ -17,6 +17,7 @@ configurations.matching { it.name in ['testCompileClasspath', 'testRuntimeClassp
         }
 
 dependencies {
+    implementation project(':protomolt-repo-engine')
     implementation project(':protomolt-repo-blob-s3')
     implementation project(':protomolt-repo-blob-redis')
     implementation project(':protomolt-repo-blob-cache')

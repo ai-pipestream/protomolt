@@ -21,24 +21,24 @@ final class SelectedDriveBackend implements Consumer<DriveRecord> {
         if ((RepoServiceConfig.BLOB_STORE_REPO.equals(provider)
                 || RepoServiceConfig.BLOB_STORE_REPO_INPROCESS.equals(provider))
                 && !config.repoBucketBindings().containsKey(drive.bucket))
-            throw GrpcErrors.failedPrecondition("Drive bucket has no configured remote binding");
+            throw new ai.protomolt.proto.repo.spi.RepositoryException(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION, "Drive bucket has no configured remote binding");
         var stored = drive.readProviderConfig();
         DriveProvisioner.requireSelectedProvider(provider, drive.provider, stored);
         if (drive.credentialsRef != null && !drive.credentialsRef.isBlank()) {
-            throw GrpcErrors.failedPrecondition("Per-drive credential resolution is not configured");
+            throw new ai.protomolt.proto.repo.spi.RepositoryException(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION, "Per-drive credential resolution is not configured");
         }
         if ("s3".equals(provider) && drive.region != null && !drive.region.isBlank()
                 && !drive.region.equals(config.s3Region())) {
-            throw GrpcErrors.failedPrecondition("Drive region differs from the selected backend");
+            throw new ai.protomolt.proto.repo.spi.RepositoryException(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION, "Drive region differs from the selected backend");
         }
         boolean remote = RepoServiceConfig.BLOB_STORE_REPO.equals(provider)
                 || RepoServiceConfig.BLOB_STORE_REPO_INPROCESS.equals(provider);
         if (remote && (stored == null || !stored.hasRemote()))
-            throw GrpcErrors.failedPrecondition("Remote drive has no persisted binding; explicit migration is required");
+            throw new ai.protomolt.proto.repo.spi.RepositoryException(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION, "Remote drive has no persisted binding; explicit migration is required");
         if (stored == null) return;
 
         if (!stored.getOptionsMap().isEmpty()) {
-            throw GrpcErrors.failedPrecondition("Per-drive provider options are not supported by this assembly");
+            throw new ai.protomolt.proto.repo.spi.RepositoryException(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION, "Per-drive provider options are not supported by this assembly");
         }
         boolean matches = switch (stored.getConfigCase()) {
             case S3 -> Objects.equals(stored.getS3().getEndpointOverride(),
@@ -54,6 +54,6 @@ final class SelectedDriveBackend implements Consumer<DriveRecord> {
             case CONFIG_NOT_SET -> true;
 
         };
-        if (!matches) throw GrpcErrors.failedPrecondition("Drive configuration differs from the selected backend");
+        if (!matches) throw new ai.protomolt.proto.repo.spi.RepositoryException(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION, "Drive configuration differs from the selected backend");
     }
 }

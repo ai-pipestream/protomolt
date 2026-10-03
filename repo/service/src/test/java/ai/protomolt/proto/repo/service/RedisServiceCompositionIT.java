@@ -69,14 +69,25 @@ class RedisServiceCompositionIT {
                                 .setStorageRef(ai.protomolt.proto.repo.v1.FileStorageReference.newBuilder()
                                         .setDriveName("legacy").setObjectKey("anything")).build()))
                         .isInstanceOf(io.grpc.StatusRuntimeException.class).hasMessageContaining("FAILED_PRECONDITION");
+                var local = new ai.protomolt.proto.repo.engine.BlobOperations(services.blobStore(), services.driveLedger());
+                assertThatThrownBy(() -> local.get(new ai.protomolt.proto.repo.spi.RepositoryCaller("test", true),
+                        ai.protomolt.proto.repo.v1.GetBlobRequest.newBuilder().setStorageRef(
+                                ai.protomolt.proto.repo.v1.FileStorageReference.newBuilder()
+                                        .setDriveName("legacy").setObjectKey("anything")).build()))
+                        .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                                failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION));
                 assertThatThrownBy(() -> services.driveLedger().findById(old.driveId))
-                        .isInstanceOf(io.grpc.StatusRuntimeException.class).hasMessageContaining("FAILED_PRECONDITION");
+                        .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION));
                 assertThatThrownBy(() -> services.driveLedger().findByName(old.accountId, old.name))
-                        .isInstanceOf(io.grpc.StatusRuntimeException.class).hasMessageContaining("FAILED_PRECONDITION");
+                        .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION));
                 assertThatThrownBy(() -> services.driveLedger().listByAccount(old.accountId, 100, null))
-                        .isInstanceOf(io.grpc.StatusRuntimeException.class).hasMessageContaining("FAILED_PRECONDITION");
+                        .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION));
                 assertThatThrownBy(() -> services.driveLedger().listAll(100))
-                        .isInstanceOf(io.grpc.StatusRuntimeException.class).hasMessageContaining("FAILED_PRECONDITION");
+                        .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION));
                 assertThatThrownBy(() -> DriveServiceGrpc.newBlockingStub(channel).createDrive(
                         CreateDriveRequest.newBuilder().setAccountId("redis-account").setName("legacy").build()))
                         .isInstanceOf(io.grpc.StatusRuntimeException.class)

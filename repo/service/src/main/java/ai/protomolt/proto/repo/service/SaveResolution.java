@@ -1,5 +1,7 @@
 package ai.protomolt.proto.repo.service;
 
+import ai.protomolt.proto.repo.engine.DriveKeys;
+
 import ai.protomolt.proto.repo.container.ledger.DocumentRecord;
 import ai.protomolt.proto.repo.container.ledger.DocumentRowKind;
 import ai.protomolt.proto.repo.container.ledger.DriveRecord;
@@ -170,7 +172,7 @@ final class SaveResolution {
 
     /** Part-object key root: {@code <drive.prefix>/documents/<accountId>/<nodeId>}. */
     static String basePrefix(DriveRecord drive, String accountId, UUID nodeId) {
-        return DriveKeys.under(drive, "documents/" + accountId + "/" + nodeId);
+        return DriveKeys.under(drive.prefix, "documents/" + accountId + "/" + nodeId);
     }
 
     /** Provider metadata stamped on every part object for observability. */

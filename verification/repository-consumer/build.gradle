@@ -16,8 +16,10 @@ repositories {
 }
 java { toolchain { languageVersion = JavaLanguageVersion.of(25) } }
 sourceSets { grpcClient }
-configurations { blobSpiOnly; s3Only; redisOnly; cacheOnly; grpcOnly }
+configurations { repositorySpiOnly; blobSpiOnly; s3Only; redisOnly; cacheOnly; grpcOnly }
 dependencies {
+    repositorySpiOnly "ai.pipestream:protomolt-repo-spi:${providers.gradleProperty('candidateVersion').get()}"
+    implementation "ai.pipestream:protomolt-repo-spi:${providers.gradleProperty('candidateVersion').get()}"
     grpcClientImplementation "ai.pipestream:protomolt-repo-blob-grpc:${providers.gradleProperty('candidateVersion').get()}"
     blobSpiOnly "ai.pipestream:protomolt-repo-blob-spi:${providers.gradleProperty('candidateVersion').get()}"
     s3Only "ai.pipestream:protomolt-repo-blob-s3:${providers.gradleProperty('candidateVersion').get()}"
@@ -37,7 +39,7 @@ tasks.register('verifyConsumer', JavaExec) {
         if (spiModules != ['protomolt-repo-blob-spi']) {
             throw new GradleException('Byte SPI must be JDK-only: ' + spiModules)
         }
-        [grpcOnly: ['s3', 'jedis'], s3Only: ['jedis'], redisOnly: ['s3'], cacheOnly: ['s3', 'jedis']].each { name, excluded ->
+        [repositorySpiOnly: ['s3', 'jedis', 'protomolt-repo-engine'], grpcOnly: ['s3', 'jedis'], s3Only: ['jedis'], redisOnly: ['s3'], cacheOnly: ['s3', 'jedis']].each { name, excluded ->
             def providerNames = configurations.getByName(name).incoming.resolutionResult.allComponents
                     .collect { it.moduleVersion?.name }.findAll { it != null }
             def forbiddenProvider = excluded + ['protomolt-repo-container', 'protomolt-repo-service',

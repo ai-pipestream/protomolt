@@ -1,4 +1,4 @@
-package ai.protomolt.proto.repo.service;
+package ai.protomolt.proto.repo.engine;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -10,10 +10,10 @@ import ai.protomolt.proto.repo.v1.FileStorageReference;
 import ai.protomolt.proto.repo.v1.GetBlobRequest;
 import ai.protomolt.proto.repo.v1.GetBlobForUpdateRequest;
 import ai.protomolt.proto.repo.v1.PutBlobRequest;
-import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.Test;
+import ai.protomolt.proto.repo.spi.RepositoryCaller;
+import ai.protomolt.proto.repo.spi.RepositoryException;
 
 /**
  * The blob surface's argument contract. Every case here is built with no object store and
@@ -30,34 +30,48 @@ class BlobOperationsTest {
     private final BlobOperations blobs = new BlobOperations(null, null);
 
     @Test
+    void rawOperationsRejectNonAdministrativeCallersBeforeStorageAccess() {
+        var caller = new RepositoryCaller("reader", false);
+        for (Runnable call : java.util.List.<Runnable>of(
+                () -> blobs.get(caller, GetBlobRequest.getDefaultInstance()),
+                () -> blobs.put(caller, PutBlobRequest.getDefaultInstance()),
+                () -> blobs.delete(caller, DeleteBlobRequest.getDefaultInstance()),
+                () -> blobs.getForUpdate(caller, GetBlobForUpdateRequest.getDefaultInstance()),
+                () -> blobs.compareAndPut(caller, CompareAndPutBlobRequest.getDefaultInstance()))) {
+            assertThatThrownBy(call::run).isInstanceOfSatisfying(RepositoryException.class,
+                    failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.PERMISSION_DENIED));
+        }
+    }
+
+    @Test
     void conditionalRequestsRejectInvalidContractsBeforeAccessingStorage() {
         var key = ConditionalBlobKey.newBuilder().setDriveName("primary")
                 .setObjectKey("state/current").build();
-        assertRefusesNaming(() -> blobs.getForUpdate(GetBlobForUpdateRequest.getDefaultInstance()),
+        assertRefusesNaming(() -> blobs.getForUpdate(new RepositoryCaller("test", true), GetBlobForUpdateRequest.getDefaultInstance()),
                 "invalid conditional blob request");
-        assertRefusesNaming(() -> blobs.getForUpdate(GetBlobForUpdateRequest.newBuilder()
+        assertRefusesNaming(() -> blobs.getForUpdate(new RepositoryCaller("test", true), GetBlobForUpdateRequest.newBuilder()
                 .setKey(key.toBuilder().setObjectKey(" ")).build()), "invalid conditional blob request");
-        assertRefusesNaming(() -> blobs.compareAndPut(CompareAndPutBlobRequest.newBuilder()
+        assertRefusesNaming(() -> blobs.compareAndPut(new RepositoryCaller("test", true), CompareAndPutBlobRequest.newBuilder()
                 .setKey(key).build()), "invalid conditional blob request");
-        assertRefusesNaming(() -> blobs.compareAndPut(CompareAndPutBlobRequest.newBuilder()
+        assertRefusesNaming(() -> blobs.compareAndPut(new RepositoryCaller("test", true), CompareAndPutBlobRequest.newBuilder()
                 .setKey(key).setIfAbsent(false).build()), "invalid conditional blob request");
         for (String unsafeTag : new String[] {"*", "W/\"tag\"", "\"one\",\"two\""}) {
-            assertRefusesNaming(() -> blobs.compareAndPut(CompareAndPutBlobRequest.newBuilder()
+            assertRefusesNaming(() -> blobs.compareAndPut(new RepositoryCaller("test", true), CompareAndPutBlobRequest.newBuilder()
                     .setKey(key).setExpectedEtag(unsafeTag).build()),
                     "invalid conditional blob request");
         }
         var unknown = key.toBuilder().setUnknownFields(com.google.protobuf.UnknownFieldSet.newBuilder()
                 .addField(99, com.google.protobuf.UnknownFieldSet.Field.newBuilder()
                         .addVarint(1).build()).build()).build();
-        assertRefusesNaming(() -> blobs.compareAndPut(CompareAndPutBlobRequest.newBuilder()
+        assertRefusesNaming(() -> blobs.compareAndPut(new RepositoryCaller("test", true), CompareAndPutBlobRequest.newBuilder()
                 .setKey(unknown).setIfAbsent(true).build()), "invalid conditional blob request");
     }
 
     private static void assertRefusesNaming(ThrowingCallable call, String... fragments) {
         assertThatThrownBy(call)
-                .isInstanceOf(StatusRuntimeException.class)
-                .satisfies(t -> assertThat(Status.fromThrowable(t).getCode())
-                        .isEqualTo(Status.Code.INVALID_ARGUMENT))
+                .isInstanceOf(RepositoryException.class)
+                .satisfies(t -> assertThat(((RepositoryException) t).code())
+                        .isEqualTo(RepositoryException.Code.INVALID_ARGUMENT))
                 .hasMessageContainingAll(fragments);
     }
 
@@ -69,18 +83,18 @@ class BlobOperationsTest {
 
     @Test
     void getWithoutAStorageRefIsRefused() {
-        assertRefusesNaming(() -> blobs.get(GetBlobRequest.getDefaultInstance()), "storage_ref");
+        assertRefusesNaming(() -> blobs.get(new RepositoryCaller("test", true), GetBlobRequest.getDefaultInstance()), "storage_ref");
     }
 
     @Test
     void getWithoutADriveIsRefused() {
-        assertRefusesNaming(() -> blobs.get(GetBlobRequest.newBuilder()
+        assertRefusesNaming(() -> blobs.get(new RepositoryCaller("test", true), GetBlobRequest.newBuilder()
                 .setStorageRef(ref().setDriveName("")).build()), "storage_ref.drive_name");
     }
 
     @Test
     void getWithoutAnObjectKeyIsRefused() {
-        assertRefusesNaming(() -> blobs.get(GetBlobRequest.newBuilder()
+        assertRefusesNaming(() -> blobs.get(new RepositoryCaller("test", true), GetBlobRequest.newBuilder()
                 .setStorageRef(ref().setObjectKey("")).build()), "storage_ref.object_key");
     }
 
@@ -88,19 +102,19 @@ class BlobOperationsTest {
 
     @Test
     void deleteWithoutAStorageRefIsRefused() {
-        assertRefusesNaming(() -> blobs.delete(DeleteBlobRequest.getDefaultInstance()),
+        assertRefusesNaming(() -> blobs.delete(new RepositoryCaller("test", true), DeleteBlobRequest.getDefaultInstance()),
                 "storage_ref");
     }
 
     @Test
     void deleteWithoutADriveIsRefused() {
-        assertRefusesNaming(() -> blobs.delete(DeleteBlobRequest.newBuilder()
+        assertRefusesNaming(() -> blobs.delete(new RepositoryCaller("test", true), DeleteBlobRequest.newBuilder()
                 .setStorageRef(ref().setDriveName("")).build()), "storage_ref.drive_name");
     }
 
     @Test
     void deleteWithoutAnObjectKeyIsRefused() {
-        assertRefusesNaming(() -> blobs.delete(DeleteBlobRequest.newBuilder()
+        assertRefusesNaming(() -> blobs.delete(new RepositoryCaller("test", true), DeleteBlobRequest.newBuilder()
                 .setStorageRef(ref().setObjectKey("")).build()), "storage_ref.object_key");
     }
 
@@ -113,9 +127,9 @@ class BlobOperationsTest {
         for (FileStorageReference.Builder bad : new FileStorageReference.Builder[] {
                 ref().setDriveName(""), ref().setObjectKey("") }) {
             FileStorageReference reference = bad.build();
-            String fromGet = messageOf(() -> blobs.get(
+            String fromGet = messageOf(() -> blobs.get(new RepositoryCaller("test", true),
                     GetBlobRequest.newBuilder().setStorageRef(reference).build()));
-            String fromDelete = messageOf(() -> blobs.delete(
+            String fromDelete = messageOf(() -> blobs.delete(new RepositoryCaller("test", true),
                     DeleteBlobRequest.newBuilder().setStorageRef(reference).build()));
             assertThat(fromGet).isEqualTo(fromDelete);
         }
@@ -125,7 +139,7 @@ class BlobOperationsTest {
         try {
             call.run();
             throw new AssertionError("expected a refusal");
-        } catch (StatusRuntimeException e) {
+        } catch (RepositoryException e) {
             return e.getMessage();
         }
     }
@@ -134,12 +148,12 @@ class BlobOperationsTest {
 
     @Test
     void putWithoutADriveIsRefused() {
-        assertRefusesNaming(() -> blobs.put(PutBlobRequest.getDefaultInstance()), "drive_name");
+        assertRefusesNaming(() -> blobs.put(new RepositoryCaller("test", true), PutBlobRequest.getDefaultInstance()), "drive_name");
     }
 
     @Test
     void putWithABlankDriveIsRefused() {
-        assertRefusesNaming(() -> blobs.put(PutBlobRequest.newBuilder()
+        assertRefusesNaming(() -> blobs.put(new RepositoryCaller("test", true), PutBlobRequest.newBuilder()
                 .setDriveName("   ").build()), "drive_name");
     }
 }

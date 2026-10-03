@@ -164,7 +164,7 @@ final class DriveProvisioner {
 
     static void requireSelectedProvider(String defaultProvider, String provider, DriveProviderConfig config) {
         if (!defaultProvider.equals(provider)) {
-            throw GrpcErrors.failedPrecondition("Drive provider does not match the selected storage backend");
+            throw new ai.protomolt.proto.repo.spi.RepositoryException(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION, "Drive provider does not match the selected storage backend");
         }
         if (config == null) return;
         boolean mismatch = switch (config.getConfigCase()) {
@@ -173,7 +173,7 @@ final class DriveProvisioner {
             case REMOTE -> !"repo".equals(defaultProvider) && !"repo-inprocess".equals(defaultProvider);
             case CONFIG_NOT_SET -> false;
         };
-        if (mismatch) throw GrpcErrors.failedPrecondition("Drive configuration does not match the selected storage backend");
+        if (mismatch) throw new ai.protomolt.proto.repo.spi.RepositoryException(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION, "Drive configuration does not match the selected storage backend");
     }
 
     /**

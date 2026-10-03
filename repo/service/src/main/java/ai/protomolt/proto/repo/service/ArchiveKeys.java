@@ -1,5 +1,7 @@
 package ai.protomolt.proto.repo.service;
 
+import ai.protomolt.proto.repo.engine.DriveKeys;
+
 import ai.protomolt.proto.repo.container.ledger.DriveRecord;
 
 import java.util.UUID;
@@ -29,7 +31,7 @@ final class ArchiveKeys {
     static String rendition(DriveRecord drive, String accountId, String archive,
                             UUID entryUuid, String name, String subKey, String sha256) {
         String middle = subKey == null || subKey.isBlank() ? name : name + "/" + subKey;
-        return DriveKeys.under(drive, "archive/" + sanitize(accountId) + "/" + archive
+        return DriveKeys.under(drive.prefix, "archive/" + sanitize(accountId) + "/" + archive
                 + "/" + entryUuid + "/" + middle + "/" + sha256);
     }
 
@@ -41,7 +43,7 @@ final class ArchiveKeys {
      */
     static String staging(DriveRecord drive, String accountId, String archive,
                           UUID entryUuid, UUID uploadId) {
-        return DriveKeys.under(drive, "archive/" + sanitize(accountId) + "/" + archive
+        return DriveKeys.under(drive.prefix, "archive/" + sanitize(accountId) + "/" + archive
                 + "/" + entryUuid + "/staging/" + uploadId);
     }
 

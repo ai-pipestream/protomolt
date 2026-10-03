@@ -1,4 +1,4 @@
-package ai.protomolt.proto.repo.service;
+package ai.protomolt.proto.repo.engine;
 
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.codec.DocumentPartCodec;
@@ -20,12 +20,12 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Message;
 import ai.protomolt.proto.validate.ProtoValidator;
-import io.grpc.Status;
+import ai.protomolt.proto.repo.spi.RepositoryCaller;
+import ai.protomolt.proto.repo.spi.RepositoryException;
+import static ai.protomolt.proto.repo.spi.RepositoryException.Code.*;
 import java.util.List;
 import java.util.Optional;
 
-import static ai.protomolt.proto.repo.service.GrpcErrors.invalidArgument;
-import static ai.protomolt.proto.repo.service.GrpcErrors.notFound;
 
 /**
  * The loose-blob surface of {@code DocumentService}: bytes addressed by drive and key,
@@ -33,7 +33,7 @@ import static ai.protomolt.proto.repo.service.GrpcErrors.notFound;
  * no state with the document path beyond the object store itself, so they live apart from
  * it.
  */
-final class BlobOperations {
+public final class BlobOperations implements ai.protomolt.proto.repo.spi.BlobRepository {
 
     /** What a put lands as when the caller names no content type. */
     static final String DEFAULT_CONTENT_TYPE = "application/octet-stream";
@@ -42,16 +42,17 @@ final class BlobOperations {
     private final BlobStore blobStore;
     private final ai.protomolt.proto.repo.container.ledger.DriveLedger drives;
 
-    BlobOperations(BlobStore blobStore, ai.protomolt.proto.repo.container.ledger.DriveLedger drives) {
+    public BlobOperations(BlobStore blobStore, ai.protomolt.proto.repo.container.ledger.DriveLedger drives) {
         this.blobStore = blobStore;
         this.drives = drives;
     }
 
-    GetBlobResponse get(GetBlobRequest request) {
+    @Override public GetBlobResponse get(RepositoryCaller caller, GetBlobRequest request) {
+        requireAdministrator(caller);
         FileStorageReference ref = storageRef(request.hasStorageRef(), request.getStorageRef());
         DriveRecord drive = driveOrThrow(ref.getDriveName());
-        BlobStore.GetResult got = blobStore.get(drive.bucket, ref.getObjectKey(),
-                ref.hasVersionId() && !ref.getVersionId().isBlank() ? ref.getVersionId() : null);
+        BlobStore.GetResult got = missingAsRepositoryError(() -> blobStore.get(drive.bucket, ref.getObjectKey(),
+                ref.hasVersionId() && !ref.getVersionId().isBlank() ? ref.getVersionId() : null));
         GetBlobResponse.Builder response = GetBlobResponse.newBuilder()
                 .setData(ByteString.copyFrom(got.data()))
                 .setSizeBytes(got.data().length)
@@ -62,7 +63,8 @@ final class BlobOperations {
         return response.build();
     }
 
-    PutBlobResponse put(PutBlobRequest request) {
+    @Override public PutBlobResponse put(RepositoryCaller caller, PutBlobRequest request) {
+        requireAdministrator(caller);
         if (request.getDriveName().isBlank()) {
             throw invalidArgument("drive_name is required");
         }
@@ -70,7 +72,7 @@ final class BlobOperations {
         byte[] data = request.getData().toByteArray();
         String sha256 = DocumentPartCodec.sha256Hex(data);
         String objectKey = request.getObjectKey().isBlank()
-                ? DriveKeys.blob(drive, sha256)
+                ? DriveKeys.blob(drive.prefix, sha256)
                 : request.getObjectKey();
         String contentType = request.getMimeType().isBlank()
                 ? DEFAULT_CONTENT_TYPE : request.getMimeType();
@@ -87,19 +89,19 @@ final class BlobOperations {
                 .build();
     }
 
-    GetBlobForUpdateResponse getForUpdate(GetBlobForUpdateRequest request) {
+    @Override public GetBlobForUpdateResponse getForUpdate(RepositoryCaller caller, GetBlobForUpdateRequest request) {
+        requireAdministrator(caller);
         request(request);
         ConditionalBlobKey key = request.getKey();
         DriveRecord drive = driveOrThrow(key.getDriveName());
         BlobStore.GetResult got;
         try {
-            got = blobStore.getForUpdate(drive.bucket, key.getObjectKey());
+            got = missingAsRepositoryError(() -> blobStore.getForUpdate(drive.bucket, key.getObjectKey()));
         } catch (UnsupportedOperationException unsupported) {
-            throw Status.UNIMPLEMENTED.withDescription("authoritative blob read is unsupported")
-                    .asRuntimeException();
+            throw new RepositoryException(UNSUPPORTED, "authoritative blob read is unsupported", unsupported);
         }
         if (got == null || got.data() == null || got.data().length > BlobStore.MAX_CONDITIONAL_BYTES) {
-            throw Status.INTERNAL.withDescription("authoritative blob read is invalid").asRuntimeException();
+            throw new RepositoryException(INTERNAL, "authoritative blob read is invalid");
         }
         String tag = backendTag(got.eTag());
         ConditionalBlobVersion version = version(key, tag, got.data());
@@ -111,7 +113,8 @@ final class BlobOperations {
         return result;
     }
 
-    CompareAndPutBlobResponse compareAndPut(CompareAndPutBlobRequest request) {
+    @Override public CompareAndPutBlobResponse compareAndPut(RepositoryCaller caller, CompareAndPutBlobRequest request) {
+        requireAdministrator(caller);
         request(request);
         ConditionalBlobKey key = request.getKey();
         DriveRecord drive = driveOrThrow(key.getDriveName());
@@ -125,18 +128,37 @@ final class BlobOperations {
             stored = blobStore.conditionalPut(new BlobStore.PutSpec(drive.bucket,
                     key.getObjectKey(), contentType, null, digest), data, condition);
         } catch (BlobStore.BlobConflictException conflict) {
-            throw GrpcErrors.aborted("conditional blob precondition failed");
+            throw new RepositoryException(CONFLICT, "conditional blob precondition failed", conflict);
         } catch (UnsupportedOperationException unsupported) {
-            throw Status.UNIMPLEMENTED.withDescription("conditional blob write is unsupported")
-                    .asRuntimeException();
+            throw new RepositoryException(UNSUPPORTED, "conditional blob write is unsupported", unsupported);
         }
         if (stored == null) {
-            throw Status.INTERNAL.withDescription("conditional blob write is invalid").asRuntimeException();
+            throw new RepositoryException(INTERNAL, "conditional blob write is invalid");
         }
         var result = CompareAndPutBlobResponse.newBuilder()
                 .setVersion(version(key, committedTag(stored.eTag()), data)).build();
         response(result);
         return result;
+    }
+
+    private static <T> T missingAsRepositoryError(java.util.function.Supplier<T> operation) {
+        try { return operation.get(); }
+        catch (BlobStore.BlobNotFoundException missing) {
+            throw new RepositoryException(NOT_FOUND, missing.getMessage(), missing);
+        }
+    }
+
+    private static void requireAdministrator(RepositoryCaller caller) {
+        if (caller == null || !caller.processAuthority())
+            throw new RepositoryException(PERMISSION_DENIED, "Raw blob operations require process authority");
+    }
+
+    private static RepositoryException invalidArgument(String message) {
+        return new RepositoryException(INVALID_ARGUMENT, message);
+    }
+
+    private static RepositoryException notFound(String message) {
+        return new RepositoryException(NOT_FOUND, message);
     }
 
     private static ConditionalBlobVersion version(ConditionalBlobKey key, String tag, byte[] data) {
@@ -148,8 +170,7 @@ final class BlobOperations {
         try {
             return BlobStore.requireStrongEtag(tag);
         } catch (IllegalArgumentException incompatible) {
-            throw Status.UNIMPLEMENTED.withDescription("backing ETag format is unsupported")
-                    .asRuntimeException();
+            throw new RepositoryException(UNSUPPORTED, "backing ETag format is unsupported", incompatible);
         }
     }
 
@@ -157,8 +178,7 @@ final class BlobOperations {
         try {
             return BlobStore.requireStrongEtag(tag);
         } catch (IllegalArgumentException incompatible) {
-            throw Status.INTERNAL.withDescription("conditional blob write returned an invalid ETag")
-                    .asRuntimeException();
+            throw new RepositoryException(INTERNAL, "conditional blob write returned an invalid ETag", incompatible);
         }
     }
 
@@ -168,7 +188,7 @@ final class BlobOperations {
 
     private static void response(Message value) {
         if (!valid(value)) {
-            throw Status.INTERNAL.withDescription("invalid conditional blob response").asRuntimeException();
+            throw new RepositoryException(INTERNAL, "invalid conditional blob response");
         }
     }
 
@@ -185,7 +205,8 @@ final class BlobOperations {
         return true;
     }
 
-    DeleteBlobResponse delete(DeleteBlobRequest request) {
+    @Override public DeleteBlobResponse delete(RepositoryCaller caller, DeleteBlobRequest request) {
+        requireAdministrator(caller);
         FileStorageReference ref = storageRef(request.hasStorageRef(), request.getStorageRef());
         DriveRecord drive = driveOrThrow(ref.getDriveName());
         // Idempotent: delete-of-absent reports deleted=false, not an error.
@@ -218,6 +239,9 @@ final class BlobOperations {
      * account. Reject ambiguous names and apply the shared drive read gate.
      */
     private Optional<DriveRecord> findDriveByName(String name) {
-        return drives.findUniqueByName(name);
+        try { return drives.findUniqueByName(name); }
+        catch (IllegalArgumentException ambiguous) {
+            throw new RepositoryException(INVALID_ARGUMENT, ambiguous.getMessage(), ambiguous);
+        }
     }
 }

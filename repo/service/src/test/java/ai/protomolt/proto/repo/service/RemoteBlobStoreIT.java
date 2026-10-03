@@ -192,14 +192,16 @@ class RemoteBlobStoreIT {
 
             try (var rebound = RepoServices.build(config.withRepoBucketBindings(java.util.Map.of(row.bucket, "different-drive")))) {
                 assertThatThrownBy(() -> rebound.driveLedger().findById(row.driveId))
-                        .isInstanceOf(io.grpc.StatusRuntimeException.class).hasMessageContaining("FAILED_PRECONDITION");
+                        .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION));
             }
             var targetChanged = new RepoServiceConfig(0, config.ledger(), null, null, null, null,
                     "local-base", 0, "repo-inprocess", "different-target", DRIVE, null, 0, 0)
                     .withRepoBucketBindings(java.util.Map.of(row.bucket, DRIVE));
             try (var rebound = RepoServices.build(targetChanged)) {
                 assertThatThrownBy(() -> rebound.driveLedger().findById(row.driveId))
-                        .isInstanceOf(io.grpc.StatusRuntimeException.class).hasMessageContaining("FAILED_PRECONDITION");
+                        .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION));
             }
             var missing = new ai.protomolt.proto.repo.container.ledger.DriveRecord();
 
@@ -213,10 +215,11 @@ class RemoteBlobStoreIT {
             missing.status = "ACTIVE";
             downstream.driveLedger().insert(missing);
             assertThatThrownBy(() -> downstream.driveLedger().findById(missing.driveId))
-                    .isInstanceOf(io.grpc.StatusRuntimeException.class).hasMessageContaining("explicit migration");
+                    .isInstanceOf(ai.protomolt.proto.repo.spi.RepositoryException.class).hasMessageContaining("explicit migration");
 
             assertThatThrownBy(() -> downstream.driveLedger().findByName("acct-remote", DRIVE))
-                    .isInstanceOf(io.grpc.StatusRuntimeException.class).hasMessageContaining("FAILED_PRECONDITION");
+                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION));
         }
     }
 
@@ -235,6 +238,49 @@ class RemoteBlobStoreIT {
                 assertThat(rebound.isBound()).isTrue();
             }
         }
+    }
+
+    @Test
+    void localAndGrpcBlobOperationsRunTheSameRoundTripCases() {
+        var local = new ai.protomolt.proto.repo.engine.BlobOperations(services.blobStore(), services.driveLedger());
+        var caller = new ai.protomolt.proto.repo.spi.RepositoryCaller("integration-test", true);
+        var grpc = DocumentServiceGrpc.newBlockingStub(channel);
+        for (boolean throughGrpc : new boolean[] {false, true}) {
+            var put = ai.protomolt.proto.repo.v1.PutBlobRequest.newBuilder().setDriveName(DRIVE)
+                    .setObjectKey("parity/" + throughGrpc).setData(com.google.protobuf.ByteString.copyFromUtf8("same bytes"))
+                    .setMimeType("text/plain").build();
+            var saved = throughGrpc ? grpc.putBlob(put) : local.put(caller, put);
+            assertThat(saved.getSizeBytes()).isEqualTo(put.getData().size());
+            assertThat(saved.getSha256()).isEqualTo(ai.protomolt.proto.repo.codec.DocumentPartCodec.sha256Hex(put.getData().toByteArray()));
+            var get = ai.protomolt.proto.repo.v1.GetBlobRequest.newBuilder().setStorageRef(saved.getStorageRef()).build();
+            var read = throughGrpc ? grpc.getBlob(get) : local.get(caller, get);
+            assertThat(read.getData()).isEqualTo(put.getData());
+            assertThat(read.getMimeType()).isEqualTo("text/plain");
+            var delete = ai.protomolt.proto.repo.v1.DeleteBlobRequest.newBuilder().setStorageRef(saved.getStorageRef()).build();
+            assertThat((throughGrpc ? grpc.deleteBlob(delete) : local.delete(caller, delete)).getDeleted()).isTrue();
+            assertThat((throughGrpc ? grpc.deleteBlob(delete) : local.delete(caller, delete)).getDeleted()).isFalse();
+        }
+    }
+
+    @Test
+    void authenticatedScopedCallerCannotUseAdministrativeBlobRpc() throws Exception {
+        var listener = services.startNetty(0, "test-operator-token", credential ->
+                "test-reader-token".equals(credential)
+                        ? java.util.Optional.of(ai.protomolt.proto.actions.Caller.scoped("reader", java.util.Set.of()))
+                        : java.util.Optional.empty());
+        var authenticatedChannel = io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder
+                .forAddress("localhost", listener.getPort()).usePlaintext().build();
+        try {
+            var headers = new io.grpc.Metadata();
+            headers.put(io.grpc.Metadata.Key.of("api_token", io.grpc.Metadata.ASCII_STRING_MARSHALLER), "test-reader-token");
+            var reader = DocumentServiceGrpc.newBlockingStub(authenticatedChannel)
+                    .withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers));
+            assertThatThrownBy(() -> reader.putBlob(ai.protomolt.proto.repo.v1.PutBlobRequest.newBuilder()
+                    .setDriveName(DRIVE).setObjectKey("denied").setData(com.google.protobuf.ByteString.copyFromUtf8("no")).build()))
+                    .isInstanceOfSatisfying(io.grpc.StatusRuntimeException.class,
+                            failure -> assertThat(failure.getStatus().getCode()).isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED));
+            assertThatThrownBy(() -> store.get(DRIVE, "denied")).isInstanceOf(BlobStore.BlobNotFoundException.class);
+        } finally { authenticatedChannel.shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS); }
     }
 
     @Test

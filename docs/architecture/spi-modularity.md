@@ -452,3 +452,31 @@ Consumers of optional implementations must declare their artifacts explicitly.
 `WorkRecords` retains its public fingerprint methods, delegating to the shared
 `MessageFingerprints` descriptor utility. A golden serialization and digest test
 protects persisted review identities from changes during this extraction.
+
+## Shared raw blob operations
+
+`protomolt-repo-spi` now exposes `BlobRepository`, `RepositoryCaller` and
+`RepositoryException`. It carries existing protobuf requests and responses and
+has no storage implementation dependency. `protomolt-repo-engine` implements
+these five raw blob operations in `BlobOperations`; the gRPC document handler
+adapts the authenticated caller and translates domain errors into wire statuses.
+The shared key helper takes a prefix string, without exposing a persistence row.
+
+Library callers must supply a caller identity resolved by their trusted host.
+Raw byte operations require process authority; a scoped principal receives
+`PERMISSION_DENIED`. This prevents the named-principal path from using the raw
+byte API to bypass document policy. Existing open listeners still resolve callers
+as the operator and must remain inside the documented trusted-network boundary.
+This change does not authenticate those listeners or implement document ACLs.
+
+`BlobOperations` moved from the service's internal package to
+`ai.protomolt.proto.repo.engine`; library failures use `RepositoryException` codes,
+including `FAILED_PRECONDITION` for incompatible drive configuration. Its previous
+service-package class was not public. No protobuf wire identity changes in this
+extraction. Tests run identical put/get/delete cases locally and over real gRPC
+against SQL and object storage, plus scoped-caller denial before writes.
+
+The engine still depends on `repo/container`, including its current ledger and
+optional messaging code. Document/archive operations, HTTP delegation, ledger
+extraction, messaging separation and complete ownership enforcement remain open.
+Do not interpret the raw-byte extraction as full repository conformance.

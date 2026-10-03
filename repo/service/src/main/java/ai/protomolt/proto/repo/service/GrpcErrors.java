@@ -60,6 +60,16 @@ final class GrpcErrors {
             return t;
         }
         Status status = switch (t) {
+            case ai.protomolt.proto.repo.spi.RepositoryException failure -> switch (failure.code()) {
+                case INVALID_ARGUMENT -> Status.INVALID_ARGUMENT;
+                case NOT_FOUND -> Status.NOT_FOUND;
+                case FAILED_PRECONDITION -> Status.FAILED_PRECONDITION;
+                case PERMISSION_DENIED -> Status.PERMISSION_DENIED;
+                case CONFLICT -> Status.ABORTED;
+                case UNSUPPORTED -> Status.UNIMPLEMENTED;
+                case INTERNAL -> Status.INTERNAL;
+            };
+
             case IllegalArgumentException _ -> Status.INVALID_ARGUMENT;
             case BlobStore.BlobNotFoundException _ -> Status.NOT_FOUND;
             case PartStorage.PartObjectMissingException _ -> Status.FAILED_PRECONDITION;
