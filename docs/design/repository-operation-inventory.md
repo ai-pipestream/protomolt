@@ -68,8 +68,10 @@ extension even where the message shape remains unchanged.
   implements it and advertises `BOUNDED_READ`. Cache, Redis and remote adapters
   do not yet implement it. Existing GetBlob protobufs and the conditional-write
   bound are unchanged. Document staging requires this capability and bounds
-  verification by the planned payload size. Repository reader integration remains
-  outstanding.
+  verification by the planned payload size. Document publication reads and legacy
+  source reuse enforce recorded part sizes through this operation. Oversize is
+  DATA_LOSS; unsupported providers fail with FAILED_PRECONDITION. Shared memory
+  accounting across operations remains outstanding.
 - **Extended:** HTTP document/archive uploads use the same engine boundaries as
   their gRPC counterparts, including streaming limits and staged publication.
 - **New, library and HTTP implementation under review:** shared raw-ingestion operation for the existing HTTP

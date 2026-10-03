@@ -556,10 +556,8 @@ was derived from the declared source; the shared engine owns that preparation.
 The selected-byte limit is per call;
 it does not account for returned buffers retained by callers. The composition
 must bound total source bytes held across concurrent read-to-stage operations.
-The byte SPI also materializes a provider response before its actual size is
-checked; this declared-size limit is not a hard bound on an oversized response.
-Hard memory guarantees require bounded provider reads as well as composition
-accounting.
+Hard aggregate memory guarantees require composition accounting in addition to
+the individual provider response limits.
 The byte SPI now has an explicit `getBounded` operation, implemented by the direct
 S3 adapter with a streaming GET. It rejects declared oversize before reading,
 checks unknown-length bodies while consuming them, and never returns a truncated
@@ -567,9 +565,12 @@ prefix. Zero permits an empty object; failures abort the acquired stream. The
 limit covers payload bytes, not SDK overhead or aggregate memory. Other adapters
 fail explicitly until implemented. Staging now requires this capability before
 admission and bounds each verification read by that part's copied payload size.
-An oversized stored version leaves the attempt unverified. Document readers still
-use the ordinary read path; wiring their reads and budgeting retained source buffers
-remain integration gates. A cache's backing-provider capabilities must not be
+An oversized stored version leaves the attempt unverified. Document publication
+reads and legacy source reuse now bound each provider read by its recorded size.
+Oversize is DATA_LOSS; unsupported bounded reads are FAILED_PRECONDITION with no
+unbounded fallback. A part larger than the Java byte-array API can represent is
+RESOURCE_EXHAUSTED. Budgeting retained source buffers remains an integration gate.
+A cache's backing-provider capabilities must not be
 treated as capabilities of the cache decorator itself.
 The managed-publication reader continues using retained backend and per-part
 provider identities. Both paths preserve fragment order and copy provider

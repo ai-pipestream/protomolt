@@ -299,7 +299,7 @@ class DocumentPartReaderIT {
                 new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
                     try {
                         var result = method.invoke(store, args);
-                        if (method.getName().equals("get")) {
+                        if (method.getName().equals("getBounded")) {
                             if (defect.equals("unavailable"))
                                 throw new BlobStoreException(BlobStoreException.Code.UNAVAILABLE, "Injected provider failure", null);
                             if (defect.equals("wrong-etag")) {
@@ -347,7 +347,7 @@ class DocumentPartReaderIT {
                 new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
                     try {
                         var result = method.invoke(store, args);
-                        if (method.getName().equals("get")) {
+                        if (method.getName().equals("getBounded")) {
                             entered.countDown();
                             try {
                                 if (!release.await(30, java.util.concurrent.TimeUnit.SECONDS))
@@ -425,7 +425,7 @@ class DocumentPartReaderIT {
                 new Class<?>[] {BlobStore.class}, (proxy, method, arguments) -> {
                     try {
                         Object result = method.invoke(store, arguments);
-                        if (method.getName().equals("get")) providerBuffer.set(((BlobStore.GetResult) result).data());
+                        if (method.getName().equals("getBounded")) providerBuffer.set(((BlobStore.GetResult) result).data());
                         return result;
                     } catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
                 });
@@ -481,7 +481,7 @@ class DocumentPartReaderIT {
                 new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
                     try {
                         var result = method.invoke(store, args);
-                        if (method.getName().equals("get")) {
+                        if (method.getName().equals("getBounded")) {
                             calls.incrementAndGet(); entered.countDown();
                             boolean interrupted = false;
                             try {
@@ -549,7 +549,7 @@ class DocumentPartReaderIT {
                 new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
                     try {
                         var result = method.invoke(store, args);
-                        if (method.getName().equals("get")) {
+                        if (method.getName().equals("getBounded")) {
                             if (args[1].equals(parts.getLast().key())) lastChunkRead.countDown();
                             if (args[1].equals(parts.get(1).key()) && !lastChunkRead.await(10, java.util.concurrent.TimeUnit.SECONDS))
                                 throw new AssertionError("Later chunks did not progress while the first chunk was delayed");
@@ -583,7 +583,7 @@ class DocumentPartReaderIT {
                 new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
                     try {
                         var result = method.invoke(store, args);
-                        if (method.getName().equals("get")) {
+                        if (method.getName().equals("getBounded")) {
                             entered.countDown();
                             boolean interrupted = false;
                             try {

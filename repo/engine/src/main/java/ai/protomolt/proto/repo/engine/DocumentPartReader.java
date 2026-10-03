@@ -204,8 +204,19 @@ public final class DocumentPartReader {
     }
 
     private static byte[] readPart(BlobStore store, String namespace, DocumentPublicationLedger.Part part, boolean legacy) {
+        if (part.size() < 0)
+            throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Document part has a negative recorded size");
+        if (part.size() > Integer.MAX_VALUE)
+            throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED, "Document part exceeds the byte-array read limit");
         BlobStore.GetResult result;
-        try { result=store.get(namespace,part.key(),part.providerVersion()); }
+        try { result=store.getBounded(namespace,part.key(),part.providerVersion(), (int) part.size()); }
+        catch (BlobStore.BlobReadLimitException oversized) {
+            throw new RepositoryException(RepositoryException.Code.DATA_LOSS,
+                    "Document part exceeds its recorded size", oversized);
+        } catch (UnsupportedOperationException unsupported) {
+            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Document backend does not support bounded reads", unsupported);
+        }
         catch (BlobStore.BlobNotFoundException missing) {
             if (legacy) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
                     "Legacy partial-save source object is unavailable; retry as a full save", missing);

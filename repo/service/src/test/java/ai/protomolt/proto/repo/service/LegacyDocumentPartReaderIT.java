@@ -56,7 +56,7 @@ class LegacyDocumentPartReaderIT {
     }
     static BlobStore counted(AtomicInteger gets) {
         return (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(), new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
-            if (method.getName().equals("get")) gets.incrementAndGet();
+            if (method.getName().equals("getBounded")) gets.incrementAndGet();
             try { return method.invoke(opened.store(), args); }
             catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
         });
@@ -82,6 +82,28 @@ class LegacyDocumentPartReaderIT {
         opened.store().put(new BlobStore.PutSpec(NAMESPACE, chunk.entry.getObjectKey(), "application/protobuf", Map.of(), null), new byte[] {1, 2});
         code(catchThrowable(() -> reader().readLegacyFragments(opened.store(), NAMESPACE, List.of(chunk.entry), null, null,
                 RepositoryReadControl.NONE)), RepositoryException.Code.DATA_LOSS);
+    }
+
+    @Test void oversizedSourceFailsDuringBoundedRead() throws Exception {
+        var core = source(DocumentPart.DOCUMENT_PART_CORE, "");
+        var replacement = opened.store().put(new BlobStore.PutSpec(NAMESPACE, core.entry.getObjectKey(),
+                "application/protobuf", Map.of(), null), new byte[core.bytes.length + 1]);
+        var failure = catchThrowable(() -> reader().readLegacyFragments(opened.store(), NAMESPACE,
+                List.of(core.entry), replacement.versionId(), replacement.eTag(), RepositoryReadControl.NONE));
+        code(failure, RepositoryException.Code.DATA_LOSS);
+        assertThat(failure).hasCauseInstanceOf(BlobStore.BlobReadLimitException.class);
+    }
+
+    @Test void unsupportedReadDoesNotFallBack() throws Exception {
+        var core = source(DocumentPart.DOCUMENT_PART_CORE, "");
+        var unsupported = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
+                new Class<?>[]{BlobStore.class}, (proxy, method, args) -> {
+                    if (method.getName().equals("getBounded"))
+                        return java.lang.reflect.InvocationHandler.invokeDefault(proxy, method, args);
+                    throw new AssertionError("Unexpected fallback: " + method.getName());
+                });
+        code(catchThrowable(() -> reader().readLegacyFragments(unsupported, NAMESPACE, List.of(core.entry),
+                null, null, RepositoryReadControl.NONE)), RepositoryException.Code.FAILED_PRECONDITION);
     }
 
     @Test void missingSourceRetainsRetryAsFullSaveMeaning() throws Exception {
