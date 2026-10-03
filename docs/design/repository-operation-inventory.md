@@ -72,6 +72,10 @@ extension even where the message shape remains unchanged.
   try-with-resources, keeping the batch open through reuse. Typed `read` closes its
   batch after assembly. Cancellation retains its reservation until entered provider
   workers exit. Existing protobuf names and responses remain unchanged.
+- **New, Java lifecycle:** `DocumentPartReader.close` rejects new work;
+  `awaitIdle` waits for entered resolver/read operations and actual provider
+  workers. Timeout retains borrowed resources. Returned batches have independent
+  caller-owned lifetimes and must still be closed.
 - **New, Java byte SPI:** `BlobStore.getBounded` reads a complete selected object
   version within a caller-supplied payload limit. Unsupported adapters fail
   explicitly; no ordinary-read fallback is permitted. The direct S3 adapter

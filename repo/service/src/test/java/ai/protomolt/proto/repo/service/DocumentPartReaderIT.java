@@ -599,6 +599,40 @@ class DocumentPartReaderIT {
                 .containsExactly("set-3");
     }
 
+    @Test void closeWaitsForEnteredResolverAndDoesNotCloseReturnedBatches() throws Exception {
+        var publication = publish(Document.newBuilder().setDocId("resolver-drain").build().toByteArray());
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var reader = new DocumentPartReader((generation, profile) -> {
+            entered.countDown();
+            try {
+                if (!release.await(10, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("Resolver gate timed out");
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(interrupted);
+            }
+            return store;
+        });
+        var task = new java.util.concurrent.FutureTask<Document>(() -> reader.read(publication, Set.of(), Set.of(), Document.getDefaultInstance()));
+        var caller = Thread.ofVirtual().start(task);
+        try {
+            assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            reader.close();
+            assertThat(reader.awaitIdle(java.time.Duration.ofMillis(20))).isFalse();
+        } finally { release.countDown(); }
+        assertThatThrownBy(() -> task.get(10, java.util.concurrent.TimeUnit.SECONDS)).hasCauseInstanceOf(RepositoryException.class);
+        caller.join(10000);
+        assertThat(reader.awaitIdle(java.time.Duration.ofSeconds(10))).isTrue();
+
+        var independent = reader();
+        try (var batch = independent.readFragments(publication, Set.of(), Set.of(),
+                ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+            independent.close();
+            assertThat(independent.awaitIdle(java.time.Duration.ZERO)).isTrue();
+            assertThat(batch.parts()).hasSize(1);
+        }
+    }
+
     @Test void absentOriginalBackendFailsExplicitly() {
         var publication = publish(Document.newBuilder().setDocId("unavailable").build().toByteArray());
         assertThatThrownBy(() -> new DocumentPartReader((generation, original) -> null)
@@ -607,7 +641,7 @@ class DocumentPartReaderIT {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"interrupt", "cancel", "deadline"})
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"interrupt", "cancel", "deadline", "close"})
     void cancellationReturnsWithoutWaitingForUncooperativeProvider(String signal) throws Exception {
         var publication = publish(Document.newBuilder().setDocId("cancel").build().toByteArray());
         var entered = new java.util.concurrent.CountDownLatch(1);
@@ -640,7 +674,9 @@ class DocumentPartReaderIT {
             @Override public boolean isCancelled() { return cancelled.get(); }
             @Override public long remainingNanos() { return remaining.get(); }
         };
-        var task = new java.util.concurrent.FutureTask<Document>(() -> new DocumentPartReader((g, p) -> delayed)
+        var reader = new DocumentPartReader((g, p) -> delayed);
+        assertThatThrownBy(() -> reader.awaitIdle(java.time.Duration.ZERO)).isInstanceOf(IllegalStateException.class);
+        var task = new java.util.concurrent.FutureTask<Document>(() -> reader
                 .read(publication, Set.of(), Set.of(), Document.getDefaultInstance(), control));
         var caller = Thread.ofVirtual().start(task);
         try {
@@ -649,6 +685,7 @@ class DocumentPartReaderIT {
                 case "interrupt" -> caller.interrupt();
                 case "cancel" -> cancelled.set(true);
                 case "deadline" -> remaining.set(0);
+                case "close" -> reader.close();
                 default -> throw new AssertionError(signal);
             }
             caller.join(2000);
@@ -657,10 +694,18 @@ class DocumentPartReaderIT {
                     .hasCauseInstanceOf(RepositoryException.class)
                     .satisfies(e -> assertThat(((RepositoryException) e.getCause()).code()).isEqualTo(
                             signal.equals("deadline") ? RepositoryException.Code.DEADLINE_EXCEEDED : RepositoryException.Code.CANCELLED));
+            reader.close();
+            reader.close();
+            assertThat(reader.awaitIdle(java.time.Duration.ofMillis(20))).isFalse();
+            assertThatThrownBy(() -> reader.read(publication, Set.of(), Set.of(), Document.getDefaultInstance()))
+                    .isInstanceOfSatisfying(RepositoryException.class,
+                            e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.CANCELLED));
         } finally {
             release.countDown();
             assertThat(workerExited.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
             caller.join(10000);
+            reader.close();
+            assertThat(reader.awaitIdle(java.time.Duration.ofSeconds(10))).isTrue();
         }
     }
 }

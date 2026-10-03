@@ -21,7 +21,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 /** Original-backend reads of an already-authorized, published document snapshot. */
-public final class DocumentPartReader {
+public final class DocumentPartReader implements AutoCloseable {
     @FunctionalInterface
     public interface BackendResolver {
         /**
@@ -36,6 +36,53 @@ public final class DocumentPartReader {
     private final int maxConcurrentReads;
     private final long maxLegacyReuseBytes;
     private final PayloadBudget payloadBudget;
+    private final Object lifecycle = new Object();
+    private boolean closed;
+    private int operations;
+    private int workers;
+
+    @Override public void close() {
+        synchronized (lifecycle) { closed = true; lifecycle.notifyAll(); }
+    }
+
+    /**
+     * After close, wait for resolver/read operations and actual provider workers.
+     * False means the borrowed backend must remain open. Returned batches retain
+     * their payload leases independently; this barrier does not close caller batches.
+     */
+    public boolean awaitIdle(java.time.Duration timeout) throws InterruptedException {
+        Objects.requireNonNull(timeout);
+        if (timeout.isNegative()) throw new IllegalArgumentException("Drain timeout must not be negative");
+        long remaining = timeout.toNanos();
+        long started = System.nanoTime();
+        synchronized (lifecycle) {
+            if (!closed) throw new IllegalStateException("Close the reader before awaiting idle");
+            while (operations != 0 || workers != 0) {
+                if (remaining <= 0) return false;
+                java.util.concurrent.TimeUnit.NANOSECONDS.timedWait(lifecycle, remaining);
+                remaining = timeout.toNanos() - (System.nanoTime() - started);
+            }
+            return true;
+        }
+    }
+
+    private void checkActive(RepositoryReadControl control) {
+        control.check();
+        synchronized (lifecycle) {
+            if (closed) throw new RepositoryException(RepositoryException.Code.CANCELLED, "Document reader is closed");
+        }
+    }
+
+    private void enterOperation() {
+        synchronized (lifecycle) {
+            if (closed) throw new RepositoryException(RepositoryException.Code.CANCELLED, "Document reader is closed");
+            operations++;
+        }
+    }
+
+    private void exitOperation() {
+        synchronized (lifecycle) { operations--; lifecycle.notifyAll(); }
+    }
 
     public DocumentPartReader(BackendResolver backends) { this(backends, 32); }
 
@@ -69,10 +116,10 @@ public final class DocumentPartReader {
     public <T extends Message> T read(DocumentPublicationLedger.Publication publication,
             Set<DocumentPart> mask, Set<String> chunkSets, T prototype, RepositoryReadControl control) {
         try (var batch = readFragments(publication, mask, chunkSets, control)) {
-            control.check();
+            checkActive(control);
             T result = DocumentPartCodec.assemble(batch.parts().stream()
                     .map(PartObject::bytes).toList(), prototype);
-            control.check();
+            checkActive(control);
             return result;
         } catch (com.google.protobuf.InvalidProtocolBufferException invalid) {
             throw new RepositoryException(RepositoryException.Code.DATA_LOSS,"Published document fragments cannot be decoded",invalid);
@@ -89,9 +136,17 @@ public final class DocumentPartReader {
     public DocumentReadBatch readFragments(
             DocumentPublicationLedger.Publication publication, Set<DocumentPart> mask,
             Set<String> chunkSets, RepositoryReadControl control) {
-        control.check();
+        enterOperation();
+        try { return readPublicationFragments(publication, mask, chunkSets, control); }
+        finally { exitOperation(); }
+    }
+
+    private DocumentReadBatch readPublicationFragments(
+            DocumentPublicationLedger.Publication publication, Set<DocumentPart> mask,
+            Set<String> chunkSets, RepositoryReadControl control) {
+        checkActive(control);
         var store=backends.resolve(publication.generation(),publication.profile());
-        control.check();
+        checkActive(control);
         if (store==null) throw RepositoryErrors.failedPrecondition("Original document backend is unavailable");
         var wanted=publication.parts().stream().filter(p -> mask.isEmpty() || mask.contains(p.part()))
                 .filter(p -> p.part()!=DocumentPart.DOCUMENT_PART_CHUNKS || chunkSets.isEmpty() || chunkSets.contains(p.subKey())).toList();
@@ -108,7 +163,14 @@ public final class DocumentPartReader {
      */
     public DocumentReadBatch readLegacyFragments(BlobStore store, String namespace,
             List<PartManifestEntry> selected, String coreVersion, String coreEtag, RepositoryReadControl control) {
-        control.check();
+        enterOperation();
+        try { return readLegacySelection(store, namespace, selected, coreVersion, coreEtag, control); }
+        finally { exitOperation(); }
+    }
+
+    private DocumentReadBatch readLegacySelection(BlobStore store, String namespace,
+            List<PartManifestEntry> selected, String coreVersion, String coreEtag, RepositoryReadControl control) {
+        checkActive(control);
         Objects.requireNonNull(store, "store");
         if (namespace == null || namespace.isBlank())
             throw RepositoryErrors.failedPrecondition("Legacy document namespace is missing");
@@ -133,7 +195,7 @@ public final class DocumentPartReader {
             wanted.add(new DocumentPublicationLedger.Part(part.getPart(), part.getSubKey(), part.getObjectKey(),
                     part.getSizeBytes(), part.getSha256(), core ? known(coreVersion) : null, core ? known(coreEtag) : null));
         }
-        control.check();
+        checkActive(control);
         return readFragments(store, namespace, wanted, control, true);
     }
 
@@ -166,17 +228,17 @@ public final class DocumentPartReader {
                 try {
                     int submitted=0;
                     while (submitted<parallelism) {
-                        control.check();
+                        checkActive(control);
                         final int index=submitted++;
                         pending.add(completions.submit(() -> new Fragment(index,readOwned(batch,store,namespace,wanted.get(index),control,legacy))));
                     }
                     int completed=0;
                     while (completed<wanted.size()) {
-                        control.check();
+                        checkActive(control);
                         var future=completions.poll(Math.max(1, Math.min(java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(50),
                                 control.remainingNanos())), java.util.concurrent.TimeUnit.NANOSECONDS);
                         if (future == null) continue;
-                        control.check();
+                        checkActive(control);
                         pending.remove(future);
                         var fragment=future.get();
                         fragments.set(fragment.index(),fragment.bytes());
@@ -201,13 +263,13 @@ public final class DocumentPartReader {
                 executor.shutdownNow();
             }
         }
-        control.check();
+        checkActive(control);
         var result = new ArrayList<PartObject>(wanted.size());
         for (int i = 0; i < wanted.size(); i++) {
             var part = wanted.get(i);
             result.add(new PartObject(part.part(), part.subKey(), fragments.get(i), part.sha256()));
         }
-        control.check();
+        checkActive(control);
         batch.complete(result);
         complete = true;
         return batch;
@@ -216,19 +278,27 @@ public final class DocumentPartReader {
 
     private byte[] readOwned(DocumentReadBatch batch, BlobStore store, String namespace,
             DocumentPublicationLedger.Part part, RepositoryReadControl control, boolean legacy) {
-        batch.enterWorker();
-        try { return readBounded(store, namespace, part, control, legacy); }
-        finally { batch.exitWorker(); }
+        synchronized (lifecycle) {
+            if (closed) throw new RepositoryException(RepositoryException.Code.CANCELLED, "Document reader is closed");
+            workers++;
+        }
+        try {
+            batch.enterWorker();
+            try { return readBounded(store, namespace, part, control, legacy); }
+            finally { batch.exitWorker(); }
+        } finally {
+            synchronized (lifecycle) { workers--; lifecycle.notifyAll(); }
+        }
     }
 
     private byte[] readBounded(BlobStore store, String namespace, DocumentPublicationLedger.Part part,
             RepositoryReadControl control, boolean legacy) {
-        control.check();
+        checkActive(control);
         if (!readSlots.tryAcquire())
             throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED,
                     "Concurrent document read capacity exhausted");
         try {
-            control.check();
+            checkActive(control);
             return readPart(store, namespace, part, legacy);
         } finally {
             // A cancelled Future does not imply the provider stopped. Hold its slot until actual return.

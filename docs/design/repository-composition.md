@@ -605,8 +605,14 @@ rather than waiting while holding another reservation.
 Cancellation closes batch ownership but does not release its lease while entered
 workers remain. Late results release on actual exit, and closed batches reject
 workers that have not yet entered; cancelling a Future does not prove exit.
-The reader still needs a close
-and drain barrier before the host releases its borrowed backend. Tests must cover
+The reader now exposes `close()` and `awaitIdle(timeout)`. Close rejects new
+operations and worker registration; the drain barrier waits for entered resolver
+operations and actual provider workers before the host may release its borrowed
+backend. A worker past its pre-call check may race with close and start a GET,
+but stays counted until exit. A timeout means the backend must remain open.
+Returned batches remain caller-owned and can outlive a drained reader; drain does
+not release their payload reservations. Typed assembly after retrieval uses no
+backend resource. Tests must cover
 concurrent saturation before I/O, partial fan-out failure, uncooperative reads,
 batch ownership through staging, repeated close, and release after success/error.
 Arrays retained by a caller after closing its batch and SDK-internal buffering are
