@@ -278,13 +278,23 @@ same operation can retry; cleanup failures remain RETRY_REQUIRED until confirmed
 reclamation. ArchiveServiceIT uses managed composition for all archive operations
 and checks logical targets separately from physical completion.
 
-**Outstanding byte-mutation guard:** generic BlobRepository put, compareAndPut,
-and delete reserve raw managed keys, but existing archive keys do not carry that
-reserved segment. An administrator can therefore bypass archive pin/recovery
-rules through the generic byte API. Protect newly minted keys and already stored
-archive coordinates before claiming an exclusive managed byte lifecycle. Cover
-all three calls with real bound objects, including versioned storage. This issue
-predates the RPC removal and is not repaired by changing archive RPCs alone.
+**Generic byte-mutation guard:** BlobRepository PUT, conditional PUT and DELETE
+reject the exact opaque path segments `archive` and `.protomolt-managed` before
+provider mutation. The effective generated PUT key is checked too. The archive
+reservation covers keys already stored under earlier layouts, including drive
+aliases sharing the namespace; it performs no data rewrite or SQL lookup.
+Raw-key detection remains separate for the raw admission machinery. Administrative
+GET and authoritative reads are unchanged. Direct BlobStore SPI access is a trusted
+provider port, outside this repository API guard.
+
+Twelve real PostgreSQL/S3 regression cases first demonstrated successful forbidden
+writes/deletes, then pass with PERMISSION_DENIED: PUT/CAS/DELETE, Java/gRPC,
+versioned/unversioned storage, and a drive alias. Post-refusal checks preserve
+current bytes, provider version, ETag and normal archive reads. Further cases
+cover unbound historical namespace keys, generated keys under reserved drive
+prefixes, raw-key regression, and ordinary loose-blob round trips. Reserving an
+exact `archive` segment makes unrelated pre-release loose blobs under that segment
+read-only through this API; similar names and encoded text are not interpreted.
 
 Keep archive operations process-authorized until current-policy guards support
 scoped callers. Legacy write/staging cleanup remains separate follow-up work;

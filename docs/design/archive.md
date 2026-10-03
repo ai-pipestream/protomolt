@@ -226,9 +226,11 @@ The earlier object-first RPCs and SQL helpers have been removed. Their request
 payload messages remain inputs to the identified mutation contract.
 
 Managed composition and explicit caller authority are required. Scoped ownership
-checks are still pending. The generic blob mutation guard also needs to cover
-archive keys before the byte lifecycle can be described as exclusive; see the
-repository operation inventory for the outstanding protection work.
+checks are still pending. Generic blob mutations reserve the exact `archive`
+path segment, protecting both earlier and current archive layouts from overwrite
+or deletion through that API, including drive aliases. Administrative reads
+remain available. Direct provider SPI access stays trusted; the guard is a
+repository API boundary, not a storage-provider permission system.
 
 ## Rules of the house
 

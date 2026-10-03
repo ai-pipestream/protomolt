@@ -84,4 +84,17 @@ class DriveKeysTest {
                 "prefix/%2Eprotomolt-managed/a", "prefix/.PROTOMOLT-MANAGED/a"))
             assertThat(DriveKeys.isManaged(key)).as(key).isFalse();
     }
+
+    @Test
+    void archiveNamespaceReservationCoversHistoricalKeysWithoutInterpretingOpaqueSegments() {
+        for (String key : java.util.List.of("archive", "archive/a", "p/archive/a/b", "p//archive//a",
+                "p/archive/", "/archive", "p/archive")) {
+            assertThat(DriveKeys.isArchiveOwned(key)).as(key).isTrue();
+            assertThat(DriveKeys.isManaged(key)).as("not a managed raw key: %s", key).isFalse();
+        }
+        for (String key : java.util.List.of("", "archives/a", "archive-backup/a", "p/xarchive/a",
+                "p/ARCHIVE/a", "p/%61rchive/a", "p/archive%2Fa", "p\\archive\\a"))
+            assertThat(DriveKeys.isArchiveOwned(key)).as(key).isFalse();
+        assertThat(DriveKeys.isArchiveOwned(null)).isFalse();
+    }
 }

@@ -30,10 +30,11 @@ class BlobOperationsTest {
     private final BlobOperations blobs = new BlobOperations(null, null);
 
     @Test
-    void managedMutationsAreRejectedBeforeDriveLookupForEverySegmentPosition() {
+    void reservedMutationsAreRejectedBeforeDriveLookupForEverySegmentPosition() {
         var caller = new RepositoryCaller("operator", true);
         for (String key : java.util.List.of(".protomolt-managed", ".protomolt-managed/v1/a",
-                "/.protomolt-managed/", "prefix//.protomolt-managed//v1/a", "prefix/.protomolt-managed")) {
+                "/.protomolt-managed/", "prefix//.protomolt-managed//v1/a", "prefix/.protomolt-managed",
+                "archive", "archive/a", "/archive/", "prefix//archive//a", "prefix/archive")) {
             for (Runnable call : java.util.List.<Runnable>of(
                     () -> blobs.put(caller, PutBlobRequest.newBuilder().setDriveName("unknown")
                             .setObjectKey(key).build()),

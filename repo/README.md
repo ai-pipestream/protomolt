@@ -370,6 +370,15 @@ under the old id. Pick it once and keep it.
 - `DeleteBlob` — delete by `FileStorageReference`; idempotent
   (`deleted=false` when absent).
 
+Generic blob PUT, conditional PUT and DELETE reject keys containing the exact
+path segment `archive` or `.protomolt-managed`, including keys generated from a
+drive prefix. These namespaces belong to repository publication and cleanup.
+The reservation protects historical archive keys and applies through drive
+aliases as well. Administrative reads remain available. Keys are opaque:
+`archive-backup` is not reserved, and percent-encoded text is not decoded.
+This intentionally makes any pre-release loose blob under an exact `archive`
+segment read-only through the generic API; existing bytes are not rewritten.
+
 ### gRPC `ArchiveService` (`repo/proto`, `archive/v1`)
 
 The generic document archive on the same engine: account-scoped archives

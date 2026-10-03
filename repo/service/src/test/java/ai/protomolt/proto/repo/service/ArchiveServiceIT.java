@@ -308,6 +308,86 @@ class ArchiveServiceIT {
                 .isEqualTo(originalBytes + "# Report, revised".length());
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({
+            "put,false,false", "put,false,true", "put,true,false", "put,true,true",
+            "cas,false,false", "cas,false,true", "cas,true,false", "cas,true,true",
+            "delete,false,false", "delete,false,true", "delete,true,false", "delete,true,true"})
+    void genericBlobMutationsCannotChangeBoundArchiveObjects(String operation, boolean versioned, boolean transport) throws Exception {
+        String unique = java.util.UUID.randomUUID().toString();
+        String account = "guard-" + unique;
+        String driveName = "guard-drive-" + unique;
+        drives.createDrive(CreateDriveRequest.newBuilder().setAccountId(account).setName(driveName)
+                .setDriveType(DriveType.DRIVE_TYPE_CUSTOM).build());
+        var drive = services.driveLedger().findByName(account, driveName).orElseThrow();
+        if (versioned) assertThat(LOCALSTACK.execInContainer("awslocal", "s3api", "put-bucket-versioning",
+                "--bucket", drive.bucket, "--versioning-configuration", "Status=Enabled").getExitCode()).isZero();
+        archives.createArchive(CreateArchiveRequest.newBuilder().setArchive(Archive.newBuilder().setAccountId(account)
+                .setName("records").setDriveName(driveName).setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED)).build());
+        var address = address(account, "records", "entry");
+        byte[] original = "protected archive body".getBytes(StandardCharsets.UTF_8);
+        var saved = archives.putEntry(PutEntryRequest.newBuilder().setAddress(address)
+                .addRenditions(rendition("original", "text/plain", new String(original, StandardCharsets.UTF_8))).build());
+        var object = saved.getManifest().getRenditions(0);
+        assertThat(object.getStorageObjectId()).isNotBlank();
+        // A different logical drive to the same physical namespace must not bypass protection.
+        var alias = new ai.protomolt.proto.repo.container.ledger.DriveRecord();
+        alias.driveId = java.util.UUID.randomUUID(); alias.accountId = account; alias.name = "alias-" + unique;
+        alias.bucket = drive.bucket; alias.prefix = "unrelated-prefix"; alias.driveType = "CUSTOM";
+        services.driveLedger().insert(alias);
+        try (var provider = ai.protomolt.proto.repo.blob.spi.BlobStores.discover().open("s3", java.util.Map.of(
+                "endpoint", LOCALSTACK.getEndpoint().toString(), "region", LOCALSTACK.getRegion(),
+                "access-key", LOCALSTACK.getAccessKey(), "secret-key", LOCALSTACK.getSecretKey(),
+                "path-style", "true", "conditional-writes", "true"))) {
+            var local = new ai.protomolt.proto.repo.engine.BlobOperations(provider.store(), services.driveLedger());
+            var documents = services.services().stream().filter(DocumentGrpcService.class::isInstance)
+                    .map(DocumentGrpcService.class::cast).findFirst().orElseThrow().repository();
+            String name = "archive-blob-guard-" + unique;
+            var host = io.grpc.inprocess.InProcessServerBuilder.forName(name)
+                    .addService(new DocumentGrpcService(documents, local)).build().start();
+            var connection = InProcessChannelBuilder.forName(name).build();
+            try {
+                var stub = ai.protomolt.proto.repo.v1.DocumentServiceGrpc.newBlockingStub(connection);
+                var caller = new ai.protomolt.proto.repo.spi.RepositoryCaller("guard-test", true);
+                var key = ai.protomolt.proto.repo.v1.ConditionalBlobKey.newBuilder()
+                        .setDriveName(alias.name).setObjectKey(object.getObjectKey()).build();
+                var before = provider.store().get(drive.bucket, object.getObjectKey());
+                var read = local.getForUpdate(caller, ai.protomolt.proto.repo.v1.GetBlobForUpdateRequest.newBuilder().setKey(key).build());
+                var replacement = ByteString.copyFromUtf8("untracked replacement");
+                Runnable mutate = switch (operation) {
+                    case "put" -> () -> {
+                        var request = ai.protomolt.proto.repo.v1.PutBlobRequest.newBuilder().setDriveName(alias.name)
+                                .setObjectKey(object.getObjectKey()).setData(replacement).build();
+                        if (transport) stub.putBlob(request); else local.put(caller, request);
+                    };
+                    case "cas" -> () -> {
+                        var request = ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest.newBuilder().setKey(key)
+                                .setExpectedEtag(read.getVersion().getEtag()).setData(replacement).build();
+                        if (transport) stub.compareAndPutBlob(request); else local.compareAndPut(caller, request);
+                    };
+                    case "delete" -> () -> {
+                        var request = ai.protomolt.proto.repo.v1.DeleteBlobRequest.newBuilder().setStorageRef(
+                                ai.protomolt.proto.repo.v1.FileStorageReference.newBuilder().setDriveName(alias.name)
+                                        .setObjectKey(object.getObjectKey())).build();
+                        if (transport) stub.deleteBlob(request); else local.delete(caller, request);
+                    };
+                    default -> throw new AssertionError(operation);
+                };
+                assertThatThrownBy(mutate::run).satisfies(failure -> {
+                    if (transport) assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
+                    else assertThat(((ai.protomolt.proto.repo.spi.RepositoryException) failure).code())
+                            .isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.PERMISSION_DENIED);
+                });
+                var after = provider.store().get(drive.bucket, object.getObjectKey());
+                assertThat(after.data()).isEqualTo(original);
+                assertThat(after.versionId()).isEqualTo(before.versionId());
+                assertThat(after.eTag()).isEqualTo(before.eTag());
+                assertThat(archives.getEntry(GetEntryRequest.newBuilder().setAddress(address).build()).getRenditions(0).getData())
+                        .isEqualTo(ByteString.copyFrom(original));
+            } finally { connection.shutdownNow(); host.shutdownNow(); }
+        }
+    }
+
     @Test
     void expectedVersionGuardsConcurrentWriters() {
         String account = "acct-guard";

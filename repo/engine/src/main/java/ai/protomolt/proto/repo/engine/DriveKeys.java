@@ -44,9 +44,27 @@ public final class DriveKeys {
 
     /** Keys are opaque: reserve the exact path segment without decoding or normalizing. */
     public static boolean isManaged(String objectKey) {
+        return hasSegment(objectKey, MANAGED_SEGMENT);
+    }
+
+    /**
+     * The archive namespace is reserved for archive publication and recovery.
+     * This includes keys minted before durable object bindings were introduced.
+     * Do not infer ownership from the current drive: aliases can share a namespace.
+     */
+    public static boolean isArchiveOwned(String objectKey) {
+        return hasSegment(objectKey, "archive");
+    }
+
+    private static boolean hasSegment(String objectKey, String reserved) {
         if (objectKey == null) return false;
-        for (String segment : objectKey.split("/", -1)) {
-            if (MANAGED_SEGMENT.equals(segment)) return true;
+        int start = 0;
+        while (start <= objectKey.length()) {
+            int end = objectKey.indexOf('/', start);
+            if (end < 0) end = objectKey.length();
+            if (end - start == reserved.length() && objectKey.startsWith(reserved, start)) return true;
+            if (end == objectKey.length()) break;
+            start = end + 1;
         }
         return false;
     }
