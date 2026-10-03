@@ -215,8 +215,21 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
     public SaveDocumentResponse saveDocument(RepositoryCaller caller, SaveDocumentRequest request) {
         requireReadBinding(caller);
         return RepositoryErrors.call(() -> {
-            return saveBlocking(caller, request);
+            return saveBlocking(caller, request, null);
         });
+    }
+
+    private record IngestionAdmission(UUID rawId, UUID token, Long expectedRevision,
+            UUID driveId, ManagedRawBindings.DriveState driveState) {}
+
+    /** Only the shared ingestion implementation may supply a freshly verified upload lease. */
+    SaveDocumentResponse saveIngested(RepositoryCaller caller, SaveDocumentRequest request,
+            UUID rawId, UUID token, Long expectedRevision, UUID driveId, ManagedRawBindings.DriveState driveState) {
+        RepositoryErrors.requireProcessAuthority(caller);
+        if (!request.getPartsWrittenList().isEmpty())
+            throw invalidArgument("Raw ingestion publishes a full intake document");
+        return RepositoryErrors.call(() -> saveBlocking(caller, request,
+                new IngestionAdmission(rawId, token, expectedRevision, driveId, driveState)));
     }
 
     /**
@@ -225,11 +238,14 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
      * @param request the save request (validated exactly as on the wire)
      * @return the save response
      */
-    private SaveDocumentResponse saveBlocking(RepositoryCaller caller, SaveDocumentRequest request) {
+    private SaveDocumentResponse saveBlocking(RepositoryCaller caller, SaveDocumentRequest request, IngestionAdmission admission) {
         SaveResolution.Resolved r = SaveResolution.resolve(request);
         requireReadAccount(caller, r.address().getAccountId());
         UUID nodeId = DocumentIds.nodeId(r.address());
         DocumentRecord destination = documents.findByNodeId(nodeId).orElse(null);
+        if (admission != null && (admission.expectedRevision() == null ? destination != null
+                : destination == null || destination.mutationRevision != admission.expectedRevision()))
+            throw RepositoryErrors.revisionConflict();
         boolean writesCore = request.getPartsWrittenList().isEmpty()
                 || request.getPartsWrittenList().contains(DocumentPart.DOCUMENT_PART_CORE);
         requireWrite(caller, destination, r.doc(), request, writesCore);
@@ -239,7 +255,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         String basePrefix = SaveResolution.basePrefix(drive, r.address().getAccountId(), nodeId);
 
         if (request.getPartsWrittenList().isEmpty()) {
-            return saveFull(caller, r, request, drive, nodeId, basePrefix, destination);
+            return saveFull(caller, r, request, drive, nodeId, basePrefix, destination, admission);
         }
         return savePartial(caller, r, request, drive, nodeId, basePrefix, destination);
     }
@@ -251,8 +267,11 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
      * documents split into identical parts and therefore identical roots.
      */
     private SaveDocumentResponse saveFull(RepositoryCaller caller, SaveResolution.Resolved r, SaveDocumentRequest request,
-            DriveRecord drive, UUID nodeId, String basePrefix, DocumentRecord destination) {
-        var bindings = rawBindings.writing(r.doc().getBlobBag(), r.address().getAccountId(), destination);
+            DriveRecord drive, UUID nodeId, String basePrefix, DocumentRecord destination, IngestionAdmission admission) {
+        var bindings = admission == null
+                ? rawBindings.writing(r.doc().getBlobBag(), r.address().getAccountId(), destination)
+                : rawBindings.admitting(r.doc().getBlobBag(), r.address().getAccountId(), destination,
+                        admission.rawId(), admission.token(), admission.driveId(), admission.driveState());
         List<PartObject> split = DocumentPartCodec.split(r.doc(), layout);
         String rootChecksum = DocumentPartCodec.rootChecksum(split);
 
@@ -270,7 +289,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
             // which itself mutates bookkeeping even without writing object bytes.
             if (destination == null ? existing.isPresent()
                     : existing.isEmpty() || existing.get().mutationRevision != destination.mutationRevision)
-                throw RepositoryErrors.aborted("Document changed while the candidate was being prepared");
+                throw RepositoryErrors.revisionConflict();
             if (existing.isEmpty()) {
                 return new Decision(false, null, 1L);
             }

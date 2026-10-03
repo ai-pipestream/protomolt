@@ -128,6 +128,17 @@ public final class RawObjectLedger {
      * SQL reference insertion. Empty bindings explicitly release previous references.
      */
     public void replaceReferences(EntityManager em, DocumentRecord document, Collection<Binding> bindings) {
+        replaceReferences(em, document, bindings, Map.of());
+    }
+
+    /**
+     * Also fences every upload attempt used to prepare this publication, including
+     * dedupe candidates that are not retained. All raw locks share the same order.
+     * Unused verified attempts expire at commit and remain durable cleanup work.
+     */
+    public void replaceReferences(EntityManager em, DocumentRecord document, Collection<Binding> bindings,
+            Map<UUID, UUID> admissions) {
+        admissions = Map.copyOf(admissions);
         if (!em.getTransaction().isActive() || !em.contains(document))
             throw new IllegalArgumentException("Binding requires the managed document publication transaction");
         em.lock(document, LockModeType.PESSIMISTIC_WRITE);
@@ -141,9 +152,16 @@ public final class RawObjectLedger {
         List<UUID> previous = references(em, document.nodeId);
         var ids = new TreeSet<>(previous);
         ids.addAll(desired.keySet());
+        ids.addAll(admissions.keySet());
         Map<UUID, RawObjectRecord> locked = new HashMap<>();
         for (UUID id : ids) locked.put(id, lock(em, id));
         Instant now = databaseNow(em);
+        for (var admission : admissions.entrySet()) {
+            var row = locked.get(admission.getKey());
+            requireLeaseOwner(row, admission.getValue(), now);
+            if (!RawObjectRecord.VERIFIED.equals(row.state) || !row.accountId.equals(document.accountId))
+                throw new FenceException("Upload admission is not verified for this account");
+        }
         for (Binding binding : desired.values()) {
             var row = locked.get(binding.rawId());
             if (!row.accountId.equals(document.accountId))
@@ -166,6 +184,12 @@ public final class RawObjectLedger {
                     .setParameter("node", document.nodeId).setParameter("raw", id).executeUpdate();
         }
         for (UUID id : previous) locked.get(id).updatedAt = now;
+        for (UUID id : admissions.keySet()) {
+            if (!desired.containsKey(id)) {
+                locked.get(id).leaseUntil = now;
+                locked.get(id).updatedAt = now;
+            }
+        }
     }
 
     /**

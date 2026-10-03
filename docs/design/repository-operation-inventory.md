@@ -61,11 +61,18 @@ extension even where the message shape remains unchanged.
 
 - **Extended:** HTTP document/archive uploads use the same engine boundaries as
   their gRPC counterparts, including streaming limits and staged publication.
-- **New, planned:** shared raw-ingestion library operation for the existing HTTP
+- **New, library implementation under test; HTTP integration pending:** shared raw-ingestion operation for the existing HTTP
   document-upload route. It owns immutable upload attempts, checksum verification,
   trusted managed-object bindings and committed-reference receipts. No new public
   RPC is required for this extraction. See the managed raw uploads design; the
   two replacement regression cases currently fail against the existing handler.
+  `RawIngestionRepository` and `RawIngestionOperations` now implement the library
+  boundary for process-authorized callers on qualified non-expiring streaming
+  stores. SQL/S3 tests cover immutable replacement, dedupe receipts, checksum and
+  length rejection, borrowed streams, drive changes, ambiguous PUT acknowledgement
+  and revision-conflict retries. Candidates remain durable for recovery; physical
+  cleanup and production composition are not yet wired. Attempt IDs are internal
+  identities, not client idempotency keys. No public endpoint availability is implied.
 - **Extended, planned:** document save/copy/delete and raw cleanup maintain managed
   raw-object references transactionally. Caller-supplied storage coordinates never
   grant deletion authority. Shared objects require zero-reference cleanup, and
@@ -74,7 +81,8 @@ extension even where the message shape remains unchanged.
   BLOBS copies retain/release admitted raw references atomically with document
   publication; dedupe validates them before updating its counter. Source fragment
   checksums and commit-time binding/backend checks reject corrupt or stale copies.
-  Acquiring a fresh managed reference still requires the planned ingestion path.
+  Acquiring a fresh managed reference requires the trusted ingestion path; ordinary
+  saves cannot acquire one by supplying storage coordinates.
 - **Extended, implemented:** PutBlob, CompareAndPutBlob and DeleteBlob reject keys
   containing the reserved `.protomolt-managed` segment, including generated put
   keys. Read operations retain their existing authority requirements. The guard

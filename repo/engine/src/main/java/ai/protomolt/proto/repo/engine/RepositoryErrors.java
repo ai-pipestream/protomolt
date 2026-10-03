@@ -18,6 +18,10 @@ final class RepositoryErrors {
     static RepositoryException failedPrecondition(String message) { return new RepositoryException(FAILED_PRECONDITION, message); }
     static RepositoryException unavailable(String message) { return new RepositoryException(UNAVAILABLE, message); }
     static RepositoryException aborted(String message) { return new RepositoryException(CONFLICT, message); }
+    static RepositoryException revisionConflict() {
+        var cause = new ai.protomolt.proto.repo.container.ledger.DocumentLedger.RevisionConflictException();
+        return new RepositoryException(CONFLICT, cause.getMessage(), cause);
+    }
     static RepositoryException alreadyExists(String message) { return new RepositoryException(ALREADY_EXISTS, message); }
     static <T> T call(java.util.function.Supplier<T> operation) {
         try { return operation.get(); }

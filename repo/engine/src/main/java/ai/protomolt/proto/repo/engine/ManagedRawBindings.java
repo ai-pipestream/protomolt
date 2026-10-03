@@ -41,12 +41,17 @@ final class ManagedRawBindings {
 
     /** Ordinary writes can retain a subset of their own refs, never acquire refs by guessing coordinates. */
     Plan writing(BlobBag bag, String account, DocumentRecord destination) {
-        return prepare(bag, account, destination, false);
+        return prepare(bag, account, destination, false, Map.of(), Map.of());
+    }
+
+    Plan admitting(BlobBag bag, String account, DocumentRecord destination, UUID rawId, UUID token,
+            UUID driveId, DriveState driveState) {
+        return prepare(bag, account, destination, false, Map.of(rawId, token), Map.of(driveId, driveState));
     }
 
     /** Read and verify the exact fragment that the partial-save path will carry forward. */
     Plan copying(BlobStore store, DriveRecord drive, DocumentRecord source, String destinationAccount) {
-        return prepare(readVerifiedBag(store, drive, source.readManifest()), destinationAccount, source, true);
+        return prepare(readVerifiedBag(store, drive, source.readManifest()), destinationAccount, source, true, Map.of(), Map.of());
     }
 
     /** Copy completion must be verified too; a source can change between GET and COPY. */
@@ -74,11 +79,14 @@ final class ManagedRawBindings {
         return bag;
     }
 
-    private Plan prepare(BlobBag bag, String account, DocumentRecord owner, boolean exact) {
+    private Plan prepare(BlobBag bag, String account, DocumentRecord owner, boolean exact, Map<UUID, UUID> admissions,
+            Map<UUID, DriveState> admittedDrives) {
         RawObjectLedger ledger = documents.rawObjects();
         Set<UUID> previous = owner == null ? Set.of() : Set.copyOf(ledger.references(owner.nodeId));
         Map<String, RawObjectRecord> allowed = new HashMap<>();
-        for (UUID id : previous) {
+        Set<UUID> available = new HashSet<>(previous);
+        available.addAll(admissions.keySet());
+        for (UUID id : available) {
             RawObjectRecord row = ledger.find(id).orElseThrow(() ->
                     RepositoryErrors.failedPrecondition("Managed reference record is missing"));
             if (allowed.put(coordinate(row.driveName, row.objectKey), row) != null)
@@ -90,7 +98,7 @@ final class ManagedRawBindings {
             case BLOBDATA_NOT_SET -> List.of();
         };
         Map<UUID, RawObjectRecord> selected = new HashMap<>();
-        Map<UUID, DriveState> driveStates = new HashMap<>();
+        Map<UUID, DriveState> driveStates = new HashMap<>(admittedDrives);
         for (Blob blob : blobs) {
             if (!blob.hasStorageRef()) continue;
             var ref = blob.getStorageRef();
@@ -119,7 +127,7 @@ final class ManagedRawBindings {
         if (exact && !selected.keySet().equals(previous))
             throw RepositoryErrors.failedPrecondition("Source BLOBS and managed reference set disagree");
         return new Plan(ledger, drives, owner == null ? null : owner.nodeId, previous,
-                Map.copyOf(selected), Map.copyOf(driveStates));
+                Map.copyOf(selected), Map.copyOf(driveStates), admissions);
     }
 
     private static String coordinate(String drive, String key) {
@@ -143,14 +151,13 @@ final class ManagedRawBindings {
     }
 
     record Plan(RawObjectLedger ledger, DriveLedger drives, UUID ownerId, Set<UUID> previous,
-            Map<UUID, RawObjectRecord> selected, Map<UUID, DriveState> driveStates) {
+            Map<UUID, RawObjectRecord> selected, Map<UUID, DriveState> driveStates, Map<UUID, UUID> admissions) {
         void publish(EntityManager em, DocumentRecord destination) {
             if (ownerId != null && !new HashSet<>(RawObjectLedger.references(em, ownerId)).equals(previous))
                 throw RepositoryErrors.aborted("Managed source references changed before publication");
             // Documents are already locked. Drive locks precede sorted raw locks;
             // raw garbage collection never locks a drive or document.
-            var driveIds = new java.util.TreeSet<UUID>();
-            selected.values().forEach(row -> driveIds.add(row.driveId));
+            var driveIds = new java.util.TreeSet<>(driveStates.keySet());
             Map<UUID, DriveRecord> lockedDrives = new HashMap<>();
             for (UUID id : driveIds) {
                 DriveRecord locked = em.find(DriveRecord.class, id, LockModeType.PESSIMISTIC_READ);
@@ -162,7 +169,7 @@ final class ManagedRawBindings {
             for (RawObjectRecord raw : selected.values()) requireDrive(raw, lockedDrives.get(raw.driveId));
             try {
                 ledger.replaceReferences(em, destination, selected.keySet().stream()
-                        .map(id -> new RawObjectLedger.Binding(id, null)).toList());
+                        .map(id -> new RawObjectLedger.Binding(id, admissions.get(id))).toList(), admissions);
             } catch (RawObjectLedger.FenceException fenced) {
                 throw new RepositoryException(RepositoryException.Code.CONFLICT,
                         "Managed raw content became unavailable before publication", fenced);
