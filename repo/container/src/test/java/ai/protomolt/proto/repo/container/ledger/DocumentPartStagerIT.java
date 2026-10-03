@@ -18,6 +18,13 @@ import static org.assertj.core.api.Assertions.*;
 
 @Testcontainers
 class DocumentPartStagerIT {
+    // These faults target exact sequential phase boundaries; parallel workers have a separate suite.
+    private static DocumentPartStager serialStager(Tx tx, String generation, BackendIdentity identity, OpenedBlobStore opened) {
+        return serialStager(tx, generation, identity, opened, 256L * 1024 * 1024);
+    }
+    private static DocumentPartStager serialStager(Tx tx, String generation, BackendIdentity identity, OpenedBlobStore opened, long bytes) {
+        return new DocumentPartStager(tx, generation, identity, opened, bytes, 1);
+    }
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
     @Container static final LocalStackContainer S3 = new LocalStackContainer(DockerImageName.parse("localstack/localstack:3.8")).withServices("s3");
     static LedgerDatabase database;
@@ -87,7 +94,7 @@ class DocumentPartStagerIT {
             return result;
         });
         var signal = new java.util.concurrent.CancellationException("Cancelled by caller");
-        try (var stager = new DocumentPartStager(tx, GENERATION, identity, borrowed(provider))) {
+        try (var stager = serialStager(tx, GENERATION, identity, borrowed(provider))) {
             var failure = catchThrowable(() -> stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(5), Map.of(), () -> {
                 if (cancelled.get()) throw signal;
             }));
@@ -123,7 +130,7 @@ class DocumentPartStagerIT {
                     try { return method.invoke(opened.store(), args); }
                     catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
                 });
-        try (var stager = new DocumentPartStager(tx, GENERATION, identity, borrowed(checking))) {
+        try (var stager = serialStager(tx, GENERATION, identity, borrowed(checking))) {
             var staged = stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(5), Map.of());
             assertThat(seen.get()).isTrue();
             assertThat(staged.attempt().state()).isEqualTo("VERIFIED");
@@ -143,7 +150,7 @@ class DocumentPartStagerIT {
             if (method.equals("put")) { calls.incrementAndGet(); throw original; }
             throw new AssertionError("Unexpected provider call after ambiguous PUT: " + method);
         });
-        try (var stager = new DocumentPartStager(tx, GENERATION, identity, borrowed(store))) {
+        try (var stager = serialStager(tx, GENERATION, identity, borrowed(store))) {
             assertThatThrownBy(() -> stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(5), Map.of()))
                     .isInstanceOfSatisfying(DocumentPartStager.StageFailure.class, failure -> {
                         assertThat(failure.attemptId()).isEqualTo(input.plan().attemptId());
@@ -163,7 +170,7 @@ class DocumentPartStagerIT {
             byte[] corrupted = actual.data().clone(); corrupted[0] ^= 1;
             return new BlobStore.GetResult(corrupted, actual.contentType(), actual.eTag(), actual.versionId());
         });
-        try (var stager = new DocumentPartStager(tx, GENERATION, identity, borrowed(store))) {
+        try (var stager = serialStager(tx, GENERATION, identity, borrowed(store))) {
             assertThatThrownBy(() -> stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(5), Map.of()))
                     .isInstanceOf(DocumentPartStager.StageFailure.class).hasStackTraceContaining("Read-back differs");
         }
@@ -177,7 +184,7 @@ class DocumentPartStagerIT {
             if (method.equals("put") && puts.incrementAndGet() == 2) throw new IllegalStateException("second acknowledgement lost");
             return result;
         });
-        try (var stager = new DocumentPartStager(tx, GENERATION, identity, borrowed(store))) {
+        try (var stager = serialStager(tx, GENERATION, identity, borrowed(store))) {
             assertThatThrownBy(() -> stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(5), Map.of()))
                     .isInstanceOf(DocumentPartStager.StageFailure.class).hasStackTraceContaining("second acknowledgement lost");
         }
@@ -202,7 +209,7 @@ class DocumentPartStagerIT {
             });
             return result;
         });
-        try (var stager = new DocumentPartStager(tx, GENERATION, identity, borrowed(store))) {
+        try (var stager = serialStager(tx, GENERATION, identity, borrowed(store))) {
             assertThatThrownBy(() -> stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(1), Map.of()))
                     .isInstanceOf(DocumentPartStager.StageFailure.class).hasStackTraceContaining("lease expired");
         }
@@ -217,7 +224,7 @@ class DocumentPartStagerIT {
             if (method.equals("put")) stagerRef.get().close();
             return result;
         });
-        try (var stager = new DocumentPartStager(tx, GENERATION, identity, borrowed(store))) {
+        try (var stager = serialStager(tx, GENERATION, identity, borrowed(store))) {
             stagerRef.set(stager);
             assertThatThrownBy(() -> stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(5), Map.of()))
                     .isInstanceOf(DocumentPartStager.StageFailure.class).hasCauseInstanceOf(java.util.concurrent.CancellationException.class);
@@ -236,7 +243,7 @@ class DocumentPartStagerIT {
                     try { return method.invoke(opened.store(), args); }
                     catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
                 });
-        try (var stager = new DocumentPartStager(tx, GENERATION, identity, borrowed(store))) {
+        try (var stager = serialStager(tx, GENERATION, identity, borrowed(store))) {
             assertThat(stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(5), Map.of()).attempt().state()).isEqualTo("VERIFIED");
         }
         assertThat(opened.store().get(NAMESPACE, input.plan().objects().getFirst().objectKey()).data()).isEqualTo(expected);
@@ -245,7 +252,7 @@ class DocumentPartStagerIT {
     @Test void mismatchedPayloadFailsBeforeAdmission() {
         var input = input();
         input.payloads().getFirst().bytes()[0] ^= 1;
-        try (var stager = new DocumentPartStager(tx, GENERATION, identity, opened)) {
+        try (var stager = serialStager(tx, GENERATION, identity, opened)) {
             assertThatThrownBy(() -> stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(5), Map.of()))
                     .isInstanceOf(IllegalArgumentException.class);
         }
@@ -254,14 +261,14 @@ class DocumentPartStagerIT {
 
     @Test void repeatedAdmissionReportsAttemptIdentityWithoutOverwritingKeys() {
         var input = input();
-        try (var stager = new DocumentPartStager(tx, GENERATION, identity, opened)) {
+        try (var stager = serialStager(tx, GENERATION, identity, opened)) {
             stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(5), Map.of());
         }
         BlobStore forbidden = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
                 new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
                     throw new AssertionError("Repeated admission reached provider " + method.getName());
                 });
-        try (var stager = new DocumentPartStager(tx, GENERATION, identity, borrowed(forbidden))) {
+        try (var stager = serialStager(tx, GENERATION, identity, borrowed(forbidden))) {
             assertThatThrownBy(() -> stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(5), Map.of()))
                     .isInstanceOfSatisfying(DocumentPartStager.StageFailure.class,
                             failure -> assertThat(failure.attemptId()).isEqualTo(input.plan().attemptId()))
@@ -272,10 +279,10 @@ class DocumentPartStagerIT {
 
     @Test void unsupportedOrMismatchedBackendIsRejectedBeforeStaging() {
         var expiring = new OpenedBlobStore(opened.store(), () -> {}, java.util.Set.of(BlobCapability.OBJECT_EXPIRY), opened::ensureNamespace);
-        assertThatThrownBy(() -> new DocumentPartStager(tx, GENERATION, identity, expiring))
+        assertThatThrownBy(() -> serialStager(tx, GENERATION, identity, expiring))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("non-expiring writes");
         var wrong = S3BackendIdentity.of("https://different.example", S3.getRegion(), true);
-        assertThatThrownBy(() -> new DocumentPartStager(tx, GENERATION, wrong, opened))
+        assertThatThrownBy(() -> serialStager(tx, GENERATION, wrong, opened))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("retained profile");
     }
 
@@ -285,7 +292,7 @@ class DocumentPartStagerIT {
             if (method.equals("put")) Thread.sleep(2200);
             return result;
         });
-        try (var stager = new DocumentPartStager(tx, GENERATION, identity, borrowed(store))) {
+        try (var stager = serialStager(tx, GENERATION, identity, borrowed(store))) {
             assertThat(stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(1), Map.of()).attempt().state()).isEqualTo("VERIFIED");
         }
     }
@@ -293,7 +300,7 @@ class DocumentPartStagerIT {
     @Test void byteLimitRefusesAdmissionBeforeCopyingOrWriting() {
         var input = input();
         long bytes = input.payloads().stream().mapToLong(p -> p.bytes().length).sum();
-        try (var stager = new DocumentPartStager(tx, GENERATION, identity, opened, bytes - 1)) {
+        try (var stager = serialStager(tx, GENERATION, identity, opened, bytes - 1)) {
             assertThatThrownBy(() -> stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(5), Map.of()))
                     .isInstanceOf(IllegalStateException.class).hasMessageContaining("byte capacity exhausted");
         }
@@ -302,7 +309,7 @@ class DocumentPartStagerIT {
 
     @Test void recoveryReclaimsExactVersionsAndRechecksLateWrites() {
         var input = input();
-        try (var stager = new DocumentPartStager(tx, GENERATION, identity, opened)) {
+        try (var stager = serialStager(tx, GENERATION, identity, opened)) {
             stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(1), Map.of());
         }
         expire(input.plan().attemptId());
@@ -329,7 +336,7 @@ class DocumentPartStagerIT {
 
     @Test void recoveryKeepsFailuresAndRetriesAfterBackendReturns() {
         var input = input();
-        try (var stager = new DocumentPartStager(tx, GENERATION, identity, opened)) {
+        try (var stager = serialStager(tx, GENERATION, identity, opened)) {
             stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(1), Map.of());
         }
         expire(input.plan().attemptId());
@@ -351,7 +358,7 @@ class DocumentPartStagerIT {
     @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
     void recoveryDoesNotTurnUnconfirmedOrLostDeletionAcknowledgementIntoSuccess(boolean lostAcknowledgement) {
         var input = input();
-        try (var stager = new DocumentPartStager(tx, GENERATION, identity, opened)) {
+        try (var stager = serialStager(tx, GENERATION, identity, opened)) {
             stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(1), Map.of());
         }
         expire(input.plan().attemptId());
@@ -388,7 +395,7 @@ class DocumentPartStagerIT {
         UUID oldToken;
         try (var firstDatabase = restartDatabase(); var firstStore = restartStore()) {
             var firstTx = new Tx(firstDatabase.entityManagerFactory());
-            try (var stager = new DocumentPartStager(firstTx, GENERATION, identity, firstStore)) {
+            try (var stager = serialStager(firstTx, GENERATION, identity, firstStore)) {
                 stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(1), Map.of());
             }
             expire(input.plan().attemptId());
@@ -432,12 +439,12 @@ class DocumentPartStagerIT {
         var profile = new ManagedBackendLedger.Profile(identity, "stager-realm");
         new ManagedBackendLedger(tx).bind(generation, profile);
         var other = input();
-        try (var stager = new DocumentPartStager(tx, GENERATION, identity, opened)) {
+        try (var stager = serialStager(tx, GENERATION, identity, opened)) {
             stager.stage(other.plan(), other.payloads(), Duration.ofSeconds(1), Map.of());
         }
         expire(other.plan().attemptId());
         var target = input(generation);
-        try (var stager = new DocumentPartStager(tx, generation, identity, opened)) {
+        try (var stager = serialStager(tx, generation, identity, opened)) {
             stager.stage(target.plan(), target.payloads(), Duration.ofSeconds(1), Map.of());
         }
         expire(target.plan().attemptId());
@@ -541,7 +548,7 @@ class DocumentPartStagerIT {
             return result;
         });
         long bytes = input.payloads().stream().mapToLong(p -> p.bytes().length).sum();
-        try (var stager = new DocumentPartStager(tx, GENERATION, identity, borrowed(store), bytes);
+        try (var stager = serialStager(tx, GENERATION, identity, borrowed(store), bytes);
                 var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
             var pending = executor.submit(() -> stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(5), Map.of()));
             try {

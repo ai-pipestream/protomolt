@@ -39,15 +39,18 @@ class DocumentStagingBenchmarkIT {
             new ManagedBackendLedger(tx).bind("benchmark", new ManagedBackendLedger.Profile(identity, "benchmark"));
             var counts = new Counts(opened.store());
             var borrowed = new OpenedBlobStore(counts.store, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer());
-            var stager = new DocumentPartStager(tx, "benchmark", identity, borrowed);
+            var serial = new DocumentPartStager(tx, "benchmark", identity, borrowed, 256L * 1024 * 1024, 1);
+            var parallel = new DocumentPartStager(tx, "benchmark", identity, borrowed, 256L * 1024 * 1024, 4);
             var csv = new StringBuilder("parts,bytes_per_part,path,sample,elapsed_nanos,puts,gets,cumulative_put_nanos,cumulative_get_nanos\n");
             try {
                 for (int count : new int[] {1, 8, 32}) {
                     for (int size : new int[] {4096, 262144}) {
                         var parts = parts(count, size);
                         for (int sample = -WARMUPS; sample < SAMPLES; sample++) {
-                            // Alternate which path goes first; both use the same warmed provider and payloads.
-                            for (boolean managed : sample % 2 == 0 ? new boolean[] {false, true} : new boolean[] {true, false}) {
+                            // Rotate first position across all three paths on the same warmed provider.
+                            for (int position = 0; position < 3; position++) {
+                                int variant = (sample + WARMUPS + position) % 3;
+                                boolean managed = variant != 0;
                                 counts.reset();
                                 UUID node = UUID.randomUUID(), attempt = UUID.randomUUID();
                                 String prefix = "documents/account/" + node + "/attempts/" + attempt + "/";
@@ -60,7 +63,7 @@ class DocumentStagingBenchmarkIT {
                                         .setGraphId("benchmark").setGraphAddressId("benchmark").build();
                                 long start = System.nanoTime();
                                 if (managed) {
-                                    var result = stager.stage(plan, parts, Duration.ofMinutes(2), Map.of());
+                                    var result = (variant == 1 ? serial : parallel).stage(plan, parts, Duration.ofMinutes(2), Map.of());
                                     assertThat(result.attempt().state()).isEqualTo("VERIFIED");
                                     assertThat(result.parts()).hasSize(count);
                                 } else {
@@ -72,7 +75,8 @@ class DocumentStagingBenchmarkIT {
                                 assertThat(counts.puts.sum()).isEqualTo(count);
                                 assertThat(counts.gets.sum()).isEqualTo(managed ? count : 0);
                                 if (sample >= 0) csv.append(count).append(',').append(parts.getFirst().bytes().length).append(',')
-                                        .append(managed ? "managed" : "legacy").append(',').append(sample).append(',').append(elapsed)
+                                        .append(managed ? (variant == 1 ? "managed-1" : "managed-4") : "legacy")
+                                        .append(',').append(sample).append(',').append(elapsed)
                                         .append(',').append(counts.puts.sum()).append(',').append(counts.gets.sum())
                                         .append(',').append(counts.putNanos.sum()).append(',').append(counts.getNanos.sum()).append('\n');
                                 // Untimed verification of every actual stored fragment in both paths.
@@ -87,8 +91,9 @@ class DocumentStagingBenchmarkIT {
                 Files.writeString(report, csv);
                 System.out.println("Document staging benchmark: " + report.toAbsolutePath());
             } finally {
-                stager.close();
-                assertThat(stager.awaitIdle(Duration.ofSeconds(10))).isTrue();
+                serial.close(); parallel.close();
+                assertThat(serial.awaitIdle(Duration.ofSeconds(10))).isTrue();
+                assertThat(parallel.awaitIdle(Duration.ofSeconds(10))).isTrue();
             }
         }
     }

@@ -64,7 +64,8 @@ public final class DocumentAttemptWriter implements AutoCloseable {
      * The publication callback runs inside the SQL transaction: only transactional
      * raw-reference/outbox work using the supplied EntityManager belongs there,
      * never remote I/O or an independently committed transaction. The cancellation
-     * check must be nonblocking. No cancellation check follows a successful commit.
+     * check must be thread-safe and nonblocking; staging workers may call it
+     * concurrently. No cancellation check follows a successful commit.
      */
     public DocumentRecord write(DocumentPartAttemptLedger.Plan plan, NodeAddress address, DriveRecord drive,
             List<PartObject> payloads, Duration lease, Map<String, String> metadata,

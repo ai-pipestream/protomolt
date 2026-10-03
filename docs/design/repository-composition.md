@@ -525,7 +525,7 @@ revision-conflict status through that failure wrapper. This seam does not enable
 managed saves or supply authorization, schema admission, or source-part planning.
 
 Performance qualification remains required before switching application writes.
-The current stager performs each part's PUT, exact read-back and SQL verification
+The first stager performed each part's PUT, exact read-back and SQL verification
 sequentially; legacy part uploads use concurrent fan-out. Measure latency
 (including p50/p95), throughput, SQL work and buffered bytes with representative
 part counts and sizes on the same backend. The read-back and lease guarantees
@@ -555,6 +555,36 @@ target in this environment; this does not establish its production contribution
 or the speedup achievable through parallelism. Before enabling managed saves,
 compare sequential and bounded-parallel managed staging with identical checks,
 including cancellation, worker draining, memory bounds, lease loss and recovery.
+
+The stager now uses four workers per attempt and a shared limit of 32 active
+part sequences across its concurrent attempts. Each sequence still renews its
+lease, PUTs, reads back the exact returned version and records measured identity.
+Returned parts retain plan order. The cancellation check is nonblocking and
+thread-safe because workers may call it concurrently. No transaction spans
+provider I/O.
+
+On failure or caller interruption, stop assigning new work and wait for every
+started worker. A worker already past its active check can still start a late
+call; its admitted key remains recoverable. Keep part permits, copied-byte budget,
+the owner slot and heartbeat until workers finish. Restore caller interruption
+after draining, and retain the first failure with subsequent failures suppressed.
+Tests use versioned provider calls to establish overlap, the shared limit,
+ordered results, corruption rejection, lease expiry, cancellation and shutdown.
+The existing single-phase fault and abrupt-process-exit tests explicitly select
+one worker so their injection points remain deterministic.
+
+The [bounded-worker diagnostic](../evidence/repository/2026-10-03-document-staging-parallel.csv)
+records 216 samples with the same fixtures and 12 samples per case. It rotates
+legacy uploads, one managed worker and four managed workers on the same opened
+provider. Both managed paths perform identical admission, lease, read-back and
+verification work. For 32 parts of 262148 bytes, nearest-rank p50 was 1011 ms
+with one worker and 315 ms with four; p95 was 1400 ms and 365 ms respectively.
+For 32 parts of 4099 bytes, p50 was 195 ms and 101 ms. Single-part differences
+are noise, since both settings launch one worker for one part. This supports
+four as the initial bounded default, without establishing production performance
+or parity with upload-only writes. The host remained shared and was observed at
+roughly 56 percent CPU use during this run; a quiet-host qualification is still
+required for performance claims. The benchmark command now runs all three paths.
 
 - Keep the active attempt reference in a separate publication table keyed by
   document node, with a unique attempt reference. `saveIfRevision` already flushes

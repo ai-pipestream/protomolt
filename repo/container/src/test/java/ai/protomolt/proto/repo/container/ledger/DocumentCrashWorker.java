@@ -37,7 +37,7 @@ public final class DocumentCrashWorker {
                         return result;
                     });
             var borrowed = new OpenedBlobStore(intercepted, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer());
-            try (var stager = new DocumentPartStager(tx, generation, identity, borrowed)) {
+            try (var stager = new DocumentPartStager(tx, generation, identity, borrowed, 256L * 1024 * 1024, 1)) {
                 stager.stage(plan, parts, Duration.ofSeconds(1), Map.of());
             }
             if (!mode.equals("cleanup")) throw new IllegalArgumentException("Unknown crash point");
