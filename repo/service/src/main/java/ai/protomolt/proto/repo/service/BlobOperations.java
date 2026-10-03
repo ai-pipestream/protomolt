@@ -3,7 +3,6 @@ package ai.protomolt.proto.repo.service;
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.codec.DocumentPartCodec;
 import ai.protomolt.proto.repo.container.ledger.DriveRecord;
-import ai.protomolt.proto.repo.container.ledger.Tx;
 import ai.protomolt.proto.repo.v1.DeleteBlobRequest;
 import ai.protomolt.proto.repo.v1.DeleteBlobResponse;
 import ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest;
@@ -41,11 +40,11 @@ final class BlobOperations {
     private static final ProtoValidator VALIDATOR = ProtoValidator.create();
 
     private final BlobStore blobStore;
-    private final Tx tx;
+    private final ai.protomolt.proto.repo.container.ledger.DriveLedger drives;
 
-    BlobOperations(BlobStore blobStore, Tx tx) {
+    BlobOperations(BlobStore blobStore, ai.protomolt.proto.repo.container.ledger.DriveLedger drives) {
         this.blobStore = blobStore;
-        this.tx = tx;
+        this.drives = drives;
     }
 
     GetBlobResponse get(GetBlobRequest request) {
@@ -216,16 +215,9 @@ final class BlobOperations {
 
     /**
      * Drive lookup by bare name, across accounts. {@link FileStorageReference} carries no
-     * account, and drive names are unique only per account: v1 trusts the caller's drive
-     * reference and takes the first match. Tighten this if multi-account name reuse
-     * becomes real.
+     * account. Reject ambiguous names and apply the shared drive read gate.
      */
     private Optional<DriveRecord> findDriveByName(String name) {
-        return tx.readOnly(em -> em.createQuery(
-                        "SELECT d FROM DriveRecord d WHERE d.name = :name", DriveRecord.class)
-                .setParameter("name", name)
-                .setMaxResults(1)
-                .getResultStream()
-                .findFirst());
+        return drives.findUniqueByName(name);
     }
 }

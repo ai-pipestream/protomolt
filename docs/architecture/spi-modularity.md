@@ -50,6 +50,19 @@ The remaining repository composition work is tracked in
 [the design](../design/repository-composition.md); this extraction does not add
 authorization, typed admission or progressive hydration.
 
+The service creates an S3 client only for S3 and S3-with-cache modes. Drive
+provisioning uses a namespace capability: S3 creates/verifies buckets; Redis
+verifies its server and uses logical namespaces. Remote blob storage does not
+currently support namespace provisioning and refuses that operation.
+
+This assembly selects one backend. New and resolved drives must match its
+provider and effective provider settings. Per-drive credential references and
+unimplemented provider options fail explicitly. Existing records describing a
+different endpoint/backend need an explicit data/configuration migration; changing
+the service backend does not migrate their bytes. The read gate is backend
+compatibility checking, not tenant authorization. Raw blob lookup rejects a bare
+drive name shared by multiple accounts instead of selecting the first row.
+
 This work separates reusable protocol and dispatch code from optional capabilities.
 Java SPI discovers trusted implementations installed in the application. gRPC remains
 the boundary for services implemented in other languages or running on other nodes.

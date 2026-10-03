@@ -301,13 +301,9 @@ class RepoServiceIT {
     @Test
     void createDrivePersistsAndEchoesProviderConfig() {
         DriveProviderConfig providerConfig = DriveProviderConfig.newBuilder()
-                .setRedis(RedisDriveConfig.newBuilder()
-                        .setUri("redis://redis.internal:6379/3")
-                        .setTtlSeconds(600)
-                        .setMaxObjectBytes(1048576L)
-                        .setKeyPrefix("acct-pcfg:"))
-                .putOptions("eviction-policy", "volatile-lru")
-                .build();
+                .setS3(ai.protomolt.proto.repo.v1.S3DriveConfig.newBuilder()
+                        .setEndpointOverride(LOCALSTACK.getEndpoint().toString())
+                        .setForcePathStyle(true)).build();
         Drive created = drives.createDrive(CreateDriveRequest.newBuilder()
                         .setName("redis-backed")
                         .setAccountId("acct-pcfg")

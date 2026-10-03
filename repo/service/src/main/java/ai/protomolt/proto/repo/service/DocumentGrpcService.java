@@ -194,7 +194,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
         this.layout = PartLayouts.document();
         this.purgeQueue = purgeQueue;
         this.events = events;
-        this.blobs = new BlobOperations(blobStore, tx);
+        this.blobs = new BlobOperations(blobStore, drives);
     }
 
     // ------------------------------------------------------------------ save

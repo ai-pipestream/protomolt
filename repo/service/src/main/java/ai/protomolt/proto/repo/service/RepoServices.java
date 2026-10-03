@@ -134,7 +134,10 @@ public final class RepoServices implements AutoCloseable {
         this.database = new LedgerDatabase(config.ledger());
         this.tx = new Tx(database.entityManagerFactory());
         this.documentLedger = new DocumentLedger(tx);
-        this.driveLedger = new DriveLedger(tx);
+        String selectedDriveProvider = RepoServiceConfig.BLOB_STORE_S3_REDIS_CACHE.equals(config.blobStore())
+                ? "s3" : config.blobStore();
+        var driveGate = new SelectedDriveBackend(config);
+        this.driveLedger = new DriveLedger(tx, driveGate);
         // Purge-queue selection (DOCUMENT_PLATFORM_PURGE_QUEUE): "jdbc"
         // claims rows straight from document_purges; "kafka" keeps the row as
         // the ledger of record and distributes claims through the purge topic
@@ -152,7 +155,9 @@ public final class RepoServices implements AutoCloseable {
             this.purgeConsumer = null;
             this.purgeQueue = new JdbcPurgeQueue(tx);
         }
-        this.s3Client = buildS3Client(config);
+        boolean usesS3 = RepoServiceConfig.BLOB_STORE_S3.equals(config.blobStore())
+                || RepoServiceConfig.BLOB_STORE_S3_REDIS_CACHE.equals(config.blobStore());
+        this.s3Client = usesS3 ? buildS3Client(config) : null;
         // Blob-store selection (DOCUMENT_PLATFORM_BLOB_STORE): "s3" is the
         // direct object-storage path; "repo"/"repo-inprocess" dogfood the
         // service's own blob API — bytes delegate to another repo-service
@@ -196,16 +201,16 @@ public final class RepoServices implements AutoCloseable {
                         config.schemaRegistryUrl()) : null;
         this.documentService = new DocumentGrpcService(documentLedger, driveLedger, tx,
                 blobStore, partStorage, purgeQueue, eventOutbox);
-        this.driveProvisioner = new DriveProvisioner(driveLedger, s3Client,
-                config.defaultBucketBase(), config.s3Region());
+        this.driveProvisioner = new DriveProvisioner(driveLedger,
+                usesS3 ? new ai.protomolt.proto.repo.blob.s3.S3NamespaceProvisioner(s3Client) : blobStore::headBucket,
+                config.defaultBucketBase(), config.s3Region(), selectedDriveProvider, driveGate);
         this.archiveOperations = new ArchiveOperations(
                 new ai.protomolt.proto.repo.container.archive.ArchiveLedger(tx),
                 driveLedger, blobStore, bridges);
         this.services = List.of(
                 documentService,
                 new ArchiveGrpcService(archiveOperations),
-                new DriveGrpcService(driveLedger, s3Client,
-                        config.defaultBucketBase(), config.s3Region()));
+                new DriveGrpcService(driveLedger, driveProvisioner));
         // The lifecycle engine (two-phase delete): stateless workers over the
         // same ledgers/queue, driven by startLifecycle()'s loops or, in tests,
         // by hand via the accessors below.
@@ -551,7 +556,7 @@ public final class RepoServices implements AutoCloseable {
                 LOG.warn("blob store close failed", e);
             }
         }
-        s3Client.close();
+        if (s3Client != null) s3Client.close();
         database.close();
         LOG.info("repo-service stopped");
     }

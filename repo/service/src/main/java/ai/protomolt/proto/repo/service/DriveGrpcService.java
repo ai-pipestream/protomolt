@@ -58,8 +58,12 @@ public final class DriveGrpcService extends DriveServiceGrpc.DriveServiceImplBas
      * @param defaultRegion region stamped on drives that don't name one
      */
     public DriveGrpcService(DriveLedger drives, S3Client s3, String defaultBucketBase, String defaultRegion) {
+        this(drives, new DriveProvisioner(drives, s3, defaultBucketBase, defaultRegion));
+    }
+
+    DriveGrpcService(DriveLedger drives, DriveProvisioner provisioner) {
         this.drives = drives;
-        this.provisioner = new DriveProvisioner(drives, s3, defaultBucketBase, defaultRegion);
+        this.provisioner = provisioner;
     }
 
     @Override

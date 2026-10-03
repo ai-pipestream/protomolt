@@ -8,7 +8,8 @@ import jakarta.persistence.PersistenceException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.S3Exception;
+import ai.protomolt.proto.repo.blob.spi.NamespaceProvisioner;
+import ai.protomolt.proto.repo.blob.s3.S3NamespaceProvisioner;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
@@ -39,7 +40,9 @@ final class DriveProvisioner {
     static final String STATUS_ACTIVE = "ACTIVE";
 
     private final DriveLedger drives;
-    private final S3Client s3;
+    private final NamespaceProvisioner namespaces;
+    private final String defaultProvider;
+    private final java.util.function.Consumer<DriveRecord> recordGate;
     private final String defaultBucketBase;
     private final String defaultRegion;
 
@@ -52,8 +55,20 @@ final class DriveProvisioner {
      * @param defaultRegion region stamped on drives that don't name one
      */
     DriveProvisioner(DriveLedger drives, S3Client s3, String defaultBucketBase, String defaultRegion) {
+        this(drives, new S3NamespaceProvisioner(s3), defaultBucketBase, defaultRegion, DEFAULT_PROVIDER);
+    }
+
+    DriveProvisioner(DriveLedger drives, NamespaceProvisioner namespaces, String defaultBucketBase,
+            String defaultRegion, String defaultProvider) {
+        this(drives, namespaces, defaultBucketBase, defaultRegion, defaultProvider, record -> {});
+    }
+
+    DriveProvisioner(DriveLedger drives, NamespaceProvisioner namespaces, String defaultBucketBase,
+            String defaultRegion, String defaultProvider, java.util.function.Consumer<DriveRecord> recordGate) {
         this.drives = drives;
-        this.s3 = s3;
+        this.namespaces = java.util.Objects.requireNonNull(namespaces);
+        this.defaultProvider = java.util.Objects.requireNonNull(defaultProvider);
+        this.recordGate = java.util.Objects.requireNonNull(recordGate);
         this.defaultBucketBase = defaultBucketBase;
         this.defaultRegion = defaultRegion;
     }
@@ -93,27 +108,19 @@ final class DriveProvisioner {
     DriveRecord ensureDrive(String accountId, String name, DriveType driveType,
             String bucket, String prefix, String provider, String region,
             String credentialsRef, String metadataJson, DriveProviderConfig providerConfig) {
+        requireSelectedProvider(isBlank(provider) ? defaultProvider : provider, providerConfig);
         UUID driveId = UUID.nameUUIDFromBytes(
                 ("drive|" + accountId + "|" + name).getBytes(StandardCharsets.UTF_8));
-        // Deterministic id ⇒ re-provision is idempotent: return the row that
-        // is already there rather than erroring on the unique constraint.
-        Optional<DriveRecord> existing = drives.findById(driveId);
-        if (existing.isPresent()) {
-            LOG.info("Found existing drive {}/{} (id={})", accountId, name, driveId);
-            return existing.get();
-        }
-
         String resolvedBucket = isBlank(bucket) ? sanitizeBucketName(
                 defaultBucketBase + "-" + accountId + "-" + name) : bucket;
         String resolvedPrefix = isBlank(prefix) ? name : stripSlashes(prefix);
-        ensureBucket(resolvedBucket);
 
         DriveRecord record = new DriveRecord();
         record.driveId = driveId;
         record.accountId = accountId;
         record.name = name;
         record.driveType = driveType(driveType);
-        record.provider = isBlank(provider) ? DEFAULT_PROVIDER : provider;
+        record.provider = isBlank(provider) ? defaultProvider : provider;
         record.bucket = resolvedBucket;
         record.prefix = resolvedPrefix;
         record.region = isBlank(region) ? defaultRegion : region;
@@ -123,6 +130,17 @@ final class DriveProvisioner {
         if (providerConfig != null) {
             record.writeProviderConfig(providerConfig);
         }
+        recordGate.accept(record);
+        // Deterministic id ⇒ re-provision is idempotent: return the row that
+        // is already there rather than erroring on the unique constraint.
+        Optional<DriveRecord> existing = drives.findById(driveId);
+        if (existing.isPresent()) {
+            requireSelectedProvider(existing.get().provider, existing.get().readProviderConfig());
+            LOG.info("Found existing drive {}/{} (id={})", accountId, name, driveId);
+            return existing.get();
+        }
+
+        ensureBucket(resolvedBucket);
         try {
             drives.insert(record);
         } catch (PersistenceException race) {
@@ -130,6 +148,7 @@ final class DriveProvisioner {
             // winner's row IS the idempotent answer.
             Optional<DriveRecord> winner = drives.findById(driveId);
             if (winner.isPresent()) {
+                requireSelectedProvider(winner.get().provider, winner.get().readProviderConfig());
                 return winner.get();
             }
             throw race;
@@ -139,21 +158,29 @@ final class DriveProvisioner {
         return record;
     }
 
+    private void requireSelectedProvider(String provider, DriveProviderConfig config) {
+        requireSelectedProvider(defaultProvider, provider, config);
+    }
+
+    static void requireSelectedProvider(String defaultProvider, String provider, DriveProviderConfig config) {
+        if (!defaultProvider.equals(provider)) {
+            throw GrpcErrors.failedPrecondition("Drive provider does not match the selected storage backend");
+        }
+        if (config == null) return;
+        boolean mismatch = switch (config.getConfigCase()) {
+            case S3 -> !"s3".equals(defaultProvider);
+            case REDIS -> !"redis".equals(defaultProvider);
+            case CONFIG_NOT_SET -> false;
+        };
+        if (mismatch) throw GrpcErrors.failedPrecondition("Drive configuration does not match the selected storage backend");
+    }
+
     /**
      * Create the drive's bucket when absent, then verify reachability. The one
      * admin-plane call site allowed on the raw client (see class Javadoc).
      */
     private void ensureBucket(String bucket) {
-        try {
-            s3.headBucket(b -> b.bucket(bucket));
-            return;
-        } catch (S3Exception e) {
-            if (e.statusCode() != 404) {
-                throw e;
-            }
-        }
-        s3.createBucket(b -> b.bucket(bucket));
-        s3.headBucket(b -> b.bucket(bucket));
+        namespaces.ensureNamespace(bucket);
     }
 
     /** Maps the wire enum to the row's check-constrained string; UNSPECIFIED → CUSTOM. */
