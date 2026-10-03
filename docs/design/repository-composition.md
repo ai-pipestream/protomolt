@@ -301,21 +301,47 @@ Source and destination locks use a consistent order, and a missing, replaced or
 changed source aborts publication even if its bytes were already copied. Same-row
 copies require both snapshots to agree. Failed attempts leave the committed
 destination unchanged; their staged objects remain cleanup work. This checks source
-stability, not a source READ grant.
+stability in addition to the scoped source READ check below.
 
 This destination revision check is a prerequisite for complete authorization.
-Scoped writes still need current WRITE-policy evaluation and source authorization
-for partial copies. Raw ledger maintenance writes remain administrative and do
+Scoped saves now require an existing AVAILABLE destination with a current WRITE
+grant before drive lookup, storage calls or dedupe bookkeeping. Dedupe rechecks
+the preflight revision under its row lock. Partial copies additionally require
+READ on the source, including self-copies: WRITE does not imply READ. Missing and
+denied scoped coordinates use the same unavailable result. Scoped copies currently
+stay within one owning account; membership in two accounts is not a cross-account
+copy grant.
+
+Scoped writes preserve the destination's current ledger ACL verbatim. Full saves
+and partial saves that write CORE must supply that same ACL; changing it requires
+process authority. A carried CORE may contain the source's ownership snapshot,
+which remains provenance and cannot change current destination access. A scoped
+caller cannot create a document by supplying its own WRITE rule, or revive a
+tombstoned document through SaveDocument. Scoped creation, policy administration
+and restoration need separately resolved trusted capabilities; they remain
+unavailable in this checkpoint.
+
+Scoped saves cannot change the drive or source-blob deletion policy, including
+its reason stamp. They also preserve the ledger datasource ID, which determines
+logical-document deletion groups. A written CORE must retain that datasource ID;
+a carried CORE may still describe its source. These controls require process
+authority and are checked before storage access, including on dedupe requests.
+Because the existing deletion fields do not express patch presence, scoped clients
+must echo their current values; omission does not mean "leave unchanged".
+The existing `written_by` stamp remains a caller-supplied provenance assertion,
+not verified actor identity or an authorization grant. Admission/evaluation actor
+binding still belongs to the versioned-provenance work below.
+
+Raw ledger maintenance writes remain administrative and do
 not themselves implement the guarded repository API. Backups must preserve the
 revision sequence state along with rows; restoring that state is still part of the
 restore acceptance work. Failed or
 superseded attempts leave unreferenced objects for lifecycle reconciliation; the
-new paths do not promise permanent historical retention. Scoped mutations remain
-disabled until the remaining authorization checks are implemented.
+new paths do not promise permanent historical retention.
 
 The complete ownership work remains unfinished: resolve inherited policy and
-atomically guard policy revision with every mutation. Mutations still require
-process authority. Named
+atomically guard policy revision with every mutation. Deletion, archive and drive
+mutations still require process authority. Named
 gRPC callers currently carry only name/scopes and remain denied unless the host
 installs a trusted repository binding resolver. The document gRPC adapter accepts
 such a resolver and rejects null, changed principal or changed process authority.

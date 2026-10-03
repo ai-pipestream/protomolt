@@ -367,6 +367,185 @@ class RepoServiceIT {
     }
 
     @Test
+    void scopedDocumentUpdatesUseCurrentWritePolicyOnBothInvocationPaths() throws Exception {
+        for (boolean overGrpc : List.of(false, true)) {
+            String account = "acct-write-" + overGrpc;
+            String drive = "scoped-write-" + overGrpc;
+            createDrive(drive, account);
+            createDrive(drive + "-other", account);
+            var policy = DocumentSecurity.newBuilder().addPermissions(AccessRule.newBuilder()
+                    .setIdentityType("public").setIdentity("public").setAccess(Access.ACCESS_WRITE)).build();
+            var original = fixture("scoped-write", account, "source").toBuilder();
+            original.getOwnershipBuilder().setSecurity(policy);
+            var save = intakeSave(original.build(), drive, account).build();
+            var initial = documents.saveDocument(save);
+            var caller = new ai.protomolt.proto.repo.spi.RepositoryCaller("login", false, Set.of(account), Set.of());
+            var binding = new java.util.concurrent.atomic.AtomicReference<>(caller);
+            String endpoint = "scoped-write-" + UUID.randomUUID();
+            var server = policyServer(endpoint, authenticated -> binding.get());
+            var connection = InProcessChannelBuilder.forName(endpoint).build();
+            try {
+                var remote = DocumentServiceGrpc.newBlockingStub(connection)
+                        .withDeadlineAfter(10, java.util.concurrent.TimeUnit.SECONDS);
+                java.util.function.Function<SaveDocumentRequest, SaveDocumentResponse> invoke = request -> overGrpc
+                        ? remote.saveDocument(request) : services.repository().saveDocument(binding.get(), request);
+                // WRITE does not need READ for a full replacement or intake dedupe.
+                assertThat(invoke.apply(save).getDeduplicated()).isTrue();
+                var replacement = original.clone();
+                replacement.getSearchMetadataBuilder().setTitle("allowed update");
+                var update = save.toBuilder().setDocument(replacement).build();
+                assertThat(invoke.apply(update).getDeduplicated()).isFalse();
+                var before = services.documentLedger().findByNodeId(UUID.fromString(initial.getNodeId())).orElseThrow();
+                for (var adminChange : List.of(
+                        update.toBuilder().setForceSave(true).setDeleteSourceBlobsOnSettle(true).build(),
+                        update.toBuilder().setForceSave(true).setSourceBlobDeleteReason("RTBF").build(),
+                        update.toBuilder().setForceSave(true).setDrive(drive + "-other").build())) {
+                    assertRepositoryFailure(() -> invoke.apply(adminChange), Status.Code.PERMISSION_DENIED);
+                }
+                // Membership and a self-supplied WRITE ACL cannot create new objects.
+                var newDocument = replacement.clone().setDocId("not-provisioned");
+                assertRepositoryFailure(() -> invoke.apply(save.toBuilder().setDocument(newDocument).build()), Status.Code.NOT_FOUND);
+                binding.set(new ai.protomolt.proto.repo.spi.RepositoryCaller("login", false, Set.of("other-account"), Set.of()));
+                assertRepositoryFailure(() -> invoke.apply(update), Status.Code.NOT_FOUND);
+                binding.set(caller);
+                var widened = replacement.clone();
+                widened.getOwnershipBuilder().getSecurityBuilder().addPermissions(AccessRule.newBuilder()
+                        .setIdentityType("public").setIdentity("public").setAccess(Access.ACCESS_READ));
+                assertRepositoryFailure(() -> invoke.apply(update.toBuilder().setDocument(widened).build()), Status.Code.PERMISSION_DENIED);
+                for (var denied : List.of(policy.toBuilder().setPermissions(0, policy.getPermissions(0).toBuilder()
+                                .setAccess(Access.ACCESS_READ)).build(),
+                        policy.toBuilder().addPermissions(AccessRule.newBuilder().setIdentityType("public")
+                                .setIdentity("public").setAccess(Access.ACCESS_DENY)).build())) {
+                    var row = services.documentLedger().findByNodeId(before.nodeId).orElseThrow();
+                    row.writeSecurity(denied);
+                    services.documentLedger().save(row);
+                    assertRepositoryFailure(() -> invoke.apply(update), Status.Code.NOT_FOUND);
+                }
+                var after = services.documentLedger().findByNodeId(before.nodeId).orElseThrow();
+                assertThat(after.reprocessCount).isEqualTo(before.reprocessCount);
+                assertThat(after.readManifest()).isEqualTo(before.readManifest());
+                assertThat(documents.getDocument(GetDocumentRequest.newBuilder().setNodeId(initial.getNodeId()).build())
+                        .getDocument()).isEqualTo(replacement.build());
+                // An administrator may enable cleanup; scoped saves must retain
+                // those controls explicitly, including on an otherwise identical body.
+                var configured = update.toBuilder().setForceSave(true)
+                        .setDeleteSourceBlobsOnSettle(true).setSourceBlobDeleteReason("RTBF").build();
+                documents.saveDocument(configured);
+                assertRepositoryFailure(() -> invoke.apply(update), Status.Code.PERMISSION_DENIED);
+                assertThat(invoke.apply(configured.toBuilder().setForceSave(false).build()).getDeduplicated()).isTrue();
+                var retained = services.documentLedger().findByNodeId(before.nodeId).orElseThrow();
+                assertThat(retained.deleteSourceBlobsOnSettle).isTrue();
+                assertThat(retained.sourceBlobDeleteReason).isEqualTo("RTBF");
+            } finally {
+                connection.shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+                server.shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            }
+        }
+    }
+
+    @Test
+    void scopedPartialCopiesRequireReadAndPreserveDestinationPolicy() throws Exception {
+        for (boolean overGrpc : List.of(false, true)) {
+            String account = "acct-scoped-copy-" + overGrpc;
+            String drive = "scoped-copy-" + overGrpc;
+            createDrive(drive, account);
+            var sourcePolicy = DocumentSecurity.newBuilder().addPermissions(AccessRule.newBuilder()
+                    .setIdentityType("public").setIdentity("public").setAccess(Access.ACCESS_READ)).build();
+            var destinationPolicy = sourcePolicy.toBuilder().setPermissions(0, sourcePolicy.getPermissions(0)
+                    .toBuilder().setAccess(Access.ACCESS_WRITE)).build();
+            var sourceDoc = fixture("scoped-copy", account, "source").toBuilder();
+            sourceDoc.getOwnershipBuilder().setSecurity(sourcePolicy);
+            var base = SaveDocumentRequest.newBuilder().setDocument(sourceDoc).setDrive(drive)
+                    .setGraphId("copy-graph").setGraphLocationId("source").build();
+            var source = documents.saveDocument(base);
+            var destDoc = sourceDoc.clone();
+            destDoc.getOwnershipBuilder().setSecurity(destinationPolicy).setDatasourceId("destination-source");
+            var destination = documents.saveDocument(base.toBuilder().setDocument(destDoc)
+                    .setGraphLocationId("destination").build());
+            var sourceId = UUID.fromString(source.getNodeId());
+            var destId = UUID.fromString(destination.getNodeId());
+            var calls = new java.util.concurrent.atomic.AtomicInteger();
+            var revokeDuringCopy = new java.util.concurrent.atomic.AtomicBoolean();
+            var real = services.blobStore();
+            var store = (ai.protomolt.proto.repo.blob.spi.BlobStore) java.lang.reflect.Proxy.newProxyInstance(
+                    getClass().getClassLoader(), new Class<?>[] {ai.protomolt.proto.repo.blob.spi.BlobStore.class},
+                    (proxy, method, args) -> {
+                        calls.incrementAndGet();
+                        Object result;
+                        try { result = method.invoke(real, args); }
+                        catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                        if (method.getName().equals("copy") && revokeDuringCopy.compareAndSet(true, false)) {
+                            var row = services.documentLedger().findByNodeId(sourceId).orElseThrow();
+                            row.writeSecurity(sourcePolicy.toBuilder().addPermissions(AccessRule.newBuilder()
+                                    .setIdentityType("public").setIdentity("public").setAccess(Access.ACCESS_DENY)).build());
+                            services.documentLedger().save(row);
+                        }
+                        return result;
+                    });
+            var engine = new ai.protomolt.proto.repo.engine.DocumentOperations(services.documentLedger(), services.driveLedger(),
+                    null, store, new ai.protomolt.proto.repo.container.blob.PartStorage(), null);
+            var caller = new ai.protomolt.proto.repo.spi.RepositoryCaller("login", false, Set.of(account), Set.of());
+            String endpoint = "scoped-copy-" + UUID.randomUUID();
+            var server = policyServer(endpoint, authenticated -> caller, engine);
+            var connection = InProcessChannelBuilder.forName(endpoint).build();
+            try {
+                var remote = DocumentServiceGrpc.newBlockingStub(connection)
+                        .withDeadlineAfter(10, java.util.concurrent.TimeUnit.SECONDS);
+                java.util.function.Function<SaveDocumentRequest, SaveDocumentResponse> invoke = request -> overGrpc
+                        ? remote.saveDocument(request) : engine.saveDocument(caller, request);
+                var copy = base.toBuilder().setGraphLocationId("destination")
+                        .addPartsWritten(DocumentPart.DOCUMENT_PART_BLOBS)
+                        .setCopyUnwrittenPartsFrom(source.getAddress()).build();
+                invoke.apply(copy);
+                var committed = services.documentLedger().findByNodeId(destId).orElseThrow();
+                assertThat(committed.readSecurity()).isEqualTo(destinationPolicy);
+                assertThat(committed.datasourceId).isEqualTo("destination-source");
+                // Carried CORE retains source provenance; it does not grant destination access.
+                assertThat(documents.getDocument(GetDocumentRequest.newBuilder().setNodeId(destination.getNodeId()).build())
+                        .getDocument().getOwnership().getSecurity()).isEqualTo(sourcePolicy);
+                int beforeDenied = calls.get();
+                // WRITE alone cannot authorize a self-copy of parts requiring READ.
+                assertRepositoryFailure(() -> invoke.apply(copy.toBuilder()
+                        .setCopyUnwrittenPartsFrom(destination.getAddress()).build()), Status.Code.NOT_FOUND);
+                assertRepositoryFailure(() -> invoke.apply(copy.toBuilder().setCopyUnwrittenPartsFrom(source.getAddress()
+                        .toBuilder().setDocId("missing")).build()), Status.Code.NOT_FOUND);
+                assertRepositoryFailure(() -> invoke.apply(copy.toBuilder().clearPartsWritten()
+                        .addPartsWritten(DocumentPart.DOCUMENT_PART_CORE).build()), Status.Code.PERMISSION_DENIED);
+                var changedDatasource = destDoc.clone();
+                changedDatasource.getOwnershipBuilder().setDatasourceId("another-deletion-group");
+                assertRepositoryFailure(() -> invoke.apply(copy.toBuilder().setDocument(changedDatasource)
+                        .clearPartsWritten().addPartsWritten(DocumentPart.DOCUMENT_PART_CORE).build()), Status.Code.PERMISSION_DENIED);
+                assertThat(calls.get()).isEqualTo(beforeDenied);
+                // A real SQL revocation after a real S3 copy must abort publication.
+                revokeDuringCopy.set(true);
+                assertRepositoryFailure(() -> invoke.apply(copy), Status.Code.ABORTED);
+                assertThat(revokeDuringCopy).isFalse();
+                var after = services.documentLedger().findByNodeId(destId).orElseThrow();
+                assertThat(after.mutationRevision).isEqualTo(committed.mutationRevision);
+                assertThat(after.readManifest()).isEqualTo(committed.readManifest());
+                beforeDenied = calls.get();
+                assertRepositoryFailure(() -> invoke.apply(copy), Status.Code.NOT_FOUND);
+                assertThat(calls.get()).isEqualTo(beforeDenied);
+            } finally {
+                connection.shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+                server.shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            }
+        }
+    }
+
+    private static void assertRepositoryFailure(org.assertj.core.api.ThrowableAssert.ThrowingCallable call, Status.Code code) {
+        assertThatThrownBy(call).satisfies(error -> {
+            if (error instanceof ai.protomolt.proto.repo.spi.RepositoryException failure) {
+                String name = failure.code() == ai.protomolt.proto.repo.spi.RepositoryException.Code.CONFLICT
+                        ? "ABORTED" : failure.code().name();
+                assertThat(name).isEqualTo(code.name());
+            } else {
+                assertThat(Status.fromThrowable(error).getCode()).isEqualTo(code);
+            }
+        });
+    }
+
+    @Test
     void boundDocumentReaderUsesCurrentAclAndCannotCrossAccounts() throws Exception {
         String account = "acct-document-policy";
         createDrive("policy", account);
@@ -591,7 +770,13 @@ class RepoServiceIT {
 
     private static io.grpc.Server policyServer(String endpoint,
             java.util.function.Function<ai.protomolt.proto.actions.Caller, ai.protomolt.proto.repo.spi.RepositoryCaller> bindings) throws Exception {
-        var implementation = new DocumentGrpcService(services.repository(),
+        return policyServer(endpoint, bindings, services.repository());
+    }
+
+    private static io.grpc.Server policyServer(String endpoint,
+            java.util.function.Function<ai.protomolt.proto.actions.Caller, ai.protomolt.proto.repo.spi.RepositoryCaller> bindings,
+            ai.protomolt.proto.repo.spi.DocumentRepository repository) throws Exception {
+        var implementation = new DocumentGrpcService(repository,
                 new ai.protomolt.proto.repo.engine.BlobOperations(services.blobStore(), services.driveLedger()),
                 bindings);
         return io.grpc.inprocess.InProcessServerBuilder.forName(endpoint)

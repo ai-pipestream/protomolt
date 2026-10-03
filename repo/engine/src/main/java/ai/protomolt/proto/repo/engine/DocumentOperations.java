@@ -200,9 +200,9 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
 
     @Override
     public SaveDocumentResponse saveDocument(RepositoryCaller caller, SaveDocumentRequest request) {
-        RepositoryErrors.requireProcessAuthority(caller);
+        requireReadBinding(caller);
         return RepositoryErrors.call(() -> {
-            return saveBlocking(request);
+            return saveBlocking(caller, request);
         });
     }
 
@@ -212,18 +212,23 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
      * @param request the save request (validated exactly as on the wire)
      * @return the save response
      */
-    private SaveDocumentResponse saveBlocking(SaveDocumentRequest request) {
+    private SaveDocumentResponse saveBlocking(RepositoryCaller caller, SaveDocumentRequest request) {
         SaveResolution.Resolved r = SaveResolution.resolve(request);
-        DriveRecord drive = drives.findByName(r.address().getAccountId(), request.getDrive())
-                .orElseThrow(() -> notFound("drive '" + request.getDrive() + "' not found for account '"
-                        + r.address().getAccountId() + "'"));
+        requireReadAccount(caller, r.address().getAccountId());
         UUID nodeId = DocumentIds.nodeId(r.address());
+        DocumentRecord destination = documents.findByNodeId(nodeId).orElse(null);
+        boolean writesCore = request.getPartsWrittenList().isEmpty()
+                || request.getPartsWrittenList().contains(DocumentPart.DOCUMENT_PART_CORE);
+        requireWrite(caller, destination, r.doc(), request, writesCore);
+        DriveRecord drive = drives.findByName(r.address().getAccountId(), request.getDrive())
+                .orElseThrow(() -> readMissing(caller, "drive '" + request.getDrive() + "' not found for account '"
+                        + r.address().getAccountId() + "'"));
         String basePrefix = SaveResolution.basePrefix(drive, r.address().getAccountId(), nodeId);
 
         if (request.getPartsWrittenList().isEmpty()) {
-            return saveFull(r, request, drive, nodeId, basePrefix);
+            return saveFull(caller, r, request, drive, nodeId, basePrefix, destination);
         }
-        return savePartial(r, request, drive, nodeId, basePrefix);
+        return savePartial(caller, r, request, drive, nodeId, basePrefix, destination);
     }
 
     /**
@@ -232,8 +237,8 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
      * because the Merkle root of the split is the dedupe key; identical
      * documents split into identical parts and therefore identical roots.
      */
-    private SaveDocumentResponse saveFull(SaveResolution.Resolved r, SaveDocumentRequest request,
-            DriveRecord drive, UUID nodeId, String basePrefix) {
+    private SaveDocumentResponse saveFull(RepositoryCaller caller, SaveResolution.Resolved r, SaveDocumentRequest request,
+            DriveRecord drive, UUID nodeId, String basePrefix, DocumentRecord destination) {
         List<PartObject> split = DocumentPartCodec.split(r.doc(), layout);
         String rootChecksum = DocumentPartCodec.rootChecksum(split);
 
@@ -247,6 +252,11 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         }
         boolean intake = DocumentRowKind.INTAKE.equals(r.rowKind());
         Decision decision = documents.withLockedReference(r.address(), existing -> {
+            // Authorization covered this exact revision. Check before dedupe,
+            // which itself mutates bookkeeping even without writing object bytes.
+            if (destination == null ? existing.isPresent()
+                    : existing.isEmpty() || existing.get().mutationRevision != destination.mutationRevision)
+                throw RepositoryErrors.aborted("Document changed while the candidate was being prepared");
             if (existing.isEmpty()) {
                 return new Decision(false, null, 1L);
             }
@@ -289,7 +299,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
                 request.hasWrittenBy() ? request.getWrittenBy() : null,
                 PART_CONTENT_TYPE, SaveResolution.s3Metadata(r), request.getForceSave(), decision.nextDocVersion());
 
-        DocumentRecord row = upsertRow(r, request, drive, nodeId, basePrefix, written.manifest(),
+        DocumentRecord row = upsertRow(caller, r, request, drive, nodeId, basePrefix, written.manifest(),
                 written.rootChecksum(), written.totalSizeBytes(), written.coreEtag(),
                 written.coreVersionId(), decision.existing(), Map.of());
         LOG.debug("Saved {} at {} (node_id={}, version={}, bytes={})",
@@ -304,20 +314,26 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
      * carry every other PRESENT part forward from the copy source's manifest.
      * No dedupe on partial saves — they are pipeline restages, not re-crawls.
      */
-    private SaveDocumentResponse savePartial(SaveResolution.Resolved r, SaveDocumentRequest request,
-            DriveRecord drive, UUID nodeId, String basePrefix) {
+    private SaveDocumentResponse savePartial(RepositoryCaller caller, SaveResolution.Resolved r, SaveDocumentRequest request,
+            DriveRecord drive, UUID nodeId, String basePrefix, DocumentRecord destExisting) {
         Set<DocumentPart> partsWritten = DocumentRequests.partsOrThrow(request.getPartsWrittenList(), "parts_written");
         if (!request.hasCopyUnwrittenPartsFrom()) {
             throw invalidArgument("copy_unwritten_parts_from is required when parts_written is non-empty");
         }
         NodeAddress srcRef = DocumentRequests.validateAddress(request.getCopyUnwrittenPartsFrom(),
                 "copy_unwritten_parts_from");
+        requireReadAccount(caller, srcRef.getAccountId());
+        if (!caller.processAuthority() && !srcRef.getAccountId().equals(r.address().getAccountId()))
+            throw notFound("Document is unavailable");
 
         // The copy source must be a live row with a manifest; a gone source is
         // FAILED_PRECONDITION (not NOT_FOUND) so the caller's
         // retry-as-full-save policy engages.
         DocumentRecord srcRow = documents.findByReference(srcRef)
-                .orElseThrow(() -> failedPrecondition("partial-save copy source row not found: " + DocumentRequests.describe(srcRef)));
+                .orElseThrow(() -> caller.processAuthority()
+                        ? failedPrecondition("partial-save copy source row not found: " + DocumentRequests.describe(srcRef))
+                        : notFound("Document is unavailable"));
+        requireRead(caller, srcRow);
         if (!DocumentStatus.AVAILABLE.equals(srcRow.status)) {
             throw failedPrecondition("partial-save copy source row is " + srcRow.status
                     + " (need AVAILABLE): " + DocumentRequests.describe(srcRef));
@@ -330,7 +346,6 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
                 .orElseThrow(() -> failedPrecondition("partial-save copy source drive '"
                         + srcRow.driveName + "' not found for account '" + srcRow.accountId + "'"));
 
-        DocumentRecord destExisting = documents.findByNodeId(nodeId).orElse(null);
         long docVersion = SaveResolution.manifestVersion(destExisting) + 1;
 
         Set<String> chunkSetsWritten = Set.copyOf(request.getChunkSetsWrittenList());
@@ -412,7 +427,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
             coreVersionId = copied.versionId();
         }
 
-        DocumentRecord row = upsertRow(r, request, drive, nodeId, basePrefix, combined,
+        DocumentRecord row = upsertRow(caller, r, request, drive, nodeId, basePrefix, combined,
                 rootChecksum, totalSize, coreEtag, coreVersionId, destExisting,
                 Map.of(srcRow.nodeId, srcRow.mutationRevision));
         LOG.debug("Partial save {} at {} (node_id={}, version={}, parts={}, copied={})",
@@ -604,20 +619,52 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
     }
 
     private static boolean canRead(RepositoryCaller caller, DocumentRecord row) {
-        if (!caller.processAuthority() && !caller.accountIds().contains(row.accountId)) return false;
-        requireReadAccount(caller, row.accountId);
-        ai.protomolt.proto.repo.v1.DocumentSecurity security;
+        return canAccess(caller, row, ai.protomolt.proto.repo.v1.Access.ACCESS_READ);
+    }
+
+    private static ai.protomolt.proto.repo.v1.DocumentSecurity storedSecurity(DocumentRecord row) {
         try {
-            security = row.readSecurity();
+            return row.readSecurity();
         } catch (ai.protomolt.proto.repo.container.ledger.LedgerException failure) {
             throw new ai.protomolt.proto.repo.spi.RepositoryException(
                     ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION,
                     "Stored document policy is malformed", failure);
         }
+    }
+
+    private static boolean canAccess(RepositoryCaller caller, DocumentRecord row, ai.protomolt.proto.repo.v1.Access access) {
+        if (!caller.processAuthority() && !caller.accountIds().contains(row.accountId)) return false;
         // An operator does not need inherited grants; scoped callers fail closed
         // until the host supplies a resolved inherited-policy snapshot.
-        return DocumentAccessPolicy.allows(caller, row.accountId, security,
-                caller.processAuthority() ? List.of() : null, ai.protomolt.proto.repo.v1.Access.ACCESS_READ);
+        return DocumentAccessPolicy.allows(caller, row.accountId, storedSecurity(row),
+                caller.processAuthority() ? List.of() : null, access);
+    }
+
+    private static void requireWrite(RepositoryCaller caller, DocumentRecord current, Document candidate,
+            SaveDocumentRequest request, boolean writesCore) {
+        if (current == null && !caller.processAuthority()) throw notFound("Document is unavailable");
+        if (current != null && (!canAccess(caller, current, ai.protomolt.proto.repo.v1.Access.ACCESS_WRITE)
+                || (!caller.processAuthority() && !DocumentStatus.AVAILABLE.equals(current.status))))
+            throw notFound("Document is unavailable");
+        var ownership = candidate.getOwnership();
+        var proposedPolicy = ownership.hasSecurity() ? ownership.getSecurity() : null;
+        if (caller.processAuthority()) {
+            DocumentAccessPolicy.allows(caller, ownership.getAccountId(), proposedPolicy,
+                    List.of(), ai.protomolt.proto.repo.v1.Access.ACCESS_WRITE);
+        } else {
+            if (writesCore && !java.util.Objects.equals(storedSecurity(current), proposedPolicy))
+                throw new ai.protomolt.proto.repo.spi.RepositoryException(
+                        ai.protomolt.proto.repo.spi.RepositoryException.Code.PERMISSION_DENIED,
+                        "Changing document access policy requires process authority");
+            String reason = request.getSourceBlobDeleteReason().isBlank() ? null : request.getSourceBlobDeleteReason();
+            if (!request.getDrive().equals(current.driveName)
+                    || request.getDeleteSourceBlobsOnSettle() != current.deleteSourceBlobsOnSettle
+                    || !java.util.Objects.equals(reason, current.sourceBlobDeleteReason)
+                    || (writesCore && !java.util.Objects.equals(ownership.getDatasourceId(), current.datasourceId)))
+                throw new ai.protomolt.proto.repo.spi.RepositoryException(
+                        ai.protomolt.proto.repo.spi.RepositoryException.Code.PERMISSION_DENIED,
+                        "Changing document storage, datasource or deletion policy requires process authority");
+        }
     }
 
     @Override
@@ -940,7 +987,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
      * re-saved tombstoned row. Bookkeeping columns (reprocess markers,
      * created_at) survive a rewrite from the existing row.
      */
-    private DocumentRecord upsertRow(SaveResolution.Resolved r, SaveDocumentRequest request, DriveRecord drive,
+    private DocumentRecord upsertRow(RepositoryCaller caller, SaveResolution.Resolved r, SaveDocumentRequest request, DriveRecord drive,
             UUID nodeId, String basePrefix, DocumentManifest manifest, String rootChecksum,
             long totalSize, String coreEtag, String coreVersionId, DocumentRecord existing,
             Map<UUID, Long> sourceRevisions) {
@@ -953,7 +1000,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         row.rowKind = r.rowKind();
         row.clusterId = r.clusterId();
         row.accountId = r.address().getAccountId();
-        row.datasourceId = ownership.getDatasourceId();
+        row.datasourceId = caller.processAuthority() ? ownership.getDatasourceId() : existing.datasourceId;
         row.connectorId = !request.getConnectorId().isBlank() ? request.getConnectorId()
                 : (ownership.hasConnectorId() ? ownership.getConnectorId() : null);
         row.checksum = rootChecksum;
@@ -966,7 +1013,8 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         row.filename = r.doc().hasSearchMetadata() && r.doc().getSearchMetadata().hasTitle()
                 ? r.doc().getSearchMetadata().getTitle() : r.address().getDocId();
         row.writeManifest(manifest);
-        row.writeSecurity(ownership.hasSecurity() ? ownership.getSecurity() : null);
+        if (caller.processAuthority()) row.writeSecurity(ownership.hasSecurity() ? ownership.getSecurity() : null);
+        else row.security = existing.security; // Current destination policy is never sourced from copied body provenance.
         boolean intake = DocumentRowKind.INTAKE.equals(r.rowKind());
         row.deleteSourceBlobsOnSettle = intake && request.getDeleteSourceBlobsOnSettle();
         row.sourceBlobDeleteReason = intake && !request.getSourceBlobDeleteReason().isBlank()
