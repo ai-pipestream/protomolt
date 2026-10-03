@@ -560,6 +560,15 @@ The byte SPI also materializes a provider response before its actual size is
 checked; this declared-size limit is not a hard bound on an oversized response.
 Hard memory guarantees require bounded provider reads as well as composition
 accounting.
+The byte SPI now has an explicit `getBounded` operation, implemented by the direct
+S3 adapter with a streaming GET. It rejects declared oversize before reading,
+checks unknown-length bodies while consuming them, and never returns a truncated
+prefix. Zero permits an empty object; failures abort the acquired stream. The
+limit covers payload bytes, not SDK overhead or aggregate memory. Other adapters
+fail explicitly until implemented. Document readers and staging still use the
+ordinary read path; wiring this operation and budgeting retained source buffers
+remain integration gates. A cache's backing-provider capabilities must not be
+treated as capabilities of the cache decorator itself.
 The managed-publication reader continues using retained backend and per-part
 provider identities. Both paths preserve fragment order and copy provider
 buffers before measuring or returning bytes, without decoding and reserializing.

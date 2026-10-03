@@ -62,6 +62,12 @@ extension even where the message shape remains unchanged.
 
 ## Other entry points and unchanged semantics
 
+- **New, Java byte SPI:** `BlobStore.getBounded` reads a complete selected object
+  version within a caller-supplied payload limit. Unsupported adapters fail
+  explicitly; no ordinary-read fallback is permitted. The direct S3 adapter
+  implements it and advertises `BOUNDED_READ`. Cache, Redis and remote adapters
+  do not yet implement it. Existing GetBlob protobufs and the conditional-write
+  bound are unchanged. Repository reader/stager integration remains outstanding.
 - **Extended:** HTTP document/archive uploads use the same engine boundaries as
   their gRPC counterparts, including streaming limits and staged publication.
 - **New, library and HTTP implementation under review:** shared raw-ingestion operation for the existing HTTP

@@ -1,10 +1,8 @@
 package ai.protomolt.proto.repo.blob.s3;
 
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
-import ai.protomolt.proto.repo.blob.spi.BlobStoreException;
 
 import software.amazon.awssdk.core.sync.RequestBody;
-import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
@@ -206,50 +204,12 @@ public final class S3BlobStore implements BlobStore {
 
     @Override
     public GetResult get(String bucket, String key, String versionId) {
-        GetObjectRequest.Builder b = GetObjectRequest.builder().bucket(bucket).key(key);
-        if (versionId != null && !versionId.isEmpty()) {
-            b.versionId(versionId);
-        }
-        try {
-            ResponseBytes<GetObjectResponse> r = client.getObjectAsBytes(b.build());
-            return new GetResult(r.asByteArray(), r.response().contentType(),
-                    r.response().eTag(), r.response().versionId());
-        } catch (NoSuchKeyException nsk) {
-            throw new BlobNotFoundException("blob not found: s3://" + bucket + "/" + key
-                    + (versionId != null ? "@" + versionId : ""), nsk);
-        } catch (S3Exception failure) {
-            if (failure.statusCode() == 404 && failure.awsErrorDetails() != null
-                    && "NoSuchVersion".equals(failure.awsErrorDetails().errorCode())) {
-                throw new BlobNotFoundException("blob version not found: s3://" + bucket + "/" + key
-                        + "@" + versionId, failure);
-            }
-            String errorCode = failure.awsErrorDetails() == null ? "" : failure.awsErrorDetails().errorCode();
-            var code = "RequestTimeout".equals(errorCode) ? BlobStoreException.Code.DEADLINE_EXCEEDED : switch (failure.statusCode()) {
-                case 400 -> BlobStoreException.Code.INVALID_ARGUMENT;
-                case 401 -> BlobStoreException.Code.UNAUTHENTICATED;
-                case 403 -> BlobStoreException.Code.PERMISSION_DENIED;
-                case 301, 307, 404 -> BlobStoreException.Code.FAILED_PRECONDITION;
-                case 408, 504 -> BlobStoreException.Code.DEADLINE_EXCEEDED;
-                case 429 -> BlobStoreException.Code.RESOURCE_EXHAUSTED;
-                default -> failure.statusCode() >= 500 ? BlobStoreException.Code.UNAVAILABLE : BlobStoreException.Code.UNKNOWN;
-            };
-            throw new BlobStoreException(code, "Object provider rejected the read", failure);
-        } catch (software.amazon.awssdk.core.exception.ApiCallTimeoutException
-                | software.amazon.awssdk.core.exception.ApiCallAttemptTimeoutException timeout) {
-            throw new BlobStoreException(BlobStoreException.Code.DEADLINE_EXCEEDED, "Object provider read timed out", timeout);
-        } catch (software.amazon.awssdk.core.exception.SdkClientException failure) {
-            var code = Thread.currentThread().isInterrupted()
-                    ? BlobStoreException.Code.CANCELLED : BlobStoreException.Code.UNAVAILABLE;
-            if (code != BlobStoreException.Code.CANCELLED) {
-                for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
-                    if (cause instanceof java.net.SocketTimeoutException) {
-                        code = BlobStoreException.Code.DEADLINE_EXCEEDED;
-                        break;
-                    }
-                }
-            }
-            throw new BlobStoreException(code, "Object provider read could not complete", failure);
-        }
+        return S3ObjectReads.read(client, bucket, key, versionId, null);
+    }
+
+    @Override
+    public GetResult getBounded(String bucket, String key, String versionId, int maxBytes) {
+        return S3ObjectReads.read(client, bucket, key, versionId, maxBytes);
     }
 
     @Override

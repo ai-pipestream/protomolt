@@ -2,6 +2,8 @@ package ai.protomolt.proto.repo.blob.spi;
 
 /** Optional operations an application may require before using a selected store. */
 public enum BlobCapability {
+    /** Complete-object GET with a caller-supplied limit enforced before unbounded materialization. */
+    BOUNDED_READ,
     AUTHORITATIVE_CONDITIONAL_READ,
     ATOMIC_CONDITIONAL_WRITE,
     LIST,

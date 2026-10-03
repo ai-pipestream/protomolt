@@ -93,6 +93,23 @@ public interface BlobStore {
     record GetResult(byte[] data, String contentType, String eTag, String versionId) {
     }
 
+    /** The selected object exceeds the caller's response-body limit; no truncated result is returned. */
+    class BlobReadLimitException extends RuntimeException {
+        public BlobReadLimitException(int maxBytes) { super("Object exceeds read limit of " + maxBytes + " bytes"); }
+    }
+
+    /**
+     * Read a complete object/version without materializing an unbounded response.
+     * Zero permits only an empty object. An oversized object fails explicitly, never
+     * returns a prefix. Implementations must enforce the limit while consuming bytes,
+     * not by checking an already materialized body or a separate HEAD response.
+     * The limit bounds payload bytes, not SDK overhead or aggregate caller memory.
+     */
+    default GetResult getBounded(String bucket, String key, String versionId, int maxBytes) {
+        if (maxBytes < 0) throw new IllegalArgumentException("Read limit must not be negative");
+        throw new UnsupportedOperationException("bounded object read is unsupported");
+    }
+
     /**
      * Reads current bytes and their backing ETag from the same authoritative operation.
      * Cache decorators must bypass their cache. Unsupported stores fail closed;
