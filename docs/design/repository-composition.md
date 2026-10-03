@@ -391,7 +391,17 @@ insufficient: another upload of identical content can reuse the same ETag.
 Scoped deletion remains disabled
 while its authorization and raw-byte protection are unfinished.
 
-### Managed raw uploads (planned, not implemented)
+### Managed raw uploads (ledger foundation; ingestion not yet wired)
+
+V10 adds managed raw-object records and document reference tables without adopting
+existing raw keys. `RawObjectLedger` provides leased STAGING/VERIFIED attempts,
+LIVE bindings in the document publication transaction, and token-fenced cleanup
+claims. Real PostgreSQL cases cover rollback, shared references, cross-account
+rejection, expired leases, immutable metadata, cleanup retries and a collector
+waiting on a publishing transaction's lock. DELETED records remain available for
+reconciliation of late writes. These are internal coordination primitives: no
+upload route or physical cleanup worker uses them yet, and the HTTP regressions
+below remain red.
 
 The real HTTP regression `rejectedReplacementPreservesCommittedDocumentAndRawBytes`
 demonstrates that a bad-checksum replacement deletes the previously committed raw
@@ -425,6 +435,14 @@ establish a binding. Copied BLOBS parts share the source binding after checking
 source access and revision; byte references must match the bound record. Retained
 versions and pending revisions will need their own foreign-key reference tables
 before their retention features are enabled.
+
+Managed keys must be reserved from arbitrary-key raw mutation APIs, including
+PutBlob, conditional put and deletion. Process authority does not make an
+uncoordinated overwrite safe. Remote repository providers need an explicit trusted
+managed-write path through this reservation; until that exists, managed ingestion
+on those backends must fail as unsupported. Providers must also guarantee that
+referenced objects do not expire independently through a TTL. Redis/cache modes
+with automatic expiry are not suitable without an explicit retention capability.
 
 Identical reuploads compare computed content identity and all relevant document
 metadata against the current managed binding. Normalize to the retained reference

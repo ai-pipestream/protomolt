@@ -49,6 +49,14 @@ class DocumentRevisionMigrationIT {
             }
             long migrated = revision(connection, id);
             assertThat(migrated).isPositive();
+            // V10 creates managed storage state without adopting legacy keys or
+            // manufacturing deletion authority for an existing document.
+            try (var query = connection.createStatement();
+                 var rows = query.executeQuery("SELECT (SELECT count(*) FROM raw_objects), (SELECT count(*) FROM document_raw_refs)")) {
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getLong(1)).isZero();
+                assertThat(rows.getLong(2)).isZero();
+            }
             try (var sql = connection.createStatement()) {
                 sql.executeUpdate("UPDATE documents SET security = '{}'::jsonb");
                 long policyChanged = revision(connection, id);
