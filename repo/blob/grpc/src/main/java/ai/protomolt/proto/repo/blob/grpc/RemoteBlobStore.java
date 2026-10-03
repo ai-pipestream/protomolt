@@ -16,12 +16,15 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Message;
 import ai.protomolt.proto.validate.ProtoValidator;
+import io.grpc.Deadline;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
+import java.time.Duration;
+import java.util.concurrent.TimeUnit;
 import java.util.List;
 import java.util.Objects;
 
@@ -69,6 +72,7 @@ public final class RemoteBlobStore implements BlobStore {
 
     private final DocumentServiceGrpc.DocumentServiceBlockingStub documents;
     private final String driveName;
+    private final long timeoutNanos;
 
     /**
      * @param documents the blocking stub of the repo-service to store through
@@ -76,7 +80,22 @@ public final class RemoteBlobStore implements BlobStore {
      *        backing bucket on the server)
      */
     public RemoteBlobStore(DocumentServiceGrpc.DocumentServiceBlockingStub documents, String driveName) {
+        this(documents, driveName, Duration.ofSeconds(30));
+    }
+
+    /**
+     * Borrows a stub and applies a fresh timeout to each RPC. A shorter deadline
+     * already on the stub or current gRPC context still wins. Timeout does not
+     * establish whether a remote write committed; this adapter does not retry it.
+     */
+    public RemoteBlobStore(DocumentServiceGrpc.DocumentServiceBlockingStub documents,
+                           String driveName, Duration timeout) {
         this.documents = Objects.requireNonNull(documents, "documents");
+        Objects.requireNonNull(timeout, "timeout");
+        try { this.timeoutNanos = timeout.toNanos(); }
+        catch (ArithmeticException overflow) { throw new IllegalArgumentException("RPC timeout is too large", overflow); }
+        if (timeoutNanos <= 0) throw new IllegalArgumentException("RPC timeout must be positive");
+
         if (driveName == null || driveName.isBlank()) {
             throw new IllegalArgumentException("driveName cannot be null or blank");
         }
@@ -102,7 +121,7 @@ public final class RemoteBlobStore implements BlobStore {
         if (outgoing.getSerializedSize() > MAX_RPC_BYTES) {
             throw new IllegalArgumentException("blob request exceeds 10 MiB RPC limit");
         }
-        PutBlobResponse response = documents.putBlob(outgoing);
+        PutBlobResponse response = callStub().putBlob(outgoing);
         // Verified write: the server computed the SHA-256 and made its store
         // verify the landed bytes against it, so a returned response is proof.
         return new PutResult(null, versionOf(response.getStorageRef()));
@@ -132,7 +151,7 @@ public final class RemoteBlobStore implements BlobStore {
     @Override
     public GetResult get(String bucket, String key, String versionId) {
         try {
-            GetBlobResponse response = documents.getBlob(GetBlobRequest.newBuilder()
+            GetBlobResponse response = callStub().getBlob(GetBlobRequest.newBuilder()
                     .setStorageRef(storageRef(key, versionId))
                     .build());
             return new GetResult(response.getData().toByteArray(),
@@ -150,7 +169,7 @@ public final class RemoteBlobStore implements BlobStore {
             throw new IllegalArgumentException("authoritative blob read request is invalid");
         }
         try {
-            var response = documents.withMaxInboundMessageSize(10 * 1024 * 1024)
+            var response = callStub().withMaxInboundMessageSize(10 * 1024 * 1024)
                     .getBlobForUpdate(request);
             requireResponse(response);
             var version = response.getVersion();
@@ -194,7 +213,7 @@ public final class RemoteBlobStore implements BlobStore {
             throw new IllegalArgumentException("conditional blob request is invalid");
         }
         try {
-            var response = documents.withMaxInboundMessageSize(10 * 1024 * 1024)
+            var response = callStub().withMaxInboundMessageSize(10 * 1024 * 1024)
                     .compareAndPutBlob(outgoing);
             requireResponse(response);
             var version = response.getVersion();
@@ -212,6 +231,13 @@ public final class RemoteBlobStore implements BlobStore {
             }
             throw failure;
         }
+    }
+
+    private DocumentServiceGrpc.DocumentServiceBlockingStub callStub() {
+        Deadline deadline = Deadline.after(timeoutNanos, TimeUnit.NANOSECONDS);
+        Deadline supplied = documents.getCallOptions().getDeadline();
+        if (supplied != null) deadline = deadline.minimum(supplied);
+        return documents.withDeadline(deadline);
     }
 
     private static void requireLength(long length) {
@@ -262,7 +288,7 @@ public final class RemoteBlobStore implements BlobStore {
     @Override
     public boolean delete(String bucket, String key) {
         try {
-            return documents.deleteBlob(DeleteBlobRequest.newBuilder()
+            return callStub().deleteBlob(DeleteBlobRequest.newBuilder()
                     .setStorageRef(storageRef(key, null))
                     .build()).getDeleted();
         } catch (StatusRuntimeException e) {

@@ -30,6 +30,10 @@ length and read at most that length plus one byte; a mismatch, oversized body
 or supplied checksum mismatch fails before the RPC. The caller owns the stream.
 The existing 9 MiB conditional-write limit is unchanged. This does not add
 multi-drive routing or streaming RPCs.
+Each RPC has a fresh 30-second timeout by default; a constructor overload accepts
+a positive `Duration`. Any shorter deadline on the supplied stub or current gRPC
+context remains effective. The client does not retry writes after a timeout,
+because a timed-out call may already have committed remotely.
 Remote gRPC storage still uses its explicitly owned channel and is not yet a
 discovered provider.
 

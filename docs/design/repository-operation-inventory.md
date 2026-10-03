@@ -124,3 +124,14 @@ passed (212 tasks executed, 1m 47s); log:
 `scripts/check-proto-compatibility.sh 528117a2d48cda3b3abedadd75b5706d7ac68ca7`
 passed before any protocol change. These checks do not prove the proposed gates,
 historical snapshots or hydration behavior; those require new red/green tests.
+
+### Remote byte coordinate migration requirement
+
+The extracted byte client still uses the legacy fixed remote drive and ignores
+its bucket argument. Replacing this with `bucket == remoteDrive` alone is unsafe:
+`RepoServices` supplies a configured remote drive, while local ledger records
+use provisioned bucket names. Before enabling rejection, define the local-bucket
+to remote-drive binding in service configuration, validate every loaded drive
+against it, and test existing rows and newly provisioned drives. Do not silently
+rewrite stored object keys or collapse unrelated local buckets into one drive.
+This requirement remains open; client extraction and deadlines do not satisfy it.
