@@ -7,11 +7,10 @@ import ai.protomolt.proto.repo.container.ledger.DriveRecord;
 import java.util.UUID;
 
 /**
- * Object keys of the archive family: entry-local content addressing under a
- * drive's prefix. A rendition object's key derives from its own content
- * hash, scoped under the entry — unchanged bytes across versions share one
- * object, and every deletion question stays bounded to one entry's own
- * manifests.
+ * Physical archive objects use unique write identities under a drive's prefix.
+ * Content hashes remain integrity/dedupe identities. Unchanged renditions share
+ * objects by carrying retained manifest references, never by minting the same
+ * key for another write or a recreated entry.
  *
  * <p>Every caller-influenced segment is either validated path-safe at the
  * contract (rendition name, sub key, archive slug) or sanitized here
@@ -25,21 +24,21 @@ final class ArchiveKeys {
     }
 
     /**
-     * The content-addressed rendition key:
-     * {@code <drive.prefix>/archive/<account>/<archive>/<entryUuid>/<name>[/<subKey>]/<sha256>}.
+     * A fresh rendition key for one physical write:
+     * {@code <drive.prefix>/archive/<account>/<archive>/<entryUuid>/<name>[/<subKey>]/writes/<uuid>/<sha256>}.
      */
     static String rendition(DriveRecord drive, String accountId, String archive,
                             UUID entryUuid, String name, String subKey, String sha256) {
         String middle = subKey == null || subKey.isBlank() ? name : name + "/" + subKey;
         return DriveKeys.under(drive.prefix, "archive/" + sanitize(accountId) + "/" + archive
-                + "/" + entryUuid + "/" + middle + "/" + sha256);
+                + "/" + entryUuid + "/" + middle + "/writes/" + UUID.randomUUID() + "/" + sha256);
     }
 
     /**
      * A staging key for a streamed upload whose hash is not yet known:
      * {@code .../<entryUuid>/staging/<uploadId>}. A crashed upload leaves
-     * this object with no owning manifest — an orphan by the standing rule,
-     * reclaimed by the reconciler's min-age sweep.
+     * this object with no owning manifest. Durable candidate registration and
+     * orphan recovery are required before claiming automatic reclamation.
      */
     static String staging(DriveRecord drive, String accountId, String archive,
                           UUID entryUuid, UUID uploadId) {

@@ -102,12 +102,10 @@ import static ai.protomolt.proto.repo.engine.RepositoryErrors.invalidArgument;
 import static ai.protomolt.proto.repo.engine.RepositoryErrors.notFound;
 
 /**
- * The archive's flows: every mutation follows the same discipline — object
- * IO first (verified, content-addressed, outside any transaction), then one
- * atomic ledger commit carrying the rows and the exact counter deltas, then
- * best-effort deletion of no-longer-referenced objects. A failure between
- * phases leaves orphans, never lies: an object with no owning manifest is
- * reclaimable by the reconciler's standing rule.
+ * Shared archive operations. Writes stage unique objects outside SQL and publish
+ * their manifest references in an atomic ledger commit. Durable tracking of
+ * unsuccessful candidates and admission before destructive object I/O remain
+ * incomplete; the archive deletion failure tests capture those unsafe paths.
  */
 public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.ArchiveRepository {
 
@@ -323,9 +321,10 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             for (RenditionContent content : request.getRenditionsList()) {
                 RenditionDescriptor descriptor = content.getRendition();
                 byte[] data = content.getData().toByteArray();
-                slots.put(new Slot(descriptor.getName(), descriptor.getSubKey()),
+                Slot slot = new Slot(descriptor.getName(), descriptor.getSubKey());
+                slots.put(slot, shareRetainedObject(
                         writtenEntry(descriptor, data, drive, address, entryUuid,
-                                request.getWrittenBy(), now));
+                                request.getWrittenBy(), now), slots.get(slot)));
             }
             List<RenditionManifestEntry> ordered = new ArrayList<>(slots.values());
             String root = ArchiveManifests.rootChecksum(ordered);
@@ -441,7 +440,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
         UUID entryUuid = ArchiveIds.entryUuid(address);
 
         // Phase 1 — land the bytes, digest computed while streaming. With a
-        // declared hash the final content-addressed key is already known and
+        // declared hash a fresh final key can be allocated immediately and
         // the store's checksum trailer enforces it; without one the bytes
         // stage under the entry and settle onto the final key by server-side
         // copy once the digest completes.
@@ -485,7 +484,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
         }
 
         // Phase 2 — one new version whose manifest re-references every other
-        // current rendition. The bytes are already content-addressed, so a
+        // current rendition. The bytes already have a unique physical key, so a
         // ledger conflict retries against fresh state without re-uploading.
         for (int attempt = 1; ; attempt++) {
             Optional<ArchiveEntryRecord> existing = ledger.findEntry(entryUuid);
@@ -514,10 +513,19 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
 
             if (current != null && root.equals(retained.stream()
                     .filter(v -> v.version == base).findFirst().orElseThrow().rootChecksum)) {
-                // The upload carried what the entry already holds: same hash,
-                // same key, already owned — nothing to land or clean.
+                // The upload candidate is unique and was never published.
+                // Return the retained reference, not the discarded candidate.
+                var retainedSlot = slotsOf(current)
+                        .get(new Slot(descriptor.getName(), descriptor.getSubKey()));
+                if (retainedSlot == null || retainedSlot.getState() != RenditionState.RENDITION_STATE_PRESENT
+                        || !retainedSlot.getSha256().equals(sha256)
+                        || retainedSlot.getSizeBytes() != declaredSize || retainedSlot.getObjectKey().isBlank()) {
+                    throw failedPrecondition("Retained rendition does not match the uploaded content identity");
+                }
+                String retainedKey = retainedSlot.getObjectKey();
+                blobStore.delete(drive.bucket, objectKey);
                 return new UploadResult(entryUuid.toString(), base, sha256, declaredSize,
-                        objectKey, root, true);
+                        retainedKey, root, true);
             }
 
             Map<String, RenditionManifestEntry> before =
@@ -1027,9 +1035,9 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
 
     /**
      * Lands every produced rendition in ONE new version beside the original,
-     * which is carried by reference and never rewritten. Content addressing
-     * makes re-running a bridge idempotent: identical output hashes to the
-     * same key, the root checksum does not move, and no version lands.
+     * which is carried by reference and never rewritten. Identical output
+     * preserves the root checksum and retained physical references; no version
+     * lands when all produced content is unchanged.
      */
     private long landDerived(EntryAddress address, ArchiveRecord archive, DriveRecord drive,
                              Map<RenditionDescriptor, Derived> produced,
@@ -1049,6 +1057,8 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                 byte[] data = item.getValue().derivation().content();
                 RenditionManifestEntry written = writtenEntry(descriptor, data, drive, address,
                         entryUuid, bridgedBy, now);
+                written = shareRetainedObject(written,
+                        slots.get(new Slot(descriptor.getName(), descriptor.getSubKey())));
                 ContentProfile profile = item.getValue().derivation().profile();
                 if (profile != null) {
                     written = written.toBuilder().setContentProfile(profile).build();
@@ -1245,6 +1255,18 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                         address.getArchive(), entryUuid, descriptor.getName(),
                         descriptor.getSubKey(), sha256))
                 .build();
+    }
+
+    private static RenditionManifestEntry shareRetainedObject(
+            RenditionManifestEntry candidate, RenditionManifestEntry retained) {
+        if (retained != null
+                && candidate.getState() == RenditionState.RENDITION_STATE_PRESENT
+                && retained.getState() == RenditionState.RENDITION_STATE_PRESENT
+                && candidate.getSha256().equals(retained.getSha256())
+                && candidate.getSizeBytes() == retained.getSizeBytes()) {
+            return candidate.toBuilder().setObjectKey(retained.getObjectKey()).build();
+        }
+        return candidate;
     }
 
     private static TreeMap<Slot, RenditionManifestEntry> slotsOf(VersionManifest current) {

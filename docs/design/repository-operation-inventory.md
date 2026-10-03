@@ -210,6 +210,15 @@ explicit retry/error coverage remain part of destructive admission.
 
 #### Reviewed deletion implementation boundary (not available yet)
 
+Physical key separation is implemented as a prerequisite: newly written rendition
+objects receive unique write UUIDs, with the content hash retained in the key and
+manifest. Unary saves and bridge output reuse a matching current rendition's
+physical reference. Streamed dedupe returns the retained key and deletes only its
+unused unique candidate; cleanup errors propagate. Delete/recreate at the same
+address gets different keys in library and gRPC integration tests. Existing
+manifest keys remain readable. Failed candidate registration/recovery, immutable
+backend bindings and durable deletion below are still unfinished.
+
 - **Extended requests:** DeleteEntry currently has only address (tag 1);
   DeleteRendition has address/rendition/reason (tags 1–3); PruneVersions has
   address/keep_latest (tags 1–2). None has an idempotency key. Add optional operation

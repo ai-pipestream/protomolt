@@ -230,9 +230,10 @@ class ArchiveServiceIT {
         assertThat(v1.getManifest().getRenditionsList()).hasSize(2);
 
         // v2: markdown changes, original does not — the unchanged rendition's
-        // hash, and therefore its object key, must be shared, not copied.
+        // retained object reference must be shared, not copied.
         PutEntryResponse v2 = archives.putEntry(PutEntryRequest.newBuilder()
                 .setAddress(address)
+                .addRenditions(rendition("original", "application/pdf", "raw-pdf-bytes"))
                 .addRenditions(rendition("markdown", "text/markdown", "# Report, revised"))
                 .build());
         assertThat(v2.getVersion()).isEqualTo(2);
@@ -248,6 +249,8 @@ class ArchiveServiceIT {
                 .build());
         assertThat(again.getDeduplicated()).isTrue();
         assertThat(again.getVersion()).isEqualTo(2);
+        assertThat(entryOf(again.getManifest(), "markdown").getObjectKey())
+                .isEqualTo(entryOf(v2.getManifest(), "markdown").getObjectKey());
 
         // The current read carries v2's bytes; the filter narrows to one name.
         GetEntryResponse current = archives.getEntry(GetEntryRequest.newBuilder()
@@ -311,6 +314,27 @@ class ArchiveServiceIT {
     // ------------------------------------------------------------------
 
     @Test
+    void recreatedEntriesNeverReuseDeletedPhysicalKeys() {
+        for (boolean transport : new boolean[] {false, true}) {
+            String account = "acct-incarnation-" + transport;
+            provision(account, VersioningPolicy.VERSIONING_POLICY_RETAINED, "docs");
+            var address = address(account, "docs", "same-address");
+            var request = PutEntryRequest.newBuilder().setAddress(address)
+                    .addRenditions(rendition("original", "text/plain", "same bytes")).build();
+            var caller = new ai.protomolt.proto.repo.spi.RepositoryCaller("identity-test", true);
+            var local = services.archiveRepository();
+            var first = transport ? archives.putEntry(request) : local.putEntry(caller, request);
+            var deletion = DeleteEntryRequest.newBuilder().setAddress(address).build();
+            if (transport) archives.deleteEntry(deletion);
+            else local.deleteEntry(caller, deletion);
+            var second = transport ? archives.putEntry(request) : local.putEntry(caller, request);
+            assertThat(second.getRootChecksum()).isEqualTo(first.getRootChecksum());
+            assertThat(entryOf(second.getManifest(), "original").getObjectKey())
+                    .isNotEqualTo(entryOf(first.getManifest(), "original").getObjectKey());
+        }
+    }
+
+    @Test
     void theStreamingDoorLandsBytesWithAndWithoutADeclaredHash() throws Exception {
         String account = "acct-stream";
         provision(account, VersioningPolicy.VERSIONING_POLICY_RETAINED, "streams");
@@ -325,6 +349,12 @@ class ArchiveServiceIT {
         assertThat(declared.getVersion()).isEqualTo(1);
         assertThat(declared.getSha256()).isEqualTo(sha256(body));
         assertThat(declared.getObjectKey()).endsWith("/" + sha256(body));
+        var duplicate = upload(address, "original", "text/plain", body, sha256(body));
+        assertThat(duplicate.getVersion()).isEqualTo(declared.getVersion());
+        assertThat(duplicate.getObjectKey()).isEqualTo(declared.getObjectKey());
+        var stagedDuplicate = upload(address, "original", "text/plain", body, null);
+        assertThat(stagedDuplicate.getVersion()).isEqualTo(declared.getVersion());
+        assertThat(stagedDuplicate.getObjectKey()).isEqualTo(declared.getObjectKey());
 
         // Without one, the bytes stage and settle; the receipt is identical
         // in shape and the sibling rendition is re-referenced, not copied.

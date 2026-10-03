@@ -65,6 +65,40 @@ class ArchiveDeletionFailureIT {
     @Test void libraryDeletePropagatesStorageFailure() throws Exception { assertDeleteFailure(false); }
     @Test void grpcDeletePropagatesStorageFailure() throws Exception { assertDeleteFailure(true); }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void streamedDuplicateReportsCandidateCleanupFailureAndPreservesRetainedBytes(boolean lostAcknowledgement) {
+        var address = EntryAddress.newBuilder().setAccountId("account").setArchive("records")
+                .setEntryId(UUID.randomUUID().toString()).build();
+        var descriptor = RenditionDescriptor.newBuilder().setName("original").setMediaType("text/plain").build();
+        byte[] bytes = "duplicate stream".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        var saved = normal.putEntry(CALLER, PutEntryRequest.newBuilder().setAddress(address)
+                .addRenditions(RenditionContent.newBuilder().setRendition(descriptor)
+                        .setData(ByteString.copyFrom(bytes))).build());
+        var retained = saved.getManifest().getRenditions(0);
+        var attempted = new AtomicBoolean();
+        BlobStore failing = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
+                    if (method.getName().equals("delete")) {
+                        assertThat(args[1]).isNotEqualTo(retained.getObjectKey());
+                        attempted.set(true);
+                        if (lostAcknowledgement) opened.store().delete((String) args[0], (String) args[1]);
+                        throw new BlobStoreException(BlobStoreException.Code.UNAVAILABLE, "candidate cleanup outage", null);
+                    }
+                    try { return method.invoke(opened.store(), args); }
+                    catch (java.lang.reflect.InvocationTargetException error) { throw error.getCause(); }
+                });
+        var operations = new ArchiveOperations(ledger, drives, failing);
+        assertThatThrownBy(() -> operations.uploadStream(CALLER, address, descriptor, bytes.length,
+                retained.getSha256(), null, null, null, null, new java.io.ByteArrayInputStream(bytes)))
+                .isInstanceOfSatisfying(RepositoryException.class,
+                        error -> assertThat(error.code()).isEqualTo(RepositoryException.Code.UNAVAILABLE));
+        assertThat(attempted).isTrue();
+        assertThat(opened.store().get("archive-failures", retained.getObjectKey()).data()).isEqualTo(bytes);
+        assertThat(normal.getManifest(CALLER, GetEntryManifestRequest.newBuilder().setAddress(address).build())
+                .getManifest()).isEqualTo(saved.getManifest());
+    }
+
     @Test void librarySqlFailureDoesNotDestroyRetainedBytes() throws Exception { assertSqlFailure(false); }
     @Test void grpcSqlFailureDoesNotDestroyRetainedBytes() throws Exception { assertSqlFailure(true); }
 
