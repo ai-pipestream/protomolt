@@ -462,13 +462,203 @@ class DocumentAtomicPublicationIT {
         assertThat(eventCount(f.row.docId)).isZero();
     }
 
+    @Test void batchCommitsTwoPublicationsWithRetainedSourceAndOutbox() {
+        var source = publish(fixture(null), (em, row) -> {});
+        var snapshot = DocumentSourceSnapshot.bound(tx, source);
+        var first = fixture(null, Duration.ofMinutes(5), Map.of(source.nodeId, source.mutationRevision));
+        var second = fixture(null);
+        var result = DocumentPublicationBatch.save(tx, List.of(entry(first, List.of(snapshot), (em, row) ->
+                new JdbcEventOutbox(tx).enqueue(em, DocumentEventFactory.saved(row, Instant.now()))),
+                entry(second, List.of(), (em, row) ->
+                new JdbcEventOutbox(tx).enqueue(em, DocumentEventFactory.saved(row, Instant.now())))));
+        assertThat(result).extracting(row -> row.nodeId).containsExactly(first.row.nodeId, second.row.nodeId);
+        for (var f : List.of(first, second)) {
+            assertThat(pin(f.row.nodeId)).isEqualTo(f.attempt.id());
+            assertThat(historyCount(f.attempt.id())).isEqualTo(1);
+            assertThat(sharedReferences(f.attempt.id())).isEqualTo(2);
+            assertThat(eventCount(f.row.docId)).isEqualTo(1);
+        }
+        assertThat(documents.findByNodeId(source.nodeId).orElseThrow().mutationRevision).isEqualTo(source.mutationRevision);
+    }
+
+    @Test void failureAfterBothMergesRollsBackEveryPublicationReferenceAndOutbox() {
+        var first = fixture(null);
+        var second = fixture(null);
+        var callbacks = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> failSecond = (em, row) -> {
+            new JdbcEventOutbox(tx).enqueue(em, DocumentEventFactory.saved(row, Instant.now()));
+            em.flush();
+            if (callbacks.incrementAndGet() == 2) throw new IllegalStateException("abort whole batch");
+        };
+        assertThatThrownBy(() -> DocumentPublicationBatch.save(tx, List.of(
+                entry(first, List.of(), failSecond), entry(second, List.of(), failSecond))))
+                .hasMessage("abort whole batch");
+        assertThat(callbacks.get()).isEqualTo(2);
+        for (var f : List.of(first, second)) {
+            assertThat(documents.findByNodeId(f.row.nodeId)).isEmpty();
+            assertThat(documents.hasPartPublication(f.row.nodeId)).isFalse();
+            assertThat(historyCount(f.attempt.id())).isZero();
+            assertThat(sharedReferences(f.attempt.id())).isZero();
+            assertThat(eventCount(f.row.docId)).isZero();
+            assertThat(new DocumentPartAttemptLedger(tx).find(f.attempt.id())).isPresent();
+        }
+    }
+
+    @Test void batchValidatesAllSourcesBeforePublishingAnyDestination() {
+        var initial = fixture(null, Duration.ofMinutes(5), Map.of(), new UUID(0, 1));
+        var source = publish(initial, (em, row) -> {});
+        var snapshot = DocumentSourceSnapshot.bound(tx, source);
+        var replacement = fixture(source);
+        var copy = fixture(null, Duration.ofMinutes(5), Map.of(source.nodeId, source.mutationRevision), new UUID(0, 2));
+        var result = DocumentPublicationBatch.save(tx, List.of(
+                entry(replacement, List.of(), (em, row) -> {}), entry(copy, List.of(snapshot), (em, row) -> {})));
+        assertThat(result.getFirst().readManifest().getDocVersion()).isEqualTo(2);
+        assertThat(pin(copy.row.nodeId)).isEqualTo(copy.attempt.id());
+        assertThat(historyCount(initial.attempt.id())).isEqualTo(1);
+        assertThat(sharedReferences(initial.attempt.id())).isEqualTo(1);
+    }
+
+    @Test void staleSourceRejectsWholeBatchBeforeCallbacks() {
+        var source = publish(fixture(null), (em, row) -> {});
+        var snapshot = DocumentSourceSnapshot.bound(tx, source);
+        var copy = fixture(null, Duration.ofMinutes(5), Map.of(source.nodeId, source.mutationRevision));
+        var independent = fixture(null);
+        source.reprocessCount++;
+        documents.save(source);
+        var callbacks = new java.util.concurrent.atomic.AtomicInteger();
+        assertThatThrownBy(() -> DocumentPublicationBatch.save(tx, List.of(
+                entry(independent, List.of(), (em, row) -> callbacks.incrementAndGet()),
+                entry(copy, List.of(snapshot), (em, row) -> callbacks.incrementAndGet()))))
+                .isInstanceOf(DocumentLedger.RevisionConflictException.class);
+        assertThat(callbacks.get()).isZero();
+        assertThat(documents.findByNodeId(independent.row.nodeId)).isEmpty();
+        assertThat(documents.findByNodeId(copy.row.nodeId)).isEmpty();
+    }
+
+    @Test void batchRejectsDuplicatesAndUnboundedDestinationLists() {
+        var f = fixture(null);
+        var p = entry(f, List.of(), (em, row) -> {});
+        assertThatThrownBy(() -> DocumentPublicationBatch.save(tx, List.of(p, p)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Duplicate");
+        assertThatThrownBy(() -> DocumentPublicationBatch.save(tx, List.of()))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("1 to 64");
+        assertThatThrownBy(() -> DocumentPublicationBatch.save(tx, java.util.Collections.nCopies(65, p)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("1 to 64");
+        assertThat(documents.findByNodeId(f.row.nodeId)).isEmpty();
+    }
+
+    @Test void oversizedAggregatePartsAreRejectedBeforePublication() {
+        var first = fixture(null); var second = fixture(null);
+        var manifest = first.row.readManifest();
+        first.row.writeManifest(manifest.toBuilder().clearParts()
+                .addAllParts(java.util.Collections.nCopies(10000, manifest.getParts(0))).build());
+        assertThatThrownBy(() -> DocumentPublicationBatch.save(tx, List.of(
+                entry(first, List.of(), (em, row) -> {}), entry(second, List.of(), (em, row) -> {}))))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("10000 parts");
+        assertThat(documents.findByNodeId(first.row.nodeId)).isEmpty();
+        assertThat(documents.findByNodeId(second.row.nodeId)).isEmpty();
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"destination", "drive", "cleanup"})
+    void oneInvalidMemberRejectsBothBeforeCallbacks(String failure) {
+        var original = publish(fixture(null), (em, row) -> {});
+        var first = fixture(null);
+        var second = fixture(original, failure.equals("cleanup") ? Duration.ofSeconds(2) : Duration.ofMinutes(5));
+        switch (failure) {
+            case "destination" -> { original.reprocessCount++; documents.save(original); }
+            case "drive" -> tx.inTransaction(em -> { em.createNativeQuery("UPDATE drives SET bucket='changed' WHERE drive_id=:id")
+                    .setParameter("id", second.drive.driveId).executeUpdate(); });
+            case "cleanup" -> {
+                expireAttempt(second.attempt.id());
+                assertThat(new DocumentAttemptCleanupLedger(tx).claim(second.attempt.id(), Duration.ofSeconds(5))).isPresent();
+            }
+        }
+        var callbacks = new java.util.concurrent.atomic.AtomicInteger();
+        assertThatThrownBy(() -> DocumentPublicationBatch.save(tx, List.of(
+                entry(first, List.of(), (em, row) -> callbacks.incrementAndGet()),
+                entry(second, List.of(), (em, row) -> callbacks.incrementAndGet()))))
+                .isInstanceOfAny(DocumentLedger.RevisionConflictException.class, DocumentPartAttemptLedger.FenceException.class);
+        assertThat(callbacks.get()).isZero();
+        assertThat(documents.findByNodeId(first.row.nodeId)).isEmpty();
+        assertThat(historyCount(first.attempt.id())).isZero();
+        assertThat(historyCount(second.attempt.id())).isZero();
+        assertThat(documents.findByNodeId(original.nodeId).orElseThrow().readManifest().getDocVersion()).isEqualTo(1);
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void opposingBatchesSerializeWhileUnrelatedPublicationProgresses(boolean abortFirst) throws Exception {
+        var a = publish(fixture(null), (em, row) -> {});
+        var b = publish(fixture(null), (em, row) -> {});
+        var firstA = fixture(a); var firstB = fixture(b);
+        var secondA = fixture(a); var secondB = fixture(b);
+        var unrelated = fixture(null);
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var blockerPid = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> hold = (em, row) -> {
+            if (blockerPid.compareAndSet(0, ((Number) em.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue())) {
+                entered.countDown();
+                try { assertThat(release.await(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue(); }
+                catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new AssertionError(interrupted); }
+                if (abortFirst) throw new IllegalStateException("abort first batch");
+            }
+        };
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(() -> DocumentPublicationBatch.save(tx, List.of(
+                    entry(firstA, List.of(), hold), entry(firstB, List.of(), hold))));
+            try {
+                assertThat(entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                var second = executor.submit(() -> DocumentPublicationBatch.save(tx, List.of(
+                        entry(secondB, List.of(), (em, row) -> {}), entry(secondA, List.of(), (em, row) -> {}))));
+                boolean waiting = false;
+                long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+                while (!waiting && System.nanoTime() < deadline) {
+                    waiting = tx.readOnly(em -> (Boolean) em.createNativeQuery(
+                            "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE :pid=ANY(pg_blocking_pids(pid)))")
+                            .setParameter("pid", blockerPid.get()).getSingleResult());
+                    if (!waiting) Thread.sleep(10);
+                }
+                assertThat(waiting).as("opposing batch waits on the first batch in PostgreSQL").isTrue();
+                var independent = executor.submit(() -> publish(unrelated, (em, row) -> {}));
+                assertThat(independent.get(5, java.util.concurrent.TimeUnit.SECONDS).nodeId).isEqualTo(unrelated.row.nodeId);
+                release.countDown();
+                if (abortFirst) {
+                    assertThatThrownBy(() -> first.get(5, java.util.concurrent.TimeUnit.SECONDS))
+                            .hasCauseInstanceOf(IllegalStateException.class);
+                    assertThat(second.get(5, java.util.concurrent.TimeUnit.SECONDS)).hasSize(2);
+                    assertThat(pin(a.nodeId)).isEqualTo(secondA.attempt.id());
+                    assertThat(pin(b.nodeId)).isEqualTo(secondB.attempt.id());
+                } else {
+                    assertThat(first.get(5, java.util.concurrent.TimeUnit.SECONDS)).hasSize(2);
+                    assertThatThrownBy(() -> second.get(5, java.util.concurrent.TimeUnit.SECONDS))
+                            .hasCauseInstanceOf(DocumentLedger.RevisionConflictException.class);
+                    assertThat(pin(a.nodeId)).isEqualTo(firstA.attempt.id());
+                    assertThat(pin(b.nodeId)).isEqualTo(firstB.attempt.id());
+                }
+            } finally { release.countDown(); }
+        }
+    }
+
+    private static DocumentPublicationBatch.Publication entry(Fixture f, List<DocumentSourceSnapshot> snapshots,
+            java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> callback) {
+        var sources = snapshots.stream().collect(java.util.stream.Collectors.toMap(
+                DocumentSourceSnapshot::nodeId, DocumentSourceSnapshot::revision));
+        return new DocumentPublicationBatch.Publication(f.row, f.expected, sources, f.attempt.id(), f.attempt.token(),
+                f.target, snapshots, () -> {}, callback);
+    }
+
     private record Fixture(DocumentRecord row, Long expected, DocumentPartAttemptLedger.Attempt attempt,
             DriveRecord drive, DocumentPublicationTarget target) {}
     private static Fixture fixture(DocumentRecord previous) {
         return fixture(previous, Duration.ofMinutes(5));
     }
     private static Fixture fixture(DocumentRecord previous, Duration lease) {
-        UUID node = previous == null ? UUID.randomUUID() : previous.nodeId;
+        return fixture(previous, lease, Map.of());
+    }
+    private static Fixture fixture(DocumentRecord previous, Duration lease, Map<UUID, Long> sources) {
+        return fixture(previous, lease, sources, previous == null ? UUID.randomUUID() : previous.nodeId);
+    }
+    private static Fixture fixture(DocumentRecord previous, Duration lease, Map<UUID, Long> sources, UUID node) {
         String generation = "atomic-" + UUID.randomUUID();
         var backend = new BackendIdentity("test-location", "test-location/v1", Map.of("endpoint", "https://storage.example"));
         new ManagedBackendLedger(tx).bind(generation, new ManagedBackendLedger.Profile(backend, generation));
@@ -480,7 +670,7 @@ class DocumentAtomicPublicationIT {
         var object = new DocumentPartAttemptLedger.PlannedObject(DocumentPart.DOCUMENT_PART_CORE,"",prefix+"core",3,SHA,"application/protobuf");
         var plan = new DocumentPartAttemptLedger.Plan(attemptId,
                 new DocumentPartAttemptLedger.Location(node,"account",generation,"container"),
-                previous == null ? 0 : previous.mutationRevision, Map.of(), List.of(object));
+                previous == null ? 0 : previous.mutationRevision, sources, List.of(object));
         var attempts = new DocumentPartAttemptLedger(tx);
         var attempt = attempts.begin(plan, lease);
         attempts.verify(attempt.id(),attempt.token(),object.objectKey(),3,SHA,"v1","etag");

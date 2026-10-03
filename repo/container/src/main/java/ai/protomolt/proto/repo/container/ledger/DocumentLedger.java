@@ -117,37 +117,9 @@ public final class DocumentLedger {
             Map<UUID, Long> sourceRevisions, UUID attemptId, UUID token, DocumentPublicationTarget target,
             List<DocumentSourceSnapshot> sourceSnapshots, Runnable check,
             java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> committed) {
-        java.util.Objects.requireNonNull(check, "check").run();
-        java.util.Objects.requireNonNull(committed, "committed");
-        Map<UUID, Long> sources = Map.copyOf(sourceRevisions);
-        var snapshots = DocumentSourceSnapshot.matching(sources, sourceSnapshots);
-        return saveGuarded(candidate, expectedRevision, sources, (em, prior) -> {
-            check.run();
-            for (var source : snapshots) source.requireCurrent(em);
-            DocumentSourceSnapshot.lockDrives(em, target, snapshots);
-            var attempt = DocumentPartAttemptLedger.requirePublishable(em, attemptId, token, candidate, expectedRevision, sources);
-            target.requireMatches(em, candidate, attempt);
-            var previousManifest = prior == null ? null : prior.readManifest();
-            if (prior != null && (previousManifest == null || previousManifest.getDocVersion() <= 0))
-                throw new DocumentPartAttemptLedger.FenceException("Existing document requires an explicit versioned manifest");
-            long previousVersion = prior == null ? 0 : previousManifest.getDocVersion();
-            long nextVersion = Math.addExact(previousVersion, 1);
-            if (candidate.readManifest().getDocVersion() != nextVersion)
-                throw new DocumentPartAttemptLedger.FenceException("Document manifest version is not the next locked version");
-            check.run();
-        }, (em, row) -> {
-            em.createNativeQuery("""
-                    INSERT INTO document_part_publication_history(attempt_id,node_id,publication_revision,body)
-                    SELECT :attempt,node_id,mutation_revision,document_publication_body(documents)
-                    FROM documents WHERE node_id=:node
-                    """).setParameter("attempt", attemptId).setParameter("node", row.nodeId).executeUpdate();
-            em.createNativeQuery("""
-                    INSERT INTO document_part_publications(node_id,attempt_id) VALUES (:node,:attempt)
-                    ON CONFLICT(node_id) DO UPDATE SET attempt_id=EXCLUDED.attempt_id
-                    """).setParameter("node", row.nodeId).setParameter("attempt", attemptId).executeUpdate();
-            committed.accept(em, row);
-            check.run();
-        });
+        return DocumentPublicationBatch.save(tx, List.of(new DocumentPublicationBatch.Publication(
+                candidate, expectedRevision, sourceRevisions, attemptId, token, target,
+                sourceSnapshots, check, committed))).getFirst();
     }
 
     /** Whether this document has an active managed part publication. */
@@ -162,29 +134,10 @@ public final class DocumentLedger {
             java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> committed) {
         java.util.Objects.requireNonNull(committed, "committed");
         Map<UUID, Long> sources = Map.copyOf(sourceRevisions);
-        var identities = new java.util.TreeSet<>(sources.keySet());
-        identities.add(candidate.nodeId);
         return tx.inTransaction(em -> {
-            // A row lock cannot serialize two first writes to a missing identity.
-            // Hash collisions only serialize unrelated writers; they cannot grant access.
-            // Sort the actual keys too: UUID ordering alone is insufficient when
-            // unrelated UUIDs alias the same advisory lock.
-            identities.stream().mapToLong(id -> id.getMostSignificantBits() ^ id.getLeastSignificantBits())
-                    .distinct().sorted().forEach(key ->
-                            em.createNativeQuery("SELECT 1 FROM pg_advisory_xact_lock(:key)", Integer.class)
-                                    .setParameter("key", key).getSingleResult());
-            Map<UUID, DocumentRecord> locked = new HashMap<>();
-            for (UUID id : identities) {
-                DocumentRecord row = em.find(DocumentRecord.class, id, LockModeType.PESSIMISTIC_WRITE);
-                locked.put(id, row);
-                Long sourceRevision = sources.get(id);
-                if (sourceRevision != null && (row == null || row.mutationRevision != sourceRevision.longValue()))
-                    throw new RevisionConflictException();
-            }
+            var locked = lockRevisions(em, java.util.Set.of(candidate.nodeId), sources);
             DocumentRecord current = locked.get(candidate.nodeId);
-            if (expectedRevision == null ? current != null
-                    : current == null || current.mutationRevision != expectedRevision.longValue())
-                throw new RevisionConflictException();
+            requireRevision(current, expectedRevision);
             beforeMerge.accept(em, current);
             DocumentRecord merged = em.merge(candidate);
             em.flush();
@@ -192,6 +145,34 @@ public final class DocumentLedger {
             committed.accept(em, merged);
             return merged;
         });
+    }
+
+    /** Shared ordering for guarded single writes and multi-document publication. */
+    static Map<UUID, DocumentRecord> lockRevisions(jakarta.persistence.EntityManager em,
+            java.util.Set<UUID> destinations, Map<UUID, Long> sources) {
+        var identities = new java.util.TreeSet<>(sources.keySet());
+        identities.addAll(destinations);
+        // Missing rows need advisory locks. Sort actual keys, since distinct UUIDs
+        // may alias a key; collisions serialize but never authenticate identity.
+        identities.stream().mapToLong(id -> id.getMostSignificantBits() ^ id.getLeastSignificantBits())
+                .distinct().sorted().forEach(key ->
+                        em.createNativeQuery("SELECT 1 FROM pg_advisory_xact_lock(:key)", Integer.class)
+                                .setParameter("key", key).getSingleResult());
+        Map<UUID, DocumentRecord> locked = new HashMap<>();
+        for (UUID id : identities) {
+            DocumentRecord row = em.find(DocumentRecord.class, id, LockModeType.PESSIMISTIC_WRITE);
+            locked.put(id, row);
+            Long revision = sources.get(id);
+            if (revision != null && (row == null || row.mutationRevision != revision.longValue()))
+                throw new RevisionConflictException();
+        }
+        return locked;
+    }
+
+    static void requireRevision(DocumentRecord current, Long expectedRevision) {
+        if (expectedRevision == null ? current != null
+                : current == null || current.mutationRevision != expectedRevision.longValue())
+            throw new RevisionConflictException();
     }
 
     /**

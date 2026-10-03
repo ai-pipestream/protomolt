@@ -104,9 +104,14 @@ public final class DocumentSourceSnapshot {
     }
 
     static void lockDrives(EntityManager em, DocumentPublicationTarget target, java.util.List<DocumentSourceSnapshot> sources) {
+        lockDrives(em, java.util.List.of(target), sources);
+    }
+
+    static void lockDrives(EntityManager em, java.util.List<DocumentPublicationTarget> targets,
+            java.util.List<DocumentSourceSnapshot> sources) {
         record Lock(UUID id, Runnable action) {}
         var locks = new java.util.ArrayList<Lock>();
-        locks.add(new Lock(target.driveId(), () -> target.lock(em)));
+        for (var target : targets) locks.add(new Lock(target.driveId(), () -> target.lock(em)));
         for (var source : sources) if (source.legacyDrive != null)
             locks.add(new Lock(source.legacyDrive.id(), () -> source.legacyDrive.lock(em, source.drives)));
         // Repeated IDs still validate every sampled state, while acquiring locks in one order.

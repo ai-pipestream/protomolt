@@ -343,10 +343,10 @@ create an unrelated generic shadow store that can disagree with those rows.
 
 The first adapter acceptance unit is two verified document attempts, their two
 destinations and a retained source revision, using existing publication validation.
-Extract a transaction-scoped internal publication routine: the current
-`saveVerifiedAttempt` starts its own transaction, so two calls cannot satisfy
-this acceptance case. One outer transaction acquires the union of destination
-and source locks in global order, then publishes both. Shared immutable part
+The internal `DocumentPublicationBatch` now supplies one outer transaction;
+`saveVerifiedAttempt` delegates a single member to it. Calling the single-member
+method twice still opens two transactions. The batch acquires the union of
+destination and source locks in global order, then publishes both. Shared immutable part
 references remain a separate integration after this atomic foundation.
 One short transaction must verify
 all expected revisions and current policies, publish both revisions and their
@@ -354,6 +354,42 @@ references, persist their outbox records and the scoped logical outcome, or roll
 back every change. Upload/validation work completes before that transaction.
 Missing-row creation uses the same advisory-lock protocol as current writers;
 lock-order interoperability must be tested with existing single-object paths.
+
+The internal document batch is an initial adapter primitive, not the completed
+commit port. It preserves existing protobuf contracts and SQL tables, validates
+all source snapshots and expected revisions against the pre-change state, locks
+selected drives in order, and validates every attempt before merging any row.
+A source may also be a destination: its original retained history remains, while
+its new current revision and the other destination publish together. This uses
+already staged bytes; it does not introduce shared immutable part reuse.
+
+Batches contain 1–64 distinct destinations and attempts. Multi-document batches
+are additionally limited to 10,000 combined new/prior manifest parts and 10,000
+source checks; existing single-document limits remain unchanged. These are
+conservative admission ceilings, not latency-qualified production defaults.
+Callbacks are internal transaction participants restricted to each member's
+bindings and outbox; unrelated document/attempt locks and provider I/O are forbidden.
+Existing trigger lock ordering is sufficient while physical objects remain
+attempt-owned and overlapping destinations serialize before attempt locks.
+Reassess that ordering when introducing cross-document physical reuse.
+
+PostgreSQL fixtures cover two publications with a retained source and outbox,
+rollback after both merges, source/destination overlap, stale source/destination,
+changed drive, previously claimed cleanup, duplicate/oversized batches, and
+opposing overlapping batches with an observed database wait. An independent
+single publication completes while the overlapping batch remains blocked, in
+both first-batch commit and rollback cases. This is concurrency evidence, not a
+latency benchmark. Concurrent cleanup races, overlapping batch/single creation,
+policy races, durable outcome/idempotent replay, consistent multi-object reads,
+and public-port/provider-neutral conformance remain outstanding.
+
+Local validation on 2026-10-03: `:protomolt-repo-container:test --tests '*Document*'
+ :protomolt-repo-service:test --tests '*Document*'` completed in 1m08s. JUnit XML
+reports 200 container cases and 87 service cases: 285 passed, zero failures/errors,
+and two opt-in benchmarks skipped. Sol reviewed the source/trigger lock ordering
+and the implementation. This is local evidence; no CI, push, merge, deployment,
+provider throughput qualification, or JCR compliance is implied. The locked-prior
+aggregate-limit branch still needs its own boundary fixture.
 
 Required cases before wiring production consumers:
 
