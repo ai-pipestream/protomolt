@@ -1266,6 +1266,61 @@ separately. A throughput result cannot substitute for conflict correctness or
 bounded resource use. Choose latency targets after representative provider tests;
 do not derive production promises from the LocalStack diagnostic.
 
+### Implementation slices after design agreement
+
+These slices preserve the eight-stage objective. They do not declare the current
+implementation complete or permit skipping ownership, typed admission, historical
+metadata, recovery, or progressive-hydration gates.
+
+1. Define immutable physical identity and reference ownership before stabilizing
+   the generic commit API. Build a small provider-neutral port and PostgreSQL
+   adapter without exposing SQL, Kafka, SDK or JCR types in the port. Model exact
+   backend/profile, namespace, key, version, digest and size. Represent current,
+   history, raw, schema and active-reader ownership. First acceptance: reference
+   acquisition races reclamation safely under real PostgreSQL, with populated
+   migration fixtures and rejection of unknown legacy identity. Production
+   publisher integration follows later; this slice tests the concurrency rule.
+2. Build a bounded multi-object change-set commit port on that model. Preserve
+   separate domain revision and operation identities, expected revisions, evidence
+   and receipt lookup. Test atomic changes to multiple objects, references, outbox
+   and receipt, including complete rollback. Reuse existing schema/receipt contracts
+   before adding wire fields. The current repo/container exposes Hibernate and
+   includes Kafka; keep those out of the minimal port. Host assembly supplies the
+   PostgreSQL adapter through the port. Move existing engine/container coupling in
+   tested increments. Dependency metadata/runtime gates must demonstrate separation.
+   Outbox persistence is transactional; Kafka event delivery is outside the commit.
+3. Add durable upload intents, one operation heartbeat, bounded evidence batches
+   and stale-owner fencing. Crash tests cover receipt loss, late uploads and expiry.
+   Establish SQL statement/transaction counts before adopting the new path.
+4. Add reusable physical references for current revisions, retained revisions,
+   raw content and schema artifacts. Protect active readers. Reference acquisition
+   and reclamation use the same object-state fences. Validate migration, history
+   retention/release, restoration and shared-object deletion before claiming reuse
+   or managed deletion complete.
+5. Route a single-part update through immutable references and the common commit
+   primitive. Compare real I/O with the operation-count targets. Verify concurrent
+   independent updates, conflicts on a shared revision, cross-object atomicity,
+   current-policy changes and resource limits. Both library and gRPC invocation
+   must exercise the same behavior.
+6. Qualify provider checksum receipts separately; the ordinary verified-readback
+   path remains explicit for providers without that capability. S3 qualification
+   does not qualify Redis, a remote client, or another S3-compatible endpoint.
+7. Finish typed admission, descriptor retention, metadata/provenance and lifecycle
+   conformance; then qualify host composition and deployment. Progressive hydration
+   follows these foundations and remains independently deliverable.
+
+Initial work establishes physical identity and reference/reclamation concurrency,
+followed by multi-object atomicity. Subsequent slices integrate domain behavior.
+No experimental path becomes the advertised implementation on the basis
+of a narrow unit test or LocalStack latency result.
+
+The pre-redesign V25 experiment is preserved in local stash commit
+`ada36843929cf34cc16f0d86ac48ea16cb59009e`. It couples publication references to
+attempt objects and is not the approved generic object model. Before baseline
+execution, clean generated repo/container resources so a previously copied V25
+migration cannot remain on the runtime classpath. Do not reapply the experiment
+without reviewing it against this design.
+
 ## Immutable part reuse: implementation design
 
 Status: design for the next ledger change, not available behavior. This follows
