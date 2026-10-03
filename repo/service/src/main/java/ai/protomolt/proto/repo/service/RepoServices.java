@@ -645,18 +645,14 @@ public final class RepoServices implements AutoCloseable {
     @Override
     public synchronized void close() {
         lifecycleClosed = true;
+        LifecycleShutdown.stopBeforeRelease(lifecycleThreads, java.time.Duration.ofSeconds(10), this::releaseAfterWorkersStop);
+    }
+
+    private void releaseAfterWorkersStop() {
         var shutdown = new OwnedResources();
         shutdown.add(owned);
         for (GrpcServerLifetime server : servers) shutdown.add(server);
         for (UploadHttpServer http : httpServers) shutdown.add(http);
-        for (Thread thread : lifecycleThreads) {
-            thread.interrupt();
-            shutdown.add(() -> {
-                try { thread.join(TimeUnit.SECONDS.toMillis(10)); }
-                catch (InterruptedException e) { Thread.currentThread().interrupt(); throw e; }
-                if (thread.isAlive()) throw new IllegalStateException("Repository lifecycle worker did not terminate");
-            });
-        }
         try { shutdown.close(); }
         finally {
             lifecycleThreads.clear();

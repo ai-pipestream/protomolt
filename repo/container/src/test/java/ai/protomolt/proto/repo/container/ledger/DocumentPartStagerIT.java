@@ -352,6 +352,55 @@ class DocumentPartStagerIT {
                 """).setParameter("id", attempt).getSingleResult());
     }
 
+    @Test void recoveryResumesExpiredClaimAfterDatabaseAndProviderClientsReopen() throws Exception {
+        var input = input();
+        UUID oldToken;
+        try (var firstDatabase = restartDatabase(); var firstStore = restartStore()) {
+            var firstTx = new Tx(firstDatabase.entityManagerFactory());
+            try (var stager = new DocumentPartStager(firstTx, GENERATION, identity, firstStore)) {
+                stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(1), Map.of());
+            }
+            expire(input.plan().attemptId());
+            var claim = new DocumentAttemptCleanupLedger(firstTx)
+                    .claim(input.plan().attemptId(), Duration.ofSeconds(1)).orElseThrow();
+            oldToken = claim.token();
+            // Real partial cleanup followed by loss of the worker, without recording its result.
+            assertThat(firstStore.reclaimer().reclaim(claim.namespace(), claim.keys().getFirst())).isTrue();
+        }
+        tx.readOnly(em -> em.createNativeQuery("""
+                SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM claim_until-clock_timestamp()))+0.05)
+                FROM document_part_attempt_cleanup WHERE attempt_id=:id
+                """).setParameter("id", input.plan().attemptId()).getSingleResult());
+        try (var secondDatabase = restartDatabase(); var secondStore = restartStore()) {
+            var secondTx = new Tx(secondDatabase.entityManagerFactory());
+            var cleanup = new DocumentAttemptCleanupLedger(secondTx);
+            assertThat(cleanup.candidates(Duration.ZERO, 1000)).contains(input.plan().attemptId());
+            var recovery = new DocumentAttemptRecovery(cleanup, (generation, profile) -> {
+                assertThat(generation).isEqualTo(GENERATION);
+                assertThat(profile.identity()).isEqualTo(identity);
+                return secondStore.reclaimer();
+            });
+            assertThat(recovery.recover(input.plan().attemptId(), Duration.ofSeconds(5)).outcome())
+                    .isEqualTo(DocumentAttemptRecovery.Outcome.ABSENT);
+            UUID currentToken = secondTx.readOnly(em -> (UUID) em.createNativeQuery(
+                    "SELECT cleanup_token FROM document_part_attempt_cleanup WHERE attempt_id=:id")
+                    .setParameter("id", input.plan().attemptId()).getSingleResult());
+            assertThat(currentToken).isNotEqualTo(oldToken);
+            for (var object : input.plan().objects())
+                assertThatThrownBy(() -> secondStore.store().get(NAMESPACE, object.objectKey()))
+                        .isInstanceOf(BlobStore.BlobNotFoundException.class);
+        }
+    }
+
+    private static LedgerDatabase restartDatabase() {
+        return new LedgerDatabase(new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()));
+    }
+
+    private static OpenedBlobStore restartStore() {
+        return BlobStores.discover().open("s3", Map.of("endpoint", S3.getEndpoint().toString(), "region", S3.getRegion(),
+                "access-key", S3.getAccessKey(), "secret-key", S3.getSecretKey(), "path-style", "true", "conditional-writes", "false"));
+    }
+
     @Test void closeReportsBusyUntilProviderReturnsAndReleasesBorrowedResources() throws Exception {
         var input = input();
         var entered = new java.util.concurrent.CountDownLatch(1);

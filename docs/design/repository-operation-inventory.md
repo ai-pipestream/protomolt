@@ -525,9 +525,20 @@ checks to remove late writes. Candidate filtering precedes the bounded scan limi
 PostgreSQL tests cover publication/cleanup contention, competing claims, expired
 owners, direct SQL guards, and migration preservation. Versioned-storage tests
 exercise physical deletion, unrelated-key preservation, late writes, unavailable
-backends, unconfirmed deletion and lost acknowledgements. Host scheduling, restart
-qualification, exact-profile resolver composition, and public writer integration
-remain outstanding. No managed document endpoint is enabled by this checkpoint.
+backends, unconfirmed deletion and lost acknowledgements. A client-reopen test
+closes the database pool/entity manager and provider client after partial cleanup,
+then opens fresh clients and resumes the expired claim from durable state. This
+does not establish recovery after a process or host crash. Host scheduling,
+process-restart qualification, exact-profile resolver composition, and public
+writer integration remain outstanding. No managed document endpoint is enabled
+by this checkpoint.
+
+Repository host shutdown interrupts lifecycle workers and gives them a shared
+ten-second join budget. A timeout or interrupted join leaves providers, the ledger,
+transports and worker handles retained, reports failure, and keeps the composition
+closed to new access. Call `close()` again after workers stop to release resources.
+This prevents a slow recovery call from using resources already closed by the host;
+it does not guarantee that an arbitrary provider responds promptly to interruption.
 
 Keep archive operations process-authorized until current-policy guards support
 scoped callers. Legacy write/staging cleanup remains separate follow-up work;
