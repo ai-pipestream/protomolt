@@ -7,7 +7,13 @@ signatures and no production library dependencies. Callers must change imports
 from `ai.protomolt.proto.repo.container.blob.BlobStore` to
 `ai.protomolt.proto.repo.blob.spi.BlobStore` and recompile. Container adapter APIs
 that mention this interface or moved codec types also require recompilation.
-Provider implementations remain in container until their separate extraction.
+Provider implementations live in `protomolt-repo-blob-s3`,
+`protomolt-repo-blob-redis` and `protomolt-repo-blob-cache`. Update imports for
+`S3BlobStore`, `RedisBlobStore`/`RedisBlobStoreConfig` and `CachingBlobStore`
+to `.repo.blob.s3`, `.repo.blob.redis` and `.repo.blob.cache` respectively.
+The cache uses the optional `ExpiringBlobStore` capability instead of depending
+on Redis. The existing service assembly explicitly composes these providers; provider
+factory discovery is separate work.
 
 `protomolt-repo-codec` owns descriptor-driven document splitting, part layouts,
 manifest encoding and typed reassembly. It depends on repository protobuf

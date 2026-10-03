@@ -1,4 +1,6 @@
-package ai.protomolt.proto.repo.container.blob;
+package ai.protomolt.proto.repo.blob.s3;
+
+import ai.protomolt.proto.repo.blob.s3.S3BlobStore;
 
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
 

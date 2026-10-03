@@ -371,6 +371,13 @@ project(':protomolt-repo-codec').projectDir = file('repo/codec')
 include 'protomolt-repo-blob-spi'
 project(':protomolt-repo-blob-spi').projectDir = file('repo/blob/spi')
 
+include 'protomolt-repo-blob-s3'
+project(':protomolt-repo-blob-s3').projectDir = file('repo/blob/s3')
+include 'protomolt-repo-blob-redis'
+project(':protomolt-repo-blob-redis').projectDir = file('repo/blob/redis')
+include 'protomolt-repo-blob-cache'
+project(':protomolt-repo-blob-cache').projectDir = file('repo/blob/cache')
+
 include 'protomolt-repo-service'
 project(':protomolt-repo-service').projectDir = file('repo/service')
 

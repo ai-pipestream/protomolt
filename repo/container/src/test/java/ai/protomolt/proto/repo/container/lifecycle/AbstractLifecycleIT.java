@@ -1,7 +1,7 @@
 package ai.protomolt.proto.repo.container.lifecycle;
 
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
-import ai.protomolt.proto.repo.container.blob.S3BlobStore;
+import ai.protomolt.proto.repo.blob.s3.S3BlobStore;
 import ai.protomolt.proto.repo.container.ledger.DocumentLedger;
 import ai.protomolt.proto.repo.container.ledger.DocumentPurgeRecord;
 import ai.protomolt.proto.repo.container.ledger.DocumentRecord;

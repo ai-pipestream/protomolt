@@ -15,9 +15,12 @@ repositories {
     mavenCentral()
 }
 java { toolchain { languageVersion = JavaLanguageVersion.of(25) } }
-configurations { blobSpiOnly }
+configurations { blobSpiOnly; s3Only; redisOnly; cacheOnly }
 dependencies {
     blobSpiOnly "ai.pipestream:protomolt-repo-blob-spi:${providers.gradleProperty('candidateVersion').get()}"
+    s3Only "ai.pipestream:protomolt-repo-blob-s3:${providers.gradleProperty('candidateVersion').get()}"
+    redisOnly "ai.pipestream:protomolt-repo-blob-redis:${providers.gradleProperty('candidateVersion').get()}"
+    cacheOnly "ai.pipestream:protomolt-repo-blob-cache:${providers.gradleProperty('candidateVersion').get()}"
     implementation "ai.pipestream:protomolt-repo-codec:${providers.gradleProperty('candidateVersion').get()}"
     implementation "ai.pipestream:protomolt-repo-blob-spi:${providers.gradleProperty('candidateVersion').get()}"
 }
@@ -30,6 +33,14 @@ tasks.register('verifyConsumer', JavaExec) {
                 .collect { it.moduleVersion?.name }.findAll { it != null && it != project.name }
         if (spiModules != ['protomolt-repo-blob-spi']) {
             throw new GradleException('Byte SPI must be JDK-only: ' + spiModules)
+        }
+        [s3Only: ['jedis'], redisOnly: ['s3'], cacheOnly: ['s3', 'jedis']].each { name, excluded ->
+            def providerNames = configurations.getByName(name).incoming.resolutionResult.allComponents
+                    .collect { it.moduleVersion?.name }.findAll { it != null }
+            def forbiddenProvider = excluded + ['protomolt-repo-container', 'protomolt-repo-service',
+                    'hibernate-core', 'HikariCP', 'postgresql', 'kafka-clients']
+            def leaks = providerNames.findAll { forbiddenProvider.contains(it) }
+            if (!leaks.isEmpty()) throw new GradleException(name + ' dependency leaks: ' + leaks)
         }
         def forbidden = ['s3', 'jedis', 'hibernate-core', 'HikariCP', 'postgresql',
                          'flyway-core', 'kafka-clients', 'protomolt-repo-container', 'protomolt-repo-service']

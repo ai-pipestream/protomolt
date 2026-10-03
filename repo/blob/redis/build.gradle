@@ -1,0 +1,10 @@
+description = 'Redis byte storage adapter'
+dependencies {
+    api project(':protomolt-repo-blob-spi')
+    implementation libs.jedis
+    testImplementation project(':protomolt-repo-codec')
+    testImplementation libs.testcontainers.junit.jupiter
+    testRuntimeOnly libs.slf4j.simple
+}
+ext.forbiddenRuntimeModules = ['protomolt-repo-container', 's3', 'hibernate-core', 'HikariCP', 'postgresql', 'kafka-clients']
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

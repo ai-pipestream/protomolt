@@ -1,4 +1,6 @@
-package ai.protomolt.proto.repo.container.blob;
+package ai.protomolt.proto.repo.blob.redis;
+
+import ai.protomolt.proto.repo.blob.redis.RedisBlobStore;
 
 /**
  * Configuration for {@link RedisBlobStore}: where Redis is and how objects

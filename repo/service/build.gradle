@@ -17,6 +17,9 @@ configurations.matching { it.name in ['testCompileClasspath', 'testRuntimeClassp
         }
 
 dependencies {
+    implementation project(':protomolt-repo-blob-s3')
+    implementation project(':protomolt-repo-blob-redis')
+    implementation project(':protomolt-repo-blob-cache')
     implementation project(':protomolt-schema-registry-git')
     api project(':protomolt-composer')
     implementation project(':protomolt-repo-proto')
@@ -37,8 +40,7 @@ dependencies {
     implementation libs.grpc.netty.shaded
     implementation libs.grpc.services
     implementation libs.grpc.inprocess
-    // S3 client construction lives here (UrlConnectionHttpClient is only an
-    // `implementation` dep of repo-container, so it is not exposed).
+    // The service assembly owns S3 client construction.
     implementation libs.awssdk.url.connection.client
     // The HTTP upload route's JSON receipts/errors (Jackson is the repo-wide
     // JSON library; see libs.versions.toml).

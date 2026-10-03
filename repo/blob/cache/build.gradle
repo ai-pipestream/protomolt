@@ -1,0 +1,8 @@
+description = 'Byte storage cache decorator independent of cache provider SDKs'
+dependencies {
+    api project(':protomolt-repo-blob-spi')
+    implementation libs.slf4j.api
+    testImplementation project(':protomolt-repo-blob-redis')
+}
+ext.forbiddenRuntimeModules = ['protomolt-repo-container', 's3', 'jedis', 'hibernate-core', 'HikariCP', 'postgresql', 'kafka-clients']
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

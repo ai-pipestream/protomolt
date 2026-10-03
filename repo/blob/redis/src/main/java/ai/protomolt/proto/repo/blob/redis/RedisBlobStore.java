@@ -1,6 +1,7 @@
-package ai.protomolt.proto.repo.container.blob;
+package ai.protomolt.proto.repo.blob.redis;
 
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
+import ai.protomolt.proto.repo.blob.spi.ExpiringBlobStore;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
@@ -61,7 +62,7 @@ import java.util.stream.Gatherers;
  * callers running on virtual threads park on the blocking round trips, same
  * as the S3 adapter.
  */
-public final class RedisBlobStore implements BlobStore, AutoCloseable {
+public final class RedisBlobStore implements ExpiringBlobStore, AutoCloseable {
 
     /** Suffix of the per-object metadata hash key. */
     static final String META_SUFFIX = "$meta";
@@ -86,7 +87,7 @@ public final class RedisBlobStore implements BlobStore, AutoCloseable {
     }
 
     /**
-     * A put with an explicit expiry — the overload {@link CachingBlobStore}
+     * A put with an explicit expiry — the overload cache decorators
      * uses to give cache entries their own TTL.
      *
      * @param spec what and where to write

@@ -1,4 +1,6 @@
-package ai.protomolt.proto.repo.container.blob;
+package ai.protomolt.proto.repo.blob.cache;
+
+import ai.protomolt.proto.repo.blob.spi.ExpiringBlobStore;
 
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
 
@@ -50,9 +52,9 @@ public final class CachingBlobStore implements BlobStore, AutoCloseable {
 
     /**
      * @param backing the store of truth (every write lands here first)
-     * @param cache the expendable front cache (e.g. a {@link RedisBlobStore})
+     * @param cache the expendable front cache (e.g. a an expiring store)
      * @param ttlSeconds cache-entry TTL; {@code 0} = no expiry. Applied when
-     *        the cache is TTL-aware (today: {@link RedisBlobStore}); other
+     *        the cache is TTL-aware (today: an expiring store); other
      *        caches ignore it
      * @param maxCacheableBytes largest object admitted to the cache; objects
      *        larger than this bypass the cache entirely. {@code 0} or
@@ -175,12 +177,19 @@ public final class CachingBlobStore implements BlobStore, AutoCloseable {
     /** Closes the backing store and the cache when they are closeable. */
     @Override
     public void close() throws Exception {
-        if (backing instanceof AutoCloseable closeable) {
-            closeable.close();
+        Exception failure = null;
+        try {
+            if (backing instanceof AutoCloseable closeable) closeable.close();
+        } catch (Exception e) {
+            failure = e;
         }
-        if (cache instanceof AutoCloseable closeable) {
-            closeable.close();
+        try {
+            if (cache != backing && cache instanceof AutoCloseable closeable) closeable.close();
+        } catch (Exception e) {
+            if (failure == null) failure = e;
+            else if (failure != e) failure.addSuppressed(e);
         }
+        if (failure != null) throw failure;
     }
 
     private boolean fits(long sizeBytes) {
@@ -189,7 +198,7 @@ public final class CachingBlobStore implements BlobStore, AutoCloseable {
 
     /** A cache put honoring the TTL when the cache is TTL-aware. */
     private void cachePut(PutSpec spec, byte[] body) {
-        if (cache instanceof RedisBlobStore redis) {
+        if (cache instanceof ExpiringBlobStore redis) {
             redis.put(spec, body, ttlSeconds);
         } else {
             cache.put(spec, body);
