@@ -1407,6 +1407,114 @@ Validation: `:protomolt-repo-service:test --tests '*Archive*' --tests
 cases passed against PostgreSQL 18 and LocalStack 3.8. Sol reviewed the production
 barrier, failure injection and scope statements with no remaining blocker.
 
+#### Reader incarnation recovery design (not implemented)
+
+The local reader barrier is necessary but insufficient for recovery. At V30,
+`ArchiveReadLedger` accepts a caller-supplied UUID without durable registration;
+SQL cannot reject further admission from an identity selected for recovery.
+Neither a fresh host UUID nor a successful shutdown of another host proves that
+the original reader stopped. The following protocol must precede pin recovery.
+
+1. Register one fresh, immutable incarnation before exposing its reader. Retain
+   a durable state row: ACTIVE, FENCED or QUIESCED. Registration must reject an
+   existing identity, including a retired one; no upsert can reactivate it.
+   Existing pins migrate to an UNKNOWN owner state, preserving every native and
+   mirrored reference. UNKNOWN is never eligible for automatic release.
+   Stop and drain V30 readers before rollout; changing SQL admission cannot stop
+   provider calls that an older process already admitted.
+2. Admission takes a shared lock on the ACTIVE incarnation before the existing
+   source-owner and object-retention shared locks. Keep this inside the existing
+   admission SQL call. Direct pin insertion must enforce the same guard. A fence
+   takes only the incarnation's exclusive lock, changes ACTIVE to FENCED, and
+   commits. Once that commit is visible no new pin may be admitted for that
+   incarnation. A pin admitted before the fence stays protective.
+3. FENCED means admission stopped; it does not mean provider I/O stopped. For a
+   local graceful stop, close reader admission, persist the fence, then observe
+   that exact reader's successful drain while its borrowed resources remain
+   alive. Only the owning lifecycle coordinator can turn that observation into
+   QUIESCED. Timeout, interruption or an ambiguous fence commit retains resources
+   and pins. Retry uses the same incarnation and observes the durable state.
+4. A remote crash requires independently verified termination of the exact host
+   incarnation and its outstanding provider work. A hostname, reused PID,
+   heartbeat age, expired lease, disconnected SQL session, canceled Future or
+   newly started replacement process is insufficient. No generic public
+   `markDead(uuid)` or `recover(uuid, true)` operation is acceptable. Until a
+   deployment-specific termination authority is designed and tested, remote
+   crash pins remain retained. Record the evidence source and subject; an
+   arbitrary evidence string is not verification.
+5. QUIESCED is permanent and authorizes bounded recovery of remaining pins,
+   including failed releases. Recovery selects a bounded batch without first
+   locking pin tuples, then processes one object per short transaction following
+   the existing source-owner -> retention -> pin order. Each transaction removes
+   its native and mirrored references atomically. Concurrent normal release is
+   idempotent; wrong incarnation or
+   object identity is an error. Keep the incarnation tombstone after its last
+   pin disappears. Do not hold an incarnation-wide exclusive lock across the
+   batch or any provider call.
+
+The lifecycle coordinator must own the entire reader admission surface for a
+registered incarnation. Returning a drain result from one of several readers
+sharing a ledger is insufficient. Construction must make that ownership explicit
+and prevent accidental identity reuse. Registration failure must prevent exposing
+the reader; ambiguous registration must not trigger a replacement UUID and leave
+an untracked owner. The incarnation UUID is public identity, not a quiescence
+capability. Keep local completion behind the owning lifecycle object; bind any
+external authority to the exact registered host generation and retain provenance.
+Processes with unrestricted SQL ownership remain inside the trusted boundary;
+a state column cannot independently verify a supervisor's claim. SQL state
+protects admission, while the trusted lifecycle boundary establishes local
+quiescence; neither replaces the
+other. Ordinary pin release remains legal after fencing and needs no exclusive
+incarnation lock. Terminal-state guards reject identity changes, deletion and
+backward transitions. Recovery privileges must not be available through ordinary
+repository caller operations.
+
+Keep this foundation provider neutral and free of JCR dependencies. It manages
+physical read lifetimes, not JCR sessions, workspaces, version histories or
+multi-object publication. A future content repository can compose lifetime
+protection with its own snapshot semantics; QUIESCED supplies none of those
+semantics. The initial consumer is managed archive reads. Document, raw-content
+and schema readers require their own admission integration before sharing the
+mechanism; their coverage must not be inferred from the archive tests.
+
+Operation inventory: registration, fencing, attested quiescence and bounded
+recovery are proposed new internal Java/SQL operations. Pin admission and host
+shutdown are proposed extensions. Pin release retains its exact-identity and
+lost-acknowledgement semantics. No protobuf field, import, Any URL, schema
+reference, receipt binding or public idempotency key changes in this slice.
+Incarnation IDs are lifecycle identities, not account authorization or receipts.
+
+Acceptance before enabling recovery:
+
+- Apply migration to populated V30 data and prove all old pins and references
+  survive as UNKNOWN; old identities cannot silently register as ACTIVE.
+- Race admission with fencing in both orders, observing actual SQL lock waits.
+  Commit and rollback cases must distinguish pre-fence admission from rejected
+  post-fence admission. Direct insertion must obey the same boundary.
+- Reject registration reuse and backward state transitions. Prove unrelated
+  incarnations and objects continue while one incarnation is fenced.
+- Keep the real delayed provider read active after fencing; recovery must reject
+  it. Cancellation, timeout and interruption must not produce quiescence evidence.
+- Bind local drain evidence to its owning reader and incarnation. Test failed
+  pin release and crash between fence and drain. A crash after drain but before
+  QUIESCED commits loses the local observation: retain pins until independent
+  proof is available. A committed QUIESCED transition whose acknowledgement was
+  lost remains recoverable by observing the durable state on retry.
+- Race bounded recovery with ordinary release and physical cleanup; include
+  duplicate recovery, wrong identities, SQL rollback and a failure midway through
+  multiple batches. Unprocessed pins must remain protective and discoverable.
+- Preserve one client statement/transaction for admission and one for release.
+  Registration and lifecycle transitions occur outside the steady read path.
+  Do not add per-read heartbeats or provider I/O under database locks. Measure
+  p50/p95 latency and throughput for same-object and disjoint reads at 1/4/16
+  readers against V30; a shared incarnation row is still a potential hot spot.
+
+Implement durable registration/fencing and its migration/race tests first, then
+bind local quiescence and bounded recovery. External crash authority is a separate
+deliverable; incomplete deployment proof must not be hidden behind a TTL policy.
+Sol reviewed this protocol on 2026-10-03; the implementation and acceptance
+evidence remain outstanding.
+
 V27 separates logical retirement from physical reclamation. An admitted archive
 mutation closes reference acquisition with a permanent retiring flag; the later
 cleanup claim sets the permanent reclaiming flag. Reclaiming always implies
