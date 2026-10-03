@@ -63,7 +63,7 @@ class DocumentAttemptCleanupMigrationIT {
     private static String snapshot(Connection connection, String table) throws Exception {
         // Callers supply only the fixed table names above.
         try (var statement = connection.createStatement(); var rows = statement.executeQuery(
-                "SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text)::text FROM " + table + " t")) {
+                "SELECT jsonb_agg(to_jsonb(t)-'physical_object_id' ORDER BY (to_jsonb(t)-'physical_object_id')::text)::text FROM " + table + " t")) {
             assertThat(rows.next()).isTrue(); return rows.getString(1);
         }
     }

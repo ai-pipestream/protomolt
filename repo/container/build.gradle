@@ -7,6 +7,7 @@ dependencies {
     testImplementation project(':protomolt-repo-blob-redis')
     testImplementation project(':protomolt-repo-blob-cache')
     api project(':protomolt-repo-proto')
+    api project(':protomolt-repo-spi')
     api libs.protobuf.java
     testImplementation libs.awssdk.s3
     api libs.hibernate.core

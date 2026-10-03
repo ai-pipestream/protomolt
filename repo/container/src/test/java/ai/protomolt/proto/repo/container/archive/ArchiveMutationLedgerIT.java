@@ -226,6 +226,11 @@ class ArchiveMutationLedgerIT {
                     .setParameter("id", command.operationId()).getSingleResult()).longValue());
             assertThat(targets).isEqualTo(1);
             save(tx, address);
+            // Recreating a PRESENT manifest without its retained reference is
+            // rejected before it can borrow the old object's known location.
+            assertThatThrownBy(() -> tx.inTransaction(em -> { em.persist(version); }))
+                    .hasStackTraceContaining("conflicts with a managed key");
+            version.manifest = "{}";
             tx.inTransaction(em -> { em.persist(version); });
             assertThatThrownBy(() -> tx.inTransaction(em -> {
                 em.createNativeQuery("INSERT INTO archive_version_object_refs(entry_uuid,version,object_id) VALUES (:entry,1,:id)")

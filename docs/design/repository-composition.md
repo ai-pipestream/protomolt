@@ -1073,11 +1073,11 @@ or history contracts. Reuse is not implemented by this diagnostic.
 
 ## Transaction and concurrency design review
 
-Status: the reviewed design now has initial Java physical-object value contracts
-in repo/spi. Database integration and the concurrency acceptance cases remain
-unfinished. The local V25 reference-table patch is a stashed experiment, not an
-approved foundation. Design choices below take priority over fitting a new API
-to that patch.
+Status: Java physical-object values and the V25 location catalog are implemented.
+Shared retention, cleanup authority and immutable-part reuse remain unfinished.
+The earlier V25 reference-table experiment remains stashed; it is not the V25
+location migration now in the tree. Design choices below take priority over
+fitting a new API to that experiment.
 
 Measured evidence establishes excessive storage I/O for partial updates. It does
 not establish a database lock-wait percentage or connection-pool bottleneck.
@@ -1280,8 +1280,8 @@ realm, namespace and key; `PhysicalObjectIdentity` adds exact provider version
 when qualified, measured size, SHA-256 and stored content type. They validate
 shape only. They do not reserve storage, qualify a provider, authorize access,
 publish content or retain objects. An absent version requires explicit immutable
-key qualification and cannot represent unknown legacy data. The future ledger
-must enforce coordinate uniqueness across profile generations within a realm.
+key qualification and cannot represent unknown legacy data. V25 enforces
+coordinate uniqueness across profile generations within a realm.
 These types add no dependencies to repo/spi; its existing protobuf dependency
 remains. Four value-contract tests and the runtime dependency gate pass, and
 generated Maven/Gradle metadata still declares only repo-proto directly. This
@@ -1303,6 +1303,34 @@ scan and install write-through guards in the same migration; drain older writers
 before deployment. Existing cleanup remains authoritative until all acquisition
 and cleanup paths use one catalog-row fence and account for existing references.
 Do not enable common references or reuse before that cutover.
+
+V25 now registers known archive and document-part locations in
+`repository_physical_locations`, using the existing archive object UUID and a
+new permanent document-part UUID. `PhysicalObjectLedger` returns those original
+locations without granting access or cleanup rights. Existing admission paths
+register locations in the same SQL transaction. No provider call occurs there.
+Current cleanup ledgers remain the only cleanup authorities.
+
+Raw keys remain quarantined even when their old backend string matches a profile
+name; verified raw adoption is not implemented. Unknown document and archive keys
+are also reserved conservatively across namespaces. Known and unknown claims use
+one permanent key guard: known registrations share its lock, while quarantine
+requires exclusive access. Distinct known namespaces can register the same key
+concurrently once the guard exists. First creation of that guard serializes.
+Source insertion, catalog registration and quarantine roll back together on a
+conflict. Reservations survive deletion and cleanup; no release API exists yet.
+Callers must still handle database transaction failures, including deadlock aborts
+for conflicting batches; this migration does not add automatic retries.
+
+`PhysicalLocationMigrationIT` covers populated backfill, unknown raw identity,
+known cross-domain collisions, rollback, both registration/quarantine race orders,
+and progress across distinct known namespaces. Archive classification uses each
+rendition's binding and measured facts. PRESENT renditions require a retained
+version reference; DELETED renditions may preserve known location provenance
+without creating a reference. An unproved occurrence cannot borrow another
+rendition's known location. Document lookups use the existing digest index plus
+exact key comparison. These checks establish registration behavior, not provider
+qualification, shared retention, or a latency target.
 
 `ArchiveRetentionConcurrencyIT` supplies the SQL baseline for that fence. It
 observes actual PostgreSQL lock waits for reference-first and cleanup-first

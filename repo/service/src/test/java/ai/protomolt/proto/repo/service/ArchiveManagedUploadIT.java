@@ -581,6 +581,10 @@ class ArchiveManagedUploadIT {
         var saved = managed.putEntry(CALLER, request);
         UUID entry = UUID.fromString(saved.getEntryUuid());
         tx.inTransaction(em -> {
+            // Inject corruption that could predate the location guard. Disable
+            // only that trigger, within this transaction, so handler recovery
+            // checks still face real inconsistent persisted facts.
+            em.createNativeQuery("ALTER TABLE archive_versions DISABLE TRIGGER archive_location_quarantine").executeUpdate();
             var version = em.find(ArchiveVersionRecord.class, new ArchiveVersionRecord.Key(entry, 1));
             var manifest = ArchiveManifests.fromJson(version.manifest).toBuilder();
             if (corruption.equals("header")) {
@@ -598,6 +602,8 @@ class ArchiveManagedUploadIT {
                 version.rootChecksum = manifest.getRootChecksum();
             }
             version.manifest = ArchiveManifests.toJson(manifest.build());
+            em.flush();
+            em.createNativeQuery("ALTER TABLE archive_versions ENABLE TRIGGER archive_location_quarantine").executeUpdate();
         });
         var command = mutation(ArchiveMutationRequest.newBuilder()
                 .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(request.getAddress())));

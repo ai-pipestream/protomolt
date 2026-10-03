@@ -122,6 +122,11 @@ class ArchiveRetentionConcurrencyIT {
         var admitted = uploads.begin(new ArchiveObjectLedger.Location(entry, "account", "archive",
                 generation, "namespace", "object-" + entry), 0, "application/octet-stream", Duration.ofMinutes(1));
         UUID id = admitted.binding().objectId();
+        var catalogLocation = new PhysicalObjectLedger(tx).find(id).orElseThrow();
+        assertThat(catalogLocation.objectId()).isEqualTo(id);
+        assertThat(catalogLocation.backendGeneration()).isEqualTo(generation);
+        assertThat(catalogLocation.namespace()).isEqualTo("namespace");
+        assertThat(catalogLocation.key()).isEqualTo(admitted.binding().location().objectKey());
         // Synthetic SQL metadata only. This isolates the retention trigger from provider I/O.
         uploads.verify(id, admitted.upload().leaseToken(), 0,
                 "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", null, null);
