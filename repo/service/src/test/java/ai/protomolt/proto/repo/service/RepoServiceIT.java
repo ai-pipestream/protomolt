@@ -79,6 +79,7 @@ import org.testcontainers.utility.DockerImageName;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -157,6 +158,119 @@ class RepoServiceIT {
         assertThat(local.listDrives(caller, next)).isEqualTo(drives.listDrives(next));
         assertThat(local.listDrives(caller, next).getDrivesList())
                 .extracting(Drive::getName).containsExactly("second");
+    }
+
+    @Test
+    void boundDocumentReaderUsesCurrentAclAndCannotCrossAccounts() throws Exception {
+        String account = "acct-document-policy";
+        createDrive("policy", account);
+        var doc = fixture("policy-doc", account, "source").toBuilder();
+        doc.getOwnershipBuilder().getSecurityBuilder().setInheritanceEnabled(false);
+        var saved = documents.saveDocument(intakeSave(doc.build(), "policy", account).build());
+        var reader = new ai.protomolt.proto.repo.spi.RepositoryCaller("login", false, Set.of(account),
+                Set.of(ai.protomolt.proto.repo.v1.Principal.newBuilder()
+                        .setIdentityType("user-principal-name").setIdentity("ALICE").build()));
+        var binding = new java.util.concurrent.atomic.AtomicReference<>(reader);
+        var row = services.documentLedger().findByNodeId(UUID.fromString(saved.getNodeId())).orElseThrow();
+        var originalPolicy = row.readSecurity();
+        var request = GetDocumentRequest.newBuilder().setNodeId(saved.getNodeId()).build();
+        var reference = GetDocumentByReferenceRequest.newBuilder().setAddress(address(
+                row.docId, row.graphAddressId, row.accountId, row.graphId)).build();
+        var manifest = GetDocumentManifestRequest.newBuilder().setNodeId(saved.getNodeId()).build();
+        String endpoint = "policy-" + UUID.randomUUID();
+        var implementation = new DocumentGrpcService(services.repository(),
+                new ai.protomolt.proto.repo.engine.BlobOperations(services.blobStore(), services.driveLedger()),
+                authenticated -> binding.get());
+        var server = io.grpc.inprocess.InProcessServerBuilder.forName(endpoint)
+                .addService(io.grpc.ServerInterceptors.intercept(implementation, new io.grpc.ServerInterceptor() {
+                    @Override public <Q,R> io.grpc.ServerCall.Listener<Q> interceptCall(
+                            io.grpc.ServerCall<Q,R> call, io.grpc.Metadata headers, io.grpc.ServerCallHandler<Q,R> next) {
+                        var context = io.grpc.Context.current().withValue(
+                                ai.protomolt.proto.authz.grpc.CallerContexts.CALLER,
+                                ai.protomolt.proto.actions.Caller.scoped("login", Set.of()));
+                        return io.grpc.Contexts.interceptCall(context, call, headers, next);
+                    }
+                })).build().start();
+        var connection = InProcessChannelBuilder.forName(endpoint).build();
+        try {
+            var remote = DocumentServiceGrpc.newBlockingStub(connection).withDeadlineAfter(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(services.repository().getDocument(reader, request).getDocument()).isEqualTo(doc.build());
+            assertThat(remote.getDocument(request).getDocument()).isEqualTo(doc.build());
+            assertThat(remote.getDocumentByReference(reference).getDocument()).isEqualTo(doc.build());
+            assertThat(services.repository().getDocumentByReference(reader, reference).getDocument()).isEqualTo(doc.build());
+        assertThat(services.repository().getDocumentManifest(reader, manifest)).isEqualTo(remote.getDocumentManifest(manifest));
+        for (var invalidBinding : List.of(new ai.protomolt.proto.repo.spi.RepositoryCaller("other-name", false),
+                new ai.protomolt.proto.repo.spi.RepositoryCaller("login", true))) {
+            binding.set(invalidBinding);
+            assertThatThrownBy(() -> remote.getDocument(request)).satisfies(error ->
+                    assertThat(Status.fromThrowable(error).getCode()).isEqualTo(Status.Code.PERMISSION_DENIED));
+        }
+        binding.set(null);
+        assertThatThrownBy(() -> remote.getDocument(request)).satisfies(error ->
+                assertThat(Status.fromThrowable(error).getCode()).isEqualTo(Status.Code.PERMISSION_DENIED));
+        binding.set(reader);
+            // Membership cannot be substituted with a matching ACL identity.
+            binding.set(new ai.protomolt.proto.repo.spi.RepositoryCaller("login", false,
+                    Set.of("different-account"), reader.identities()));
+            assertThatThrownBy(() -> remote.getDocument(request)).satisfies(error ->
+                    assertThat(Status.fromThrowable(error).getCode()).isEqualTo(Status.Code.NOT_FOUND));
+            assertThatThrownBy(() -> services.repository().getDocument(binding.get(), request))
+                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            error -> assertThat(error.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.NOT_FOUND));
+        binding.set(reader);
+        for (var policy : List.of(DocumentSecurity.getDefaultInstance(),
+                originalPolicy.toBuilder().setPermissions(0, originalPolicy.getPermissions(0).toBuilder()
+                        .setAccess(Access.ACCESS_WRITE)).build())) {
+            row.writeSecurity(policy);
+            services.documentLedger().save(row);
+            assertThatThrownBy(() -> remote.getDocument(request)).satisfies(error ->
+                    assertThat(Status.fromThrowable(error).getCode()).isEqualTo(Status.Code.NOT_FOUND));
+        }
+        row.writeSecurity(null);
+        services.documentLedger().save(row);
+        assertThatThrownBy(() -> remote.getDocument(request)).satisfies(error ->
+                assertThat(Status.fromThrowable(error).getCode()).isEqualTo(Status.Code.NOT_FOUND));
+        // Scoped callers cannot treat unresolved inheritance as an empty parent policy.
+        row.writeSecurity(originalPolicy.toBuilder().setInheritanceEnabled(true).build());
+        services.documentLedger().save(row);
+        assertThatThrownBy(() -> remote.getDocument(request)).satisfies(error ->
+                assertThat(Status.fromThrowable(error).getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION));
+        row.security = "{\"denyAll\":true}";
+        services.documentLedger().save(row);
+        assertThatThrownBy(() -> remote.getDocument(request)).satisfies(error ->
+                assertThat(Status.fromThrowable(error).getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION));
+        assertThatThrownBy(() -> services.repository().getDocument(reader, request))
+                .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                        error -> assertThat(error.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION));
+        row.writeSecurity(DocumentSecurity.newBuilder().addPermissions(AccessRule.newBuilder()
+                .setIdentityType("public").setIdentity("public").setAccess(Access.ACCESS_READ)).build());
+        services.documentLedger().save(row);
+        // Public means any bound member of this account, including one without group identities.
+        binding.set(new ai.protomolt.proto.repo.spi.RepositoryCaller("login", false, Set.of(account), Set.of()));
+        assertThat(remote.getDocument(request).getDocument()).isEqualTo(doc.build());
+        binding.set(new ai.protomolt.proto.repo.spi.RepositoryCaller("login", false, Set.of("another"), Set.of()));
+        assertThatThrownBy(() -> remote.getDocument(request)).satisfies(error ->
+                assertThat(Status.fromThrowable(error).getCode()).isEqualTo(Status.Code.NOT_FOUND));
+        binding.set(reader);
+        // The body still contains the old grant. The current ledger policy decides access.
+            row.writeSecurity(originalPolicy.toBuilder().addPermissions(AccessRule.newBuilder()
+                    .setIdentityType("user-principal-name").setIdentity("alice").setAccess(Access.ACCESS_DENY)).build());
+            services.documentLedger().save(row);
+            for (Runnable denied : List.<Runnable>of(() -> remote.getDocument(request),
+                    () -> remote.getDocumentByReference(reference), () -> remote.getDocumentManifest(manifest))) {
+                assertThatThrownBy(denied::run).satisfies(error ->
+                        assertThat(Status.fromThrowable(error).getCode()).isEqualTo(Status.Code.NOT_FOUND));
+            }
+            for (Runnable denied : List.<Runnable>of(() -> services.repository().getDocument(reader, request),
+                    () -> services.repository().getDocumentByReference(reader, reference),
+                    () -> services.repository().getDocumentManifest(reader, manifest))) {
+                assertThatThrownBy(denied::run).isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                        error -> assertThat(error.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.NOT_FOUND));
+            }
+        } finally {
+            connection.shutdownNow().awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS);
+            server.shutdownNow().awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS);
+        }
     }
 
     @Test

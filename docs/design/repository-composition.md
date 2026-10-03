@@ -253,12 +253,26 @@ repair affected records. Do not backfill permissive ACLs or infer historical
 ownership from a current login. Unknown security fields now raise a ledger error
 instead of being discarded; retained bytes remain unchanged.
 
-The caller binding and evaluator are implementation foundations, not completed
-enforcement. Handler integration must still resolve current policy for reads,
-filter listings before counts and continuation tokens, and atomically guard policy
-revision with every mutation. Named gRPC callers currently carry only name/scopes;
-they remain denied until trusted repository bindings are installed. Open listeners
-retain process authority and require the trusted-network deployment boundary.
+Document node, reference and manifest reads now evaluate the loaded row's current
+policy before fetching content or exposing object coordinates. The row lookup is
+the policy snapshot for that read: a later revocation affects the next read, and
+does not promise cancellation of an already authorized read. Serialized ownership
+inside the stored body is provenance and never supplies a read grant. Denied and
+absent scoped point reads return the same NOT_FOUND status and description.
+
+An account-bound caller needs no additional typed identity to match a public ACL;
+public still does not cross accounts. Scoped inherited-policy reads remain
+unavailable until parent policy resolution is implemented. Operators bypass
+inherited grants while local policy and ownership still must be well formed.
+
+The complete ownership work remains unfinished: filter listings before counts and
+continuation tokens, resolve inherited policy, and atomically guard policy revision
+with every mutation. Lists and mutations still require process authority. Named
+gRPC callers currently carry only name/scopes and remain denied unless the host
+installs a trusted repository binding resolver. The document gRPC adapter accepts
+such a resolver and rejects null, changed principal or changed process authority.
+It is not a request-header override. Open listeners retain process authority and
+require the trusted-network deployment boundary.
 
 ## Partial updates and progressive hydration
 

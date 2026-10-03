@@ -482,11 +482,12 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
 
     @Override
     public GetDocumentResponse getDocument(RepositoryCaller caller, GetDocumentRequest request) {
-        RepositoryErrors.requireProcessAuthority(caller);
+        requireReadBinding(caller);
         return RepositoryErrors.call(() -> {
             UUID nodeId = DocumentRequests.parseUuid(request.getNodeId(), "node_id");
             DocumentRecord row = documents.findByNodeId(nodeId)
-                    .orElseThrow(() -> notFound("no document row for node_id " + nodeId));
+                    .orElseThrow(() -> readMissing(caller, "no document row for node_id " + nodeId));
+            requireRead(caller, row);
             return assemble(row, DocumentRequests.partsOrThrow(request.getPartsList(), "parts"),
                     Set.copyOf(request.getChunkSetsList()));
         });
@@ -494,11 +495,13 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
 
     @Override
     public GetDocumentResponse getDocumentByReference(RepositoryCaller caller, GetDocumentByReferenceRequest request) {
-        RepositoryErrors.requireProcessAuthority(caller);
+        requireReadBinding(caller);
         return RepositoryErrors.call(() -> {
             NodeAddress address = DocumentRequests.validateAddress(request.getAddress(), "address");
+            requireReadAccount(caller, address.getAccountId());
             DocumentRecord row = documents.findByReference(address)
-                    .orElseThrow(() -> notFound("no document row for " + DocumentRequests.describe(address)));
+                    .orElseThrow(() -> readMissing(caller, "no document row for " + DocumentRequests.describe(address)));
+            requireRead(caller, row);
             return assemble(row, DocumentRequests.partsOrThrow(request.getPartsList(), "parts"),
                     Set.copyOf(request.getChunkSetsList()));
         });
@@ -537,22 +540,24 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
 
     @Override
     public GetDocumentManifestResponse getDocumentManifest(RepositoryCaller caller, GetDocumentManifestRequest request) {
-        RepositoryErrors.requireProcessAuthority(caller);
+        requireReadBinding(caller);
         return RepositoryErrors.call(() -> {
             DocumentRecord row = switch (request.getCoordinateCase()) {
                 case NODE_ID -> {
                     UUID nodeId = DocumentRequests.parseUuid(request.getNodeId(), "node_id");
                     yield documents.findByNodeId(nodeId)
-                            .orElseThrow(() -> notFound("no document row for node_id " + nodeId));
+                            .orElseThrow(() -> readMissing(caller, "no document row for node_id " + nodeId));
                 }
                 case ADDRESS -> {
                     NodeAddress address = DocumentRequests.validateAddress(request.getAddress(), "address");
+                    requireReadAccount(caller, address.getAccountId());
                     yield documents.findByReference(address)
-                            .orElseThrow(() -> notFound("no document row for " + DocumentRequests.describe(address)));
+                            .orElseThrow(() -> readMissing(caller, "no document row for " + DocumentRequests.describe(address)));
                 }
                 default -> throw invalidArgument(
                         "exactly one coordinate (node_id or address) must be set");
             };
+            requireRead(caller, row);
             DocumentManifest manifest = row.readManifest();
             if (manifest == null) {
                 throw notFound("document row " + row.nodeId + " carries no part manifest");
@@ -565,6 +570,40 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
     }
 
     // ------------------------------------------------------------------ delete
+
+    private static void requireReadBinding(RepositoryCaller caller) {
+        if (caller == null || (!caller.processAuthority() && caller.accountIds().isEmpty()))
+            throw new ai.protomolt.proto.repo.spi.RepositoryException(
+                    ai.protomolt.proto.repo.spi.RepositoryException.Code.PERMISSION_DENIED,
+                    "Repository account bindings are required");
+    }
+
+    private static ai.protomolt.proto.repo.spi.RepositoryException readMissing(RepositoryCaller caller, String detail) {
+        return notFound(caller.processAuthority() ? detail : "Document is unavailable");
+    }
+
+    private static void requireReadAccount(RepositoryCaller caller, String account) {
+        if (!caller.processAuthority() && !caller.accountIds().contains(account))
+            throw notFound("Document is unavailable");
+    }
+
+    /** The loaded row is the policy snapshot for this read; body ACLs never grant access. */
+    private static void requireRead(RepositoryCaller caller, DocumentRecord row) {
+        requireReadAccount(caller, row.accountId);
+        ai.protomolt.proto.repo.v1.DocumentSecurity security;
+        try {
+            security = row.readSecurity();
+        } catch (ai.protomolt.proto.repo.container.ledger.LedgerException failure) {
+            throw new ai.protomolt.proto.repo.spi.RepositoryException(
+                    ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION,
+                    "Stored document policy is malformed", failure);
+        }
+        // An operator does not need inherited grants; scoped callers fail closed
+        // until the host supplies a resolved inherited-policy snapshot.
+        if (!DocumentAccessPolicy.allows(caller, row.accountId, security,
+                caller.processAuthority() ? List.of() : null, ai.protomolt.proto.repo.v1.Access.ACCESS_READ))
+            throw notFound("Document is unavailable");
+    }
 
     @Override
     public DeleteDocumentResponse deleteDocument(RepositoryCaller caller, DeleteDocumentRequest request) {

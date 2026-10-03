@@ -14,10 +14,18 @@ import io.grpc.stub.StreamObserver;
 public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServiceImplBase {
     private final DocumentRepository documents;
     private final BlobRepository blobs;
+    private final java.util.function.Function<ai.protomolt.proto.actions.Caller, RepositoryCaller> callerBindings;
 
     public DocumentGrpcService(DocumentRepository documents, BlobRepository blobs) {
+        this(documents, blobs, caller -> new RepositoryCaller(caller.name(), caller.unrestricted()));
+    }
+
+    /** The trusted host resolves account and ACL identities after transport authentication. */
+    public DocumentGrpcService(DocumentRepository documents, BlobRepository blobs,
+            java.util.function.Function<ai.protomolt.proto.actions.Caller, RepositoryCaller> callerBindings) {
         this.documents = java.util.Objects.requireNonNull(documents);
         this.blobs = java.util.Objects.requireNonNull(blobs);
+        this.callerBindings = java.util.Objects.requireNonNull(callerBindings);
     }
 
     public DocumentGrpcService(DocumentLedger documents, DriveLedger drives, Tx tx,
@@ -33,9 +41,15 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
 
     DocumentRepository repository() { return documents; }
 
-    private static RepositoryCaller caller() {
+    private RepositoryCaller caller() {
         var caller = ai.protomolt.proto.authz.grpc.CallerContexts.current();
-        return new RepositoryCaller(caller.name(), caller.unrestricted());
+        var resolved = callerBindings.apply(caller);
+        if (resolved == null || !resolved.principalName().equals(caller.name())
+                || resolved.processAuthority() != caller.unrestricted()) {
+            throw new RepositoryException(RepositoryException.Code.PERMISSION_DENIED,
+                    "Repository binding must preserve the authenticated principal and authority");
+        }
+        return resolved;
     }
 
     @Override public void saveDocument(SaveDocumentRequest request, StreamObserver<SaveDocumentResponse> observer) {
