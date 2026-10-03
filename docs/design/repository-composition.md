@@ -1052,6 +1052,175 @@ original backend/profile, version, digest and size for reused objects. Define
 cross-provider behavior and assess JCR requirements before changing publication
 or history contracts. Reuse is not implemented by this diagnostic.
 
+## Transaction and concurrency design review
+
+Status: architecture review requested before further implementation. The local
+V25 reference-table patch is an uncommitted experiment, not an approved foundation.
+Design choices below take priority over fitting a new API to that patch.
+
+Measured evidence establishes excessive storage I/O for partial updates. It does
+not establish a database lock-wait percentage or connection-pool bottleneck.
+Inspection identifies a coordination cost: DocumentPartStager.stagePart invokes
+2 lease renewals and 1 verification transaction per part. These operations lock
+the same attempt record. A 33-part save therefore executes 99 such transactions,
+plus admission, publication and scheduled heartbeat work. Profile their cost;
+do not attribute the measured latency to Java thread performance without data.
+
+### Target operation flow
+
+The foundation separates stored-content identity, repository revision identity
+and commit identity. A commit accepts a bounded change set with expected revisions
+for multiple repository objects. A document save composes this primitive. JCR
+sessions may accumulate changes outside SQL and submit a change set later; this
+does not yet define or implement JCR sessions.
+
+1. Admit a durable operation identity, request fingerprint, new upload intents
+   and ownership token. Record exact cleanup scope before provider writes.
+2. Upload only changed content using bounded I/O workers. Maintain one operation
+   heartbeat, independent of individual parts. Collect provider versions and
+   verification evidence. Batch persistence of evidence at defined checkpoints;
+   do not renew the same lease around each object operation.
+3. Validate the proposed revision and typed content. Reused immutable bytes may
+   retain byte-verification evidence, but schema/admission identity must match the
+   new revision. Failed validation cannot publish content or reach semantic review.
+4. Execute a short SQL commit: verify operation ownership, expected revisions,
+   current authorization and retention eligibility; insert revision manifests,
+   object/raw references and operation receipt; switch current revisions and
+   enqueue events. Lock shared invariants in a deterministic order. No provider
+   network call executes under these locks.
+5. Dispatch events and reclaim eligible unreferenced content asynchronously.
+   A synchronous response follows the SQL commit. Loss of the response is resolved
+   through the operation identity and request fingerprint, not a blind new write.
+
+Different objects should proceed independently. Updates competing for the same
+expected revision conflict explicitly; automatic merging requires domain rules.
+Cross-object invariants serialize only the affected change set. Admission and
+publication are separate transactions; object bytes may exist before visibility.
+The commit establishes repository visibility, not a distributed physical rollback
+across SQL and heterogeneous storage providers.
+
+### Failure and scheduling requirements
+
+An expired owner cannot publish. Late uploads remain within recorded cleanup
+scope and cannot regain ownership. A crash before evidence persistence may require
+re-verification or reclamation, but cannot create a visible revision. Batched
+verification must preserve all checks required for publication; batching is not
+permission to trust an unchecked upload receipt.
+
+Retention acquisition and cleanup claims need a shared concurrency protocol.
+Once reclamation is admitted for an object identity, later commits cannot acquire
+that identity. Cleanup proceeds outside SQL with durable retry state. Historical
+references, including raw bytes and schema descriptors, participate in this rule.
+
+Retained reads need an explicit lifetime: a read pin or equivalent epoch protects
+physical identities during materialization. Reclamation must account for provider
+calls that continue after client expiry. Missing or corrupt retained data produces
+an explicit error.
+
+Provider qualification may permit upload checksum evidence tied to the exact
+returned version, avoiding a verification GET. Until that evidence is validated,
+use bounded readback. An ETag is not sufficient checksum evidence. This decision
+is separate from eliminating copies of unchanged parts.
+
+Bound concurrency by provider connections, reserved bytes and admission capacity,
+with fairness across operations. Virtual threads can host blocking adapters;
+nonblocking adapters can implement the same completion/lifecycle contract. Select
+between them using evidence from connection wait, worker queue, SQL lock wait,
+provider duration, hashing and allocation measurements. Adding threads does not
+remove unnecessary storage calls or serialize fewer SQL updates.
+
+Required experiments compare the current path with changed-part-only writes and
+batched verification, preserving failure tests. Include independent documents,
+competing updates to one document, multi-object commits, slow providers and memory
+pressure. Record operation latency distributions, SQL transaction counts and wait
+times, provider calls/bytes, throughput, and reservation bounds. The design is not
+production-qualified until these results and failure/recovery tests support it.
+
+## Immutable part reuse: implementation design
+
+Status: design for the next ledger change, not available behavior. This follows
+the partial-update diagnostic and the existing JCR compatibility assessment.
+Provider versioning supplies physical identity; repository revisions group parts
+and retain references. Neither identity substitutes for the other.
+
+### Physical identity and provider qualification
+
+A retained object binding records backend generation/profile, namespace, key,
+provider version, checksum, byte length and content type. S3 version IDs already
+flow through the byte SPI and attempt ledger. A non-null version selects a
+specific stored object; the literal S3 `null` version is not an immutable-version
+guarantee. S3 lifecycle rules and explicit version deletion can remove retained
+content, so versioning does not establish retention policy by itself.
+See [S3 versioning](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html)
+and [version deletion](https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeletingObjectVersions.html).
+
+Continue allocating fresh keys for changed objects. Referencing an existing
+version avoids the copy; overwriting its key is unnecessary. This also preserves
+the abandoned-attempt reclaimer's whole-key scope. A future same-key write mode
+would require version-specific reclamation and tests before activation.
+Unversioned storage needs a qualified immutable-key policy for reuse. The
+NON_EXPIRING_WRITES capability does not supply that policy. Providers without a
+qualified reuse identity retain the explicit verified-copy path, with that
+behavior recorded in operation evidence. Do not silently select another backend.
+
+### Separate staged writes from committed references
+
+V22 currently equates the ordered manifest with all objects written by one
+attempt. DocumentPartPublication validates that equality, and
+DocumentPublicationLedger loads parts from that attempt. Introduce an ordered
+revision-reference relation so a committed revision can combine fresh verified
+objects with references to previously admitted objects. An attempt still records
+only its new writes, including uncertain writes requiring cleanup.
+
+1. Add immutable physical bindings and ordered revision references. Backfill
+   existing publication history from verified attempt objects, retaining exact
+   identities and manifest order. Legacy unbound objects stay explicitly unknown.
+   Check migration on populated data; reject missing or inconsistent evidence.
+2. Change SQL publication guards and Java validation together. Validate the full
+   ordered reference set, aggregates, CORE identity, manifest and root checksum.
+   Fresh references require the live verified attempt. Reused references require
+   a retained admitted binding and a source authorization/revision fence. Empty
+   fresh-write sets must support metadata-only revisions without invented PUTs.
+3. Resolve each reference through its retained storage binding during readback.
+   A revision can contain several storage identities. Keep cross-provider copy
+   explicit when destination policy requires local placement; otherwise validate
+   permission to retain the remote binding. Preserve existing protobuf tags,
+   names, import paths and Any URLs; internal SQL relations need no wire rename.
+4. Publish current and historical references atomically with document metadata,
+   raw-object retention, and outbox records. Existing current raw references do
+   not establish historical retention. Add historical raw pins before releasing
+   current bindings or permitting history restoration.
+5. Reclamation must lock physical identity and reject any current or retained
+   reference. Reference acquisition and reclamation share that lock discipline.
+   Preserve durable cleanup fencing for late writes. A published origin attempt
+   cannot be reclaimed merely because its original document was deleted.
+
+Reuse preserves part provenance and timestamps. It does not authorize a new
+account, validate a different schema, or prove semantic correctness. Bind typed
+admission to the assembled revision and descriptor identity; changed schemas or
+policies need their required checks even when byte identities remain unchanged.
+The repository foundation supplies reusable object references and atomic change
+sets; document revisions are one consumer. JCR graph/session/workspace semantics
+remain in the optional extension, with no JCR dependency in byte modules.
+
+### Acceptance sequence
+
+- Migrate populated managed history; exact version reads and manifest order remain
+  unchanged. Reject forged reuse, wrong account, unknown binding, wrong digest,
+  unavailable original profile and a source revision changed before commit.
+- Change one of 32 managed chunks: verify one new object write, no copied objects,
+  complete result equality and retained original identities for the other parts.
+  Separate required schema/admission reads from unnecessary storage copying.
+- Test reuse after a later S3 version and a delete marker, plus missing exact
+  versions and suspended/null-version policy. Repeat with a qualified non-S3
+  provider; do not infer qualification from a successful S3 test.
+- Race reference acquisition with release/reclamation and restoration. Exercise
+  cancellation, ambiguous commit and restart with real adapters. Shared objects
+  survive deletion of a referencing document until the final permitted release.
+- Rerun the same partial-update diagnostic and report I/O, reservation and latency
+  changes. Keep production managed-save wiring gated on deletion, retention,
+  authorization, lifecycle and transport conformance tests.
+
 ## Archival durability and lifecycle
 
 Preserve manifests, checksums, entry-local sharing, version policies and exact-key
