@@ -89,6 +89,15 @@ class ArchiveMutationContractTest {
                 .setObservedAt(Timestamp.newBuilder().setSeconds(1)).setStatusRevision(1);
     }
 
+    @Test void successfulTransportResponsesRequireAValidReceipt() throws Exception {
+        var noop = receipt().setState(ArchiveMutationState.ARCHIVE_MUTATION_STATE_COMPLETED).build();
+        check(ArchiveMutationResponse.newBuilder().setReceipt(noop).build(), true);
+        check(GetArchiveMutationResponse.newBuilder().setReceipt(noop).build(), true);
+        check(ArchiveMutationResponse.getDefaultInstance(), false);
+        check(GetArchiveMutationResponse.getDefaultInstance(), false);
+        check(ArchiveMutationResponse.newBuilder().setReceipt(noop.toBuilder().setObjectsPending(1)).build(), false);
+    }
+
     private void check(Message message, boolean valid) throws Exception {
         var result = validator.validate(message);
         assertThat(result.valid()).as("%s: %s", message, result).isEqualTo(valid);

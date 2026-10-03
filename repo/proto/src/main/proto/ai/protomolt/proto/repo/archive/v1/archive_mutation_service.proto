@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.archive.v1;
+
+import "ai/protomolt/proto/repo/archive/v1/archive_mutation.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.archive.v1";
+
+// Durable logical mutation with separately observed physical cleanup. Hosts
+// must configure authorization and recovery before enabling this service.
+service ArchiveMutationService {
+  // Admit once by trusted principal, account and caller operation UUID. Retries
+  // retain the logical result and return the latest recorded cleanup observation.
+  rpc ArchiveMutation(ArchiveMutationRequest) returns (ArchiveMutationResponse);
+  // Observe cleanup without repeating the logical mutation. COMPLETED is an
+  // observation; late byte writes can reopen cleanup at a later status revision.
+  rpc GetArchiveMutation(GetArchiveMutationRequest) returns (GetArchiveMutationResponse);
+}
+
+// The admitted logical outcome with the latest durable cleanup observation.
+message ArchiveMutationResponse {
+  // Present on every successful response.
+  ArchiveMutationReceipt receipt = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true}];
+}
+
+// The recorded logical outcome with the latest durable cleanup observation.
+message GetArchiveMutationResponse {
+  // Present on every successful response; absent operations return NOT_FOUND.
+  ArchiveMutationReceipt receipt = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true}];
+}

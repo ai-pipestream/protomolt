@@ -161,13 +161,16 @@ tests before extending retry contracts.
 
 ### Next boundary: archive destructive admission
 
-The new `archive_mutation.proto` defines reviewed request/receipt/lookup messages,
-without registering a service or adding ignored fields to the existing RPCs.
+The new `archive_mutation.proto` defines reviewed request/receipt/lookup messages.
+`archive_mutation_service.proto` adds the separately mounted `ArchiveMutationService`
+without adding ignored fields to the existing RPCs.
 `ArchiveMutationRequest` wraps exactly one existing destructive request and a
 required operation UUID. `ArchiveMutationReceipt` separates immutable logical
 counts from observed physical cleanup, with a command fingerprint, observation
-time and monotonic status revision. `COMPLETED` means confirmed absence at that
-observation; detected late writes can reopen physical cleanup with a newer status
+time and monotonic status revision. `COMPLETED` means the latest durable cleanup
+records confirm absence, not that lookup performed a fresh provider check.
+Undetected late writes may exist until reconciliation; a cleanup claim can reopen
+the physical status with a newer status
 revision. Targets partition into pending and confirmed-absent objects. No-op
 operations have a completed, zero-target receipt.
 
@@ -198,7 +201,11 @@ Handler obligations, beyond annotations:
 Runtime fixtures cover generated and dynamic messages, required/exclusive action
 selection, nested request rules, bounds and receipt cross-field accounting. JSON
 Schema exposes UUID format and CEL metadata; CEL accounting is runtime-only.
-No portable OpenAPI parity or implemented mutation RPC is claimed.
+No portable OpenAPI parity is claimed. The new service has two new operations:
+`ArchiveMutation` admits one of the three existing command shapes;
+`GetArchiveMutation` returns its durable cleanup status. Required response
+wrappers carry the same validated receipt. Existing destructive RPC contracts
+remain unchanged and their implementation cutover is still pending.
 
 `ArchiveMutationCommand`, `ArchiveMutationLedger` and V19 now implement internal
 command validation and atomic admission persistence. The operation key serializes
@@ -216,10 +223,37 @@ commands, absent-entry replay after recreation, rollback/retry, stale revisions,
 invalid outcomes, target scope/liveness, immutable rows and repinning after
 admission. The repinning regression failed before the V19 trigger fix. Nested
 invalid and unknown command fields exercise the runtime validation boundary.
-The internal lookup returns the **initial** admission receipt only. Current
-physical observations, production handler/transport integration, complete policy
-enforcement and end-to-end crash recovery remain unfinished. Existing destructive
-RPCs do not yet use this ledger.
+The admission ledger's internal lookup returns the **initial** receipt only.
+`ArchiveDestructiveMutations` implements logical entry deletion, version pruning
+and rendition redaction inside that transaction. It recomputes manifest hashes
+and sizes, verifies exact per-version SQL pins and original byte bindings, and
+updates counters with the logical changes. Redaction retains object identity and
+reason as provenance while removing live references; both row and protobuf
+manifest checksum/size fields change together. Unbound content requires explicit
+storage identity migration; no current-drive inference is performed.
+
+V20 and `ArchiveMutationObservations` maintain a separate monotonic status record.
+One SQL snapshot reads all target states, and unchanged observations retain their
+revision/time. Observation writes serialize per operation; late reconciliation
+can move completed status back to reclaiming. Lookup never executes provider I/O
+or repeats a logical mutation. `ArchiveMutationOperations` is shared by the Java
+SPI and the public optional `ArchiveMutationGrpcService` adapter. The adapter
+requires an explicit trusted caller context; process authority is required in
+both paths until archive ownership policy integration is complete. Authentication
+alone does not grant this authority.
+
+Real PostgreSQL/S3 tests exercise all three commands through the shared library
+and in-process gRPC, retained-object sharing, checksum/size tombstone updates,
+rollback without byte loss, invalid stored bindings, cleanup outage/retry,
+concurrent status lookup and late-write reconciliation. A PostgreSQL test verifies
+cancellation during the logical callback rolls back admission. Runtime fixtures
+validate missing and malformed successful response receipts.
+
+`RepoServices` does not mount the new adapter or enable managed archive writes
+yet. Production composition/recovery scheduling, complete write-path coverage,
+ownership enforcement, legacy identity migration and destructive RPC cutover
+remain unfinished. The existing unsafe legacy deletion regressions below are
+still relevant; the new path does not make those old handlers safe.
 
 `ArchiveDeletionFailureIT` now reproduces swallowed delete failures over both the
 library and real in-process gRPC transport with PostgreSQL and S3. Both cases are

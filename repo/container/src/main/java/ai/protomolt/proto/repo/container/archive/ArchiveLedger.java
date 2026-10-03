@@ -456,7 +456,7 @@ public final class ArchiveLedger {
         }
     }
 
-    private static void applyDelta(EntityManager em, String accountId, String archive,
+    static void applyDelta(EntityManager em, String accountId, String archive,
                                    StatsDelta delta) {
         if (delta.entries() == 0 && delta.versions() == 0
                 && delta.retainedBytes() == 0 && delta.currentBytes() == 0

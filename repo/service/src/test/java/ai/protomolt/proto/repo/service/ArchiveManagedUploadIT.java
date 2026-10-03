@@ -251,4 +251,266 @@ class ArchiveManagedUploadIT {
                 .addRenditions(RenditionContent.newBuilder().setRendition(RenditionDescriptor.newBuilder().setName("original"))
                         .setData(ByteString.copyFromUtf8(value))).build();
     }
+
+    @Test void admittedDeleteRemovesLogicalStateBeforeReclaimingOriginalBytesAndReplaysSafely() {
+        var request = request("durable deletion");
+        var saved = managed.putEntry(CALLER, request);
+        var object = saved.getManifest().getRenditions(0);
+        var stats = ledger.findStats("account", "records").orElseThrow();
+        var command = mutation(ArchiveMutationRequest.newBuilder()
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(request.getAddress())));
+        var receipt = execute(command);
+        assertThat(receipt.getEntryDeleted()).isTrue();
+        assertThat(receipt.getVersionsRemoved()).isEqualTo(1);
+        assertThat(receipt.getObjectsPending()).isEqualTo(1);
+        assertThat(ledger.findEntry(ArchiveIds.entryUuid(request.getAddress()))).isEmpty();
+        var after = ledger.findStats("account", "records").orElseThrow();
+        assertThat(after.entries).isEqualTo(stats.entries - 1);
+        assertThat(after.versions).isEqualTo(stats.versions - 1);
+        assertThat(after.retainedBytes).isEqualTo(stats.retainedBytes - object.getSizeBytes());
+        assertThat(after.currentBytes).isEqualTo(stats.currentBytes - object.getSizeBytes());
+        assertThat(opened.store().get("managed-archive", object.getObjectKey()).data())
+                .isEqualTo(request.getRenditions(0).getData().toByteArray());
+        var replacement = managed.putEntry(CALLER, request);
+        assertThat(execute(command)).isEqualTo(receipt);
+        assertThat(ledger.findEntry(UUID.fromString(replacement.getEntryUuid()))).isPresent();
+        assertThat(recovery().recover(UUID.fromString(object.getStorageObjectId()), java.time.Instant.now().plusSeconds(60)))
+                .isEqualTo(ArchiveObjectRecovery.Outcome.RECLAIMED);
+        assertThat(managed.getEntry(CALLER, GetEntryRequest.newBuilder().setAddress(request.getAddress()).build())
+                .getRenditions(0).getData()).isEqualTo(request.getRenditions(0).getData());
+    }
+
+    @Test void admittedPruningKeepsObjectsSharedByRetainedVersions() {
+        var request = request("shared");
+        var first = managed.putEntry(CALLER, request);
+        var secondRequest = request.toBuilder().addRenditions(RenditionContent.newBuilder()
+                .setRendition(RenditionDescriptor.newBuilder().setName("summary"))
+                .setData(ByteString.copyFromUtf8("summary bytes"))).build();
+        managed.putEntry(CALLER, secondRequest);
+        managed.putEntry(CALLER, secondRequest.toBuilder().setRenditions(0, secondRequest.getRenditions(0).toBuilder()
+                .setData(ByteString.copyFromUtf8("new original"))).build());
+        var firstPrune = execute(mutation(ArchiveMutationRequest.newBuilder()
+                .setPruneVersions(PruneVersionsRequest.newBuilder().setAddress(request.getAddress()).setKeepLatest(2))));
+        assertThat(firstPrune.getVersionsRemoved()).isEqualTo(1);
+        assertThat(firstPrune.getObjectsTargeted()).isZero();
+        assertThat(firstPrune.getState()).isEqualTo(ArchiveMutationState.ARCHIVE_MUTATION_STATE_COMPLETED);
+        var secondPrune = execute(mutation(ArchiveMutationRequest.newBuilder()
+                .setPruneVersions(PruneVersionsRequest.newBuilder().setAddress(request.getAddress()).setKeepLatest(1))));
+        assertThat(secondPrune.getVersionsRemoved()).isEqualTo(1);
+        assertThat(secondPrune.getObjectsTargeted()).isEqualTo(1);
+        var old = first.getManifest().getRenditions(0);
+        assertThat(recovery().recover(UUID.fromString(old.getStorageObjectId()), java.time.Instant.now().plusSeconds(60)))
+                .isEqualTo(ArchiveObjectRecovery.Outcome.RECLAIMED);
+        assertThat(managed.getEntry(CALLER, GetEntryRequest.newBuilder().setAddress(request.getAddress()).build())
+                .getRenditionsList()).extracting(RenditionContent::getData)
+                .containsExactlyInAnyOrder(ByteString.copyFromUtf8("new original"), ByteString.copyFromUtf8("summary bytes"));
+    }
+
+    @Test void admittedRedactionUpdatesManifestHeadersAndPreservesTombstoneProvenance() {
+        var request = request("original");
+        var first = managed.putEntry(CALLER, request);
+        managed.putEntry(CALLER, request.toBuilder().addRenditions(RenditionContent.newBuilder()
+                .setRendition(RenditionDescriptor.newBuilder().setName("summary"))
+                .setData(ByteString.copyFromUtf8("summary"))).build());
+        var command = mutation(ArchiveMutationRequest.newBuilder()
+                .setDeleteRendition(DeleteRenditionRequest.newBuilder().setAddress(request.getAddress())
+                        .setRendition("original").setReason("redaction requested")));
+        var receipt = execute(command);
+        assertThat(receipt.getVersionsTombstoned()).isEqualTo(2);
+        assertThat(receipt.getObjectsTargeted()).isEqualTo(1);
+        for (var version : ledger.allVersions(UUID.fromString(first.getEntryUuid()))) {
+            var manifest = ArchiveManifests.fromJson(version.manifest);
+            assertThat(manifest.getRootChecksum()).isEqualTo(ArchiveManifests.rootChecksum(manifest.getRenditionsList()))
+                    .isEqualTo(version.rootChecksum);
+            assertThat(manifest.getTotalBytes()).isEqualTo(ArchiveManifests.totalBytes(manifest.getRenditionsList()))
+                    .isEqualTo(version.totalBytes);
+            var original = manifest.getRenditionsList().stream().filter(r -> r.getRendition().getName().equals("original")).findFirst().orElseThrow();
+            assertThat(original.getState()).isEqualTo(RenditionState.RENDITION_STATE_DELETED);
+            assertThat(original.getDeletedReason()).isEqualTo("redaction requested");
+            assertThat(original.getStorageObjectId()).isEqualTo(first.getManifest().getRenditions(0).getStorageObjectId());
+        }
+        var noop = execute(new ArchiveMutationCommand(command.request().toBuilder().setOperationId(UUID.randomUUID().toString()).build()));
+        assertThat(noop.getVersionsTombstoned()).isZero();
+        assertThat(noop.getObjectsTargeted()).isZero();
+        assertThat(execute(command)).isEqualTo(receipt);
+    }
+
+    @Test void failedLogicalDeleteLeavesReceiptAbsentAndStoredBytesReadable() {
+        var request = request("must survive rollback");
+        var saved = managed.putEntry(CALLER, request);
+        String function = "reject_delete_" + UUID.randomUUID().toString().replace("-", "");
+        var command = mutation(ArchiveMutationRequest.newBuilder()
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(request.getAddress())));
+        tx.inTransaction(em -> {
+            em.createNativeQuery("CREATE FUNCTION " + function + "() RETURNS trigger LANGUAGE plpgsql AS $$ "
+                    + "BEGIN RAISE EXCEPTION 'injected mutation failure' USING ERRCODE='40001'; END; $$").executeUpdate();
+            em.createNativeQuery("CREATE TRIGGER " + function + " BEFORE DELETE ON archive_entries "
+                    + "FOR EACH ROW WHEN (OLD.entry_uuid='" + saved.getEntryUuid() + "'::uuid) EXECUTE FUNCTION " + function + "()")
+                    .executeUpdate();
+        });
+        try {
+            assertThatThrownBy(() -> execute(command)).hasStackTraceContaining("injected mutation failure");
+            assertThat(new ArchiveMutationLedger(tx).find(CALLER.principalName(), "account", command.operationId())).isEmpty();
+            assertThat(managed.getEntry(CALLER, GetEntryRequest.newBuilder().setAddress(request.getAddress()).build())
+                    .getRenditions(0).getData()).isEqualTo(request.getRenditions(0).getData());
+        } finally {
+            tx.inTransaction(em -> {
+                em.createNativeQuery("DROP TRIGGER " + function + " ON archive_entries").executeUpdate();
+                em.createNativeQuery("DROP FUNCTION " + function + "()").executeUpdate();
+            });
+        }
+        assertThat(execute(command).getEntryDeleted()).isTrue();
+    }
+
+    @Test void receiptObservationsTrackFailureRecoveryAndReopenedCleanup() throws Exception {
+        var request = request("observe cleanup");
+        var saved = managed.putEntry(CALLER, request);
+        var object = saved.getManifest().getRenditions(0);
+        UUID objectId = UUID.fromString(object.getStorageObjectId());
+        var command = mutation(ArchiveMutationRequest.newBuilder()
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(request.getAddress())));
+        var admission = execute(command);
+        var observations = new ArchiveMutationObservations(tx);
+        java.util.function.Supplier<ArchiveMutationReceipt> observe = () -> observations
+                .observe(CALLER.principalName(), "account", command.operationId()).orElseThrow();
+        assertThat(observe.get()).isEqualTo(admission);
+        assertThat(observations.observe("other", "account", command.operationId())).isEmpty();
+        var offline = new ArchiveObjectRecovery(new ArchiveCleanupLedger(tx), new ManagedBackendLedger(tx), (generation, profile) -> {
+            throw new IllegalStateException("Original backend offline");
+        });
+        var cutoff = java.time.Instant.now().plusSeconds(60);
+        assertThatThrownBy(() -> offline.recover(objectId, cutoff)).hasRootCauseMessage("Original backend offline");
+        var failed = observe.get();
+        assertThat(failed.getState()).isEqualTo(ArchiveMutationState.ARCHIVE_MUTATION_STATE_RETRY_REQUIRED);
+        assertThat(failed.getErrorCode()).isEqualTo("BACKEND_RECLAMATION_FAILED");
+        assertThat(failed.getStatusRevision()).isGreaterThan(admission.getStatusRevision());
+        assertThat(recovery().recover(objectId, cutoff)).isEqualTo(ArchiveObjectRecovery.Outcome.RECLAIMED);
+        var completed = observe.get();
+        assertThat(completed.getState()).isEqualTo(ArchiveMutationState.ARCHIVE_MUTATION_STATE_COMPLETED);
+        assertThat(completed.getObjectsConfirmedAbsent()).isEqualTo(1);
+        assertThat(completed.hasErrorCode()).isFalse();
+        assertThat(completed.getStatusRevision()).isGreaterThan(failed.getStatusRevision());
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var calls = java.util.stream.IntStream.range(0, 8).mapToObj(i -> executor.submit(observe::get)).toList();
+            for (var call : calls) assertThat(call.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(completed);
+        }
+        opened.store().put(new BlobStore.PutSpec("managed-archive", object.getObjectKey(), "text/plain", Map.of(), object.getSha256()),
+                request.getRenditions(0).getData().toByteArray());
+        new ArchiveCleanupLedger(tx).claim(objectId, cutoff).orElseThrow();
+        var reopened = observe.get();
+        assertThat(reopened.getState()).isEqualTo(ArchiveMutationState.ARCHIVE_MUTATION_STATE_RECLAIMING);
+        assertThat(reopened.getObjectsPending()).isEqualTo(1);
+        assertThat(reopened.getStatusRevision()).isGreaterThan(completed.getStatusRevision());
+        assertThat(recovery().recover(objectId, cutoff)).isEqualTo(ArchiveObjectRecovery.Outcome.RECLAIMED);
+        assertThat(observe.get().getStatusRevision()).isGreaterThan(reopened.getStatusRevision());
+        assertThat(execute(command)).isEqualTo(admission); // Logical record remains immutable.
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"header", "bytes", "key", "pin"})
+    void inconsistentStoredFactsCannotAdmitDestruction(String corruption) {
+        var request = request("validate original facts");
+        var saved = managed.putEntry(CALLER, request);
+        UUID entry = UUID.fromString(saved.getEntryUuid());
+        tx.inTransaction(em -> {
+            var version = em.find(ArchiveVersionRecord.class, new ArchiveVersionRecord.Key(entry, 1));
+            var manifest = ArchiveManifests.fromJson(version.manifest).toBuilder();
+            if (corruption.equals("header")) {
+                manifest.setTotalBytes(manifest.getTotalBytes() + 1);
+                version.totalBytes++;
+            } else if (corruption.equals("pin")) {
+                em.createNativeQuery("DELETE FROM archive_version_object_refs WHERE entry_uuid=:entry")
+                        .setParameter("entry", entry).executeUpdate();
+            } else {
+                var item = manifest.getRenditions(0).toBuilder();
+                if (corruption.equals("key")) item.setObjectKey("wrong-key");
+                else item.setSha256("b".repeat(64));
+                manifest.setRenditions(0, item);
+                manifest.setRootChecksum(ArchiveManifests.rootChecksum(manifest.getRenditionsList()));
+                version.rootChecksum = manifest.getRootChecksum();
+            }
+            version.manifest = ArchiveManifests.toJson(manifest.build());
+        });
+        var command = mutation(ArchiveMutationRequest.newBuilder()
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(request.getAddress())));
+        assertThatThrownBy(() -> execute(command)).isInstanceOf(IllegalStateException.class);
+        assertThat(new ArchiveMutationLedger(tx).find(CALLER.principalName(), "account", command.operationId())).isEmpty();
+        assertThat(ledger.findEntry(entry)).isPresent();
+        assertThat(opened.store().get("managed-archive", saved.getManifest().getRenditions(0).getObjectKey()).data())
+                .isEqualTo(request.getRenditions(0).getData().toByteArray());
+    }
+
+    static ArchiveMutationCommand mutation(ArchiveMutationRequest.Builder request) {
+        return new ArchiveMutationCommand(request.setOperationId(UUID.randomUUID().toString()).build());
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void mutationAndLookupConformanceAcrossLibraryAndAuthenticatedGrpc(boolean transport) throws Exception {
+        var operations = new ArchiveMutationOperations(ledger, new ArchiveMutationLedger(tx), new ArchiveMutationObservations(tx));
+        String name = "archive-mutations-" + UUID.randomUUID();
+        var operator = ai.protomolt.proto.actions.Caller.operator();
+        var caller = new RepositoryCaller(operator.name(), operator.unrestricted());
+        var server = InProcessServerBuilder.forName(name).addService(io.grpc.ServerInterceptors.intercept(
+                new ArchiveMutationGrpcService(operations), new io.grpc.ServerInterceptor() {
+                    @Override public <Q, S> io.grpc.ServerCall.Listener<Q> interceptCall(io.grpc.ServerCall<Q, S> call,
+                            io.grpc.Metadata headers, io.grpc.ServerCallHandler<Q, S> next) {
+                        return io.grpc.Contexts.interceptCall(io.grpc.Context.current()
+                                .withValue(ai.protomolt.proto.authz.grpc.CallerContexts.CALLER, operator), call, headers, next);
+                    }
+                })).build().start();
+        var channel = InProcessChannelBuilder.forName(name).build();
+        try {
+            var stub = ArchiveMutationServiceGrpc.newBlockingStub(channel);
+            java.util.function.Function<ArchiveMutationRequest, ArchiveMutationReceipt> mutate = transport
+                    ? r -> stub.archiveMutation(r).getReceipt() : r -> operations.mutateArchive(caller, r);
+            java.util.function.Function<GetArchiveMutationRequest, ArchiveMutationReceipt> lookup = transport
+                    ? r -> stub.getArchiveMutation(r).getReceipt() : r -> operations.getArchiveMutation(caller, r);
+            var request = request("version one");
+            managed.putEntry(CALLER, request);
+            managed.putEntry(CALLER, request.toBuilder().setRenditions(0, request.getRenditions(0).toBuilder()
+                    .setData(ByteString.copyFromUtf8("version two"))).build());
+            var prune = mutation(ArchiveMutationRequest.newBuilder()
+                    .setPruneVersions(PruneVersionsRequest.newBuilder().setAddress(request.getAddress()).setKeepLatest(1))).request();
+            var receipt = mutate.apply(prune);
+            assertThat(receipt.getVersionsRemoved()).isEqualTo(1);
+            assertThat(receipt.getObjectsPending()).isEqualTo(1);
+            assertThat(lookup.apply(GetArchiveMutationRequest.newBuilder().setAccountId("account").setOperationId(prune.getOperationId()).build()))
+                    .isEqualTo(receipt);
+            assertThat(mutate.apply(prune)).isEqualTo(receipt);
+            var redaction = mutate.apply(mutation(ArchiveMutationRequest.newBuilder()
+                    .setDeleteRendition(DeleteRenditionRequest.newBuilder().setAddress(request.getAddress())
+                            .setRendition("original").setReason("remove content"))).request());
+            assertThat(redaction.getVersionsTombstoned()).isEqualTo(1);
+            var deletion = mutate.apply(mutation(ArchiveMutationRequest.newBuilder()
+                    .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(request.getAddress()))).request());
+            assertThat(deletion.getEntryDeleted()).isTrue();
+            assertThat(deletion.getObjectsTargeted()).isZero();
+            var denied = new RepositoryCaller(caller.principalName(), false);
+            assertThatThrownBy(() -> operations.mutateArchive(denied, prune)).isInstanceOfSatisfying(RepositoryException.class,
+                    failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.PERMISSION_DENIED));
+            assertThatThrownBy(() -> operations.getArchiveMutation(denied, GetArchiveMutationRequest.newBuilder()
+                    .setAccountId("account").setOperationId(prune.getOperationId()).build())).isInstanceOfSatisfying(RepositoryException.class,
+                    failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.PERMISSION_DENIED));
+            var conflict = prune.toBuilder().setPruneVersions(prune.getPruneVersions().toBuilder().setKeepLatest(2)).build();
+            assertThatThrownBy(() -> mutate.apply(conflict)).satisfies(failure -> {
+                if (transport) assertThat(io.grpc.Status.fromThrowable(failure).getCode()).isEqualTo(io.grpc.Status.Code.ABORTED);
+                else assertThat(((RepositoryException) failure).code()).isEqualTo(RepositoryException.Code.CONFLICT);
+            });
+        } finally { channel.shutdownNow(); server.shutdownNow(); }
+    }
+
+    @Test void mutationTransportRejectsMissingCallerInsteadOfAssumingOperator() throws Exception {
+        String name = "archive-no-caller-" + UUID.randomUUID();
+        var operations = new ArchiveMutationOperations(ledger, new ArchiveMutationLedger(tx), new ArchiveMutationObservations(tx));
+        var server = InProcessServerBuilder.forName(name).addService(new ArchiveMutationGrpcService(operations)).build().start();
+        var channel = InProcessChannelBuilder.forName(name).build();
+        try {
+            assertThatThrownBy(() -> ArchiveMutationServiceGrpc.newBlockingStub(channel).archiveMutation(ArchiveMutationRequest.getDefaultInstance()))
+                    .satisfies(failure -> assertThat(io.grpc.Status.fromThrowable(failure).getCode()).isEqualTo(io.grpc.Status.Code.UNAUTHENTICATED));
+        } finally { channel.shutdownNow(); server.shutdownNow(); }
+    }
+
+    static ArchiveMutationReceipt execute(ArchiveMutationCommand command) {
+        long revision = ledger.findEntry(ArchiveIds.entryUuid(command.address())).map(e -> e.mutationRevision).orElse(0L);
+        return new ArchiveMutationLedger(tx).execute(CALLER.principalName(), command, revision);
+    }
 }

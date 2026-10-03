@@ -134,6 +134,26 @@ class ArchiveMutationLedgerIT {
         assertThat(otherId.sha256()).isEqualTo(command.sha256());
     }
 
+    @Test void cancellationDuringLogicalChangeRollsBackAdmission() throws Exception {
+        try (var database = database(); var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var tx = new Tx(database.entityManagerFactory());
+            var mutations = new ArchiveMutationLedger(tx);
+            var command = command(address());
+            var saved = save(tx, command.address());
+            executor.submit(() -> {
+                try {
+                    assertThatThrownBy(() -> mutations.admit("caller", command, saved.mutationRevision, (em, entry) -> {
+                        em.remove(entry);
+                        Thread.currentThread().interrupt();
+                        return new ArchiveMutationLedger.LogicalOutcome(true, 0, 0, Set.of());
+                    })).isInstanceOf(java.util.concurrent.CancellationException.class);
+                } finally { Thread.interrupted(); }
+            }).get(10, TimeUnit.SECONDS);
+            assertThat(new ArchiveLedger(tx).findEntry(saved.entryUuid)).isPresent();
+            assertThat(mutations.find("caller", command.address().getAccountId(), command.operationId())).isEmpty();
+        }
+    }
+
     @Test void targetsMustBePublishedInScopeAndUnpinnedAndCommitWithTheReceipt() throws Exception {
         try (var database = database()) {
             var tx = new Tx(database.entityManagerFactory());

@@ -10,7 +10,7 @@ import "google/protobuf/timestamp.proto";
 option java_multiple_files = true;
 option java_package = "ai.protomolt.proto.repo.archive.v1";
 
-// Reviewed admission contracts. No RPC is registered for these messages yet.
+// Admission contracts served by ArchiveMutationService when explicitly mounted.
 // The operation key is (account, trusted stable caller principal, operation_id).
 // The principal never comes from the payload. Normalize the selected command,
 // persist its fingerprint, and reject key reuse with a different command.
@@ -55,8 +55,8 @@ enum ArchiveMutationState {
   ARCHIVE_MUTATION_STATE_RECLAIMING = 2;
   // Cleanup failed and durable retry remains necessary.
   ARCHIVE_MUTATION_STATE_RETRY_REQUIRED = 3;
-  // All targets were confirmed absent as of observed_at. A detected late PUT
-  // may reopen cleanup; retained object tombstones remain reconcilable.
+  // Latest durable cleanup records confirm every target absent. This is not a
+  // fresh provider check; an undetected late PUT may exist until reconciliation.
   ARCHIVE_MUTATION_STATE_COMPLETED = 4;
 }
 
@@ -99,11 +99,12 @@ message ArchiveMutationReceipt {
   int64 objects_targeted = 9 [(ai.protomolt.proto.validate.v1.field) = {int64: {gte: 0}}];
   // Targets without current confirmed absence.
   int64 objects_pending = 10 [(ai.protomolt.proto.validate.v1.field) = {int64: {gte: 0}}];
-  // Targets confirmed absent at the recorded observation.
+  // Targets whose latest durable cleanup record confirms absence.
   int64 objects_confirmed_absent = 11 [(ai.protomolt.proto.validate.v1.field) = {int64: {gte: 0}}];
   // Bounded diagnostic category, never a provider exception or credential.
   optional string error_code = 12 [(ai.protomolt.proto.validate.v1.field) = {string: {pattern: "^[A-Z][A-Z0-9_]{0,127}$"}}];
-  // Server-assigned observation time. Admission time for an identified no-op.
+  // Server-assigned recorded-status snapshot time, not a fresh provider check.
+  // Admission time for an identified no-op. Unchanged observations retain it.
   google.protobuf.Timestamp observed_at = 13 [(ai.protomolt.proto.validate.v1.field) = {required: true}];
   // Monotonic within this operation. Reject stale worker observations in SQL.
   int64 status_revision = 14 [(ai.protomolt.proto.validate.v1.field) = {required: true, int64: {gt: 0}}];

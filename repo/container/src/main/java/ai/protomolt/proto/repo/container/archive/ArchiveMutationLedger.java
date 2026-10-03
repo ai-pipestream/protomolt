@@ -26,6 +26,12 @@ public final class ArchiveMutationLedger {
 
     public ArchiveMutationLedger(Tx tx) { this.tx = Objects.requireNonNull(tx); }
 
+    /** Apply a reviewed archive command, including logical counters and cleanup targets. */
+    public ArchiveMutationReceipt execute(String principal, ArchiveMutationCommand command, long sampledRevision) {
+        return admit(principal, command, sampledRevision,
+                (em, entry) -> ArchiveDestructiveMutations.apply(em, entry, command));
+    }
+
     public record LogicalOutcome(boolean entryDeleted, long versionsRemoved,
             long versionsTombstoned, Set<UUID> targets) {
         public LogicalOutcome { targets = Set.copyOf(targets); }
@@ -44,8 +50,10 @@ public final class ArchiveMutationLedger {
         Objects.requireNonNull(command);
         Objects.requireNonNull(mutation);
         if (sampledRevision < 0) throw new IllegalArgumentException("Negative entry revision");
+        checkCancellation();
         String account = command.address().getAccountId();
         return tx.inTransaction(em -> {
+            checkCancellation();
             // Hash collisions only serialize unrelated operations. The SQL primary
             // key and exact command bytes, not this hash, establish identity.
             String lockKey = account.length() + ":" + account + principal.length() + ":" + principal + command.operationId();
@@ -70,6 +78,7 @@ public final class ArchiveMutationLedger {
                     .createNativeQuery("SELECT DISTINCT object_id FROM archive_version_object_refs WHERE entry_uuid=:entry", UUID.class)
                     .setParameter("entry", entryId).getResultList());
             var outcome = Objects.requireNonNull(mutation.apply(em, entry));
+            checkCancellation();
             if (entry == null && (outcome.entryDeleted() || outcome.versionsRemoved() != 0
                     || outcome.versionsTombstoned() != 0 || !outcome.targets().isEmpty()))
                 throw new IllegalArgumentException("An absent entry cannot produce a mutation outcome");
@@ -102,6 +111,7 @@ public final class ArchiveMutationLedger {
                             : ArchiveMutationState.ARCHIVE_MUTATION_STATE_ADMITTED)
                     .setObservedAt(Timestamp.newBuilder().setSeconds(now.getEpochSecond()).setNanos(now.getNano())).build();
             if (!VALIDATOR.validate(receipt).valid()) throw new IllegalArgumentException("Invalid archive mutation outcome");
+            checkCancellation();
             em.createNativeQuery("""
                     INSERT INTO archive_mutations(account_id,principal,operation_id,command_sha256,command,admission_receipt,sampled_revision)
                     VALUES (:account,:principal,:id,:sha,:command,:receipt,:revision)
@@ -152,5 +162,18 @@ public final class ArchiveMutationLedger {
 
     public static final class OperationConflictException extends RuntimeException {
         public OperationConflictException(String message) { super(message); }
+    }
+
+    public static final class EntryMissingException extends RuntimeException {
+        public EntryMissingException() { super("Archive entry does not exist"); }
+    }
+
+    public static final class MigrationRequiredException extends RuntimeException {
+        public MigrationRequiredException() { super("Unbound archive content requires explicit storage identity migration before mutation"); }
+    }
+
+    private static void checkCancellation() {
+        if (Thread.currentThread().isInterrupted())
+            throw new java.util.concurrent.CancellationException("Archive mutation cancelled before admission");
     }
 }
