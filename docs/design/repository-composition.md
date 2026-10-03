@@ -1136,6 +1136,46 @@ pressure. Record operation latency distributions, SQL transaction counts and wai
 times, provider calls/bytes, throughput, and reservation bounds. The design is not
 production-qualified until these results and failure/recovery tests support it.
 
+### Upload verification evidence at the provider boundary
+
+S3BlobStore.putRequest already supplies the expected SHA-256 through the S3
+checksumSHA256 request field. DocumentPartStager supplies that digest, then performs
+bounded readback. BlobStore.PutResult exposes only ETag and version ID, so it cannot
+express checksum evidence suitable for selecting a different verification path.
+AWS documents full-object checksum handling for single PutObject requests in the
+[PutObject API](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html).
+This is a protocol capability, not proof about every compatible endpoint.
+
+Design a qualified verified-write result distinct from a plain write receipt.
+Record algorithm, checksum scope, digest, observed byte count, physical identity
+and evidence method. A supplied checksum or requested Content-Length is not
+independent evidence of stored bytes. Validate supported checksum responses and
+endpoint enforcement; reject mismatches. Missing evidence follows the explicitly
+selected readback policy or fails qualification. ETag is not the checksum.
+
+The optimized method is opt-in and fails if required response evidence is absent
+or malformed. Ordinary writes can use the selected readback path; do not hide a
+broken verified-write response by retrying a different mode. Measure the bytes
+actually supplied to the request. A verified stream contract needs exact-length
+and trailing-byte handling; otherwise limit this method to bounded immutable byte
+inputs initially. Checksum qualification and version-retention qualification are
+separate: successful checksum verification does not enable immutable reuse by
+itself.
+
+Single PUT qualification does not qualify multipart uploads or composite digests.
+Qualification must also specify content-type/metadata guarantees. If admission
+requires independent stored-metadata verification, retain that check instead of
+claiming a checksum proves metadata. Storage verification does not replace
+protobuf validation, semantic review or retained-read corruption detection.
+
+Current S3 tests include matching and incorrect digests. The incorrect-digest test
+accepts either S3Exception or SdkClientException, so passing it does not isolate
+server rejection from client validation. Before enabling the optimized path, add
+real endpoint evidence for mismatch rejection, correct response digest/version,
+missing checksum evidence, wrong receipt, stream length mismatch and ambiguous
+acknowledgement. Exercise configured endpoint identities individually. Keep this
+provider optimization separate from revision reuse and from SQL batching.
+
 ### Commit identity and state boundaries
 
 This is a semantic design, not a proposed protobuf schema. Review the existing
