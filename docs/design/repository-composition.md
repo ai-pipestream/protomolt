@@ -524,6 +524,30 @@ reconciliation. Engine integration must preserve cancellation, deadline and
 revision-conflict status through that failure wrapper. This seam does not enable
 managed saves or supply authorization, schema admission, or source-part planning.
 
+`DocumentPartReader.readLegacyFragments` supplies exact verified source bytes for
+future managed partial saves. It rejects invalid or duplicate selected slots,
+missing SHA-256 digests and oversized declared selections before provider reads.
+The default selection limit is 256 MiB and can be lowered by the host. CORE uses
+its recorded provider version and ETag when known. Other legacy parts have no
+recorded provider version: their currently readable bytes must match the saved
+size and digest. Missing source objects remain `FAILED_PRECONDITION` so the
+caller can retry as a full save; mismatched bytes are `DATA_LOSS`. Neither case
+causes historical-version guessing or empty-content substitution.
+
+This byte reader does not adopt an old row as a managed publication. Before
+wiring it into saves, strictly parse the source manifest, authorize its sampled
+row, confirm the same revision remains unbound, and retain source revision and
+drive-state checks through publication. The selected-byte limit is per call;
+it does not account for returned buffers retained by callers. The composition
+must bound total source bytes held across concurrent read-to-stage operations.
+The byte SPI also materializes a provider response before its actual size is
+checked; this declared-size limit is not a hard bound on an oversized response.
+Hard memory guarantees require bounded provider reads as well as composition
+accounting.
+The managed-publication reader continues using retained backend and per-part
+provider identities. Both paths preserve fragment order and copy provider
+buffers before measuring or returning bytes, without decoding and reserializing.
+
 Performance qualification remains required before switching application writes.
 The first stager performed each part's PUT, exact read-back and SQL verification
 sequentially; legacy part uploads use concurrent fan-out. Measure latency
