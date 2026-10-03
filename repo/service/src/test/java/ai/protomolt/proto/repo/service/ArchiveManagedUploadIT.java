@@ -69,13 +69,68 @@ class ArchiveManagedUploadIT {
     }
 
     static ArchiveOperations operations(BlobStore writerStore) {
+        return operations(writerStore, opened.store());
+    }
+
+    static ArchiveOperations operations(BlobStore writerStore, BlobStore readerStore) {
         var reader = new ArchiveObjectReader(new ArchiveObjectLedger(tx), (generation, realm) -> {
             if (!generation.equals("original") || !realm.equals("original-realm"))
                 throw new RepositoryException(RepositoryException.Code.UNAVAILABLE, "Original backend unavailable");
-            return opened.store();
+            return readerStore;
         });
         return new ArchiveOperations(ledger, drives, opened.store(), BridgeEngine.standard(), reader,
                 new ArchiveObjectWriter(new ArchiveUploadLedger(tx), writerStore, "original", opened.capabilities(), Duration.ofMinutes(5)));
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void managedReadsBoundProviderBytesToThePublishedLength(boolean transport) throws Exception {
+        var bounded = new java.util.concurrent.atomic.AtomicInteger();
+        var unbounded = new java.util.concurrent.atomic.AtomicInteger();
+        var limit = new java.util.concurrent.atomic.AtomicInteger(-1);
+        BlobStore observed = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
+                new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
+                    if (method.getName().equals("get")) unbounded.incrementAndGet();
+                    if (method.getName().equals("getBounded")) {
+                        bounded.incrementAndGet(); limit.set((int) args[3]);
+                    }
+                    try { return method.invoke(opened.store(), args); }
+                    catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                });
+        var repository = operations(opened.store(), observed);
+        var request = request("recorded bytes");
+        var saved = repository.putEntry(CALLER, request);
+        var rendition = saved.getManifest().getRenditions(0);
+        String name = "archive-bounded-" + UUID.randomUUID();
+        var server = InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(repository)).build().start();
+        var channel = InProcessChannelBuilder.forName(name).build();
+        try {
+            var readRequest = GetEntryRequest.newBuilder().setAddress(request.getAddress()).build();
+            java.util.function.Supplier<GetEntryResponse> read = transport
+                    ? () -> ArchiveServiceGrpc.newBlockingStub(channel).getEntry(readRequest)
+                    : () -> repository.getEntry(CALLER, readRequest);
+            assertThat(read.get().getRenditions(0).getData()).isEqualTo(request.getRenditions(0).getData());
+            assertThat(bounded.get()).isEqualTo(1);
+            assertThat(unbounded.get()).isZero();
+            assertThat(limit.get()).isEqualTo(rendition.getSizeBytes());
+            // This fixture uses an unversioned namespace. Replace real provider
+            // bytes to simulate corruption after publication, not a fake GET.
+            byte[] oversized = new byte[(int) rendition.getSizeBytes() + 1];
+            opened.store().put(new BlobStore.PutSpec("managed-archive", rendition.getObjectKey(), "text/plain", Map.of(),
+                    ArchiveManifests.sha256Hex(oversized)), oversized);
+            if (transport) {
+                assertThatThrownBy(read::get).isInstanceOfSatisfying(io.grpc.StatusRuntimeException.class,
+                        failure -> assertThat(failure.getStatus().getCode()).isEqualTo(io.grpc.Status.Code.DATA_LOSS));
+            } else {
+                assertThatThrownBy(read::get).isInstanceOfSatisfying(RepositoryException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.DATA_LOSS))
+                        .hasCauseInstanceOf(BlobStore.BlobReadLimitException.class);
+            }
+            assertThat(bounded.get()).isEqualTo(2);
+            assertThat(unbounded.get()).isZero();
+        } finally {
+            channel.shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            server.shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+        }
     }
 
     @ParameterizedTest @ValueSource(booleans = {false, true})
@@ -104,6 +159,30 @@ class ArchiveManagedUploadIT {
             assertThatThrownBy(() -> new ArchiveOperations(ledger, drives, opened.store()).putEntry(CALLER, request))
                     .isInstanceOf(RepositoryException.class);
         } finally { channel.shutdownNow(); server.shutdownNow(); }
+    }
+
+    @Test void unsupportedBoundedReadNeverFallsBackToAnUnboundedFetch() {
+        var bounded = new java.util.concurrent.atomic.AtomicInteger();
+        var unbounded = new java.util.concurrent.atomic.AtomicInteger();
+        BlobStore unsupported = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
+                new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
+                    if (method.getName().equals("get")) unbounded.incrementAndGet();
+                    if (method.getName().equals("getBounded")) {
+                        bounded.incrementAndGet();
+                        throw new UnsupportedOperationException("Injected missing bounded-read capability");
+                    }
+                    try { return method.invoke(opened.store(), args); }
+                    catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                });
+        var request = request("real bytes on backend without bounded read capability");
+        managed.putEntry(CALLER, request);
+        assertThatThrownBy(() -> operations(opened.store(), unsupported).getEntry(CALLER,
+                GetEntryRequest.newBuilder().setAddress(request.getAddress()).build()))
+                .isInstanceOfSatisfying(RepositoryException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION))
+                .hasCauseInstanceOf(UnsupportedOperationException.class);
+        assertThat(bounded.get()).isEqualTo(1);
+        assertThat(unbounded.get()).isZero();
     }
 
     @Test void documentOrphanSweepCannotDeleteArchiveObjectsOrUploadCandidates() {

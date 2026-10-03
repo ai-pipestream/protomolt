@@ -45,11 +45,20 @@ public final class ArchiveObjectReader {
                 || !location.objectKey().equals(manifest.getObjectKey())
                 || readable.size() != manifest.getSizeBytes() || !readable.sha256().equals(manifest.getSha256()))
             throw failedPrecondition("Archive manifest disagrees with its published storage binding");
+        if (readable.size() > Integer.MAX_VALUE)
+            throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED,
+                    "Archive object exceeds the byte-array read limit");
         var store = backends.resolve(location.backendGeneration(), binding.storageRealm());
         if (store == null) throw failedPrecondition("Original archive backend is not available");
         BlobStore.GetResult result;
         try {
-            result = store.get(location.bucket(), location.objectKey(), readable.providerVersion());
+            result = store.getBounded(location.bucket(), location.objectKey(), readable.providerVersion(), (int) readable.size());
+        } catch (BlobStore.BlobReadLimitException oversized) {
+            throw new RepositoryException(RepositoryException.Code.DATA_LOSS,
+                    "Archive object exceeds its published size", oversized);
+        } catch (UnsupportedOperationException unsupported) {
+            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Archive backend does not support bounded reads", unsupported);
         } catch (BlobStore.BlobNotFoundException missing) {
             throw new RepositoryException(RepositoryException.Code.DATA_LOSS,
                     "Published archive object is missing from its original backend", missing);

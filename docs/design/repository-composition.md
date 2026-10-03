@@ -1358,6 +1358,29 @@ Document mirrors use set-based SQL within the publication transaction, adding on
 history and one current reference per part, with row guards. Their statement and
 lock costs must be measured before any performance acceptance or speedup claim.
 
+Managed archive reads now call the provider's bounded read with the retained
+object size. Oversized bodies fail with DATA_LOSS, unsupported bounded reads fail
+with FAILED_PRECONDITION, and objects above the byte-array limit fail before
+provider resolution. Length and digest checks still run on completed results.
+The local/gRPC tests use real stored bytes and an oversized provider overwrite;
+capability rejection is injected around the real adapter. This bounds one managed
+object, not aggregate response memory. Legacy unbound archive reads still need
+the same bound, and multi-rendition responses need a shared payload reservation.
+
+Reader pins are not implemented. Their admission must prove the exact retained
+version under the source-owner and retention locks before returning original
+storage coordinates. A distinct reader-incarnation owner must hold the pin until
+the actual provider call and materialization finish, including ignored cancellation.
+Timeout alone cannot release it. Crash recovery needs explicit evidence that the
+owning incarnation and its provider work have stopped; failed release leaves a
+durable pin for retry, never an age-based deletion permission.
+
+Before enabling reader pins, split logical retirement from physical reclamation.
+An admitted archive mutation must close new acquisition while existing readers
+finish. Only the later cleanup claim, after all pins drain, may mark the physical
+object reclaiming. V26's single fence suffices for native references but must not
+be reused unchanged for readers. No SQL transaction may span a provider read.
+
 `ArchiveRetentionConcurrencyIT` supplies the SQL baseline for that fence. It
 observes actual PostgreSQL lock waits for reference-first and cleanup-first
 transactions, then checks both commit and rollback outcomes. While a reference

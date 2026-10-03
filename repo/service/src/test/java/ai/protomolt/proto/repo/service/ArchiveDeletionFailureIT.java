@@ -93,26 +93,29 @@ class ArchiveDeletionFailureIT {
         var entry = ledger.findEntry(UUID.fromString(saved.getEntryUuid())).orElseThrow();
         var item = saved.getManifest().getRenditions(0);
         String originalBucket = "bound-read-" + UUID.randomUUID();
+        String managedKey = "bound-read/" + UUID.randomUUID();
         opened.ensureNamespace(originalBucket);
         assertThat(S3.execInContainer("awslocal", "s3api", "put-bucket-versioning", "--bucket", originalBucket,
                 "--versioning-configuration", "Status=Enabled").getExitCode()).isZero();
-        opened.store().put(new BlobStore.PutSpec(originalBucket, item.getObjectKey(), "text/plain", Map.of(), null), bytes.toByteArray());
         var uploads = new ai.protomolt.proto.repo.container.archive.ArchiveUploadLedger(tx);
         var admission = uploads.begin(new ai.protomolt.proto.repo.container.archive.ArchiveObjectLedger.Location(
-                entry.entryUuid, entry.accountId, entry.archive, generation, originalBucket, item.getObjectKey()),
+                entry.entryUuid, entry.accountId, entry.archive, generation, originalBucket, managedKey),
                 bytes.size(), "text/plain", java.time.Duration.ofMinutes(1));
-        var stored = opened.store().get(originalBucket, item.getObjectKey());
+        // Copy into freshly admitted coordinates; the unbound legacy key stays quarantined.
+        opened.store().put(new BlobStore.PutSpec(originalBucket, managedKey, "text/plain", Map.of(), null), bytes.toByteArray());
+        var stored = opened.store().get(originalBucket, managedKey);
         assertThat(stored.versionId()).isNotBlank().isNotEqualTo("null");
         uploads.verify(admission.upload().objectId(), admission.upload().leaseToken(), stored.data().length,
                 ai.protomolt.proto.repo.container.archive.ArchiveManifests.sha256Hex(stored.data()), stored.versionId(), stored.eTag());
         var version = ledger.findVersion(entry.entryUuid, 1).orElseThrow();
         version.version = 2;
         version.manifest = ai.protomolt.proto.repo.container.archive.ArchiveManifests.toJson(saved.getManifest().toBuilder()
-                .setVersion(2).setRenditions(0, item.toBuilder().setStorageObjectId(admission.upload().objectId().toString())).build());
+                .setVersion(2).setRenditions(0, item.toBuilder().setObjectKey(managedKey)
+                        .setStorageObjectId(admission.upload().objectId().toString())).build());
         entry.currentVersion = 2;
         ledger.commitSave(entry, 1, version, 0, ArchiveLedger.StatsDelta.none(),
                 Map.of(admission.upload().objectId(), admission.upload().leaseToken()));
-        opened.store().put(new BlobStore.PutSpec(originalBucket, item.getObjectKey(), "text/plain", Map.of(), null),
+        opened.store().put(new BlobStore.PutSpec(originalBucket, managedKey, "text/plain", Map.of(), null),
                 ByteString.copyFromUtf8("a later provider revision").toByteArray());
         var reader = new ai.protomolt.proto.repo.engine.ArchiveObjectReader(objects, (identity, realm) -> {
             assertThat(identity).isEqualTo(generation);
@@ -163,7 +166,7 @@ class ArchiveDeletionFailureIT {
                                 failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
             } finally { failedChannel.shutdownNow(); failedServer.shutdownNow(); }
             assertThat(S3.execInContainer("awslocal", "s3api", "delete-object", "--bucket", originalBucket,
-                    "--key", item.getObjectKey(), "--version-id", stored.versionId()).getExitCode()).isZero();
+                    "--key", managedKey, "--version-id", stored.versionId()).getExitCode()).isZero();
             assertThatThrownBy(() -> bound.getEntry(CALLER, request)).isInstanceOfSatisfying(RepositoryException.class,
                     failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.DATA_LOSS));
         } finally {
