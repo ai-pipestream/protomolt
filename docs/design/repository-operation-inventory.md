@@ -188,11 +188,19 @@ number. Migration coverage includes direct SQL updates and delete/reinsert of bo
 row types. Restores must preserve or advance the revision sequence beyond restored
 row revisions.
 
-This is not yet a complete retained-reference guard. Version rewrites and pruning
-do not advance the entry revision. Saves and classification must also compare the
-sampled version revisions and retained set before publishing derived state. Keep
-that work coupled to destructive admission so a concurrent save cannot republish
-references to removed bytes.
+V13 binds that entry revision to its retained-version set: inserts, rewrites and
+deletes advance each affected owner's revision in the same transaction. Statement
+triggers cover bulk and direct SQL changes, and moving a version touches both
+owners. Saves and metadata/classification merges therefore reject a snapshot
+sampled before a committed retained-set change. Regression tests reproduce all
+three previously accepted stale writes against PostgreSQL.
+
+This still does not make object-first deletion safe: bytes can disappear before
+the manifest transaction commits. Durable destructive admission must fence that
+interval and prevent later writes from reviving references selected for cleanup.
+Direct SQL that locks versions before entries can also deadlock with an engine
+save; PostgreSQL aborts a participant. Consistent application lock ordering and
+explicit retry/error coverage remain part of destructive admission.
 
 After destructive admission, add historical metadata/schema/policy snapshots.
 Current historical archive reads expose current entry
