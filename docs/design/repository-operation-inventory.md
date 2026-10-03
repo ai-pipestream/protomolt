@@ -156,6 +156,38 @@ tests before extending retry contracts.
 
 ## Regression evidence to preserve
 
+### Next boundary: archive destructive admission
+
+`ArchiveDeletionFailureIT` now reproduces swallowed delete failures over both the
+library and real in-process gRPC transport with PostgreSQL and S3. Both cases are
+intentionally red: injecting UNAVAILABLE into physical deletion still produces a
+successful response. Do not describe these paths as recovered or retry-safe yet.
+
+The next implementation must cover DeleteEntry, DeleteRendition and PruneVersions:
+
+- Lock and compare sampled entry/version state before admitting deletion.
+- Persist exact original storage coordinates and a durable operation identity
+  before object I/O. Fence writes that could reintroduce affected references.
+- Make affected content unavailable through normal reads while physical cleanup
+  is pending, without falsely reporting that physical deletion completed.
+- Complete counters, tombstones and responses from confirmed state; preserve
+  retryable failures and handle a timeout after successful completion.
+- Exercise partial provider failure, SQL failure, concurrent saves, shared
+  retained objects, restart and retry through both invocation paths.
+
+Changing `deleteQuietly` alone cannot satisfy this boundary: object-first deletion
+can still damage retained manifests if a commit fails or a concurrent save wins.
+Post-save pruning and upload cleanup also call that helper and require durable
+orphan handling. Keep archive operations process-authorized until mutation and
+current-policy guards support scoped callers.
+
+After destructive admission, add historical metadata/schema/policy snapshots and
+guard metadata-only updates. Current historical archive reads expose current entry
+metadata, and same-content saves can merge metadata without creating a version.
+Typed admission must not inherit that ambiguity.
+
+### Existing baseline cases
+
 - `DocumentPartCodecTest`: full/core byte round trips, absent field preservation,
   chunk partitioning, root checksum, manifest JSON and path validation.
 - `ArchiveServiceIT`: retained versions, unchanged rendition sharing, expected
