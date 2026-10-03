@@ -91,6 +91,12 @@ extension even where the message shape remains unchanged.
 - **Extended, implemented:** provider discovery reports NON_EXPIRING_WRITES for
   S3 and TTL-zero Redis. This reports adapter expiry behavior, not a deployment
   durability guarantee. Existing protobuf descriptors remain unchanged.
+- **New, provider implementation under test:** `ObjectReclaimer` is a separate
+  lifecycle port on an opened byte store. S3 advertises PHYSICAL_RECLAMATION and
+  removes exact-key versions and delete markers in bounded passes, then checks
+  absence. Ordinary raw delete APIs do not acquire this authority. Other providers
+  report unsupported; cache composition and the managed recovery worker remain
+  pending. A successful pass does not rule out a later completion of an old PUT.
 - **New:** library repository interface and remote implementation, reusing the
   existing request/response vocabulary rather than creating a second wire model.
 - **New:** provider factory discovery and explicit capability selection.

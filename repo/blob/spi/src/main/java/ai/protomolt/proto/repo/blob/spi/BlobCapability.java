@@ -12,5 +12,7 @@ public enum BlobCapability {
      * Normal PUT/COPY does not apply an object TTL. This does not qualify external
      * lifecycle policies, eviction, persistence settings or administrative deletion.
      */
-    NON_EXPIRING_WRITES
+    NON_EXPIRING_WRITES,
+    /** Exact-key physical reclamation includes all historical versions and markers. */
+    PHYSICAL_RECLAMATION
 }

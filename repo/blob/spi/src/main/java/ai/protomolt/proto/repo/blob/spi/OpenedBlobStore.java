@@ -9,6 +9,7 @@ public final class OpenedBlobStore implements AutoCloseable {
     private final AutoCloseable lifetime;
     private final Set<BlobCapability> capabilities;
     private final NamespaceProvisioner namespaces;
+    private final ObjectReclaimer reclaimer;
     private boolean closed;
 
     public OpenedBlobStore(BlobStore store, AutoCloseable lifetime) {
@@ -23,10 +24,27 @@ public final class OpenedBlobStore implements AutoCloseable {
 
     public OpenedBlobStore(BlobStore store, AutoCloseable lifetime, Set<BlobCapability> capabilities,
             NamespaceProvisioner namespaces) {
+        this(store, lifetime, capabilities, namespaces, unsupportedReclaimer(capabilities));
+    }
+
+    public OpenedBlobStore(BlobStore store, AutoCloseable lifetime, Set<BlobCapability> capabilities,
+            NamespaceProvisioner namespaces, ObjectReclaimer reclaimer) {
         this.store = Objects.requireNonNull(store, "store");
         this.lifetime = Objects.requireNonNull(lifetime, "lifetime");
         this.capabilities = Set.copyOf(capabilities);
         this.namespaces = Objects.requireNonNull(namespaces, "namespaces");
+        this.reclaimer = Objects.requireNonNull(reclaimer, "reclaimer");
+    }
+
+    public synchronized ObjectReclaimer reclaimer() {
+        if (closed) throw new IllegalStateException("Storage handle is closed");
+        return reclaimer;
+    }
+
+    private static ObjectReclaimer unsupportedReclaimer(Set<BlobCapability> capabilities) {
+        if (capabilities.contains(BlobCapability.PHYSICAL_RECLAMATION))
+            throw new IllegalArgumentException("PHYSICAL_RECLAMATION requires a reclaimer port");
+        return (bucket, key) -> { throw new UnsupportedOperationException("Physical object reclamation is unsupported"); };
     }
 
     public synchronized void ensureNamespace(String namespace) {
