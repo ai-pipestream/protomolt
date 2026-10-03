@@ -628,6 +628,44 @@ publication and releases on close. This proves the component handoff, not the
 public SaveDocument composition: raw references, outbox, ownership fences, metadata
 and host lifecycle still need to be integrated before that route is enabled.
 
+### Save engine integration obligations
+
+`DocumentSaveCandidate` now holds the existing pure row-construction behavior,
+used by the legacy save path and available to the managed writer's candidate
+factory. It preserves creation/reprocessing metadata and retains the destination's
+datasource and stored security for scoped callers. The caller must already have
+authorized the exact destination revision; this builder does not authorize a save.
+The current transaction still publishes raw bindings and enqueues the saved event
+with cancellation checks before and after those changes.
+
+Managed routing must preserve these behaviors explicitly:
+
+- Full-save dedupe mutates reprocessing bookkeeping and raw references under the
+  authorized revision lock. A managed publication must not become inconsistent
+  with that changed row revision or history; qualify this path before enabling it.
+- Partial saves keep canonical part order and existing chunk-set positions.
+  Carried parts retain their update/provenance stamps, rewritten entries take
+  current stamps, and absent parts remain explicit EMPTY entries.
+- Source authorization precedes snapshot capture/read; destination and source
+  revision fences must also cover the policy used for that authorization.
+- The shared candidate builder feeds the managed writer. Raw-binding publication
+  and the saved outbox event run on the writer's supplied EntityManager in its
+  atomic publication transaction, never as a second transaction.
+- Before composing that callback, acquire the union of target, source and raw
+  drive locks in one global order. The current writer locks target/source drives
+  before `ManagedRawBindings.Plan.publish` locks its raw-drive subset; opposing
+  target-X/raw-Y and target-Y/raw-X saves can deadlock. Sorting each group alone
+  does not fix their combined ordering.
+- Carried BLOBS bindings must derive from the exact verified source batch.
+  `ManagedRawBindings.copying` still uses an ordinary read and current source
+  drive, so it cannot be reused unchanged for managed partial saves.
+- Capacity, cancellation, deadline and revision errors wrapped by WriteFailure
+  retain domain meaning and attempt identity. An ambiguous commit is reconciled,
+  not blindly retried.
+- Host composition supplies a shared budget and drains writers/readers before
+  releasing providers and SQL resources. Passing a cache decorator requires its
+  own qualified bounded-read support or explicit original-backing resolution.
+
 Performance qualification remains required before switching application writes.
 The first stager performed each part's PUT, exact read-back and SQL verification
 sequentially; legacy part uploads use concurrent fan-out. Measure latency

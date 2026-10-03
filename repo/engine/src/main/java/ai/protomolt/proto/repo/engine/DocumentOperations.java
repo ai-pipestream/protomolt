@@ -1010,48 +1010,9 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
             long totalSize, String coreEtag, String coreVersionId, DocumentRecord existing,
             Map<UUID, Long> sourceRevisions, ManagedRawBindings.Plan bindings, RepositoryOperationControl control) {
         control.check();
-        OwnershipContext ownership = r.doc().getOwnership();
-        DocumentRecord row = new DocumentRecord();
-        row.nodeId = nodeId;
-        row.docId = r.address().getDocId();
-        row.graphAddressId = r.address().getGraphAddressId();
-        row.graphId = r.address().getGraphId();
-        row.rowKind = r.rowKind();
-        row.clusterId = r.clusterId();
-        row.accountId = r.address().getAccountId();
-        row.datasourceId = caller.processAuthority() ? ownership.getDatasourceId() : existing.datasourceId;
-        row.connectorId = !request.getConnectorId().isBlank() ? request.getConnectorId()
-                : (ownership.hasConnectorId() ? ownership.getConnectorId() : null);
-        row.checksum = rootChecksum;
-        row.driveName = drive.name;
-        row.objectKey = basePrefix;
-        row.versionId = coreVersionId;
-        row.etag = coreEtag != null ? coreEtag : "";
-        row.sizeBytes = totalSize;
-        row.contentType = PART_CONTENT_TYPE;
-        row.filename = r.doc().hasSearchMetadata() && r.doc().getSearchMetadata().hasTitle()
-                ? r.doc().getSearchMetadata().getTitle() : r.address().getDocId();
-        row.writeManifest(manifest);
-        if (caller.processAuthority()) row.writeSecurity(ownership.hasSecurity() ? ownership.getSecurity() : null);
-        else row.security = existing.security; // Current destination policy is never sourced from copied body provenance.
-        boolean intake = DocumentRowKind.INTAKE.equals(r.rowKind());
-        row.deleteSourceBlobsOnSettle = intake && request.getDeleteSourceBlobsOnSettle();
-        row.sourceBlobDeleteReason = intake && !request.getSourceBlobDeleteReason().isBlank()
-                ? request.getSourceBlobDeleteReason() : null;
-        row.status = DocumentStatus.AVAILABLE;
-        row.crawlId = request.hasCrawlId() && !request.getCrawlId().isBlank()
-                ? request.getCrawlId() : null;
-        Instant now = Instant.now();
-        if (existing != null) {
-            row.createdAt = existing.createdAt;
-            row.reprocessCount = existing.reprocessCount;
-            row.lastReprocessedAt = existing.lastReprocessedAt;
-        } else {
-            row.createdAt = now;
-        }
-        // Body rewrite: the staleness guard moves. Deliberately explicit —
-        // nothing else bumps updated_at (see DocumentRecord's class Javadoc).
-        row.updatedAt = now;
+        var row = DocumentSaveCandidate.build(caller, r, request, drive, nodeId, basePrefix, manifest, rootChecksum,
+                totalSize, coreEtag, coreVersionId, existing);
+        Instant now = row.updatedAt;
         try {
             return documents.saveIfRevision(row, existing == null ? null : existing.mutationRevision, sourceRevisions,
                     (em, committed) -> {
