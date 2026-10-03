@@ -565,8 +565,10 @@ S3 adapter with a streaming GET. It rejects declared oversize before reading,
 checks unknown-length bodies while consuming them, and never returns a truncated
 prefix. Zero permits an empty object; failures abort the acquired stream. The
 limit covers payload bytes, not SDK overhead or aggregate memory. Other adapters
-fail explicitly until implemented. Document readers and staging still use the
-ordinary read path; wiring this operation and budgeting retained source buffers
+fail explicitly until implemented. Staging now requires this capability before
+admission and bounds each verification read by that part's copied payload size.
+An oversized stored version leaves the attempt unverified. Document readers still
+use the ordinary read path; wiring their reads and budgeting retained source buffers
 remain integration gates. A cache's backing-provider capabilities must not be
 treated as capabilities of the cache decorator itself.
 The managed-publication reader continues using retained backend and per-part

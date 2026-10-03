@@ -67,7 +67,9 @@ extension even where the message shape remains unchanged.
   explicitly; no ordinary-read fallback is permitted. The direct S3 adapter
   implements it and advertises `BOUNDED_READ`. Cache, Redis and remote adapters
   do not yet implement it. Existing GetBlob protobufs and the conditional-write
-  bound are unchanged. Repository reader/stager integration remains outstanding.
+  bound are unchanged. Document staging requires this capability and bounds
+  verification by the planned payload size. Repository reader integration remains
+  outstanding.
 - **Extended:** HTTP document/archive uploads use the same engine boundaries as
   their gRPC counterparts, including streaming limits and staged publication.
 - **New, library and HTTP implementation under review:** shared raw-ingestion operation for the existing HTTP

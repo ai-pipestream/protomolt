@@ -64,8 +64,9 @@ final class DocumentPartStager implements AutoCloseable {
         this.parallelism = parallelism;
         this.maxBufferedBytes = maxBufferedBytes;
         Objects.requireNonNull(opened, "opened");
-        if (!opened.capabilities().containsAll(Set.of(BlobCapability.NON_EXPIRING_WRITES, BlobCapability.PHYSICAL_RECLAMATION)))
-            throw new IllegalArgumentException("Document staging requires non-expiring writes and exact physical reclamation");
+        if (!opened.capabilities().containsAll(Set.of(BlobCapability.NON_EXPIRING_WRITES,
+                BlobCapability.PHYSICAL_RECLAMATION, BlobCapability.BOUNDED_READ)))
+            throw new IllegalArgumentException("Document staging requires non-expiring writes, exact physical reclamation and bounded reads");
         var profile = new ManagedBackendLedger(tx).find(generation)
                 .orElseThrow(() -> new IllegalArgumentException("Document backend generation is not registered"));
         if (!profile.identity().equals(identity))
@@ -178,7 +179,7 @@ final class DocumentPartStager implements AutoCloseable {
             attempts.renew(owner.id(), owner.token(), lease);
             phase = "read-back verification";
             check.run();
-            var actual = store.get(owner.location().namespace(), expected.objectKey(), put.versionId());
+            var actual = store.getBounded(owner.location().namespace(), expected.objectKey(), put.versionId(), body.length);
             check.run();
             if (actual == null || actual.data() == null || actual.data().length != expected.size()
                     || !DocumentPartCodec.sha256Hex(actual.data()).equals(expected.sha256())

@@ -191,7 +191,7 @@ class DocumentPartParallelIT {
     void invalidOrCancelledParallelWritesNeverBecomeVerified(String fault) {
         var input = input(); var fired = new AtomicBoolean(); var cancelled = new AtomicBoolean();
         var provider = intercepted((method, args, value) -> {
-            if (fault.equals("corrupt") && method.equals("get") && fired.compareAndSet(false, true)) {
+            if (fault.equals("corrupt") && method.equals("getBounded") && fired.compareAndSet(false, true)) {
                 var actual = (BlobStore.GetResult) value; var bytes = actual.data().clone(); bytes[0] ^= 1;
                 return new BlobStore.GetResult(bytes, actual.contentType(), actual.eTag(), actual.versionId());
             }

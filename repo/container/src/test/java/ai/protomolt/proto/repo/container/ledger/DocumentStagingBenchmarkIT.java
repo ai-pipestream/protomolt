@@ -117,12 +117,12 @@ class DocumentStagingBenchmarkIT {
                         long start = System.nanoTime();
                         try {
                             if (method.getName().equals("put")) puts.increment();
-                            if (method.getName().equals("get")) gets.increment();
+                            if (method.getName().equals("getBounded")) gets.increment();
                             return method.invoke(delegate, args);
                         } catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
                         finally {
                             if (method.getName().equals("put")) putNanos.add(System.nanoTime() - start);
-                            if (method.getName().equals("get")) getNanos.add(System.nanoTime() - start);
+                            if (method.getName().equals("getBounded")) getNanos.add(System.nanoTime() - start);
                         }
                     });
         }

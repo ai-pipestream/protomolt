@@ -90,7 +90,7 @@ class DocumentPartStagerIT {
         var gets = new java.util.concurrent.atomic.AtomicInteger();
         var provider = intercept((method, args, result) -> {
             if (method.equals("put")) cancelled.set(true);
-            if (method.equals("get")) gets.incrementAndGet();
+            if (method.equals("getBounded")) gets.incrementAndGet();
             return result;
         });
         var signal = new java.util.concurrent.CancellationException("Cancelled by caller");
@@ -126,7 +126,7 @@ class DocumentPartStagerIT {
                         assertThat(planned).isEqualTo(1);
                         seen.set(true);
                     }
-                    if (method.getName().equals("get")) assertThat((String) args[2]).isNotBlank().isNotEqualTo("null");
+                    if (method.getName().equals("getBounded")) assertThat((String) args[2]).isNotBlank().isNotEqualTo("null");
                     try { return method.invoke(opened.store(), args); }
                     catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
                 });
@@ -162,10 +162,36 @@ class DocumentPartStagerIT {
         assertThat(opened.store().get(NAMESPACE, input.plan().objects().getFirst().objectKey()).data()).isEqualTo(input.payloads().getFirst().bytes());
     }
 
+    @Test void oversizedStoredVersionCannotBecomeVerified() {
+        var input = input();
+        var store = intercept((method, args, result) -> {
+            if (method.equals("get")) throw new AssertionError("Unbounded verification is forbidden");
+            if (!method.equals("put")) return result;
+            // Fault after the genuine PUT: return a receipt for a larger, real stored version.
+            return opened.store().put(new BlobStore.PutSpec(NAMESPACE, input.plan().objects().getFirst().objectKey(),
+                    "application/protobuf", Map.of(), null), new byte[((byte[]) args[1]).length + 1]);
+        });
+        try (var stager = serialStager(tx, GENERATION, identity, borrowed(store))) {
+            assertThatThrownBy(() -> stager.stage(input.plan(), input.payloads(), Duration.ofSeconds(5), Map.of()))
+                    .isInstanceOf(DocumentPartStager.StageFailure.class)
+                    .hasCauseInstanceOf(BlobStore.BlobReadLimitException.class);
+        }
+        assertThat(new DocumentPartAttemptLedger(tx).find(input.plan().attemptId()).orElseThrow().state()).isEqualTo("STAGING");
+    }
+
+    @Test void missingBoundedCapabilityFailsBeforeAdmission() {
+        var capabilities = new java.util.HashSet<>(opened.capabilities());
+        capabilities.remove(ai.protomolt.proto.repo.blob.spi.BlobCapability.BOUNDED_READ);
+        var unsupported = new OpenedBlobStore(opened.store(), () -> {}, capabilities,
+                opened::ensureNamespace, opened.reclaimer());
+        assertThatThrownBy(() -> serialStager(tx, GENERATION, identity, unsupported))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("bounded reads");
+    }
+
     @Test void corruptReadCannotBecomeVerified() {
         var input = input();
         var store = intercept((method, args, result) -> {
-            if (!method.equals("get")) return result;
+            if (!method.equals("getBounded")) return result;
             var actual = (BlobStore.GetResult) result;
             byte[] corrupted = actual.data().clone(); corrupted[0] ^= 1;
             return new BlobStore.GetResult(corrupted, actual.contentType(), actual.eTag(), actual.versionId());
@@ -200,7 +226,7 @@ class DocumentPartStagerIT {
         var input = input();
         var gets = new java.util.concurrent.atomic.AtomicInteger();
         var store = intercept((method, args, result) -> {
-            if (method.equals("get")) gets.incrementAndGet();
+            if (method.equals("getBounded")) gets.incrementAndGet();
             if (method.equals("put")) tx.inTransaction(em -> {
                 em.createNativeQuery("SELECT attempt_id FROM document_part_attempts WHERE attempt_id=:id FOR UPDATE")
                         .setParameter("id", input.plan().attemptId()).getSingleResult();
