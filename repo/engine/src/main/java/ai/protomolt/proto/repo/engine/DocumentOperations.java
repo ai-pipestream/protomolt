@@ -982,17 +982,15 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         // Body rewrite: the staleness guard moves. Deliberately explicit —
         // nothing else bumps updated_at (see DocumentRecord's class Javadoc).
         row.updatedAt = now;
-        if (events == null) {
-            return documents.save(row);
+        try {
+            return documents.saveIfRevision(row, existing == null ? null : existing.mutationRevision,
+                    (em, committed) -> {
+                        if (events != null) events.enqueue(em, DocumentEventFactory.saved(committed, now));
+                    });
+        } catch (DocumentLedger.RevisionConflictException conflict) {
+            throw new ai.protomolt.proto.repo.spi.RepositoryException(
+                    ai.protomolt.proto.repo.spi.RepositoryException.Code.CONFLICT, conflict.getMessage(), conflict);
         }
-        // The DocumentSaved event commits with the row upsert: the event
-        // stream cannot drift from the ledger (transactional outbox).
-        // Cast disambiguates the Tx.inTransaction Function overload.
-        return tx.inTransaction((Function<EntityManager, DocumentRecord>) em -> {
-                    DocumentRecord merged = em.merge(row);
-                    events.enqueue(em, DocumentEventFactory.saved(merged, now));
-                    return merged;
-                });
     }
 
 }

@@ -149,6 +149,73 @@ class DocumentLedgerIT {
     }
 
     @Test
+    void guardedSaveRejectsStalePolicyAndReturnsPersistedRevision() {
+        var candidate = intakeRow(UUID.randomUUID(), "guarded-policy", "guarded-source");
+        var initial = ledger.saveIfRevision(candidate, null, (em, row) -> {});
+        assertThat(initial.mutationRevision).isPositive();
+        assertThat(initial.mutationRevision).isEqualTo(ledger.findByNodeId(candidate.nodeId).orElseThrow().mutationRevision);
+        var changed = ledger.findByNodeId(candidate.nodeId).orElseThrow();
+        changed.security = "{}";
+        ledger.save(changed);
+        var persisted = ledger.findByNodeId(candidate.nodeId).orElseThrow();
+        assertThat(persisted.mutationRevision).isGreaterThan(initial.mutationRevision);
+        assertThat(persisted.updatedAt).isEqualTo(initial.updatedAt);
+        initial.filename = "stale-candidate";
+        assertThatThrownBy(() -> ledger.saveIfRevision(initial, initial.mutationRevision, (em, row) -> {
+            throw new AssertionError("Stale candidate reached commit callback");
+        })).isInstanceOf(DocumentLedger.RevisionConflictException.class);
+        assertThat(ledger.findByNodeId(candidate.nodeId).orElseThrow().security).isEqualTo("{}");
+        assertThatThrownBy(() -> ledger.saveIfRevision(persisted, null, (em, row) -> {}))
+                .isInstanceOf(DocumentLedger.RevisionConflictException.class);
+        persisted.filename = "next-candidate";
+        var next = ledger.saveIfRevision(persisted, persisted.mutationRevision, (em, row) -> {});
+        assertThat(next.mutationRevision).isGreaterThan(persisted.mutationRevision);
+        assertThat(next.mutationRevision).isEqualTo(ledger.findByNodeId(candidate.nodeId).orElseThrow().mutationRevision);
+    }
+
+    @Test
+    void guardedCallbackFailureRollsBackAndDeleteReinsertCannotReuseRevision() {
+        var row = ledger.saveIfRevision(intakeRow(UUID.randomUUID(), "guarded-rollback", "guarded-source"),
+                null, (em, committed) -> {});
+        long revision = row.mutationRevision;
+        String filename = row.filename;
+        row.filename = "uncommitted";
+        assertThatThrownBy(() -> ledger.saveIfRevision(row, revision, (em, committed) -> {
+            throw new IllegalStateException("injected commit callback failure");
+        })).isInstanceOf(IllegalStateException.class).hasMessageContaining("injected");
+        var unchanged = ledger.findByNodeId(row.nodeId).orElseThrow();
+        assertThat(unchanged.mutationRevision).isEqualTo(revision);
+        assertThat(unchanged.filename).isEqualTo(filename);
+        ledger.deleteByReference(addressOf(row));
+        var replacement = ledger.saveIfRevision(row, null, (em, committed) -> {});
+        assertThat(replacement.mutationRevision).isGreaterThan(revision);
+        assertThatThrownBy(() -> ledger.saveIfRevision(row, revision, (em, committed) -> {}))
+                .isInstanceOf(DocumentLedger.RevisionConflictException.class);
+    }
+
+    @Test
+    void twoGuardedFirstWritesHaveExactlyOneWinner() throws Exception {
+        UUID id = UUID.randomUUID();
+        var start = new java.util.concurrent.CountDownLatch(1);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var futures = new java.util.ArrayList<java.util.concurrent.Future<Boolean>>();
+            for (int i = 0; i < 2; i++) futures.add(executor.submit(() -> {
+                start.await();
+                try {
+                    ledger.saveIfRevision(intakeRow(id, "guarded-concurrent", "guarded-source"), null, (em, row) -> {});
+                    return true;
+                } catch (DocumentLedger.RevisionConflictException expected) {
+                    return false;
+                }
+            }));
+            start.countDown();
+            int winners = 0;
+            for (var future : futures) if (future.get(10, java.util.concurrent.TimeUnit.SECONDS)) winners++;
+            assertThat(winners).isEqualTo(1);
+        }
+    }
+
+    @Test
     void duplicateStorageIdentityIsRejected() {
         String docId = "doc-dupe";
         DocumentRecord first = intakeRow(UUID.randomUUID(), docId, "ds-dupe");

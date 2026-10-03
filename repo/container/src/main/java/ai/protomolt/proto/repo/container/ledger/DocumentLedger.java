@@ -57,6 +57,37 @@ public final class DocumentLedger {
                 em -> em.merge(record));
     }
 
+    /** A candidate was prepared against a different row revision or existence state. */
+    public static final class RevisionConflictException extends RuntimeException {
+        public RevisionConflictException() { super("Document changed while the candidate was being prepared"); }
+    }
+
+    /**
+     * Publishes only against the expected revision (null means absent). The callback
+     * runs after flush/refresh in the same transaction, for the transactional outbox.
+     * No object-store work belongs in this transaction.
+     */
+    public DocumentRecord saveIfRevision(DocumentRecord candidate, Long expectedRevision,
+            java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> committed) {
+        java.util.Objects.requireNonNull(committed, "committed");
+        return tx.inTransaction(em -> {
+            // A row lock cannot serialize two first writes to a missing identity.
+            // Hash collisions only serialize unrelated writers; they cannot grant access.
+            long lockKey = candidate.nodeId.getMostSignificantBits() ^ candidate.nodeId.getLeastSignificantBits();
+            em.createNativeQuery("SELECT 1 FROM pg_advisory_xact_lock(:key)", Integer.class)
+                    .setParameter("key", lockKey).getSingleResult();
+            DocumentRecord current = em.find(DocumentRecord.class, candidate.nodeId, LockModeType.PESSIMISTIC_WRITE);
+            if (expectedRevision == null ? current != null
+                    : current == null || current.mutationRevision != expectedRevision.longValue())
+                throw new RevisionConflictException();
+            DocumentRecord merged = em.merge(candidate);
+            em.flush();
+            em.refresh(merged);
+            committed.accept(em, merged);
+            return merged;
+        });
+    }
+
     /**
      * Look up a row by primary key.
      *

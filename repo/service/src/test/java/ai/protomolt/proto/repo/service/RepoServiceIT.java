@@ -265,6 +265,56 @@ class RepoServiceIT {
     }
 
     @Test
+    void policyEditDuringObjectWritesRejectsCandidateWithoutChangingVisibleBody() throws Exception {
+        String account = "acct-commit-policy";
+        createDrive("commit-policy", account);
+        var original = fixture("commit-policy-doc", account, "source");
+        var saved = documents.saveDocument(intakeSave(original, "commit-policy", account).build());
+        var before = services.documentLedger().findByNodeId(UUID.fromString(saved.getNodeId())).orElseThrow();
+        var injected = new java.util.concurrent.atomic.AtomicBoolean();
+        var real = services.blobStore();
+        // Every operation reaches the real S3 adapter. Inject one real SQL policy
+        // change after a PUT succeeds, while the candidate is still being prepared.
+        var store = (ai.protomolt.proto.repo.blob.spi.BlobStore) java.lang.reflect.Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[] {ai.protomolt.proto.repo.blob.spi.BlobStore.class},
+                (proxy, method, args) -> {
+                    Object result;
+                    try { result = method.invoke(real, args); }
+                    catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                    if (method.getName().equals("put") && injected.compareAndSet(false, true)) {
+                        var row = services.documentLedger().findByNodeId(before.nodeId).orElseThrow();
+                        row.writeSecurity(DocumentSecurity.newBuilder().addPermissions(AccessRule.newBuilder()
+                                .setIdentityType("public").setIdentity("public").setAccess(Access.ACCESS_DENY)).build());
+                        services.documentLedger().save(row);
+                    }
+                    return result;
+                });
+        var engine = new ai.protomolt.proto.repo.engine.DocumentOperations(services.documentLedger(), services.driveLedger(),
+                null, store, new ai.protomolt.proto.repo.container.blob.PartStorage(), null);
+        String endpoint = "commit-policy-" + UUID.randomUUID();
+        var server = io.grpc.inprocess.InProcessServerBuilder.forName(endpoint).addService(new DocumentGrpcService(engine,
+                new ai.protomolt.proto.repo.engine.BlobOperations(store, services.driveLedger()))).build().start();
+        var connection = InProcessChannelBuilder.forName(endpoint).build();
+        try {
+            var candidate = original.toBuilder();
+            candidate.getSearchMetadataBuilder().setTitle("must not publish");
+            assertThatThrownBy(() -> DocumentServiceGrpc.newBlockingStub(connection)
+                    .saveDocument(intakeSave(candidate.build(), "commit-policy", account).build()))
+                    .satisfies(error -> assertThat(Status.fromThrowable(error).getCode()).isEqualTo(Status.Code.ABORTED));
+            assertThat(injected).isTrue();
+            var after = services.documentLedger().findByNodeId(before.nodeId).orElseThrow();
+            assertThat(after.checksum).isEqualTo(before.checksum);
+            assertThat(after.partManifest).isEqualTo(before.partManifest);
+            assertThat(after.readSecurity().getPermissions(0).getAccess()).isEqualTo(Access.ACCESS_DENY);
+            assertThat(documents.getDocument(GetDocumentRequest.newBuilder().setNodeId(saved.getNodeId()).build())
+                    .getDocument()).isEqualTo(original);
+        } finally {
+            connection.shutdownNow().awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS);
+            server.shutdownNow().awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     void boundDocumentReaderUsesCurrentAclAndCannotCrossAccounts() throws Exception {
         String account = "acct-document-policy";
         createDrive("policy", account);

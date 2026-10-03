@@ -29,7 +29,8 @@ import java.util.TreeMap;
  * just to prove existence would be waste). A confirmed-missing object gets
  * its manifest entry tombstoned to {@code PART_STATE_DELETED} with
  * {@code deleted_reason = "COHERENCE_PROBE"} (size/sha/object_key retained,
- * per the manifest contract) and the row is re-saved.
+ * per the manifest contract) and the row is saved only if its sampled revision
+ * is still current. Concurrent changes defer repair to a subsequent probe.
  * <p>
  * The row's STATUS deliberately stays AVAILABLE: the remaining parts are
  * still valid and readable — the manifest now honestly says which parts are
@@ -62,11 +63,17 @@ public final class CoherenceProbe {
      *
      * @param rowsExamined AVAILABLE rows sampled
      * @param objectsChecked manifest-PRESENT objects HEAD-probed
-     * @param missingByPart part name → count of confirmed-missing objects
-     *        (and therefore of manifest entries tombstoned)
+     * @param missingByPart part name → count of confirmed-missing objects,
+     *        including observations whose repair was skipped after a conflict
+     * @param repairsSkipped rows whose repair conflicted with a concurrent change
      */
     public record ProbeReport(int rowsExamined, int objectsChecked,
-            Map<String, Integer> missingByPart) {
+            Map<String, Integer> missingByPart, int repairsSkipped) {
+
+        /** Compatibility constructor for reports with no skipped repairs. */
+        public ProbeReport(int rowsExamined, int objectsChecked, Map<String, Integer> missingByPart) {
+            this(rowsExamined, objectsChecked, missingByPart, 0);
+        }
 
         /**
          * Total confirmed-missing objects across all parts.
@@ -89,6 +96,7 @@ public final class CoherenceProbe {
     public ProbeReport probe(BlobStore store, int sampleSize) {
         List<DocumentRecord> sample = documents.listByStatus(DocumentStatus.AVAILABLE, sampleSize);
         int objectsChecked = 0;
+        int repairsSkipped = 0;
         Map<String, Integer> missingByPart = new TreeMap<>();
         for (DocumentRecord row : sample) {
             DocumentManifest manifest = row.readManifest();
@@ -124,7 +132,7 @@ public final class CoherenceProbe {
                     dirty = true;
                     missingByPart.merge(entry.getPart().name(), 1, Integer::sum);
                     LOG.warn("Coherence probe: object gone for node_id={} part={} key={} — "
-                            + "manifest entry tombstoned", row.nodeId, entry.getPart(),
+                            + "manifest repair pending", row.nodeId, entry.getPart(),
                             entry.getObjectKey());
                 } catch (RuntimeException other) {
                     // A transient/other error proves nothing — do not tombstone.
@@ -134,9 +142,15 @@ public final class CoherenceProbe {
             }
             if (dirty) {
                 row.writeManifest(repaired.build());
-                documents.save(row);
+                try {
+                    documents.saveIfRevision(row, row.mutationRevision, (em, committed) -> {});
+                } catch (DocumentLedger.RevisionConflictException conflict) {
+                    repairsSkipped++;
+                    LOG.warn("Coherence probe skipped repair for node_id={}: revision {} changed; "
+                            + "a subsequent probe must recheck the current row", row.nodeId, row.mutationRevision);
+                }
             }
         }
-        return new ProbeReport(sample.size(), objectsChecked, Map.copyOf(missingByPart));
+        return new ProbeReport(sample.size(), objectsChecked, Map.copyOf(missingByPart), repairsSkipped);
     }
 }

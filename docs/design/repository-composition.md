@@ -284,11 +284,27 @@ reported storage prefix remains the stable node root. A carried CORE is read bac
 to verify its checksum and capture destination ETag/version metadata; this adds
 one object read when a partial save copies CORE.
 
-This is a prerequisite for commit-time authorization, not a concurrency guarantee.
-The final row update still needs a locked policy/version comparison. Failed or
+The final full/partial save now compares the destination's database-managed
+mutation revision under a row lock before publishing. V8 backfills existing rows
+and uses a sequence-backed trigger to advance the revision on every INSERT or
+UPDATE, including direct SQL policy edits. Delete/reinsert receives a new revision.
+Two guarded first writes also serialize on a transaction advisory lock because
+there is no row to lock yet. Stale candidates return ABORTED; the API does not
+silently retry with a newly privileged policy snapshot. Row and outbox changes
+still share one transaction. Coherence-probe repairs also compare the sampled
+revision, so maintenance cannot overwrite a concurrent policy edit. A conflict
+leaves the current row unchanged and is reported as a skipped repair for a
+subsequent probe; missing-object counts describe observations, not committed repairs.
+
+This destination revision check is a prerequisite for complete authorization.
+Scoped writes still need current WRITE-policy evaluation and source authorization
+for partial copies. Raw ledger maintenance writes remain administrative and do
+not themselves implement the guarded repository API. Backups must preserve the
+revision sequence state along with rows; restoring that state is still part of the
+restore acceptance work. Failed or
 superseded attempts leave unreferenced objects for lifecycle reconciliation; the
 new paths do not promise permanent historical retention. Scoped mutations remain
-disabled until those commit guards are implemented.
+disabled until the remaining authorization checks are implemented.
 
 The complete ownership work remains unfinished: resolve inherited policy and
 atomically guard policy revision with every mutation. Mutations still require

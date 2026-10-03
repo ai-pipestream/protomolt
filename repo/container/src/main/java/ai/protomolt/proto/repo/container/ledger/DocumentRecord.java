@@ -72,6 +72,10 @@ public class DocumentRecord {
     @Column(name = "node_id", nullable = false)
     public UUID nodeId;
 
+    /** Database-managed revision of any row mutation, including policy-only changes. */
+    @Column(name = "mutation_revision", nullable = false, insertable = false, updatable = false)
+    public long mutationRevision;
+
     /**
      * Logical document identifier, stable across all pipeline states.
      * Multiple rows can share a doc_id (one per storage address).
