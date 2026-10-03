@@ -233,7 +233,22 @@ public final class DocumentLedger {
      * @return one page and the total count across all pages
      */
     public ListDocumentsResult list(ListDocumentsFilter filter) {
-        return tx.readOnly(em -> {
+        return list(filter, null, null);
+    }
+
+    /** Evaluates visibility before count and offset, within one database cursor transaction. */
+    public ListDocumentsResult listVisible(ListDocumentsFilter filter, java.util.Set<String> accountIds,
+            java.util.function.Predicate<DocumentRecord> visible) {
+        var accounts = java.util.Set.copyOf(accountIds);
+        java.util.Objects.requireNonNull(visible, "visible");
+        if (accounts.size() > 1024) throw new IllegalArgumentException("At most 1024 account bindings are supported per listing");
+        if (accounts.isEmpty()) return new ListDocumentsResult(List.of(), 0);
+        return list(filter, accounts, visible);
+    }
+
+    private ListDocumentsResult list(ListDocumentsFilter filter, java.util.Set<String> accountIds,
+            java.util.function.Predicate<DocumentRecord> visible) {
+        Function<jakarta.persistence.EntityManager, ListDocumentsResult> query = em -> {
             // The listing serves "the documents": rows tombstoned for purge
             // (or stuck in PURGE_FAILED) are logically deleted and must not
             // be re-discovered by listers — a replay resubmitting a
@@ -259,6 +274,31 @@ public final class DocumentLedger {
                 params.put("accountId", filter.accountId());
             }
 
+            if (accountIds != null) {
+                where.append(" AND d.accountId IN :permittedAccounts");
+                params.put("permittedAccounts", accountIds);
+                TypedQuery<DocumentRecord> scan = em.createQuery(
+                        "SELECT d FROM DocumentRecord d " + where
+                                + " ORDER BY d.createdAt ASC, d.nodeId ASC", DocumentRecord.class);
+                params.forEach(scan::setParameter);
+                scan.setHint("org.hibernate.fetchSize", 256);
+                scan.setHint("org.hibernate.readOnly", true);
+                var rows = new ArrayList<DocumentRecord>();
+                long total = 0;
+                try (var stream = scan.getResultStream()) {
+                    var iterator = stream.iterator();
+                    while (iterator.hasNext()) {
+                        DocumentRecord row = iterator.next();
+                        boolean allowed = visible.test(row);
+                        em.detach(row);
+                        if (!allowed) continue;
+                        if (total >= filter.offset() && rows.size() < filter.effectiveLimit()) rows.add(row);
+                        total++;
+                    }
+                }
+                return new ListDocumentsResult(List.copyOf(rows), total);
+            }
+
             TypedQuery<Long> count = em.createQuery(
                     "SELECT COUNT(d) FROM DocumentRecord d " + where, Long.class);
             params.forEach(count::setParameter);
@@ -274,7 +314,8 @@ public final class DocumentLedger {
                 page.setFirstResult((int) Math.min(filter.offset(), Integer.MAX_VALUE));
             }
             return new ListDocumentsResult(page.getResultList(), total);
-        });
+        };
+        return accountIds == null ? tx.readOnly(query) : tx.inTransaction(query);
     }
 
     /**

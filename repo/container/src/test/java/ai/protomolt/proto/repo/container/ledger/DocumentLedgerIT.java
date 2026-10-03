@@ -123,6 +123,32 @@ class DocumentLedgerIT {
     }
 
     @Test
+    void visiblePaginationScansBeyondOneFetchBatchWithoutCountingHiddenRows() {
+        String drive = "visible-scan-" + UUID.randomUUID();
+        Instant start = Instant.parse("2020-01-01T00:00:00Z");
+        for (int i = 0; i < 300; i++) {
+            var row = intakeRow(UUID.randomUUID(), drive + "-" + i, "visible-source");
+            row.driveName = drive;
+            row.createdAt = start.plusSeconds(i);
+            row.filename = Integer.toString(i);
+            ledger.save(row);
+        }
+        var visited = new java.util.concurrent.atomic.AtomicInteger();
+        var result = ledger.listVisible(new ListDocumentsFilter(drive, null, null, null, 3, 147),
+                java.util.Set.of(ACCOUNT), row -> {
+                    visited.incrementAndGet();
+                    return Integer.parseInt(row.filename) % 2 == 1;
+                });
+        assertThat(visited.get()).isEqualTo(300);
+        assertThat(result.totalCount()).isEqualTo(150);
+        assertThat(result.rows()).extracting(row -> row.filename).containsExactly("295", "297", "299");
+        assertThat(ledger.listVisible(new ListDocumentsFilter(drive, null, null, null, 3, 0),
+                java.util.Set.of("different-account"), row -> {
+                    throw new AssertionError("Unbound account reached the visibility predicate");
+                }).totalCount()).isZero();
+    }
+
+    @Test
     void duplicateStorageIdentityIsRejected() {
         String docId = "doc-dupe";
         DocumentRecord first = intakeRow(UUID.randomUUID(), docId, "ds-dupe");

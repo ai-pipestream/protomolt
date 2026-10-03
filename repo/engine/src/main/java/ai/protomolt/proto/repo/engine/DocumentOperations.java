@@ -589,6 +589,11 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
 
     /** The loaded row is the policy snapshot for this read; body ACLs never grant access. */
     private static void requireRead(RepositoryCaller caller, DocumentRecord row) {
+        if (!canRead(caller, row)) throw notFound("Document is unavailable");
+    }
+
+    private static boolean canRead(RepositoryCaller caller, DocumentRecord row) {
+        if (!caller.processAuthority() && !caller.accountIds().contains(row.accountId)) return false;
         requireReadAccount(caller, row.accountId);
         ai.protomolt.proto.repo.v1.DocumentSecurity security;
         try {
@@ -600,9 +605,8 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         }
         // An operator does not need inherited grants; scoped callers fail closed
         // until the host supplies a resolved inherited-policy snapshot.
-        if (!DocumentAccessPolicy.allows(caller, row.accountId, security,
-                caller.processAuthority() ? List.of() : null, ai.protomolt.proto.repo.v1.Access.ACCESS_READ))
-            throw notFound("Document is unavailable");
+        return DocumentAccessPolicy.allows(caller, row.accountId, security,
+                caller.processAuthority() ? List.of() : null, ai.protomolt.proto.repo.v1.Access.ACCESS_READ);
     }
 
     @Override
@@ -851,17 +855,24 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
 
     @Override
     public ListDocumentsResponse listDocuments(RepositoryCaller caller, ListDocumentsRequest request) {
-        RepositoryErrors.requireProcessAuthority(caller);
+        requireReadBinding(caller);
         return RepositoryErrors.call(() -> {
             int limit = request.getLimit() <= 0 ? DEFAULT_LIST_LIMIT
                     : Math.min(request.getLimit(), MAX_LIST_LIMIT);
             long offset = DocumentRequests.parseContinuationToken(request.getContinuationToken());
-            ListDocumentsResult result = documents.list(new ListDocumentsFilter(
+            ListDocumentsFilter filter = new ListDocumentsFilter(
                     DocumentRequests.blankToNull(request.getDrive()),
                     DocumentRequests.blankToNull(request.getConnectorId()),
                     DocumentRequests.blankToNull(request.getCrawlId()),
                     DocumentRequests.blankToNull(request.getAccountId()),
-                    limit, offset));
+                    limit, offset);
+            ListDocumentsResult result = caller.processAuthority() ? documents.list(filter)
+                    : documents.listVisible(filter, caller.accountIds(), row -> canRead(caller, row));
+
+            if (result.totalCount() > Integer.MAX_VALUE)
+                throw new ai.protomolt.proto.repo.spi.RepositoryException(
+                        ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED,
+                        "Visible document count exceeds the response contract");
 
             ListDocumentsResponse.Builder response = ListDocumentsResponse.newBuilder()
                     .setTotalCount((int) result.totalCount());

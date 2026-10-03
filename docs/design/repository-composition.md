@@ -265,9 +265,20 @@ public still does not cross accounts. Scoped inherited-policy reads remain
 unavailable until parent policy resolution is implemented. Operators bypass
 inherited grants while local policy and ownership still must be well formed.
 
-The complete ownership work remains unfinished: filter listings before counts and
-continuation tokens, resolve inherited policy, and atomically guard policy revision
-with every mutation. Lists and mutations still require process authority. Named
+Scoped document listings restrict SQL to the caller's bound accounts and evaluate
+current ACLs before visible counts, offsets and continuation tokens. Omitting an
+account filter lists across those bindings; naming an unbound account returns an
+empty list. Each request scans matching rows in one database transaction, using a
+fetch batch of 256 and detaching examined rows. At most 1024 account bindings are
+accepted per listing. Exact visible totals require scanning every matching row;
+the first page is not a constant-cost operation. Malformed or unresolved policy
+fails the whole request, including when encountered beyond the returned page.
+Offsets count visible rows, and policy changes between requests can shift pages;
+tokens do not pin an old authorization snapshot. Count overflow fails explicitly.
+
+The complete ownership work remains unfinished: resolve inherited policy and
+atomically guard policy revision with every mutation. Mutations still require
+process authority. Named
 gRPC callers currently carry only name/scopes and remain denied unless the host
 installs a trusted repository binding resolver. The document gRPC adapter accepts
 such a resolver and rejects null, changed principal or changed process authority.

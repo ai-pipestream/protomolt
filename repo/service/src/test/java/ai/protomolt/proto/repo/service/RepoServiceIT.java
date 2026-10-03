@@ -161,6 +161,66 @@ class RepoServiceIT {
     }
 
     @Test
+    void scopedListingsCountAndPageOnlyVisibleDocuments() throws Exception {
+        String account = "acct-list-policy";
+        createDrive("list-policy", account);
+        var reader = new ai.protomolt.proto.repo.spi.RepositoryCaller("login", false, Set.of(account),
+                Set.of(ai.protomolt.proto.repo.v1.Principal.newBuilder()
+                        .setIdentityType("user-principal-name").setIdentity("alice").build()));
+        for (int i = 0; i < 5; i++) {
+            var doc = fixture("list-policy-" + i, account, "source").toBuilder();
+            var policy = doc.getOwnershipBuilder().getSecurityBuilder().setInheritanceEnabled(false);
+            if (i % 2 == 0) policy.addPermissions(AccessRule.newBuilder()
+                    .setIdentityType("user-principal-name").setIdentity("alice").setAccess(Access.ACCESS_DENY));
+            documents.saveDocument(intakeSave(doc.build(), "list-policy", account).build());
+        }
+        String endpoint = "list-policy-" + UUID.randomUUID();
+        var server = policyServer(endpoint, authenticated -> reader);
+        var connection = InProcessChannelBuilder.forName(endpoint).build();
+        try {
+            var remote = DocumentServiceGrpc.newBlockingStub(connection);
+            var request = ListDocumentsRequest.newBuilder().setLimit(1).build();
+            var first = services.repository().listDocuments(reader, request);
+            assertThat(remote.listDocuments(request)).isEqualTo(first);
+            assertThat(first.getTotalCount()).isEqualTo(2);
+            assertThat(first.getDocumentsList()).extracting(ai.protomolt.proto.repo.v1.DocumentMetadata::getDocId)
+                    .containsExactly("list-policy-1");
+            assertThat(first.getNextContinuationToken()).isEqualTo("1");
+            var second = services.repository().listDocuments(reader,
+                    request.toBuilder().setContinuationToken(first.getNextContinuationToken()).build());
+            assertThat(second.getTotalCount()).isEqualTo(2);
+            assertThat(remote.listDocuments(request.toBuilder().setContinuationToken("1").build())).isEqualTo(second);
+            assertThat(second.getDocumentsList()).extracting(ai.protomolt.proto.repo.v1.DocumentMetadata::getDocId)
+                    .containsExactly("list-policy-3");
+            assertThat(second.getNextContinuationToken()).isEmpty();
+            var other = services.repository().listDocuments(reader, request.toBuilder().setAccountId("unbound").build());
+            assertThat(other.getDocumentsList()).isEmpty();
+            assertThat(other.getTotalCount()).isZero();
+            assertThat(remote.listDocuments(request.toBuilder().setAccountId("unbound").build())).isEqualTo(other);
+            var pastEnd = request.toBuilder().setContinuationToken("999").build();
+            assertThat(remote.listDocuments(pastEnd).getDocumentsList()).isEmpty();
+            assertThat(remote.listDocuments(pastEnd).getTotalCount()).isEqualTo(2);
+            var row = services.documentLedger().findByNodeId(UUID.fromString(first.getDocuments(0).getNodeId())).orElseThrow();
+            row.writeSecurity(DocumentSecurity.getDefaultInstance());
+            services.documentLedger().save(row);
+            var revoked = remote.listDocuments(request);
+            assertThat(revoked).isEqualTo(services.repository().listDocuments(reader, request));
+            assertThat(revoked.getTotalCount()).isEqualTo(1);
+            assertThat(revoked.getDocumentsList()).extracting(ai.protomolt.proto.repo.v1.DocumentMetadata::getDocId)
+                    .containsExactly("list-policy-3");
+            assertThat(revoked.getNextContinuationToken()).isEmpty();
+            // A malformed policy cannot be skipped just because it falls before the requested visible offset.
+            row.security = "{\"unknownPolicy\":true}";
+            services.documentLedger().save(row);
+            assertThatThrownBy(() -> remote.listDocuments(pastEnd)).satisfies(error ->
+                    assertThat(Status.fromThrowable(error).getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION));
+        } finally {
+            connection.shutdownNow().awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS);
+            server.shutdownNow().awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     void boundDocumentReaderUsesCurrentAclAndCannotCrossAccounts() throws Exception {
         String account = "acct-document-policy";
         createDrive("policy", account);
@@ -178,19 +238,7 @@ class RepoServiceIT {
                 row.docId, row.graphAddressId, row.accountId, row.graphId)).build();
         var manifest = GetDocumentManifestRequest.newBuilder().setNodeId(saved.getNodeId()).build();
         String endpoint = "policy-" + UUID.randomUUID();
-        var implementation = new DocumentGrpcService(services.repository(),
-                new ai.protomolt.proto.repo.engine.BlobOperations(services.blobStore(), services.driveLedger()),
-                authenticated -> binding.get());
-        var server = io.grpc.inprocess.InProcessServerBuilder.forName(endpoint)
-                .addService(io.grpc.ServerInterceptors.intercept(implementation, new io.grpc.ServerInterceptor() {
-                    @Override public <Q,R> io.grpc.ServerCall.Listener<Q> interceptCall(
-                            io.grpc.ServerCall<Q,R> call, io.grpc.Metadata headers, io.grpc.ServerCallHandler<Q,R> next) {
-                        var context = io.grpc.Context.current().withValue(
-                                ai.protomolt.proto.authz.grpc.CallerContexts.CALLER,
-                                ai.protomolt.proto.actions.Caller.scoped("login", Set.of()));
-                        return io.grpc.Contexts.interceptCall(context, call, headers, next);
-                    }
-                })).build().start();
+        var server = policyServer(endpoint, authenticated -> binding.get());
         var connection = InProcessChannelBuilder.forName(endpoint).build();
         try {
             var remote = DocumentServiceGrpc.newBlockingStub(connection).withDeadlineAfter(10, java.util.concurrent.TimeUnit.SECONDS);
@@ -393,6 +441,23 @@ class RepoServiceIT {
         assertThatThrownBy(() -> services.startNetty(0, null, caller -> java.util.Optional.empty()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("api token");
+    }
+
+    private static io.grpc.Server policyServer(String endpoint,
+            java.util.function.Function<ai.protomolt.proto.actions.Caller, ai.protomolt.proto.repo.spi.RepositoryCaller> bindings) throws Exception {
+        var implementation = new DocumentGrpcService(services.repository(),
+                new ai.protomolt.proto.repo.engine.BlobOperations(services.blobStore(), services.driveLedger()),
+                bindings);
+        return io.grpc.inprocess.InProcessServerBuilder.forName(endpoint)
+                .addService(io.grpc.ServerInterceptors.intercept(implementation, new io.grpc.ServerInterceptor() {
+                    @Override public <Q,R> io.grpc.ServerCall.Listener<Q> interceptCall(
+                            io.grpc.ServerCall<Q,R> call, io.grpc.Metadata headers, io.grpc.ServerCallHandler<Q,R> next) {
+                        var context = io.grpc.Context.current().withValue(
+                                ai.protomolt.proto.authz.grpc.CallerContexts.CALLER,
+                                ai.protomolt.proto.actions.Caller.scoped("login", Set.of()));
+                        return io.grpc.Contexts.interceptCall(context, call, headers, next);
+                    }
+                })).build().start();
     }
 
     // ------------------------------------------------------------- fixtures
