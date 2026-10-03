@@ -138,5 +138,7 @@ configuration drift fail before returning drive records. Runtime annotations
 validate nonblank, bounded identity fields; equality to configuration is a handler
 obligation. Legacy rows require an explicit verified backfill, not automatic
 adoption. Many-to-one mappings are rejected. This is a deliberate change from ignored bucket
-arguments. Remote namespace provisioning and direct self-routing detection remain
-unfinished; this mapping work does not establish complete remote repository parity.
+arguments. Remote namespace provisioning remains unfinished. Direct self-routing is checked
+at listener startup for in-process names and local TCP addresses on the bound
+port. Proxy and multi-node cycle detection is not implemented. This work does
+not establish complete remote repository parity.

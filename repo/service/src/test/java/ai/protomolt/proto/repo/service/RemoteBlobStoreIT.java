@@ -176,6 +176,8 @@ class RemoteBlobStoreIT {
             assertThat(downstream.driveLedger().findById(row.driveId)).isPresent();
             downstream.blobStore().put(new BlobStore.PutSpec(row.bucket, "unchanged-key", null, null, null), new byte[] {3});
             assertThat(store.get(DRIVE, "unchanged-key").data()).containsExactly((byte) 3);
+            assertThatThrownBy(() -> downstream.startInProcess("it-remote"))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("this in-process listener");
             String downstreamName = io.grpc.inprocess.InProcessServerBuilder.generateName();
             downstream.startInProcess(downstreamName);
             var downstreamChannel = InProcessChannelBuilder.forName(downstreamName).build();
@@ -215,6 +217,23 @@ class RemoteBlobStoreIT {
 
             assertThatThrownBy(() -> downstream.driveLedger().findByName("acct-remote", DRIVE))
                     .isInstanceOf(io.grpc.StatusRuntimeException.class).hasMessageContaining("FAILED_PRECONDITION");
+        }
+    }
+
+    @Test
+    void rejectedSelfRoutingClosesTheBoundTcpListener() throws Exception {
+        int port;
+        try (var reservation = new java.net.ServerSocket(0)) { port = reservation.getLocalPort(); }
+        var config = new RepoServiceConfig(0,
+                new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
+                null, null, null, null, "local-base", 0, "repo", "localhost:" + port, DRIVE,
+                null, 0, 0).withRepoBucketBindings(java.util.Map.of("local", DRIVE));
+        try (var downstream = RepoServices.build(config)) {
+            assertThatThrownBy(() -> downstream.startNetty(port))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("this TCP listener");
+            try (var rebound = new java.net.ServerSocket(port)) {
+                assertThat(rebound.isBound()).isTrue();
+            }
         }
     }
 

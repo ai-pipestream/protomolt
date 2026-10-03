@@ -451,6 +451,7 @@ public record RepoServiceConfig(
             throw new IllegalArgumentException(ENV_REPO_TARGET + " is required when " + ENV_BLOB_STORE
                     + "=" + blobStore);
         }
+        if (blobStore.equals(BLOB_STORE_REPO)) RemoteRouting.endpoint(repoTarget);
         if (repoDrive == null || repoDrive.isBlank()) {
             repoDrive = DEFAULT_REPO_DRIVE;
         }

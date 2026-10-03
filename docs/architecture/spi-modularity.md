@@ -48,6 +48,12 @@ transport. Loaded rows with absent or mismatched binding metadata fail closed;
 changing routing requires an explicit storage migration and verified row update. There is no automatic fallback or key rewriting. Multiple
 local buckets cannot map to the same remote drive. Unmapped persisted drives
 fail with `FAILED_PRECONDITION`. Remote namespace provisioning remains unsupported.
+Startup rejects a remote target matching this process's in-process listener name.
+For TCP, supported targets are `host:port` and `dns:///host:port`; the actual bound
+port is compared with the target, and matching local/loopback addresses are
+rejected. A failed check closes the newly bound listener and its executor.
+This checks direct routing at startup, not later DNS changes or cycles through
+proxies or other nodes; per-call deadlines still bound those calls.
 Remote gRPC storage still uses its explicitly owned channel and is not yet a
 discovered provider.
 

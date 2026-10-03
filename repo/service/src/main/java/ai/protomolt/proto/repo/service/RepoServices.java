@@ -265,6 +265,7 @@ public final class RepoServices implements AutoCloseable {
      */
     public synchronized Server startInProcess(String name) {
         requireOpen();
+        RemoteRouting.rejectInProcess(config, name);
         try {
             return registerAndStart(InProcessServerBuilder.forName(name)
                     .maxInboundMessageSize(10 * 1024 * 1024));
@@ -323,7 +324,7 @@ public final class RepoServices implements AutoCloseable {
             if (apiToken != null) {
                 builder.intercept(new ApiTokenServerInterceptor(apiToken, resolver));
             }
-            Server server = registerAndStart(builder);
+            Server server = registerAndStart(builder, started -> RemoteRouting.rejectTcp(config, started.getPort()));
             health.setStatus("", HealthCheckResponse.ServingStatus.SERVING);
             LOG.info("repo-service listening on port {}", server.getPort());
             return server;
@@ -333,8 +334,20 @@ public final class RepoServices implements AutoCloseable {
     }
 
     private Server registerAndStart(io.grpc.ServerBuilder<?> builder) throws IOException {
+        return registerAndStart(builder, server -> {});
+    }
+
+    private Server registerAndStart(io.grpc.ServerBuilder<?> builder,
+                                    java.util.function.Consumer<Server> routingCheck) throws IOException {
         services.forEach(builder::addService);
         GrpcServerLifetime transport = GrpcServerLifetime.start(builder);
+        try { routingCheck.accept(transport.server()); }
+        catch (RuntimeException | Error failure) {
+            try { transport.close(); }
+            catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        }
+
         servers.add(transport);
         return transport.server();
     }
