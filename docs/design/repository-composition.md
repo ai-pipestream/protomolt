@@ -14,10 +14,19 @@ content repository with standard Java JCR and protobuf/gRPC access to the same
 behavior. Follow the [compatibility and gap assessment](repository-jcr-compatibility.md)
 before extending contracts or choosing document-specific transaction boundaries.
 Keep JCR dependencies out of base storage modules. Existing accounts, workspaces,
-IDs and version numbers are not assumed to have JCR semantics. Preserve current
-protobuf contracts; declare capabilities and establish conformance before any
+IDs and version numbers are not assumed to have JCR semantics. Declare
+capabilities and establish conformance before any
 compliance claim. The potential gRPC transport must remain usable with other JCR
 implementations. Continue storage correctness and recovery independently.
+
+Pre-release design policy: there are no external users. Breaking Java and
+protobuf changes are permitted when they simplify the design; do not retain
+obsolete interfaces, compatibility shims or fallback behavior merely to preserve
+an old API. Update affected callers and tests together. Stored objects, original
+backend identities and recovery records still require deliberate handling;
+permission to change contracts is not permission to silently lose data.
+Keep provider I/O outside database transactions and provider dependencies out of
+shared interfaces. Verify performance with measurements before claiming gains.
 
 Make the repository usable as a Java library or a gRPC service with the same
 document behavior. Applications select storage providers without inheriting all

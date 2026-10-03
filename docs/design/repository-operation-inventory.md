@@ -198,8 +198,28 @@ Handler obligations, beyond annotations:
 Runtime fixtures cover generated and dynamic messages, required/exclusive action
 selection, nested request rules, bounds and receipt cross-field accounting. JSON
 Schema exposes UUID format and CEL metadata; CEL accounting is runtime-only.
-No portable OpenAPI parity or implemented mutation RPC is claimed. Operation
-persistence, execution, lookup, policy and crash/replay tests remain to implement.
+No portable OpenAPI parity or implemented mutation RPC is claimed.
+
+`ArchiveMutationCommand`, `ArchiveMutationLedger` and V19 now implement internal
+command validation and atomic admission persistence. The operation key serializes
+retries; both the hash and exact command bytes must match. A new admission locks
+and checks the sampled entry revision, runs the logical SQL callback, validates
+its cleanup targets against prior references and remaining live references, and
+commits the initial receipt and immutable target set with the change. Reciprocal
+database triggers prevent an admitted target from acquiring new references.
+Authorization remains the caller's obligation, including before replay/lookup.
+Callbacks must maintain logical counters and perform no provider I/O or nested
+transactions. Admission is entry-scoped, not a general JCR session transaction.
+
+Real PostgreSQL tests cover concurrent replay, principal isolation, conflicting
+commands, absent-entry replay after recreation, rollback/retry, stale revisions,
+invalid outcomes, target scope/liveness, immutable rows and repinning after
+admission. The repinning regression failed before the V19 trigger fix. Nested
+invalid and unknown command fields exercise the runtime validation boundary.
+The internal lookup returns the **initial** admission receipt only. Current
+physical observations, production handler/transport integration, complete policy
+enforcement and end-to-end crash recovery remain unfinished. Existing destructive
+RPCs do not yet use this ledger.
 
 `ArchiveDeletionFailureIT` now reproduces swallowed delete failures over both the
 library and real in-process gRPC transport with PostgreSQL and S3. Both cases are
