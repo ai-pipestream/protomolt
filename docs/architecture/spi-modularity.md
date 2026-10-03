@@ -14,7 +14,12 @@ to `.repo.blob.s3`, `.repo.blob.redis` and `.repo.blob.cache` respectively.
 The cache uses the optional `ExpiringBlobStore` capability instead of depending
 on Redis. The existing service assembly explicitly composes these providers; provider
 factory discovery is available through `BlobStores.discover()` in the byte SPI.
-The service assembly has not yet switched its construction to this factory API.
+The service assembly uses this factory API for S3 and Redis, including the two
+handles in its cache composition. It registers each acquired resource immediately;
+failed construction releases earlier resources in reverse order. Shutdown attempts
+all owned resources and reports failures with secondary failures suppressed.
+Remote gRPC storage still uses its explicitly owned channel and is not yet a
+discovered provider.
 
 Discovery opens no stores. `open(id, options, requiredCapabilities)` requires an
 installed provider and returns an `OpenedBlobStore` whose lifetime belongs to the
@@ -27,8 +32,11 @@ after closure. Factory-created clients are owned, not borrowed.
 The Redis factory requires `uri`, `ttl-seconds`, `max-object-bytes`, and `key-prefix`.
 The S3 factory requires `endpoint`, `region`, `access-key`, `secret-key`,
 `path-style`, and `conditional-writes`. Booleans accept only `true` or `false`.
-S3 factory credentials are explicitly static in this first implementation; direct
-client construction remains available for other credential providers. Setting
+The original key-pair option form selects static credentials. Alternatively,
+`credentials-mode=static` requires that pair, while `credentials-mode=default-chain`
+forbids it and explicitly selects the AWS credential chain. An empty `endpoint`
+selects the regional AWS endpoint; it is not a fallback for malformed input.
+The factory owns the client and any closeable credential provider. Setting
 `conditional-writes=true` is an operator assertion that the endpoint has been
 qualified; discovery does not establish remote atomicity. The tests qualify the
 existing pinned RustFS endpoint with competing conditional writes. Redis does not

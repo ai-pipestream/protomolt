@@ -38,6 +38,6 @@ public final class RedisBlobStoreProvider implements BlobStoreProvider {
         RedisBlobStore store = new RedisBlobStore(config);
         return new OpenedBlobStore(store, store, Set.of(
                 ai.protomolt.proto.repo.blob.spi.BlobCapability.LIST,
-                ai.protomolt.proto.repo.blob.spi.BlobCapability.OBJECT_EXPIRY));
+                ai.protomolt.proto.repo.blob.spi.BlobCapability.OBJECT_EXPIRY), store::headBucket);
     }
 }

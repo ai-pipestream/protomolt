@@ -5,9 +5,6 @@ import ai.protomolt.proto.authz.grpc.ApiTokenServerInterceptor;
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.blob.cache.CachingBlobStore;
 import ai.protomolt.proto.repo.container.blob.PartStorage;
-import ai.protomolt.proto.repo.blob.redis.RedisBlobStore;
-import ai.protomolt.proto.repo.blob.redis.RedisBlobStoreConfig;
-import ai.protomolt.proto.repo.blob.s3.S3BlobStore;
 import ai.protomolt.proto.repo.container.ledger.DocumentLedger;
 import ai.protomolt.proto.repo.container.ledger.DriveLedger;
 import ai.protomolt.proto.repo.container.ledger.DriveRecord;
@@ -39,19 +36,11 @@ import io.grpc.services.HealthStatusManager;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
-import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.s3.S3Client;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.net.URI;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -102,7 +91,7 @@ public final class RepoServices implements AutoCloseable {
     private final DocumentLedger documentLedger;
     private final DriveLedger driveLedger;
     private final PurgeQueue purgeQueue;
-    private final S3Client s3Client;
+    private final OwnedResources owned = new OwnedResources();
     private final BlobStore blobStore;
     private final ManagedChannel remoteChannel;
     private final PartStorage partStorage;
@@ -120,7 +109,7 @@ public final class RepoServices implements AutoCloseable {
     private final KafkaProducer<String, com.google.protobuf.Message> purgeProducer;
     private final org.apache.kafka.clients.consumer.KafkaConsumer<String, byte[]> purgeConsumer;
 
-    private final List<Server> servers = new CopyOnWriteArrayList<>();
+    private final List<GrpcServerLifetime> servers = new CopyOnWriteArrayList<>();
     private final List<UploadHttpServer> httpServers = new CopyOnWriteArrayList<>();
     private final List<Thread> lifecycleThreads = new CopyOnWriteArrayList<>();
     private volatile boolean lifecycleClosed;
@@ -130,94 +119,103 @@ public final class RepoServices implements AutoCloseable {
     }
 
     private RepoServices(RepoServiceConfig config, BridgeEngine bridges) {
-        this.config = config;
-        this.database = new LedgerDatabase(config.ledger());
-        this.tx = new Tx(database.entityManagerFactory());
-        this.documentLedger = new DocumentLedger(tx);
-        String selectedDriveProvider = RepoServiceConfig.BLOB_STORE_S3_REDIS_CACHE.equals(config.blobStore())
-                ? "s3" : config.blobStore();
-        var driveGate = new SelectedDriveBackend(config);
-        this.driveLedger = new DriveLedger(tx, driveGate);
-        // Purge-queue selection (DOCUMENT_PLATFORM_PURGE_QUEUE): "jdbc"
-        // claims rows straight from document_purges; "kafka" keeps the row as
-        // the ledger of record and distributes claims through the purge topic
-        // (the config already failed fast when kafka is selected without
-        // bootstrap servers).
-        if (RepoServiceConfig.PURGE_QUEUE_KAFKA.equals(config.purgeQueue())) {
-            this.purgeProducer = KafkaPurgeQueue.newProducer(config.kafkaBootstrapServers(),
-                    config.schemaRegistryUrl());
-            this.purgeConsumer = KafkaPurgeQueue.newConsumer(config.kafkaBootstrapServers(),
-                    PURGE_CONSUMER_GROUP);
-            this.purgeQueue = KafkaPurgeQueue.create(tx, purgeProducer, purgeConsumer,
-                    config.kafkaPurgeTopic(), PURGE_POLL_TIMEOUT);
-        } else {
-            this.purgeProducer = null;
-            this.purgeConsumer = null;
-            this.purgeQueue = new JdbcPurgeQueue(tx);
+        this(config, bridges, ai.protomolt.proto.repo.blob.spi.BlobStores.discover());
+    }
+
+    RepoServices(RepoServiceConfig config, BridgeEngine bridges, ai.protomolt.proto.repo.blob.spi.BlobStores providers) {
+        try {
+            this.config = config;
+            this.database = owned.add(new LedgerDatabase(config.ledger()));
+            this.tx = new Tx(database.entityManagerFactory());
+            this.documentLedger = new DocumentLedger(tx);
+            String selectedDriveProvider = RepoServiceConfig.BLOB_STORE_S3_REDIS_CACHE.equals(config.blobStore())
+                    ? "s3" : config.blobStore();
+            var driveGate = new SelectedDriveBackend(config);
+            this.driveLedger = new DriveLedger(tx, driveGate);
+            // Purge-queue selection (DOCUMENT_PLATFORM_PURGE_QUEUE): "jdbc"
+            // claims rows straight from document_purges; "kafka" keeps the row as
+            // the ledger of record and distributes claims through the purge topic
+            // (the config already failed fast when kafka is selected without
+            // bootstrap servers).
+            if (RepoServiceConfig.PURGE_QUEUE_KAFKA.equals(config.purgeQueue())) {
+                this.purgeProducer = owned.add(KafkaPurgeQueue.newProducer(config.kafkaBootstrapServers(),
+                        config.schemaRegistryUrl()));
+                this.purgeConsumer = owned.add(KafkaPurgeQueue.newConsumer(config.kafkaBootstrapServers(),
+                        PURGE_CONSUMER_GROUP));
+                this.purgeQueue = KafkaPurgeQueue.create(tx, purgeProducer, purgeConsumer,
+                        config.kafkaPurgeTopic(), PURGE_POLL_TIMEOUT);
+            } else {
+                this.purgeProducer = null;
+                this.purgeConsumer = null;
+                this.purgeQueue = new JdbcPurgeQueue(tx);
+            }
+            ai.protomolt.proto.repo.blob.spi.NamespaceProvisioner namespaces;
+            switch (config.blobStore()) {
+                case RepoServiceConfig.BLOB_STORE_S3 -> {
+                    var selected = owned.add(providers.open("s3", s3Options(config)));
+                    this.blobStore = selected.store();
+                    namespaces = selected::ensureNamespace;
+                    this.remoteChannel = null;
+                }
+                case RepoServiceConfig.BLOB_STORE_REDIS -> {
+                    var selected = owned.add(providers.open("redis", redisOptions(config)));
+                    this.blobStore = selected.store();
+                    namespaces = selected::ensureNamespace;
+                    this.remoteChannel = null;
+                }
+                case RepoServiceConfig.BLOB_STORE_S3_REDIS_CACHE -> {
+                    var backing = owned.add(providers.open("s3", s3Options(config)));
+                    var cache = owned.add(providers.open("redis", redisOptions(config)));
+                    this.blobStore = new CachingBlobStore(backing.store(), cache.store(),
+                            config.redisTtlSeconds(), config.redisMaxObjectBytes());
+                    namespaces = backing::ensureNamespace;
+                    this.remoteChannel = null;
+                }
+                default -> {
+                    this.remoteChannel = RepoServiceConfig.BLOB_STORE_REPO.equals(config.blobStore())
+                            ? NettyChannelBuilder.forTarget(config.repoTarget()).usePlaintext().build()
+                            : InProcessChannelBuilder.forName(config.repoTarget()).build();
+                    owned.add(() -> {
+                        remoteChannel.shutdownNow();
+                        if (!remoteChannel.awaitTermination(10, TimeUnit.SECONDS))
+                            throw new IllegalStateException("Repository client channel did not terminate");
+                    });
+                    this.blobStore = new RemoteBlobStore(DocumentServiceGrpc.newBlockingStub(remoteChannel), config.repoDrive());
+                    namespaces = blobStore::headBucket;
+                }
+            }
+            this.partStorage = new PartStorage();
+            // Kafka eventing (DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS): the
+            // transactional outbox. Unset = no outbox, no relay, no producer, and
+            // the commit points skip the outbox entirely (zero overhead).
+            this.eventOutbox = config.kafkaEnabled() ? new JdbcEventOutbox(tx) : null;
+            this.eventRelay = eventOutbox != null ? new EventRelay(eventOutbox) : null;
+            this.eventProducer = eventOutbox != null
+                    ? owned.add(EventRelay.newProducer(config.kafkaBootstrapServers(),
+                            config.schemaRegistryUrl())) : null;
+            this.documentService = new DocumentGrpcService(documentLedger, driveLedger, tx,
+                    blobStore, partStorage, purgeQueue, eventOutbox);
+            this.driveProvisioner = new DriveProvisioner(driveLedger,
+                    namespaces,
+                    config.defaultBucketBase(), config.s3Region(), selectedDriveProvider, driveGate);
+            this.archiveOperations = new ArchiveOperations(
+                    new ai.protomolt.proto.repo.container.archive.ArchiveLedger(tx),
+                    driveLedger, blobStore, bridges);
+            this.services = List.of(
+                    documentService,
+                    new ArchiveGrpcService(archiveOperations),
+                    new DriveGrpcService(driveLedger, driveProvisioner));
+            // The lifecycle engine (two-phase delete): stateless workers over the
+            // same ledgers/queue, driven by startLifecycle()'s loops or, in tests,
+            // by hand via the accessors below.
+            this.s3Purger = new S3Purger(tx, documentLedger, driveLedger, purgeQueue, eventOutbox);
+            this.purgeSweeper = new PurgeSweeper(tx, documentLedger, driveLedger, purgeQueue);
+            this.storageReconciler = new StorageReconciler(documentLedger);
+            this.coherenceProbe = new CoherenceProbe(documentLedger, driveLedger);
+        } catch (RuntimeException | Error failure) {
+            try { owned.close(); } catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
         }
-        boolean usesS3 = RepoServiceConfig.BLOB_STORE_S3.equals(config.blobStore())
-                || RepoServiceConfig.BLOB_STORE_S3_REDIS_CACHE.equals(config.blobStore());
-        this.s3Client = usesS3 ? buildS3Client(config) : null;
-        // Blob-store selection (DOCUMENT_PLATFORM_BLOB_STORE): "s3" is the
-        // direct object-storage path; "repo"/"repo-inprocess" dogfood the
-        // service's own blob API — bytes delegate to another repo-service
-        // (netty or in-process target) via RemoteBlobStore. Note the target
-        // must be a DIFFERENT service set: pointing a repo mode back at this
-        // one would recurse PutBlob into itself. "redis" keeps objects in
-        // Redis outright; "s3-redis-cache" puts an expendable Redis
-        // read-through/write-through cache in front of the S3 store of truth.
-        switch (config.blobStore()) {
-            case RepoServiceConfig.BLOB_STORE_S3 -> {
-                this.blobStore = new S3BlobStore(s3Client, config.s3ConditionalWrites());
-                this.remoteChannel = null;
-            }
-            case RepoServiceConfig.BLOB_STORE_REDIS -> {
-                this.blobStore = new RedisBlobStore(redisConfig(config));
-                this.remoteChannel = null;
-            }
-            case RepoServiceConfig.BLOB_STORE_S3_REDIS_CACHE -> {
-                this.blobStore = new CachingBlobStore(new S3BlobStore(s3Client,
-                        config.s3ConditionalWrites()),
-                        new RedisBlobStore(redisConfig(config)),
-                        config.redisTtlSeconds(), config.redisMaxObjectBytes());
-                this.remoteChannel = null;
-            }
-            default -> {
-                this.remoteChannel = RepoServiceConfig.BLOB_STORE_REPO.equals(config.blobStore())
-                        ? NettyChannelBuilder.forTarget(config.repoTarget()).usePlaintext().build()
-                        : InProcessChannelBuilder.forName(config.repoTarget()).build();
-                this.blobStore = new RemoteBlobStore(
-                        DocumentServiceGrpc.newBlockingStub(remoteChannel), config.repoDrive());
-            }
-        }
-        this.partStorage = new PartStorage();
-        // Kafka eventing (DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS): the
-        // transactional outbox. Unset = no outbox, no relay, no producer, and
-        // the commit points skip the outbox entirely (zero overhead).
-        this.eventOutbox = config.kafkaEnabled() ? new JdbcEventOutbox(tx) : null;
-        this.eventRelay = eventOutbox != null ? new EventRelay(eventOutbox) : null;
-        this.eventProducer = eventOutbox != null
-                ? EventRelay.newProducer(config.kafkaBootstrapServers(),
-                        config.schemaRegistryUrl()) : null;
-        this.documentService = new DocumentGrpcService(documentLedger, driveLedger, tx,
-                blobStore, partStorage, purgeQueue, eventOutbox);
-        this.driveProvisioner = new DriveProvisioner(driveLedger,
-                usesS3 ? new ai.protomolt.proto.repo.blob.s3.S3NamespaceProvisioner(s3Client) : blobStore::headBucket,
-                config.defaultBucketBase(), config.s3Region(), selectedDriveProvider, driveGate);
-        this.archiveOperations = new ArchiveOperations(
-                new ai.protomolt.proto.repo.container.archive.ArchiveLedger(tx),
-                driveLedger, blobStore, bridges);
-        this.services = List.of(
-                documentService,
-                new ArchiveGrpcService(archiveOperations),
-                new DriveGrpcService(driveLedger, driveProvisioner));
-        // The lifecycle engine (two-phase delete): stateless workers over the
-        // same ledgers/queue, driven by startLifecycle()'s loops or, in tests,
-        // by hand via the accessors below.
-        this.s3Purger = new S3Purger(tx, documentLedger, driveLedger, purgeQueue, eventOutbox);
-        this.purgeSweeper = new PurgeSweeper(tx, documentLedger, driveLedger, purgeQueue);
-        this.storageReconciler = new StorageReconciler(documentLedger);
-        this.coherenceProbe = new CoherenceProbe(documentLedger, driveLedger);
     }
 
     /**
@@ -260,13 +258,11 @@ public final class RepoServices implements AutoCloseable {
      *        {@code InProcessChannelBuilder.forName(name)}
      * @return the started server (also closed by {@link #close()})
      */
-    public Server startInProcess(String name) {
+    public synchronized Server startInProcess(String name) {
+        requireOpen();
         try {
             return registerAndStart(InProcessServerBuilder.forName(name)
-                    .maxInboundMessageSize(10 * 1024 * 1024)
-                    // Virtual threads: every handler body is blocking JDBC/S3 —
-                    // exactly what virtual threads are for.
-                    .executor(Executors.newVirtualThreadPerTaskExecutor()));
+                    .maxInboundMessageSize(10 * 1024 * 1024));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -307,7 +303,8 @@ public final class RepoServices implements AutoCloseable {
      * @param resolver resolves a policy-named credential to its principal; requires a token
      * @return the started server (also closed by {@link #close()})
      */
-    public Server startNetty(int port, String apiToken, CallerResolver resolver) {
+    public synchronized Server startNetty(int port, String apiToken, CallerResolver resolver) {
+        requireOpen();
         if (apiToken == null && resolver != null) {
             throw new IllegalArgumentException(
                     "an access-policy resolver requires the operator api token");
@@ -316,7 +313,6 @@ public final class RepoServices implements AutoCloseable {
             HealthStatusManager health = new HealthStatusManager();
             var builder = NettyServerBuilder.forPort(port)
                     .maxInboundMessageSize(10 * 1024 * 1024)
-                    .executor(Executors.newVirtualThreadPerTaskExecutor())
                     .addService(health.getHealthService())
                     .addService(ProtoReflectionService.newInstance());
             if (apiToken != null) {
@@ -333,9 +329,9 @@ public final class RepoServices implements AutoCloseable {
 
     private Server registerAndStart(io.grpc.ServerBuilder<?> builder) throws IOException {
         services.forEach(builder::addService);
-        Server server = builder.build().start();
-        servers.add(server);
-        return server;
+        GrpcServerLifetime transport = GrpcServerLifetime.start(builder);
+        servers.add(transport);
+        return transport.server();
     }
 
     /**
@@ -364,7 +360,8 @@ public final class RepoServices implements AutoCloseable {
      * @param apiToken the credential every request must present, or null to serve open
      * @return the started HTTP server (also closed by {@link #close()})
      */
-    public UploadHttpServer startHttp(int port, String apiToken) {
+    public synchronized UploadHttpServer startHttp(int port, String apiToken) {
+        requireOpen();
         UploadHttpServer http = new UploadHttpServer(documentService, driveLedger,
                 blobStore, apiToken, archiveOperations);
         http.start(port);
@@ -413,7 +410,8 @@ public final class RepoServices implements AutoCloseable {
      * {@code DOCUMENT_PLATFORM_LIFECYCLE_ENABLED=false}; the loops stop in
      * {@link #close()}.
      */
-    public void startLifecycle() {
+    public synchronized void startLifecycle() {
+        requireOpen();
         if (!config.lifecycleEnabled()) {
             LOG.info("repo lifecycle loops disabled ({})",
                     RepoServiceConfig.ENV_LIFECYCLE_ENABLED + "=false");
@@ -501,88 +499,52 @@ public final class RepoServices implements AutoCloseable {
         }
     }
 
-    /** Stops the lifecycle loops, then all started servers, then closes the S3 client and the ledger database. */
+    /** Stops lifecycle workers and transports before releasing providers, messaging clients and the ledger. */
     @Override
-    public void close() {
+    public synchronized void close() {
         lifecycleClosed = true;
+        var shutdown = new OwnedResources();
+        shutdown.add(owned);
+        for (GrpcServerLifetime server : servers) shutdown.add(server);
+        for (UploadHttpServer http : httpServers) shutdown.add(http);
         for (Thread thread : lifecycleThreads) {
             thread.interrupt();
+            shutdown.add(() -> {
+                try { thread.join(TimeUnit.SECONDS.toMillis(10)); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); throw e; }
+                if (thread.isAlive()) throw new IllegalStateException("Repository lifecycle worker did not terminate");
+            });
         }
-        for (Thread thread : lifecycleThreads) {
-            try {
-                thread.join(TimeUnit.SECONDS.toMillis(10));
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
+        try { shutdown.close(); }
+        finally {
+            lifecycleThreads.clear();
+            httpServers.clear();
+            servers.clear();
         }
-        lifecycleThreads.clear();
-        for (UploadHttpServer http : httpServers) {
-            http.close();
-        }
-        httpServers.clear();
-        for (Server server : servers) {
-            server.shutdown();
-        }
-        for (Server server : servers) {
-            try {
-                if (!server.awaitTermination(10, TimeUnit.SECONDS)) {
-                    server.shutdownNow();
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                server.shutdownNow();
-            }
-        }
-        servers.clear();
-        if (eventProducer != null) {
-            eventProducer.close();
-        }
-        if (purgeConsumer != null) {
-            purgeConsumer.close();
-        }
-        if (purgeProducer != null) {
-            purgeProducer.close();
-        }
-        if (remoteChannel != null) {
-            remoteChannel.shutdownNow();
-        }
-        // Close Redis pools (direct redis store, or the cache inside the
-        // caching decorator — CachingBlobStore.close closes both arms that
-        // are closeable; S3BlobStore is not).
-        if (blobStore instanceof AutoCloseable closeable) {
-            try {
-                closeable.close();
-            } catch (Exception e) {
-                LOG.warn("blob store close failed", e);
-            }
-        }
-        if (s3Client != null) s3Client.close();
-        database.close();
         LOG.info("repo-service stopped");
     }
 
-    private static RedisBlobStoreConfig redisConfig(RepoServiceConfig config) {
-        return new RedisBlobStoreConfig(config.redisUri(), config.redisTtlSeconds(),
-                config.redisMaxObjectBytes(), "");
+    private void requireOpen() {
+        if (lifecycleClosed) throw new IllegalStateException("repository services are closed");
     }
 
-    private static S3Client buildS3Client(RepoServiceConfig config) {
-        var builder = S3Client.builder()
-                .region(Region.of(config.s3Region()))
-                .httpClient(UrlConnectionHttpClient.create());
+    private static java.util.Map<String, String> redisOptions(RepoServiceConfig config) {
+        return java.util.Map.of("uri", config.redisUri(), "ttl-seconds", Integer.toString(config.redisTtlSeconds()),
+                "max-object-bytes", Long.toString(config.redisMaxObjectBytes()), "key-prefix", "");
+    }
+
+    private static java.util.Map<String, String> s3Options(RepoServiceConfig config) {
+        var options = new java.util.HashMap<String, String>();
+        options.put("endpoint", config.s3Endpoint() == null ? "" : config.s3Endpoint());
+        options.put("region", config.s3Region());
+        options.put("path-style", Boolean.toString(config.s3Endpoint() != null));
+        options.put("conditional-writes", Boolean.toString(config.s3ConditionalWrites()));
+        options.put("credentials-mode", config.hasStaticCredentials() ? "static" : "default-chain");
         if (config.hasStaticCredentials()) {
-            builder.credentialsProvider(StaticCredentialsProvider.create(
-                    AwsBasicCredentials.create(config.s3AccessKey(), config.s3SecretKey())));
-        } else {
-            builder.credentialsProvider(DefaultCredentialsProvider.create());
+            options.put("access-key", config.s3AccessKey());
+            options.put("secret-key", config.s3SecretKey());
         }
-        if (config.s3Endpoint() != null) {
-            // S3-compatible store (LocalStack, SeaweedFS, MinIO): path-style
-            // addressing is required for endpoint overrides.
-            builder.endpointOverride(URI.create(config.s3Endpoint()));
-            builder.forcePathStyle(true);
-        }
-        return builder.build();
+        return options;
     }
 
     // Package-private accessors: the IT asserts on ledger state through the
@@ -600,9 +562,6 @@ public final class RepoServices implements AutoCloseable {
         return blobStore;
     }
 
-    S3Client s3Client() {
-        return s3Client;
-    }
 
     PurgeQueue purgeQueue() {
         return purgeQueue;

@@ -275,7 +275,7 @@ class RepoServiceIT {
         assertThat(created.getCreatedAt().getSeconds()).isPositive();
 
         // The bucket actually exists in LocalStack.
-        services.s3Client().headBucket(b -> b.bucket(created.getBucket()));
+        services.blobStore().headBucket(created.getBucket());
 
         // timestamptz stores micros, so the create response (in-memory
         // Instant, full nanos) and re-fetched rows can differ below a micro:

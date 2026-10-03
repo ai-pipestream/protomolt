@@ -22,8 +22,16 @@ class RedisServiceCompositionIT {
                 new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
                 "http://127.0.0.1:1", "us-east-1", "unused", "unused", "redis-test", 0,
                 "redis", null, null, "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379), 0, 1024);
-        try (var services = RepoServices.build(config)) {
-            assertThat(services.s3Client()).isNull();
+        var unopenedS3 = new ai.protomolt.proto.repo.blob.spi.BlobStoreProvider() {
+            public String id() { return "s3"; }
+            public ai.protomolt.proto.repo.blob.spi.OpenedBlobStore open(java.util.Map<String, String> options) {
+                throw new AssertionError("Redis composition opened S3");
+            }
+        };
+        var providers = ai.protomolt.proto.repo.blob.spi.BlobStores.of(java.util.List.of(
+                unopenedS3, new ai.protomolt.proto.repo.blob.redis.RedisBlobStoreProvider()));
+        try (var services = new RepoServices(config, ai.protomolt.proto.asset.bridge.BridgeEngine.standard(), providers)) {
+            assertThat(services.blobStore()).isInstanceOf(ai.protomolt.proto.repo.blob.redis.RedisBlobStore.class);
             String name = "redis-composition";
             services.startInProcess(name);
             var channel = InProcessChannelBuilder.forName(name).build();
@@ -75,5 +83,34 @@ class RedisServiceCompositionIT {
                         .hasMessageContaining("FAILED_PRECONDITION");
             } finally { channel.shutdownNow(); }
         }
+    }
+
+    @Test void failedCacheAcquisitionClosesAlreadyOpenedBackingStore() {
+        var config = new RepoServiceConfig(0,
+                new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
+                "http://127.0.0.1:1", "us-east-1", "unused", "unused", "startup-test", 0,
+                "s3-redis-cache", null, null, "redis://127.0.0.1:1", 0, 1024);
+        var closes = new java.util.concurrent.atomic.AtomicInteger();
+        var backing = new ai.protomolt.proto.repo.blob.spi.BlobStoreProvider() {
+            public String id() { return "s3"; }
+            public ai.protomolt.proto.repo.blob.spi.OpenedBlobStore open(java.util.Map<String, String> options) {
+                var real = new ai.protomolt.proto.repo.blob.s3.S3BlobStoreProvider().open(options);
+                return new ai.protomolt.proto.repo.blob.spi.OpenedBlobStore(real.store(), () -> {
+                    closes.incrementAndGet();
+                    real.close();
+                }, real.capabilities(), real::ensureNamespace);
+            }
+        };
+        var failure = new IllegalStateException("Injected cache acquisition failure");
+        var cache = new ai.protomolt.proto.repo.blob.spi.BlobStoreProvider() {
+            public String id() { return "redis"; }
+            public ai.protomolt.proto.repo.blob.spi.OpenedBlobStore open(java.util.Map<String, String> options) {
+                throw failure;
+            }
+        };
+        assertThatThrownBy(() -> new RepoServices(config, ai.protomolt.proto.asset.bridge.BridgeEngine.standard(),
+                ai.protomolt.proto.repo.blob.spi.BlobStores.of(java.util.List.of(backing, cache))))
+                .isSameAs(failure);
+        assertThat(closes.get()).isEqualTo(1);
     }
 }

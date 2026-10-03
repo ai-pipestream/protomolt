@@ -35,4 +35,16 @@ class S3ProviderTest {
         assertThatThrownBy(() -> providers.open("s3", credentialUrl))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageNotContaining("secret");
     }
+
+    @Test void explicitDefaultChainDoesNotResolveCredentialsDuringAcquisition() throws Exception {
+        var options = options();
+        options.remove("access-key");
+        options.remove("secret-key");
+        options.put("credentials-mode", "default-chain");
+        options.put("endpoint", "");
+        options.put("path-style", "false");
+        try (var opened = BlobStores.discover().open("s3", options)) {
+            assertThat(opened.store()).isInstanceOf(S3BlobStore.class);
+        }
+    }
 }
