@@ -258,6 +258,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         boolean writesCore = request.getPartsWrittenList().isEmpty()
                 || request.getPartsWrittenList().contains(DocumentPart.DOCUMENT_PART_CORE);
         requireWrite(caller, destination, r.doc(), request, writesCore);
+        requireLegacyWriteTarget(destination);
         DriveRecord drive = drives.findByName(r.address().getAccountId(), request.getDrive())
                 .orElseThrow(() -> readMissing(caller, "drive '" + request.getDrive() + "' not found for account '"
                         + r.address().getAccountId() + "'"));
@@ -383,6 +384,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
             throw failedPrecondition("partial-save copy source row is " + srcRow.status
                     + " (need AVAILABLE): " + DocumentRequests.describe(srcRef));
         }
+        requireLegacyWriteTarget(srcRow);
         DocumentManifest srcManifest = srcRow.readManifest();
         if (srcManifest == null) {
             throw failedPrecondition("partial-save copy source row has no manifest: " + DocumentRequests.describe(srcRef));
@@ -556,6 +558,12 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
                 .setState(PartState.PART_STATE_EMPTY)
                 .setUpdatedAt(now)
                 .build();
+    }
+
+    /** Legacy PUT/COPY cannot replace or borrow a generation-bound publication. */
+    private void requireLegacyWriteTarget(DocumentRecord row) {
+        if (row != null && documents.hasPartPublication(row.nodeId))
+            throw failedPrecondition("Managed document writes are not configured");
     }
 
     // ------------------------------------------------------------------ reads

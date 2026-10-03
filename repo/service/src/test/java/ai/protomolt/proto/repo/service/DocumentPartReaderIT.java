@@ -87,9 +87,12 @@ class DocumentPartReaderIT {
 
     /** Fixture uses guarded SQL publication, not a claim that the public managed writer is enabled. */
     private static Bound bound() {
-        UUID node = UUID.randomUUID();
+        String docId = "doc-" + UUID.randomUUID();
+        var address = NodeAddress.newBuilder().setAccountId("account").setDocId(docId)
+                .setGraphId("intake:account").setGraphAddressId("source").build();
+        UUID node = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(address);
         UUID attemptId = UUID.randomUUID();
-        var doc = Document.newBuilder().setDocId("doc-" + node)
+        var doc = Document.newBuilder().setDocId(docId)
                 .setOwnership(OwnershipContext.newBuilder().setAccountId("account").setDatasourceId("source")).build();
         byte[] bytes = doc.toByteArray();
         String prefix = "documents/account/" + node + "/attempts/" + attemptId + "/";
@@ -137,6 +140,33 @@ class DocumentPartReaderIT {
         return new ai.protomolt.proto.repo.engine.DocumentOperations(documents, drives, tx, store,
                 new ai.protomolt.proto.repo.container.blob.PartStorage(),
                 new ai.protomolt.proto.repo.container.lifecycle.JdbcPurgeQueue(tx), null, null, reader);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void legacyWriterCannotRewriteOrCopyBoundPublication(boolean copy) {
+        var seeded = bound();
+        var touched = new java.util.concurrent.atomic.AtomicInteger();
+        BlobStore guarded = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
+                new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
+                    touched.incrementAndGet();
+                    throw new AssertionError("Unqualified legacy writer reached provider " + method.getName());
+                });
+        var engine = new ai.protomolt.proto.repo.engine.DocumentOperations(documents, drives, tx, guarded,
+                new ai.protomolt.proto.repo.container.blob.PartStorage(),
+                new ai.protomolt.proto.repo.container.lifecycle.JdbcPurgeQueue(tx), null, null, reader());
+        var request = SaveDocumentRequest.newBuilder().setDocument(seeded.expected()).setDrive(seeded.drive().name)
+                .setUseDatasourceId(true).setGraphId("intake:account").setForceSave(true);
+        if (copy) request.setDocument(seeded.expected().toBuilder().setDocId("copy-" + UUID.randomUUID()))
+                .addPartsWritten(DocumentPart.DOCUMENT_PART_CORE)
+                .setCopyUnwrittenPartsFrom(seeded.row().readManifest().getAddress());
+        assertThatThrownBy(() -> engine.saveDocument(new ai.protomolt.proto.repo.spi.RepositoryCaller("test", true), request.build()))
+                .isInstanceOfSatisfying(RepositoryException.class,
+                        e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+        assertThat(touched.get()).isZero();
+        assertThat(documents.findByNodeId(seeded.row().nodeId).orElseThrow().mutationRevision).isEqualTo(seeded.row().mutationRevision);
+        assertThat(engine.getDocument(new ai.protomolt.proto.repo.spi.RepositoryCaller("test", true),
+                GetDocumentRequest.newBuilder().setNodeId(seeded.row().nodeId.toString()).build()).getDocument()).isEqualTo(seeded.expected());
     }
 
     @Test void boundReadUsesOriginalNamespaceLocallyAndOverGrpcAfterDriveChanges() throws Exception {

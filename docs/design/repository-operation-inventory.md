@@ -432,6 +432,55 @@ managed document feature. Public managed write admission, host composition and
 document attempt reclamation remain unfinished. Do not enable managed document
 writes until those publication and recovery paths are implemented and qualified.
 
+### Managed document writer and recovery sequence
+
+The legacy save path must reject bound destinations and bound copy sources after
+authorization, before dedupe bookkeeping or provider I/O. The existing SQL body
+guard prevents unbound replacement at commit, but does not prevent an earlier
+legacy PUT/COPY. This is an explicit transitional failure, not permission to read
+from the current drive or silently downgrade a publication. The managed writer
+will replace this rejection when qualified.
+The preflight query is not a lock held across I/O. A publication racing after the
+check can still leave an abandoned legacy object; fresh keys and final SQL
+revision/publication guards prevent it from replacing the visible bound body.
+
+The next implementation pieces reuse the current attempt, publication and receipt
+models; they do not require a replacement document RPC:
+
+1. An internal stager owns admission of a complete ordered plan and immutable
+   payload snapshots. If admission is separated later, it must reload the sealed
+   plan: the current `Attempt` value exposes only its count and location, not
+   enough information to authorize arbitrary supplied keys. Record each source
+   revision and the exact original backend/version for carried fragments. A
+   current-drive COPY without a source version is insufficient for bound content.
+2. Resolve and qualify the selected backend before I/O. Write fresh attempt keys,
+   then GET the returned provider version and verify measured size, SHA-256 and
+   provider identity before marking each part verified. An ambiguous PUT failure
+   retains the admitted attempt; never infer absence or retry by overwriting that
+   key. Byte verification remains separate from typed/schema admission.
+3. Keep lease ownership valid throughout provider calls using renewal during I/O
+   or a validated lease budget greater than the bounded operation duration plus
+   margin. Renewal only before a long call is insufficient. Check the token after
+   every call; expired ownership cannot be reacquired for publication. Cancellation
+   leaves durable attempted-object records for cleanup rather than deleting inline.
+4. Extend recovery with a persisted deletion claim fenced against publication on
+   the same attempt lock. Resolve original profiles, verify no live reference,
+   reclaim only exact admitted keys, retain failures and confirm physical absence.
+   Permanent identity reservations and tombstones must support repeated checks for
+   a late write after lease expiry. Test cleanup racing publication, lost provider
+   acknowledgements, restart and late I/O before enabling public writes.
+5. Publish through `saveVerifiedAttempt` with destination/source revision locks,
+   target generation checks, raw-reference bindings and the outbox in one SQL
+   transaction. Then qualify full and partial saves locally and over gRPC, including
+   policy/drive changes, carried fragments, cancellation and commit ambiguity.
+   Existing intake deduplication is not general idempotency-key replay.
+
+The internal stager may be tested before recovery, but must remain unwired to
+public writes while abandoned attempts cannot be recovered. Host composition is
+the final enablement step. These locks and object lifecycle records are repository
+foundation work; they do not establish JCR transient sessions, atomic multi-object
+commits or workspace/version semantics. Keep that optional extension separate.
+
 Keep archive operations process-authorized until current-policy guards support
 scoped callers. Legacy write/staging cleanup remains separate follow-up work;
 removing destructive RPCs does not qualify those older write paths.
