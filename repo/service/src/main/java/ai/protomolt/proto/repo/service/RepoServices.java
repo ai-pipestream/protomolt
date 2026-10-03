@@ -229,9 +229,8 @@ public final class RepoServices implements AutoCloseable {
                         ai.protomolt.proto.repo.blob.spi.BlobCapability.PHYSICAL_RECLAMATION)))
                     throw new IllegalArgumentException("Selected backing provider cannot support managed ingestion and reclamation");
                 var profiles = new ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger(tx);
-                var profile = new ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger.Profile("s3",
-                        config.s3Endpoint() == null ? ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger.SDK_DEFAULT : config.s3Endpoint(),
-                        config.s3Region(), config.s3Endpoint() != null, config.managedStorage().storageRealm());
+                var profile = new ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger.Profile(
+                        providers.managedIdentity("s3", s3Options(config)), config.managedStorage().storageRealm());
                 profiles.bind(generation, profile);
                 var reclaimer = java.util.Objects.requireNonNull(managedReclaimer);
                 this.rawRecovery = new ai.protomolt.proto.repo.engine.RawObjectRecovery(documentLedger.rawObjects(), profiles,

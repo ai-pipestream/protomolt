@@ -38,9 +38,11 @@ not existing bindings. Credential rotation may preserve an identity; a physical
 namespace change requires a new generation and explicit migration. An unresolved
 original backend is an error, never permission to try another backend.
 
-The current managed profile and SQL binding coordinates remain S3-shaped. Their
-generalization and non-S3 lifecycle qualification are still required; the
-identity-based reader alone does not establish that completion.
+Managed profiles now carry a versioned provider-owned nonsecret identity.
+V17 preserves legacy S3 profiles without rewriting them; new profiles use the
+generic representation. SQL object coordinates still use bucket/key terminology,
+and non-S3 managed lifecycle qualification remains required. Generic profile
+persistence alone does not establish provider durability or recovery support.
 
 Embedding intent is defined by protobuf field annotations, including
 [`index.chunking_policy.embedding`](../../search/index/spi/src/main/proto/ai/protomolt/proto/index/hints/v1/indexing_hints.proto).

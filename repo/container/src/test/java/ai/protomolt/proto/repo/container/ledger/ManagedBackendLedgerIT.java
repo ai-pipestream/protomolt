@@ -32,6 +32,26 @@ class ManagedBackendLedgerIT {
         assertThat(ledger.find(id)).contains(original);
     }
 
+    @Test void providerOwnedIdentityNeedsNoS3FieldsAndCannotBeRedirected() {
+        String id = UUID.randomUUID().toString();
+        // A persistence fixture, not a qualified filesystem provider.
+        var original = new ManagedBackendLedger.Profile(new ai.protomolt.proto.repo.blob.spi.BackendIdentity(
+                "filesystem", "filesystem/v1", java.util.Map.of("root", "/archive")), "filesystem-realm");
+        ledger.bind(id, original);
+        assertThat(ledger.find(id)).contains(original);
+        ledger.bind(id, original);
+        assertThatThrownBy(() -> ledger.bind(id, new ManagedBackendLedger.Profile(
+                new ai.protomolt.proto.repo.blob.spi.BackendIdentity("filesystem", "filesystem/v1",
+                        java.util.Map.of("root", "/other")), "filesystem-realm")))
+                .isInstanceOf(IllegalStateException.class);
+        tx.readOnly(em -> {
+            var row = (Object[]) em.createNativeQuery("SELECT endpoint,region,path_style,identity_schema FROM managed_backend_profiles WHERE generation=:id")
+                    .setParameter("id", id).getSingleResult();
+            assertThat(row).containsExactly(null, null, null, "filesystem/v1");
+            return null;
+        });
+    }
+
     @Test void conflictingConcurrentRegistrationsHaveOneWinner() throws Exception {
         String id = UUID.randomUUID().toString();
         var start = new CountDownLatch(1);

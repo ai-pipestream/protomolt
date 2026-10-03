@@ -32,6 +32,17 @@ public final class BlobStores {
 
     public Set<String> providerIds() { return providers.keySet(); }
 
+    /** Obtain identity from the same installed factory used by open, without I/O. */
+    public BackendIdentity managedIdentity(String id, Map<String, String> options) {
+        var provider = providers.get(requireId(id));
+        if (provider == null) throw new IllegalArgumentException("Byte storage provider is not installed: " + id);
+        var identity = Objects.requireNonNull(provider.managedIdentity(Map.copyOf(options)),
+                "Byte storage provider returned no identity");
+        if (!id.equals(identity.provider()))
+            throw new IllegalArgumentException("Selected provider returned a different backend identity provider");
+        return identity;
+    }
+
     public OpenedBlobStore open(String id, Map<String, String> options) {
         return open(id, options, Set.of());
     }

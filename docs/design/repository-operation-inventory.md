@@ -368,6 +368,23 @@ historical snapshots or hydration behavior; those require new red/green tests.
 
 ### Bound archive reads (internal composition)
 
+Backend identity persistence is extended without protobuf changes. V17 preserves
+existing generations, realms, profile values and foreign keys; legacy S3 rows
+decode to the same canonical s3/v1 identity as new provider-produced descriptors.
+New generations persist a provider/schema/location descriptor with no required
+S3 columns. Generation immutability and conflicting registration checks remain.
+BlobStoreProvider.managedIdentity is additive and defaults to unsupported. S3
+implements it without opening a client and excludes credential options; the host
+must still check retention capabilities. No other provider gains managed recovery
+support merely because its identity can be persisted.
+
+Java callers of ManagedBackendLedger.Profile should now use
+Profile(BackendIdentity, storageRealm). The former S3 constructor remains as a
+deprecated compatibility entry point; S3-specific record accessors are replaced
+by identity().location(). Provider modules own canonicalization and validation;
+the generic value is a trusted provider descriptor, not a credential sanitizer
+for arbitrary user maps. Production composition uses the S3 provider factory.
+
 GetEntry, ClassifyEntry and BridgeEntry now share an optional ArchiveObjectReader
 for renditions with storage_object_id. It requires an exact retained version
 reference to a LIVE upload, checks manifest scope/key/size/checksum, and resolves

@@ -20,6 +20,13 @@ import software.amazon.awssdk.services.s3.S3Client;
 public final class S3BlobStoreProvider implements BlobStoreProvider {
     @Override public String id() { return "s3"; }
 
+    @Override public ai.protomolt.proto.repo.blob.spi.BackendIdentity managedIdentity(Map<String, String> options) {
+        String endpoint = options.get("endpoint");
+        if (endpoint == null) throw new IllegalArgumentException("Missing S3 identity endpoint");
+        return S3BackendIdentity.of(endpoint.isEmpty() ? S3BackendIdentity.SDK_DEFAULT : endpoint,
+                options.get("region"), bool(options, "path-style"));
+    }
+
     @Override public OpenedBlobStore open(Map<String, String> options) {
         // The original explicit key-pair form remains supported.
         String mode = options.containsKey("credentials-mode") ? options.get("credentials-mode") : "static";
@@ -85,6 +92,7 @@ public final class S3BlobStoreProvider implements BlobStoreProvider {
         return switch (options.get(key)) {
             case "true" -> true;
             case "false" -> false;
+            case null -> throw new IllegalArgumentException("Missing S3 option: " + key);
             default -> throw new IllegalArgumentException(key + " must be true or false");
         };
     }

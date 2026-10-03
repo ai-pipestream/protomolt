@@ -8,6 +8,25 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class BlobStoresTest {
+    @Test void identityResolutionRejectsUnsupportedAndMisdirectedProvidersWithoutOpeningClients() {
+        var unsupported = new BlobStoreProvider() {
+            public String id() { return "unsupported"; }
+            public OpenedBlobStore open(Map<String, String> options) { throw new AssertionError("Identity lookup acquired resources"); }
+        };
+        var misdirected = new BlobStoreProvider() {
+            public String id() { return "misdirected"; }
+            public OpenedBlobStore open(Map<String, String> options) { throw new AssertionError("Identity lookup acquired resources"); }
+            public BackendIdentity managedIdentity(Map<String, String> options) {
+                return new BackendIdentity("other", "other/v1", Map.of("namespace", "elsewhere"));
+            }
+        };
+        var providers = BlobStores.of(List.of(unsupported, misdirected));
+        assertThatThrownBy(() -> providers.managedIdentity("unsupported", Map.of()))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> providers.managedIdentity("misdirected", Map.of()))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("different backend identity");
+    }
+
     @Test void emptyInstallationHasNoImplicitBackend() {
         var providers = BlobStores.discover();
         assertThat(providers.providerIds()).isEmpty();
