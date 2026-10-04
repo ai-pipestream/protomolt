@@ -5600,3 +5600,27 @@ and cancellation after the observation. Failed observations retain count and
 command bytes; positive proof removes only that entry. Retrying normal execution
 after retirement still cannot take ownership. This is local capacity management,
 not an abort receipt, provider cleanup, automatic takeover or public endpoint.
+
+### Rejection receipt contract and encoding
+
+New: `DocumentPublicationRejection` and `DocumentPublicationRejectionCodec`.
+Extended: `DocumentPublicationCommand` can verify a rejection against its exact
+canonical identity and trusted principal/generation. Unchanged: the success result,
+all existing field tags, protobuf import paths and Any URLs. No service method or
+terminal rejection storage is added at this checkpoint.
+
+Generated and dynamic-message fixtures exercise the real runtime validator for
+required identity, bounds, defined enums and the bidirectional cancellation rule.
+Codec fixtures cover identity mismatches, unknown fields, NUL strings, encoding
+version, digest corruption, truncation, duplicate scalar fields and the wire-value
+limit. JSON Schema exposes account length bounds and retains the disposition rule
+as `x-protomolt-cel`; that rule and trusted command/owner binding remain runtime
+obligations. This does not add an OpenAPI endpoint or change the generator.
+
+The full imports compile; Buf lint passes for the new contract and the complete
+descriptor inventory passes FILE compatibility against `c05ef2d5`. All 90
+repo-proto/repo-spi tests and the SPI/engine runtime dependency checks pass.
+The fenced storage, decision,
+replay authorization and race-test backlog is recorded in the design's rejection
+receipt section. A valid receipt shape alone must never be advertised as a durable
+terminal outcome.

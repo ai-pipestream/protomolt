@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v1;
+
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.v1";
+
+// A durable decision that prevents this entire operation from publishing.
+enum DocumentPublicationDisposition {
+  // Not a terminal decision.
+  DOCUMENT_PUBLICATION_DISPOSITION_UNSPECIFIED = 0;
+  // A verified admission or precondition failure prevented publication.
+  DOCUMENT_PUBLICATION_DISPOSITION_REJECTED = 1;
+  // An explicit cancellation decision prevented publication.
+  DOCUMENT_PUBLICATION_DISPOSITION_ABORTED = 2;
+}
+
+// Fixed reasons only: provider errors, credentials and document data are excluded.
+enum DocumentPublicationRejectionReason {
+  // No reason recorded; invalid for a terminal receipt.
+  DOCUMENT_PUBLICATION_REJECTION_REASON_UNSPECIFIED = 0;
+  // A required domain condition failed under its current lock.
+  DOCUMENT_PUBLICATION_REJECTION_REASON_PRECONDITION_NOT_MET = 1;
+  // Candidate admission failed with its required evidence verified.
+  DOCUMENT_PUBLICATION_REJECTION_REASON_ADMISSION_REJECTED = 2;
+  // An authorized explicit cancellation won the operation fence.
+  DOCUMENT_PUBLICATION_REJECTION_REASON_EXPLICIT_CANCELLATION = 3;
+}
+
+// Additive receipt contract; no rejection RPC is mounted by this definition.
+// A handler must record this in a fresh transaction after failed publication has
+// rolled back, under the exact command/owner fence, excluding successful commits
+// and newer owners. Recheck mutable rejection conditions under their domain and
+// policy locks. A timeout, disconnection, expired lease or lost acknowledgment is
+// not rejection. Explicit cancellation is a terminal decision, not a thrown
+// cancellation check. Physical cleanup remains separately owned and observable.
+// Exact replay reauthorizes current target access and returns the stored decision.
+// Shape validation and command binding alone do not prove a durable decision.
+message DocumentPublicationRejection {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-rejection-disposition"
+    message: "only explicit cancellation has an aborted disposition"
+    expression: "(this.disposition == 2) == (this.reason == 3)"
+  };
+  // Scoped to the account and authenticated principal.
+  string operation_id = 1 [(ai.protomolt.proto.validate.v1.field).string = {uuid: true, pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}];
+  // Account scope of the admitted command.
+  string account_id = 2 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+  // Existing canonical command identity; a new payload under the same key conflicts.
+  string command_sha256 = 3 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$"];
+  // Trusted operation principal, never an API key.
+  string principal = 4 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+  // Generation making the terminal decision, not a retrying reader's generation.
+  int64 owner_generation = 5 [(ai.protomolt.proto.validate.v1.field).int64.gt = 0];
+  // Existing canonical command encoding version.
+  uint32 command_encoding_version = 6 [(ai.protomolt.proto.validate.v1.field).uint32.const = 1];
+  // Existing canonical command codec, not the receipt's storage codec.
+  string command_codec = 7 [(ai.protomolt.proto.validate.v1.field).string.const = "document-publication"];
+  // Database time assigned inside the decision transaction, not its commit instant.
+  int64 recorded_at_epoch_micros = 8 [(ai.protomolt.proto.validate.v1.field).int64 = {gt: 0, lte: 253402300799999999}];
+  // Whole-operation decision; no partial publication is represented.
+  DocumentPublicationDisposition disposition = 9 [(ai.protomolt.proto.validate.v1.field).enum = {defined_only: true, not_in: 0}];
+  // Fixed reason whose meaning must agree with the disposition.
+  DocumentPublicationRejectionReason reason = 10 [(ai.protomolt.proto.validate.v1.field).enum = {defined_only: true, not_in: 0}];
+}

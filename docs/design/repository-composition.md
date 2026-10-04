@@ -1403,8 +1403,9 @@ bindings, and rechecks mutable authorization and revision preconditions. It then
 publishes the revisions, native/common references, transactional outbox and one
 immutable logical outcome together. The internal batch now has a transaction-scoped
 entry for this coordinator; nesting calls to `save(Tx, ...)` would open a second
-transaction and is prohibited. The coordinator's binding and outcome work remains
-unimplemented. Operation tracking is not a shadow
+transaction and is prohibited. Internal native successful publication now binds
+the complete result to the committed revisions in that transaction. Durable
+rejection and abort decisions remain unimplemented. Operation tracking is not a shadow
 document store: existing domain rows and retention tables remain authoritative.
 
 The unsigned logical outcome records the scoped operation identity, command
@@ -2754,3 +2755,55 @@ the commit design. It cannot be inferred from NOT_OBSERVED, PENDING, a timeout o
 an expired lease. Full restart reconstruction and terminal rejection receipts
 are still required. The internal registry transition
 does not claim that those paths are mounted or complete.
+
+### Rejection receipt and terminal decision implementation
+
+`DocumentPublicationRejection` is a separate additive receipt contract. The
+successful `DocumentPublicationResult` and its encoding remain unchanged. A
+rejection binds the account, authenticated principal, operation UUID, exact
+canonical command codec/version/digest and deciding owner generation. It includes
+a database-assigned decision time in epoch microseconds, and fixed disposition
+and reason enums. Explicit cancellation requires ABORTED; admission and
+precondition rejection require REJECTED. There is no arbitrary error text,
+document snapshot, provider identity, lease token or invented revision result.
+
+The runtime validator checks receipt shape, enum alternatives, bounds and the
+disposition/reason rule. `DocumentPublicationCommand.requireRejection` additionally
+checks the trusted command/principal/generation binding and rejects unknown fields
+and NUL strings. `DocumentPublicationRejectionCodec` limits stored receipts to
+4096 bytes and 32 wire values, verifies the encoding version and digest, and
+requires exact canonical bytes on decode. Encoding a caller-constructed receipt
+is not proof that any decision was recorded. No rejection RPC is mounted.
+
+The implementation still needs these shared behaviors:
+
+- Add an immutable rejection table beside `repository_operation_success`, keyed
+  by the same account/principal/operation. Under the operation owner fence, prohibit
+  success and rejection from coexisting, including within one transaction. Reuse
+  the canonical command identity and store the bounded encoded receipt. The
+  deciding transaction assigns the receipt time; callers cannot choose it.
+- Extend the SQL write fence, terminal owner guard, Java admission/renewal/takeover
+  checks and replay to recognize either terminal outcome. Recovery cleanup may
+  continue with its separate recovery fence; it must not restore write permission.
+- After publication rolls back, open a fresh decision transaction. Lock the owner
+  first, compare the exact command and current generation, and return an already
+  committed outcome if another worker won. A newer owner fences the stale worker.
+  Recheck mutable rejection conditions under domain/policy locks before recording
+  them. Do not classify arbitrary exceptions as deterministic rejection.
+- Implement explicit cancellation as an authorized operation decision. Transport
+  cancellation, timeout, lost acknowledgment and transient SQL/provider failure
+  remain unknown or pending. No failed control check silently records an abort.
+- Replay exact stored receipts with current account/principal and target access
+  checks. Define missing-target behavior for rejected creation separately from
+  deleted or revoked existing targets. Never skip authorization merely because
+  the receipt has no result revisions. An authorized terminal observation can
+  retire its local session after invocation references leave; physical cleanup
+  remains separately owned.
+
+Acceptance requires real PostgreSQL publication/rejection/cancellation races,
+owner takeover between rollback and decision, response loss after decision commit,
+duplicate decisions, command conflicts, renewal/write refusal after termination,
+current-policy replay and revocation races, immutable receipt/digest checks,
+migration over existing success rows, and cleanup after either terminal outcome.
+Existing successful publication and provider tests must remain green. The receipt
+contract fixtures do not establish any of those SQL or host behaviors.

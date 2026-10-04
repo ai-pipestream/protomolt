@@ -103,6 +103,21 @@ public final class DocumentPublicationCommand {
         }
     }
 
+    /** Correspondence only; a handler must separately prove the fenced durable decision. */
+    public void requireRejection(DocumentPublicationRejection rejection,
+            String principal, long generation) {
+        Objects.requireNonNull(rejection, "rejection"); Objects.requireNonNull(principal, "principal");
+        if (rejection.getSerializedSize() > DocumentPublicationRejectionCodec.MAX_BYTES)
+            throw new IllegalArgumentException("Publication rejection exceeds byte bounds");
+        rejectUnknownAndNul(rejection);
+        if (!VALIDATOR.validate(rejection).valid()) throw new IllegalArgumentException("Invalid publication rejection");
+        if (!rejection.getOperationId().equals(operationId.toString()) || !rejection.getAccountId().equals(intent.getAccountId())
+                || !rejection.getCommandSha256().equals(sha256) || rejection.getCommandEncodingVersion() != ENCODING_VERSION
+                || !rejection.getCommandCodec().equals(CODEC) || !rejection.getPrincipal().equals(principal)
+                || rejection.getOwnerGeneration() != generation)
+            throw new IllegalArgumentException("Publication rejection differs from operation identity");
+    }
+
     @Override public String toString() {
         return "DocumentPublicationCommand[operationId=" + operationId + ", members="
                 + intent.getMembersCount() + ", sha256=" + sha256 + "]";
