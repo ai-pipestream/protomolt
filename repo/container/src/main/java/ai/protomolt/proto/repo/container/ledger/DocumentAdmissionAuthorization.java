@@ -77,16 +77,17 @@ final class DocumentAdmissionAuthorization {
         }
     }
 
-    static void lockAndAuthorize(EntityManager em, RepositoryCaller caller,
+    static Map<UUID, DocumentRecord> lockAndAuthorize(EntityManager em, RepositoryCaller caller,
             DocumentUploadPlan.Prepared plan, Prepared prepared) {
         // Lock every address first, but authorize before exposing revision mismatches.
         // Otherwise a source revision conflict can disclose a document the caller cannot read.
-        var locked = DocumentRevisionLocks.lock(em, prepared.destinations(), prepared.sources().keySet());
+        var admitted = DocumentRevisionLocks.lockForAdmission(em, prepared.destinations(), prepared.sources().keySet());
+        var locked = admitted.documents();
         for (var source : prepared.sources().entrySet()) {
-            var row = locked.get(source.getKey());
+            var row = admitted.sources().get(source.getKey());
             requireIdentity(row, source.getValue().getAddress());
-            requireAccess(caller, row, Access.ACCESS_READ);
-            if (!DocumentStatus.AVAILABLE.equals(row.status) || row.pendingPurgeId != null) throw unavailable();
+            requireSourceAccess(caller,row);
+            if (!DocumentStatus.AVAILABLE.equals(row.status()) || row.pendingPurgeId() != null) throw unavailable();
         }
         for (var member : plan.members()) {
             var intent = member.intent();
@@ -119,17 +120,36 @@ final class DocumentAdmissionAuthorization {
         // Complete authorization for the entire set before returning any revision
         // conflict, including a stale readable source paired with a denied destination.
         for (var source : prepared.sources().entrySet())
-            DocumentLedger.requireRevision(locked.get(source.getKey()), source.getValue().getExpectedMutationRevision());
+            if (admitted.sources().get(source.getKey()).mutationRevision()!=source.getValue().getExpectedMutationRevision())
+                throw new DocumentLedger.RevisionConflictException();
         for (var member : plan.members()) {
             var destination = member.intent().getDestination();
             DocumentLedger.requireRevision(locked.get(member.nodeId()), destination.hasExpectedMutationRevision()
                     ? destination.getExpectedMutationRevision() : null);
         }
+        return locked;
     }
 
     private static void requireIdentity(DocumentRecord row, NodeAddress address) {
         if (row == null || !address.getAccountId().equals(row.accountId) || !address.getDocId().equals(row.docId)
                 || !address.getGraphId().equals(row.graphId) || !address.getGraphAddressId().equals(row.graphAddressId))
+            throw unavailable();
+    }
+
+    private static void requireIdentity(DocumentRevisionLocks.SourceView row,NodeAddress address) {
+        if (row==null || !address.getAccountId().equals(row.accountId()) || !address.getDocId().equals(row.docId())
+                || !address.getGraphId().equals(row.graphId()) || !address.getGraphAddressId().equals(row.graphAddressId()))
+            throw unavailable();
+    }
+
+    private static void requireSourceAccess(RepositoryCaller caller,DocumentRevisionLocks.SourceView row) {
+        if (!caller.processAuthority() && !caller.accountIds().contains(row.accountId())) throw unavailable();
+        final DocumentSecurity policy;
+        try { policy=DocumentRecord.parseSecurity(row.security(),row.nodeId()); }
+        catch (LedgerException failure) {
+            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,"Stored document policy is malformed",failure);
+        }
+        if (!DocumentAccessPolicy.allows(caller,row.accountId(),policy,caller.processAuthority() ? List.of() : null,Access.ACCESS_READ))
             throw unavailable();
     }
 

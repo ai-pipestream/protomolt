@@ -13,12 +13,30 @@ import java.util.stream.Collectors;
 final class DocumentRevisionLocks {
     private DocumentRevisionLocks() {}
 
+    record SourceView(UUID nodeId,String accountId,String docId,String graphId,String graphAddressId,
+            long mutationRevision,String status,UUID pendingPurgeId,String security) {
+        static SourceView of(DocumentRecord row) {
+            return new SourceView(row.nodeId,row.accountId,row.docId,row.graphId,row.graphAddressId,
+                    row.mutationRevision,row.status,row.pendingPurgeId,row.security);
+        }
+    }
+    record Locked(Map<UUID,DocumentRecord> documents,Map<UUID,SourceView> sources) {}
+
     static Map<UUID,DocumentRecord> lock(EntityManager em, Set<UUID> destinations, Set<UUID> sources) {
+        return lock(em,destinations,sources,false).documents();
+    }
+
+    /** Source-only rows omit manifests and other payload metadata; overlapping destinations remain full rows. */
+    static Locked lockForAdmission(EntityManager em,Set<UUID> destinations,Set<UUID> sources) {
+        return lock(em,destinations,sources,true);
+    }
+
+    private static Locked lock(EntityManager em,Set<UUID> destinations,Set<UUID> sources,boolean leanSources) {
         if (!em.getTransaction().isActive()) throw new IllegalStateException("Revision locks require an active transaction");
         if (destinations.size()>64 || sources.size()>10000)
             throw new IllegalArgumentException("Revision locks exceed 64 destinations or 10000 sources");
         var identities=new TreeSet<>(sources); identities.addAll(destinations);
-        if (identities.isEmpty()) return Map.of();
+        if (identities.isEmpty()) return new Locked(Map.of(),Map.of());
         if (destinations.containsAll(sources)) {
             // An all-write set uses the established exclusive batch protocol.
             // No database capability probing or alternate correctness path.
@@ -31,7 +49,8 @@ final class DocumentRevisionLocks {
         }
         var ordered=List.copyOf(identities);
         Map<UUID,DocumentRecord> locked=new HashMap<>();
-        identities.forEach(id -> locked.put(id,null));
+        (leanSources ? destinations : identities).forEach(id -> locked.put(id,null));
+        Map<UUID,SourceView> sourceViews=new HashMap<>();
         for (int start=0; start<ordered.size();) {
             boolean write=destinations.contains(ordered.get(start));
             int end=start+1;
@@ -39,6 +58,23 @@ final class DocumentRevisionLocks {
             String ids=ordered.subList(start,end).stream().map(UUID::toString).collect(Collectors.joining(",","{","}"));
             // Keep global Java UUID order across modes and batches. Existing
             // multi-document deletion takes that row order without advisory locks.
+            if (leanSources && !write) {
+                var rows=em.createNativeQuery("""
+                        SELECT d.node_id,d.account_id,d.doc_id,d.graph_id,d.graph_address_id,
+                            d.mutation_revision,d.status,d.pending_purge_id,d.security::text
+                        FROM unnest(CAST(:ids AS uuid[])) WITH ORDINALITY AS requested(id,position)
+                        JOIN documents d ON d.node_id=requested.id
+                        ORDER BY requested.position FOR SHARE OF d
+                        """).setParameter("ids",ids).getResultList();
+                for (Object value:rows) {
+                    Object[] row=(Object[])value;
+                    var source=new SourceView((UUID)row[0],(String)row[1],(String)row[2],(String)row[3],(String)row[4],
+                            ((Number)row[5]).longValue(),(String)row[6],(UUID)row[7],(String)row[8]);
+                    sourceViews.put(source.nodeId(),source);
+                }
+                start=end;
+                continue;
+            }
             var rows=em.unwrap(org.hibernate.Session.class).createNativeQuery("""
                     SELECT d.*,d.mutation_revision AS locked_revision
                     FROM unnest(CAST(:ids AS uuid[])) WITH ORDINALITY AS requested(id,position)
@@ -51,10 +87,11 @@ final class DocumentRevisionLocks {
                 DocumentRecord row=(DocumentRecord)result[0];
                 if (row.mutationRevision!=(Long)result[1]) throw new DocumentLedger.RevisionConflictException();
                 locked.put(row.nodeId,row);
+                if (leanSources && sources.contains(row.nodeId)) sourceViews.put(row.nodeId,SourceView.of(row));
             }
             start=end;
         }
-        return locked;
+        return new Locked(locked,sourceViews);
     }
 
     private static String keys(Set<UUID> identities) {

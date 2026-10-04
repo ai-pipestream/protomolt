@@ -23,6 +23,12 @@ record ManagedDocumentFixture(DocumentRecord row, UUID attempt,
     static ManagedDocumentFixture publish(Tx tx, DriveRecord drive, String generation,
             ManagedBackendLedger.Profile profile, NodeAddress address, DocumentSecurity policy,
             int parts, long coreSize, String version, boolean sparseManifest) {
+        return publish(tx,drive,generation,profile,address,policy,parts,coreSize,version,sparseManifest,null);
+    }
+
+    static ManagedDocumentFixture publish(Tx tx, DriveRecord drive, String generation,
+            ManagedBackendLedger.Profile profile, NodeAddress address, DocumentSecurity policy,
+            int parts, long coreSize, String version, boolean sparseManifest, WriteProvenance provenance) {
         UUID node = DocumentIds.nodeId(address); UUID id = UUID.randomUUID();
         var documents = new DocumentLedger(tx);
         var prior = documents.findByNodeId(node).orElse(null);
@@ -56,8 +62,10 @@ record ManagedDocumentFixture(DocumentRecord row, UUID attempt,
         if (sparseManifest) manifest.addParts(PartManifestEntry.newBuilder().setPart(DocumentPart.DOCUMENT_PART_BLOBS)
                 .setState(PartState.PART_STATE_EMPTY));
         for (var object : objects) {
-            manifest.addParts(PartManifestEntry.newBuilder().setPart(object.part()).setSubKey(object.subKey())
-                    .setState(PartState.PART_STATE_PRESENT).setObjectKey(object.objectKey()).setSizeBytes(object.size()).setSha256(object.sha256()));
+            var entry=PartManifestEntry.newBuilder().setPart(object.part()).setSubKey(object.subKey())
+                    .setState(PartState.PART_STATE_PRESENT).setObjectKey(object.objectKey()).setSizeBytes(object.size()).setSha256(object.sha256());
+            if (provenance!=null) entry.setWrittenBy(provenance);
+            manifest.addParts(entry);
             if (sparseManifest && object.part() == DocumentPart.DOCUMENT_PART_CORE)
                 manifest.addParts(PartManifestEntry.newBuilder().setPart(DocumentPart.DOCUMENT_PART_PARSED)
                         .setState(PartState.PART_STATE_DELETED).setDeletedReason("Synthetic tombstone"));

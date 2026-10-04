@@ -3635,3 +3635,77 @@ This prerequisite does not activate the production native publisher.
 All 125 affected container/engine tests and 34 repository service integration
 tests pass without failures or skips. Sol reviewed the migration, trigger order
 and legacy response boundary without a blocker.
+
+### Internal native publication checkpoint
+
+`DocumentPublicationCommit` now connects checked `DocumentCommandContent`, current
+upload selections, exact physical bindings and native revision commits. This is
+an internal boundary, not an available RPC. It builds every candidate before writing
+any destination and records the terminal result after all member revisions and
+saved events. Typed-required intake still fails explicitly until retained schema
+integration is complete.
+
+`Prepared` must describe the currently selected attempt. After replacing an
+attempt, rebuild the prepared plan with that attempt ID; an earlier plan cannot
+publish the replacement's bytes. This preserves canonical command identity while
+checking the current generated physical keys independently.
+
+Current local evidence:
+
+- `DocumentPublicationCommitIT` uses PostgreSQL and a versioned LocalStack S3
+  adapter to upload and verify two documents, admit their actual protobuf bytes,
+  commit native revisions, read exact provider versions and replay the durable
+  result. Opaque `Any` values retain invalid inner wire bytes without inner
+  deserialization and record resolution as not attempted.
+- A PostgreSQL trigger injects failure while inserting the second member's commit.
+  Neither document nor native commit becomes visible; the operation remains
+  pending. Removing the fault allows the same staged operation to commit and
+  replay successfully.
+- Reuse-only and mixed revisions pass through the same Java publisher with a
+  retained CORE. Its physical identity, last-write time and provenance stay
+  unchanged; document version advances, and both original and new outcomes replay.
+  These cases perform exact versioned retained reads directly in the test; they
+  do not yet qualify the production retained-reader handoff.
+- A replacement upload attempt succeeds with a rebuilt prepared plan while the
+  original plan is rejected. Checked content remains bound to unchanged canonical
+  command bytes, independently of the replacement physical attempt.
+- Host-required typed intake rejects opaque content. Caller cancellation and
+  thread interruption before commit leave the operation pending and retryable.
+- Revoking destination access after staging prevents publication. Authorization
+  refusal precedes revision-conflict disclosure to the denied caller; process
+  authority still receives the stale-revision conflict and cannot publish it.
+- A caller-side delivery failure injected after the real SQL commit is recovered
+  through exact durable replay. A repeated publication is refused by the terminal
+  operation guard; it does not create another revision or success outcome. This
+  is not a network transport qualification.
+- A PostgreSQL advisory-lock trigger pauses the first member's revision insert.
+  Cancelling the caller before releasing that barrier rolls back the batch;
+  neither document becomes visible and the same staged operation can retry.
+- Retained manifest tests accept a producer field just below the per-entry JSON
+  budget and reject an oversized entry with `RESOURCE_EXHAUSTED`. A different
+  physical object for the requested source slot and conflicting identities for
+  one source slot are rejected. These are SQL metadata tests with explicitly
+  synthetic physical verification, not provider qualification.
+- `DocumentCommitWriterTest` verifies caller-declared producer provenance is
+  preserved and absent provenance remains absent. Its physical identities are
+  synthetic and do not qualify a provider.
+
+`DocumentRetainedManifestEntries` now projects only requested source slots using
+their retained revision-part ordinal, with a V54 `(revision_id, object_id)` index.
+It parses batches of at most 32 entries, rejects individual JSON entries over
+1 MiB before returning them from SQL, and enforces a 64 MiB aggregate serialized
+metadata budget. Slot, state, key, size and digest must match the command. These
+limits cover this provenance projection, not the whole transaction. Admission
+now locks source-only documents as scalar identity, revision, status and policy
+views without hydrating their manifest. Destinations, including source/destination
+overlaps, retain full row loading and prior-manifest parsing. The same globally
+ordered advisory and row locks still apply; authorization precedes all revision
+conflict reporting. Policy JSON and destination metadata still need aggregate
+resource qualification.
+
+Remaining for host integration: qualify the aggregate metadata budget and
+aggregate policy/destination metadata use, production retained-reader handoff,
+network acknowledgement loss and operating-limit performance. Typed admission,
+retained-schema publication and the shared public library/transport boundary are
+still unfinished. Existing SQL-only native publication fixtures do not substitute
+for those integration cases.

@@ -17,9 +17,9 @@ import java.util.UUID;
 /**
  * Internal SQL staging only. The qualified composition supplies sampled physical
  * placement and authenticated caller. Current policy and revisions are checked
- * here, along with retained current source bindings. Provider qualification for
- * physical reuse, schema validation, provider retry reconciliation and provider I/O remain
- * separate, unimplemented boundaries.
+ * here, along with retained current source bindings. Provider I/O and retry
+ * reconciliation belong to the upload coordinator; checked content and atomic
+ * publication are separate boundaries. Typed schema retention remains unfinished.
  */
 final class DocumentOperationUploadAdmission {
     private final Tx tx;
@@ -62,6 +62,7 @@ final class DocumentOperationUploadAdmission {
         }
 
         List<DocumentUploadPlan.Member> members() { return plan.members(); }
+        DocumentUploadPlan.Prepared plan() { return plan; }
         Duration lease() { return lease; }
     }
 

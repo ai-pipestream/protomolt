@@ -107,7 +107,7 @@ final class DocumentSelectedAttemptLedger {
         });
     }
 
-    private static DocumentPartAttemptLedger.Attempt lockSelected(EntityManager em,
+    static DocumentPartAttemptLedger.Attempt lockSelected(EntityManager em,
             RepositoryOperationLedger.Owner owner, Selected selection) {
         var attempt = DocumentPartAttemptLedger.read(em, selection.attempt(), true).orElseThrow(DocumentSelectedAttemptLedger::conflict);
         if (!attempt.planKind().equals("NEW_CONTENT") || !attempt.token().equals(selection.token())

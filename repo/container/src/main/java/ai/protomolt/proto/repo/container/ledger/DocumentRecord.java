@@ -289,6 +289,10 @@ public class DocumentRecord {
      * @return the parsed security, or null
      */
     public DocumentSecurity readSecurity() {
+        return parseSecurity(security,nodeId);
+    }
+
+    static DocumentSecurity parseSecurity(String security,UUID nodeId) {
         if (security == null) {
             return null;
         }

@@ -30,6 +30,82 @@ class DocumentReuseAdmissionIT {
     @AfterAll static void close() { if (database != null) database.close(); }
     private record Fixture(DriveRecord drive, String generation, ManagedBackendLedger.Profile profile, ManagedDocumentFixture source) {}
 
+    @ParameterizedTest @ValueSource(booleans={false,true})
+    void retainedManifestProjectionEnforcesEntryByteBudget(boolean oversized) {
+        var original=fixture(1,"v1");
+        String producer="p".repeat(oversized ? 1_048_576 : 1_040_000);
+        var source=ManagedDocumentFixture.publish(tx,original.drive,original.generation,original.profile,
+                address("source-"+UUID.randomUUID()),DocumentSecurity.getDefaultInstance(),1,CORE_SIZE,"v1",false,
+                WriteProvenance.newBuilder().setModuleId(producer).build());
+        var fixture=new Fixture(original.drive,original.generation,original.profile,source);
+        var plan=plan(fixture,member(fixture),List.of());
+        var requested=DocumentRetainedManifestEntries.prepare(plan,()->{});
+        java.util.function.Supplier<Map<UUID,Map<DocumentPublicationSlot,PartManifestEntry>>> read=()->tx.inTransaction(em -> {
+            DocumentAdmissionAuthorization.lockAndAuthorize(em,new RepositoryCaller("operator",true),plan,DocumentAdmissionAuthorization.prepare(plan));
+            DocumentReuseAdmission.requireBoundSources(em,DocumentReuseAdmission.prepare(plan));
+            return DocumentRetainedManifestEntries.read(em,requested,()->{});
+        });
+        if (oversized) {
+            assertThatThrownBy(read::get).isInstanceOf(ai.protomolt.proto.repo.spi.RepositoryException.class)
+                    .satisfies(failure -> assertThat(((ai.protomolt.proto.repo.spi.RepositoryException)failure).code())
+                            .isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED));
+        } else {
+            assertThat(read.get().get(source.row().nodeId).get(source.slots().getFirst()).getWrittenBy().getModuleId()).isEqualTo(producer);
+        }
+    }
+
+    @Test void retainedManifestProjectionRejectsAnUnboundObject() {
+        var fixture=fixture(1,"v1");
+        var member=member(fixture).toBuilder();
+        var part=member.getParts(0);
+        member.setParts(0,part.toBuilder().setReuse(part.getReuse().toBuilder()
+                .setObject(part.getReuse().getObject().toBuilder().setObjectId(UUID.randomUUID().toString()))));
+        var requested=DocumentRetainedManifestEntries.prepare(plan(fixture,member.build(),List.of()),()->{});
+        assertThatThrownBy(()->tx.inTransaction(em -> {
+            DocumentRevisionLocks.lockForAdmission(em,java.util.Set.of(),java.util.Set.of(fixture.source.row().nodeId));
+            return DocumentRetainedManifestEntries.read(em,requested,()->{});
+        })).isInstanceOf(DocumentPartAttemptLedger.FenceException.class);
+    }
+
+    @Test void leanSourceLockAvoidsEntityHydrationAndBlocksConcurrentPolicyChange() throws Exception {
+        var fixture=fixture(513,"v1");
+        var statistics=database.entityManagerFactory().unwrap(org.hibernate.SessionFactory.class).getStatistics();
+        statistics.setStatisticsEnabled(true);
+        try (var executor=java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+                var locked=database.entityManagerFactory().createEntityManager()) {
+            locked.getTransaction().begin();
+            java.util.concurrent.Future<?> update=null;
+            try {
+                long before=statistics.getEntityLoadCount();
+                var snapshot=DocumentRevisionLocks.lockForAdmission(locked,java.util.Set.of(UUID.randomUUID()),java.util.Set.of(fixture.source.row().nodeId));
+                assertThat(statistics.getEntityLoadCount()).isEqualTo(before);
+                assertThat(snapshot.documents()).doesNotContainKey(fixture.source.row().nodeId);
+                assertThat(snapshot.sources().get(fixture.source.row().nodeId).mutationRevision()).isEqualTo(fixture.source.row().mutationRevision);
+                var started=new java.util.concurrent.CountDownLatch(1);
+                var updaterPid=new java.util.concurrent.atomic.AtomicInteger();
+                update=executor.submit(()->tx.inTransaction(em -> {
+                    updaterPid.set(((Number)em.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue());
+                    started.countDown();
+                    em.createNativeQuery("UPDATE documents SET security='{}'::jsonb WHERE node_id=:node")
+                            .setParameter("node",fixture.source.row().nodeId).executeUpdate();
+                }));
+                assertThat(started.await(5,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                boolean blocked=false;
+                long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+                do {
+                    blocked=tx.readOnly(em -> (Boolean)em.createNativeQuery("SELECT cardinality(pg_blocking_pids(:pid))>0")
+                            .setParameter("pid",updaterPid.get()).getSingleResult());
+                    if (blocked || update.isDone()) break;
+                    Thread.sleep(10);
+                } while (System.nanoTime()<deadline);
+                assertThat(blocked).as("source policy update waits for the lean FOR SHARE lock").isTrue();
+            } finally { locked.getTransaction().rollback(); }
+            if (update!=null) update.get(5,java.util.concurrent.TimeUnit.SECONDS);
+        } finally { statistics.setStatisticsEnabled(false); }
+        assertThat(new DocumentLedger(tx).findByNodeId(fixture.source.row().nodeId).orElseThrow().mutationRevision)
+                .isGreaterThan(fixture.source.row().mutationRevision);
+    }
+
     @ParameterizedTest @ValueSource(ints = {1, 256, 257, 513})
     void provesExactSlotsWithBoundedStatementsAndInt64Sizes(int count) {
         var f = fixture(count, "v1");
@@ -72,6 +148,8 @@ class DocumentReuseAdmissionIT {
         var plan = plan(f, first, List.of(second.build()));
         assertThatThrownBy(() -> DocumentReuseAdmission.prepare(plan)).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Contradictory retained object identities");
+        assertThatThrownBy(() -> DocumentRetainedManifestEntries.prepare(plan,()->{}))
+                .isInstanceOf(DocumentPartAttemptLedger.FenceException.class);
     }
 
     @Test void policyOnlyRevisionChangeDoesNotRequireOriginalPublicationRevision() {
