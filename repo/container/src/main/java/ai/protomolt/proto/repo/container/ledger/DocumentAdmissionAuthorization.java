@@ -21,9 +21,9 @@ import java.util.UUID;
 final class DocumentAdmissionAuthorization {
     private DocumentAdmissionAuthorization() {}
 
-    record Prepared(Set<UUID> nodes, Map<UUID, DocumentRevisionCondition> sources) {
+    record Prepared(Set<UUID> destinations, Map<UUID, DocumentRevisionCondition> sources) {
         Prepared {
-            nodes = Set.copyOf(nodes);
+            destinations = Set.copyOf(destinations);
             // Prepare stable diagnostic order before acquiring database locks.
             sources = java.util.Collections.unmodifiableMap(new java.util.TreeMap<>(sources));
         }
@@ -39,7 +39,6 @@ final class DocumentAdmissionAuthorization {
                 if (part.hasReuse()) addSource(sources, part.getReuse().getSource());
             }
         }
-        nodes.addAll(sources.keySet());
         return new Prepared(nodes, sources);
     }
 
@@ -62,7 +61,7 @@ final class DocumentAdmissionAuthorization {
             DocumentUploadPlan.Prepared plan, Prepared prepared) {
         // Lock every address first, but authorize before exposing revision mismatches.
         // Otherwise a source revision conflict can disclose a document the caller cannot read.
-        var locked = DocumentLedger.lockRevisions(em, prepared.nodes(), Map.of());
+        var locked = DocumentAdmissionLocks.lock(em, prepared.destinations(), prepared.sources().keySet());
         for (var source : prepared.sources().entrySet()) {
             var row = locked.get(source.getKey());
             requireIdentity(row, source.getValue().getAddress());

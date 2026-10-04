@@ -2176,3 +2176,40 @@ duplicate-admission rollback, immutable placement, configuration minimization an
 populated migration without attempt adoption. Sol reviewed the final versioned
 digest and migration fixture with no blocker. No provider I/O or performance
 qualification is established by these SQL tests. Work remains local.
+
+### Concurrent source reads during typed staging (V41)
+
+Extended internal admission locking; protobuf and legacy publication behavior are
+unchanged. Source-only documents use shared advisory and FOR SHARE row locks.
+Destinations, including self-sources, use exclusive advisory and FOR UPDATE row
+locks. Shared advisory keys are promoted before acquisition when any destination
+aliases the key. The SQL helper sorts actual signed keys, acquires every advisory
+lock, then Java locks rows in its global UUID order. Runs of one mode are batched
+at 256 rows. This preserves order with the direct multi-document delete path;
+locking all destinations before sources would introduce a deadlock.
+
+The maximum row-statement count is bounded by source chunks plus twice the number
+of destinations; with 10000 sources and 64 destinations, including the advisory
+statement the bound is 169. Typical source/destination pairs use one extra query
+compared with the previous all-exclusive batch. The 1/513-new-part admission gates
+are now 18/20 client statements. This cost buys concurrent source access without
+weakening policy locks or changing row order. Source ACL/status/deletion updates
+still conflict with FOR SHARE. The raw mutation revision detects stale Hibernate
+entities; authorization still precedes caller-requested revision comparisons.
+
+Two real PostgreSQL tests first failed against the old exclusive helper: independent
+destinations sharing a source timed out, and a source-row share probe failed after
+an advisory collision. Tests now also cover a complete pair of admissions with
+one held after selection insertion, direct policy/deletion conflicts, self-source
+and alias promotion, mixed-mode row ordering against a direct writer, malformed
+SQL arrays, cached-policy staleness and a large interleaved batch. Publication and
+retention lock modes are unchanged. This is staging concurrency evidence, not
+mixed-publication or provider throughput qualification.
+
+Local validation on 2026-10-04: container/service regression passed in 2m31s:
+108 suites, 944 cases, 941 passed, 3 skipped, no failures/errors. Sol reviewed the
+final SQL, Java, tests and design with no blocker. The interleaved 10000-source,
+64-destination case used 130 client statements (bound 169), taking 558.514 ms in
+this uncontrolled run. That is a diagnostic measurement, not a throughput or
+production tail-latency result. The held-selection test establishes concurrent
+staging progress; provider I/O and mixed publication remain outside its scope.

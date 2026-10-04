@@ -35,6 +35,131 @@ class DocumentRevisionLockBatchIT {
     }
     @AfterAll static void close() { if (database != null) database.close(); }
 
+    @Test void independentDestinationsCanShareAnAdmissionSource() {
+        var source=UUID.randomUUID(); var first=UUID.randomUUID(); var second=UUID.randomUUID();
+        insert(List.of(source,first,second));
+        try (var holder=database.entityManagerFactory().createEntityManager()) {
+            holder.getTransaction().begin();
+            try {
+                DocumentAdmissionLocks.lock(holder,Set.of(first),Set.of(source));
+                tx.inTransaction(em -> {
+                    em.createNativeQuery("SET LOCAL lock_timeout='300ms'").executeUpdate();
+                    assertThat(DocumentAdmissionLocks.lock(em,Set.of(second),Set.of(source))).hasSize(2);
+                });
+            } finally { holder.getTransaction().rollback(); }
+        }
+    }
+
+    @Test void largeInterleavedAdmissionHasBoundedStatements() {
+        var sources=new java.util.HashSet<UUID>(); var destinations=new java.util.HashSet<UUID>();
+        for (int i=0;i<10000;i++) sources.add(new UUID(0,100000+2L*i));
+        for (int i=0;i<64;i++) destinations.add(new UUID(0,100001+312L*i));
+        var all=new ArrayList<>(sources); all.addAll(destinations); insert(all);
+        var statistics=database.entityManagerFactory().unwrap(org.hibernate.SessionFactory.class).getStatistics();
+        statistics.setStatisticsEnabled(true); statistics.clear();
+        long started=System.nanoTime();
+        try {
+            var locked=tx.inTransaction(em -> { return DocumentAdmissionLocks.lock(em,destinations,sources); });
+            assertThat(locked).hasSize(10064);
+            assertThat(statistics.getPrepareStatementCount()).isLessThanOrEqualTo(1+40+128);
+            System.out.printf("mixed_revision_lock sources=10000 destinations=64 client_statements=%d elapsed_ms=%.3f%n",
+                    statistics.getPrepareStatementCount(),(System.nanoTime()-started)/1_000_000.0);
+        } finally { statistics.setStatisticsEnabled(false); }
+    }
+
+    @Test void admissionRejectsStaleCachedPolicyAfterWaiting() {
+        var id=UUID.randomUUID(); insert(List.of(id));
+        tx.inTransaction(em -> {
+            em.find(DocumentRecord.class,id);
+            tx.inTransaction(other -> { other.createNativeQuery("UPDATE documents SET security='{\"inheritanceEnabled\":true}' WHERE node_id=:id")
+                    .setParameter("id",id).executeUpdate(); });
+            assertThatThrownBy(() -> DocumentAdmissionLocks.lock(em,Set.of(),Set.of(id)))
+                    .isInstanceOf(DocumentLedger.RevisionConflictException.class);
+        });
+    }
+
+    @Test void mixedAdvisoryFunctionRejectsMalformedAndOversizedInputs() {
+        for (String arguments : List.of("NULL::bigint[],ARRAY[]::bigint[]", "ARRAY[NULL]::bigint[],ARRAY[]::bigint[]",
+                "ARRAY[]::bigint[],array_fill(1::bigint,ARRAY[65])",
+                "ARRAY[[1,2],[3,4]]::bigint[],ARRAY[]::bigint[]",
+                "ARRAY(SELECT generate_series(1,10064)::bigint),ARRAY[10065]::bigint[]")) {
+            assertThatThrownBy(() -> tx.inTransaction(em -> {
+                em.createNativeQuery("SELECT lock_document_admission_keys("+arguments+")").getSingleResult();
+            })).hasStackTraceContaining("non-null one-dimensional bounds");
+        }
+    }
+
+    @Test void admissionSourcesBlockDirectPolicyChangesAndDeletion() {
+        var source=UUID.randomUUID(); insert(List.of(source));
+        try (var holder=database.entityManagerFactory().createEntityManager()) {
+            holder.getTransaction().begin();
+            try {
+                DocumentAdmissionLocks.lock(holder,Set.of(),Set.of(source));
+                for (String sql : List.of("UPDATE documents SET security='{}' WHERE node_id=:id",
+                        "DELETE FROM documents WHERE node_id=:id")) {
+                    assertThatThrownBy(() -> tx.inTransaction(em -> {
+                        em.createNativeQuery("SET LOCAL lock_timeout='100ms'").executeUpdate();
+                        em.createNativeQuery(sql).setParameter("id",source).executeUpdate();
+                    })).hasStackTraceContaining("lock timeout");
+                }
+            } finally { holder.getTransaction().rollback(); }
+        }
+    }
+
+    @Test void overlappingAndAliasedAdmissionKeysChooseExclusiveModeBeforeAcquiringLocks() {
+        var source=new UUID(10,20); var destination=new UUID(20,10);
+        insert(List.of(source,destination));
+        try (var holder=database.entityManagerFactory().createEntityManager()) {
+            holder.getTransaction().begin();
+            try {
+                DocumentAdmissionLocks.lock(holder,Set.of(destination),Set.of(source,destination));
+                long sharedAdvisories=((Number)holder.createNativeQuery("""
+                        SELECT count(*) FROM pg_locks WHERE pid=pg_backend_pid()
+                        AND locktype='advisory' AND mode='ShareLock'
+                        """).getSingleResult()).longValue();
+                assertThat(sharedAdvisories).isZero();
+                assertThatThrownBy(() -> tx.inTransaction(em -> {
+                    em.createNativeQuery("SET LOCAL lock_timeout='100ms'").executeUpdate();
+                    DocumentAdmissionLocks.lock(em,Set.of(),Set.of(source));
+                })).hasStackTraceContaining("lock timeout");
+                tx.inTransaction(em -> {
+                    // Promotion of the aliased advisory key must not turn a
+                    // read-only source row into an exclusive row lock.
+                    em.createNativeQuery("SELECT node_id FROM documents WHERE node_id=:id FOR SHARE NOWAIT")
+                            .setParameter("id",source).getSingleResult();
+                });
+                assertThatThrownBy(() -> tx.inTransaction(em -> {
+                    em.createNativeQuery("SELECT node_id FROM documents WHERE node_id=:id FOR SHARE NOWAIT")
+                            .setParameter("id",destination).getSingleResult();
+                })).hasStackTraceContaining("could not obtain lock");
+            } finally { holder.getTransaction().rollback(); }
+        }
+    }
+
+    @Test void admissionPreservesGlobalRowOrderAcrossLockModes() throws Exception {
+        var source=new UUID(0,401); var destination=new UUID(0,402);
+        insert(List.of(source,destination));
+        try (var deleter=database.entityManagerFactory().createEntityManager();
+             var executor=Executors.newVirtualThreadPerTaskExecutor()) {
+            deleter.getTransaction().begin();
+            deleter.createNativeQuery("SELECT node_id FROM documents WHERE node_id=:id FOR UPDATE")
+                    .setParameter("id",source).getSingleResult();
+            var pid=new CompletableFuture<Integer>();
+            var future=executor.submit(() -> tx.inTransaction(em -> {
+                pid.complete(pid(em));
+                return DocumentAdmissionLocks.lock(em,Set.of(destination),Set.of(source));
+            }));
+            try {
+                awaitLock(pid.get(10,TimeUnit.SECONDS));
+                // A destination-first implementation would already hold this row.
+                deleter.createNativeQuery("SELECT node_id FROM documents WHERE node_id=:id FOR UPDATE NOWAIT")
+                        .setParameter("id",destination).getSingleResult();
+                deleter.getTransaction().commit();
+                assertThat(future.get(10,TimeUnit.SECONDS)).hasSize(2);
+            } finally { if(deleter.getTransaction().isActive()) deleter.getTransaction().rollback(); }
+        }
+    }
+
     @ParameterizedTest @ValueSource(ints = {1, 257, 10000})
     void locksExistingRowsWithBoundedClientStatements(int count) {
         var ids = new ArrayList<UUID>();

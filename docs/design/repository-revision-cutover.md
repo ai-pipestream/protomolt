@@ -167,14 +167,16 @@ against exclusive retirement/reclamation, with stable global ordering and no loc
 upgrades. Cleanup and publication must use the same discipline. Merely changing a
 single trigger's lock mode is insufficient to establish safety.
 
-The current typed staging path also passes the complete source/destination union
-to `DocumentLedger.lockRevisions`, taking exclusive advisory and document-row locks
-even for read-only sources. Shared origin locks alone will not make independent
-operations using one source proceed concurrently. The new boundary must classify
-read-only sources versus destinations, choose each identity's strongest required
-mode before acquiring any lock (including advisory-key collisions), and retain
-policy/revision protection without lock upgrades. Tests must cover source policy
-revocation, deletion, absent destinations and a source that is also a destination.
+V41 removes exclusive source locking from typed staging. `DocumentAdmissionLocks`
+classifies destinations as writes and source-only identities as reads, choosing
+the strongest advisory mode across identity/hash collisions before any row lock.
+It preserves global Java UUID row order through same-mode runs of at most 256 IDs;
+read-only rows use FOR SHARE and destinations use FOR UPDATE. Destination-first
+row locking would conflict with existing multi-document deletion, which follows
+UUID row order without the advisory protocol. Current policy and raw mutation
+revision checks remain protected, and requested revisions are compared only after
+authorization. Publication must repeat these checks; its existing lock paths and
+the exclusive origin/retention guards have not changed.
 
 Performance acceptance includes independent destinations sharing one origin,
 independent origins, deliberate same-destination conflicts, multi-destination

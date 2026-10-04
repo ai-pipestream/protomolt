@@ -359,7 +359,7 @@ class DocumentOperationUploadAdmissionIT {
             result = admission.admit(ADMIN, f.owner, prepared);
             assertThat(statistics.getTransactionCount()).isEqualTo(1);
             // owner+command+revision locks+source/claim proof+drive+profile+final checks; then attempt rows and batches.
-            assertThat(statistics.getPrepareStatementCount()).isEqualTo(10 + 4 + (chunks + 255) / 256 + 2);
+            assertThat(statistics.getPrepareStatementCount()).isEqualTo(10 + 4 + (chunks + 255) / 256 + 3);
         } finally { statistics.setStatisticsEnabled(false); }
         assertThat(result).hasSize(1);
         assertThat(result.getFirst().planKind()).isEqualTo("NEW_CONTENT");
@@ -398,6 +398,59 @@ class DocumentOperationUploadAdmissionIT {
                 .setParameter("id", f.drive.driveId).executeUpdate(); });
         assertThatThrownBy(() -> admission.admit(ADMIN, f.owner, f.prepare())).hasMessageContaining("drive changed");
         assertThat(selection(f)[4]).isEqualTo("original");
+    }
+
+    @Test void separateAdmissionsSharingOneSourceCanBothReachSelection() throws Exception {
+        var first=fixture(0);
+        var member=first.command.intent().getMembers(0);
+        var command=new DocumentPublicationCommand(first.command.intent().toBuilder().setOperationId(UUID.randomUUID().toString())
+                .setMembers(0,member.toBuilder().setDestination(member.getDestination().toBuilder()
+                        .setAddress(address("concurrent-"+UUID.randomUUID())).setIfAbsent(true))).build());
+        var owner=operations.admit(new RepositoryOperationLedger.Key("account","principal",command.operationId()),
+                command,UUID.randomUUID(),LEASE).owner().orElseThrow();
+        var second=DocumentOperationUploadAdmission.prepare(command,first.placements(),Map.of(),LEASE);
+        try (var blocker=database.dataSource().getConnection();
+             var executor=java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            blocker.setAutoCommit(false);
+            int blockerPid;
+            try (var statement=blocker.createStatement()) {
+                statement.execute("SELECT pg_advisory_xact_lock(7301,7302)");
+                try (var rows=statement.executeQuery("SELECT pg_backend_pid()")) { rows.next(); blockerPid=rows.getInt(1); }
+            }
+            tx.inTransaction(em -> {
+                em.createNativeQuery("""
+                        CREATE FUNCTION hold_first_selection() RETURNS trigger LANGUAGE plpgsql AS $$
+                        BEGIN IF NEW.operation_id='%s' THEN PERFORM pg_advisory_xact_lock(7301,7302); END IF;
+                        RETURN NEW; END; $$
+                        """.formatted(first.command.operationId())).executeUpdate();
+                em.createNativeQuery("""
+                        CREATE TRIGGER zz_hold_first_selection AFTER INSERT ON document_operation_selections
+                        FOR EACH ROW EXECUTE FUNCTION hold_first_selection()
+                        """).executeUpdate();
+            });
+            var pending=executor.submit(() -> admission.admit(ADMIN,first.owner,first.prepare()));
+            try {
+                long deadline=System.nanoTime()+Duration.ofSeconds(5).toNanos();
+                boolean waiting=false;
+                do {
+                    waiting=tx.readOnly(em -> !em.createNativeQuery(
+                            "SELECT pid FROM pg_stat_activity WHERE :blocker=ANY(pg_blocking_pids(pid))")
+                            .setParameter("blocker",blockerPid).getResultList().isEmpty());
+                    if (waiting) break;
+                    Thread.sleep(10);
+                } while(System.nanoTime()<deadline);
+                assertThat(waiting).as("first admission held after selection insertion").isTrue();
+                var independent=executor.submit(() -> admission.admit(ADMIN,owner,second));
+                assertThat(independent.get(5,java.util.concurrent.TimeUnit.SECONDS)).isEmpty();
+                assertThat(pending.isDone()).isFalse();
+                blocker.rollback();
+                assertThat(pending.get(5,java.util.concurrent.TimeUnit.SECONDS)).isEmpty();
+            } finally {
+                blocker.rollback();
+                pending.get(10,java.util.concurrent.TimeUnit.SECONDS);
+                tx.inTransaction(em -> { em.createNativeQuery("DROP FUNCTION hold_first_selection() CASCADE").executeUpdate(); });
+            }
+        }
     }
 
     private static Object[] selection(Fixture f) {
