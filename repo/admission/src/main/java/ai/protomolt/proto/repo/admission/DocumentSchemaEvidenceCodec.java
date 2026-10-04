@@ -28,8 +28,45 @@ final class DocumentSchemaEvidenceCodec {
 
     record Encoded(ByteString bytes, String sha256) {}
 
+    /** Borrowed bytes remain covered only while this owner is open. */
+    static final class OwnedEncoded implements AutoCloseable {
+        private Encoded encoded;
+        private final DocumentAdmissionReservations.Lease lease;
+        private OwnedEncoded(Encoded encoded, DocumentAdmissionReservations.Lease lease) {
+            this.encoded = encoded; this.lease = lease;
+        }
+        synchronized Encoded value() {
+            if (encoded == null) throw new IllegalStateException("Canonical encoding is closed");
+            return encoded;
+        }
+        @Override public synchronized void close() {
+            if (encoded == null) return;
+            encoded = null; lease.close();
+        }
+    }
+
+    static OwnedEncoded encodeOwned(Message path, DocumentAdmissionReservations reservations, Runnable control) {
+        Objects.requireNonNull(reservations);
+        int size = measureAndValidate(path, control);
+        var lease = Objects.requireNonNull(reservations.reserve(size), "reservation lease");
+        boolean transferred = false;
+        try {
+            active(control);
+            var encoded = encodeMeasured(path, size, control);
+            var result = new OwnedEncoded(encoded, lease);
+            transferred = true;
+            return result;
+        } finally {
+            if (!transferred) lease.close();
+        }
+    }
+
     static Encoded encode(Message path, Runnable control) {
         int size = measureAndValidate(path, control);
+        return encodeMeasured(path, size, control);
+    }
+
+    private static Encoded encodeMeasured(Message path, int size, Runnable control) {
         byte[] bytes = new byte[size];
         var output = CodedOutputStream.newInstance(bytes);
         try {
@@ -38,7 +75,9 @@ final class DocumentSchemaEvidenceCodec {
         } catch (IOException failure) {
             throw new IllegalStateException("cannot encode schema evidence", failure);
         }
-        var encoded = ByteString.copyFrom(bytes);
+        // Exclusively owned array: output is finished and neither the array nor its
+        // writer escapes. Avoid a second full serialized copy.
+        var encoded = com.google.protobuf.UnsafeByteOperations.unsafeWrap(bytes);
         return new Encoded(encoded, digest(encoded, control));
     }
 
@@ -56,6 +95,20 @@ final class DocumentSchemaEvidenceCodec {
     static <T extends Message> T decode(String expectedCodec, String codec, int version, ByteString bytes, String sha256,
             com.google.protobuf.Descriptors.Descriptor descriptor, com.google.protobuf.Parser<T> parser,
             Runnable control) throws InvalidProtocolBufferException {
+        return decodeInternal(expectedCodec, codec, version, bytes, sha256, descriptor, parser, null, control);
+    }
+
+    /** Budget only canonical comparison scratch; the input and parsed object remain caller-owned. */
+    static <T extends Message> T decode(String expectedCodec, String codec, int version, ByteString bytes, String sha256,
+            com.google.protobuf.Descriptors.Descriptor descriptor, com.google.protobuf.Parser<T> parser,
+            DocumentAdmissionReservations reservations, Runnable control) throws InvalidProtocolBufferException {
+        return decodeInternal(expectedCodec, codec, version, bytes, sha256, descriptor, parser,
+                Objects.requireNonNull(reservations), control);
+    }
+
+    private static <T extends Message> T decodeInternal(String expectedCodec, String codec, int version, ByteString bytes, String sha256,
+            com.google.protobuf.Descriptors.Descriptor descriptor, com.google.protobuf.Parser<T> parser,
+            DocumentAdmissionReservations reservations, Runnable control) throws InvalidProtocolBufferException {
         Objects.requireNonNull(bytes, "bytes");
         Objects.requireNonNull(control, "control");
         active(control);
@@ -78,8 +131,14 @@ final class DocumentSchemaEvidenceCodec {
             throw new IllegalArgumentException("schema evidence parser differs from bounded descriptor");
         input.checkLastTagWas(0);
         if (input.getTotalBytesRead() != bytes.size()) throw new InvalidProtocolBufferException("incomplete schema evidence decode");
-        var canonical = encode(path, control);
-        if (!canonical.bytes().equals(bytes)) throw new IllegalArgumentException("noncanonical schema evidence encoding");
+        if (reservations == null) {
+            var canonical = encode(path, control);
+            if (!canonical.bytes().equals(bytes)) throw new IllegalArgumentException("noncanonical schema evidence encoding");
+        } else {
+            try (var canonical = encodeOwned(path, reservations, control)) {
+                if (!canonical.value().bytes().equals(bytes)) throw new IllegalArgumentException("noncanonical schema evidence encoding");
+            }
+        }
         return path;
     }
 
@@ -200,14 +259,14 @@ final class DocumentSchemaEvidenceCodec {
             if (field.isMapField()) {
                 // V1 string maps use unsigned UTF-8 key order, not insertion order
                 // or a protobuf runtime's deterministic serialization convention.
-                record MapItem(Message message, ByteString key) {}
+                record MapItem(Message message, String key) {}
                 var sorted = new java.util.ArrayList<MapItem>(values.size());
                 for (var value : values) {
                     active(control);
                     var item = (Message) value;
-                    sorted.add(new MapItem(item, ByteString.copyFromUtf8(mapString(item, 1))));
+                    sorted.add(new MapItem(item, mapString(item, 1)));
                 }
-                sorted.sort((a, b) -> ByteString.unsignedLexicographicalComparator().compare(a.key(), b.key()));
+                sorted.sort((a, b) -> compareUtf8Keys(a.key(), b.key(), control));
                 for (var item : sorted) {
                     active(control);
                     output.writeTag(field.getNumber(), 2);
@@ -239,6 +298,18 @@ final class DocumentSchemaEvidenceCodec {
                 }
             }
         }
+    }
+
+    /** Validated Unicode scalar order equals unsigned UTF-8 byte order, without key buffers. */
+    private static int compareUtf8Keys(String left, String right, Runnable control) {
+        int a = 0, b = 0;
+        while (a < left.length() && b < right.length()) {
+            if ((a & 1023) == 0) active(control);
+            int x = left.codePointAt(a), y = right.codePointAt(b);
+            if (x != y) return Integer.compare(x, y);
+            a += Character.charCount(x); b += Character.charCount(y);
+        }
+        return Integer.compare(left.length() - a, right.length() - b);
     }
 
     private static String digest(ByteString bytes, Runnable control) {

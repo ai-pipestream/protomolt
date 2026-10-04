@@ -2654,4 +2654,6 @@ descriptors, protobuf builders and object graphs retain their structural limits
 and host concurrency/heap requirements. The scope must distinguish scratch from
 retained leases, and tests must prove peak accounting, prompt scratch release,
 capacity failure before allocation, cancellation cleanup, and complete proof
-lifetime. These are integration requirements, not implemented accounting APIs.
+lifetime. The reservation interface and owned canonical codec are implemented as
+described in the operation inventory. Full proof-level propagation and a host
+coordinator remain integration requirements.

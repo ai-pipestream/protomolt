@@ -5089,3 +5089,26 @@ the remaining allowance directly; accepted canonical bytes and hashes are
 unchanged. Tests cover the exact boundary, one byte over and rejection before
 duplicate-selector processing. Evidence projection and shape validation still
 precede this guard; it is not complete admission-memory accounting.
+
+### Owned canonical encoding and comparison scratch
+
+New `DocumentAdmissionReservations` supplies nonblocking byte leases without a
+storage or transport dependency. The internal canonical codec has an additive
+owned encode path: validate/measure, reserve, allocate one private output array,
+then keep the lease until the encoded owner closes. Failed encoding releases it.
+The array is transferred to an immutable ByteString without a second full copy.
+
+The additive budgeted decode path owns only the canonical comparison scratch and
+closes it before returning, including on a noncanonical-wire failure. Existing
+caller-accounted overloads remain explicit; reservation failure never selects
+those overloads as a fallback. Neither path accounts for input bytes, parsed
+messages, validators or descriptor/object heap. Full preparation and proof
+ownership still need to propagate these reservations.
+
+Canonical string-map sorting compares validated Unicode scalar values directly,
+which preserves unsigned UTF-8 byte order without allocating encoded key buffers.
+Tests compare against independently written canonical wire bytes across UTF-8
+width boundaries and supplementary characters. Additional cases verify exact
+serialized-byte peak, owned lifetime, prompt decode-scratch release, capacity
+refusal, cancellation and idempotent close. Existing canonical format and hash
+contracts remain unchanged.

@@ -17,6 +17,84 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 
 class DocumentSchemaAssetCodecTest {
+    @Test void mapKeyOrderingMatchesUnsignedUtf8AcrossEncodingBoundaries() throws Exception {
+        var keys = List.of("a", "aa", "a\u0080", "\u007f", "\u0080", "\u07ff", "\u0800",
+                "\ud7ff", "\ue000", "\uffff", "\ud800\udc00", "\udbff\udfff");
+        var ordered = keys.stream().sorted((a, b) -> ByteString.unsignedLexicographicalComparator()
+                .compare(ByteString.copyFromUtf8(a), ByteString.copyFromUtf8(b)))
+                .map(key -> new WireOption(key, "value")).toList();
+        var base = local();
+        var compiler = base.getCompilation().getKnownCompiler().toBuilder().clearOptions();
+        for (var key : keys.reversed()) compiler.putOptions(key, "value");
+        var value = base.toBuilder().setCompilation(base.getCompilation().toBuilder().setKnownCompiler(compiler)).build();
+        assertThat(DocumentSchemaEvidenceCodec.encode(value, () -> {}).bytes())
+                .isEqualTo(rawWithOptions(base, ordered, false));
+    }
+
+    @Test void ownedCanonicalBytesStayReservedUntilClosed() {
+        var value = localWithOptions("\ue000", "bmp", "\ud800\udc00", "supplementary", "empty", "");
+        var expected = DocumentSchemaEvidenceCodec.encode(value, () -> {});
+        var budget = new Reservations(expected.bytes().size());
+        var owned = DocumentSchemaEvidenceCodec.encodeOwned(value, budget, () -> {});
+        try {
+            assertThat(owned.value()).isEqualTo(expected);
+            assertThat(budget.current).isEqualTo(expected.bytes().size());
+            assertThat(budget.peak).isEqualTo(expected.bytes().size());
+            assertThat(budget.calls).isEqualTo(1);
+        } finally { owned.close(); }
+        owned.close();
+        assertThat(budget.current).isZero();
+        assertThatThrownBy(owned::value).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test void canonicalDecodeClosesComparisonScratchBeforeReturning() throws Exception {
+        var value = localWithOptions("empty", "", "z", "last", "a", "first");
+        var encoded = DocumentSchemaEvidenceCodec.encode(value, () -> {});
+        var budget = new Reservations(encoded.bytes().size());
+        var decoded = DocumentSchemaEvidenceCodec.decode("test", "test", 1, encoded.bytes(), encoded.sha256(),
+                RepositorySchemaAsset.getDescriptor(), RepositorySchemaAsset.parser(), budget, () -> {});
+        assertThat(decoded).isEqualTo(value);
+        assertThat(budget.current).isZero();
+        assertThat(budget.peak).isEqualTo(encoded.bytes().size());
+        var duplicate = encoded.bytes().concat(ByteString.copyFrom(wire(out -> out.writeString(3, value.getTypeUrl()))));
+        assertThatThrownBy(() -> DocumentSchemaEvidenceCodec.decode("test", "test", 1, duplicate, sha256(duplicate),
+                RepositorySchemaAsset.getDescriptor(), RepositorySchemaAsset.parser(), budget, () -> {}))
+                .hasMessageContaining("noncanonical");
+        assertThat(budget.current).isZero();
+    }
+
+    @Test void ownedEncodingPreservesCapacityAndCancellationFailures() {
+        var value = local();
+        var encoded = DocumentSchemaEvidenceCodec.encode(value, () -> {});
+        var tiny = new Reservations(encoded.bytes().size() - 1);
+        assertThatThrownBy(() -> DocumentSchemaEvidenceCodec.encodeOwned(value, tiny, () -> {})).isSameAs(tiny.exhausted);
+        assertThat(tiny.current).isZero();
+        var budget = new Reservations(encoded.bytes().size());
+        var stopped = new CancellationException("cancel owned encoding");
+        var activeAfterReserve = new java.util.concurrent.atomic.AtomicInteger();
+        assertThatThrownBy(() -> DocumentSchemaEvidenceCodec.encodeOwned(value, budget, () -> {
+            if (budget.current > 0 && activeAfterReserve.incrementAndGet() == 2) throw stopped;
+        })).isSameAs(stopped);
+        assertThat(budget.peak).isPositive();
+        assertThat(budget.current).isZero();
+    }
+
+    /** Allocation-accounting fixture; no provider or repository behavior is simulated. */
+    private static final class Reservations implements DocumentAdmissionReservations {
+        final long capacity;
+        final IllegalStateException exhausted = new IllegalStateException("test byte capacity exhausted");
+        long current, peak;
+        int calls;
+        Reservations(long capacity) { this.capacity = capacity; }
+        @Override public Lease reserve(long bytes) {
+            calls++;
+            if (bytes > capacity - current) throw exhausted;
+            current += bytes; peak = Math.max(peak, current);
+            var closed = new java.util.concurrent.atomic.AtomicBoolean();
+            return () -> { if (closed.compareAndSet(false, true)) current -= bytes; };
+        }
+    }
+
     private static final String SHA = "a".repeat(64);
 
     @Test void localAndImportedProvenanceRoundTrip() throws Exception {
