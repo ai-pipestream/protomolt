@@ -167,9 +167,18 @@ identity. `DocumentChunkSequence` now checks global ordered run names, partition
 and a caller-specified aggregate element bound. `DocumentRevisionAssembly` now
 combines these checks with immutable original PRESENT-fragment bytes, unique slots,
 exactly one CORE, aggregate byte/count bounds, bounded-depth parsing and cancellation
-between fragments. Repository resolution, full manifest preparation and publication
+between fragments. Its explicit `Limits.maxWireValues` policy also preflights every
+fragment before allocating a decoded Document. One budget counts every field
+occurrence plus packed scalar elements across fragments, including duplicate
+singular fields, map-entry messages and unknown-group contents. Known messages are
+traversed through the generated descriptor; opaque unknown bytes remain byte-bounded.
+Fixed-width packed bodies are alignment-checked and skipped without decoding, and
+packed varints have cancellation checks during scanning. Original bytes are untouched.
+Repository resolution, full manifest preparation and publication
 wiring remain unimplemented. Byte bounds are not a heap limit; hosts must reserve
-resources for protobuf object expansion and apply concrete policy. A single parse
+resources for protobuf object expansion and apply concrete policy. Wire counts
+bound structural allocation inputs, not exact heap, merge costs or later Any/schema
+decoding. The extra scan has not received production latency qualification. A single parse
 is not interruptible through the between-fragment control callback.
 `DocumentCommandContent` now binds materialized full-ordinal bytes to the canonical
 member, checks declared sizes/digests and decoded ownership, and refuses an explicit

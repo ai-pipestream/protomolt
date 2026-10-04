@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 
 class DocumentCommandContentTest {
-    private static final DocumentRevisionAssembly.Limits LIMITS = new DocumentRevisionAssembly.Limits(100_000, 10, 100, 100);
+    private static final DocumentRevisionAssembly.Limits LIMITS = new DocumentRevisionAssembly.Limits(100_000, 10, 100, 100, 100_000);
     private static OwnershipContext owner(String account) {
         return OwnershipContext.newBuilder().setAccountId(account).setDatasourceId("source")
                 .setSecurity(DocumentSecurity.getDefaultInstance()).build();
@@ -67,7 +67,7 @@ class DocumentCommandContentTest {
     @Test void aggregateBoundAndCancellationAreEnforcedBeforeContentWork() {
         var f = fixture("account");
         assertThatThrownBy(() -> DocumentCommandContent.check(f.command, "member", f.bytes, false,
-                new DocumentRevisionAssembly.Limits(1, 10, 10, 10), () -> {})).hasMessageContaining("aggregate bound");
+                new DocumentRevisionAssembly.Limits(1, 10, 10, 10, 100_000), () -> {})).hasMessageContaining("aggregate bound");
         var failure = new java.util.concurrent.CancellationException();
         assertThatThrownBy(() -> DocumentCommandContent.check(f.command, "member", f.bytes, false, LIMITS, () -> { throw failure; })).isSameAs(failure);
     }

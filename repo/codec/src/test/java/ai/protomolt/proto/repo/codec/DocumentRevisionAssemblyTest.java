@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 
 class DocumentRevisionAssemblyTest {
-    private static final DocumentRevisionAssembly.Limits LIMITS = new DocumentRevisionAssembly.Limits(1_000_000, 100, 100, 100);
+    private static final DocumentRevisionAssembly.Limits LIMITS = new DocumentRevisionAssembly.Limits(1_000_000, 100, 100, 100, 100_000);
     private static DocumentRevisionAssembly.Fragment fragment(DocumentPart part, String key, Document doc) {
         return new DocumentRevisionAssembly.Fragment(part, key, doc.toByteString());
     }
@@ -31,11 +31,11 @@ class DocumentRevisionAssemblyTest {
     @Test void aggregateLimitIsCheckedBeforeParsingAndExactLimitPasses() throws Exception {
         var parts = split(core());
         int size = parts.getFirst().bytes().size();
-        assertThat(DocumentRevisionAssembly.assemble(parts, "doc", new DocumentRevisionAssembly.Limits(size, 1, 10, 1), () -> {}).document()).isEqualTo(core());
-        assertThatThrownBy(() -> DocumentRevisionAssembly.assemble(parts, "doc", new DocumentRevisionAssembly.Limits(size - 1, 1, 10, 1), () -> {}))
+        assertThat(DocumentRevisionAssembly.assemble(parts, "doc", new DocumentRevisionAssembly.Limits(size, 1, 10, 1, 100_000), () -> {}).document()).isEqualTo(core());
+        assertThatThrownBy(() -> DocumentRevisionAssembly.assemble(parts, "doc", new DocumentRevisionAssembly.Limits(size - 1, 1, 10, 1, 100_000), () -> {}))
                 .hasMessageContaining("byte bound");
         var invalid = new DocumentRevisionAssembly.Fragment(DocumentPart.DOCUMENT_PART_CORE, "", ByteString.copyFrom(new byte[]{(byte) 0x80, (byte) 0x80}));
-        assertThatThrownBy(() -> DocumentRevisionAssembly.assemble(List.of(invalid), "doc", new DocumentRevisionAssembly.Limits(1, 1, 10, 1), () -> {}))
+        assertThatThrownBy(() -> DocumentRevisionAssembly.assemble(List.of(invalid), "doc", new DocumentRevisionAssembly.Limits(1, 1, 10, 1, 100_000), () -> {}))
                 .hasMessageContaining("byte bound");
     }
     @Test void rejectsDuplicateSlotsMissingCoreAndMisplacedFields() {
@@ -60,7 +60,7 @@ class DocumentRevisionAssemblyTest {
     }
     @Test void parsingDepthIsEnforced() {
         var nested = core().toBuilder().setBlobBag(BlobBag.newBuilder().setBlob(Blob.newBuilder().setBlobId("b"))).build();
-        assertThatThrownBy(() -> DocumentRevisionAssembly.assemble(split(nested), "doc", new DocumentRevisionAssembly.Limits(1000, 10, 1, 10), () -> {}))
+        assertThatThrownBy(() -> DocumentRevisionAssembly.assemble(split(nested), "doc", new DocumentRevisionAssembly.Limits(1000, 10, 1, 10, 100_000), () -> {}))
                 .isInstanceOf(com.google.protobuf.InvalidProtocolBufferException.class);
     }
     @Test void endGroupCannotHideTrailingFragmentFields() {
@@ -75,12 +75,32 @@ class DocumentRevisionAssemblyTest {
                 .addSemanticResults(SemanticProcessingResult.newBuilder().setResultId("a"))
                 .addSemanticResults(SemanticProcessingResult.newBuilder().setResultId("a"))).build();
         var parts = split(full);
-        assertThat(DocumentRevisionAssembly.assemble(parts, "doc", new DocumentRevisionAssembly.Limits(1000, 2, 10, 2), () -> {}).document()).isEqualTo(full);
-        assertThatThrownBy(() -> DocumentRevisionAssembly.assemble(parts, "doc", new DocumentRevisionAssembly.Limits(1000, 1, 10, 2), () -> {}))
+        assertThat(DocumentRevisionAssembly.assemble(parts, "doc", new DocumentRevisionAssembly.Limits(1000, 2, 10, 2, 100_000), () -> {}).document()).isEqualTo(full);
+        assertThatThrownBy(() -> DocumentRevisionAssembly.assemble(parts, "doc", new DocumentRevisionAssembly.Limits(1000, 1, 10, 2, 100_000), () -> {}))
                 .hasMessageContaining("fragment count");
-        assertThatThrownBy(() -> DocumentRevisionAssembly.assemble(parts, "doc", new DocumentRevisionAssembly.Limits(1000, 2, 10, 1), () -> {}))
+        assertThatThrownBy(() -> DocumentRevisionAssembly.assemble(parts, "doc", new DocumentRevisionAssembly.Limits(1000, 2, 10, 1, 100_000), () -> {}))
                 .hasMessageContaining("element bound");
         assertThatThrownBy(() -> DocumentRevisionAssembly.assemble(parts, "other", LIMITS, () -> {}))
                 .hasMessageContaining("identity");
+    }
+
+    @Test void structuralBudgetSpansFragmentsBeforeSemanticAssembly() {
+        var wrongIdentity = fragment(DocumentPart.DOCUMENT_PART_CORE, "", Document.newBuilder().setDocId("other").build());
+        var manyEntries = fragment(DocumentPart.DOCUMENT_PART_CHUNKS, "set", Document.newBuilder()
+                .setSearchMetadata(SearchMetadata.newBuilder()
+                        .addSemanticResults(SemanticProcessingResult.getDefaultInstance())
+                        .addSemanticResults(SemanticProcessingResult.getDefaultInstance())).build());
+        // CORE consumes one occurrence, SearchMetadata and its two empty entries consume three.
+        assertThatThrownBy(() -> DocumentRevisionAssembly.assemble(List.of(wrongIdentity, manyEntries), "doc",
+                new DocumentRevisionAssembly.Limits(1000, 2, 10, 100, 3), () -> {})).hasMessageContaining("wire value count");
+    }
+
+    @Test void mapEntriesAreBudgetedBeforeTheirDecodedAllocation() throws Exception {
+        var full = core().toBuilder().putParserResults("a", ParserResult.getDefaultInstance())
+                .putParserResults("b", ParserResult.getDefaultInstance()).build();
+        var parts = split(full);
+        assertThatThrownBy(() -> DocumentRevisionAssembly.assemble(parts, "doc",
+                new DocumentRevisionAssembly.Limits(1000, 10, 10, 100, 3), () -> {})).hasMessageContaining("wire value count");
+        assertThat(DocumentRevisionAssembly.assemble(parts, "doc", LIMITS, () -> {}).document()).isEqualTo(full);
     }
 }

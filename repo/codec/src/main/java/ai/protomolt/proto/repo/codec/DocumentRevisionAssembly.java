@@ -18,11 +18,11 @@ import java.util.concurrent.CancellationException;
 public final class DocumentRevisionAssembly {
     private DocumentRevisionAssembly() {}
 
-    /** Raw byte/element limits, not a heap bound; the host supplies policy and memory reservation. */
-    public record Limits(long maxBytes, int maxFragments, int maxDepth, long maxChunkElements) {
+    /** Raw bytes, structural values and chunk limits, not a heap bound; the host owns memory reservations. */
+    public record Limits(long maxBytes, int maxFragments, int maxDepth, long maxChunkElements, long maxWireValues) {
         public Limits {
             if (maxBytes < 1 || maxFragments < 1 || maxFragments > 10_000
-                    || maxDepth < 1 || maxDepth > 100 || maxChunkElements < 1)
+                    || maxDepth < 1 || maxDepth > 100 || maxChunkElements < 1 || maxWireValues < 1)
                 throw new IllegalArgumentException("Invalid document assembly limits");
         }
     }
@@ -62,6 +62,10 @@ public final class DocumentRevisionAssembly {
                 throw new IllegalArgumentException("Duplicate document slot");
         }
         if (cores != 1) throw new IllegalArgumentException("Exactly one CORE fragment required");
+        // Scan all fragments before creating a decoded Document. Packed values,
+        // map entries and unknown groups share this structural allocation budget.
+        var wire = new DocumentWireBudget(limits.maxWireValues(), limits.maxDepth(), control);
+        for (var fragment : original) wire.check(fragment.bytes(), Document.getDescriptor());
         var chunks = new DocumentChunkSequence(expectedDocId, limits.maxChunkElements());
         var assembled = Document.newBuilder();
         for (var fragment : original) {

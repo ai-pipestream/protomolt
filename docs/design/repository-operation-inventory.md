@@ -3074,3 +3074,31 @@ The initial empty-CORE fixture was rejected by the runtime validator and replace
 with valid retained-source evidence; content-type fixture construction was corrected.
 Sol found no blocker. All 117 coordinator, upload admission and payload cases passed
 in 33s with no failures or skips. No hosted CI, push, merge or deployment ran.
+
+### Structural wire budget before document decoding
+
+`DocumentRevisionAssembly.Limits` now requires an explicit fifth argument,
+`maxWireValues`; all in-repository Java callers were updated. No protobuf names,
+tags, imports or Any URLs changed. `DocumentWireBudget` scans every fragment before
+creating the decoded Document builder, using one aggregate counter for field
+occurrences and packed scalar elements. It descends known message fields through
+their generated descriptors, counts duplicate singular fields and map-entry fields,
+and recursively counts unknown groups. Unknown length-delimited data stays opaque
+and subject to the aggregate raw-byte limit. It does not copy field payloads.
+
+Both packed and unpacked numeric encodings are accepted independently of the
+descriptor's packing preference. Fixed-width packed lengths must align; packed
+varints are scanned within their declared limit with cancellation checks. Truncated
+or negative nested lengths, unmatched groups and excessive depth fail before
+decoding. Original physical bytes remain unchanged, including noncanonical wire
+representations accepted by the real parser.
+
+Tests compare real protobuf parser behavior and cover packed/unpacked values,
+unknown and nested groups, duplicate singular fields, wrong-wire known fields,
+malformed nested lengths, map entries and one aggregate budget across fragments.
+Sol found no blocking issue; its suggested nested-group and nested-length regression
+cases were added. All 58 codec/content-check cases in seven suites passed with no
+failures or skips, including the codec runtime dependency gate. The final invocation
+completed in 2s. This is a structural allocation-input bound, not a heap, merge-cost,
+Any-decoding or schema-validation guarantee; production scan latency remains
+unqualified. No hosted CI, push, merge or deployment ran.
