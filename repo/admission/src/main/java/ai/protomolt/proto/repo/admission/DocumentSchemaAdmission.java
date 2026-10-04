@@ -124,12 +124,14 @@ public final class DocumentSchemaAdmission {
         private final Document document;
         private final Map<Integer, ByteString> fragments;
         private final List<RootEvidence> roots;
+        private final Reference containerReference;
         private final List<Reference> references;
         private final Map<String, ByteString> artifacts;
         private Proof(Request request, Limits limits, Document document, Map<Integer, ByteString> fragments,
                       List<RootEvidence> roots, List<Reference> references, Map<String, ByteString> artifacts) {
             this.commandSha256 = request.commandSha256(); this.policySha256 = request.policySha256();
             this.requireStructuredRoot = request.requireStructuredRoot();
+            this.containerReference = request.container();
             this.limits = limits;
             this.member = request.member(); this.document = document; this.fragments = Map.copyOf(fragments);
             this.roots = List.copyOf(roots); this.references = List.copyOf(references); this.artifacts = Map.copyOf(artifacts);
@@ -143,6 +145,8 @@ public final class DocumentSchemaAdmission {
         public Document document() { return document; }
         public Map<Integer, ByteString> fragments() { return fragments; }
         public List<RootEvidence> roots() { return roots; }
+        /** Exact containing Document association, distinct from aliases used by payloads. */
+        public Reference containerReference() { return containerReference; }
         /** Includes the containing Document definition and all used payload associations. */
         public List<Reference> references() { return references; }
         /** Exact normalized descriptor, metadata and optional source bytes to retain atomically. */

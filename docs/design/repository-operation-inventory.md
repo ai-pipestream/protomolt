@@ -4811,3 +4811,30 @@ atomic publication (64) and content checks (9). Sol reviewed the integration and
 recovery test with no blocker. Historical decoding through authorized retained
 schema reads, host/policy administration integration, typed cross-transport
 conformance and large-batch latency remain required work.
+
+### Exact containing schema association
+
+V62 adds the containing schema role to the immutable admission header. The checked
+proof supplies its exact container reference; the header points to that revision's
+retained association by type-URL digest and descriptor digest. The association
+already binds the metadata and optional source artifacts. This distinguishes a
+containing Document definition from payload aliases that share its descriptor.
+New TYPED admissions require the pair, OPAQUE admissions require both fields to
+be absent, and a deferred foreign key requires the association before commit.
+
+Pre-V62 admissions retain an unknown container role. Migration does not infer one
+from unordered associations or invent historical provenance. An authorized
+historical reader must report that limitation when typed reconstruction needs the
+container role. Raw preserved content remains a separate read capability. The
+role binding does not itself implement historical authorization or decoding.
+
+Qualification: 58 distinct tests pass across admission proofs (10), admission
+binding (14), typed native publication (5), retention failure/retry (1),
+provider-backed native commit (11), populated migration (2), retention (6),
+snapshots (6) and manifests (3). Fault injection during fresh publication verifies
+missing, half-present, opaque-supplied and unretained container associations fail
+and roll back. Real V61 typed and opaque admissions migrate to V62 with NULL roles,
+unchanged evidence bytes and manifests, and preserved terminal success. The
+focused SQL fixtures use synthetic physical observations; the native commit suite
+separately exercises versioned LocalStack storage. Sol reviewed production code,
+the fault tests and populated upgrade fixtures with no blocker.

@@ -123,6 +123,13 @@ final class DocumentSchemaRetentionFixture {
         return publish(c, f, false, beforeSeal, afterBinding, true);
     }
 
+    /** Historical writer used only to seed a schema at V61 before applying the V62 upgrade. */
+    static UUID publishV61(Context c, Fixture f) {
+        return publish(c, f, false, (em, revision, manifest) -> {
+            if (f.retention() != null) f.retention().write(em, f.owner(), revision, () -> {});
+        }, (em, candidate) -> {}, true, true);
+    }
+
     private static UUID publish(Context c, Fixture f, boolean omitCore, ManifestCheck beforeSeal,
             BiConsumer<EntityManager, DocumentCommitWriter.Candidate> beforeWrite) {
         return publish(c, f, omitCore, beforeSeal, beforeWrite, false);
@@ -130,6 +137,11 @@ final class DocumentSchemaRetentionFixture {
 
     private static UUID publish(Context c, Fixture f, boolean omitCore, ManifestCheck beforeSeal,
             BiConsumer<EntityManager, DocumentCommitWriter.Candidate> beforeWrite, boolean bound) {
+        return publish(c, f, omitCore, beforeSeal, beforeWrite, bound, false);
+    }
+
+    private static UUID publish(Context c, Fixture f, boolean omitCore, ManifestCheck beforeSeal,
+            BiConsumer<EntityManager, DocumentCommitWriter.Candidate> beforeWrite, boolean bound, boolean v61Admission) {
         return c.tx().inTransaction(em -> {
             RepositoryOperationLedger.fenceLiveOwner(em, f.owner());
             RepositoryOperationLedger.requireCommand(em, f.owner().key(), f.command());
@@ -142,7 +154,9 @@ final class DocumentSchemaRetentionFixture {
             var manifest = DocumentSchemaManifest.prepare(f.batch(), "member", parts, () -> {});
             f.batch().lockArtifacts(em, f.owner(), () -> {});
             var candidate = DocumentCommitWriter.prepare(plan.members().getFirst(), f.content(), parts, locked, Map.of(), Instant.now(), () -> {});
-            String decision = bound ? DocumentSchemaAdmissionBinding.insert(em, f.owner(), f.batch(), candidate, parts, () -> {}) : "OPAQUE";
+            String decision;
+            if (v61Admission) decision = insertV61Admission(em, f, candidate, manifest);
+            else decision = bound ? DocumentSchemaAdmissionBinding.insert(em, f.owner(), f.batch(), candidate, parts, () -> {}) : "OPAQUE";
             beforeWrite.accept(em, candidate);
             var row = em.merge(candidate.row()); em.flush(); em.refresh(row);
             var event = DocumentEventFactory.savedWithoutDelivery(row, row.updatedAt);
@@ -189,6 +203,28 @@ final class DocumentSchemaRetentionFixture {
             em.createNativeQuery("SET CONSTRAINTS ALL IMMEDIATE").executeUpdate();
             return revision;
         });
+    }
+
+    private static String insertV61Admission(EntityManager em, Fixture f, DocumentCommitWriter.Candidate candidate,
+            DocumentSchemaManifest manifest) {
+        var snapshot = DocumentAdmissionSnapshot.prepare(em, candidate.row());
+        int inserted = em.createNativeQuery("""
+                INSERT INTO document_revision_schema_admissions(revision_id,account_id,principal,operation_id,
+                 owner_generation,member_id,node_id,selection_revision,command_sha256,policy_revision,policy_sha256,
+                 decision,body,metadata,manifest)
+                VALUES(:revision,:account,:principal,:operation,:generation,:member,:node,:selection,:command,
+                 :policyRevision,:policy,:decision,CAST(:body AS jsonb),CAST(:metadata AS jsonb),CAST(:manifest AS jsonb))
+                """).setParameter("revision", candidate.revision()).setParameter("account", f.owner().key().account())
+                .setParameter("principal", f.owner().key().principal()).setParameter("operation", f.owner().key().operationId())
+                .setParameter("generation", f.owner().generation()).setParameter("member", candidate.member())
+                .setParameter("node", candidate.row().nodeId).setParameter("selection", candidate.selection())
+                .setParameter("command", HexFormat.of().parseHex(f.batch().command().sha256()))
+                .setParameter("policyRevision", f.batch().policy().revision())
+                .setParameter("policy", HexFormat.of().parseHex(f.batch().policy().policy().sha256()))
+                .setParameter("decision", manifest.decision()).setParameter("body", snapshot.body())
+                .setParameter("metadata", snapshot.metadata()).setParameter("manifest", manifest.json()).executeUpdate();
+        if (inserted != 1) throw new IllegalStateException("V61 fixture admission insert count differs");
+        return manifest.decision();
     }
 
     static DocumentSchemaAdmission.Definition definition(com.google.protobuf.Descriptors.Descriptor type) {

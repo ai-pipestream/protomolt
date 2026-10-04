@@ -38,6 +38,7 @@ class DocumentSchemaAdmissionTest {
         assertThat(proof.member()).isEqualTo(f.member);
         assertThat(proof.roots()).hasSize(3);
         assertThat(proof.roots()).extracting(DocumentSchemaAdmission.RootEvidence::ordinal).containsExactly(0, 1, 1);
+        assertThat(proof.containerReference()).isEqualTo(f.container.reference);
         assertThat(proof.references()).containsExactly(f.container.reference, f.stringAsset.reference, f.timestampAsset.reference);
         assertThat(proof.artifacts()).containsAllEntriesOf(f.artifacts);
         assertThat(proof.document()).isEqualTo(f.document);

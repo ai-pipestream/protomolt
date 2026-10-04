@@ -2457,3 +2457,40 @@ Before closing this repository goal, the acceptance inventory must include:
 These gates refine stages 5 through 7. Production typed publication stays disabled
 until candidate binding, retention and validation evidence are complete. This
 section does not activate a registry resolver, cache, read mode or new public RPC.
+
+### Historical schema read boundary
+
+The historical reader must authorize the current document before looking up a
+requested revision or any retained schema bytes. Reuse the shared advisory lock
+and lean `SourceView` row lock from `DocumentRevisionLocks.lockForAdmission`,
+with the existing account, READ policy, available-state and pending-purge checks.
+A caller who can read one document need not own its original publication
+operation. Conversely, an operation owner alone has no historical read grant.
+
+After authorization, require the requested revision to belong to that exact node
+and account, with a sealed native projection, matching native commit and terminal
+operation success. The historical revision need not be current. Read schema bytes
+only through its V55 artifact references, V57 associations and V56 evidence. V62
+identifies the exact containing schema association; a pre-V62 unknown role cannot
+be inferred from descriptor equality or association order.
+
+Read the immutable schema rows without adding artifact row locks after document
+locks. Check aggregate counts and byte sizes before copying bytes, budgeting for
+JDBC and protobuf copies as well as the retained 64 MiB artifact and 16 MiB
+evidence limits. Keep the complete stored command and policy internal: access to
+one member does not grant disclosure of sibling members or account policy details.
+Descriptor decoding runs outside database locks, with current authorization
+checked again before exposing decoded data or detailed errors to the caller.
+
+A schema snapshot alone does not establish validated historical content. Acquire
+reader pins for the exact historical provider objects, verify their retained
+identities and hashes, then replay the recorded occurrence bindings against those
+bytes. The existing `DocumentReadPins.acquire` and V44 `guard_document_read_pin`
+require a current revision and its DOCUMENT_CURRENT reference. They cannot pin an
+arbitrary old revision unchanged. Add explicit historical admission against the
+sealed revision's DOCUMENT_HISTORY references while preserving current-source
+checks for publication reuse and the shared reader drain/recovery lifecycle.
+Pins remain until provider work drains, including cancellation. Use the
+current runtime against retained definitions without consulting registry latest;
+do not claim to rerun a historical compiler or executable validator. These read
+and replay operations still require implementation and qualification.

@@ -1,8 +1,10 @@
 package ai.protomolt.proto.repo.container.ledger;
 
 import ai.protomolt.proto.repo.container.blob.DocumentIds;
+import ai.protomolt.proto.repo.codec.DocumentPartCodec;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.FlushModeType;
+import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
 import java.util.Objects;
 import java.util.concurrent.CancellationException;
@@ -31,13 +33,15 @@ final class DocumentSchemaAdmissionBinding {
                 throw new IllegalArgumentException("Schema admission candidate differs from selection");
             var manifest = DocumentSchemaManifest.prepare(batch, candidate.member(), parts, control);
             var snapshot = DocumentAdmissionSnapshot.prepare(em, candidate.row());
+            var proof = batch.proofs().get(candidate.member());
+            var container = proof == null ? null : proof.containerReference();
             active(control);
             int inserted = em.createNativeQuery("""
                     INSERT INTO document_revision_schema_admissions(revision_id,account_id,principal,operation_id,
                      owner_generation,member_id,node_id,selection_revision,command_sha256,policy_revision,policy_sha256,
-                     decision,body,metadata,manifest)
+                     decision,body,metadata,manifest,container_type_url_sha256,container_descriptor_sha256)
                     VALUES(:revision,:account,:principal,:operation,:generation,:member,:node,:selection,:command,
-                     :policyRevision,:policy,:decision,CAST(:body AS jsonb),CAST(:metadata AS jsonb),CAST(:manifest AS jsonb))
+                     :policyRevision,:policy,:decision,CAST(:body AS jsonb),CAST(:metadata AS jsonb),CAST(:manifest AS jsonb),:containerUrl,:containerDescriptor)
                     """).setFlushMode(FlushModeType.COMMIT)
                     .setParameter("revision", candidate.revision()).setParameter("account", owner.key().account())
                     .setParameter("principal", owner.key().principal()).setParameter("operation", owner.key().operationId())
@@ -47,7 +51,10 @@ final class DocumentSchemaAdmissionBinding {
                     .setParameter("policyRevision", batch.policy().revision())
                     .setParameter("policy", HexFormat.of().parseHex(batch.policy().policy().sha256()))
                     .setParameter("decision", manifest.decision()).setParameter("body", snapshot.body())
-                    .setParameter("metadata", snapshot.metadata()).setParameter("manifest", manifest.json()).executeUpdate();
+                    .setParameter("metadata", snapshot.metadata()).setParameter("manifest", manifest.json())
+                    .setParameter("containerUrl", container == null ? null : HexFormat.of().parseHex(
+                            DocumentPartCodec.sha256Hex(container.typeUrl().getBytes(StandardCharsets.UTF_8))))
+                    .setParameter("containerDescriptor", container == null ? null : HexFormat.of().parseHex(container.descriptorSha256())).executeUpdate();
             if (inserted != 1) throw new IllegalStateException("Schema admission insert count differs");
             active(control);
             return manifest.decision();
