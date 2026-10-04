@@ -3062,3 +3062,31 @@ Tests cover a bad later fragment before every resolver, invalid-first/missing-la
 and invalid-first/ineligible-later members, later opaque ownership failure, explicit
 opaque mode, cancellation, shared capacity refusal, private snapshot lifetime and
 32 invalid descriptor variants exceeding the operation artifact count.
+
+#### Independent replay of a member assessment
+
+`DocumentSchemaAssessmentReplay` now reconstructs a member assessment from its
+canonical occurrence evidence, retained descriptors, metadata and optional source
+archives. It has no live schema resolver. Each selection binds the member ordinal,
+root locator, complete occurrence prefix, exact type URL and candidate value hash
+and size. Duplicate roots and selections are refused before retained asset reads.
+Every recorded selection must be consumed exactly once by the reconstructed
+candidate, and its canonical root evidence and complete asset/reference union
+must match. Asset reads remain scoped and authenticated by the caller.
+
+Replay verifies the policy content digest and root requirement, evaluates at the
+recorded instant, and compares the complete bounded first-failure identity. It
+works for accepted and invalid values without turning an invalid result into an
+admission proof. It reproduces the verdict under the current validation runtime;
+it does not prove execution by a historical runtime or authorize publication.
+Original fragments, parsed inputs and reader buffers remain caller-owned and
+bounded. Canonical scratch and reassessment assets are reserved and released on
+success, cancellation, missing/corrupt evidence and reservation failure.
+
+The admission suite passes 149 tests, including eight replay cases covering both
+verdicts after the original assessment closes, changed evaluation time, erased
+failure identity, missing later-root evidence, duplicate roots/references, policy
+mismatch, corrupt evidence, every missing/corrupt retained asset including source
+archives, read cancellation and each reservation refusal point. Operation-level
+replay integration, durable assessment bindings and the fresh fenced terminal
+rejection decision remain unfinished.

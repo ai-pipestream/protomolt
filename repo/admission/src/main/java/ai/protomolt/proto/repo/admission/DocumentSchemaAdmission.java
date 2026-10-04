@@ -53,7 +53,7 @@ public final class DocumentSchemaAdmission {
             Objects.requireNonNull(typeUrl); Objects.requireNonNull(descriptorSha256);
             Objects.requireNonNull(metadataCodec); Objects.requireNonNull(metadataSha256); Objects.requireNonNull(sourceSha256);
         }
-        private DocumentRetainedSchemaAssets.Reference internal() {
+        DocumentRetainedSchemaAssets.Reference internal() {
             return new DocumentRetainedSchemaAssets.Reference(typeUrl, descriptorSha256, metadataCodec,
                     metadataVersion, metadataSha256, sourceSha256);
         }
@@ -303,7 +303,7 @@ public final class DocumentSchemaAdmission {
         return new Proof(request, limits, assembly.document(), fragments, roots, references, artifacts);
     }
 
-    private static Map<Integer, List<DocumentRootSchemaEvidence>> decodeEvidence(
+    static Map<Integer, List<DocumentRootSchemaEvidence>> decodeEvidence(
             Map<Integer, List<EncodedEvidence>> input, Limits limits, DocumentAdmissionReservations reservations,
             Runnable control) throws InvalidProtocolBufferException {
         var result = new HashMap<Integer, List<DocumentRootSchemaEvidence>>();
