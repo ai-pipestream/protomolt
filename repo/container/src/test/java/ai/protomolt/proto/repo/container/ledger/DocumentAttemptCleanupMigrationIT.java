@@ -54,6 +54,14 @@ class DocumentAttemptCleanupMigrationIT {
             Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
                     .locations("classpath:db/migration/repo").load().migrate();
             for (var entry : before.entrySet()) assertThat(snapshot(connection, entry.getKey())).isEqualTo(entry.getValue());
+            try (var statement = connection.createStatement(); var rows = statement.executeQuery("""
+                    SELECT a.plan_kind,a.operation_principal,a.operation_id,a.operation_generation,a.member_id,a.drive_id,
+                        o.ordinal,o.revision_ordinal FROM document_part_attempts a JOIN document_part_attempt_objects o USING(attempt_id)
+                    """)) {
+                assertThat(rows.next()).isTrue(); assertThat(rows.getString(1)).isEqualTo("FULL_REVISION");
+                for (int i = 2; i <= 6; i++) assertThat(rows.getObject(i)).isNull();
+                assertThat(rows.getInt(8)).isEqualTo(rows.getInt(7)); assertThat(rows.next()).isFalse();
+            }
             try (var statement = connection.createStatement(); var rows = statement.executeQuery("SELECT count(*) FROM document_part_attempt_cleanup")) {
                 assertThat(rows.next()).isTrue(); assertThat(rows.getLong(1)).isZero();
             }
@@ -62,8 +70,12 @@ class DocumentAttemptCleanupMigrationIT {
 
     private static String snapshot(Connection connection, String table) throws Exception {
         // Callers supply only the fixed table names above.
+        // Compare every pre-existing field, and assert additive defaults above.
+        String additions = table.equals("document_part_attempts")
+                ? "'plan_kind','operation_principal','operation_id','operation_generation','member_id','drive_id'"
+                : "'physical_object_id','revision_ordinal'";
         try (var statement = connection.createStatement(); var rows = statement.executeQuery(
-                "SELECT jsonb_agg(to_jsonb(t)-'physical_object_id' ORDER BY (to_jsonb(t)-'physical_object_id')::text)::text FROM " + table + " t")) {
+                "SELECT jsonb_agg(to_jsonb(t)-ARRAY[" + additions + "] ORDER BY (to_jsonb(t)-ARRAY[" + additions + "])::text)::text FROM " + table + " t")) {
             assertThat(rows.next()).isTrue(); return rows.getString(1);
         }
     }

@@ -82,7 +82,7 @@ public final class DocumentPartAttemptLedger {
     }
 
     public record Attempt(UUID id, Location location, String storageRealm, long sampledRevision,
-            UUID token, Instant leaseUntil, String state, int plannedCount) {}
+            UUID token, Instant leaseUntil, String state, int plannedCount, String planKind) {}
 
     public static final class FenceException extends RuntimeException {
         public FenceException(String message) { super(message); }
@@ -263,6 +263,8 @@ public final class DocumentPartAttemptLedger {
     private static Attempt requireOwner(EntityManager em, UUID id, UUID token) {
         Objects.requireNonNull(id, "id");
         var attempt = read(em, id, true).orElseThrow(() -> new FenceException("Document part attempt is missing"));
+        if (!attempt.planKind().equals("FULL_REVISION"))
+            throw new FenceException("NEW_CONTENT requires an operation-bound entry point");
         Instant now = em.unwrap(org.hibernate.Session.class).createNativeQuery("SELECT clock_timestamp()", Instant.class).getSingleResult();
         if (!attempt.token().equals(token) || !attempt.leaseUntil().isAfter(now)
                 || !(attempt.state().equals("STAGING") || attempt.state().equals("VERIFIED")))
@@ -273,7 +275,7 @@ public final class DocumentPartAttemptLedger {
     private static Optional<Attempt> read(EntityManager em, UUID id, boolean lock) {
         List<?> rows = em.createNativeQuery("""
                 SELECT attempt_id,node_id,account_id,backend_generation,storage_namespace,storage_realm,
-                       sampled_revision,lease_token,EXTRACT(EPOCH FROM lease_until),state,planned_count
+                       sampled_revision,lease_token,EXTRACT(EPOCH FROM lease_until),state,planned_count,plan_kind
                 FROM document_part_attempts WHERE attempt_id=:id
                 """ + (lock ? " FOR UPDATE" : "")).setParameter("id", id).getResultList();
         if (rows.isEmpty()) return Optional.empty();
@@ -282,7 +284,7 @@ public final class DocumentPartAttemptLedger {
         long seconds = epoch.longValue();
         Instant until = Instant.ofEpochSecond(seconds, epoch.subtract(java.math.BigDecimal.valueOf(seconds)).movePointRight(9).intValueExact());
         return Optional.of(new Attempt((UUID) r[0], new Location((UUID) r[1], (String) r[2], (String) r[3], (String) r[4]),
-                (String) r[5], ((Number) r[6]).longValue(), (UUID) r[7], until, (String) r[9], ((Number) r[10]).intValue()));
+                (String) r[5], ((Number) r[6]).longValue(), (UUID) r[7], until, (String) r[9], ((Number) r[10]).intValue(), (String) r[11]));
     }
 
     private static void requireLease(Duration lease) {

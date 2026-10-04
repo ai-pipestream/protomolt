@@ -1661,3 +1661,67 @@ The full container and service suites subsequently passed in 2m29s: 103 suites,
 identifying the exact blocked backend in the lock-wait cases; that improvement
 passed all 16 focused cases in a 14-second rerun. No production throughput,
 hosted CI, push, merge or deployment is claimed by these local results.
+
+### Operation-bound new-content attempt storage
+
+V36 extends the existing attempt tables with `FULL_REVISION` and `NEW_CONTENT`
+plan kinds. Existing rows and callers retain full-revision semantics. New-content
+rows bind account, principal, operation, owner generation, member and selected
+drive UUID immutably. This is a storage binding, not evidence that the command
+authorized that drive or those slots. A future typed admission entry point must
+compare the persisted command, complete member intent and sampled placement.
+No service or provider-I/O path admits new-content attempts yet.
+
+Objects retain compact upload ordinals and separately store original revision
+ordinals. Migration backfills the latter from the former for existing objects.
+New-content subsets remain nonempty, with unique slots and original positions;
+they may contain zero or one uploaded CORE. Complete revisions still need CORE,
+and reuse-only revisions have no attempt. Existing reservation, immutable
+physical-location and common retention guards apply to these same object rows.
+No copied retained objects or second upload ledger is introduced.
+
+Attempt and object/source writes require the matching V35 owner-write proof.
+Binding fields and original ordinals cannot change. Object/source guards use the
+existing parent lookup and check the proof after locking the attempt, including
+database-time liveness after a wait. The proof read acquires no owner lock; a
+legitimate writer must already hold it from V35. Unfenced direct SQL can wait on
+an attempt before failing, but cannot obtain ownership through this check.
+Legacy publication rejects new-content rows before taking retention locks.
+The Java attempt snapshot now includes `planKind`; its canonical constructor has
+one additional String argument. Legacy Java renew/verify/publication entry points
+explicitly refuse new-content attempts instead of treating them as full revisions.
+Wire contracts are unchanged.
+
+Takeover cannot adopt an old attempt: the stored owner generation is immutable.
+Recovery must allocate a fresh attempt and fresh keys. More than one historical
+attempt may exist for a member within one owner generation, because an expired
+upload can need replacement while its operation lease remains live. The future
+coordinator must select and reconcile the exact attempt; this schema alone does
+not implement retry reconciliation or active-attempt selection.
+
+Cleanup intentionally retains its attempt-only lock order. It accepts only an
+expired, sealed, unpublished attempt; the attempt lease cannot then be renewed.
+New-content publication is disabled, and generation takeover requires fresh keys.
+Cleanup can therefore reclaim abandoned uploads even while an operation owner is
+live, without acquiring an owner lock after the attempt lock. Common retention
+still fences reclaiming objects. Reassess eligibility when complete revision
+ownership is implemented; do not weaken it to enable publication.
+
+Real PostgreSQL fixtures exercise the SQL lifecycle with synthetic unverified
+byte declarations, not provider success or semantic validation. They cover sparse
+positions, both uploaded-CORE counts, missing/stale owner proof, immutable fields,
+rollback of reservations/catalogue rows, fresh attempts after takeover, cleanup
+and late-write refusal, early legacy-publication refusal under a held attempt
+lock, and migration with an existing attempt/physical object. The owner check is
+folded into the existing parent guard, preserving one parent lookup for legacy
+object/source writes. New-content writes add an owner-proof lookup. Unchanged
+client statement counts do not qualify their latency cost.
+
+Local validation on 2026-10-04: all 17 new SQL lifecycle cases passed. The final
+full container/service regression passed in 2m30s: 104 suites, 821 cases, 818
+passed and three skipped, with zero failures/errors. The older cleanup migration
+fixture now compares every pre-existing field and separately checks the additive
+plan-kind/binding/ordinal defaults. Sol reviewed the SQL guard preservation,
+trigger order, recovery semantics and removal of redundant legacy parent reads.
+No provider upload, public admission API, hosted CI, push, merge, deployment or
+performance qualification is claimed.
