@@ -20,7 +20,7 @@ import java.util.concurrent.CancellationException;
 public final class DocumentSchemaAdmission {
     /** Fixed rule dialects and structural ceilings, independent of ServiceLoader state. */
     public static final String PROFILE = "protomolt-retained-schema-admission/v1";
-    private static final ProtoValidator VALIDATOR = ProtoValidator.create(
+    static final ProtoValidator VALIDATOR = ProtoValidator.create(
             List.of(new ProtomoltRuleSource(), new ProtovalidateRuleSource()));
     private static final int MIB = 1024 * 1024;
     private DocumentSchemaAdmission() {}
@@ -85,6 +85,34 @@ public final class DocumentSchemaAdmission {
     public record RootEvidence(int ordinal, DocumentSchemaRootLocator locator, String locatorSha256,
                                EncodedEvidence encoded) {}
 
+    /** Complete definition from the host's authorized registry/compiler, never executable code. */
+    public record Definition(RepositorySchemaAsset metadata, ByteString descriptors, Optional<ByteString> source) {
+        public Definition { Objects.requireNonNull(metadata); Objects.requireNonNull(descriptors); Objects.requireNonNull(source); }
+    }
+
+    /** Host context is captured by the resolver; prefix selects the next Any before its boundary. */
+    public record Selection(int ordinal, DocumentSchemaRootLocator root, String typeUrl,
+                            List<RepositorySchemaOccurrenceStep> prefix, String valueSha256, long valueSizeBytes) {
+        public Selection { Objects.requireNonNull(root); Objects.requireNonNull(typeUrl);
+            prefix = List.copyOf(prefix); Objects.requireNonNull(valueSha256); }
+    }
+
+    /** Select an authorized immutable definition for this occurrence; failures propagate without fallback. */
+    @FunctionalInterface public interface Resolver { Definition select(Selection occurrence); }
+
+    /** Host bounds allocations and keeps collections stable throughout preparation, as for Request. */
+    public record Preparation(ByteString commandSha256, String policySha256, boolean requireStructuredRoot,
+                              DocumentPublicationMember member, Map<Integer, ByteString> fragments, Definition container) {
+        public Preparation { Objects.requireNonNull(commandSha256); Objects.requireNonNull(policySha256);
+            Objects.requireNonNull(member); Objects.requireNonNull(fragments); Objects.requireNonNull(container); }
+    }
+
+    /** Generate evidence from checked payloads, then independently replay it before delivering a proof. */
+    public static Proof prepareAndCheck(Preparation request, Resolver resolver, Limits limits, Runnable control)
+            throws InvalidProtocolBufferException {
+        return DocumentSchemaPreparation.check(request, resolver, limits, control);
+    }
+
     /** Constructed only after complete checking. Immutable content proof, not an authorization receipt. */
     public static final class Proof {
         private final ByteString commandSha256;
@@ -127,20 +155,11 @@ public final class DocumentSchemaAdmission {
         if (member.getPartsCount() > limits.maxFragments() || request.fragments().size() > limits.maxFragments()
                 || request.evidence().size() > limits.maxFragments() || request.references().size() >= limits.maxBindings())
             throw new IllegalArgumentException("member admission count exceeds limit");
-        if (member.getSerializedSize() > MIB) throw new IllegalArgumentException("publication member exceeds byte limit");
-        VALIDATOR.validate(member).throwIfInvalid();
         var fragments = Map.copyOf(request.fragments());
+        var assembly = checkMember(member, fragments, request.requireStructuredRoot(), limits, control);
         var bundles = decodeEvidence(request.evidence(), limits, control);
         if (bundles.keySet().stream().anyMatch(ordinal -> ordinal >= member.getPartsCount()))
             throw new IllegalArgumentException("evidence ordinal is outside the member");
-        var assembly = assemble(member, fragments, limits, control);
-        if (!assembly.document().hasOwnership() || !assembly.document().getOwnership().equals(member.getOwnership()))
-            throw new IllegalArgumentException("decoded ownership differs from publication member");
-        requireKnownDocument(assembly.document(), "", 0, new int[1], control);
-        VALIDATOR.validate(assembly.document()).throwIfInvalid();
-        if ((request.requireStructuredRoot() || member.hasStructuredSchema()) && !assembly.document().hasStructuredData())
-            throw new IllegalArgumentException("required structured root is absent");
-
         var artifacts = new HashMap<String, ByteString>();
         var retained = new DocumentRetainedSchemaAssets(hash -> {
             var result = Objects.requireNonNull(reader.read(hash));
@@ -236,6 +255,22 @@ public final class DocumentSchemaAdmission {
             result.put(entry.getKey(), List.copyOf(decoded));
         }
         return Map.copyOf(result);
+    }
+
+    static DocumentRevisionAssembly.Result checkMember(DocumentPublicationMember member, Map<Integer, ByteString> fragments,
+            boolean requireStructuredRoot, Limits limits, Runnable control) throws InvalidProtocolBufferException {
+        if (member.getPartsCount() > limits.maxFragments() || fragments.size() > limits.maxFragments())
+            throw new IllegalArgumentException("member admission count exceeds limit");
+        if (member.getSerializedSize() > MIB) throw new IllegalArgumentException("publication member exceeds byte limit");
+        VALIDATOR.validate(member).throwIfInvalid();
+        var assembly = assemble(member, fragments, limits, control);
+        if (!assembly.document().hasOwnership() || !assembly.document().getOwnership().equals(member.getOwnership()))
+            throw new IllegalArgumentException("decoded ownership differs from publication member");
+        requireKnownDocument(assembly.document(), "", 0, new int[1], control);
+        VALIDATOR.validate(assembly.document()).throwIfInvalid();
+        if ((requireStructuredRoot || member.hasStructuredSchema()) && !assembly.document().hasStructuredData())
+            throw new IllegalArgumentException("required structured root is absent");
+        return assembly;
     }
 
     private static DocumentRevisionAssembly.Result assemble(DocumentPublicationMember member, Map<Integer, ByteString> bytes,

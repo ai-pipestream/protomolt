@@ -29,31 +29,38 @@ final class DocumentSchemaOccurrenceProjection {
         for (var occurrence : checked.occurrences()) {
             active(control);
             var path = RepositorySchemaOccurrencePath.newBuilder().setEncodingVersion(1);
-            for (var item : occurrence.path()) {
-                active(control);
-                var step = RepositorySchemaOccurrenceStep.newBuilder();
-                switch (item) {
-                    case DocumentSchemaOccurrences.Field field -> step.setFieldNumber(field.number());
-                    case DocumentSchemaOccurrences.Index index -> step.setRepeatedIndex(index.index());
-                    case DocumentSchemaOccurrences.MapKey key -> step.setMapKey(mapKey(key));
-                    case DocumentSchemaOccurrences.Boundary boundary -> {
-                        var schema = checked.resolvedSchemas().get(new DocumentPayloadCheck.SchemaKey(
-                                boundary.typeUrl(), boundary.artifactSha256()));
-                        if (schema == null || !schema.artifactSha256().equals(boundary.artifactSha256()))
-                            throw new IllegalArgumentException("occurrence schema differs from completed check");
-                        step.setAnyBoundary(RepositoryAnyResolution.newBuilder()
-                                .setTypeUrl(boundary.typeUrl()).setValueSha256(boundary.valueSha256())
-                                .setValueSizeBytes(boundary.valueSizeBytes())
-                                .setResolved(RepositoryResolvedSchema.newBuilder()
-                                        .setSchema(schema.condition()).setArtifactSha256(schema.artifactSha256())));
-                    }
-                }
-                path.addSteps(step);
-            }
+            path.addAllSteps(projectSteps(occurrence.path(), checked.resolvedSchemas(), control));
             var built = path.build();
             VALIDATOR.validate(built).throwIfInvalid();
             active(control);
             result.add(built);
+        }
+        return List.copyOf(result);
+    }
+
+    static List<RepositorySchemaOccurrenceStep> projectSteps(List<DocumentSchemaOccurrences.Step> steps,
+            java.util.Map<DocumentPayloadCheck.SchemaKey, DocumentSchemaBinding> schemas, Runnable control) {
+        var result = new ArrayList<RepositorySchemaOccurrenceStep>();
+        for (var item : steps) {
+            active(control);
+            var step = RepositorySchemaOccurrenceStep.newBuilder();
+            switch (item) {
+                case DocumentSchemaOccurrences.Field field -> step.setFieldNumber(field.number());
+                case DocumentSchemaOccurrences.Index index -> step.setRepeatedIndex(index.index());
+                case DocumentSchemaOccurrences.MapKey key -> step.setMapKey(mapKey(key));
+                case DocumentSchemaOccurrences.Boundary boundary -> {
+                    var schema = schemas.get(new DocumentPayloadCheck.SchemaKey(
+                            boundary.typeUrl(), boundary.artifactSha256()));
+                    if (schema == null || !schema.artifactSha256().equals(boundary.artifactSha256()))
+                        throw new IllegalArgumentException("occurrence schema differs from completed check");
+                    step.setAnyBoundary(RepositoryAnyResolution.newBuilder()
+                            .setTypeUrl(boundary.typeUrl()).setValueSha256(boundary.valueSha256())
+                            .setValueSizeBytes(boundary.valueSizeBytes())
+                            .setResolved(RepositoryResolvedSchema.newBuilder()
+                                    .setSchema(schema.condition()).setArtifactSha256(schema.artifactSha256())));
+                }
+            }
+            result.add(step.build());
         }
         return List.copyOf(result);
     }

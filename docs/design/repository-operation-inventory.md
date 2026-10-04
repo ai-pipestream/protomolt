@@ -4283,3 +4283,80 @@ occurrence, check payloads, project canonical evidence and replay through `check
 Hosts should reuse that operation instead of duplicating root discovery and
 schema selection through public encoders. The consuming `check` remains an
 independent verifier of persisted or imported evidence.
+
+### Native publisher integration gate
+
+The current main-source call graph has no caller of `DocumentPublicationCommit`
+or `DocumentCommandContent.check`; container tests exercise both. Wiring a host
+is remaining work. Existing authorization handles caller/account/document access,
+not a schema-policy identity or freshness guard. The publisher constructor's
+`requireTypedSchema` flag cannot authenticate the policy digest in an admission
+proof. Add an authoritative policy snapshot and a commit-time guard before typed
+activation; do not compute policy identity from untrusted request fields.
+
+The host must stage the complete operation asset union before the commit
+transaction. `RepositorySchemaArtifacts.stage` opens a transaction and must not
+be nested inside `DocumentPublicationCommit.commit`. Within commit, retain the
+existing owner, command, authorization, placement and physical-part checks. Lock
+schema digests in sorted order across all members, verify current-generation
+claims and current policy, and compare proof identity and raw slot hashes/sizes
+with the selected upload or authorized reuse. Insert V55 references, V57 schema
+associations and V56 root evidence after revision parts and before projection
+sealing. Cancellation before terminal success must roll back the entire batch.
+
+Typed mode needs a coordinated V52 migration and deferred completion checks;
+proof existence does not authorize a mode change. SQL should enforce persisted
+counts, scope and required bindings. Java proves canonical root coverage and
+validation semantics. Preserve atomic multi-object publication while introducing
+these checks, consistent with the repository foundation and optional JCR design.
+
+### Produce evidence from host-selected definitions
+
+`DocumentSchemaAdmission.prepareAndCheck` now accepts a complete member and an
+explicit resolver. Each selection includes the raw-fragment root locator,
+member ordinal, nested selector prefix, exact type URL and payload digest/size.
+Earlier Any boundaries in the prefix include their selected descriptor identity.
+A resolver can choose different descriptor versions for the same URL at different
+occurrences. Bindings use the pair of URL and descriptor digest; storage assets
+use their digest. Repeated selections cannot change metadata for one binding.
+
+The producer validates payloads with the fixed profile, projects canonical root
+and occurrence evidence, verifies claimed sources, and checks aggregate limits.
+It then freezes the asset set and calls the independent consuming verifier.
+That replay performs no registry selection. Null, denied, unavailable or invalid
+definitions fail this strict path without an opaque fallback. A failed attempt
+returns no proof and writes no storage. Resolver inputs and returned definitions
+still require host authorization and allocation limits; compiler claims remain
+separate from source integrity. This supplies the evidence-generation entrypoint
+identified above, without activating the publisher or changing protobuf contracts.
+
+A proposed policy catalog uses immutable account-scoped policy snapshots and an
+active revision pointer. The snapshot must identify the validation profile,
+structured-root requirement, schema eligibility and resource ceilings. Preparation
+reads the authoritative snapshot; commit takes a shared pointer lock after the
+operation fence and before document/drive locks, compares every proof and holds
+that lock through terminal success. Concurrent writers can share the lock. A
+policy update changes the pointer exclusively: an earlier update rejects stale
+proofs, while an earlier writer lock permits that commit before the update.
+This catalog and adapter remain to be implemented in the document repository,
+with no dependencies added to byte storage or the optional JCR interface.
+
+Activation must cover every publication entry point. An account requiring typed
+admission cannot bypass policy through a legacy opaque writer. Opaque publication
+remains permitted only where authoritative policy allows it. The current command
+has one account, so one target policy pointer covers the member batch; source
+ACL/revision checks still apply. Any future cross-account source or finer policy
+scope needs an explicit scope and locking review. Required integration tests
+include stale-policy rollback of all members, concurrent shared-lock writers,
+a policy updater waiting for a writer, mixed-policy rejection, missing policy
+and an attempt to use a legacy writer under a typed-required policy.
+
+The evidence producer checkpoint passes 386 tests across the affected modules,
+including 9 new preparation tests and the admission runtime dependency gate.
+Unchanged module tasks reuse Gradle verification outputs. Tests cover source
+integrity failure and repaired retry, resolver errors, Buf payload rejection,
+aggregate limits and cancellation. The mixed-version fixture pairs nested fields
+1 and 2 with distinct descriptor hashes under the same URL and checks those
+pairs in canonical evidence. Resolver call counts prove that final replay does
+not consult the registry. Sol reviewed production code and tests with no blocker.
+These are library tests, not hosted publication or historical SQL qualification.
