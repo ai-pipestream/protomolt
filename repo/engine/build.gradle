@@ -8,6 +8,7 @@ dependencies {
     implementation project(':protomolt-protobuf-validation')
     implementation project(':protomolt-formats')
     implementation libs.jackson.databind
+    testImplementation project(':protomolt-sources')
     api project(':protomolt-asset-bridge')
 }
 ext.forbiddenRuntimeModules = ['protomolt-repo-service', 's3', 'jedis', 'grpc-netty-shaded', 'grpc-inprocess']

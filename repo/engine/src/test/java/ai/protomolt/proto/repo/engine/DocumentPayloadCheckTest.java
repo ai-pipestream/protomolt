@@ -86,8 +86,8 @@ class DocumentPayloadCheckTest {
     }
 
     @Test
-    void refusesUnresolvedAnyAndExtensionSchemas() {
-        for (Descriptor type : List.of(Any.getDescriptor(), FieldOptions.getDescriptor())) {
+    void refusesExtensionSchemas() {
+        for (Descriptor type : List.of(FieldOptions.getDescriptor())) {
             var schema = binding(type);
             String url = "type.protomolt.test/" + type.getFullName();
             var candidate = Any.newBuilder().setTypeUrl(url).build();
@@ -105,7 +105,7 @@ class DocumentPayloadCheckTest {
     }
 
     @Test
-    void refusesUnsetNestedAnyAndChecksSchemaLimits() throws Exception {
+    void acceptsUnsetNestedAnyAndChecksSchemaLimits() throws Exception {
         var file = FileDescriptorProto.newBuilder().setName("wrapper.proto").setPackage("payload").setSyntax("proto3")
                 .addDependency(Any.getDescriptor().getFile().getName())
                 .addMessageType(DescriptorProto.newBuilder().setName("Wrapper").addField(
@@ -116,8 +116,7 @@ class DocumentPayloadCheckTest {
         var schema = binding(type);
         String url = "type.protomolt.test/payload.Wrapper";
         var empty = Any.newBuilder().setTypeUrl(url).build();
-        assertThatThrownBy(() -> DocumentPayloadCheck.check(schema, empty, url, validator(), LIMITS, () -> {}))
-                .isInstanceOf(UnsupportedOperationException.class);
+        assertThat(DocumentPayloadCheck.check(schema, empty, url, validator(), LIMITS, () -> {}).decoded().getAllFields()).isEmpty();
         var limited = new DocumentPayloadCheck.Limits(1024, 100, 10, 1, 1000);
         assertThatThrownBy(() -> DocumentPayloadCheck.check(schema, empty, url, validator(), limited, () -> {}))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("schema message count");
@@ -144,6 +143,140 @@ class DocumentPayloadCheckTest {
         var checked = check(schema, valid.toBuilder().setValue(bytes).build(), LIMITS);
         assertThat(checked.original().getValue()).isEqualTo(bytes);
         assertThat(checked.decoded().getUnknownFields().hasField(99)).isTrue();
+    }
+
+    @Test
+    void resolvesRepeatedAnyOnceAndValidatesEveryEmbeddedPayload() throws Exception {
+        var wrapper = wrapper();
+        var inner = binding(choice("(this.left != '') != (this.right != '')"));
+        var calls = new java.util.concurrent.atomic.AtomicInteger();
+        var payload = wrapped(wrapper, candidate(inner, "first", ""), candidate(inner, "second", ""));
+        var checked = DocumentPayloadCheck.check(wrapper, payload, payload.getTypeUrl(), validator(), LIMITS, () -> {}, url -> {
+            assertThat(url).isEqualTo(URL);
+            calls.incrementAndGet();
+            return inner;
+        });
+        assertThat(calls.get()).isEqualTo(1);
+        assertThat(checked.resolvedSchemas()).containsEntry(URL, inner);
+        assertThat(checked.original()).isSameAs(payload);
+        var invalid = wrapped(wrapper, candidate(inner, "first", ""), candidate(inner, "x", ""));
+        assertThatThrownBy(() -> DocumentPayloadCheck.check(wrapper, invalid, invalid.getTypeUrl(), validator(), LIMITS,
+                () -> {}, url -> inner)).isInstanceOf(ValidationResult.ValidationException.class);
+    }
+
+    @Test
+    void unresolvedWrongBindingAndResolverFailureCannotProduceCheckedPayload() throws Exception {
+        var wrapper = wrapper();
+        var inner = binding(choice("true"));
+        var payload = wrapped(wrapper, candidate(inner, "first", ""));
+        assertThatThrownBy(() -> DocumentPayloadCheck.check(wrapper, payload, payload.getTypeUrl(), validator(), LIMITS, () -> {}))
+                .hasMessageContaining("unresolved Any");
+        assertThatThrownBy(() -> DocumentPayloadCheck.check(wrapper, payload, payload.getTypeUrl(), validator(), LIMITS, () -> {}, url -> null))
+                .hasMessageContaining("unresolved Any");
+        assertThatThrownBy(() -> DocumentPayloadCheck.check(wrapper, payload, payload.getTypeUrl(), validator(), LIMITS, () -> {}, url -> wrapper))
+                .hasMessageContaining("type URL");
+        var failure = new IllegalStateException("registry unavailable");
+        assertThatThrownBy(() -> DocumentPayloadCheck.check(wrapper, payload, payload.getTypeUrl(), validator(), LIMITS,
+                () -> {}, url -> { throw failure; })).isSameAs(failure);
+    }
+
+    @Test
+    void nestedWorkSharesBytesWireValuesAndDepthBudgets() throws Exception {
+        var wrapper = wrapper();
+        var inner = binding(choice("true"));
+        var payload = wrapped(wrapper, candidate(inner, "first", ""));
+        var bytes = new DocumentPayloadCheck.Limits(payload.getValue().size(), 100, 10, 100, 1000);
+        assertThatThrownBy(() -> DocumentPayloadCheck.check(wrapper, payload, payload.getTypeUrl(), validator(), bytes,
+                () -> {}, url -> inner)).hasMessageContaining("aggregate payload bytes");
+        var wire = new DocumentPayloadCheck.Limits(1024, 3, 10, 100, 1000);
+        assertThatThrownBy(() -> DocumentPayloadCheck.check(wrapper, payload, payload.getTypeUrl(), validator(), wire,
+                () -> {}, url -> inner)).hasMessageContaining("wire value");
+        var depth = new DocumentPayloadCheck.Limits(1024, 100, 1, 100, 1000);
+        assertThatThrownBy(() -> DocumentPayloadCheck.check(wrapper, payload, payload.getTypeUrl(), validator(), depth,
+                () -> {}, url -> inner)).hasMessageContaining("depth");
+    }
+
+    @Test
+    void recursivelyResolvesAnyInsideResolvedPayload() throws Exception {
+        var wrapper = wrapper();
+        var inner = binding(choice("true"));
+        var nested = wrapped(wrapper, candidate(inner, "valid", ""));
+        var payload = wrapped(wrapper, nested);
+        var checked = DocumentPayloadCheck.check(wrapper, payload, payload.getTypeUrl(), validator(), LIMITS,
+                () -> {}, url -> inner);
+        assertThat(checked.resolvedSchemas()).hasSize(2);
+        var invalid = wrapped(wrapper, wrapped(wrapper, candidate(inner, "x", "")));
+        assertThatThrownBy(() -> DocumentPayloadCheck.check(wrapper, invalid, invalid.getTypeUrl(), validator(), LIMITS,
+                () -> {}, url -> inner)).isInstanceOf(ValidationResult.ValidationException.class);
+    }
+
+    @Test
+    void validatesMapAnyValues() throws Exception {
+        var entry = DescriptorProto.newBuilder().setName("ItemsEntry").setOptions(MessageOptions.newBuilder().setMapEntry(true))
+                .addField(FieldDescriptorProto.newBuilder().setName("key").setNumber(1).setType(FieldDescriptorProto.Type.TYPE_STRING))
+                .addField(FieldDescriptorProto.newBuilder().setName("value").setNumber(2).setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                        .setTypeName(".google.protobuf.Any"));
+        var file = FileDescriptorProto.newBuilder().setName("map.proto").setPackage("payload").setSyntax("proto3")
+                .addDependency("google/protobuf/any.proto").addMessageType(DescriptorProto.newBuilder().setName("MapWrapper")
+                        .addNestedType(entry).addField(FieldDescriptorProto.newBuilder().setName("items").setNumber(1)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED).setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".payload.MapWrapper.ItemsEntry"))).build();
+        var schema = binding(FileDescriptor.buildFrom(file, new FileDescriptor[]{Any.getDescriptor().getFile()})
+                .findMessageTypeByName("MapWrapper"));
+        var inner = binding(choice("true"));
+        var items = schema.type().findFieldByName("items");
+        var entryType = items.getMessageType();
+        var value = candidate(inner, "x", "");
+        var mapEntry = DynamicMessage.newBuilder(entryType).setField(entryType.findFieldByName("key"), "one")
+                .setField(entryType.findFieldByName("value"), DynamicMessage.parseFrom(entryType.findFieldByName("value").getMessageType(), value.toByteString())).build();
+        var payload = Any.newBuilder().setTypeUrl("type.protomolt.test/payload.MapWrapper")
+                .setValue(DynamicMessage.newBuilder(schema.type()).addRepeatedField(items, mapEntry).build().toByteString()).build();
+        assertThatThrownBy(() -> DocumentPayloadCheck.check(schema, payload, payload.getTypeUrl(), validator(), LIMITS,
+                () -> {}, url -> inner)).isInstanceOf(ValidationResult.ValidationException.class);
+    }
+
+    @Test
+    void resolvesSourceOnlyTypeAtRuntimeAndReusesRetainedDefinitionOffline() throws Exception {
+        var wrapper = wrapper();
+        String typeUrl = "type.protomolt.test/runtime.NewType";
+        var embedded = Any.newBuilder().setTypeUrl(typeUrl)
+                .setValue(ByteString.copyFrom(new byte[]{10, 2, 'o', 'k'})).build();
+        var payload = wrapped(wrapper, embedded);
+        var checked = DocumentPayloadCheck.check(wrapper, payload, payload.getTypeUrl(), validator(), LIMITS, () -> {}, url -> {
+            assertThat(url).isEqualTo(typeUrl);
+            try { var compiled = new ai.protomolt.proto.sources.ProtoSourceCompiler().compile(
+                    ai.protomolt.proto.sources.ProtoSourceSet.builder().add("runtime.proto",
+                            "syntax = \"proto3\"; package runtime; message NewType { string value = 1; }", "test definition").build());
+            return binding(compiled.descriptorFor("runtime.proto").orElseThrow().findMessageTypeByName("NewType"));
+            } catch (ai.protomolt.proto.sources.ProtoCompilationException e) {
+                throw new IllegalStateException("runtime schema compilation failed", e);
+            }
+        });
+        var retained = checked.resolvedSchemas().get(typeUrl);
+        // Fresh descriptor graph reconstructed only from retained bytes, no class or live registry.
+        var reconstructed = DocumentSchemaBinding.bind(retained.condition(), retained.artifact(),
+                new ClosedDescriptorSet.Limits(4_000_000, 100, 1000, 100), () -> {});
+        var offline = DocumentPayloadCheck.check(wrapper, payload, payload.getTypeUrl(), validator(), LIMITS,
+                () -> {}, url -> reconstructed);
+        assertThat(offline.original()).isEqualTo(payload);
+        assertThat(offline.resolvedSchemas().get(typeUrl).type().getFullName()).isEqualTo("runtime.NewType");
+    }
+
+    private static DocumentSchemaBinding wrapper() throws Exception {
+        var file = FileDescriptorProto.newBuilder().setName("wrapper.proto").setPackage("payload").setSyntax("proto3")
+                .addDependency("google/protobuf/any.proto").addMessageType(DescriptorProto.newBuilder().setName("Wrapper")
+                        .addField(FieldDescriptorProto.newBuilder().setName("items").setNumber(1)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED).setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                                .setTypeName(".google.protobuf.Any"))).build();
+        return binding(FileDescriptor.buildFrom(file, new FileDescriptor[]{Any.getDescriptor().getFile()})
+                .findMessageTypeByName("Wrapper"));
+    }
+
+    private static Any wrapped(DocumentSchemaBinding wrapper, Any... values) throws Exception {
+        var data = DynamicMessage.newBuilder(wrapper.type());
+        var field = wrapper.type().findFieldByName("items");
+        for (Any value : values) data.addRepeatedField(field, DynamicMessage.parseFrom(field.getMessageType(), value.toByteString()));
+        return Any.newBuilder().setTypeUrl("type.protomolt.test/payload.Wrapper").setValue(data.build().toByteString()).build();
     }
 
     private static DocumentPayloadCheck check(DocumentSchemaBinding schema, Any candidate, DocumentPayloadCheck.Limits limits)

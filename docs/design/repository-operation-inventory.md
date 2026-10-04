@@ -3279,3 +3279,38 @@ refusal of catalog/claim mutation. Cleanup, revision references, historical read
 publication and performance qualification remain unfinished. This is internal
 staging storage, not completed schema retention. Runtime Any resolution remains a
 required integration, as recorded in the cutover design.
+
+### Runtime Any validation and existing peer capabilities
+
+The internal payload checker now accepts unset Any fields and resolves populated
+Any envelopes through host-selected immutable schema bindings. It validates nested,
+repeated and map payloads, caches each exact URL for the check, and shares byte,
+wire-value, depth and schema limits across embedded messages. Original candidate
+bytes remain unchanged. The returned URL map is in-memory evidence only; durable
+per-path revision bindings and publication are still required.
+
+All 101 engine tests pass, with no failures or skips, including runtime compilation
+of a source-only type through the existing ProtoSourceCompiler and reconstruction
+from retained descriptor bytes without another compilation. This is a helper test,
+not proof of SQL-backed historical reads. The engine runtime dependency gate passes;
+the source compiler is a test dependency only. Sol reviewed the recursive check and
+found no blocker.
+
+Existing service discovery already provides much of the peer workflow:
+ServiceActionSupport.reflectAndStore obtains live reflected descriptors and writes
+them through SchemaRegistryStore.putDescriptorSet. GitSchemaRegistryStore stores
+those bytes at descriptors/sha256/<fingerprint>.pb and commits them. Service profiles
+persist separately. ReflectedServiceActions and ReflectedMethodAction rebuild
+methods and invoke them dynamically using DynamicGrpcCalls. No peer executable
+library or generated Java class is required. The MCP host composes these facilities.
+
+Tests cover reflection with dynamic Any invocation, registry-backed invocation,
+profile restart and invocation, and Git descriptor persistence across restart.
+The audit did not locate one test spanning reflection, Git commit, reopening both
+stores and invocation together. Add that integration coverage rather than building
+a duplicate discovery or persistence path.
+
+GenerateStubsAction already emits source for Java, Kotlin, Python, C++, C#, Ruby,
+PHP and Objective-C, plus grpc-java service stubs. Generated-source ZIP packaging
+was reported by the user; its exact codegen download route is still being located.
+Do not equate source generation or ZIP download with executable peer code loading.

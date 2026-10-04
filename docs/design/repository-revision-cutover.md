@@ -733,24 +733,48 @@ and historical decode with the registry unavailable. Annotation rules on the out
 Any envelope and on each decoded payload must both run. These cases are required
 before treating typed archival admission as complete.
 
-### Java classes and SPI execution
+### Definition exchange and locally generated SPI clients
 
-ProtoMolt also needs a path from schema definitions to executable Java providers.
-`GenerateStubsAction` and `WasmProtoc` already generate Java message source and
-service stubs. `Composer.builder()` already discovers `ServiceModule` providers
-through `ServiceLoader`. Runtime compilation and loading of newly generated
-classes between those steps have not been verified as existing functionality.
+ProtoMolt servers exchange protobuf definitions and service metadata so a receiving
+server can resolve types at runtime and construct a client for the remote service.
+They do not exchange executable libraries, classes, JARs or service implementations.
 
-Use an optional module to generate source from a pinned schema, compile with
-explicit dependencies, load the artifact, and discover a shared SPI provider.
-Generated protobuf messages need a provider adapter; implementing `Message` does
-not make them SPI providers. The shared SPI and protobuf runtime need a common
-parent class loader so providers agree on Java type identity. Versioned artifacts
-need an explicit loader lifecycle, admission policy, error reporting and resource
-cleanup. A class loader is not an execution sandbox.
+Reuse `GenerateStubsAction` and `WasmProtoc` to generate message classes and gRPC
+client source locally from the received definitions. The receiving host selects
+its own generators, compiler, dependencies and SPI adapter template. Compile and
+load the generated client through a service-specific class loader, then expose it
+through the local SPI. Calls execute on the remote service through gRPC; received
+schema definitions do not authorize running remote implementation code locally.
+
+`Composer.builder()` already discovers local `ServiceModule` providers through
+`ServiceLoader`. The connection from generated client source to runtime compilation,
+service-specific loading and SPI registration still needs implementation evidence.
+Generated protobuf messages are not SPI providers by themselves. Share the SPI and
+protobuf runtime through the parent class loader to preserve Java type identity.
+Pin schema and endpoint identities and define client disposal and loader lifetimes.
+
+Received definitions are input data. Use fixed compiler options, controlled source
+paths, approved dependencies and host-owned generators; reject options requesting
+external code, plugins or classpath changes. Never load a library supplied by the
+peer. A class loader is not an execution sandbox.
 
 Keep compilation optional and outside base storage. Descriptor-based Any admission
 must work without Java generation. Both paths use the same selected schema identity
-and validation rules. Before claiming runtime provider execution, test source
-generation, compilation, SPI discovery, invocation, version isolation, failures
-and loader cleanup with actual generated artifacts.
+and validation rules. Acceptance must exercise two servers exchanging definitions,
+local generation and compilation, SPI discovery, an actual gRPC call, version
+isolation, rejection of executable peer artifacts, failures and loader cleanup.
+
+### Existing reflection and dynamic invocation
+
+The existing `ReflectionClient` discovers services and their descriptor closures
+from live gRPC servers. `ReflectedAnyActionTest` exercises reflection, profile
+registration and dynamic request/reply handling for a real in-process Any service.
+`DynamicGrpcCalls` invokes methods without generated client classes. Reuse these
+paths for peer discovery and invocation. The optional generated-class path does
+not replace them, and its missing compilation/loading evidence does not mean
+runtime type resolution is missing from ProtoMolt.
+
+For archival admission, freeze the selected reflected definition and retain its
+complete closure. Discovery of a current remote definition alone cannot recreate
+an older revision after that definition changes. No executable peer library is
+needed for the dynamic reflection path.
