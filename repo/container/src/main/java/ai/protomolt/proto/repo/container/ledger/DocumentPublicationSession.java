@@ -19,13 +19,31 @@ final class DocumentPublicationSession {
     private final DocumentPublicationCommand command;
     private final UUID ownerNonce;
     private final Duration lease;
+    private final long predecessorGeneration;
     private final DocumentOperationUploadAdmission.Prepared prepared;
     private final AtomicBoolean executing = new AtomicBoolean();
     private Map<String, DocumentPublicationCandidate.Mode> modes;
 
     DocumentPublicationSession(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
             Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease) {
+        this(tx, caller, command, placements, lease, 0);
+    }
+
+    /** Explicit host recovery; never selected automatically by ordinary admission. */
+    static DocumentPublicationSession recovering(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease, long predecessorGeneration,
+            Map<String, DocumentPublicationCandidate.Mode> modes) {
+        if (predecessorGeneration < 1 || predecessorGeneration == Long.MAX_VALUE)
+            throw new IllegalArgumentException("Recovery requires a replaceable predecessor generation");
+        var session = new DocumentPublicationSession(tx, caller, command, placements, lease, predecessorGeneration);
+        session.modes = session.checkedModes(modes);
+        return session;
+    }
+
+    private DocumentPublicationSession(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease, long predecessorGeneration) {
         this.command = Objects.requireNonNull(command); this.lease = Objects.requireNonNull(lease);
+        this.predecessorGeneration = predecessorGeneration;
         if (caller == null) throw new RepositoryException(RepositoryException.Code.UNAUTHENTICATED,
                 "Authenticated repository caller is required");
         key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
@@ -43,7 +61,9 @@ final class DocumentPublicationSession {
     }
 
     /**
-     * Exact retry only: never renews, takes over, or changes owner/attempt identities.
+     * Exact retry only: never renews or changes owner/attempt identities. A normal
+     * session admits; an explicitly constructed recovery session retries only its
+     * fixed predecessor generation and next nonce through command-bound takeover.
      * Empty means no executable owner was granted. A terminal operation must use
      * authorized result replay instead. Failure after SQL, including cancellation,
      * leaves this session intact for reconciliation; the host must retain it.
@@ -51,12 +71,21 @@ final class DocumentPublicationSession {
     Optional<RepositoryOperationLedger.Owner> admit(RepositoryCaller caller, RepositoryReadControl control) {
         Objects.requireNonNull(control).check();
         DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
-        var admitted = operations.admit(key, command, ownerNonce, lease);
+        var owner = predecessorGeneration == 0 ? operations.admit(key, command, ownerNonce, lease).owner()
+                : Optional.of(operations.takeOver(key, command, predecessorGeneration, ownerNonce, lease));
         control.check();
-        return admitted.owner();
+        return owner;
     }
 
     DocumentOperationUploadAdmission.Prepared prepared() { return prepared; }
+
+    private Map<String, DocumentPublicationCandidate.Mode> checkedModes(Map<String, DocumentPublicationCandidate.Mode> requested) {
+        var copy = Map.copyOf(requested);
+        var members = command.intent().getMembersList().stream()
+                .map(member -> member.getMemberId()).collect(java.util.stream.Collectors.toSet());
+        if (!copy.keySet().equals(members)) throw new IllegalArgumentException("Admission modes differ from command members");
+        return copy;
+    }
 
     /** Fail fast rather than queue borrowed payloads behind another execution. */
     Execution begin(RepositoryCaller caller, RepositoryReadControl control) {
@@ -80,10 +109,7 @@ final class DocumentPublicationSession {
         /** Host choices remain fixed even when admission or publication fails. */
         synchronized Map<String, DocumentPublicationCandidate.Mode> bindModes(Map<String, DocumentPublicationCandidate.Mode> requested) {
             if (closed.get()) throw new IllegalStateException("Publication execution is closed");
-            var copy = Map.copyOf(requested);
-            var members = command.intent().getMembersList().stream()
-                    .map(member -> member.getMemberId()).collect(java.util.stream.Collectors.toSet());
-            if (!copy.keySet().equals(members)) throw new IllegalArgumentException("Admission modes differ from command members");
+            var copy = checkedModes(requested);
             if (modes == null) modes = copy;
             else if (!modes.equals(copy)) throw new IllegalArgumentException("Publication session admission modes changed");
             return modes;

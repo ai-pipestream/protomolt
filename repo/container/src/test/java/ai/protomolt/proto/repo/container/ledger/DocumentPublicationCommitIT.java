@@ -470,18 +470,25 @@ class DocumentPublicationCommitIT {
     }
 
     @Test void boundedRegistryOwnsTypedPublicationAndRetiresItsCommittedSession() throws Exception {
-        publishRetainedRevision(true,1,true,false,true);
+        publishRetainedRevision(true,1,true,false,ExecutionMode.REGISTRY);
     }
+
+    @Test void recoveredSessionPublishesTypedRevisionWithFreshUploadAttempts() throws Exception {
+        publishRetainedRevision(true,1,true,false,ExecutionMode.RECOVERY);
+    }
+
+    private enum ExecutionMode { DIRECT, REGISTRY, RECOVERY }
 
     private static void publishRetainedRevision(boolean mixed,int chunks,boolean typed) throws Exception {
         publishRetainedRevision(mixed,chunks,typed,false);
     }
 
     private static void publishRetainedRevision(boolean mixed,int chunks,boolean typed,boolean rejectSchema) throws Exception {
-        publishRetainedRevision(mixed,chunks,typed,rejectSchema,false);
+        publishRetainedRevision(mixed,chunks,typed,rejectSchema,ExecutionMode.DIRECT);
     }
 
-    private static void publishRetainedRevision(boolean mixed,int chunks,boolean typed,boolean rejectSchema,boolean registryOwns) throws Exception {
+    private static void publishRetainedRevision(boolean mixed,int chunks,boolean typed,boolean rejectSchema,ExecutionMode executionMode) throws Exception {
+        boolean registryOwns=executionMode==ExecutionMode.REGISTRY;
         var first=fixture(1,chunks,DocumentSecurity.getDefaultInstance(),"composed-"+UUID.randomUUID(),typed);
         var checked=stage(first);
         var original=publisher().commit(ADMIN,first.owner,first.prepared,checked.content,checked.selected,()->{});
@@ -521,7 +528,30 @@ class DocumentPublicationCommitIT {
         var command=new DocumentPublicationCommand(first.command.intent().toBuilder().setOperationId(UUID.randomUUID().toString()).setMembers(0,member).build());
         var placements=new HashMap<UUID,DocumentUploadPlan.Placement>();
         first.prepared.members().forEach(m -> placements.put(m.placement().drive().id(),m.placement()));
-        var session=new DocumentPublicationSession(tx,ADMIN,command,placements,LEASE);
+        final DocumentPublicationSession session;
+        final java.util.Optional<RepositoryOperationLedger.Owner> predecessor;
+        if (executionMode==ExecutionMode.RECOVERY) {
+            var expired=new DocumentPublicationSession(tx,ADMIN,command,placements,Duration.ofSeconds(1));
+            var oldOwner=expired.admit(ADMIN,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE).orElseThrow();
+            predecessor=java.util.Optional.of(oldOwner);
+            tx.readOnly(em->em.createNativeQuery("""
+                    SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM lease_until-clock_timestamp()))+0.02)
+                    FROM repository_operation_owners WHERE operation_id=:id
+                    """).setParameter("id",command.operationId()).getSingleResult());
+            session=DocumentPublicationSession.recovering(tx,ADMIN,command,placements,LEASE,1,
+                    Map.of(member.getMemberId(),DocumentPublicationCandidate.Mode.TYPED));
+            assertThat(session.prepared().members().getFirst().attempt().orElseThrow().id())
+                    .isNotEqualTo(expired.prepared().members().getFirst().attempt().orElseThrow().id());
+            assertThat(session.prepared().members().getFirst().attempt().orElseThrow().uploads())
+                    .extracting(upload->upload.object().objectKey())
+                    .doesNotContainAnyElementsOf(expired.prepared().members().getFirst().attempt().orElseThrow().uploads()
+                            .stream().map(upload->upload.object().objectKey()).toList());
+            assertThatThrownBy(()->new RepositoryOperationLedger(tx).renew(oldOwner,LEASE))
+                    .isInstanceOf(RepositoryOperationLedger.OwnerFencedException.class);
+        } else {
+            session=new DocumentPublicationSession(tx,ADMIN,command,placements,LEASE);
+            predecessor=java.util.Optional.empty();
+        }
         var prepared=session.prepared();
         var policy=ai.protomolt.proto.repo.admission.DocumentAdmissionPolicy.of(DocumentSchemaPolicy.newBuilder()
                 .setEncodingVersion(1).setAccountId(command.intent().getAccountId())
@@ -560,6 +590,8 @@ class DocumentPublicationCommitIT {
             assertThat(sessions.retainedCommandBytes()).isZero();
             if (!registryOwns) {
             session.admit(ADMIN,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE).orElseThrow();
+            predecessor.ifPresent(oldOwner->assertThatThrownBy(()->new RepositoryOperationLedger(tx).renew(oldOwner,LEASE))
+                    .isInstanceOf(RepositoryOperationLedger.OwnerFencedException.class));
             assertThatThrownBy(()->execution.execute(ADMIN,contender,Map.of(),Map.of(),
                     Map.of(member.getMemberId(),typed ? DocumentPublicationCandidate.Mode.TYPED : DocumentPublicationCandidate.Mode.OPAQUE),
                     java.util.Optional.empty(),(m,occurrence)->{ throw new AssertionError("Unowned operation must not resolve schemas"); },
@@ -621,6 +653,7 @@ class DocumentPublicationCommitIT {
                     : execution.execute(ADMIN,session,Map.copyOf(shiftedBodies),Map.of(),modes,container,resolver,
                     ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
             assertThat(rejectSchema).as("Schema failure must prevent publication").isFalse();
+            assertThat(result.getOwnerGeneration()).isEqualTo(executionMode==ExecutionMode.RECOVERY ? 2 : 1);
             assertThatThrownBy(()->new RepositoryOperationLedger(tx).takeOver(
                     new RepositoryOperationLedger.Key(command.intent().getAccountId(),"principal",command.operationId()),
                     command,1,UUID.randomUUID(),LEASE))

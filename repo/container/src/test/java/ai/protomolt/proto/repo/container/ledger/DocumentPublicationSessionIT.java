@@ -23,6 +23,69 @@ class DocumentPublicationSessionIT {
     private static final RepositoryCaller CALLER = new RepositoryCaller("principal", true);
     private static final Duration LEASE = Duration.ofMinutes(5);
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void recoveryRetainsFreshAttemptAndModeIdentitiesAfterCommittedSqlFailure(boolean cancel) {
+        try (var c = context(POSTGRES)) {
+            var input = input(c);
+            var original = new DocumentPublicationSession(c.tx(), CALLER, input.command(), input.placements(), Duration.ofSeconds(1));
+            var oldOwner = original.admit(CALLER, RepositoryReadControl.NONE).orElseThrow();
+            c.tx().readOnly(em -> em.createNativeQuery("""
+                    SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM lease_until-clock_timestamp()))+0.02)
+                    FROM repository_operation_owners WHERE operation_id=:id
+                    """).setParameter("id", input.command().operationId()).getSingleResult());
+            var armed = new AtomicBoolean();
+            var cancelled = new AtomicBoolean();
+            var source = DocumentJdbcFaults.afterCommit(c.pool(), () -> {
+                if (armed.compareAndSet(true, false)) {
+                    if (cancel) cancelled.set(true);
+                    else throw new java.sql.SQLException("Recovery acknowledgment lost after commit", "08006");
+                }
+            });
+            try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                    Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
+                var modes = new java.util.HashMap<String, DocumentPublicationCandidate.Mode>();
+                input.command().intent().getMembersList().forEach(member -> modes.put(member.getMemberId(), DocumentPublicationCandidate.Mode.TYPED));
+                var expectedModes = Map.copyOf(modes);
+                for (long invalid : new long[]{0, -1, Long.MAX_VALUE}) {
+                    assertThatThrownBy(() -> DocumentPublicationSession.recovering(new Tx(emf), CALLER,
+                            input.command(), input.placements(), LEASE, invalid, modes)).isInstanceOf(IllegalArgumentException.class);
+                }
+                assertThatThrownBy(() -> DocumentPublicationSession.recovering(new Tx(emf), CALLER,
+                        input.command(), input.placements(), LEASE, 1, Map.of())).isInstanceOf(IllegalArgumentException.class);
+                assertThat(new RepositoryOperationLedger(c.tx()).find(key(input.command())).orElseThrow().generation()).isEqualTo(1);
+                var recovery = DocumentPublicationSession.recovering(new Tx(emf), CALLER, input.command(), input.placements(), LEASE, 1, modes);
+                modes.replaceAll((member, mode) -> DocumentPublicationCandidate.Mode.OPAQUE);
+                var prepared = recovery.prepared();
+                assertThat(prepared.members().getFirst().attempt().orElseThrow().id())
+                        .isNotEqualTo(original.prepared().members().getFirst().attempt().orElseThrow().id());
+                assertThat(prepared.members().get(1).attempt()).isEmpty();
+                var control = new RepositoryReadControl() {
+                    @Override public long remainingNanos() { return Long.MAX_VALUE; }
+                    @Override public boolean isCancelled() { return cancelled.get(); }
+                };
+                armed.set(true);
+                var failure = catchThrowable(() -> recovery.admit(CALLER, control));
+                if (cancel) assertThat(failure).isInstanceOfSatisfying(RepositoryException.class,
+                        error -> assertThat(error.code()).isEqualTo(RepositoryException.Code.CANCELLED));
+                else assertThat(failure).hasStackTraceContaining("Recovery acknowledgment lost after commit");
+                assertThat(armed).isFalse();
+                cancelled.set(false);
+                var owner = recovery.admit(CALLER, RepositoryReadControl.NONE).orElseThrow();
+                assertThat(owner.generation()).isEqualTo(2);
+                assertThat(owner.token()).isNotEqualTo(oldOwner.token());
+                assertThat(recovery.admit(CALLER, RepositoryReadControl.NONE)).contains(owner);
+                assertThat(recovery.prepared()).isSameAs(prepared);
+                assertThatThrownBy(() -> new RepositoryOperationLedger(c.tx()).renew(oldOwner, LEASE))
+                        .isInstanceOf(RepositoryOperationLedger.OwnerFencedException.class);
+                try (var execution = recovery.begin(CALLER, RepositoryReadControl.NONE)) {
+                    assertThatThrownBy(() -> execution.bindModes(modes)).hasMessageContaining("modes changed");
+                    assertThat(execution.bindModes(expectedModes)).isEqualTo(expectedModes);
+                }
+            }
+        }
+    }
+
     @Test void executionExcludesConcurrentUseAndOldCloseCannotUnlockItsSuccessor() throws Exception {
         try (var c = context(POSTGRES)) {
             var input = input(c);

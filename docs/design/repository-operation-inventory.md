@@ -5483,3 +5483,25 @@ actual takeover commit whose acknowledgment is lost. Exact retry returns the sto
 generation, token and lease without extending it. Real-provider publication tests
 also refuse takeover of a committed operation. This does not yet expose recovery
 through the host or retire an abandoned registry session.
+
+### Retained recovery-session identities
+
+An explicit internal `DocumentPublicationSession.recovering` factory now fixes
+the expected predecessor generation, next owner nonce, fresh upload attempts,
+qualified placement snapshot and complete copied admission-mode map before any
+takeover SQL. Ordinary sessions still use initial admission and never implicitly
+take over. Every recovery admission retries the same command-bound generation
+transition; neither cancellation nor a lost acknowledgment changes its identities.
+Unsupported predecessor generations and incomplete mode maps fail before SQL.
+
+PostgreSQL tests inject acknowledgment loss and cancellation after actual takeover
+commit. Reusing the same session recovers generation two with unchanged owner and
+prepared-plan identity; caller map mutation cannot downgrade admission. The mixed
+typed revision test also publishes through a recovered session against the real
+object-store adapter, verifies fresh attempt IDs and disjoint upload keys, and
+checks old-owner fencing after takeover. The committed result records generation
+two and retains the existing authorized replay behavior.
+
+This qualifies the retained recovery-session component. The bounded registry
+still needs exclusive recovery transitions and host-controlled restart selection;
+no recovery transport or automatic abandoned-session eviction is enabled here.
