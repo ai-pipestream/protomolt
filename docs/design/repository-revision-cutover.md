@@ -146,8 +146,9 @@ versions remain distinct; neither means that another backend may be substituted.
 
 The next internal boundary is a non-publishing revision preparer. It resolves
 verified upload observations and retained source identities into one immutable,
-command-ordered draft. Repository orchestration belongs in `repo/container`;
-deterministic fragment checks belong in `repo/codec`. No provider I/O occurs in the
+command-ordered draft. Repository orchestration belongs in `repo/engine`;
+SQL evidence and fencing belong in `repo/container`, and deterministic fragment
+checks belong in `repo/codec`. No provider I/O occurs in the
 publication transaction. Publication must recheck owner/selection fences, source
 revisions, authorization and physical retention before committing this draft.
 
@@ -208,6 +209,71 @@ requests requiring structured-schema validation must fail closed. A structurally
 confined fragment is not typed-valid. Nested Any paths follow explicit policy.
 Keep this preparer internal until mixed publication, reads and retention activate
 together; a draft cannot itself produce a successful operation outcome.
+
+### Preparation bridge and resource lifetime
+
+The existing engine depends on the container. Do not reverse that dependency to
+reuse `DocumentPartReader`, move provider orchestration into the ledger, or invent
+a `Publication` for unpublished content. Extend the existing bounded reader rather
+than introducing another executor, concurrency limit or provider lookup path.
+
+The container must issue an immutable preparation read plan after authorization
+and durable source checks. It binds the canonical member and full part ordinals,
+source revision and slot, complete physical object identity and retained backend
+binding. Fresh selections additionally bind attempt, selection revision and token.
+Construction is controlled by the ledger; a caller-supplied object declaration is
+not equivalent evidence. Reuse the batched comparisons in `DocumentReuseAdmission`.
+`DocumentSourceSnapshot` alone does not contain the complete command object claim,
+and `DocumentPartReader.readSourceSlots` currently selects by slot only.
+
+The engine consumes that plan through the reader's existing aggregate reservation
+and scheduling window. Read the exact retained generation, namespace, key and
+provider version; verify size, digest and content type against the plan. Existing
+`DocumentPublicationLedger.Part` and its reader do not carry or check content type,
+so this is an explicit extension, not an already-satisfied guarantee. No lookup of
+today's drive or fallback backend is allowed.
+
+Fresh bytes remain under `DocumentUploadPayloads.Use`; do not fetch them again
+solely for assembly. The current coordinator closes this use before returning
+`Staged`, so integration requires a scoped engine callback or equivalent controlled
+handoff inside the use lifetime. It must also remain inside owner/selection
+heartbeat, cancellation and operation-permit lifetimes. The current heartbeat ends
+before the final selected-attempt verification; appending a callback after that
+verification without extending heartbeat coverage is insufficient. Zero-upload
+preparation still needs owner renewal and must not take the current early return.
+Run the handoff after upload acknowledgments and SQL verification, while heartbeat
+and failure checks remain active; the returned `Staged` snapshot is not that fence.
+
+Use one shared payload budget for uploads and retained reads, reserving additional
+copies before allocation. `PayloadBudget` accounts for reservations, not actual JVM
+heap or protobuf expansion. Design and test an explicit worst-case expansion
+reservation or independent parser/heap bound before claiming aggregate decoded
+memory control. `DocumentReadBatch.parts()` exposes
+byte arrays, and closing its batch releases their reservation; those arrays cannot
+escape as an unbudgeted draft. Drain actual provider workers before releasing any
+reservation, even when cancellation has already completed a Future.
+
+SQL source evidence is point-in-time evidence, not a reader pin. Existing retained
+history does not prove a general read-versus-prune protocol. Before allowing a
+source read concurrently with reference release, prove a durable protection path
+and retain it through actual I/O completion. Re-fence source authorization/revision,
+owner, selected attempts and physical retention after I/O. Final publication still
+performs its own atomic fence; neither a read plan nor a checked draft grants it.
+
+Implementation order and acceptance:
+
+1. Expose the controlled exact read plan and extend the reader. Real SQL/provider
+   cases must reject a matching slot with a different object/version/type, retain
+   original backend identity after drive changes, and release budgets on failure.
+2. Add the scoped upload handoff and engine composition. Count real provider calls
+   to prove no extra GET for fresh assembly; exercise cancellation and lease loss
+   during reused reads, zero-upload members and admission capacity exhaustion.
+3. Add durable source-read protection and race it against prune/cleanup before
+   enabling those combinations. A final stale-source rejection cannot repair bytes
+   reclaimed while an admitted reader is still using them.
+4. Integrate typed validation and descriptor retention, then enable publication only
+   with the mixed-read/retention/outcome cutover gates above. Structural assembly
+   alone remains insufficient for a successful typed operation.
 
 Required cases include noncanonical protobuf wire ordering, unknown CORE/owned
 payload bytes, forged fields in CHUNKS, mismatched IDs/ownership, wrong global

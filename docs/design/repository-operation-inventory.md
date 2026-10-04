@@ -2748,3 +2748,31 @@ mismatch, schema-policy refusal, cancellation and limits. Sol reviewed the final
 fix without a blocker. These tests do not fabricate provider success or establish
 retained storage provenance. The helper is not yet integrated with live repository
 preparation, authorization or publication. No remote publication occurred.
+
+### Preparation integration boundary audit
+
+The next preparation path extends existing behavior rather than adding a new RPC.
+Source inspection found that bounded provider reads and their shared budgets live
+in `repo/engine`, which already depends on `repo/container`. The revision cutover
+design now places preparation orchestration in the engine and leaves durable
+evidence/fencing in the container; its earlier container-orchestration instruction
+would have encouraged a dependency cycle or duplicate provider I/O.
+
+New internal work is an exact, ledger-issued preparation read plan and a scoped
+fresh-payload handoff. Existing reader selection is extended to verify complete
+command object identity and content type, not merely source slots. Upload staging
+must extend heartbeat and private-byte lifetime through preparation, including
+zero-upload members. Authentication, protobuf fields, public reads and publication
+behavior are unchanged by this design checkpoint.
+
+Existing `DocumentPartReaderIT` cases provide reusable regression coverage:
+`mixedBindingsPreserveOrderVersionsAndOneAggregateBudget`,
+`boundReadUsesOriginalNamespaceLocallyAndOverGrpcAfterDriveChanges`,
+`readsRecordedVersionAfterLatestBytesAreReplaced`, and
+`cancelledCallsRetainCapacityUntilProviderReturns`. These were inspected, not rerun
+for this documentation change. They do not establish the new exact-plan boundary,
+content-type check, scoped payload handoff or document reader-versus-prune safety.
+Those acceptance cases remain required by the updated cutover design.
+Sol reviewed the boundary against the implementation without a design blocker;
+its memory-accounting clarification is included. Documentation whitespace checks
+passed. No code, protobuf, hosted CI or deployed behavior changed.
