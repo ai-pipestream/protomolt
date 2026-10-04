@@ -2558,3 +2558,39 @@ Require authenticated operator credentials for externally exposed HTTP raw uploa
 until its scoped contract exists; today's optional token does not guarantee this.
 Keep raw keys outside repository and provider modules. See the composition design's trusted-caller
 section; do not place credential storage in the byte SPI or provider modules.
+
+### Redis v2 provider correctness
+
+Extended existing byte operations without changing protobuf contracts. The old
+split body/metadata layout allowed namespace/key and `$meta` collisions, torn
+reads, glob interpretation of logical listing prefixes, ignored requested versions
+and incorrectly sized stream writes. Real Redis regressions demonstrated these
+failures before replacement.
+
+The new versioned key tuple and single hash isolate identity components. Lua
+operations bind bytes and metadata, reject oversized reads before fetching the
+body and apply destination expiry on writes/copies. Stream lengths and allocation
+bounds are checked before writes. Managed backend identity excludes credentials
+and includes the v2 layout. Bounded reads and exact-key physical reclamation are
+now explicit capabilities; conditional writes remain unsupported and their shared
+payload bound is unchanged. Standalone Redis 7+ is the supported topology.
+
+This is a breaking physical layout, with no legacy fallback or implicit retained
+generation conversion. See `repo/blob/redis/README.md`. Persistence, eviction,
+immutable repository key reuse and cross-provider coordinator qualification still
+need evidence; these provider capabilities alone do not prove archival durability.
+
+Account/principal ownership is distinct from credential identity. Key rotation
+must preserve document ownership; the effective credential grant still determines
+allowed operations and delegated scope. Production host integration described
+above remains outstanding.
+
+Sol's review identified unbounded custom metadata allocation. A real Redis
+regression failed before adding a 256-entry / 64 KiB UTF-8 limit, including content
+type, with malformed text rejected before EVAL. Rejection preserves existing
+bytes. The Redis/cache/container/service suites and runtime dependency gates passed
+in 2m37s before that refinement; the Redis/cache suites passed again in 6s after
+it. No hosted CI, push, merge or deployment was performed.
+The final Redis/cache rerun passed in 7s after moving metadata/address validation
+ahead of body copying or stream consumption and adding an accepted exact-boundary
+metadata fixture. Sol reviewed the resource-bound change with no blocker.

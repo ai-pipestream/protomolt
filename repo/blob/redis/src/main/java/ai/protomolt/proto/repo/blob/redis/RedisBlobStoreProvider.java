@@ -12,7 +12,24 @@ public final class RedisBlobStoreProvider implements BlobStoreProvider {
 
     @Override public String id() { return "redis"; }
 
+    @Override public ai.protomolt.proto.repo.blob.spi.BackendIdentity managedIdentity(Map<String, String> options) {
+        var config = config(options);
+        return RedisBackendIdentity.of(config.uri(), config.keyPrefix());
+    }
+
     @Override public OpenedBlobStore open(Map<String, String> options) {
+        var config = config(options);
+        RedisBlobStore store = new RedisBlobStore(config);
+        var capabilities = java.util.EnumSet.of(
+                ai.protomolt.proto.repo.blob.spi.BlobCapability.LIST,
+                ai.protomolt.proto.repo.blob.spi.BlobCapability.OBJECT_EXPIRY,
+                ai.protomolt.proto.repo.blob.spi.BlobCapability.BOUNDED_READ,
+                ai.protomolt.proto.repo.blob.spi.BlobCapability.PHYSICAL_RECLAMATION);
+        if (config.ttlSeconds() == 0) capabilities.add(ai.protomolt.proto.repo.blob.spi.BlobCapability.NON_EXPIRING_WRITES);
+        return new OpenedBlobStore(store, store, capabilities, store::headBucket, store::reclaim);
+    }
+
+    private static RedisBlobStoreConfig config(Map<String, String> options) {
         if (!options.keySet().equals(OPTIONS)) {
             throw new IllegalArgumentException("Redis requires uri, ttl-seconds, max-object-bytes and key-prefix only");
         }
@@ -34,12 +51,6 @@ public final class RedisBlobStoreProvider implements BlobStoreProvider {
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException("Redis ttl-seconds and max-object-bytes must be integers");
         }
-        var config = new RedisBlobStoreConfig(uri.toString(), ttl, max, options.get("key-prefix"));
-        RedisBlobStore store = new RedisBlobStore(config);
-        var capabilities = java.util.EnumSet.of(
-                ai.protomolt.proto.repo.blob.spi.BlobCapability.LIST,
-                ai.protomolt.proto.repo.blob.spi.BlobCapability.OBJECT_EXPIRY);
-        if (ttl == 0) capabilities.add(ai.protomolt.proto.repo.blob.spi.BlobCapability.NON_EXPIRING_WRITES);
-        return new OpenedBlobStore(store, store, capabilities, store::headBucket);
+        return new RedisBlobStoreConfig(uri.toString(), ttl, max, options.get("key-prefix"));
     }
 }

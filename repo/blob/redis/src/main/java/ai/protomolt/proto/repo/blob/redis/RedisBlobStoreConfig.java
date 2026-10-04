@@ -8,16 +8,16 @@ import ai.protomolt.proto.repo.blob.redis.RedisBlobStore;
  *
  * @param uri the Redis connection URI ({@code redis://[:password@]host:port[/db]})
  * @param ttlSeconds per-object expiry in seconds; {@code 0} = no expiry
- * @param maxObjectBytes largest object the store accepts; {@code 0} = unbounded.
+ * @param maxObjectBytes largest object the store accepts; {@code 0} = adapter ceiling (512 MiB).
  *        Redis values live in memory — the ceiling is the guard rail that keeps
  *        a stray multi-gigabyte put from OOMing the server
- * @param keyPrefix prefix prepended to every physical key (e.g.
+ * @param keyPrefix identity component encoded into every physical key (e.g.
  *        {@code "repo:"}), so one Redis database can host several stores
- *        without key collisions; empty = no prefix
+ *        without key collisions; empty is a distinct configured identity
  */
 public record RedisBlobStoreConfig(String uri, int ttlSeconds, long maxObjectBytes, String keyPrefix) {
 
-    /** Defaults matching the service wiring: localhost, no expiry, unbounded, no prefix. */
+    /** Local defaults: localhost, no expiry, adapter size ceiling, empty prefix identity. */
     public static final RedisBlobStoreConfig LOCAL =
             new RedisBlobStoreConfig("redis://localhost:6379", 0, 0L, "");
 
@@ -29,8 +29,9 @@ public record RedisBlobStoreConfig(String uri, int ttlSeconds, long maxObjectByt
             throw new IllegalArgumentException("ttlSeconds must be >= 0 (0 = no expiry)");
         }
         if (maxObjectBytes < 0) {
-            throw new IllegalArgumentException("maxObjectBytes must be >= 0 (0 = unbounded)");
+            throw new IllegalArgumentException("maxObjectBytes must be >= 0 (0 = adapter ceiling)");
         }
         keyPrefix = keyPrefix == null ? "" : keyPrefix;
+        RedisBackendIdentity.of(uri, keyPrefix);
     }
 }

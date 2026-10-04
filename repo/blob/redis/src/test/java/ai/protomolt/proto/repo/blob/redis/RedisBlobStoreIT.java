@@ -80,13 +80,11 @@ class RedisBlobStoreIT {
                 String key = "retention-" + java.util.UUID.randomUUID();
                 var spec = new BlobStore.PutSpec(bucket, key, "text/plain", null, null);
                 store.put(spec, original, 300);
-                String physical = "it:" + bucket + "/" + key;
+                String physical = new RedisObjectKeys("it:").object(bucket, key);
                 assertThat(redis.ttl(physical)).isPositive();
-                assertThat(redis.ttl(physical + RedisBlobStore.META_SUFFIX)).isPositive();
                 if (copy) store.copy(bucket, source, bucket, key);
                 else store.put(spec, replacement);
                 assertThat(redis.ttl(physical)).isEqualTo(-1);
-                assertThat(redis.ttl(physical + RedisBlobStore.META_SUFFIX)).isEqualTo(-1);
                 assertThat(store.get(bucket, key).data()).isEqualTo(replacement);
                 assertThat(store.get(bucket, key).contentType()).isEqualTo("text/plain");
                 assertThatThrownBy(() -> store.put(spec, original, -1))
@@ -176,10 +174,6 @@ class RedisBlobStoreIT {
         assertThat(store.list("bb", "it/list/"))
                 .extracting(BlobStore.ListedObject::key)
                 .containsExactly("it/list/a");
-        // The $meta hashes never show up as objects.
-        assertThat(store.list("ba", ""))
-                .extracting(BlobStore.ListedObject::key)
-                .noneMatch(k -> k.endsWith("$meta"));
     }
 
     @Test
