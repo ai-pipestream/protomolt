@@ -538,7 +538,7 @@ class DocumentPayloadCheckTest {
                 () -> {}, url -> innerAsset)).isInstanceOf(ValidationResult.ValidationException.class);
     }
 
-    private static DocumentSchemaAssetBinding asset(DocumentSchemaBinding schema, String url) {
+    static DocumentSchemaAssetBinding asset(DocumentSchemaBinding schema, String url) {
         var metadata = ai.protomolt.proto.repo.v1.RepositorySchemaAsset.newBuilder()
                 .setSchema(schema.condition()).setArtifactSha256(schema.artifactSha256()).setTypeUrl(url)
                 .setCompilation(ai.protomolt.proto.repo.v1.SchemaCompilationProvenance.newBuilder()
@@ -784,7 +784,7 @@ class DocumentPayloadCheckTest {
                 .type().getFullName()).isEqualTo("runtime.NewType");
     }
 
-    private static DocumentSchemaBinding wrapper() throws Exception {
+    static DocumentSchemaBinding wrapper() throws Exception {
         var file = FileDescriptorProto.newBuilder().setName("wrapper.proto").setPackage("payload").setSyntax("proto3")
                 .addDependency("google/protobuf/any.proto").addMessageType(DescriptorProto.newBuilder().setName("Wrapper")
                         .addField(FieldDescriptorProto.newBuilder().setName("items").setNumber(1)
@@ -794,7 +794,7 @@ class DocumentPayloadCheckTest {
                 .findMessageTypeByName("Wrapper"));
     }
 
-    private static Any wrapped(DocumentSchemaBinding wrapper, Any... values) throws Exception {
+    static Any wrapped(DocumentSchemaBinding wrapper, Any... values) throws Exception {
         var data = DynamicMessage.newBuilder(wrapper.type());
         var field = wrapper.type().findFieldByName("items");
         for (Any value : values) data.addRepeatedField(field, DynamicMessage.parseFrom(field.getMessageType(), value.toByteString()));
@@ -806,18 +806,18 @@ class DocumentPayloadCheckTest {
         return DocumentPayloadCheck.check(schema, candidate, URL, validator(), limits, () -> {});
     }
 
-    private static ProtoValidator validator() {
+    static ProtoValidator validator() {
         return ProtoValidator.create(List.of(new ProtomoltRuleSource()));
     }
 
-    private static Any candidate(DocumentSchemaBinding binding, String left, String right) {
+    static Any candidate(DocumentSchemaBinding binding, String left, String right) {
         var type = binding.type();
         var data = DynamicMessage.newBuilder(type).setField(type.findFieldByName("left"), left)
                 .setField(type.findFieldByName("right"), right).build();
         return Any.newBuilder().setTypeUrl(URL).setValue(data.toByteString()).build();
     }
 
-    private static DocumentSchemaBinding binding(Descriptor type) {
+    static DocumentSchemaBinding binding(Descriptor type) {
         var set = DescriptorFingerprints.closure(type);
         var condition = PublicationSchemaCondition.newBuilder().setTypeName(type.getFullName())
                 .setDescriptorFingerprint(DescriptorFingerprints.fingerprint(set)).build();
@@ -825,7 +825,7 @@ class DocumentPayloadCheckTest {
                 new ClosedDescriptorSet.Limits(4_000_000, 100, 1000, 100), () -> {});
     }
 
-    private static Descriptor choice(String expression) throws Exception {
+    static Descriptor choice(String expression) throws Exception {
         var message = DescriptorProto.newBuilder().setName("Choice")
                 .setOptions(MessageOptions.newBuilder().setExtension(ValidateProto.message,
                         MessageRules.newBuilder().addCel(CelRule.newBuilder().setId("choice.exclusive")

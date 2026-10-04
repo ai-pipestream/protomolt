@@ -284,9 +284,41 @@ public final class ProtoValidator {
      * not resolve Any payloads or create admission evidence.
      */
     public ValidationResult validate(Message message, java.time.Instant evaluatedAt) {
+        List<ValidationResult.Violation> violations = new ArrayList<>();
+        validateInto(message, evaluatedAt, violations);
+        return violations.isEmpty() ? ValidationResult.ok() : ValidationResult.failed(violations);
+    }
+
+    /**
+     * Evaluates all applicable rules but retains at most one violation. Later rule
+     * compilation or evaluation errors still propagate; this is not fail-fast
+     * validation. Useful when a caller needs a bounded verdict rather than every
+     * diagnostic. Rule execution and an individual diagnostic still need budgets.
+     */
+    public java.util.Optional<ValidationResult.Violation> firstViolation(Message message, java.time.Instant evaluatedAt) {
+        var violations = new FirstViolation();
+        validateInto(message, evaluatedAt, violations);
+        return java.util.Optional.ofNullable(violations.first);
+    }
+
+    private static final class FirstViolation extends java.util.AbstractList<ValidationResult.Violation> {
+        private ValidationResult.Violation first;
+        @Override public boolean add(ValidationResult.Violation value) {
+            Objects.requireNonNull(value);
+            if (first != null) return false;
+            first = value;
+            return true;
+        }
+        @Override public int size() { return first == null ? 0 : 1; }
+        @Override public ValidationResult.Violation get(int index) {
+            Objects.checkIndex(index, size());
+            return first;
+        }
+    }
+
+    private void validateInto(Message message, java.time.Instant evaluatedAt, List<ValidationResult.Violation> violations) {
         Objects.requireNonNull(evaluatedAt, "evaluatedAt");
         Objects.requireNonNull(message, "message");
-        List<ValidationResult.Violation> violations = new ArrayList<>();
         Descriptor descriptor = message.getDescriptorForType();
         CompiledRules rules = rulesFor(descriptor);
         if (!skipFieldRules(message, descriptor, rules)) {
@@ -295,9 +327,6 @@ public final class ProtoValidator {
             }
         }
         validateMessageRules(message, descriptor, rules, "", violations, evaluatedAt);
-        return violations.isEmpty()
-                ? ValidationResult.ok()
-                : ValidationResult.failed(violations);
     }
 
     /**

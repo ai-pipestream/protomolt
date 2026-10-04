@@ -5691,3 +5691,17 @@ or command-byte verification. The design section "Schema-admission rejection
 evidence" specifies the required ordering, failure categories and acceptance
 cases. No admission-rejection RPC or automatic terminal classification is exposed
 by the validator overload.
+
+### Complete payload traversal with a bounded verdict
+
+New: internal `DocumentPayloadAssessment` and contextual assessment entry point.
+Extended: the validator can evaluate all rules while retaining only the first
+violation. Existing checked-payload return types and public protobuf contracts
+are unchanged. Payload-level assessment preserves exact contextual schema paths
+and one evaluation instant; an earlier invalid value cannot hide a later missing
+schema, unsupported rule or operational failure.
+
+This is a library building block. Command-wide fragment verification, continued
+assessment across all roots/members, frozen evidence replay and the durable
+schema-admission rejection decision remain required. No public outcome endpoint
+or automatic admission-rejection receipt is added by this change.

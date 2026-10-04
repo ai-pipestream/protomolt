@@ -2957,3 +2957,34 @@ after an earlier invalid value, lost SQL acknowledgement, retained-evidence
 corruption, fresh-process replay without the registry, and cleanup only after the
 declared retention boundary. Evaluation-time tests must use fixed instants and
 cover relative timestamp bounds and CEL without sleeping.
+
+#### Payload assessment building block
+
+`DocumentPayloadCheck.assessContextualAssets` now completes one payload's bounded
+structural and contextual schema traversal even after a value-rule violation.
+It uses the supplied evaluation instant for every decoded Any boundary. The
+result is either an accepted checked payload or a separate invalid assessment
+with the original envelope, complete resolved asset/occurrence inventory and
+first failure identity. Invalid data never inhabits `DocumentPayloadCheck` or
+its `AssetResult` success type. Existing checking methods still throw on invalid
+values and return only checked payloads.
+
+A later missing definition, unsupported rule, malformed payload, exceeded bound,
+resolver failure or cancellation prevents an assessment result, even if an earlier
+value was invalid. `ProtoValidator.firstViolation` evaluates all applicable rules
+while retaining at most one violation; later rule compilation/evaluation errors
+still propagate. Payload assessment discards diagnostic message text and bounds
+each retained path/rule string to 16,384 UTF-16 code units. Those remaining
+identities can still include user-controlled names or map keys and are internal,
+not public receipt text. Individual diagnostic construction, decoded object heap
+and rule execution retain their existing caller-budget obligations.
+
+Assessment borrows stable byte/schema assets, copies the bounded occurrence
+inventory and does not retain every decoded nested graph for a second traversal.
+It does not establish command-wide fragment hash verification, complete later
+root/member resolution, policy eligibility/authorization, evidence retention or a
+durable rejection. The operation-level assessment must compose all roots and
+members before a tentative value failure becomes verified-invalid evidence.
+Tests cover distinct definitions under one URL, invalid-first/missing-later and
+invalid-first/unsupported-later sequences, malformed later bytes, cancellation,
+occurrence exhaustion, fixed-time verdicts and later CEL evaluation errors.

@@ -86,7 +86,7 @@ final class DocumentSchemaOccurrences {
         retainedTextBytes += pathTextBytes;
     }
 
-    /** Called only after the enclosing candidate check succeeds. Order is not identity. */
+    /** Called only after complete structural/schema traversal, including invalid-value assessments. Order is not identity. */
     List<Occurrence> result() { return List.copyOf(occurrences); }
 
     /** Prefix selecting the next Any envelope, before adding its resolved boundary. */

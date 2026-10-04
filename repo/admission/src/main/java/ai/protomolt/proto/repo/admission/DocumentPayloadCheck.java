@@ -95,6 +95,36 @@ final class DocumentPayloadCheck {
             ProtoValidator validator, Limits limits, Runnable control,
             Function<ResolutionRequest, DocumentSchemaAssetBinding> resolver,
             DocumentSchemaOccurrences.Limits evidenceLimits) throws InvalidProtocolBufferException {
+        var selections = assetSelections(root, acceptedTypeUrl, resolver, control);
+        var payload = check(root.schema(), candidate, acceptedTypeUrl, validator, limits, control,
+                selections.resolver(), new DocumentSchemaOccurrences(evidenceLimits));
+        return new AssetResult(payload, selections.assets());
+    }
+
+    /** Completes the entire payload traversal after a value failure; operational failures still throw. */
+    static DocumentPayloadAssessment assessContextualAssets(DocumentSchemaAssetBinding root, Any candidate,
+            String acceptedTypeUrl, ProtoValidator validator, Limits limits, Runnable control,
+            Function<ResolutionRequest, DocumentSchemaAssetBinding> resolver,
+            DocumentSchemaOccurrences.Limits evidenceLimits, java.time.Instant evaluatedAt)
+            throws InvalidProtocolBufferException {
+        var selections = assetSelections(root, acceptedTypeUrl, resolver, control);
+        var scan = scan(root.schema(), candidate, acceptedTypeUrl, validator, limits, control,
+                selections.resolver(), new DocumentSchemaOccurrences(evidenceLimits), evaluatedAt, true);
+        var session = scan.session();
+        var occurrences = session.evidence.result();
+        active(control);
+        if (session.failure != null) return new DocumentPayloadAssessment.Invalid(evaluatedAt, candidate,
+                selections.assets(), occurrences, session.decodedBytes, session.failure);
+        var checked = new DocumentPayloadCheck(root.schema(), candidate, scan.decoded(), session.bindings,
+                occurrences, session.decodedBytes);
+        return new DocumentPayloadAssessment.Accepted(evaluatedAt, new AssetResult(checked, selections.assets()));
+    }
+
+    private record AssetSelections(Map<SchemaKey, DocumentSchemaAssetBinding> assets,
+                                   Function<ResolutionRequest, DocumentSchemaBinding> resolver) {}
+
+    private static AssetSelections assetSelections(DocumentSchemaAssetBinding root, String acceptedTypeUrl,
+            Function<ResolutionRequest, DocumentSchemaAssetBinding> resolver, Runnable control) {
         Objects.requireNonNull(root, "root");
         Objects.requireNonNull(resolver, "resolver");
         Objects.requireNonNull(control, "control");
@@ -104,7 +134,7 @@ final class DocumentPayloadCheck {
         }
         var assets = new LinkedHashMap<SchemaKey, DocumentSchemaAssetBinding>();
         assets.put(new SchemaKey(acceptedTypeUrl, root.schema().artifactSha256()), root);
-        var payload = check(root.schema(), candidate, acceptedTypeUrl, validator, limits, control, request -> {
+        return new AssetSelections(assets, request -> {
             String url = request.typeUrl();
             var asset = resolver.apply(request);
             active(control);
@@ -117,8 +147,7 @@ final class DocumentPayloadCheck {
             if (previous != null && !previous.metadata().equals(asset.metadata()))
                 throw new IllegalArgumentException("conflicting schema asset metadata for one identity");
             return asset.schema();
-        }, new DocumentSchemaOccurrences(evidenceLimits));
-        return new AssetResult(payload, assets);
+        });
     }
 
     /**
@@ -156,6 +185,18 @@ final class DocumentPayloadCheck {
     private static DocumentPayloadCheck check(DocumentSchemaBinding schema, Any candidate, String acceptedTypeUrl,
             ProtoValidator validator, Limits limits, Runnable control,
             Function<ResolutionRequest, DocumentSchemaBinding> resolver, DocumentSchemaOccurrences evidence) throws InvalidProtocolBufferException {
+        var scan = scan(schema, candidate, acceptedTypeUrl, validator, limits, control, resolver, evidence,
+                java.time.Instant.now(), false);
+        return new DocumentPayloadCheck(schema, candidate, scan.decoded(), scan.session().bindings,
+                evidence == null ? java.util.List.of() : evidence.result(), scan.session().decodedBytes);
+    }
+
+    private record Scan(DynamicMessage decoded, Session session) {}
+
+    private static Scan scan(DocumentSchemaBinding schema, Any candidate, String acceptedTypeUrl,
+            ProtoValidator validator, Limits limits, Runnable control,
+            Function<ResolutionRequest, DocumentSchemaBinding> resolver, DocumentSchemaOccurrences evidence,
+            java.time.Instant evaluatedAt, boolean assess) throws InvalidProtocolBufferException {
         Objects.requireNonNull(schema, "schema");
         Objects.requireNonNull(candidate, "candidate");
         Objects.requireNonNull(acceptedTypeUrl, "acceptedTypeUrl");
@@ -171,11 +212,10 @@ final class DocumentPayloadCheck {
         if (!candidate.getUnknownFields().asMap().isEmpty()) {
             throw new IllegalArgumentException("unsupported Any envelope fields");
         }
-        var session = new Session(validator, limits, control, resolver, evidence);
+        var session = new Session(validator, limits, control, resolver, evidence, evaluatedAt, assess);
         session.bindings.put(new SchemaKey(acceptedTypeUrl, schema.artifactSha256()), schema);
         DynamicMessage decoded = session.decodeBoundary(acceptedTypeUrl, schema, candidate.getValue(), 0);
-        return new DocumentPayloadCheck(schema, candidate, decoded, session.bindings,
-                evidence == null ? java.util.List.of() : evidence.result(), session.decodedBytes);
+        return new Scan(decoded, session);
     }
 
     private static void requireUrl(String url, DocumentSchemaBinding schema) {
@@ -198,9 +238,15 @@ final class DocumentPayloadCheck {
         private long decodedBytes;
         private long schemaFields;
         private long anyCount;
+        private final java.time.Instant evaluatedAt;
+        private final boolean assess;
+        private DocumentPayloadAssessment.Failure failure;
 
         Session(ProtoValidator validator, Limits limits, Runnable control,
-                Function<ResolutionRequest, DocumentSchemaBinding> resolver, DocumentSchemaOccurrences evidence) {
+                Function<ResolutionRequest, DocumentSchemaBinding> resolver, DocumentSchemaOccurrences evidence,
+                java.time.Instant evaluatedAt, boolean assess) {
+            this.evaluatedAt = Objects.requireNonNull(evaluatedAt);
+            this.assess = assess;
             this.validator = validator;
             this.limits = limits;
             this.control = control;
@@ -245,7 +291,11 @@ final class DocumentPayloadCheck {
             if (input.getTotalBytesRead() != bytes.size()) throw new InvalidProtocolBufferException("incomplete payload decode");
             walk(decoded, depth);
             active(control);
-            validator.validate(decoded).throwIfInvalid();
+            if (assess) {
+                var invalid = validator.firstViolation(decoded, evaluatedAt);
+                if (failure == null && invalid.isPresent())
+                    failure = DocumentPayloadAssessment.Failure.from(evidence.prefix(), invalid.orElseThrow());
+            } else validator.validate(decoded, evaluatedAt).throwIfInvalid();
             active(control);
             return decoded;
         }
