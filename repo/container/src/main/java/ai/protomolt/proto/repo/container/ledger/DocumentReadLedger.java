@@ -69,7 +69,7 @@ public final class DocumentReadLedger {
                 var plan = DocumentHistoricalReadRows.capture(em, address, revision);
                 return DocumentReadPins.acquireHistorical(em, plan, incarnation);
             });
-            var result = new PinnedHistory(captured);
+            var result = new PinnedHistory(captured, caller);
             handedOff = true;
             return result;
         } finally {
@@ -114,7 +114,23 @@ public final class DocumentReadLedger {
     }
 
     public final class PinnedHistory extends PinnedRead<DocumentHistoricalReadPlan> {
-        private PinnedHistory(DocumentReadPins.Captured<DocumentHistoricalReadPlan> captured) { super(captured); }
+        private final RepositoryCaller caller;
+        private final ai.protomolt.proto.repo.v1.NodeAddress address;
+        private PinnedHistory(DocumentReadPins.Captured<DocumentHistoricalReadPlan> captured, RepositoryCaller caller) {
+            super(captured);
+            this.caller = Objects.requireNonNull(caller);
+            this.address = captured.plan().address();
+        }
+
+        /** Rechecks current policy for the exact caller bound at capture; grants no new read lifetime. */
+        public void authorizeDelivery(ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
+            Objects.requireNonNull(control).check();
+            tx.inTransaction(em -> {
+                DocumentAdmissionAuthorization.authorizeHistory(em, caller, address);
+                control.check();
+            });
+            control.check();
+        }
     }
 
     /** Shared ownership of a ledger-issued plan; only this ledger can create handles. */

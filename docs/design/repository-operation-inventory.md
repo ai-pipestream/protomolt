@@ -4953,3 +4953,35 @@ and turnover (2), upload admission (90), upload coordination (20), part publicat
 (26) and typed publication (5). The initial typed capture fixture omitted policy
 activation and was corrected; all seven historical cases passed again after that
 fix and the normal-reader authorization assertion.
+
+### Protected historical provider reads
+
+New Java operation `DocumentPartReader.readHistorical` consumes `PinnedHistory`
+and reads its original backend generations, namespaces, keys and provider versions.
+It verifies retained byte identities through the existing bounded provider reader
+and returns raw fragments without decoding or reserializing protobuf content.
+Unresolved `Any` bytes are preserved in this mode. The batch owns its payload
+reservation and transferred pin use until both the caller and actual workers
+finish. Hosts still close, drain and release SQL pins explicitly.
+
+`PinnedHistory` retains the capture-time authenticated caller and address. Delivery
+checks current READ authorization again before returning content or detailed
+provider failures; callers cannot swap identity at that check. Cancellation and
+deadline errors carry a generic status without provider details. Control is
+checked again after SQL lock waits and transaction completion. Typed schema replay
+composition, public transports and process-restart qualification remain separate
+unfinished work; this Java reader is not a public historical endpoint.
+
+Qualification uses real PostgreSQL and versioned LocalStack storage. Cases cover
+old-version reads after a same-key provider overwrite, denied delivery after a real
+GET on both success and injected failure, and a noncooperative worker that retains
+pins and payload capacity until it exits. Two SQL contention tests cancel or
+expire the request while delivery authorization waits on the document row.
+Provider interception delegates the actual GET before injecting faults; it does
+not substitute successful bytes.
+The retained-publication cases also read the superseded native revision after
+replacement, covering unchanged and replaced parts plus a 40-chunk document.
+There are 42 distinct passing tests: provider publication/read (15), delivery
+lock-wait control (2), historical capture (5), and upload coordination (20). The
+provider suite passed again after adding superseded-read assertions. Sol reviewed
+the implementation and failure-boundary tests with no blocker.

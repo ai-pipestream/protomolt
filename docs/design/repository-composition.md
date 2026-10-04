@@ -2504,6 +2504,13 @@ syntax. Provider batches accept the shared use type, so historical plans can
 retain the same transfer, drain and retryable release semantics. This extraction
 does not itself authorize delivery of historical provider bytes. `PinnedHistory`
 uses this lifecycle, while host integration must reauthorize after provider I/O.
+`DocumentPartReader.readHistorical` reads those original bindings into a protected
+raw batch and invokes `PinnedHistory.authorizeDelivery` before returning it. The
+handle binds the authenticated caller from capture; delivery cannot substitute
+another caller. Runtime read failures are reauthorized before their details are
+returned. Cancellation and deadline failures expose only a generic status, with
+no provider details. The host still owns plan close, drain and SQL release; a
+cancelled provider worker retains its batch reservation and pin use until it exits.
 Pins remain until provider work drains, including cancellation. Use the
 current runtime against retained definitions without consulting registry latest;
 do not claim to rerun a historical compiler or executable validator.
@@ -2511,6 +2518,7 @@ do not claim to rerun a historical compiler or executable validator.
 `DocumentHistoricalSchemas.check` now implements the internal authorization,
 bounded SQL snapshot and runtime replay boundary for supplied exact fragment
 bytes. It reads no registry and rechecks the stored command and historical policy.
-The provider pin/read path, process-restart qualification and public transport
-integration remain to be implemented and tested. A successful internal proof does
-not establish that a provider still serves the retained physical objects.
+Composing this replay with the protected raw provider batch, process-restart
+qualification and public transport integration remain to be implemented and
+tested. A successful internal schema proof alone does not establish that a
+provider still serves the retained physical objects.

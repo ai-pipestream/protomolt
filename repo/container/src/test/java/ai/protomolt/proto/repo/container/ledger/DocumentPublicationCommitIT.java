@@ -276,17 +276,190 @@ class DocumentPublicationCommitIT {
         assertThat(new DocumentPublicationReplay(tx).observe(ADMIN,fixture.command).result()).contains(result);
     }
 
+    @Test void readsExactHistoricalProviderVersionAndKeepsPinsWithReturnedBatch() throws Exception {
+        var grant=publicReadGrant();
+        var fixture=fixture(1,1,grant);
+        var checked=stage(fixture);
+        var published=publisher().commit(ADMIN,fixture.owner,fixture.prepared,checked.content,checked.selected,()->{});
+        var revision=published.getMembers(0);
+        var caller=historyCaller();
+        var incarnation=UUID.randomUUID();
+        var ledger=new DocumentReadLedger(tx,incarnation);
+        var history=ledger.captureHistorical(caller,revision.getAddress(),UUID.fromString(revision.getRevisionId()));
+        var inspect=history.use();
+        var plan=inspect.plan();
+        inspect.close();
+        assertThat(plan.entries()).isNotEmpty();
+        var first=plan.entries().getFirst();
+        var part=first.part().part();
+        opened.store().put(new BlobStore.PutSpec(first.part().binding().namespace(),part.key(),"application/octet-stream",Map.of(),null),
+                new byte[]{91,92,93});
+        long reserved=plan.entries().stream().mapToLong(e->e.part().part().size()).sum()*2;
+        var budget=new PayloadBudget(reserved);
+        try(var reader=new ai.protomolt.proto.repo.engine.DocumentPartReader((generation,p)->opened.store(),4,1_000_000,budget)) {
+            var batch=reader.readHistorical(history,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+            assertThat(batch.parts()).hasSize(plan.entries().size());
+            for(int i=0;i<plan.entries().size();i++) {
+                var entry=plan.entries().get(i);
+                var expected=fixture.bodies.entrySet().stream().filter(e->e.getKey().member().equals("member-0")
+                        &&e.getValue().part()==entry.part().part().part()
+                        &&e.getValue().subKey().equals(entry.part().part().subKey())).findFirst().orElseThrow().getValue();
+                assertThat(batch.parts().get(i).bytes()).containsExactly(expected.bytes());
+            }
+            assertThat(budget.reservedBytes()).isEqualTo(reserved);
+            history.close(); ledger.fence();
+            assertThat(history.awaitDrained(Duration.ZERO)).isFalse();
+            assertThat(documentReadPins(incarnation)).isEqualTo(plan.entries().size());
+            batch.close();
+            assertThat(budget.reservedBytes()).isZero();
+            assertThat(history.awaitDrained(Duration.ofSeconds(5))).isTrue();
+            ledger.attestLocalQuiescence(); history.release();
+            assertThat(documentReadPins(incarnation)).isZero();
+            reader.close();
+            assertThat(reader.awaitIdle(Duration.ZERO)).isTrue();
+        }
+    }
+
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans={false,true})
-    void publishesNewRevisionWithRetainedCoreAndOptionalFreshParts(boolean mixed) {
+    void reauthorizesHistoricalReadAfterRealProviderGet(boolean failAfterGet) throws Exception {
+        var fixture=fixture(1,1,publicReadGrant());
+        var checked=stage(fixture);
+        var revision=publisher().commit(ADMIN,fixture.owner,fixture.prepared,checked.content,checked.selected,()->{}).getMembers(0);
+        var node=ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(revision.getAddress());
+        var incarnation=UUID.randomUUID();
+        var ledger=new DocumentReadLedger(tx,incarnation);
+        var history=ledger.captureHistorical(historyCaller(),revision.getAddress(),UUID.fromString(revision.getRevisionId()));
+        var budget=new PayloadBudget(2_000_000);
+        var gets=new java.util.concurrent.atomic.AtomicInteger();
+        var wrapped=intercept((method,args,call)->{
+            Object result=call.call();
+            if(method.equals("getBounded")) {
+                gets.incrementAndGet();
+                tx.inTransaction(em->{
+                    var row=em.find(DocumentRecord.class,node,jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
+                    row.writeSecurity(DocumentSecurity.newBuilder().addPermissions(AccessRule.newBuilder()
+                            .setIdentityType("public").setIdentity("public").setAccess(Access.ACCESS_DENY)).build());
+                });
+                if(failAfterGet) throw new java.io.IOException("injected failure after real provider read");
+            }
+            return result;
+        });
+        try(var reader=new ai.protomolt.proto.repo.engine.DocumentPartReader((generation,p)->wrapped,4,1_000_000,budget)) {
+            assertThatThrownBy(()->reader.readHistorical(history,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            e->assertThat(e.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.NOT_FOUND))
+                    .hasNoCause();
+            assertThat(gets.get()).isGreaterThan(0);
+            reader.close();
+            assertThat(reader.awaitIdle(Duration.ofSeconds(5))).isTrue();
+            assertThat(budget.reservedBytes()).isZero();
+            assertThat(documentReadPins(incarnation)).isGreaterThan(0);
+            history.close(); ledger.fence();
+            assertThat(history.awaitDrained(Duration.ofSeconds(5))).isTrue();
+            ledger.attestLocalQuiescence(); history.release();
+            assertThat(documentReadPins(incarnation)).isZero();
+        }
+    }
+
+    @Test void cancelledHistoricalReadRetainsOwnershipUntilRealGetDrains() throws Exception {
+        var fixture=fixture(1,1,publicReadGrant());
+        var checked=stage(fixture);
+        var revision=publisher().commit(ADMIN,fixture.owner,fixture.prepared,checked.content,checked.selected,()->{}).getMembers(0);
+        var incarnation=UUID.randomUUID();
+        var ledger=new DocumentReadLedger(tx,incarnation);
+        var history=ledger.captureHistorical(historyCaller(),revision.getAddress(),UUID.fromString(revision.getRevisionId()));
+        var use=history.use();
+        long reserved;
+        try { reserved=use.plan().entries().stream().mapToLong(e->e.part().part().size()).sum()*2; }
+        finally { use.close(); }
+        var budget=new PayloadBudget(reserved);
+        var entered=new java.util.concurrent.CountDownLatch(1);
+        var unblock=new java.util.concurrent.CountDownLatch(1);
+        var wrapped=intercept((method,args,call)->{
+            Object result=call.call();
+            if(method.equals("getBounded")) {
+                entered.countDown(); boolean interrupted=false;
+                long end=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(15);
+                try {
+                    while(true) {
+                        long remaining=end-System.nanoTime();
+                        if(remaining<=0) throw new IllegalStateException("Provider gate timed out");
+                        try {
+                            if(!unblock.await(remaining,java.util.concurrent.TimeUnit.NANOSECONDS))
+                                throw new IllegalStateException("Provider gate timed out");
+                            break;
+                        } catch(InterruptedException ignoredForFaultInjection) { interrupted=true; }
+                    }
+                }
+                finally { if(interrupted) Thread.currentThread().interrupt(); }
+            }
+            return result;
+        });
+        var cancelled=new java.util.concurrent.atomic.AtomicBoolean();
+        try(var reader=new ai.protomolt.proto.repo.engine.DocumentPartReader((generation,p)->wrapped,4,1_000_000,budget);
+                var executor=java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var pending=executor.submit(()->reader.readHistorical(history,new ai.protomolt.proto.repo.spi.RepositoryReadControl() {
+                public boolean isCancelled(){return cancelled.get();}
+                public long remainingNanos(){return Long.MAX_VALUE;}
+            }));
+            try {
+                assertThat(entered.await(5,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                cancelled.set(true);
+                assertThatThrownBy(()->pending.get(5,java.util.concurrent.TimeUnit.SECONDS))
+                        .isInstanceOfSatisfying(java.util.concurrent.ExecutionException.class, failure -> {
+                            assertThat(failure.getCause()).isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                                    error -> assertThat(error.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.CANCELLED));
+                        });
+                history.close(); ledger.fence();
+                assertThat(history.awaitDrained(Duration.ZERO)).isFalse();
+                assertThat(documentReadPins(incarnation)).isGreaterThan(0);
+                assertThat(budget.reservedBytes()).isEqualTo(reserved);
+            } finally { unblock.countDown(); }
+            assertThat(history.awaitDrained(Duration.ofSeconds(5))).isTrue();
+            reader.close();
+            assertThat(reader.awaitIdle(Duration.ofSeconds(5))).isTrue();
+            ledger.attestLocalQuiescence(); history.release();
+            assertThat(documentReadPins(incarnation)).isZero();
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    private static DocumentSecurity publicReadGrant() {
+        return DocumentSecurity.newBuilder().addPermissions(AccessRule.newBuilder().setIdentityType("public")
+                .setIdentity("public").setAccess(Access.ACCESS_READ)).build();
+    }
+    private static RepositoryCaller historyCaller() {
+        return new RepositoryCaller("reader",false,java.util.Set.of("account"),java.util.Set.of());
+    }
+    private static long documentReadPins(UUID incarnation) {
+        return tx.readOnly(em->((Number)em.createNativeQuery("SELECT count(*) FROM document_read_pins WHERE reader_incarnation=:id")
+                .setParameter("id",incarnation).getSingleResult()).longValue());
+    }
+    @FunctionalInterface private interface Invocation { Object call() throws Exception; }
+    @FunctionalInterface private interface Interceptor { Object invoke(String method,Object[] args,Invocation call) throws Exception; }
+    private static BlobStore intercept(Interceptor interceptor) {
+        return (BlobStore)java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),new Class<?>[]{BlobStore.class},
+                (proxy,method,args)->interceptor.invoke(method.getName(),args,()->{
+                    try { return method.invoke(opened.store(),args); }
+                    catch(java.lang.reflect.InvocationTargetException failure) {
+                        if(failure.getCause() instanceof Exception exception) throw exception;
+                        throw (Error)failure.getCause();
+                    }
+                }));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans={false,true})
+    void publishesNewRevisionWithRetainedCoreAndOptionalFreshParts(boolean mixed) throws Exception {
         publishRetainedRevision(mixed,1);
     }
 
-    @Test void projectsRetainedProvenanceAcrossSqlBatchBoundary() {
+    @Test void projectsRetainedProvenanceAcrossSqlBatchBoundary() throws Exception {
         publishRetainedRevision(false,40);
     }
 
-    private static void publishRetainedRevision(boolean mixed,int chunks) {
+    private static void publishRetainedRevision(boolean mixed,int chunks) throws Exception {
         var first=fixture(1,chunks);
         var checked=stage(first);
         var original=publisher().commit(ADMIN,first.owner,first.prepared,checked.content,checked.selected,()->{});
@@ -348,6 +521,25 @@ class DocumentPublicationCommitIT {
         }
         assertThat(new DocumentPublicationReplay(tx).observe(ADMIN,first.command).result()).contains(original);
         assertThat(new DocumentPublicationReplay(tx).observe(ADMIN,command).result()).contains(result);
+        // Read the superseded native revision through the real provider, including
+        // objects that the new revision replaced and objects it retained unchanged.
+        var ledger=new DocumentReadLedger(tx,UUID.randomUUID());
+        var history=ledger.captureHistorical(ADMIN,revision.getAddress(),UUID.fromString(revision.getRevisionId()));
+        try(var inspect=history.use();
+                var reader=new ai.protomolt.proto.repo.engine.DocumentPartReader((generation,p)->opened.store());
+                var batch=reader.readHistorical(history,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+            assertThat(inspect.plan().manifest()).isEqualTo(prior.readManifest());
+            assertThat(batch.parts()).hasSize(inspect.plan().entries().size());
+            for(int i=0;i<batch.parts().size();i++) {
+                int ordinal=inspect.plan().entries().get(i).revisionOrdinal();
+                assertThat(batch.parts().get(i).bytes())
+                        .containsExactly(first.bodies.get(new DocumentUploadPayloads.Key("member-0",ordinal)).bytes());
+            }
+        } finally {
+            history.close();
+            assertThat(history.awaitDrained(Duration.ofSeconds(5))).isTrue();
+            history.release(); ledger.fence(); ledger.attestLocalQuiescence();
+        }
     }
 
     @Test void publishesMixedTypedAndOpaqueMembersFromRealVersionedProviderWrites() throws Exception {

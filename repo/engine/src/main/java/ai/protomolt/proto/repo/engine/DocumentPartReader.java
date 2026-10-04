@@ -205,6 +205,56 @@ public final class DocumentPartReader implements AutoCloseable {
         } finally { exitOperation(); }
     }
 
+    /**
+     * Reads original historical provider versions without protobuf decoding. The
+     * capture-bound caller is reauthorized before bytes or detailed failures leave
+     * this method. Keep the returned batch open while using its bytes; the host
+     * closes, drains and releases the plan separately, including after cancellation.
+     */
+    public DocumentReadBatch readHistorical(DocumentReadLedger.PinnedHistory history, RepositoryReadControl control) {
+        Objects.requireNonNull(history); Objects.requireNonNull(control);
+        enterOperation();
+        DocumentReadBatch batch = null;
+        boolean delivered = false;
+        try (var setup = history.use()) {
+            try {
+                checkActive(control);
+                var wanted = setup.plan().entries().stream().map(entry -> entry.part()).toList();
+                batch = readFragments(wanted.stream().map(DocumentPublicationLedger.BoundPart::part).toList(),
+                        () -> resolveBoundParts(wanted, control), control, false, setup);
+                checkActive(control);
+            } catch (java.util.concurrent.CancellationException cancelled) {
+                throw new RepositoryException(RepositoryException.Code.CANCELLED, "Historical document read cancelled");
+            } catch (RuntimeException failure) {
+                // Cancellation has no result to authorize. Do not start JDBC on
+                // an interrupted caller or disclose provider exception details.
+                if (failure instanceof RepositoryException repository
+                        && (repository.code() == RepositoryException.Code.CANCELLED
+                            || repository.code() == RepositoryException.Code.DEADLINE_EXCEEDED))
+                    throw new RepositoryException(repository.code(), "Historical document read cancelled or expired");
+                authorizeHistoricalDelivery(history, control);
+                throw failure;
+            }
+            authorizeHistoricalDelivery(history, control);
+            delivered = true;
+            return batch;
+        } finally {
+            if (!delivered && batch != null) batch.close();
+            exitOperation();
+        }
+    }
+
+    private static void authorizeHistoricalDelivery(DocumentReadLedger.PinnedHistory history, RepositoryReadControl control) {
+        try { history.authorizeDelivery(control); }
+        catch (java.util.concurrent.CancellationException cancelled) {
+            throw new RepositoryException(RepositoryException.Code.CANCELLED, "Historical document read cancelled");
+        } catch (RepositoryException failure) {
+            if (failure.code() == RepositoryException.Code.CANCELLED || failure.code() == RepositoryException.Code.DEADLINE_EXCEEDED)
+                throw new RepositoryException(failure.code(), "Historical document read cancelled or expired");
+            throw failure;
+        }
+    }
+
     private DocumentReadBatch readBoundParts(List<DocumentPublicationLedger.BoundPart> wanted, RepositoryReadControl control) {
         return readFragments(wanted.stream().map(DocumentPublicationLedger.BoundPart::part).toList(),
                 () -> resolveBoundParts(wanted,control),control,false);
