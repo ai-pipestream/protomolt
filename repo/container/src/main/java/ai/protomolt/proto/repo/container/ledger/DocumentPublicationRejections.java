@@ -13,6 +13,7 @@ import java.util.Optional;
 
 /** Explicit terminal decisions in fresh transactions; never an exception classifier. */
 final class DocumentPublicationRejections {
+    private enum Decision { CANCEL, PRECONDITIONS }
     private final Tx tx;
     DocumentPublicationRejections(Tx tx) { this.tx = Objects.requireNonNull(tx); }
 
@@ -24,11 +25,22 @@ final class DocumentPublicationRejections {
      */
     DocumentPublicationReplay.Observation cancel(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentPublicationCommand command, RepositoryReadControl control) {
+        return decide(caller, owner, command, control, Decision.CANCEL);
+    }
+
+    /** Recheck all command conditions under current locks; a prior exception is not decision evidence. */
+    DocumentPublicationReplay.Observation rejectRevisionPreconditions(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentPublicationCommand command, RepositoryReadControl control) {
+        return decide(caller, owner, command, control, Decision.PRECONDITIONS);
+    }
+
+    private DocumentPublicationReplay.Observation decide(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentPublicationCommand command, RepositoryReadControl control, Decision decision) {
         Objects.requireNonNull(owner); Objects.requireNonNull(command); Objects.requireNonNull(control).check();
         var key = owner.key();
         DocumentAdmissionAuthorization.requireCaller(caller, key, command.intent().getAccountId());
         if (!key.account().equals(command.intent().getAccountId()) || !key.operationId().equals(command.operationId()))
-            throw new IllegalArgumentException("Cancellation owner differs from command scope");
+            throw new IllegalArgumentException("Decision owner differs from command scope");
         return tx.inTransaction(em -> {
             var rows = em.createNativeQuery("""
                     SELECT owner_generation FROM repository_operation_owners
@@ -42,7 +54,13 @@ final class DocumentPublicationRejections {
                     || observed.state() == DocumentPublicationReplay.State.TERMINATED) return observed;
             RepositoryOperationLedger.lockLiveOwner(em, owner);
             RepositoryOperationLedger.fenceLiveOwner(em, owner);
-            DocumentAdmissionAuthorization.authorizeRejection(em, caller, command);
+            if (decision == Decision.PRECONDITIONS) {
+                boolean matches = DocumentAdmissionAuthorization.revisionPreconditionsMatch(em, caller, command);
+                control.check();
+                if (matches) return new DocumentPublicationReplay.Observation(DocumentPublicationReplay.State.PENDING, Optional.empty());
+            } else {
+                DocumentAdmissionAuthorization.authorizeRejection(em, caller, command);
+            }
             control.check();
             long recordedAt = ((Number) em.createNativeQuery(
                     "SELECT floor(extract(epoch FROM clock_timestamp())*1000000)").getSingleResult()).longValue();
@@ -50,8 +68,10 @@ final class DocumentPublicationRejections {
                     .setAccountId(key.account()).setPrincipal(key.principal()).setOwnerGeneration(owner.generation())
                     .setCommandCodec(DocumentPublicationCommand.CODEC).setCommandEncodingVersion(DocumentPublicationCommand.ENCODING_VERSION)
                     .setCommandSha256(command.sha256()).setRecordedAtEpochMicros(recordedAt)
-                    .setDisposition(DocumentPublicationDisposition.DOCUMENT_PUBLICATION_DISPOSITION_ABORTED)
-                    .setReason(DocumentPublicationRejectionReason.DOCUMENT_PUBLICATION_REJECTION_REASON_EXPLICIT_CANCELLATION).build();
+                    .setDisposition(decision == Decision.CANCEL ? DocumentPublicationDisposition.DOCUMENT_PUBLICATION_DISPOSITION_ABORTED
+                            : DocumentPublicationDisposition.DOCUMENT_PUBLICATION_DISPOSITION_REJECTED)
+                    .setReason(decision == Decision.CANCEL ? DocumentPublicationRejectionReason.DOCUMENT_PUBLICATION_REJECTION_REASON_EXPLICIT_CANCELLATION
+                            : DocumentPublicationRejectionReason.DOCUMENT_PUBLICATION_REJECTION_REASON_PRECONDITION_NOT_MET).build();
             var encoded = DocumentPublicationRejectionCodec.encode(command, receipt, key.principal(), owner.generation());
             em.createNativeQuery("""
                     INSERT INTO repository_operation_rejection(account_id,principal,operation_id,owner_generation,

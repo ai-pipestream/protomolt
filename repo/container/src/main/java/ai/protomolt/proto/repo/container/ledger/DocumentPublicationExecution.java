@@ -16,6 +16,7 @@ import java.util.Optional;
 /** One already-admitted native publication, including authorized replay and owned cleanup. */
 final class DocumentPublicationExecution {
     private final DocumentPublicationReplay replay;
+    private final DocumentPublicationRejections rejections;
     private final DocumentSchemaPolicies policies;
     private final DocumentOperationUploadAdmission admission;
     private final DocumentReadLedger reads;
@@ -29,6 +30,7 @@ final class DocumentPublicationExecution {
             DocumentRevisionAssembly.Limits opaqueLimits, boolean deliverEvents) {
         this.reads = Objects.requireNonNull(reads); this.opaqueLimits = Objects.requireNonNull(opaqueLimits);
         replay = new DocumentPublicationReplay(tx); policies = new DocumentSchemaPolicies(tx);
+        rejections = new DocumentPublicationRejections(tx);
         admission = new DocumentOperationUploadAdmission(tx, drives);
         preparation = new DocumentPublicationPreparation(uploads, retained, budget);
         artifacts = new RepositorySchemaArtifacts(tx);
@@ -95,6 +97,22 @@ final class DocumentPublicationExecution {
     }
 
     private DocumentPublicationResult executeNew(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
+            Map<String, String> attributes, Map<String, DocumentPublicationCandidate.Mode> modes,
+            Optional<DocumentSchemaAdmission.Definition> container, DocumentPublicationCandidate.Resolver resolver,
+            RepositoryReadControl control) throws InvalidProtocolBufferException {
+        try {
+            return executeCandidate(caller, owner, prepared, bodies, attributes, modes, container, resolver, control);
+        } catch (DocumentLedger.RevisionConflictException conflict) {
+            // Candidate transactions and local scopes have unwound. Recheck in a fresh
+            // transaction; the earlier exception is not proof of a terminal decision.
+            var observed = rejections.rejectRevisionPreconditions(caller, owner, prepared.plan().command(), control);
+            observed.requireNotTerminated();
+            return observed.result().orElseThrow(() -> conflict);
+        }
+    }
+
+    private DocumentPublicationResult executeCandidate(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
             Map<String, String> attributes, Map<String, DocumentPublicationCandidate.Mode> modes,
             Optional<DocumentSchemaAdmission.Definition> container, DocumentPublicationCandidate.Resolver resolver,

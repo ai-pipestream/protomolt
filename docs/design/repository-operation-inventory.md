@@ -5648,6 +5648,30 @@ for the full 10,064-node union; existing 10,000-source admission limits remain.
 Rejected creation without a target requires process authority. Missing or revoked
 existing targets do not become readable through rejection replay.
 
-Deterministic admission/precondition rejection, public mounting, complete cleanup
+Schema-admission rejection, public mounting, complete cleanup
 and restart recovery remain open work. No general exception-to-receipt conversion
 or unverified abort result is introduced.
+
+### Rechecked revision-precondition rejection
+
+New: internal `rejectRevisionPreconditions` decision. Extended: native execution
+can reconcile a direct revision conflict after rollback and resource unwinding.
+Unchanged: protobuf contracts, V64 storage format, codec and public RPC inventory.
+
+The decision checks destination revision/if-absent conditions and explicit/reused
+source revisions under the complete current-authorized shared lock set. A confirmed
+mismatch records PRECONDITION_NOT_MET; a match returns PENDING with no receipt and
+preserves the original conflict in execution. Missing or denied existing objects
+do not become rejection evidence. An existing success or terminal decision wins
+exact replay; a newer owner fences the previous worker.
+
+SQL tests cover each condition kind, full-set authorization, owner replacement,
+success winning and both row-lock orders. Execution uses real PostgreSQL with
+controlled faults and provider ports that fail if reached: a real stale candidate
+is rejected before I/O, a direct conflict signal with matching conditions is not
+enough, cancellation leaves no decision, and Hibernate-wrapped commit failures
+remain failures rather than being classified from their nested causes.
+
+The receipt binds the canonical conditions and deciding generation, but carries
+no observed revision or per-member rejection detail. Schema-admission rejection,
+public host mounting, full cleanup and restart recovery remain separate work.

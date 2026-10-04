@@ -72,7 +72,24 @@ final class DocumentAdmissionAuthorization {
         authorizeReplay(em, caller, command, true);
     }
 
-    private static void authorizeReplay(EntityManager em, RepositoryCaller caller, DocumentPublicationCommand command,
+    /** Authorize the complete read set before revealing whether any command condition is stale. */
+    static boolean revisionPreconditionsMatch(EntityManager em, RepositoryCaller caller, DocumentPublicationCommand command) {
+        var locked = authorizeReplay(em, caller, command, true);
+        for (var member : command.intent().getMembersList()) {
+            if (!conditionMatches(member.getDestination(), locked)) return false;
+            for (var source : member.getSourcesList()) if (!conditionMatches(source, locked)) return false;
+            for (var part : member.getPartsList())
+                if (part.hasReuse() && !conditionMatches(part.getReuse().getSource(), locked)) return false;
+        }
+        return true;
+    }
+
+    private static boolean conditionMatches(DocumentRevisionCondition condition, Map<UUID, DocumentRevisionLocks.SourceView> locked) {
+        var row = locked.get(DocumentIds.nodeId(condition.getAddress()));
+        return condition.getIfAbsent() ? row == null : row != null && row.mutationRevision() == condition.getExpectedMutationRevision();
+    }
+
+    private static Map<UUID, DocumentRevisionLocks.SourceView> authorizeReplay(EntityManager em, RepositoryCaller caller, DocumentPublicationCommand command,
             boolean allowUncreatedTarget) {
         var nodes = command.intent().getMembersList().stream()
                 .map(member -> DocumentIds.nodeId(member.getDestination().getAddress()))
@@ -101,6 +118,7 @@ final class DocumentAdmissionAuthorization {
             if (!DocumentStatus.AVAILABLE.equals(row.status()) || row.pendingPurgeId() != null) throw unavailable();
             requireSourceAccess(caller, row);
         }
+        return locked;
     }
 
     /** Current read access precedes any historical revision or schema lookup. */

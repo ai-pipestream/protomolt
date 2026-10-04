@@ -1405,8 +1405,9 @@ immutable logical outcome together. The internal batch now has a transaction-sco
 entry for this coordinator; nesting calls to `save(Tx, ...)` would open a second
 transaction and is prohibited. Internal native successful publication now binds
 the complete result to the committed revisions in that transaction. Internal
-explicit cancellation also has a fenced durable decision; automatic admission
-or precondition rejection and public outcome endpoints remain unimplemented.
+explicit cancellation and declared revision-precondition rejection have fenced
+durable decisions; schema-admission rejection and public outcome endpoints remain
+unimplemented.
 Operation tracking is not a shadow
 document store: existing domain rows and retention tables remain authoritative.
 
@@ -2754,9 +2755,9 @@ This does not admit a new execution or select recovery on the caller's behalf.
 
 Aborted/rejected retirement requires the durable terminal decision described in
 the commit design. It cannot be inferred from NOT_OBSERVED, PENDING, a timeout or
-an expired lease. Authorized replay of an explicit cancellation can now retire
+an expired lease. Authorized replay of a terminal rejection or cancellation can now retire
 its local session after invocation references leave. Full restart reconstruction,
-deterministic admission/precondition rejection and host mounting remain required.
+schema-admission rejection and host mounting remain required.
 
 ### Rejection receipt and terminal decision implementation
 
@@ -2846,5 +2847,42 @@ write refusal, cleanup-fence access, source revocation while replay waits, heade
 corruption, old-schema success migration and provider-free terminal replay.
 Pre-V64 migration fixtures seed genuine legacy admission rows under old SQL guards;
 production code does not probe for missing tables or fall back to an older schema.
-This does not implement automatic rejection classification, admission/precondition
+This does not implement general exception classification, schema-admission
 evidence rechecks, full cleanup completion or a public cancellation/outcome RPC.
+
+#### Declared revision and creation preconditions
+
+`rejectRevisionPreconditions` reuses the fresh owner-fenced decision transaction.
+It locks the complete destination/source union and authorizes every current view
+before evaluating any mismatch. Only command-declared destination revisions,
+if-absent creation conditions, explicit source revisions and reused-part source
+revisions are checked. Matching conditions return PENDING without a receipt or
+lease renewal. Missing expected-existing or revoked objects remain unavailable;
+they do not become evidence for rejection. An authorized existing destination
+does contradict an if-absent condition.
+
+A verified mismatch records REJECTED/PRECONDITION_NOT_MET using the same immutable
+encoding, terminal mutual exclusion and exact replay as cancellation. This records
+that a declared condition failed at the fenced decision, bound to the canonical
+command and deciding owner. It does not record which condition failed or the
+observed row revision, and must not be described as detailed historical evidence.
+Current-policy and schema-admission failures require their own evidence and are
+not covered by this decision method.
+
+Native execution catches only a direct `DocumentLedger.RevisionConflictException`
+after the candidate transaction and local resource scopes have unwound. The fresh
+decision may return a competing success, an authorized terminal receipt, or PENDING.
+PENDING preserves the original conflict; cancellation or lost ownership prevents
+the decision. SQL/commit wrappers are propagated without searching their causes
+for a reason to reject. No timeout, registry outage or generic exception is turned
+into a terminal receipt.
+
+Real SQL fixtures cover matching and stale conditions for destinations, explicit
+sources, reused parts and creation; full-set authorization before a visible
+conflict; missing objects; stale ownership; and successful publication winning.
+Lock-order tests verify that a committed update is seen after a wait, and that a
+matching observation blocks a later writer until its transaction ends. It is an
+observation, not a promise that a later publication will remain valid. Execution
+tests prove stale conditions are rejected before provider work, while direct
+conflict signals with matching conditions, cancelled decisions and wrapped SQL
+failures leave no fabricated receipt.
