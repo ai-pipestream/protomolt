@@ -169,22 +169,9 @@ class DocumentReadReconciliationIT {
     /** Delegates every operation to PostgreSQL; only the response after a real commit is lost. */
     private static javax.sql.DataSource loseCommitAcknowledgment(javax.sql.DataSource delegate,
             java.util.concurrent.atomic.AtomicBoolean armed) {
-        return (javax.sql.DataSource) java.lang.reflect.Proxy.newProxyInstance(
-                javax.sql.DataSource.class.getClassLoader(), new Class<?>[]{javax.sql.DataSource.class}, (proxy, method, args) -> {
-                    final Object result;
-                    try { result = method.invoke(delegate, args); }
-                    catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
-                    if (!method.getName().equals("getConnection")) return result;
-                    var connection = (java.sql.Connection) result;
-                    return java.lang.reflect.Proxy.newProxyInstance(java.sql.Connection.class.getClassLoader(),
-                            new Class<?>[]{java.sql.Connection.class}, (connectionProxy, operation, parameters) -> {
-                                final Object response;
-                                try { response = operation.invoke(connection, parameters); }
-                                catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
-                                if (operation.getName().equals("commit") && armed.compareAndSet(true, false))
-                                    throw new java.sql.SQLException("Injected lost SQL commit acknowledgment", "08006");
-                                return response;
-                            });
-                });
+        return DocumentJdbcFaults.afterCommit(delegate, () -> {
+            if (armed.compareAndSet(true, false))
+                throw new java.sql.SQLException("Injected lost SQL commit acknowledgment", "08006");
+        });
     }
 }

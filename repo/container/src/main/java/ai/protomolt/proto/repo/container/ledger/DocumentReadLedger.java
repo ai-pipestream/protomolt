@@ -23,6 +23,7 @@ public final class DocumentReadLedger {
     private int activeLifetimes;
     private boolean fenced;
     private boolean quiesced;
+    private boolean shutdownClosing;
     private final int maxOutstandingReads;
     private int outstandingReads;
     private final LinkedHashSet<PinnedRead<?>> retainedReads = new LinkedHashSet<>();
@@ -51,7 +52,7 @@ public final class DocumentReadLedger {
         boolean handedOff = false;
         try {
             var result = new PinnedPlan(admission.capturePinnedReads(caller, owner, prepared, incarnation));
-            synchronized (lifetime) { retainedReads.add(result); }
+            register(result);
             handedOff = true;
             return result;
         } finally {
@@ -77,7 +78,7 @@ public final class DocumentReadLedger {
                 return DocumentReadPins.acquireHistorical(em, plan, incarnation);
             });
             var result = new PinnedHistory(captured, caller);
-            synchronized (lifetime) { retainedReads.add(result); }
+            register(result);
             handedOff = true;
             return result;
         } finally {
@@ -97,8 +98,40 @@ public final class DocumentReadLedger {
     }
 
     private void failedCapture() {
-        synchronized (lifetime) { outstandingReads--; activeLifetimes--; }
+        synchronized (lifetime) { outstandingReads--; activeLifetimes--; lifetime.notifyAll(); }
     }
+
+    private void register(PinnedRead<?> read) {
+        synchronized (lifetime) {
+            retainedReads.add(read);
+            if (shutdownClosing) read.close();
+        }
+    }
+
+    /** Stops new uses, including on captures completing concurrently. Existing uses still protect work. */
+    void closeForShutdown() {
+        synchronized (lifetime) {
+            admissionClosed = true; shutdownClosing = true;
+            retainedReads.forEach(PinnedRead::close);
+        }
+        fence();
+    }
+
+    boolean awaitLocalDrain(Duration timeout) throws InterruptedException {
+        if (timeout.isNegative()) throw new IllegalArgumentException("Drain timeout must not be negative");
+        long budget = timeout.toNanos(), start = System.nanoTime();
+        synchronized (lifetime) {
+            if (!shutdownClosing) throw new IllegalStateException("Shutdown has not stopped reader admission");
+            while (activeLifetimes != 0) {
+                long remaining = budget - (System.nanoTime() - start);
+                if (remaining <= 0) return false;
+                TimeUnit.NANOSECONDS.timedWait(lifetime, remaining);
+            }
+            return true;
+        }
+    }
+
+    int recoverQuiescedPins(int limit) { return new DocumentReadRecovery(tx).recoverBatch(incarnation, limit); }
 
     /** Includes in-progress captures and drained handles whose SQL release has not succeeded. */
     public int outstandingReads() { synchronized (lifetime) { return outstandingReads; } }
@@ -280,6 +313,7 @@ public final class DocumentReadLedger {
             if (closed && uses == 0) {
                 activeLifetimes--;
                 drained.countDown();
+                lifetime.notifyAll();
             }
         }
 

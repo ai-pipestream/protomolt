@@ -5339,3 +5339,31 @@ mismatched identities. A separately labeled catalog fault proves confirmation
 does not require the old physical location rows; it is not evidence that history
 pruning has been implemented. V45 and its rejection of unregistered release claims
 remain unchanged. No protobuf or transport contract changes.
+
+### Reader lifecycle composition
+
+New `DocumentReadLifecycle` combines bounded cleanup passes and retryable shutdown
+for one reader incarnation. Its worker-lifecycle port is implemented directly by
+`DocumentPartReader`; the container still has no engine runtime dependency. A
+host schedules `tick()` while serving and repeats `shutdownStep(waitBudget)` during
+shutdown. The component owns no background thread or provider/database client.
+
+Shutdown stops reader and ledger admission, closes captured plans to new uses,
+waits for actual provider operations/workers and then all transferred batch uses,
+and only then attests durable quiescence. A capture whose SQL response arrives
+after shutdown started is registered closed; its in-flight capture count prevents
+premature quiescence. Each shutdown step performs at most one durable recovery
+batch and one local reconciliation batch. A positive recovery count requires a
+later pass observing zero. False, interruption or an exception keeps shared
+resources host-owned and shutdown retryable. The local wait budget is shared
+between worker and batch waits; SQL timeouts remain separately configured.
+
+Real-provider tests hold returned batches and deliberately keep cancelled S3
+workers running; shutdown cannot complete or release pins until those owners end.
+PostgreSQL tests cover normal cleanup without closing admission, interrupted waits,
+cleanup lock timeouts followed by retry, and a capture gated after real commit but
+before the handle reaches the ledger. JDBC fault injection is shared with the
+acknowledgment-loss tests and delegates every database operation to PostgreSQL.
+This qualifies the lifecycle component, not a complete `RepoServices` deployment:
+production scheduling, authenticated publication setup, transport mounting and
+full host restart qualification remain outstanding.

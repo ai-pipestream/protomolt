@@ -23,7 +23,8 @@ import java.util.concurrent.Future;
 
 /** Original-backend reads of an already-authorized, published document snapshot. */
 public final class DocumentPartReader implements AutoCloseable,
-        ai.protomolt.proto.repo.container.ledger.DocumentRetainedReader {
+        ai.protomolt.proto.repo.container.ledger.DocumentRetainedReader,
+        ai.protomolt.proto.repo.container.ledger.DocumentReadLifecycle.Reader {
     @FunctionalInterface
     public interface BackendResolver {
         /**

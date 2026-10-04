@@ -809,9 +809,10 @@ class DocumentUploadCoordinatorIT {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"read", "cancel", "inputs", "invalid-inputs", "wrong-operation", "wrong-owner"})
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"read", "cancel", "inputs", "invalid-inputs", "wrong-operation", "wrong-owner", "lifecycle", "lifecycle-cancel"})
     void protectedRetainedReadsKeepPinsUntilBatchesAndActualWorkersEnd(String mode) throws Exception {
-        boolean cancel = mode.equals("cancel");
+        boolean cancel = mode.equals("cancel") || mode.equals("lifecycle-cancel");
+        boolean managedLifecycle = mode.startsWith("lifecycle");
         var base = fixture(3, LEASE);
         var source = retain(base, List.of(0, 2));
         var original = base.command.intent().getMembers(0);
@@ -881,6 +882,7 @@ class DocumentUploadCoordinatorIT {
         try (var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, retainedProfile) -> counted,
                 2, 1024 * 1024, budget)) {
             DocumentRetainedReader retainedReader = reader;
+            var lifecycle = new DocumentReadLifecycle(ledger, reader, 2);
             if (mode.equals("inputs") || mode.equals("invalid-inputs") || mode.startsWith("wrong-")) {
                 var uploadBudget = new PayloadBudget(1024 * 1024);
                 var snapshotBudget = new PayloadBudget(1024 * 1024);
@@ -946,7 +948,8 @@ class DocumentUploadCoordinatorIT {
                         assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
                         cancelled.set(true);
                         assertThatThrownBy(() -> result.get(5, TimeUnit.SECONDS)).hasStackTraceContaining("Document read cancelled");
-                        protectedPlan.close(); ledger.fence();
+                        if (managedLifecycle) assertThat(lifecycle.shutdownStep(Duration.ZERO)).isFalse();
+                        else { protectedPlan.close(); ledger.fence(); }
                         assertThat(protectedPlan.awaitDrained(Duration.ZERO)).isFalse();
                         assertThatThrownBy(protectedPlan::release).isInstanceOf(IllegalStateException.class);
                         assertThatThrownBy(ledger::attestLocalQuiescence).isInstanceOf(IllegalStateException.class);
@@ -968,7 +971,8 @@ class DocumentUploadCoordinatorIT {
                             .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
                                     error -> assertThat(error.code()).isEqualTo(
                                             ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED));
-                    protectedPlan.close(); ledger.fence();
+                    if (managedLifecycle) assertThat(lifecycle.shutdownStep(Duration.ZERO)).isFalse();
+                    else { protectedPlan.close(); ledger.fence(); }
                     assertThat(protectedPlan.isDrained()).isFalse();
                     assertThatThrownBy(protectedPlan::release).isInstanceOf(IllegalStateException.class);
                     assertThatThrownBy(ledger::attestLocalQuiescence).isInstanceOf(IllegalStateException.class);
@@ -977,7 +981,13 @@ class DocumentUploadCoordinatorIT {
                 }
             }
             assertThat(protectedPlan.awaitDrained(Duration.ofSeconds(5))).isTrue();
-            ledger.attestLocalQuiescence(); protectedPlan.release();
+            if (managedLifecycle) {
+                assertThat(lifecycle.shutdownStep(Duration.ofSeconds(5))).isFalse(); // one durable batch, not yet an empty pass
+                assertThat(lifecycle.shutdownStep(Duration.ofSeconds(5))).isTrue();
+                assertThat(lifecycle.shutdownStep(Duration.ZERO)).isTrue();
+                assertThat(ledger.outstandingReads()).isZero();
+                assertThatThrownBy(lifecycle::tick).hasMessageContaining("stopping");
+            } else { ledger.attestLocalQuiescence(); protectedPlan.release(); }
             assertThat(documentPins(incarnation)).isZero();
         }
         assertThat(gets.get()).isEqualTo(mode.startsWith("wrong-") ? 0 : 2);
