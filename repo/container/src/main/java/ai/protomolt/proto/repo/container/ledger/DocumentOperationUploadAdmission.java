@@ -2,6 +2,8 @@ package ai.protomolt.proto.repo.container.ledger;
 
 import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
+import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
+import ai.protomolt.proto.repo.codec.PartObject;
 import com.google.protobuf.ByteString;
 import jakarta.persistence.EntityManager;
 import java.time.Duration;
@@ -11,6 +13,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -49,6 +52,15 @@ final class DocumentOperationUploadAdmission {
                     .map(member -> new UploadMember(member, UUID.randomUUID())).toList();
             this.placements = plan.members().stream().map(DocumentUploadPlan.Member::placement).distinct()
                     .sorted(Comparator.comparing(placement -> placement.drive().id())).toList();
+        }
+
+        DocumentUploadPayloads preparePayloads(Set<String> members,
+                Map<DocumentUploadPayloads.Key, PartObject> supplied, PayloadBudget budget) {
+            return DocumentUploadPayloads.prepare(plan, members, supplied, budget);
+        }
+
+        DocumentUploadPayloads.Use claimPayloads(DocumentUploadPayloads payloads, Set<String> members) {
+            return payloads.claim(plan, members);
         }
     }
 

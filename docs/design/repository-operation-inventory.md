@@ -2371,6 +2371,35 @@ Local container and service suites passed in 2m17s: 110 suites, 987 cases,
 extraction and adapter evidence with no remaining blocker. No hosted CI, push,
 merge or deployment was performed.
 
+### Bounded selected-upload payload preparation
+
+Extended internal preparation only. `DocumentOperationUploadAdmission.Prepared`
+can prepare and claim private payloads for an explicit member subset. The bundle
+binds to that exact prepared plan and attempt IDs. Its keys use member identity
+and complete revision ordinal, preserving sparse uploads without requiring CORE
+bytes. Exact key-set equality rejects missing bodies and bodies for retained,
+empty or unselected slots. Slot, size and declared checksum must match the plan;
+the copied bytes are independently hashed before admission or provider I/O.
+
+One shared `PayloadBudget` reservation covers twice the aggregate uploaded bytes
+before any payload copy: input copies and bounded read-back capacity. Failed
+preparation releases the reservation. A one-use claim transfers ownership to the
+coordinator; the caller cannot close an active bundle. Only the coordinator may
+lend its arrays to workers and close the claimed handle after all started work
+and observation flushing drain. SDK buffers and caller-owned input are outside
+this accounting. No new limit is added to the blob SPI's conditional writes.
+
+Unit coverage checks sparse ordinals, retained-only members, wrong slots and
+checksums, replacement-plan rejection, explicit subset binding, shared capacity,
+partial-preparation failure and the admission facade. These synthetic payload
+fixtures establish byte/declaration binding, not protobuf semantic validity or a
+working operation-wide provider coordinator. That coordinator remains pending.
+
+Local payload and upload-plan tests passed: 17 cases, no failures or skips. Sol
+reviewed resource ownership and command/attempt binding with no blocker. This
+checkpoint did not rerun the full container/service suites or hosted CI, and was
+not pushed, merged or deployed.
+
 ### Credential-to-ownership integration gap
 
 New required host integration; existing shared ownership checks remain unchanged.
