@@ -173,6 +173,22 @@ current switches, exact replay after lost acknowledgment, and migration of popul
 legacy rows without fabricated observations. The existing projection and atomic
 publication integration suites are the regression baseline for those changes.
 
+The independent lock primitive is now implemented in DocumentPublicationLocks,
+separately from the unchanged FULL_REVISION methods. After the caller locks the
+operation, documents/sources and drives, it stabilizes native current pointers,
+unions their old physical objects with proposed objects, and rejects a union above
+10,000 before acquiring origin locks. It resolves immutable DOCUMENT_PART locations,
+adds selected fresh attempts and locks the complete origin set in PostgreSQL UUID
+order, followed by exact retention objects in UUID order. Zero fresh attempts are
+permitted. Missing identities and retiring/reclaiming retention rows fail explicitly.
+
+The token binds the EntityManager, database transaction ID and immutable destination,
+proposed-object and selected-attempt sets. requirePlan only succeeds after retention
+locking in that same live transaction. This checks lock coverage, not caller
+authority, canonical command validity or verified physical content. Failed locking
+marks the transaction rollback-only. The independent publisher and activation
+gates above remain unimplemented; this primitive is not a commit operation.
+
 ## Identity and ownership
 
 A revision receives an immutable UUID independently of upload attempts, document

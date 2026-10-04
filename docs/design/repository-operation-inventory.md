@@ -3482,3 +3482,19 @@ All 76 DocumentRevisionProjectionIT and DocumentAtomicPublicationIT cases pass
 against real PostgreSQL with populated migration fixtures and no skips. This is
 a refreshed legacy regression baseline, not evidence that independent publication
 is implemented. The full mixed/zero-upload and multi-destination scope remains.
+
+### Independent publication origin and retention locks
+
+Added a separate internal lock path for complete old/new physical sets without
+requiring one upload attempt per destination. It stabilizes native current pointers,
+locks the full origin union before retention objects and refuses missing or retiring
+identities. A transaction-bound token compares the final destination/object/attempt
+sets only after successful retention locking. The legacy FULL_REVISION path is unchanged.
+
+The 80 atomic-publication/projection PostgreSQL cases pass. New cases verify old and
+proposed origins and objects with zero fresh attempts, current-pointer protection,
+missing objects, stale transaction tokens, incomplete lock phases and retirement
+contention using actual database wait evidence. Fixture provider observations are
+synthetic; these tests establish SQL behavior, not provider qualification. Independent
+revision creation/sealing, metadata persistence, outcome/outbox and read activation
+remain pending. Sol found no blocker in the scoped lock primitive.

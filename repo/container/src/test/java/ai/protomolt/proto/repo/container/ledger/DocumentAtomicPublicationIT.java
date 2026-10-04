@@ -31,6 +31,113 @@ class DocumentAtomicPublicationIT {
     }
     @AfterAll static void close() { if (database != null) database.close(); }
 
+    @Test void independentLocksCoverOldAndProposedOriginsWithoutInventingUploadAttempts() {
+        var old = fixture(null);
+        var saved = publish(old, (em, row) -> {});
+        var reused = fixture(null);
+        publish(reused, (em, row) -> {});
+        UUID oldObject = objectId(old);
+        UUID reusedObject = objectId(reused);
+        tx.inTransaction(em -> {
+            var nodes = java.util.Set.of(saved.nodeId);
+            DocumentLedger.lockRevisions(em, nodes, Map.of());
+            DocumentSourceSnapshot.lockDrives(em, List.of(old.target, reused.target), List.of());
+            var origins = DocumentPublicationLocks.lockIndependentOrigins(em, nodes, java.util.Set.of(reusedObject), java.util.Set.of());
+            assertThatThrownBy(() -> origins.requirePlan(nodes, java.util.Set.of(reusedObject), java.util.Set.of()))
+                    .hasMessageContaining("have not been acquired");
+            DocumentPublicationLocks.lockIndependentRetention(em, origins);
+            origins.requirePlan(nodes, java.util.Set.of(reusedObject), java.util.Set.of());
+            assertThatThrownBy(() -> origins.requirePlan(nodes, java.util.Set.of(oldObject), java.util.Set.of()))
+                    .hasMessageContaining("differs from locked sets");
+            assertRowLocked("document_revision_current", "node_id", saved.nodeId);
+            assertRowLocked("document_part_attempts", "attempt_id", old.attempt.id());
+            assertRowLocked("document_part_attempts", "attempt_id", reused.attempt.id());
+            assertRowLocked("repository_object_retention", "object_id", oldObject);
+            assertRowLocked("repository_object_retention", "object_id", reusedObject);
+        });
+    }
+
+    @Test void independentLocksRejectMissingObjectsAndCannotCrossTransactions() {
+        var f = fixture(null);
+        UUID object = objectId(f);
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            DocumentPublicationLocks.lockIndependentOrigins(em, java.util.Set.of(f.row.nodeId),
+                    java.util.Set.of(UUID.randomUUID()), java.util.Set.of());
+        })).hasMessageContaining("object is missing");
+        try (var em = database.entityManagerFactory().createEntityManager()) {
+            em.getTransaction().begin();
+            var token = DocumentPublicationLocks.lockIndependentOrigins(em, java.util.Set.of(f.row.nodeId),
+                    java.util.Set.of(object), java.util.Set.of(f.attempt.id()));
+            DocumentPublicationLocks.lockIndependentRetention(em, token);
+            em.getTransaction().commit();
+            em.getTransaction().begin();
+            assertThatThrownBy(() -> token.requirePlan(java.util.Set.of(f.row.nodeId), java.util.Set.of(object), java.util.Set.of(f.attempt.id())))
+                    .hasMessageContaining("another transaction");
+            assertThatThrownBy(() -> DocumentPublicationLocks.lockIndependentRetention(em, token))
+                    .hasMessageContaining("another transaction");
+            assertThat(em.getTransaction().getRollbackOnly()).isTrue();
+            em.getTransaction().rollback();
+        }
+    }
+
+    @Test void independentLocksRejectRetiringObjectsAfterOriginLock() {
+        var f = fixture(null);
+        UUID object = objectId(f);
+        tx.inTransaction(em -> {
+            em.createNativeQuery("UPDATE repository_object_retention SET retiring=true WHERE object_id=:object")
+                    .setParameter("object", object).executeUpdate();
+        });
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            var token = DocumentPublicationLocks.lockIndependentOrigins(em, java.util.Set.of(f.row.nodeId),
+                    java.util.Set.of(object), java.util.Set.of(f.attempt.id()));
+            DocumentPublicationLocks.lockIndependentRetention(em, token);
+        })).hasMessageContaining("missing or retiring");
+    }
+
+    @Test void independentLocksSerializeWithRetirementAndRecheckAfterCommit() throws Exception {
+        var f = fixture(null);
+        UUID object = objectId(f);
+        var contender = new java.util.concurrent.atomic.AtomicReference<java.util.concurrent.Future<?>>();
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            tx.inTransaction(em -> {
+                var token = DocumentPublicationLocks.lockIndependentOrigins(em, java.util.Set.of(f.row.nodeId),
+                        java.util.Set.of(object), java.util.Set.of(f.attempt.id()));
+                DocumentPublicationLocks.lockIndependentRetention(em, token);
+                int holder = ((Number) em.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue();
+                contender.set(executor.submit(() -> tx.inTransaction(other -> {
+                    other.createNativeQuery("UPDATE repository_object_retention SET retiring=true WHERE object_id=:object")
+                            .setParameter("object", object).executeUpdate();
+                })));
+                try { awaitDatabaseWait(holder); }
+                catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new AssertionError(interrupted); }
+                assertThat(contender.get().isDone()).isFalse();
+            });
+            contender.get().get(10, java.util.concurrent.TimeUnit.SECONDS);
+        }
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            var token = DocumentPublicationLocks.lockIndependentOrigins(em, java.util.Set.of(f.row.nodeId),
+                    java.util.Set.of(object), java.util.Set.of());
+            DocumentPublicationLocks.lockIndependentRetention(em, token);
+        })).hasMessageContaining("missing or retiring");
+    }
+
+    private static UUID objectId(Fixture fixture) {
+        return tx.readOnly(em -> (UUID) em.createNativeQuery(
+                "SELECT physical_object_id FROM document_part_attempt_objects WHERE attempt_id=:attempt")
+                .setParameter("attempt", fixture.attempt.id()).getSingleResult());
+    }
+
+    private static void assertRowLocked(String table, String column, UUID id) {
+        try (var connection = database.dataSource().getConnection()) {
+            connection.setAutoCommit(false);
+            try (var query = connection.prepareStatement("SELECT " + column + " FROM " + table + " WHERE " + column + "=? FOR UPDATE NOWAIT")) {
+                query.setObject(1, id);
+                assertThatThrownBy(query::executeQuery).isInstanceOf(java.sql.SQLException.class)
+                        .satisfies(error -> assertThat(((java.sql.SQLException) error).getSQLState()).isEqualTo("55P03"));
+            } finally { connection.rollback(); }
+        } catch (java.sql.SQLException failure) { throw new AssertionError(failure); }
+    }
+
     @Test void sharedRetentionTracksExactHistoryAndCurrentOwners() {
         var first = fixture(null);
         var saved = publish(first, (em,row) -> {});
