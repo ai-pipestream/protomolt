@@ -101,6 +101,134 @@ class DocumentReaderPinsIT {
         assertThat(references(a)).isZero(); assertThat(references(b)).isZero();
     }
 
+    @Test void discoveryRequiresQuiescenceEvenWhenNoPinsExist() {
+        var recovery = new DocumentReadRecovery(tx); UUID reader = reader();
+        assertThatThrownBy(() -> recovery.recoverBatch(reader, 1)).hasStackTraceContaining("proven quiescence");
+        assertThatThrownBy(() -> recovery.recoverBatch(UUID.randomUUID(), 1)).hasStackTraceContaining("proven quiescence");
+        tx.inTransaction(em -> { em.createNativeQuery("SELECT fence_repository_reader(:id)").setParameter("id", reader).getSingleResult(); });
+        assertThatThrownBy(() -> recovery.recoverBatch(reader, 1)).hasStackTraceContaining("proven quiescence");
+        assertThatThrownBy(() -> recovery.recoverBatch(reader, 0)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> recovery.recoverBatch(reader, 10001)).isInstanceOf(IllegalArgumentException.class);
+        for (Integer limit : java.util.Arrays.asList(null, 0, 10001)) {
+            assertThatThrownBy(() -> tx.inTransaction(em -> { em.createNativeQuery(
+                    "SELECT recover_quiesced_document_read_pin_batch(:reader,CAST(:limit AS integer))")
+                    .setParameter("reader", reader).setParameter("limit", limit).getSingleResult(); }))
+                    .hasStackTraceContaining("1 to 10000");
+        }
+        quiesce(reader);
+        assertThat(recovery.recoverBatch(reader, 1)).isZero();
+        assertThat(recovery.recoverBatch(reader, 10000)).isZero();
+    }
+
+    @Test void discoveryDrains257ClaimsInBoundedBatchesWithoutTouchingAnotherReader() {
+        var first = source(); var second = source();
+        UUID reader = reader(), other = reader(), otherPin = UUID.randomUUID();
+        var pins = new java.util.ArrayList<UUID>();
+        tx.inTransaction(em -> {
+            for (int i = 0; i < 257; i++) {
+                UUID pin = UUID.randomUUID(); pins.add(pin);
+                var source = i % 2 == 0 ? first : second;
+                insert(em, pin, reader, source, source.fixture.attempt());
+            }
+        });
+        pin(otherPin, other, first, first.fixture.attempt());
+        quiesce(reader);
+        var recovery = new DocumentReadRecovery(tx);
+        for (int remaining : new int[] {193, 129, 65, 1}) {
+            assertThat(recovery.recoverBatch(reader, 64)).isEqualTo(64);
+            assertThat(pinCount(reader)).isEqualTo(remaining);
+        }
+        assertThat(recovery.recoverBatch(reader, 64)).isEqualTo(1);
+        assertThat(recovery.recoverBatch(reader, 64)).isZero();
+        assertThat(pinCount(reader)).isZero();
+        long mirrors = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                "SELECT count(*) FROM repository_object_references WHERE owner_kind='DOCUMENT_READER' AND owner_id IN (:pins)")
+                .setParameter("pins", pins).getSingleResult()).longValue());
+        assertThat(mirrors).isZero();
+        assertThat(references(otherPin)).isEqualTo(1);
+        assertThat(pinCount(other)).isEqualTo(1);
+        release(otherPin, other, first.object());
+    }
+
+    @Test void overlappingDiscoveryReportsObservedClaimsAndSafelyReplays() throws Exception {
+        var first = source(); var second = source(); UUID reader = reader();
+        UUID a = UUID.randomUUID(), b = UUID.randomUUID();
+        pin(a, reader, first, first.fixture.attempt()); pin(b, reader, second, second.fixture.attempt());
+        quiesce(reader);
+        var recovery = new DocumentReadRecovery(tx);
+        try (var blocker = database.entityManagerFactory().createEntityManager();
+                var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            blocker.getTransaction().begin();
+            try {
+                blocker.createNativeQuery("SELECT object_id FROM repository_object_retention WHERE object_id=:id FOR UPDATE")
+                        .setParameter("id", first.object()).getSingleResult();
+                int pid = ((Number) blocker.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue();
+                var one = executor.submit(() -> recovery.recoverBatch(reader, 2));
+                var two = executor.submit(() -> recovery.recoverBatch(reader, 2));
+                long deadline = System.nanoTime() + java.time.Duration.ofSeconds(5).toNanos();
+                long waiting;
+                do {
+                    waiting = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                            "SELECT count(*) FROM pg_stat_activity WHERE :blocker=ANY(pg_blocking_pids(pid))")
+                            .setParameter("blocker", pid).getSingleResult()).longValue());
+                    if (waiting == 2 || one.isDone() || two.isDone()) break;
+                    Thread.sleep(10);
+                } while (System.nanoTime() < deadline);
+                assertThat(waiting).as("both recoveries selected before either could release").isEqualTo(2);
+                blocker.getTransaction().rollback();
+                assertThat(one.get(5, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(2);
+                assertThat(two.get(5, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(2);
+            } finally { if (blocker.getTransaction().isActive()) blocker.getTransaction().rollback(); }
+        }
+        assertThat(recovery.recoverBatch(reader, 2)).isZero();
+        assertThat(references(a)).isZero(); assertThat(references(b)).isZero();
+    }
+
+    private static long pinCount(UUID reader) {
+        return tx.readOnly(em -> ((Number) em.createNativeQuery(
+                "SELECT count(*) FROM document_read_pins WHERE reader_incarnation=:id")
+                .setParameter("id", reader).getSingleResult()).longValue());
+    }
+
+    @Test void discoveryFailureAfterMirrorDeletionRollsBackAndCanRetry() {
+        var first = source(); var second = source(); UUID reader = reader();
+        UUID a = UUID.randomUUID(), b = UUID.randomUUID();
+        pin(a, reader, first, first.fixture.attempt()); pin(b, reader, second, second.fixture.attempt());
+        quiesce(reader);
+        // Inject failure after the real native delete and mirror trigger, scoped to this reader.
+        tx.inTransaction(em -> {
+            em.createNativeQuery("""
+                    CREATE FUNCTION fail_document_pin_recovery_test() RETURNS trigger LANGUAGE plpgsql AS $$
+                    BEGIN
+                     IF EXISTS(SELECT 1 FROM repository_object_references
+                        WHERE owner_kind='DOCUMENT_READER' AND owner_id=OLD.pin_id) THEN
+                      RAISE EXCEPTION 'Fault ran before mirror deletion'; END IF;
+                     RAISE EXCEPTION 'Injected document recovery failure';
+                    END;
+                    $$
+                    """).executeUpdate();
+            em.createNativeQuery("""
+                    CREATE TRIGGER zz_fail_document_pin_recovery_test AFTER DELETE ON document_read_pins
+                    FOR EACH ROW WHEN (OLD.reader_incarnation='%s')
+                    EXECUTE FUNCTION fail_document_pin_recovery_test()
+                    """.formatted(reader)).executeUpdate();
+        });
+        var recovery = new DocumentReadRecovery(tx);
+        try {
+            assertThatThrownBy(() -> recovery.recoverBatch(reader, 2)).hasStackTraceContaining("Injected document recovery failure");
+            assertThat(pinCount(reader)).isEqualTo(2);
+            assertThat(references(a)).isEqualTo(1); assertThat(references(b)).isEqualTo(1);
+        } finally {
+            tx.inTransaction(em -> {
+                em.createNativeQuery("DROP TRIGGER zz_fail_document_pin_recovery_test ON document_read_pins").executeUpdate();
+                em.createNativeQuery("DROP FUNCTION fail_document_pin_recovery_test()").executeUpdate();
+            });
+        }
+        assertThat(recovery.recoverBatch(reader, 2)).isEqualTo(2);
+        assertThat(recovery.recoverBatch(reader, 2)).isZero();
+        assertThat(references(a)).isZero(); assertThat(references(b)).isZero();
+    }
+
     @Test void batchReleaseChecksAllIdentitiesAndRetriesWithoutPartialRelease() {
         var first = source(); var second = source(); UUID reader = reader();
         UUID a = UUID.randomUUID(), b = UUID.randomUUID();

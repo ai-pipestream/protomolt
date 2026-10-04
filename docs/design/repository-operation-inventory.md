@@ -2994,3 +2994,29 @@ Sol found no blocking race. Final qualification passed 240 cases in 16 suites
 with no failures or skips; the engine runtime boundary gate passed. Initial test
 compilation exposed missing cancellation-control methods, which were corrected.
 The final invocation completed in 33s. No hosted CI, push, merge or deployment ran.
+
+### Bounded discovery for quiesced-reader recovery
+
+V47 and `DocumentReadRecovery` recover durable document pins without an original
+plan handle. The SQL gate requires permanent QUIESCED state even for an empty
+reader and limits each discovery to 1–10,000 claims. A composite reader/pin index
+replaces the reader-only index; discovery takes no native-pin row locks before
+delegating to V46/V45's origin/retention/pin lock order. The returned count means
+claims observed, not rows deleted. Concurrent workers may select the same claims;
+zero establishes drain because a quiesced reader cannot acquire new pins.
+
+Real PostgreSQL cases cover invalid Java and direct-SQL bounds, empty-reader gates,
+257 claims in 64-claim batches across two physical objects, another reader's pins
+remaining untouched, and two recoveries held after selecting the same claims.
+An injected AFTER DELETE failure runs after the real mirror deletion; rollback
+restores native pins and mirrors, and fresh discovery subsequently succeeds.
+The quiescence fixture is direct SQL evidence, not proof of remote process shutdown.
+
+Sol found no blocker. A losing recovery may still fail if concurrent cleanup removes
+an identity after another worker releases its pin; fresh discovery is retryable,
+and failures are never reported as a successful drain. This slice does not qualify
+all cleanup races, implement recovery scheduling or mount the production host.
+Final qualification passed 111 cases across native document pins, upload admission
+and archive-reader incarnations with no failures or skips in 29s. An initial
+ambiguous transaction lambda was corrected before the successful runs. No hosted
+CI, push, merge or deployment ran.

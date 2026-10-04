@@ -340,9 +340,16 @@ timeout and explicitly invokes `release` outside batch/lifecycle monitors. Relea
 and recovery serialize per handle; SQL failure propagates and permits retry.
 The host must bound its waiting tasks, preserve failed-release handles and keep
 its SQL pool alive through release or recovery. An exception from a cancelled
-worker's Future is not an adequate reporting channel. Durable recovery discovery
-after losing an in-memory handle, cleanup races and production host mounting remain
-unfinished; these APIs do not establish remote-crash quiescence.
+worker's Future is not an adequate reporting channel. `DocumentReadRecovery` now
+discovers exact durable pin identities without the original in-memory handle, only
+for already-QUIESCED readers. Each V47 call selects 1–10,000 claims in indexed
+reader/pin order, then uses V46/V45 without acquiring pin locks ahead of origins.
+It returns the observed claim count, which may overlap another worker's batch;
+callers repeat bounded calls until zero. A failure during concurrent cleanup is
+visible and requires fresh discovery, never a fabricated successful drain result.
+The caller owns scheduling, deadlines and retry policy. Cleanup race qualification
+and production host mounting remain unfinished; these APIs do not establish
+remote-crash quiescence for ACTIVE, FENCED or UNKNOWN readers.
 
 Acceptance requires atomic multi-object rollback, acquisition versus cleanup in
 both lock orders, logical source deletion while a pin still blocks reclaim,
