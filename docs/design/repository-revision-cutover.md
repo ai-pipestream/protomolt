@@ -274,13 +274,16 @@ performs its own atomic fence; neither a read plan nor a checked draft grants it
 
 ### Document reader protection before activation
 
-This protection is designed, not implemented. Reuse the existing
+V44 implements the native document pin table, mirror/reference guards and exact
+single-pin release primitive. Whole-plan acquisition, host lifetime ownership and
+quiescence recovery are still unimplemented; provider reads do not yet acquire
+these pins. The remaining integration must reuse the existing
 `repository_reader_incarnations` lifecycle from V31/V32: fresh ACTIVE incarnations,
 permanent fencing, and trusted LOCAL_DRAIN attestation before QUIESCED recovery.
 Pins do not expire. A deadline, cancelled Future or expired operation lease cannot
 prove that a provider has stopped using an object.
 
-Add document-specific native read pins and a DOCUMENT_READER generic reference
+V44 adds document-specific native read pins and a DOCUMENT_READER generic reference
 kind. Archive pins have archive-entry/version foreign keys and cannot represent
 document identities. Each document pin binds its reader incarnation and exact
 physical object independently of current and historical document rows. Validate
@@ -301,8 +304,8 @@ expiry before commit. Claim validation, sorted locks and inserts must share this
 transaction; a previously captured plan is insufficient. No provider call occurs
 under these locks. An invalid final object rolls back the whole acquisition.
 
-The generic reference guard needs a shared-lock branch for DOCUMENT_READER;
-otherwise its default exclusive branch would upgrade these locks. Preserve the
+The generic reference guard now has a shared-lock branch for DOCUMENT_READER;
+its default exclusive branch would otherwise upgrade these locks. Preserve the
 existing durable document reference modes until their separate concurrency audit.
 Trigger-acquired locks must obey the same complete origin-then-retention ordering.
 Release uses that order and exact pin/incarnation/object identity. Failed releases

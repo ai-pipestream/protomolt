@@ -2874,3 +2874,28 @@ in a Part accessor. No production code, hosted CI, push, merge or deployment cha
 Sol reviewed the fixture and design; its distinction between deduplicated physical
 pins and all canonical source claims is incorporated, along with the host/SQL
 authentication boundary.
+
+### Native document reader pins
+
+V44 adds `document_read_pins`, the DOCUMENT_READER native/reference mirror, a
+shared origin/retention lock branch, and exact single-pin release. Admission
+requires an ACTIVE reader incarnation, a verified object in a sealed current
+revision, existing history/current retention and an object not retiring or
+reclaiming. Pins have no expiry and no source-row foreign key. Native identities
+cannot be updated; detached mirror insertion and premature mirror deletion fail.
+Exact release checks incarnation and object and permits acknowledgement retries.
+Existing archive and durable document reference predicates/modes are preserved.
+
+Real PostgreSQL cases cover mirrored ownership, wrong-incarnation release,
+immutable identity, fenced admission, structurally forged source/mirror rejection,
+source replacement, retirement refusal and overlapping shared-reader transactions.
+The fixture supplies explicitly synthetic SQL content evidence and does not claim
+provider I/O or typed validation. This migration is a foundation only: no document
+read currently acquires these pins. Atomic whole-plan acquisition, lifetime/drain
+ownership, quiescent recovery and cleanup races remain integration gates.
+
+Sol reviewed the migration and tests without a blocker. Full container/service
+reports contain 116 suites and 1,031 cases: 1,028 passed, three skipped, no failures.
+The first run completed service tests but failed container test compilation on an
+ambiguous lambda overload; after correction the container suite passed in 1m56s,
+with service results up to date. No hosted CI, push, merge or deployment ran.
