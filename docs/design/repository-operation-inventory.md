@@ -3519,3 +3519,20 @@ Complete protobuf imports compile, new-file Buf lint and workspace compatibility
 against the preceding HEAD pass. Sol's canonical UUID concern was addressed with
 exact lowercase UUID patterns and short-form rejection fixtures; the final 67-test
 rerun passes.
+
+### Bounded publication result storage encoding
+
+Added a versioned DocumentPublicationResultCodec in the repository SPI. Encoding
+requires complete command/member and committing-principal/generation matching.
+Decoding checks the stored codec/version, byte bound and exact SHA-256 before a
+descriptor-driven wire scan and generated parsing. The scan bounds field
+occurrences before repeated-message allocation and runtime cross-field validation.
+Decoding retains the stored identity; it does not consult or adopt a newer owner.
+
+All 28 SPI tests and runtime dependency gates pass. Fixtures cover deterministic
+encoding, mismatched identities, malformed bytes with a correct digest, excessive
+empty member occurrences and the full 64-member result with maximum positive
+counters. Sol reviewed the final codec with no remaining blocker. The added
+descriptor dependency introduces no SQL, Kafka or storage SDK runtime dependency.
+This is a storage codec only. Atomic outcome insertion, revision/outbox binding,
+terminal-operation fencing and authorized replay remain pending.

@@ -11,7 +11,7 @@ class DocumentPublicationCommandTest {
     private static final String OTHER = "10000000-0000-4000-8000-000000000002";
     private static final String SHA = "a".repeat(64);
 
-    @Test void successfulResultMustMatchFullCanonicalCommandAndCommittingOwner() {
+    @Test void successfulResultMustMatchFullCanonicalCommandAndCommittingOwner() throws Exception {
         var command = command(intent().toBuilder().clearMembers().addMembers(member("z")).addMembers(member("a")).build());
         var result = DocumentPublicationResult.newBuilder().setOperationId(ID).setAccountId("a")
                 .setCommandEncodingVersion(1).setCommandSha256(command.sha256()).setPrincipal("principal").setOwnerGeneration(2);
@@ -35,6 +35,55 @@ class DocumentPublicationCommandTest {
         var unknown = UnknownFieldSet.newBuilder().addField(999, UnknownFieldSet.Field.newBuilder().addVarint(1).build()).build();
         assertThatThrownBy(() -> command.requireResult(valid.toBuilder().setUnknownFields(unknown).build(), "principal", 2))
                 .hasMessageContaining("Unknown publication fields");
+        var encoded = DocumentPublicationResultCodec.encode(command, valid, "principal", 2);
+        var repeated = DocumentPublicationResultCodec.encode(command, valid, "principal", 2);
+        assertThat(repeated.bytes()).isEqualTo(encoded.bytes());
+        assertThat(repeated.sha256()).isEqualTo(encoded.sha256());
+        assertThat(DocumentPublicationResultCodec.decode(command, "principal", 2,
+                DocumentPublicationResultCodec.CODEC, 1, encoded.bytes(), encoded.sha256())).isEqualTo(valid);
+        assertThatThrownBy(() -> DocumentPublicationResultCodec.decode(command, "principal", 2,
+                DocumentPublicationResultCodec.CODEC, 2, encoded.bytes(), encoded.sha256())).hasMessageContaining("Unsupported");
+        assertThatThrownBy(() -> DocumentPublicationResultCodec.decode(command, "principal", 2,
+                "another-codec", 1, encoded.bytes(), encoded.sha256())).hasMessageContaining("Unsupported");
+        assertThatThrownBy(() -> DocumentPublicationResultCodec.decode(command, "principal", 2,
+                DocumentPublicationResultCodec.CODEC, 1, encoded.bytes(), "0".repeat(64))).hasMessageContaining("digest mismatch");
+        assertThatThrownBy(() -> DocumentPublicationResultCodec.decode(command, "another", 2,
+                DocumentPublicationResultCodec.CODEC, 1, encoded.bytes(), encoded.sha256())).hasMessageContaining("operation identity");
+        assertThatThrownBy(() -> DocumentPublicationResultCodec.decode(command, "principal", 3,
+                DocumentPublicationResultCodec.CODEC, 1, encoded.bytes(), encoded.sha256())).hasMessageContaining("operation identity");
+        assertThatThrownBy(() -> DocumentPublicationResultCodec.decode(command, "principal", 2,
+                DocumentPublicationResultCodec.CODEC, 1, com.google.protobuf.ByteString.EMPTY, encoded.sha256())).hasMessageContaining("byte bounds");
+        var malformed = com.google.protobuf.ByteString.copyFrom(new byte[]{0});
+        var malformedHash = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(malformed.toByteArray()));
+        assertThatThrownBy(() -> DocumentPublicationResultCodec.decode(command, "principal", 2,
+                DocumentPublicationResultCodec.CODEC, 1, malformed, malformedHash)).isInstanceOf(com.google.protobuf.InvalidProtocolBufferException.class);
+        var repeatedEmptyMembers = new byte[2 * (DocumentPublicationResultCodec.MAX_WIRE_VALUES + 1)];
+        for (int i = 0; i < repeatedEmptyMembers.length; i += 2) repeatedEmptyMembers[i] = 50; // field 6, empty message
+        var excessiveWire = com.google.protobuf.ByteString.copyFrom(repeatedEmptyMembers);
+        var excessiveHash = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(repeatedEmptyMembers));
+        assertThatThrownBy(() -> DocumentPublicationResultCodec.decode(command, "principal", 2,
+                DocumentPublicationResultCodec.CODEC, 1, excessiveWire, excessiveHash)).hasMessageContaining("wire value");
+    }
+
+    @Test void resultCodecAcceptsAll64MembersWithinWireBudget() throws Exception {
+        var intent = intent().toBuilder().clearMembers();
+        for (int i = 0; i < 64; i++) intent.addMembers(member("member-" + i));
+        var command = command(intent.build());
+        var result = DocumentPublicationResult.newBuilder().setOperationId(ID).setAccountId("a")
+                .setCommandEncodingVersion(1).setCommandSha256(command.sha256())
+                .setPrincipal("principal").setOwnerGeneration(Long.MAX_VALUE);
+        int index = 1;
+        for (var member : command.intent().getMembersList()) {
+            result.addMembers(DocumentPublishedRevision.newBuilder().setMemberId(member.getMemberId())
+                    .setAddress(member.getDestination().getAddress())
+                    .setRevisionId(new java.util.UUID(0, index++).toString())
+                    .setMutationRevision(Long.MAX_VALUE));
+        }
+        var expected = result.build();
+        var encoded = DocumentPublicationResultCodec.encode(command, expected, "principal", Long.MAX_VALUE);
+        assertThat(DocumentPublicationResultCodec.decode(command, "principal", Long.MAX_VALUE,
+                DocumentPublicationResultCodec.CODEC, DocumentPublicationResultCodec.VERSION,
+                encoded.bytes(), encoded.sha256())).isEqualTo(expected);
     }
 
     private static NodeAddress address(String doc) {
