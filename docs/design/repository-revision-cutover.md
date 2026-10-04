@@ -4,6 +4,13 @@ Status: Sol-reviewed implementation plan, not available behavior. Source audit a
 This refines [repository composition](repository-composition.md#immutable-part-reuse-implementation-design)
 and preserves the [optional JCR boundary](repository-jcr-compatibility.md).
 
+Implementation checkpoint: V38 adds the three shadow tables and the legacy
+publication bridge described below. It preserves full manifest positions, exact
+managed object identities and immutable history, including deleted documents.
+V22/V36 publication and V26/V29 retention remain authoritative. Independent-ID
+allocation for new mixed revisions, per-part backend reads and retention cutover
+are still unimplemented; the shadow projection does not enable them.
+
 ## Current coupling that must change together
 
 - `DocumentPublicationLedger.Publication` carries one attempt, backend profile

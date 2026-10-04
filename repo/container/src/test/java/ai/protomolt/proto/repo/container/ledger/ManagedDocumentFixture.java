@@ -17,7 +17,15 @@ record ManagedDocumentFixture(DocumentRecord row, UUID attempt,
     static ManagedDocumentFixture publish(Tx tx, DriveRecord drive, String generation,
             ManagedBackendLedger.Profile profile, NodeAddress address, DocumentSecurity policy,
             int parts, long coreSize, String version) {
+        return publish(tx, drive, generation, profile, address, policy, parts, coreSize, version, false);
+    }
+
+    static ManagedDocumentFixture publish(Tx tx, DriveRecord drive, String generation,
+            ManagedBackendLedger.Profile profile, NodeAddress address, DocumentSecurity policy,
+            int parts, long coreSize, String version, boolean sparseManifest) {
         UUID node = DocumentIds.nodeId(address); UUID id = UUID.randomUUID();
+        var documents = new DocumentLedger(tx);
+        var prior = documents.findByNodeId(node).orElse(null);
         String prefix = RepositoryNamespaces.under(drive.prefix, "documents/" + address.getAccountId() + "/" + node + "/attempts/" + id + "/");
         var objects = new ArrayList<DocumentPartAttemptLedger.PlannedObject>();
         var slots = new ArrayList<DocumentPublicationSlot>();
@@ -31,7 +39,7 @@ record ManagedDocumentFixture(DocumentRecord row, UUID attempt,
         var attempts = new DocumentPartAttemptLedger(tx);
         var attempt = attempts.begin(new DocumentPartAttemptLedger.Plan(id,
                 new DocumentPartAttemptLedger.Location(node, address.getAccountId(), generation, drive.bucket),
-                0, Map.of(), objects), Duration.ofMinutes(5));
+                prior == null ? 0 : prior.mutationRevision, Map.of(), objects), Duration.ofMinutes(5));
         // Exercise real SQL guards with explicitly synthetic observations; no successful SDK response is fabricated.
         tx.inTransaction(em -> {
             em.createNativeQuery("UPDATE document_part_attempt_objects SET verified=true,provider_version=:version,etag='fixture' WHERE attempt_id=:id")
@@ -43,11 +51,19 @@ record ManagedDocumentFixture(DocumentRecord row, UUID attempt,
         row.datasourceId = "source"; row.driveName = drive.name; row.objectKey = prefix;
         row.versionId = version; row.etag = "fixture"; row.sizeBytes = Math.addExact(coreSize, parts - 1L);
         row.createdAt = Instant.now(); row.updatedAt = row.createdAt; row.writeSecurity(policy);
-        var manifest = DocumentManifest.newBuilder().setAddress(address).setDocVersion(1);
-        for (var object : objects) manifest.addParts(PartManifestEntry.newBuilder().setPart(object.part()).setSubKey(object.subKey())
-                .setState(PartState.PART_STATE_PRESENT).setObjectKey(object.objectKey()).setSizeBytes(object.size()).setSha256(object.sha256()));
+        var manifest = DocumentManifest.newBuilder().setAddress(address)
+                .setDocVersion(prior == null ? 1 : Math.addExact(prior.readManifest().getDocVersion(), 1));
+        if (sparseManifest) manifest.addParts(PartManifestEntry.newBuilder().setPart(DocumentPart.DOCUMENT_PART_BLOBS)
+                .setState(PartState.PART_STATE_EMPTY));
+        for (var object : objects) {
+            manifest.addParts(PartManifestEntry.newBuilder().setPart(object.part()).setSubKey(object.subKey())
+                    .setState(PartState.PART_STATE_PRESENT).setObjectKey(object.objectKey()).setSizeBytes(object.size()).setSha256(object.sha256()));
+            if (sparseManifest && object.part() == DocumentPart.DOCUMENT_PART_CORE)
+                manifest.addParts(PartManifestEntry.newBuilder().setPart(DocumentPart.DOCUMENT_PART_PARSED)
+                        .setState(PartState.PART_STATE_DELETED).setDeletedReason("Synthetic tombstone"));
+        }
         row.writeManifest(manifest.build()); row.checksum = DocumentPartCodec.rootChecksumFromManifest(manifest.build());
-        row = new DocumentLedger(tx).saveVerifiedAttempt(row, null, Map.of(), id, attempt.token(),
+        row = documents.saveVerifiedAttempt(row, prior == null ? null : prior.mutationRevision, Map.of(), id, attempt.token(),
                 new DocumentPublicationTarget(new DriveLedger(tx), drive, generation, profile.identity()), (em, saved) -> {});
         var identities = tx.readOnly(em -> {
             var result = new ArrayList<PublicationObjectIdentity>();

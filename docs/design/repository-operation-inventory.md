@@ -1970,3 +1970,46 @@ No new semantic review, normal-read or receipt path is enabled.
 The full container and service regression run passed on 2026-10-04 in 2m18s:
 107 suites, 902 cases, 899 passed and three skipped, zero failures or errors.
 No push, hosted CI, merge or deployment is claimed for this local checkpoint.
+
+### Independent revision projection migration
+
+V38 adds internal document revision headers, ordered PRESENT-part references and
+current revision pins. This extends the existing FULL_REVISION publication path
+with a transactional shadow projection; no protobuf/RPC, receipt, schema reference
+or idempotency contract changes. Historical UUID values initially equal their
+legacy attempt IDs, recorded separately as provenance. The schema's independent
+revision identity is preparation for the reviewed cutover, not an implemented
+mixed-revision publication API.
+
+Backfill uses immutable history bodies, including histories with no surviving
+document. Full manifest position and dense PRESENT-object ordinal are resolved
+separately, so EMPTY/DELETED slots do not shift physical identities. Exact slot,
+key, size, checksum and physical location must match verified managed evidence;
+aggregate size, root checksum and CORE provider identity are checked as well.
+Missing or inconsistent evidence aborts migration atomically. Unbound legacy
+documents remain unadopted. New legacy writes maintain the projection in the same
+transaction, and deleting a document removes its current pin while retaining history.
+
+The population trigger closes part insertion before returning. Sol identified
+an earlier same-transaction bypass where forcing a deferred check early allowed
+later inserts without revalidation. A real PostgreSQL test reproduced that failure
+before the synchronous seal fixed it. The default completeness check is immediate,
+after population; explicitly deferred callers still cannot add parts once sealed.
+One materialized expected relation supports each completeness proof, avoiding a
+full manifest scan per part and deferred-event accumulation across the backfill.
+
+No generic retention owner kinds or extra pins are added. Existing archive reader
+and document retention guards remain in force. The shadow tables do not qualify
+provider immutability, authorize physical reuse, retain schema/raw history, or enable
+metadata-only writes, mixed publication, restoration or pruning. The coordinated
+read/retention cutover and latency qualification remain required.
+
+Local validation on 2026-10-04: the container/service regression passed in 2m17s,
+108 suites and 909 cases (906 passed, three skipped, no failures/errors). Two final
+fixtures then extended migration coverage to nine passing cases in eleven seconds:
+explicit deferral of the completeness proof and a 513-part sparse revision migrated
+and replaced through the live bridge. That diagnostic measured migration at 96 ms
+and complete SQL fixture publication at 444 ms on the local run; these include test
+setup work and are not controlled latency/throughput qualification. Sol reviewed
+the migration and seal fix with no remaining blocking finding. No push, hosted CI,
+merge or deployment is claimed.
