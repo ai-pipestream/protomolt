@@ -621,6 +621,10 @@ class DocumentPublicationCommitIT {
                     : execution.execute(ADMIN,session,Map.copyOf(shiftedBodies),Map.of(),modes,container,resolver,
                     ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
             assertThat(rejectSchema).as("Schema failure must prevent publication").isFalse();
+            assertThatThrownBy(()->new RepositoryOperationLedger(tx).takeOver(
+                    new RepositoryOperationLedger.Key(command.intent().getAccountId(),"principal",command.operationId()),
+                    command,1,UUID.randomUUID(),LEASE))
+                    .isInstanceOf(RepositoryOperationLedger.TerminalOperationException.class);
             if (registryOwns) {
                 assertThat(nested).isTrue();
                 assertThat(sessions.retainedSessions()).isZero();

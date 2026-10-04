@@ -61,6 +61,61 @@ class RepositoryOperationAdmissionIT {
         }
     }
 
+    @Test void typedRecoveryRejectsChangedCommandBeforeTakeoverAndExactNonceReplay() {
+        var key = key();
+        var command = new DocumentPublicationCommand(typedIntent(key));
+        var changed = new DocumentPublicationCommand(command.intent().toBuilder().setMembers(0,
+                command.intent().getMembers(0).toBuilder().setCrawlId("changed-recovery-command")).build());
+        var original = ledger.admit(key, command, UUID.randomUUID(), Duration.ofSeconds(1)).owner().orElseThrow();
+        var next = UUID.randomUUID();
+        assertThatThrownBy(() -> ledger.takeOver(key, command, 1, next, LEASE))
+                .isInstanceOf(RepositoryOperationLedger.OwnerFencedException.class);
+        expire(key);
+        assertThatThrownBy(() -> ledger.takeOver(key, changed, 1, next, LEASE))
+                .isInstanceOf(RepositoryOperationLedger.CommandConflictException.class);
+        assertThat(ledger.find(key).orElseThrow().generation()).isEqualTo(1);
+        var recovered = ledger.takeOver(key, command, 1, next, LEASE);
+        assertThat(recovered.generation()).isEqualTo(2);
+        assertThatThrownBy(() -> ledger.takeOver(key, changed, 1, next, Duration.ofHours(1)))
+                .isInstanceOf(RepositoryOperationLedger.CommandConflictException.class);
+        assertThat(ledger.takeOver(key, command, 1, next, Duration.ofHours(1))).isEqualTo(recovered);
+        assertThatThrownBy(() -> ledger.renew(original, LEASE))
+                .isInstanceOf(RepositoryOperationLedger.OwnerFencedException.class);
+        for (var wrong : new RepositoryOperationLedger.Key[]{
+                new RepositoryOperationLedger.Key("wrong-account", key.principal(), key.operationId()),
+                new RepositoryOperationLedger.Key(key.account(), key.principal(), UUID.randomUUID())}) {
+            assertThatThrownBy(() -> ledger.takeOver(wrong, command, 1, next, LEASE))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("scope");
+            assertThat(ledger.find(wrong)).isEmpty();
+        }
+    }
+
+    @Test void typedRecoveryReconcilesActualCommittedTakeoverAfterAcknowledgmentLoss() {
+        var key = key();
+        var command = new DocumentPublicationCommand(typedIntent(key));
+        ledger.admit(key, command, UUID.randomUUID(), Duration.ofSeconds(1));
+        expire(key);
+        var armed = new java.util.concurrent.atomic.AtomicBoolean(true);
+        var source = DocumentJdbcFaults.afterCommit(database.dataSource(), () -> {
+            if (armed.compareAndSet(true, false)) throw new java.sql.SQLException("Takeover acknowledgment lost after commit", "08006");
+        });
+        try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                java.util.Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
+            var reconnecting = new RepositoryOperationLedger(new Tx(emf));
+            var next = UUID.randomUUID();
+            assertThatThrownBy(() -> reconnecting.takeOver(key, command, 1, next, LEASE))
+                    .hasStackTraceContaining("Takeover acknowledgment lost after commit");
+            assertThat(armed).isFalse();
+            var stored = ledger.find(key).orElseThrow();
+            assertThat(stored.generation()).isEqualTo(2);
+            var recovered = reconnecting.takeOver(key, command, 1, next, Duration.ofHours(1));
+            assertThat(recovered.generation()).isEqualTo(stored.generation());
+            assertThat(recovered.leaseUntil()).isEqualTo(stored.leaseUntil());
+            assertThat(recovered.token()).isEqualTo(next);
+            assertThat(reconnecting.takeOver(key, command, 1, next, LEASE)).isEqualTo(recovered);
+        }
+    }
+
     private static DocumentPublicationIntent typedIntent(RepositoryOperationLedger.Key key) {
         return DocumentPublicationIntent.newBuilder().setEncodingVersion(1).setAccountId(key.account())
                 .setOperationId(key.operationId().toString()).addMembers(DocumentPublicationMember.newBuilder()

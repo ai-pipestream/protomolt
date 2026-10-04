@@ -2699,3 +2699,38 @@ lifecycle. Its current document operation construction does not do that. Keep
 the private library flow as the qualification target first, including mixed
 upload/reuse/EMPTY ordinals, revocation, policy changes, cancellation and restart;
 add the thin public transport only after those checks pass.
+
+### Publication session recovery ordering
+
+The bounded in-process session registry retains failed and uncertain entries.
+Capacity pressure and lease expiry are not permission to discard their private
+owner/attempt identities. A committed outcome can release the registry entry only
+after its active invocation references leave; protected reader pins and provider
+cleanup remain owned by their separate lifecycles.
+
+Before implementing host takeover, authenticate the operation principal/account,
+verify the same canonical command, and observe an authorized terminal result.
+Mint and retain the next owner nonce before sending takeover SQL. Use the typed
+ledger takeover entry: it checks the exact command under the owner row lock, then
+performs generation CAS against an expired owner. An uncertain acknowledgment
+retries that same expected generation and nonce. It must not mint another nonce,
+change operation identity, renew implicitly, or treat an expired retry as success.
+The new owner must prepare fresh attempt identities and recheck placement and
+current admission policy before provider work. Old attempts cannot be adopted by
+guessing their keys or copying their verification observations.
+
+Replacing a local registry entry requires an exclusive recovery state so another
+caller cannot concurrently execute the old session or evict its replacement.
+Bound recovery preparation and retain its identities across failed SQL responses.
+Worker cancellation is not proof of drain: SQL generation fences prevent stale
+publication, while old physical attempts and retained-read pins still need their
+existing drain/cleanup ownership. Restart recovery must reconstruct command and
+recorded selection evidence from durable state, without assuming the in-process
+registry survived. Internal typed/opaque choices must be recovered or selected by
+an explicit deterministic policy; do not add an unbound caller downgrade flag.
+
+Aborted/rejected retirement requires the durable terminal decision described in
+the commit design. It cannot be inferred from NOT_OBSERVED, PENDING, a timeout or
+an expired lease. Host recovery, terminal rejection receipts and registry recovery
+state are still required; the command-bound ledger fence is their prerequisite,
+not a claim that those paths are mounted or complete.

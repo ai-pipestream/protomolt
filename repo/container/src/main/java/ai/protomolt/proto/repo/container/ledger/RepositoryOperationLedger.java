@@ -205,12 +205,30 @@ final class RepositoryOperationLedger {
 
     /** CAS takeover; the same nonce can reconcile a lost takeover acknowledgement. */
     Owner takeOver(Key key, long expectedGeneration, UUID nextNonce, Duration lease) {
+        return takeOver(key, expectedGeneration, nextNonce, lease, null);
+    }
+
+    /**
+     * Document recovery verifies the immutable command under the same owner lock
+     * as takeover, including an exact retry after an uncertain acknowledgement.
+     * Trusted caller authorization remains the host's responsibility.
+     */
+    Owner takeOver(Key key, DocumentPublicationCommand command, long expectedGeneration, UUID nextNonce, Duration lease) {
+        Objects.requireNonNull(key); Objects.requireNonNull(command);
+        if (!key.account.equals(command.intent().getAccountId()) || !key.operationId.equals(command.operationId()))
+            throw new IllegalArgumentException("Publication command differs from operation scope");
+        return takeOver(key, expectedGeneration, nextNonce, lease, command);
+    }
+
+    private Owner takeOver(Key key, long expectedGeneration, UUID nextNonce, Duration lease,
+            DocumentPublicationCommand command) {
         Objects.requireNonNull(key); Objects.requireNonNull(nextNonce);
         if (expectedGeneration < 1 || expectedGeneration == Long.MAX_VALUE)
             throw new IllegalArgumentException("Invalid takeover generation");
         long millis = leaseMillis(lease);
         return tx.inTransaction(em -> {
             var row = readOwner(em, key, true).orElseThrow(OwnerFencedException::new);
+            if (command != null) requireCommand(em, key, command);
             boolean live = live(em, key);
             if (row.generation == expectedGeneration + 1 && row.token.equals(nextNonce) && live)
                 return row;

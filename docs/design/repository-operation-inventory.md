@@ -5467,3 +5467,19 @@ work without evicting uncertain identities; it still permits committed replay.
 This is an internal host component, not durable restart recovery. Explicit recovery
 and retirement of abandoned pending sessions remain necessary before production
 mounting; there is no expiry-based eviction or implicit takeover.
+
+### Command-bound ownership recovery
+
+The internal operation ledger now offers a typed publication takeover entry. It
+checks command account/operation scope before SQL, then locks the owner and verifies
+the exact immutable canonical command before either a generation change or an
+idempotent next-nonce return. Caller authentication is still a host obligation;
+the ledger's key and command do not authenticate a principal. The older raw internal
+takeover entry is not the entry for document host recovery.
+
+PostgreSQL tests cover a changed command after expiry, a changed command on the
+same-nonce retry path, live-owner refusal, wrong scope, stale-owner fencing, and an
+actual takeover commit whose acknowledgment is lost. Exact retry returns the stored
+generation, token and lease without extending it. Real-provider publication tests
+also refuse takeover of a committed operation. This does not yet expose recovery
+through the host or retire an abandoned registry session.
