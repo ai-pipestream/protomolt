@@ -2633,3 +2633,21 @@ failure path; coordinator payload-budget draining has separate integration tests
 Sol reviewed the test and fix without a blocker. Full container/service validation
 passed: 114 suites, 1,012 cases, 1,009 passed and three skipped, no failures/errors.
 No hosted CI, push, merge or deployment was performed.
+
+### Retained CORE with a changed-part upload
+
+Existing selected staging now has a real retained-content integration case.
+`DocumentPartStager` writes and verifies a CORE in versioned S3, and the existing
+full-revision publication path commits its actual measured identity to PostgreSQL.
+A subsequent command targets that same document revision, reuses the exact CORE
+identity and supplies only the ordinal-1 CHUNKS payload. An extra CORE payload is
+rejected before creating an attempt or calling PUT. Valid staging performs exactly
+one PUT and records one verified CHUNKS object. The original CORE remains both
+historically readable and current at the same S3 version and bytes; the current
+document manifest and mutation revision do not change during staging.
+
+Sol reviewed the case and requested the current-version assertion in addition to
+the pinned-version read. Twelve coordinator cases passed in 28s before that final
+assertion; the strengthened retained-CORE case then passed in 14s. This is staging
+evidence, not completion of mixed-revision publication,
+schema admission, changed-part reads or retention cutover. No public API changed.

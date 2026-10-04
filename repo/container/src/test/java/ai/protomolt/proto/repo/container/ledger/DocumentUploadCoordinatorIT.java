@@ -445,6 +445,94 @@ class DocumentUploadCoordinatorIT {
         }
     }
 
+    @Test void retainedCoreIsReusedWhileOnlyChangedChunksAreUploaded() throws Exception {
+        var base = fixture(2, LEASE);
+        var original = base.command.intent().getMembers(0);
+        var address = original.getDestination().getAddress();
+        var drive = new DriveLedger(tx).findById(UUID.fromString(original.getDriveId())).orElseThrow();
+        var planned = DocumentUploadPlan.prepare(base.command, base.placements, Map.of("member", base.attempt))
+                .members().getFirst().attempt().orElseThrow();
+        var core = planned.uploads().getFirst().object();
+        var fullPlan = new DocumentPartAttemptLedger.Plan(base.attempt, planned.location(), 0, Map.of(), List.of(core));
+        DocumentPartStager.Staged stored;
+        try (var stager = new DocumentPartStager(tx, GENERATION, profile.identity(), opened)) {
+            stored = stager.stage(fullPlan, List.of(base.bodies.get(new DocumentUploadPayloads.Key("member", 0))), LEASE, Map.of());
+        }
+        var measured = stored.parts().getFirst();
+        assertThat(measured.providerVersion()).isNotBlank().isNotEqualTo("null");
+        var manifest = DocumentManifest.newBuilder().setAddress(address).setDocVersion(1)
+                .addParts(PartManifestEntry.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE)
+                        .setState(PartState.PART_STATE_PRESENT).setObjectKey(core.objectKey()).setSizeBytes(core.size()).setSha256(core.sha256())).build();
+        var row = new DocumentRecord(); row.nodeId = planned.location().nodeId(); row.accountId = "account";
+        row.docId = address.getDocId(); row.graphId = address.getGraphId(); row.graphAddressId = address.getGraphAddressId();
+        row.rowKind = DocumentRowKind.PIPELINE; row.datasourceId = "source"; row.driveName = drive.name;
+        row.objectKey = core.objectKey(); row.versionId = measured.providerVersion(); row.etag = measured.etag();
+        row.sizeBytes = core.size(); row.createdAt = java.time.Instant.now(); row.updatedAt = row.createdAt;
+        row.writeSecurity(DocumentSecurity.getDefaultInstance()); row.writeManifest(manifest);
+        row.checksum = DocumentPartCodec.rootChecksumFromManifest(manifest);
+        var published = new DocumentLedger(tx).saveVerifiedAttempt(row, null, Map.of(), base.attempt, stored.attempt().token(),
+                new DocumentPublicationTarget(new DriveLedger(tx), drive, GENERATION, profile.identity()), (em, saved) -> {});
+        String physical = tx.readOnly(em -> em.createNativeQuery(
+                "SELECT physical_object_id FROM document_part_attempt_objects WHERE attempt_id=:id")
+                .setParameter("id", base.attempt).getSingleResult().toString());
+        var identity = PublicationObjectIdentity.newBuilder().setObjectId(physical).setBackendGeneration(GENERATION)
+                .setStorageRealm(profile.storageRealm()).setNamespace(NAMESPACE).setObjectKey(core.objectKey())
+                .setSizeBytes(core.size()).setSha256(core.sha256()).setContentType(core.contentType())
+                .setProviderVersion(measured.providerVersion()).build();
+        var condition = DocumentRevisionCondition.newBuilder().setAddress(address).setExpectedMutationRevision(published.mutationRevision).build();
+        var member = original.toBuilder().setDestination(condition).setParts(0, original.getParts(0).toBuilder()
+                .clearUpload().setReuse(PublicationReuse.newBuilder().setSource(condition)
+                        .setSourceSlot(original.getParts(0).getSlot()).setObject(identity))).build();
+        var command = new DocumentPublicationCommand(base.command.intent().toBuilder().setOperationId(UUID.randomUUID().toString())
+                .clearMembers().addMembers(member).build());
+        var owner = new RepositoryOperationLedger(tx).admit(new RepositoryOperationLedger.Key("account", "principal", command.operationId()),
+                command, UUID.randomUUID(), LEASE).owner().orElseThrow();
+        UUID next = UUID.randomUUID();
+        var prepared = DocumentOperationUploadAdmission.prepare(command, base.placements, Map.of("member", next), LEASE);
+        var bodies = Map.of(new DocumentUploadPayloads.Key("member", 1), base.bodies.get(new DocumentUploadPayloads.Key("member", 1)));
+        var puts = new java.util.concurrent.atomic.AtomicInteger();
+        var store = intercept((method, args, call) -> {
+            if (method.equals("put")) {
+                puts.incrementAndGet();
+                assertThat(((BlobStore.PutSpec) args[0]).key()).endsWith("part-1").isNotEqualTo(core.objectKey());
+            }
+            return call.call();
+        });
+        var budget = new PayloadBudget(1024 * 1024);
+        try (var coordinator = coordinator(store, budget, Duration.ofMillis(25))) {
+            assertThatThrownBy(() -> coordinator.stage(ADMIN, owner, prepared, base.bodies, Map.of(), () -> {}))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThat(puts.get()).isZero();
+            assertThat(new DocumentPartAttemptLedger(tx).find(next)).isEmpty();
+            assertThat(budget.reservedBytes()).isZero();
+            var result = coordinator.stage(ADMIN, owner, prepared, bodies, Map.of(), () -> {});
+            assertThat(result.attempts()).singleElement().satisfies(attempt -> {
+                assertThat(attempt.id()).isEqualTo(next);
+                assertThat(attempt.plannedCount()).isEqualTo(1);
+                assertThat(attempt.state()).isEqualTo("VERIFIED");
+            });
+        }
+        assertThat(puts.get()).isEqualTo(1);
+        assertThat(budget.reservedBytes()).isZero();
+        var uploadedSlots = tx.readOnly(em -> em.unwrap(org.hibernate.Session.class).createNativeQuery(
+                "SELECT part,sub_key,verified FROM document_part_attempt_objects WHERE attempt_id=:id", Object[].class)
+                .setParameter("id", next).getResultList());
+        assertThat(uploadedSlots).singleElement().satisfies(values -> {
+            assertThat(((Number) values[0]).intValue()).isEqualTo(DocumentPart.DOCUMENT_PART_CHUNKS.getNumber());
+            assertThat(values[1]).isEqualTo(original.getParts(1).getSlot().getSubKey());
+            assertThat(values[2]).isEqualTo(true);
+        });
+        var retained = opened.store().get(NAMESPACE, core.objectKey(), measured.providerVersion());
+        assertThat(retained.data()).containsExactly(base.bodies.get(new DocumentUploadPayloads.Key("member", 0)).bytes());
+        assertThat(retained.versionId()).isEqualTo(measured.providerVersion());
+        var currentCore = opened.store().get(NAMESPACE, core.objectKey());
+        assertThat(currentCore.versionId()).isEqualTo(measured.providerVersion());
+        assertThat(currentCore.data()).containsExactly(retained.data());
+        var current = new DocumentLedger(tx).findByNodeId(published.nodeId).orElseThrow();
+        assertThat(current.mutationRevision).isEqualTo(published.mutationRevision);
+        assertThat(current.readManifest()).isEqualTo(manifest);
+    }
+
     private static DocumentUploadCoordinator coordinator(BlobStore store, PayloadBudget budget, Duration age) {
         // A fault-injecting wrapper delegates to the real adapter; the underlying handle remains borrowed.
         var borrowed = new OpenedBlobStore(store, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer());
