@@ -16,8 +16,9 @@ import java.util.UUID;
 /**
  * Internal SQL staging only. The qualified composition supplies sampled physical
  * placement and authenticated caller. Current policy and revisions are checked
- * here, but retained physical content, schema validation, retry reconciliation
- * and provider I/O remain separate, unimplemented boundaries.
+ * here, along with retained current source bindings. Provider qualification for
+ * physical reuse, schema validation, retry reconciliation and provider I/O remain
+ * separate, unimplemented boundaries.
  */
 final class DocumentOperationUploadAdmission {
     private final Tx tx;
@@ -35,10 +36,12 @@ final class DocumentOperationUploadAdmission {
         private final List<EncodedMember> uploads;
         private final List<DocumentUploadPlan.Placement> placements;
         private final DocumentAdmissionAuthorization.Prepared authorization;
+        private final DocumentReuseAdmission.Prepared reuse;
 
         private Prepared(DocumentUploadPlan.Prepared plan, Duration lease) {
             this.plan = plan;
             this.authorization = DocumentAdmissionAuthorization.prepare(plan);
+            this.reuse = DocumentReuseAdmission.prepare(plan);
             this.lease = lease;
             this.uploads = plan.members().stream().filter(member -> member.attempt().isPresent())
                     .map(member -> new EncodedMember(member, UUID.randomUUID(), DocumentAttemptPlanEncoding.prepare(member))).toList();
@@ -68,6 +71,7 @@ final class DocumentOperationUploadAdmission {
             RepositoryOperationLedger.fenceLiveOwner(em, owner);
             requireCommand(em, owner.key(), command);
             DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, prepared.plan, prepared.authorization);
+            DocumentReuseAdmission.requireBoundSources(em, prepared.reuse);
             for (var placement : prepared.placements) {
                 placement.drive().lock(em, drives);
                 var actual = ManagedBackendLedger.find(em, placement.generation())

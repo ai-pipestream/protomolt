@@ -103,6 +103,39 @@ class DocumentOperationUploadAdmissionIT {
         assertThat(admission.admit(SCOPED, f.owner, f.prepare())).hasSize(1);
     }
 
+    @ParameterizedTest @ValueSource(strings = {"uuid", "generation", "realm", "namespace", "key", "version", "missing-version", "size", "sha", "type", "slot"})
+    void forgedReuseClaimCannotStage(String field) {
+        var f = fixture(1);
+        var member = f.command.intent().getMembers(0).toBuilder();
+        var reuse = member.getParts(0).getReuse().toBuilder();
+        var identity = reuse.getObject().toBuilder();
+        switch (field) {
+            case "uuid" -> identity.setObjectId(UUID.randomUUID().toString());
+            case "generation" -> identity.setBackendGeneration("other");
+            case "realm" -> identity.setStorageRealm("other");
+            case "namespace" -> identity.setNamespace("other");
+            case "key" -> identity.setObjectKey("other");
+            case "version" -> identity.setProviderVersion("other");
+            case "missing-version" -> identity.clearProviderVersion();
+            case "size" -> identity.setSizeBytes(2);
+            case "sha" -> identity.setSha256("b".repeat(64));
+            case "type" -> identity.setContentType("text/plain");
+            default -> reuse.setSourceSlot(DocumentPublicationSlot.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CHUNKS).setSubKey("missing"));
+        }
+        var requestedPart = member.getParts(0).toBuilder().setReuse(reuse.setObject(identity));
+        if (field.equals("slot")) {
+            // Keep target/source slots equal and retain a CORE, so this reaches
+            // the database proof rather than failing command shape validation.
+            member.addParts(member.getParts(0));
+            requestedPart.setSlot(reuse.getSourceSlot());
+        }
+        member.setParts(0, requestedPart);
+        var changed = rebind(f, member.build());
+        assertThatThrownBy(() -> admission.admit(SCOPED, changed.owner, changed.prepare()))
+                .isInstanceOf(DocumentPartAttemptLedger.FenceException.class).hasMessageContaining("retained current managed source binding");
+        assertNoAttempt(changed.attempt);
+    }
+
     @Test void deniedDestinationTakesPrecedenceOverAuthorizedButStaleSource() {
         var f = fixture(1);
         tx.inTransaction(em -> { em.createNativeQuery("UPDATE documents SET filename='changed' WHERE node_id=:id")
@@ -276,8 +309,8 @@ class DocumentOperationUploadAdmissionIT {
         return new Fixture(command, owner, f.drive, f.placement, f.attempt, f.destination, f.source);
     }
 
-    @ParameterizedTest @ValueSource(strings = {"missing", "malformed", "inherited", "write-only", "purging", "identity"})
-    void sourcePolicyAndAvailabilityCannotBeBypassedByDeclaredReuse(String kind) {
+    @ParameterizedTest @ValueSource(strings = {"missing", "malformed", "inherited", "write-only", "purging", "destination-identity"})
+    void sourcePolicyAndDestinationIdentityCannotBeBypassedByDeclaredReuse(String kind) {
         var f = fixture(1);
         switch (kind) {
             case "missing" -> tx.inTransaction(em -> { em.createNativeQuery("UPDATE documents SET security=NULL WHERE node_id=:id")
@@ -289,7 +322,7 @@ class DocumentOperationUploadAdmissionIT {
             case "purging" -> tx.inTransaction(em -> { em.createNativeQuery("UPDATE documents SET status='PENDING_PURGE' WHERE node_id=:id")
                     .setParameter("id", f.source.nodeId).executeUpdate(); });
             default -> tx.inTransaction(em -> { em.createNativeQuery("UPDATE documents SET doc_id='different' WHERE node_id=:id")
-                    .setParameter("id", f.source.nodeId).executeUpdate(); });
+                    .setParameter("id", f.destination.nodeId).executeUpdate(); });
         }
         assertThatThrownBy(() -> admission.admit(SCOPED, f.owner, f.prepare()))
                 .isInstanceOfSatisfying(RepositoryException.class, failure -> assertThat(failure.code()).isEqualTo(
@@ -325,8 +358,8 @@ class DocumentOperationUploadAdmissionIT {
         try {
             result = admission.admit(ADMIN, f.owner, prepared);
             assertThat(statistics.getTransactionCount()).isEqualTo(1);
-            // owner+command+revision locks+drive+profile+final lease/fence; then attempt rows and batches.
-            assertThat(statistics.getPrepareStatementCount()).isEqualTo(8 + 4 + (chunks + 255) / 256 + 1);
+            // owner+command+revision locks+source/claim proof+drive+profile+final checks; then attempt rows and batches.
+            assertThat(statistics.getPrepareStatementCount()).isEqualTo(10 + 4 + (chunks + 255) / 256 + 1);
         } finally { statistics.setStatisticsEnabled(false); }
         assertThat(result).hasSize(1);
         assertThat(result.getFirst().planKind()).isEqualTo("NEW_CONTENT");
@@ -464,7 +497,8 @@ class DocumentOperationUploadAdmissionIT {
         var destinationAddress = address("destination-" + UUID.randomUUID());
         var sourceAddress = address("source-" + UUID.randomUUID());
         var destination = document(destinationAddress, drive.name);
-        var source = document(sourceAddress, drive.name);
+        var retained = ManagedDocumentFixture.publish(tx, drive, generation, profile, sourceAddress, POLICY, 1, 1, "source-v1");
+        var source = retained.row();
         var slot = DocumentPublicationSlot.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE).build();
         var member = DocumentPublicationMember.newBuilder().setMemberId("member").setDriveId(drive.driveId.toString())
                 .setDestination(DocumentRevisionCondition.newBuilder().setAddress(destinationAddress).setExpectedMutationRevision(destination.mutationRevision))
@@ -472,9 +506,7 @@ class DocumentOperationUploadAdmissionIT {
                 .setRowKind(DocumentPublicationRowKind.DOCUMENT_PUBLICATION_ROW_KIND_PIPELINE)
                 .addParts(DocumentPublicationPart.newBuilder().setSlot(slot).setReuse(PublicationReuse.newBuilder()
                         .setSource(DocumentRevisionCondition.newBuilder().setAddress(sourceAddress).setExpectedMutationRevision(source.mutationRevision)).setSourceSlot(slot)
-                        .setObject(PublicationObjectIdentity.newBuilder().setObjectId(UUID.randomUUID().toString())
-                                .setBackendGeneration("original").setStorageRealm("original-realm").setNamespace("original-namespace")
-                                .setObjectKey("original-key").setSizeBytes(1).setSha256(SHA).setContentType("application/protobuf"))));
+                        .setObject(retained.identities().getFirst())));
         for (int i = 0; i < chunks; i++) member.addParts(DocumentPublicationPart.newBuilder()
                 .setSlot(DocumentPublicationSlot.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CHUNKS).setSubKey("chunk-" + i))
                 .setUpload(PublicationUpload.newBuilder().setSizeBytes(9007199254740993L).setSha256(SHA).setContentType("application/protobuf")));

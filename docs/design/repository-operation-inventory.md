@@ -1920,3 +1920,53 @@ two client statements for batched document locking: 1 and 513 uploads now requir
 per-row SQL. These counts exclude server trigger work and are not latency
 qualification. All work is local; no push, hosted CI, merge or deployment is
 claimed by this checkpoint.
+
+### Retained source binding at typed upload staging
+
+This extends internal upload admission without changing protobuf contracts or
+enabling a new public operation. After locked source authorization and revision
+checks, admission now proves that each reuse claim matches the source's current
+managed FULL_REVISION publication. The proof requires verified attempt/object
+records, an unchanged published body, no cleanup claim, and both current and
+historical retention references. It compares the exact object ID, backend
+generation, realm, namespace, key, optional provider version, size, checksum and
+content type. Catalogue registration alone is insufficient.
+
+Policy-only revision changes are checked against the caller's current expected
+revision without requiring the older publication revision to change. Explicit
+source dependencies that do not reuse bytes need no managed publication. A legacy
+row recreated at a formerly managed address cannot borrow the retained historical
+binding. Current drive configuration does not remap stored source coordinates.
+
+Preparation deduplicates claims and encodes batches before acquiring SQL locks.
+Proof uses ceil(distinct reused sources / 256) plus ceil(distinct reused slots /
+256) client statements. Each source body is compared once, independent of its
+number of claimed parts. Integer sizes are encoded as decimal strings, preserving
+64-bit precision. The tested one-source admission cases now use 16 statements for
+one upload and 18 for 513 uploads. These are statement bounds, not throughput or
+tail-latency qualification; full-body comparison, lock duration and memory still
+need measurements under representative load.
+
+No additional attempt or retention locks are acquired. This relies on the existing
+FULL_REVISION immutable history, exclusive attempt keys and native retention
+guards while source revision locks are held. Reassess that argument when adding
+mixed revisions. Provider work is outside this staging transaction.
+
+Eleven forged identity/slot cases were reproduced as incorrectly accepted with
+the new proof disabled, then passed with it enabled. The final focused run passed
+66 cases in 20 seconds, including 256/257 distinct sources, 256/257/513 claims,
+sizes above 2^53, shared and contradictory claims, optional version presence,
+policy changes and SQL retention guards. Test fixtures explicitly synthesize SQL
+verification observations; they exercise real publication and retention guards
+but do not claim to upload or verify provider bytes. Sol reviewed the final source
+and found no blocking issue within this boundary.
+
+Provider immutability qualification, independent revision identity and ordered
+references, mixed/zero-upload publication, retained schema closure and retry
+reconciliation remain unfinished. Passing this proof grants no enduring publish
+authority: publication must reauthorize and recheck revisions after provider work.
+No new semantic review, normal-read or receipt path is enabled.
+
+The full container and service regression run passed on 2026-10-04 in 2m18s:
+107 suites, 902 cases, 899 passed and three skipped, zero failures or errors.
+No push, hosted CI, merge or deployment is claimed for this local checkpoint.
