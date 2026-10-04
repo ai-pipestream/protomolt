@@ -4138,3 +4138,46 @@ entries, reversed wire order, omitted default values, invalid provenance,
 encoding/digest mismatch, bounded decode and cancellation. Existing occurrence
 and root codec regression tests remain green. Sol reviewed the code and tests
 without a remaining blocker. These fixtures do not authenticate compiler claims.
+
+### Normalized revision provenance and source bindings
+
+V57 adds `document_revision_schema_assets`, associating an exact type URL and
+descriptor artifact with canonical metadata and optional source artifacts. All
+bytes use the existing account-scoped, immutable digest catalog. Composite
+foreign keys require each role to have a retained artifact reference on that
+same revision. A null source is permitted for imported definitions with no source
+claim; trusted admission must require and verify the source reference whenever
+the metadata claims one, including local compilation.
+
+The association is immutable and requires the native commit owner, generation,
+current transaction and unsealed projection. Metadata storage is bounded to
+512 KiB. Type URLs retain their exact text, with a verified SHA-256 index key so
+valid long URLs do not exceed PostgreSQL's B-tree entry limit. Readers must still
+compare the exact URL; a collision on the composite URL-digest/descriptor identity
+must refuse the association, never select a different definition. Different descriptor versions under one exact
+URL remain distinct associations. Conflicting metadata for the same URL and
+descriptor within one revision is not accepted.
+
+The existing 64-artifact and 64 MiB staging budget applies cumulatively across
+descriptor, metadata and source roles. Individual artifacts remain limited to
+16 MiB; associations are limited to 64 per revision. These independent ceilings
+do not promise 64 complete unique bindings: three unique artifacts per binding
+would exhaust the artifact count after 21 bindings. Reuse reduces storage and
+claim counts. Expanding the budget requires operation-wide resource review.
+
+No source archive is extracted or executed by retention. Source bytes are inert;
+future compilation must establish their exact format, input manifest and import
+closure before claiming local observed provenance. The publisher must decode the
+canonical metadata and compare its type URL, descriptor, source and condition
+with these stored claims, retain the complete asset union, and establish policy
+and candidate evidence before activation. V57 alone does not establish any of
+those semantic relationships. Existing revisions receive no invented metadata.
+
+Five targeted PostgreSQL suites pass 41 tests, including ten new association
+tests. They cover shared normalized artifacts, each missing role reference,
+optional and missing source/metadata cases, the exact metadata byte limit,
+ownership and sealing, rollback/retry, populated V56 migration, 4096-character
+Unicode URLs, multiple definitions under one URL and the exact 64-binding limit.
+Explicit foreign-key names make the role-specific failures unambiguous. Sol
+reviewed the migration and fixtures with no remaining blocker. These SQL tests
+use synthetic bytes and do not establish trusted compiler or admission evidence.
