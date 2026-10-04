@@ -11,6 +11,32 @@ class DocumentPublicationCommandTest {
     private static final String OTHER = "10000000-0000-4000-8000-000000000002";
     private static final String SHA = "a".repeat(64);
 
+    @Test void successfulResultMustMatchFullCanonicalCommandAndCommittingOwner() {
+        var command = command(intent().toBuilder().clearMembers().addMembers(member("z")).addMembers(member("a")).build());
+        var result = DocumentPublicationResult.newBuilder().setOperationId(ID).setAccountId("a")
+                .setCommandEncodingVersion(1).setCommandSha256(command.sha256()).setPrincipal("principal").setOwnerGeneration(2);
+        for (var m : command.intent().getMembersList()) result.addMembers(DocumentPublishedRevision.newBuilder()
+                .setMemberId(m.getMemberId()).setAddress(m.getDestination().getAddress())
+                .setRevisionId(java.util.UUID.randomUUID().toString()).setMutationRevision(1));
+        var valid = result.build();
+        assertThatCode(() -> command.requireResult(valid, "principal", 2)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> command.requireResult(valid, "other-principal", 2)).hasMessageContaining("operation identity");
+        assertThatThrownBy(() -> command.requireResult(valid, "principal", 3)).hasMessageContaining("operation identity");
+        assertThatThrownBy(() -> command.requireResult(valid.toBuilder().setOperationId(OTHER).build(), "principal", 2))
+                .hasMessageContaining("operation identity");
+        assertThatThrownBy(() -> command.requireResult(valid.toBuilder().setCommandSha256("b".repeat(64)).build(), "principal", 2))
+                .hasMessageContaining("operation identity");
+        assertThatThrownBy(() -> command.requireResult(valid.toBuilder().removeMembers(1).build(), "principal", 2))
+                .hasMessageContaining("incomplete member set");
+        assertThatThrownBy(() -> command.requireResult(valid.toBuilder().setMembers(0, valid.getMembers(1))
+                .setMembers(1, valid.getMembers(0)).build(), "principal", 2)).hasMessageContaining("canonical member order");
+        assertThatThrownBy(() -> command.requireResult(valid.toBuilder().setMembers(0, valid.getMembers(0).toBuilder()
+                .setAddress(address("wrong"))).build(), "principal", 2)).hasMessageContaining("address");
+        var unknown = UnknownFieldSet.newBuilder().addField(999, UnknownFieldSet.Field.newBuilder().addVarint(1).build()).build();
+        assertThatThrownBy(() -> command.requireResult(valid.toBuilder().setUnknownFields(unknown).build(), "principal", 2))
+                .hasMessageContaining("Unknown publication fields");
+    }
+
     private static NodeAddress address(String doc) {
         return NodeAddress.newBuilder().setAccountId("a").setDocId(doc)
                 .setGraphId("g").setGraphAddressId("n").build();

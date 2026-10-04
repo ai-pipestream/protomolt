@@ -189,6 +189,23 @@ authority, canonical command validity or verified physical content. Failed locki
 marks the transaction rollback-only. The independent publisher and activation
 gates above remain unimplemented; this primitive is not a commit operation.
 
+DocumentPublicationResult now defines the success payload required by durable
+outcome storage. It binds account, principal, operation UUID, canonical command
+encoding version/digest and the committing owner generation to the complete ordered
+member set. Each member records its exact address, independent revision UUID and
+positive document mutation revision. It has no required upload attempt and no
+validation verdict. Existing command and protobuf identities are unchanged.
+
+DocumentPublicationCommand.requireResult validates bounded result shape and exact
+command/owner/member correspondence, including canonical member order. Replay must
+use the original committing generation read from the durable outcome, not renew
+ownership to manufacture a new result. The publisher must separately verify actual
+revision IDs/counters against the committed rows, commit the immutable outcome with
+all members and the outbox, and authorize replay against current access policy.
+Failure to validate a response after commit does not roll back the database; retry
+must recover the same durable result. Outcome persistence and this replay path are
+still unimplemented. Errors/cancellation are not encoded as successful member results.
+
 ## Identity and ownership
 
 A revision receives an immutable UUID independently of upload attempts, document

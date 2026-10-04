@@ -3498,3 +3498,24 @@ contention using actual database wait evidence. Fixture provider observations ar
 synthetic; these tests establish SQL behavior, not provider qualification. Independent
 revision creation/sealing, metadata persistence, outcome/outbox and read activation
 remain pending. Sol found no blocker in the scoped lock primitive.
+
+### Successful publication result contract and command binding
+
+Added DocumentPublicationResult/DocumentPublishedRevision without changing an
+existing RPC or protobuf identity. The result binds the scoped operation, command
+encoding version/hash, committing generation and full member/revision set. It does
+not require an upload attempt and makes no typed-validation claim. The shared SPI
+command now checks exact result correspondence and rejects unknown fields before
+real runtime validation. Missing/extra/reordered members, wrong addresses, principal,
+generation and command identity cannot pass that check.
+
+All 67 protobuf/SPI tests and runtime dependency gates pass, including generated
+and dynamic result validation and a 64-member result. JSON Schema exposes bounds
+and CEL metadata; cross-field rules remain runtime constraints and no OpenAPI
+generator change is included. Durable outcome insertion, atomic revision/outbox
+binding and authorized replay remain unimplemented. Do not advertise this standalone
+result definition as an available commit endpoint.
+Complete protobuf imports compile, new-file Buf lint and workspace compatibility
+against the preceding HEAD pass. Sol's canonical UUID concern was addressed with
+exact lowercase UUID patterns and short-form rejection fixtures; the final 67-test
+rerun passes.

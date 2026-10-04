@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v1;
+
+import "ai/protomolt/proto/repo/v1/address.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.v1";
+
+// Successful committed revision identity, independent of any upload attempt.
+message DocumentPublishedRevision {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "published-revision-address"
+    message: "all address coordinates must be nonblank"
+    expression: "this.address.doc_id.matches('.*\\\\S.*') && this.address.graph_address_id.matches('.*\\\\S.*') && this.address.account_id.matches('.*\\\\S.*') && this.address.graph_id.matches('.*\\\\S.*')"
+  };
+  // Member identity from the exact canonical command.
+  string member_id = 1 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+  // Exact destination address from that member.
+  NodeAddress address = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Immutable repository revision UUID, not an upload attempt ID.
+  string revision_id = 3 [(ai.protomolt.proto.validate.v1.field).string = {uuid: true, pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}];
+  // Document mutation revision, not a manifest version or JCR version.
+  int64 mutation_revision = 4 [(ai.protomolt.proto.validate.v1.field).int64.gt = 0];
+}
+
+// Proposed successful result for atomic publication. No RPC is mounted here.
+// A handler must match the complete canonical command/member/address set, verify
+// caller scope and commit all revisions, references, outcome and outbox atomically.
+// Unknown fields are rejected at that boundary. Shape validation does not prove
+// commit, payload validity, provenance, or authorization. Retry returns the same
+// durable result after authorization; a lost acknowledgment does not create new IDs.
+message DocumentPublicationResult {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-result-account"
+    message: "every committed address must belong to the result account"
+    expression: "this.members.all(m, m.address.account_id == this.account_id)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-result-unique"
+    message: "members, addresses and committed revision IDs must be unique"
+    expression: "this.members.all(m, this.members.filter(n, n.member_id == m.member_id).size() == 1 && this.members.filter(n, n.revision_id == m.revision_id).size() == 1 && this.members.filter(n, n.address == m.address).size() == 1)"
+  };
+  // Exact operation UUID, scoped to account and authenticated principal.
+  string operation_id = 1 [(ai.protomolt.proto.validate.v1.field).string = {uuid: true, pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}];
+  // Account scope of the committed command.
+  string account_id = 2 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+  // SHA-256 from DocumentPublicationCommand's existing canonical encoding.
+  string command_sha256 = 3 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$"];
+  // Authenticated principal, not an API key or credential.
+  string principal = 4 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+  // Owner generation that committed; later retries must not replace it.
+  int64 owner_generation = 5 [(ai.protomolt.proto.validate.v1.field).int64.gt = 0];
+  // Complete member set in canonical command order; no partial success is represented.
+  repeated DocumentPublishedRevision members = 6 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 64}];
+  // Version of the existing document-publication canonical command codec.
+  uint32 command_encoding_version = 7 [(ai.protomolt.proto.validate.v1.field).uint32.const = 1];
+}

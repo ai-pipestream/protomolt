@@ -74,6 +74,35 @@ public final class DocumentPublicationCommand {
     public ByteString canonical() { return canonical; }
     public String sha256() { return sha256; }
 
+    /**
+     * Validate a success result against this exact command and the authenticated
+     * operation's committing principal/generation. This proves correspondence only,
+     * not commit, authorization or admission. The publisher must verify durable
+     * revision rows and store the result in their transaction. Replay uses the
+     * originally committed generation, not a new reader's or retry worker's value.
+     */
+    public void requireResult(DocumentPublicationResult result, String principal, long committedGeneration) {
+        Objects.requireNonNull(result, "result");
+        Objects.requireNonNull(principal, "principal");
+        if (result.getSerializedSize() > MAX_COMMAND_BYTES)
+            throw new IllegalArgumentException("Publication result exceeds 1 MiB");
+        rejectUnknownAndNul(result);
+        if (!VALIDATOR.validate(result).valid()) throw new IllegalArgumentException("Invalid publication result");
+        if (!result.getOperationId().equals(operationId.toString()) || !result.getAccountId().equals(intent.getAccountId())
+                || !result.getCommandSha256().equals(sha256) || result.getCommandEncodingVersion() != ENCODING_VERSION
+                || !result.getPrincipal().equals(principal) || result.getOwnerGeneration() != committedGeneration)
+            throw new IllegalArgumentException("Publication result differs from operation identity");
+        if (result.getMembersCount() != intent.getMembersCount())
+            throw new IllegalArgumentException("Publication result has an incomplete member set");
+        for (int i = 0; i < intent.getMembersCount(); i++) {
+            var expected = intent.getMembers(i);
+            var actual = result.getMembers(i);
+            if (!actual.getMemberId().equals(expected.getMemberId())
+                    || !actual.getAddress().equals(expected.getDestination().getAddress()))
+                throw new IllegalArgumentException("Publication result differs from canonical member order or address");
+        }
+    }
+
     @Override public String toString() {
         return "DocumentPublicationCommand[operationId=" + operationId + ", members="
                 + intent.getMembersCount() + ", sha256=" + sha256 + "]";
