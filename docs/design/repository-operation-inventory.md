@@ -5179,3 +5179,21 @@ publication test holds both fragment and proof owners through staging and commit
 releases them, and validates the retained custom type in a fresh JVM. This extends
 the existing historical replay qualification; a mounted native coordinator and
 its complete end-to-end resource accounting are still pending.
+
+### Owned upload-preparation handoff
+
+New internal `DocumentUploadCoordinator.stageAndPrepareOwned` transfers an
+independently owned callback result only after final authorization, selection and
+operation-owner checks and worker/view draining succeed. A later failure closes
+that candidate and preserves the primary exception, attaching any cleanup error
+as suppressed. Before the callback returns, it owns its own failure cleanup and
+must not retain the borrowed upload view. Successful callers own the returned
+result through staging/commit and close it after its consumers finish.
+
+Real-provider tests cover successful transfer, cancellation after callback return,
+expired ownership and cleanup failure. They assert that upload reservations have
+drained before transfer and that the candidate closes exactly once on rejection.
+Expiry is injected explicitly in the test database; ordinary SQL renewal guards
+reject shortening a live lease. The earlier expiry fixture was corrected to test
+the intended post-preparation owner fence. The native publication coordinator
+still needs to use this handoff with its combined fragment/proof owner.

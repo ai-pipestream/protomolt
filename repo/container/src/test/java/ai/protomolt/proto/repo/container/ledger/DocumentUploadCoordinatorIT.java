@@ -182,6 +182,8 @@ class DocumentUploadCoordinatorIT {
                         if (failure.equals("callback")) throw new IllegalStateException("test callback failure");
                         if (failure.equals("cancel")) cancelled.set(true);
                         if (failure.equals("owner")) tx.inTransaction(em -> {
+                            // Test-only expiry injection: normal renewals correctly reject shortening a lease.
+                            em.createNativeQuery("SET LOCAL session_replication_role='replica'").executeUpdate();
                             em.createNativeQuery("UPDATE repository_operation_owners SET lease_until=clock_timestamp()-interval '1 second' WHERE operation_id=:id")
                                     .setParameter("id", f.command.operationId()).executeUpdate();
                         });
@@ -190,6 +192,58 @@ class DocumentUploadCoordinatorIT {
         }
         assertThat(view.get()).isNotNull();
         assertThatThrownBy(() -> view.get().keys()).hasMessageContaining("closed");
+        assertThat(budget.reservedBytes()).isZero();
+        assertThat(verified(f)).isEqualTo(1);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"success", "cancel", "owner", "cleanup"})
+    void ownedPreparationTransfersOnlyAfterPostChecksAndDraining(String outcome) throws Exception {
+        var f = fixture(1, LEASE);
+        var budget = new PayloadBudget(1024 * 1024);
+        var cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        var closes = new java.util.concurrent.atomic.AtomicInteger();
+        var cancelledFailure = new java.util.concurrent.CancellationException("cancel after owned preparation");
+        var cleanupFailure = new java.io.IOException("candidate cleanup failed");
+        Runnable control = () -> { if (cancelled.get()) throw cancelledFailure; };
+        DocumentUploadCoordinator.Preparation<AutoCloseable> preparation = (staged, bytes, active) -> {
+            assertThat(bytes.keys()).hasSize(1);
+            var lease = budget.reserve(19);
+            try {
+                if (outcome.equals("owner")) tx.inTransaction(em -> {
+                    // Force expiration after the callback without waiting on wall-clock lease duration.
+                    em.createNativeQuery("SET LOCAL session_replication_role='replica'").executeUpdate();
+                    em.createNativeQuery("UPDATE repository_operation_owners SET lease_until=clock_timestamp()-interval '1 second' WHERE operation_id=:id")
+                            .setParameter("id", f.command.operationId()).executeUpdate();
+                });
+                if (outcome.equals("cancel") || outcome.equals("cleanup")) cancelled.set(true);
+                return () -> {
+                    closes.incrementAndGet();
+                    lease.close();
+                    if (outcome.equals("cleanup")) throw cleanupFailure;
+                };
+            } catch (RuntimeException | Error failure) {
+                lease.close();
+                throw failure;
+            }
+        };
+        try (var coordinator = coordinator(opened.store(), budget, Duration.ofMillis(25))) {
+            if (outcome.equals("success")) {
+                try (var candidate = coordinator.stageAndPrepareOwned(ADMIN, f.owner, f.prepared, f.bodies,
+                        Map.of(), control, preparation)) {
+                    assertThat(closes).hasValue(0);
+                    assertThat(budget.reservedBytes()).isEqualTo(19); // All upload workers/views have drained.
+                }
+            } else {
+                var caught = catchThrowable(() -> coordinator.stageAndPrepareOwned(ADMIN, f.owner, f.prepared,
+                        f.bodies, Map.of(), control, preparation));
+                if (outcome.equals("owner")) assertThat(caught).isInstanceOf(RepositoryOperationLedger.OwnerFencedException.class);
+                else assertThat(caught).isSameAs(cancelledFailure);
+                if (outcome.equals("cleanup")) assertThat(caught.getSuppressed()).containsExactly(cleanupFailure);
+                else assertThat(caught.getSuppressed()).isEmpty();
+            }
+        }
+        assertThat(closes).hasValue(1);
         assertThat(budget.reservedBytes()).isZero();
         assertThat(verified(f)).isEqualTo(1);
     }

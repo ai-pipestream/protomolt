@@ -95,6 +95,37 @@ final class DocumentUploadCoordinator implements AutoCloseable {
         return execute(caller, owner, prepared, bodies, attributes, control, Map.of(), Objects.requireNonNull(preparation), true);
     }
 
+    /**
+     * Transfer an independently owned candidate only after post-preparation fences and
+     * worker drain succeed. If either fails, close the candidate before propagating the
+     * failure. The callback still owns cleanup until it returns and must not retain the
+     * borrowed view. A successful caller must close the returned owner after all uses.
+     */
+    <T extends AutoCloseable> T stageAndPrepareOwned(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
+            Map<String, String> attributes, Runnable control, Preparation<T> preparation) {
+        Objects.requireNonNull(preparation);
+        var pending = new AtomicReference<T>();
+        try {
+            var result = stageAndPrepare(caller, owner, prepared, bodies, attributes, control, (staged, bytes, active) -> {
+                var candidate = Objects.requireNonNull(preparation.prepare(staged, bytes, active), "Owned preparation result");
+                pending.set(candidate);
+                return candidate;
+            });
+            pending.set(null);
+            return result;
+        } catch (RuntimeException | Error failure) {
+            var candidate = pending.getAndSet(null);
+            if (candidate != null) {
+                try { candidate.close(); }
+                catch (Exception | Error cleanup) {
+                    if (cleanup != failure) failure.addSuppressed(cleanup);
+                }
+            }
+            throw failure;
+        }
+    }
+
     Staged retry(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
             Map<String, String> attributes, Runnable control, Map<String, DocumentOperationSelection.Expected> replacements) {
