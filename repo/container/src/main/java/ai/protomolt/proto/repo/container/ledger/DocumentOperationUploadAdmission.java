@@ -73,6 +73,20 @@ final class DocumentOperationUploadAdmission {
     /** Capture exact retained reads without creating attempts or claiming fresh upload selection. */
     DocumentRetainedReadPlan captureRetainedReads(RepositoryCaller caller,
             RepositoryOperationLedger.Owner owner, Prepared prepared) {
+        return captureReads(caller, owner, prepared, null, null).plan();
+    }
+
+    /** Durable whole-plan protection; no host/provider read lifetime is activated by this handle. */
+    DocumentReadPins.Captured capturePinnedReads(RepositoryCaller caller,
+            RepositoryOperationLedger.Owner owner, Prepared prepared, UUID reader) {
+        Objects.requireNonNull(reader);
+        Objects.requireNonNull(prepared);
+        var pins = DocumentReadPins.prepare(prepared.plan.command());
+        return captureReads(caller, owner, prepared, reader, pins);
+    }
+
+    private DocumentReadPins.Captured captureReads(RepositoryCaller caller,
+            RepositoryOperationLedger.Owner owner, Prepared prepared, UUID reader, DocumentReadPins.Prepared pins) {
         Objects.requireNonNull(owner); Objects.requireNonNull(prepared);
         var command = prepared.plan.command();
         DocumentAdmissionAuthorization.requireCaller(caller, owner, command.intent().getAccountId());
@@ -80,14 +94,18 @@ final class DocumentOperationUploadAdmission {
             throw new IllegalArgumentException("Read command differs from operation scope");
         return tx.inTransaction(em -> {
             RepositoryOperationLedger.fenceLiveOwner(em, owner);
+            if (reader != null) em.createNativeQuery("SELECT require_active_repository_reader(:reader)")
+                    .setParameter("reader", reader).getSingleResult();
             requireCommand(em, owner.key(), command);
             DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, prepared.plan, prepared.authorization);
             var captured = DocumentReuseAdmission.capture(em, prepared.reuse, prepared.plan, owner);
+            var protectedReads = pins == null ? new DocumentReadPins.Captured(captured, null, List.of())
+                    : DocumentReadPins.acquire(em, pins, captured, reader, prepared.reuse);
             // Source/profile waits must not allow an expired owner to receive a new plan.
             em.createNativeQuery("SELECT require_repository_operation_write_fence(:account,:principal,:operation,:generation)")
                     .setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())
                     .setParameter("operation", owner.key().operationId()).setParameter("generation", owner.generation()).getSingleResult();
-            return captured;
+            return protectedReads;
         });
     }
 

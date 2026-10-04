@@ -511,6 +511,90 @@ class DocumentOperationUploadAdmissionIT {
         assertThat(selectionHistoryCount(f)).isZero();
     }
 
+    private static UUID activeReader() {
+        UUID reader = UUID.randomUUID();
+        tx.inTransaction(em -> { em.createNativeQuery("INSERT INTO repository_reader_incarnations(incarnation,state) VALUES(:reader,'ACTIVE')")
+                .setParameter("reader", reader).executeUpdate(); });
+        return reader;
+    }
+
+    private static long readPins(UUID reader) {
+        return tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM document_read_pins WHERE reader_incarnation=:reader")
+                .setParameter("reader", reader).getSingleResult()).longValue());
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void completePinSetCommitsOrRollsBackWhenAnObjectIsRetiring(boolean retire) {
+        var f = fixture(0);
+        var source = ManagedDocumentFixture.publish(tx, f.drive, f.placement.generation(), f.placement.profile(),
+                f.source.readManifest().getAddress(), POLICY, 2, 1, "pin-source-v2");
+        var condition = DocumentRevisionCondition.newBuilder().setAddress(source.row().readManifest().getAddress())
+                .setExpectedMutationRevision(source.row().mutationRevision).build();
+        var member = f.command.intent().getMembers(0).toBuilder().clearParts();
+        for (int i = 0; i < 2; i++) member.addParts(DocumentPublicationPart.newBuilder().setSlot(source.slots().get(i))
+                .setReuse(PublicationReuse.newBuilder().setSource(condition).setSourceSlot(source.slots().get(i))
+                        .setObject(source.identities().get(i))));
+        var changed = rebind(f, member.build());
+        UUID reader = activeReader();
+        if (retire) {
+            // Retire the last object in SQL UUID order so at least one earlier INSERT
+            // can execute before the native guard rejects the batch.
+            UUID last = source.identities().stream().map(i -> UUID.fromString(i.getObjectId()))
+                    .max(java.util.Comparator.comparing(UUID::toString)).orElseThrow();
+            tx.inTransaction(em -> { em.createNativeQuery("UPDATE repository_object_retention SET retiring=true WHERE object_id=:object")
+                    .setParameter("object", last).executeUpdate(); });
+            assertThatThrownBy(() -> admission.capturePinnedReads(SCOPED, changed.owner, changed.prepare(), reader))
+                    .isInstanceOf(RuntimeException.class);
+            assertThat(readPins(reader)).isZero();
+            for (var identity : source.identities()) {
+                long count = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM repository_object_references WHERE object_id=:object AND owner_kind='DOCUMENT_READER'")
+                    .setParameter("object", UUID.fromString(identity.getObjectId())).getSingleResult()).longValue());
+                assertThat(count).isZero();
+            }
+        } else {
+            var captured = admission.capturePinnedReads(SCOPED, changed.owner, changed.prepare(), reader);
+            assertThat(captured.plan().entries()).hasSize(2);
+            assertThat(captured.pins()).hasSize(2);
+            assertThat(readPins(reader)).isEqualTo(2);
+            for (var pin : captured.pins()) tx.inTransaction(em -> {
+                assertThat(((Number) em.createNativeQuery("SELECT count(*) FROM repository_object_references WHERE owner_kind='DOCUMENT_READER' AND owner_id=:pin")
+                        .setParameter("pin", pin.id()).getSingleResult()).longValue()).isEqualTo(1);
+                em.createNativeQuery("SELECT release_document_read_pin(:pin,:reader,:object)")
+                        .setParameter("pin", pin.id()).setParameter("reader", reader).setParameter("object", pin.object()).getSingleResult();
+            });
+            assertThat(readPins(reader)).isZero();
+        }
+        assertNoAttempt(changed.attempt);
+    }
+
+    @Test void pinnedCaptureRejectsUnknownReaderWithoutPins() {
+        var f = fixture(0); UUID reader = UUID.randomUUID();
+        assertThatThrownBy(() -> admission.capturePinnedReads(SCOPED, f.owner, f.prepare(), reader)).isInstanceOf(RuntimeException.class);
+        assertThat(readPins(reader)).isZero();
+    }
+
+    @Test void twoMembersSharingOneObjectRetainEveryClaimButAcquireOnePin() {
+        var f = fixture(0);
+        var first = f.command.intent().getMembers(0);
+        var second = first.toBuilder().setMemberId("second").setDestination(DocumentRevisionCondition.newBuilder()
+                .setAddress(first.getDestination().getAddress().toBuilder().setDocId(UUID.randomUUID().toString()))
+                .setIfAbsent(true)).build();
+        var command = new DocumentPublicationCommand(f.command.intent().toBuilder()
+                .setOperationId(UUID.randomUUID().toString()).addMembers(second).build());
+        var owner = operations.admit(new RepositoryOperationLedger.Key("account", "principal", command.operationId()),
+                command, UUID.randomUUID(), LEASE).owner().orElseThrow();
+        var prepared = DocumentOperationUploadAdmission.prepare(command, f.placements(), Map.of(), LEASE);
+        UUID reader = activeReader();
+        var captured = admission.capturePinnedReads(ADMIN, owner, prepared, reader);
+        assertThat(captured.plan().entries()).extracting(DocumentRetainedReadPlan.Entry::memberId).containsExactly("member", "second");
+        assertThat(captured.pins()).hasSize(1);
+        assertThat(readPins(reader)).isEqualTo(1);
+        var pin = captured.pins().getFirst();
+        tx.inTransaction(em -> { em.createNativeQuery("SELECT release_document_read_pin(:pin,:reader,:object)")
+                .setParameter("pin", pin.id()).setParameter("reader", reader).setParameter("object", pin.object()).getSingleResult(); });
+    }
+
     @Test void deniedDestinationTakesPrecedenceOverAuthorizedButStaleSource() {
         var f = fixture(1);
         tx.inTransaction(em -> { em.createNativeQuery("UPDATE documents SET filename='changed' WHERE node_id=:id")

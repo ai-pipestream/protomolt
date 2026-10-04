@@ -2899,3 +2899,24 @@ reports contain 116 suites and 1,031 cases: 1,028 passed, three skipped, no fail
 The first run completed service tests but failed container test compilation on an
 ambiguous lambda overload; after correction the container suite passed in 1m56s,
 with service results up to date. No hosted CI, push, merge or deployment ran.
+
+### Atomic retained-plan pin acquisition
+
+New internal `capturePinnedReads` retains normal command/owner/authorization checks,
+requires an ACTIVE reader and captures all exact source claims. `DocumentReadPins`
+prepares pin UUIDs and deduplicated physical witnesses before SQL, then locks the
+complete distinct origin set in PostgreSQL UUID order followed by all retention
+objects in PostgreSQL UUID order. It inserts the whole pin set in one statement;
+the ending owner check participates in the same transaction. All claims are
+rechecked after origin locking, including future shared-object/non-witness sources;
+deduplicating physical protection never removes canonical claim validation.
+
+Tests verify two-object acquisition, complete native/mirror rollback when the last
+object in SQL order is retiring, unknown-reader refusal and two members retaining
+two claims but sharing one physical pin. Existing source/owner/authorization cases
+remain in the affected suite. Sol reviewed the lock discipline; the additional
+post-origin source proof was incorporated from that review. Host read lifetimes,
+quiescence/recovery and overlapping large-plan races remain unqualified. No public
+API or provider path uses this internal handle yet.
+The final 91 admission/native-pin cases passed in 27s after fixing an ambiguous
+test assertion overload. No hosted CI, push, merge or deployment ran.

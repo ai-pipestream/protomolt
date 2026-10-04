@@ -1,7 +1,9 @@
 # Repository composition and typed archival admission
 
-Status: proposed design, ready for implementation planning. This document does
-not introduce an API or claim that the missing behavior is available.
+Status: implementation in progress under the eight delivery stages below.
+Individual checkpoints are recorded in the operation inventory and revision-cutover
+design. The complete typed archival admission path is not yet available; this
+document does not claim that unfinished behavior is implemented.
 
 Source baseline: `fd0cf28769494b281e5ca3963bff1844b22be193`, whose tree matches
 the merged delegation extraction at `528117a2d48cda3b3abedadd75b5706d7ac68ca7`.
@@ -2120,8 +2122,8 @@ requirements, which refine the boundaries above:
 
 ### Delivery stages
 
-Each item is a bounded change with its own review. This is the proposed scope for
-a subsequent goal, not an active implementation goal.
+Each item has its own implementation and review evidence. These eight stages are
+the active goal; individual checkpoints do not establish completion of a stage.
 
 1. **Contract inventory and regression baseline.** Classify every affected
    operation as unchanged, extended or new. Inventory schema references, receipt

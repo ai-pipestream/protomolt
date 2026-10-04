@@ -275,8 +275,10 @@ performs its own atomic fence; neither a read plan nor a checked draft grants it
 ### Document reader protection before activation
 
 V44 implements the native document pin table, mirror/reference guards and exact
-single-pin release primitive. Whole-plan acquisition, host lifetime ownership and
-quiescence recovery are still unimplemented; provider reads do not yet acquire
+single-pin release primitive. Internal whole-plan acquisition now validates all
+claims, locks complete sorted origin/retention sets and inserts deduplicated pins
+atomically. Host lifetime ownership and quiescence recovery are still unimplemented;
+provider reads do not yet acquire
 these pins. The remaining integration must reuse the existing
 `repository_reader_incarnations` lifecycle from V31/V32: fresh ACTIVE incarnations,
 permanent fencing, and trusted LOCAL_DRAIN attestation before QUIESCED recovery.
