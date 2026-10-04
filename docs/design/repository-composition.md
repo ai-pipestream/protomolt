@@ -241,6 +241,10 @@ binding, durable descriptor retention and historical restore integration remain
 required. Existing registry artifact hash validation and permissive classpath
 loading retain their separate purposes.
 
+The [descriptor retention design](repository-revision-cutover.md#descriptor-retention-design)
+chooses a bounded SQL artifact catalog with staging claims and immutable revision
+references. It remains a design: current identity and payload checks are in-memory.
+
 ## Admission and validation boundary
 
 Expose two explicit policies: opaque archival intake and validated typed intake.

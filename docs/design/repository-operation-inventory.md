@@ -3250,3 +3250,16 @@ invalid schema CEL, URL/type mismatch, malformed bytes, limits, duplicate tags,
 unsupported schemas, cancellation and unknown fields. All 94 descriptor, 51 codec
 and 95 engine tests passed without failures or skips in 3s. Both repository runtime
 dependency gates passed. No protobuf definitions changed.
+
+### Descriptor retention implementation decision
+
+Reviewed the current physical-location kinds, retention mirrors, V38 revision
+projection and optional registry artifact store. None supplies repository-owned
+schema retention. The cutover design now selects a bounded SQL artifact catalog,
+staging claims and immutable revision/path references. Descriptor bytes stage
+before publication; reference insertion joins the atomic revision commit.
+
+The design covers account isolation, historical ownership, explicit legacy gaps,
+operation-first lock order, implicit SQL locks, bounded obsolete-claim cleanup and
+aggregate limits. It preserves the optional JCR boundary and existing protobuf
+identities. This is design work; no migration or retention API was implemented.

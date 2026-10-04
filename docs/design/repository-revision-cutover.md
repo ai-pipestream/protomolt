@@ -549,3 +549,147 @@ Bound both old and new reference sets, not only newly uploaded parts.
 The JCR extension may later compose multiple graph changes using these foundation
 primitives. None of these revision IDs, document addresses, accounts or counters
 claim JCR node identity, sessions, workspaces or version-history semantics.
+
+## Descriptor retention design
+
+Status: reviewed design for implementation. DocumentSchemaBinding and
+DocumentPayloadCheck verify in-memory evidence; neither persists descriptors.
+Typed publication remains disabled.
+
+### Storage and identity
+
+Use a bounded immutable SQL descriptor catalog for the first implementation.
+Descriptors are repository metadata. This choice does not select a document byte
+provider or require S3. Stage bytes in a separate short transaction before the
+publication transaction. Publication writes references, not descriptor payloads.
+Do not add registry or provider calls inside SQL transactions.
+
+Catalog identity is `(account_id, artifact_sha256)`. Store exact serialized bytes,
+length and creation time. Enforce a maximum artifact size at the Java and SQL
+boundaries, with a proposed ceiling of 16 MiB matching the existing registry
+artifact ceiling. Hosts can set lower limits. Verify SHA-256 in SQL; a duplicate
+key must compare exact bytes and refuse a mismatch. Do not deduplicate across
+accounts or expose artifact existence outside the authorized account.
+Artifact hashes are not read credentials. Historical reads obtain artifacts through
+an authorized revision/path binding; an internal catalog lookup must not become a
+public fetch-by-hash endpoint.
+
+A schema binding identifies the full message name, canonical descriptor-closure
+fingerprint and exact artifact hash. These hashes have different meanings. File
+order and unknown descriptor-set envelope fields can change artifact bytes without
+changing the canonical fingerprint. Store the fingerprint algorithm version with
+admission evidence. Verify complete imports and selected-type closure before
+staging; a SQL hash check does not prove protobuf validity or rule support.
+
+Bound typed paths and distinct artifact keys per operation/revision, plus aggregate
+staged descriptor bytes. Reject an oversized plan before acquiring locks. The
+artifact-size ceiling does not bound a batch containing many distinct schemas.
+Qualify these aggregate limits before activation.
+
+The catalog is repository-controlled. SchemaRegistryStore descriptor storage is
+optional and cannot serve as the historical retention authority. Missing artifacts
+fail reads; never consult the current registry or drive to fill a historical gap.
+
+### Staging and publication ownership
+
+Protect staged artifacts with claims tied to the canonical operation key, owner
+generation and stable member/path identity. Stage and claim creation must be
+atomic. Reuse an existing artifact only after an exact-byte match. The engine
+retains the verified binding and validation-policy identity as preparation evidence.
+Staging does not create a readable revision or a successful operation outcome.
+
+Publication must recheck operation ownership, account, expected revisions and
+current authorization. Link each required artifact in the same SQL transaction as
+the revision, ordered content references, admission evidence, outcome and outbox.
+Carry unchanged path bindings into the new revision explicitly. A missing claim,
+expired owner, missing artifact or changed evidence must refuse publication.
+Recovery can restage under a valid owner before retrying; it cannot invent success.
+
+Binding ownership belongs to the immutable historical revision. Deleting the
+current pointer or document must not remove descriptors still required by history.
+A binding includes the rendition/part selector and an exact typed-payload path;
+root structured_data and parser-result Any values need distinct bindings. Inventory
+existing selector contracts before choosing an encoding. Do not use wildcards or
+ambiguous concatenated strings as persisted path identity. Pin layout/schema
+versions needed to interpret that path.
+
+No binding is backfilled for V38 legacy projections. Their missing schema and
+admission evidence stays unknown. New bindings activate only with the reviewed
+independent revision publisher. SQL foreign keys and hashes protect storage
+integrity, not the truth of a validation verdict. A trusted internal publication
+boundary must bind engine evidence to the exact operation and candidate; direct
+SQL must not manufacture validated revisions through unguarded inserts.
+
+### Cleanup and concurrency
+
+Staging claims require a finite recovery lifecycle. Cleanup may remove an artifact
+only when it has no historical bindings and no live staging claim. Expiry is not
+permission to detach a committed reference. Do not solve cleanup by retaining all
+unreferenced staging rows forever.
+
+The proposed lock order is operation owners, existing publication locks
+(document/source, physical origins and retention, when applicable), artifact keys,
+then claim/reference rows. Lock each complete key set in deterministic order.
+Artifact acquisition never takes an operation-owner lock later. Use one SQL order
+for compound owner keys and artifact keys, including explicit text collation;
+Java string ordering must not silently substitute a different comparator.
+
+Cleanup first discovers a bounded candidate set and all related claim-owner keys
+without locks. It then locks those owners, locks the artifact keys and rereads
+claims and references. If a new claim owner was not in the locked set, roll back
+and rediscover; do not acquire that owner after the artifact lock. Missing owner
+evidence fails closed. Recheck generation, expiry and terminal state under the
+owner locks before removing obsolete claims. A live claim or historical reference
+prevents deletion. A candidate exceeding the owner-set limit stays retained; do not
+truncate the proof to make it eligible. Cleanup can still remove bounded batches
+of individually proven obsolete claims, following owner-then-artifact-then-claim
+lock order. It must not remove claims outside the locked/proven batch. Final artifact
+deletion requires the full claim/reference absence proof. Rotate discovery fairly
+so a popular artifact cannot starve unrelated recovery work or leave dead claims
+permanently unreachable.
+
+Publication and cleanup serialize on artifact identity so a reference cannot
+commit to deleted bytes. Never check liveness and later delete outside the
+protected transaction. Avoid a shared counter or registry-wide lock that serializes
+unrelated artifacts. Foreign keys and conflict handling can take implicit locks; include those locks
+in the audit. Prelock existing rows before claim/reference mutations. Create new
+artifact rows in the same sorted key order, accounting for unique-key waits. Test
+trigger, foreign-key and conflict paths with SQL barriers before enabling cleanup.
+
+A SQL descriptor read returns the complete bounded artifact under a database
+snapshot. Later parsing owns local immutable bytes; it does not borrow a provider
+stream. On historical decode, rehash the exact artifact, rebuild the closed schema
+and verify type/canonical identity before decoding. Current access policy still
+applies. Host memory accounting and cancellation cover the artifact and decoded
+messages. This design does not permit history pruning until the separate restore
+and JCR assessments authorize it.
+
+### Implementation and acceptance
+
+1. Add catalog and staging-claim storage with real PostgreSQL tests for byte bounds,
+   hash enforcement, immutable identity, same-account dedupe, account isolation,
+   exact replay and conflicting bytes. Prove populated migration creates no legacy
+   schema bindings.
+2. Implement operation-scoped staging and bounded recovery. Race owner replacement,
+   expiry, cleanup and publication using real SQL barriers. Verify rollback after
+   claim insertion and restart recovery without in-memory handles.
+3. Add native revision/path references with the independent publisher. Test multiple
+   paths, carried-forward bindings, changed-schema-only revisions and atomic
+   rollback when a later member fails. Descriptor bytes stay outside the commit
+   transaction; references, evidence and outcome commit together.
+4. Read and restore historical data with the registry unavailable. Reconstruct from
+   persisted descriptor bytes and revision metadata, reject corrupted/missing
+   artifacts, and retain descriptors after current-document deletion. Exercise
+   current authorization and explicit legacy-unknown behavior.
+5. Measure staging size/latency, metadata-commit p50/p95/p99, lock waits, WAL and
+   peak memory with repeated schemas and independent accounts. Qualify the ceiling
+   and dedupe behavior before activation. A future blob-backed artifact store needs
+   an explicit lifecycle and capability; there is no automatic storage fallback.
+
+### JCR boundary
+
+Immutable artifacts, references, staged claims and atomic publication are reusable
+repository primitives. Document paths are one consumer of them. They do not define
+JCR node types, sessions, workspaces or version histories. The eventual content
+extension can compose schema references within a larger atomic change set. Keep
+JCR dependencies out of this catalog and preserve existing protobuf identities.
