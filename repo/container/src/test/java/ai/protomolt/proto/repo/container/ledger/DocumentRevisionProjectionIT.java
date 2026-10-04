@@ -22,6 +22,75 @@ import static org.assertj.core.api.Assertions.*;
 class DocumentRevisionProjectionIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
+    @ParameterizedTest @ValueSource(booleans={false,true})
+    void revisionRetentionCutoverPreservesPinsAndSameRevisionUpserts(boolean revisionCascadeFirst) {
+        try (var context=context("38")) {
+            var first=publish(context,true,"before");
+            var deleted=publish(context,false,"deleted");
+            new DocumentLedger(context.tx).deleteByNodeId(deleted.row().nodeId);
+            var before=references(context);
+            context.migrate();
+            assertThat(references(context)).containsExactlyElementsOf(before);
+            execute(context,"UPDATE document_part_publications SET attempt_id=attempt_id");
+            assertThat(references(context)).containsExactlyElementsOf(before);
+            var next=publish(context,true,"after",first.row().readManifest().getAddress());
+            assertThat(count(context,"repository_object_references")).isEqualTo(before.size()+2);
+            long invalid=context.tx.readOnly(em -> ((Number)em.createNativeQuery("""
+                    SELECT count(*) FROM repository_object_references
+                    WHERE NOT repository_native_reference_exists(object_id,owner_kind,owner_id,owner_revision)
+                    """).getSingleResult()).longValue());
+            assertThat(invalid).isZero();
+            assertThatThrownBy(() -> execute(context,"DELETE FROM repository_object_references WHERE owner_kind='DOCUMENT_HISTORY'"))
+                    .hasStackTraceContaining("cannot release a retained native owner");
+            if (revisionCascadeFirst) {
+                // Deliberately reverse the native FK cascade order. The revision
+                // mirror must not depend on the old pin acquiring origin locks first.
+                execute(context,"""
+                        DO $$ DECLARE trigger_name text; BEGIN
+                         SELECT tgname INTO STRICT trigger_name FROM pg_trigger
+                         WHERE tgrelid='documents'::regclass AND tgconstrrelid='document_revision_current'::regclass
+                          AND tgfoid='"RI_FKey_cascade_del"()'::regprocedure;
+                         EXECUTE format('ALTER TRIGGER %I ON documents RENAME TO "A0_revision_cascade_first"',trigger_name);
+                        END $$
+                        """);
+            }
+            new DocumentLedger(context.tx).deleteByNodeId(next.row().nodeId);
+            assertThat(count(context,"repository_object_references")).isEqualTo(before.size());
+            assertThat(count(context,"document_revision_current")).isZero();
+        }
+    }
+
+    @ParameterizedTest @ValueSource(booleans={false,true})
+    void retentionCutoverRejectsMissingOrExtraReferencesAtomically(boolean extra) {
+        try (var context=context("38")) {
+            publish(context,true,"before");
+            context.tx.inTransaction(em -> {
+                em.createNativeQuery("ALTER TABLE repository_object_references DISABLE TRIGGER repository_reference_guard").executeUpdate();
+                em.createNativeQuery(extra ? """
+                        INSERT INTO repository_object_references
+                        SELECT object_id,owner_kind,gen_random_uuid(),owner_revision
+                        FROM repository_object_references LIMIT 1
+                        """ : "DELETE FROM repository_object_references WHERE owner_kind='DOCUMENT_CURRENT'").executeUpdate();
+                em.createNativeQuery("ALTER TABLE repository_object_references ENABLE TRIGGER repository_reference_guard").executeUpdate();
+            });
+            var damaged=references(context);
+            assertThatThrownBy(context::migrate).hasStackTraceContaining("retention differs from existing references");
+            assertThat(references(context)).containsExactlyElementsOf(damaged);
+            long oldMirrors=context.tx.readOnly(em -> ((Number)em.createNativeQuery("""
+                    SELECT count(*) FROM pg_trigger WHERE tgrelid='document_part_publications'::regclass
+                    AND tgname='document_current_reference_mirror'
+                    """).getSingleResult()).longValue());
+            assertThat(oldMirrors).isEqualTo(1);
+        }
+    }
+
+    private static java.util.List<String> references(Context context) {
+        return context.tx.readOnly(em -> em.unwrap(org.hibernate.Session.class).createNativeQuery("""
+                SELECT object_id::text || ':' || owner_kind || ':' || owner_id::text || ':' || owner_revision::text
+                FROM repository_object_references ORDER BY object_id,owner_kind,owner_id,owner_revision
+                """,String.class).getResultList());
+    }
+
     @Test void backfillsSparseAndDeletedHistoryAndMirrorsLivePublicationWithoutNewRetentionPins() {
         try (var context = context()) {
             var retained = publish(context, true, "v1");
@@ -222,9 +291,12 @@ class DocumentRevisionProjectionIT {
         public void close() { try { emf.close(); } finally { pool.close(); } }
     }
     private static Context context() {
+        return context("37");
+    }
+    private static Context context(String target) {
         String schema="revision_"+UUID.randomUUID().toString().replace("-","");
         Flyway.configure().dataSource(POSTGRES.getJdbcUrl(),POSTGRES.getUsername(),POSTGRES.getPassword())
-                .schemas(schema).defaultSchema(schema).locations("classpath:db/migration/repo").target("37").load().migrate();
+                .schemas(schema).defaultSchema(schema).locations("classpath:db/migration/repo").target(target).load().migrate();
         var config=new HikariConfig(); config.setJdbcUrl(POSTGRES.getJdbcUrl()); config.setUsername(POSTGRES.getUsername());
         config.setPassword(POSTGRES.getPassword()); config.setSchema(schema); config.setMaximumPoolSize(3);
         var pool=new HikariDataSource(config);

@@ -2099,3 +2099,36 @@ without application changes. Combined final container/service results: 108 suite
 921 cases, 918 passed, three skipped, no failures/errors. Sol reviewed the final
 helper and tests without a blocking finding. No push, hosted CI, merge or deployment
 is claimed.
+
+### Revision-owned retention (V39)
+
+Extended internal SQL behavior; no protobuf or public API change. Document native
+reference checks now use sealed revision headers and ordered part membership.
+History owners use revision identity; current owners use document identity plus
+the retained publication revision. Existing FULL_REVISION bridge UUIDs equal their
+legacy attempts, so the migration changes no reference keys and creates no pins.
+It checks exact expected/actual reference sets in both directions before and after
+replacing the document mirrors. Missing or extra pins fail migration atomically.
+Archive-version and active-reader predicate branches remain unchanged.
+
+History references are installed when the projection seals, after its parts exist.
+Current references switch after the current revision pointer changes. Same-revision
+upserts return immediately. Each switch locks the old/new origin union, then the
+physical retention union in UUID order, and deletes old references in one set
+statement. This also covers document deletion when the revision-current FK cascade
+runs before the legacy-current cascade. Historical references survive deletion.
+SQL work still scales with part count; this is not a constant-time operation.
+
+V22/V36/V38 guards still restrict publication to complete legacy revisions. The
+Java batch prelocks all members' origins and retention before publication; per-row
+SQL mirrors do not prove global ordering for arbitrary multi-member direct SQL.
+Independent revision creation, mixed-origin and zero-upload publication, shared
+origin throughput qualification, pruning and operation replay remain unfinished.
+
+Local validation on 2026-10-04: all 14 revision-projection migration cases passed,
+including both FK cascade orders, exact retained-reference parity, rejection of
+missing/extra references, same-pin updates, sparse 513-part histories and immutable
+projection checks. Full container/service run passed in 2m30s: 108 suites, 925
+cases, 922 passed, 3 skipped, no failures/errors. Sol reviewed the final SQL
+and tests with no blocker. These results establish regression coverage; controlled
+throughput and tail-latency measurements remain pending. Work remains local.
