@@ -32,6 +32,75 @@ class DocumentPayloadCheckTest {
     private static final DocumentPayloadCheck.Limits LIMITS = new DocumentPayloadCheck.Limits(1024, 100, 10, 100, 1000);
 
     @Test
+    void contextualResolutionDoesNotReuseRootPolicyAndRejectsConflictingAssetMetadata() throws Exception {
+        var root = wrapper();
+        var nested = wrapped(root);
+        var payload = wrapped(root, nested, nested);
+        var rootAsset = asset(root, payload.getTypeUrl());
+        var calls = new java.util.concurrent.atomic.AtomicInteger();
+        var checked = DocumentPayloadCheck.checkContextualAssets(rootAsset, payload, payload.getTypeUrl(),
+                validator(), LIMITS, () -> {}, request -> {
+                    calls.incrementAndGet();
+                    assertThat(request.typeUrl()).isEqualTo(payload.getTypeUrl());
+                    return rootAsset;
+                }, DocumentSchemaOccurrences.Limits.DEFAULT);
+        assertThat(calls.get()).isEqualTo(2);
+        assertThat(checked.assets()).hasSize(1);
+        assertThat(checked.payload().occurrences()).hasSize(3);
+        var changedMetadata = rootAsset.metadata().toBuilder().setCompilation(rootAsset.metadata().getCompilation()
+                .toBuilder().setUnknownCompilerReason("Different producer assertion")).build();
+        var conflicting = DocumentSchemaAssetBinding.bind(changedMetadata, root.artifact(),
+                new ClosedDescriptorSet.Limits(4_000_000, 100, 1000, 100), () -> {});
+        assertThatThrownBy(() -> DocumentPayloadCheck.checkContextualAssets(rootAsset, payload, payload.getTypeUrl(),
+                validator(), LIMITS, () -> {}, request -> conflicting, DocumentSchemaOccurrences.Limits.DEFAULT))
+                .hasMessageContaining("conflicting schema asset metadata");
+    }
+
+    @Test
+    void contextualResolutionKeepsSameUrlVersionsSeparateThroughValidationAndProjection() throws Exception {
+        var root = wrapper();
+        var left = binding(choice("this.left != '' && this.right == ''"));
+        var right = binding(choice("this.right != '' && this.left == ''"));
+        var first = candidate(left, "left", "");
+        var second = candidate(right, "", "right");
+        var digests = List.of(digest(first.getValue()), digest(second.getValue()));
+        var payload = wrapped(root, first, second);
+        var rootAsset = asset(root, payload.getTypeUrl());
+        var requests = new java.util.ArrayList<DocumentPayloadCheck.ResolutionRequest>();
+        java.util.function.Function<DocumentPayloadCheck.ResolutionRequest, DocumentSchemaAssetBinding> resolver = request -> {
+            requests.add(request);
+            assertThat(request.typeUrl()).isEqualTo(URL);
+            assertThat(request.prefix()).hasSize(3);
+            assertThat(request.prefix().get(0)).isInstanceOf(DocumentSchemaOccurrences.Boundary.class);
+            assertThat(request.prefix().get(1)).isEqualTo(new DocumentSchemaOccurrences.Field(1));
+            int index = ((DocumentSchemaOccurrences.Index) request.prefix().get(2)).index();
+            var value = index == 0 ? first : second;
+            assertThat(request.valueSha256()).isEqualTo(digests.get(index));
+            assertThat(request.valueSizeBytes()).isEqualTo(value.getValue().size());
+            return asset(index == 0 ? left : right, request.typeUrl());
+        };
+        var result = DocumentPayloadCheck.checkContextualAssets(rootAsset, payload, payload.getTypeUrl(),
+                validator(), LIMITS, () -> {}, resolver, DocumentSchemaOccurrences.Limits.DEFAULT);
+        assertThat(requests).hasSize(2);
+        assertThatThrownBy(() -> requests.getFirst().prefix().clear()).isInstanceOf(UnsupportedOperationException.class);
+        assertThat(result.assets()).hasSize(3);
+        var paths = DocumentSchemaOccurrenceProjection.project(result.payload(), () -> {});
+        assertThat(paths).hasSize(3);
+        assertThat(paths.get(1).getSteps(3).getAnyBoundary().getResolved().getArtifactSha256()).isEqualTo(left.artifactSha256());
+        assertThat(paths.get(2).getSteps(3).getAnyBoundary().getResolved().getArtifactSha256()).isEqualTo(right.artifactSha256());
+        assertThatThrownBy(() -> DocumentPayloadCheck.checkContextualAssets(rootAsset, payload, payload.getTypeUrl(),
+                validator(), LIMITS, () -> {}, request -> asset(left, request.typeUrl()), DocumentSchemaOccurrences.Limits.DEFAULT))
+                .isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> DocumentPayloadCheck.checkContextualAssets(rootAsset, payload, payload.getTypeUrl(),
+                validator(), LIMITS, () -> {}, request -> null, DocumentSchemaOccurrences.Limits.DEFAULT))
+                .hasMessageContaining("unresolved Any schema asset");
+        var outage = new IllegalStateException("registry unavailable");
+        assertThatThrownBy(() -> DocumentPayloadCheck.checkContextualAssets(rootAsset, payload, payload.getTypeUrl(),
+                validator(), LIMITS, () -> {}, request -> { throw outage; }, DocumentSchemaOccurrences.Limits.DEFAULT))
+                .isSameAs(outage);
+    }
+
+    @Test
     void projectsMeasuredBoundaryIdentityAndRejectsUncheckedEvidence() throws Exception {
         var root = wrapper();
         var inner = binding(choice("true"));
@@ -354,7 +423,9 @@ class DocumentPayloadCheckTest {
         var result = DocumentPayloadCheck.checkAssets(rootAsset, payload, payload.getTypeUrl(), validator(), LIMITS,
                 () -> {}, url -> { resolutions.incrementAndGet(); return innerAsset; });
         assertThat(resolutions.get()).isEqualTo(1);
-        assertThat(result.assets()).containsExactlyInAnyOrderEntriesOf(java.util.Map.of(payload.getTypeUrl(), rootAsset, URL, innerAsset));
+        assertThat(result.assets()).containsExactlyInAnyOrderEntriesOf(java.util.Map.of(
+                new DocumentPayloadCheck.SchemaKey(payload.getTypeUrl(), wrapper.artifactSha256()), rootAsset,
+                new DocumentPayloadCheck.SchemaKey(URL, inner.artifactSha256()), innerAsset));
         assertThat(result.payload().original()).isSameAs(payload);
         assertThatThrownBy(() -> result.assets().clear()).isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(() -> DocumentPayloadCheck.checkAssets(rootAsset, payload, "other/payload.Wrapper", validator(), LIMITS,
@@ -507,7 +578,7 @@ class DocumentPayloadCheckTest {
             return inner;
         });
         assertThat(calls.get()).isEqualTo(1);
-        assertThat(checked.resolvedSchemas()).containsEntry(URL, inner);
+        assertThat(checked.resolvedSchemas()).containsEntry(new DocumentPayloadCheck.SchemaKey(URL, inner.artifactSha256()), inner);
         assertThat(checked.original()).isSameAs(payload);
         var invalid = wrapped(wrapper, candidate(inner, "first", ""), candidate(inner, "x", ""));
         assertThatThrownBy(() -> DocumentPayloadCheck.check(wrapper, invalid, invalid.getTypeUrl(), validator(), LIMITS,
@@ -602,14 +673,16 @@ class DocumentPayloadCheckTest {
                 throw new IllegalStateException("runtime schema compilation failed", e);
             }
         });
-        var retained = checked.resolvedSchemas().get(typeUrl);
+        var retained = checked.resolvedSchemas().entrySet().stream()
+                .filter(entry -> entry.getKey().typeUrl().equals(typeUrl)).findFirst().orElseThrow().getValue();
         // Fresh descriptor graph reconstructed only from retained bytes, no class or live registry.
         var reconstructed = DocumentSchemaBinding.bind(retained.condition(), retained.artifact(),
                 new ClosedDescriptorSet.Limits(4_000_000, 100, 1000, 100), () -> {});
         var offline = DocumentPayloadCheck.check(wrapper, payload, payload.getTypeUrl(), validator(), LIMITS,
                 () -> {}, url -> reconstructed);
         assertThat(offline.original()).isEqualTo(payload);
-        assertThat(offline.resolvedSchemas().get(typeUrl).type().getFullName()).isEqualTo("runtime.NewType");
+        assertThat(offline.resolvedSchemas().get(new DocumentPayloadCheck.SchemaKey(typeUrl, reconstructed.artifactSha256()))
+                .type().getFullName()).isEqualTo("runtime.NewType");
     }
 
     private static DocumentSchemaBinding wrapper() throws Exception {

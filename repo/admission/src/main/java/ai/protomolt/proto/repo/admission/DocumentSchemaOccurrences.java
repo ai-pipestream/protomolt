@@ -89,9 +89,12 @@ final class DocumentSchemaOccurrences {
     /** Called only after the enclosing candidate check succeeds. Order is not identity. */
     List<Occurrence> result() { return List.copyOf(occurrences); }
 
+    /** Prefix selecting the next Any envelope, before adding its resolved boundary. */
+    List<Step> prefix() { return List.copyOf(path); }
+
     private static long utf8(String value) { return value.getBytes(StandardCharsets.UTF_8).length; }
 
-    private static String sha256(ByteString bytes, Runnable control) {
+    static String sha256(ByteString bytes, Runnable control) {
         try {
             var digest = MessageDigest.getInstance("SHA-256");
             for (var buffer : bytes.asReadOnlyByteBufferList()) {

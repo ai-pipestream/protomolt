@@ -2264,9 +2264,10 @@ fence before taking revision locks, without starting a nested transaction.
 
 ### Contextual Any resolution and optional materialization
 
-This is a design requirement, not an available read API. The current admission
-helper resolves once per exact type URL through a `Function<String, ...>` and
-stores bindings by URL. That is an implementation limitation: the URL alone does
+This is a design requirement, not an available read API. The original admission
+entrypoints resolve once per exact type URL through a `Function<String, ...>`.
+The internal contextual entrypoint now records separate occurrence bindings;
+registry integration and the read modes remain unfinished. The URL alone does
 not reliably identify a schema revision. Keep definitions immutable during an
 attempt, but pin them by occurrence and exact artifact identity rather than
 requiring every occurrence of a URL to share one definition.
@@ -2364,4 +2365,4 @@ Before closing this repository goal, the acceptance inventory must include:
 
 These gates refine stages 5 through 7. Production typed publication stays disabled
 until candidate binding, retention and validation evidence are complete. This
-section does not activate a resolver, cache, read mode or new public RPC.
+section does not activate a registry resolver, cache, read mode or new public RPC.

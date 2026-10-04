@@ -37,7 +37,8 @@ final class DocumentSchemaOccurrenceProjection {
                     case DocumentSchemaOccurrences.Index index -> step.setRepeatedIndex(index.index());
                     case DocumentSchemaOccurrences.MapKey key -> step.setMapKey(mapKey(key));
                     case DocumentSchemaOccurrences.Boundary boundary -> {
-                        var schema = checked.resolvedSchemas().get(boundary.typeUrl());
+                        var schema = checked.resolvedSchemas().get(new DocumentPayloadCheck.SchemaKey(
+                                boundary.typeUrl(), boundary.artifactSha256()));
                         if (schema == null || !schema.artifactSha256().equals(boundary.artifactSha256()))
                             throw new IllegalArgumentException("occurrence schema differs from completed check");
                         step.setAnyBoundary(RepositoryAnyResolution.newBuilder()

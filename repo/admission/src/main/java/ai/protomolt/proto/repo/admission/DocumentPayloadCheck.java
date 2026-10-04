@@ -19,6 +19,12 @@ import com.google.protobuf.Message;
 
 /** Internal candidate check under a trusted host's explicit validator and URL policy. */
 final class DocumentPayloadCheck {
+    record SchemaKey(String typeUrl, String artifactSha256) {}
+    /** Host context and immutable version selection belong to the resolver, not payload bytes. */
+    record ResolutionRequest(String typeUrl, java.util.List<DocumentSchemaOccurrences.Step> prefix,
+            String valueSha256, long valueSizeBytes) {
+        ResolutionRequest { prefix = java.util.List.copyOf(prefix); }
+    }
     record Limits(int maxBytes, long maxWireValues, int maxDepth, int maxSchemaTypes, int maxSchemaFields) {
         Limits {
             if (maxBytes < 1 || maxWireValues < 1 || maxDepth < 1 || maxDepth > 100
@@ -31,10 +37,10 @@ final class DocumentPayloadCheck {
     private final DocumentSchemaBinding schema;
     private final Any original;
     private final DynamicMessage decoded;
-    private final Map<String, DocumentSchemaBinding> resolvedSchemas;
+    private final Map<SchemaKey, DocumentSchemaBinding> resolvedSchemas;
     private final java.util.List<DocumentSchemaOccurrences.Occurrence> occurrences;
 
-    private DocumentPayloadCheck(DocumentSchemaBinding schema, Any original, DynamicMessage decoded, Map<String, DocumentSchemaBinding> resolvedSchemas,
+    private DocumentPayloadCheck(DocumentSchemaBinding schema, Any original, DynamicMessage decoded, Map<SchemaKey, DocumentSchemaBinding> resolvedSchemas,
             java.util.List<DocumentSchemaOccurrences.Occurrence> occurrences) {
         this.schema = schema;
         this.original = original;
@@ -46,11 +52,11 @@ final class DocumentPayloadCheck {
     DocumentSchemaBinding schema() { return schema; }
     Any original() { return original; }
     DynamicMessage decoded() { return decoded; }
-    Map<String, DocumentSchemaBinding> resolvedSchemas() { return resolvedSchemas; }
+    Map<SchemaKey, DocumentSchemaBinding> resolvedSchemas() { return resolvedSchemas; }
     java.util.List<DocumentSchemaOccurrences.Occurrence> occurrences() { return occurrences; }
 
     /** In-memory evidence only; neither retention nor trusted compiler provenance is established. */
-    record AssetResult(DocumentPayloadCheck payload, Map<String, DocumentSchemaAssetBinding> assets) {
+    record AssetResult(DocumentPayloadCheck payload, Map<SchemaKey, DocumentSchemaAssetBinding> assets) {
         AssetResult { assets = Map.copyOf(assets); }
     }
 
@@ -74,6 +80,18 @@ final class DocumentPayloadCheck {
             ProtoValidator validator, Limits limits, Runnable control,
             Function<String, DocumentSchemaAssetBinding> resolver, DocumentSchemaOccurrences.Limits evidenceLimits)
             throws InvalidProtocolBufferException {
+        Objects.requireNonNull(resolver, "resolver");
+        var pinned = new LinkedHashMap<String, DocumentSchemaAssetBinding>();
+        pinned.put(acceptedTypeUrl, root);
+        return checkContextualAssets(root, candidate, acceptedTypeUrl, validator, limits, control,
+                request -> pinned.computeIfAbsent(request.typeUrl(), resolver), evidenceLimits);
+    }
+
+    /** Resolves each occurrence separately; the host supplies authorized immutable version bindings. */
+    static AssetResult checkContextualAssets(DocumentSchemaAssetBinding root, Any candidate, String acceptedTypeUrl,
+            ProtoValidator validator, Limits limits, Runnable control,
+            Function<ResolutionRequest, DocumentSchemaAssetBinding> resolver,
+            DocumentSchemaOccurrences.Limits evidenceLimits) throws InvalidProtocolBufferException {
         Objects.requireNonNull(root, "root");
         Objects.requireNonNull(resolver, "resolver");
         Objects.requireNonNull(control, "control");
@@ -81,16 +99,20 @@ final class DocumentPayloadCheck {
         if (!root.metadata().getTypeUrl().equals(acceptedTypeUrl)) {
             throw new IllegalArgumentException("schema asset type URL differs from host policy");
         }
-        var assets = new LinkedHashMap<String, DocumentSchemaAssetBinding>();
-        assets.put(acceptedTypeUrl, root);
-        var payload = check(root.schema(), candidate, acceptedTypeUrl, validator, limits, control, url -> {
-            var asset = resolver.apply(url);
+        var assets = new LinkedHashMap<SchemaKey, DocumentSchemaAssetBinding>();
+        assets.put(new SchemaKey(acceptedTypeUrl, root.schema().artifactSha256()), root);
+        var payload = check(root.schema(), candidate, acceptedTypeUrl, validator, limits, control, request -> {
+            String url = request.typeUrl();
+            var asset = resolver.apply(request);
             active(control);
             if (asset == null) throw new IllegalArgumentException("unresolved Any schema asset: " + url);
             if (!asset.metadata().getTypeUrl().equals(url)) {
                 throw new IllegalArgumentException("resolved schema asset type URL mismatch");
             }
-            assets.put(url, asset);
+            var key = new SchemaKey(url, asset.schema().artifactSha256());
+            var previous = assets.putIfAbsent(key, asset);
+            if (previous != null && !previous.metadata().equals(asset.metadata()))
+                throw new IllegalArgumentException("conflicting schema asset metadata for one identity");
             return asset.schema();
         }, new DocumentSchemaOccurrences(evidenceLimits));
         return new AssetResult(payload, assets);
@@ -121,12 +143,16 @@ final class DocumentPayloadCheck {
     static DocumentPayloadCheck check(DocumentSchemaBinding schema, Any candidate, String acceptedTypeUrl,
             ProtoValidator validator, Limits limits, Runnable control,
             Function<String, DocumentSchemaBinding> resolver) throws InvalidProtocolBufferException {
-        return check(schema,candidate,acceptedTypeUrl,validator,limits,control,resolver,null);
+        Objects.requireNonNull(resolver, "resolver");
+        var pinned = new LinkedHashMap<String, DocumentSchemaBinding>();
+        pinned.put(acceptedTypeUrl, schema);
+        return check(schema,candidate,acceptedTypeUrl,validator,limits,control,
+                request -> pinned.computeIfAbsent(request.typeUrl(), resolver),null);
     }
 
     private static DocumentPayloadCheck check(DocumentSchemaBinding schema, Any candidate, String acceptedTypeUrl,
             ProtoValidator validator, Limits limits, Runnable control,
-            Function<String, DocumentSchemaBinding> resolver, DocumentSchemaOccurrences evidence) throws InvalidProtocolBufferException {
+            Function<ResolutionRequest, DocumentSchemaBinding> resolver, DocumentSchemaOccurrences evidence) throws InvalidProtocolBufferException {
         Objects.requireNonNull(schema, "schema");
         Objects.requireNonNull(candidate, "candidate");
         Objects.requireNonNull(acceptedTypeUrl, "acceptedTypeUrl");
@@ -143,7 +169,7 @@ final class DocumentPayloadCheck {
             throw new IllegalArgumentException("unsupported Any envelope fields");
         }
         var session = new Session(validator, limits, control, resolver, evidence);
-        session.bindings.put(acceptedTypeUrl, schema);
+        session.bindings.put(new SchemaKey(acceptedTypeUrl, schema.artifactSha256()), schema);
         DynamicMessage decoded = session.decodeBoundary(acceptedTypeUrl, schema, candidate.getValue(), 0);
         return new DocumentPayloadCheck(schema, candidate, decoded, session.bindings,
                 evidence == null ? java.util.List.of() : evidence.result());
@@ -160,18 +186,18 @@ final class DocumentPayloadCheck {
         private final ProtoValidator validator;
         private final Limits limits;
         private final Runnable control;
-        private final Function<String, DocumentSchemaBinding> resolver;
+        private final Function<ResolutionRequest, DocumentSchemaBinding> resolver;
         private final boolean archival;
         private final DocumentSchemaOccurrences evidence;
         private final MessageWireBudget wire;
-        private final Map<String, DocumentSchemaBinding> bindings = new LinkedHashMap<>();
+        private final Map<SchemaKey, DocumentSchemaBinding> bindings = new LinkedHashMap<>();
         private final java.util.Set<Descriptor> schemas = Collections.newSetFromMap(new IdentityHashMap<>());
         private long decodedBytes;
         private long schemaFields;
         private long anyCount;
 
         Session(ProtoValidator validator, Limits limits, Runnable control,
-                Function<String, DocumentSchemaBinding> resolver, DocumentSchemaOccurrences evidence) {
+                Function<ResolutionRequest, DocumentSchemaBinding> resolver, DocumentSchemaOccurrences evidence) {
             this.validator = validator;
             this.limits = limits;
             this.control = control;
@@ -247,14 +273,18 @@ final class DocumentPayloadCheck {
                 String url = (String) message.getField(urlField);
                 if (url.isEmpty() || url.length() > 4096) throw new IllegalArgumentException("invalid Any type URL");
                 depth(depth + 1);
-                DocumentSchemaBinding binding = bindings.get(url);
-                if (binding == null) {
-                    binding = resolver.apply(url);
-                    active(control);
-                    if (binding == null) throw new IllegalArgumentException("unresolved Any type URL: " + url);
-                    requireUrl(url, binding);
-                    bindings.put(url, binding);
-                }
+                var bytes = (com.google.protobuf.ByteString) message.getField(valueField);
+                if (bytes.size() > limits.maxBytes() - decodedBytes)
+                    throw new IllegalArgumentException("aggregate payload bytes exceed limit");
+                DocumentSchemaBinding binding = resolver.apply(new ResolutionRequest(url,
+                        evidence == null ? java.util.List.of() : evidence.prefix(),
+                        evidence == null ? "" : DocumentSchemaOccurrences.sha256(bytes, () -> active(control)), bytes.size()));
+                active(control);
+                if (binding == null) throw new IllegalArgumentException("unresolved Any type URL: " + url);
+                requireUrl(url, binding);
+                var key = new SchemaKey(url, binding.artifactSha256());
+                var previous = bindings.putIfAbsent(key, binding);
+                if (previous != null) binding = previous;
                 decodeBoundary(url, binding, (com.google.protobuf.ByteString) message.getField(valueField), depth + 1);
                 return;
             }

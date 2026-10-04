@@ -3883,8 +3883,9 @@ schema binding, preserve/materialize read modes, bounded contextual caching,
 explicit failure outcomes, and historical restore tests with the registry absent
 and process cache empty. Inventory every remaining document Any root before goal
 closure, with coverage or an explicit typed-admission rejection. The current
-URL-only admission resolver and CORE/PARSED root discovery are still the
-implemented limits. Unknown schemas may remain opaque under an allowing contract;
+CORE/PARSED root discovery remains the implemented root coverage. The contextual
+checker below removes the internal URL-only resolution restriction. Unknown
+schemas may remain opaque under an allowing contract;
 required typed validation may not downgrade to opaque success.
 
 ### Immutable revision-to-schema retention prerequisite
@@ -3909,3 +3910,24 @@ decoding, and reference-aware terminal claim cleanup/GC remain required. A row i
 this table proves retention only; neither it nor `structured_resolution` grants
 typed-validation status. This migration changes no protobuf contract or public
 operation behavior.
+
+### Contextual occurrence schema checks
+
+The internal admission checker now has a separate contextual entrypoint. Its
+resolver receives the exact URL, immutable path to each nested Any, and effective
+value digest/size. Every nested occurrence is resolved independently, including
+occurrences sharing the root URL. Existing URL-only entrypoints retain their
+once-per-URL behavior through explicit adapters.
+
+Completed schema/asset indexes and occurrence projection use exact URL plus
+artifact hash. Conflicting metadata for one identity is rejected. Fixtures use
+two definitions with the same message name and opposing CEL rules in one
+candidate; each validates and projects under its own bound definition. Wrong
+selection fails validation, missing definitions fail strict admission, and
+resolver outages propagate unchanged. Additional fixtures cover repeated root
+URLs, immutable request paths and conflicting metadata.
+
+This is bounded in-memory checking, not host-authorized registry resolution,
+historical restoration or durable publication proof. The host still supplies
+authorization, immutable version selection and aggregate resolver-memory limits.
+No protobuf fields, public RPCs or production publication paths changed.
