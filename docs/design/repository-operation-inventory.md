@@ -3725,3 +3725,44 @@ storage SDKs, Kafka, registry/compiler clients and transport implementations fro
 its production graph. Compiler-backed fixture tests remain test-only. This is a
 module extraction, not an enabled typed publication API; the reviewed occurrence,
 source-provenance and retention prerequisites remain in the cutover design.
+
+### Occurrence evidence contract
+
+Classification: new internal evidence contract; existing publication, read,
+replay, receipt, idempotency and schema-resolution operations are unchanged.
+`schema_occurrence.proto` adds `RepositorySchemaOccurrencePath`, its step and
+map-key messages, and an explicit protobuf map-key type enum. It imports the
+existing `RepositoryAnyResolution`/`RepositoryResolvedSchema` identities instead
+of redefining artifact references. A path boundary requires the resolved outcome;
+that observation still does not establish successful validation or retention.
+
+Version 1 paths begin and end at a selected Any boundary. Field numbers, repeated
+positions and typed map keys describe decoded occurrences. Runtime rules check
+step selection, map-key kind and numeric width, valid field numbers, path bounds,
+and boundary resolution. The real validator fixtures exercise generated and
+dynamic messages, zero/false/empty keys, UINT64_MAX, reserved field numbers and
+invalid or absent alternatives. JSON Schema records structural bounds and CEL
+extensions; it does not execute cross-field CEL or establish OpenAPI parity.
+
+An enclosing root locator remains required. CORE contains
+`Document.structured_data` at field 4. PARSED contains parser shape via
+`Document.parser_results` field 5 and its exact string key, then
+`ParserResult.document` field 7 and `ParserDocument.shape` field 1. A generic
+relative path must not be mistaken for either locator, a revision identifier or
+an authorization capability. Reuse `DocumentPublicationSlot` when defining the
+document-part wrapper; pin the containing layout and exact root access path.
+
+Handler obligations remain: bound raw bytes, recursion and wire occurrences
+before parsing; reject unknown evidence fields; validate transitions
+against retained descriptors and candidate values; verify effective Any.value
+bytes, size, URL and artifact/condition binding; apply aggregate UTF-8 text/step
+bounds; reject duplicate paths; and bind account, operation/attempt, revision and
+policy. Canonical encoding and its decoder/re-encode checks are not implemented.
+The collector-to-protobuf bridge must obtain actual value sizes from traversal;
+it must not substitute an unknown size with zero. No existing API consumes this
+contract yet, and typed publication remains disabled.
+
+Validation for this additive contract: 163 contract/admission/engine tests pass,
+including both runtime dependency gates. Scoped Buf lint passes. Complete-import
+descriptor compilation and unwaived FILE compatibility pass against checkpoint
+`354d8fbbf80d17ff577992acf927d85e02388e51`. Sol reviewed the contract and fixtures.

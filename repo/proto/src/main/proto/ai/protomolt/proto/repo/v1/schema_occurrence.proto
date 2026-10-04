@@ -1,0 +1,107 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v1;
+
+import "ai/protomolt/proto/repo/v1/any_resolution.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.v1";
+
+// Declared protobuf map-key type. Never encode a Java descriptor enum ordinal.
+enum RepositoryOccurrenceKeyType {
+  // Invalid for recorded keys.
+  REPOSITORY_OCCURRENCE_KEY_TYPE_UNSPECIFIED = 0;
+  // UTF-8 string key.
+  REPOSITORY_OCCURRENCE_KEY_TYPE_STRING = 1;
+  // Boolean key.
+  REPOSITORY_OCCURRENCE_KEY_TYPE_BOOL = 2;
+  // Signed int32 key.
+  REPOSITORY_OCCURRENCE_KEY_TYPE_INT32 = 3;
+  // Signed sint32 key.
+  REPOSITORY_OCCURRENCE_KEY_TYPE_SINT32 = 4;
+  // Signed sfixed32 key.
+  REPOSITORY_OCCURRENCE_KEY_TYPE_SFIXED32 = 5;
+  // Unsigned uint32 key.
+  REPOSITORY_OCCURRENCE_KEY_TYPE_UINT32 = 6;
+  // Unsigned fixed32 key.
+  REPOSITORY_OCCURRENCE_KEY_TYPE_FIXED32 = 7;
+  // Signed int64 key.
+  REPOSITORY_OCCURRENCE_KEY_TYPE_INT64 = 8;
+  // Signed sint64 key.
+  REPOSITORY_OCCURRENCE_KEY_TYPE_SINT64 = 9;
+  // Signed sfixed64 key.
+  REPOSITORY_OCCURRENCE_KEY_TYPE_SFIXED64 = 10;
+  // Unsigned uint64 key.
+  REPOSITORY_OCCURRENCE_KEY_TYPE_UINT64 = 11;
+  // Unsigned fixed64 key.
+  REPOSITORY_OCCURRENCE_KEY_TYPE_FIXED64 = 12;
+}
+
+// Decoded key identity; explicit zero, false and empty-string keys are valid.
+message RepositoryOccurrenceMapKey {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "occurrence-key-kind"
+    message: "key value must match its declared protobuf scalar type and width"
+    expression: "this.type == 1 ? has(this.string_value) : this.type == 2 ? has(this.bool_value) : this.type in [3, 4, 5] ? (has(this.signed_value) && this.signed_value >= -2147483648 && this.signed_value <= 2147483647) : this.type in [6, 7] ? (has(this.unsigned_value) && this.unsigned_value <= 4294967295u) : this.type in [8, 9, 10] ? has(this.signed_value) : this.type in [11, 12] && has(this.unsigned_value)"
+  };
+  // Must match the retained map key descriptor, checked by the handler.
+  RepositoryOccurrenceKeyType type = 1 [(ai.protomolt.proto.validate.v1.field).enum = {defined_only: true, not_in: 0}];
+  // Exactly one representation matching the declared scalar type.
+  oneof value {
+    // Signed 32-bit or 64-bit value.
+    int64 signed_value = 2;
+    // Unsigned value; preserve all 64 bits, including values above INT64_MAX.
+    uint64 unsigned_value = 3;
+    // Explicit false is a valid key.
+    bool bool_value = 4;
+    // Exact spelling. Aggregate UTF-8 byte bounds are handler obligations.
+    string string_value = 5 [(ai.protomolt.proto.validate.v1.field).string.max_len = 1048576];
+  }
+}
+
+// One decoded traversal step. Field/map/index meaning depends on the descriptor.
+message RepositorySchemaOccurrenceStep {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "occurrence-field-number"
+    message: "field numbers in the protobuf reserved range are invalid"
+    expression: "!has(this.field_number) || this.field_number < 19000u || this.field_number > 19999u"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "occurrence-step-kind"
+    message: "one step is required; Any boundaries require a resolved definition"
+    expression: "has(this.field_number) || has(this.repeated_index) || has(this.map_key) || (has(this.any_boundary) && has(this.any_boundary.resolved))"
+  };
+  // A map key selects the value directly, without synthetic entry field 2.
+  oneof step {
+    // Positive protobuf field number; descriptor matching is a handler check.
+    uint32 field_number = 1 [(ai.protomolt.proto.validate.v1.field).uint32 = {gte: 1, lte: 536870911}];
+    // Zero-based repeated position; actual collection bounds need the candidate.
+    uint32 repeated_index = 2 [(ai.protomolt.proto.validate.v1.field).uint32.lte = 2147483647];
+    // Typed semantic map key, independent of map iteration order.
+    RepositoryOccurrenceMapKey map_key = 3;
+    // Reuses exact URL, effective value digest/size and pinned schema reference.
+    // Hash the parsed Any.value, not its original envelope's raw wire span.
+    // A resolved observation alone is not proof of successful validation.
+    RepositoryAnyResolution any_boundary = 4;
+  }
+}
+
+// Relative to a selected root Any, not a document address or raw wire byte span.
+// The enclosing record must identify the part/rendition, exact root location,
+// immutable revision, operation/attempt, candidate and admission policy.
+// Readers must bound raw bytes, recursion and wire occurrences before parsing;
+// post-parse annotation limits are not an allocation budget.
+// This contract introduces no RPC, persistence, authorization or validation verdict.
+message RepositorySchemaOccurrencePath {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "occurrence-path-boundaries"
+    message: "a path must begin and end at resolved Any boundaries"
+    expression: "size(this.steps) > 0 && has(this.steps[0].any_boundary) && has(this.steps[size(this.steps) - 1].any_boundary)"
+  };
+  // Only this layout is understood. Unknown fields must also be rejected by readers.
+  uint32 encoding_version = 1 [(ai.protomolt.proto.validate.v1.field).uint32.const = 1];
+  // Bounded syntax only. Verify every transition against descriptors and values;
+  // enforce aggregate counts/text, reject duplicate paths and canonicalize before hashing.
+  repeated RepositorySchemaOccurrenceStep steps = 2 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 301}];
+}
