@@ -4230,3 +4230,56 @@ cross-role deduplication, aggregate byte bounds and access failure during checki
 or before delivery. Sol reviewed the reader and tests; its missing successful
 no-source case was added and passed. This is not a SQL/process-restart historical
 restore qualification or proof of trusted compiler execution.
+
+### Complete member schema admission proof
+
+`DocumentSchemaAdmission.check` is the public, storage-independent verification
+boundary for a complete publication member. It binds the command digest, policy
+digest, explicit structured-root requirement, member and raw fragment ordinals.
+It checks every nonempty declaration against the actual bytes, assembles the
+Document, verifies ownership equality and refuses unknown fields or unsupported
+Any locations. The fixed v1 validation profile uses ProtoMolt and Buf annotation
+rules through ProtoMolt's runtime validator; callers cannot replace it with a
+no-op validator or change its dialects through provider discovery.
+
+Canonical root bundles must cover all discovered CORE and PARSED roots. All
+retained associations, including optional claimed source bytes, are verified
+before payload replay. The proof contains only the complete used association
+set and its normalized descriptor/metadata/source artifact union. Fragment,
+root, evidence, retained-asset and decoded-payload budgets apply across the
+member; subordinate structural and schema ceilings are documented in `Limits`.
+These serialized limits do not reserve heap or bound the reader's initial I/O
+allocation. The host remains responsible for those reservations.
+
+The immutable proof is privately constructed after final control checking. A
+member without typed roots can pass when the structured-root requirement is
+false; that proof is content verification, not a typed-admission verdict. The
+publisher must compare the command, member, policy, requirement and validation
+profile under its transaction fence, recheck authorization and physical object
+identity, and retain the full artifact/reference/evidence set before sealing.
+None of those publisher changes are activated by this facade. V52 remains
+OPAQUE-only, and historical SQL reading still needs its own authorization path.
+
+This boundary consumes candidate-supplied canonical evidence. Generating that
+evidence from an initial registry-backed admission remains separate integration
+work. Source integrity still does not establish trusted compilation. Before
+activation, qualify near-limit memory and latency, including eager retained
+reads and repeated canonical evidence encoding, against the host's operational
+budgets. Reuse the shared `DocumentRevisionAssembly` checks when integrating
+`DocumentCommandContent`; do not maintain two diverging assembly policies.
+
+The affected module suites pass 377 tests, including 10 new facade tests;
+unchanged tasks reuse Gradle verification outputs. The runtime dependency gate
+passes with the explicit validation dialect module. Fixtures cover raw fragment
+identity, root/reference coverage, source retention, aggregate budgets,
+structured-root requirements, unknown fields and final access failure. A Buf
+string constraint accepts a valid payload and rejects an invalid payload with
+internally consistent candidate-supplied provenance. Sol reviewed the facade
+and tests with no remaining blocker.
+
+Initial publication needs an evidence-producing entrypoint in this facade when
+the host resolver is integrated. It should select immutable definitions per
+occurrence, check payloads, project canonical evidence and replay through `check`.
+Hosts should reuse that operation instead of duplicating root discovery and
+schema selection through public encoders. The consuming `check` remains an
+independent verifier of persisted or imported evidence.

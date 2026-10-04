@@ -5,6 +5,7 @@ dependencies {
     implementation project(':protomolt-descriptors')
     implementation project(':protomolt-repo-codec')
     implementation project(':protomolt-protobuf-validation')
+    implementation project(':protomolt-protobuf-validation-protovalidate')
     implementation libs.protobuf.java.util
     testImplementation project(':protomolt-sources')
 }
