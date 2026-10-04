@@ -20,6 +20,74 @@ import static org.assertj.core.api.Assertions.*;
 class DocumentSchemaPolicyConcurrencyIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
+    @Test void firstActivationWaitsForAnActualPublicationThatObservedNoPolicy() throws Exception {
+        try (var c = context(POSTGRES); var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            c.pool().setMaximumPoolSize(6);
+            var prepared = prepare(c, 1);
+            var ready = new CountDownLatch(1);
+            var release = new CompletableFuture<Void>();
+            var writerPid = new AtomicInteger();
+            var writer = executor.submit(() -> publish(c, prepared, Fault.NONE, em -> {
+                writerPid.set(((Number) em.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue());
+                ready.countDown(); release.join();
+            }));
+            try {
+                assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+                var parallel = executor.submit(() -> c.tx().inTransaction(em -> {
+                    em.createNativeQuery("SELECT require_document_schema_policy_absent('account')").getSingleResult();
+                    return true;
+                }));
+                assertThat(parallel.get(10, TimeUnit.SECONDS)).as("ordinary account fences are shared").isTrue();
+                var catalog = new DocumentSchemaPolicies(c.tx());
+                var activation = executor.submit(() -> catalog.activate(policy("account", 100), 0, () -> {}));
+                awaitBlockedBy(c, writerPid.get());
+                assertThat(activation.isDone()).isFalse();
+                var other = executor.submit(() -> catalog.activate(policy("other", 100), 0, () -> {}));
+                assertThat(other.get(10, TimeUnit.SECONDS).revision()).isEqualTo(1);
+                release.complete(null);
+                assertThat(writer.get(10, TimeUnit.SECONDS).getMembersCount()).isEqualTo(1);
+                assertThat(activation.get(10, TimeUnit.SECONDS).revision()).isEqualTo(1);
+            } finally { release.complete(null); }
+        }
+    }
+
+    @Test void publicationWaitingForFirstActivationRejectsAndRollsBackItsDocumentChanges() throws Exception {
+        try (var c = context(POSTGRES); var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            c.pool().setMaximumPoolSize(5);
+            var prepared = prepare(c, 1);
+            var original = c.tx().readOnly(em -> em.createNativeQuery("SELECT row_to_json(d)::text FROM documents d").getSingleResult());
+            var ready = new CountDownLatch(1);
+            var release = new CompletableFuture<Void>();
+            var updaterPid = new AtomicInteger();
+            var replacement = policy("account", 100);
+            // Direct SQL first activation exercises the INSERT trigger, not the
+            // Java adapter's earlier advisory fence.
+            var updater = executor.submit(() -> c.tx().inTransaction(em -> {
+                em.createNativeQuery("INSERT INTO document_schema_policies VALUES('account',:sha,:codec,1,:bytes)")
+                        .setParameter("sha", java.util.HexFormat.of().parseHex(replacement.sha256()))
+                        .setParameter("codec", DocumentAdmissionPolicy.CODEC).setParameter("bytes", replacement.bytes().toByteArray()).executeUpdate();
+                em.createNativeQuery("INSERT INTO document_schema_policy_current VALUES('account',1,:sha)")
+                        .setParameter("sha", java.util.HexFormat.of().parseHex(replacement.sha256())).executeUpdate();
+                updaterPid.set(((Number) em.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue());
+                ready.countDown(); release.join(); return true;
+            }));
+            try {
+                assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+                var writer = executor.submit(() -> publish(c, prepared, Fault.NONE, em -> {}));
+                awaitBlockedBy(c, updaterPid.get());
+                assertThat(writer.isDone()).isFalse();
+                release.complete(null);
+                assertThat(updater.get(10, TimeUnit.SECONDS)).isTrue();
+                assertThatThrownBy(() -> writer.get(10, TimeUnit.SECONDS))
+                        .hasStackTraceContaining("Publication requires an explicit schema policy binding");
+                var after = c.tx().readOnly(em -> em.createNativeQuery("SELECT row_to_json(d)::text FROM documents d").getSingleResult());
+                long commits = c.tx().readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM document_revision_commits").getSingleResult()).longValue());
+                assertThat(after).isEqualTo(original);
+                assertThat(commits).isZero();
+            } finally { release.complete(null); }
+        }
+    }
+
     @Test void writersShareThePointerAndAnUpdaterWaitsForBothWithoutBlockingAnotherAccount() throws Exception {
         try (var c = context(POSTGRES); var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             c.pool().setMaximumPoolSize(6);

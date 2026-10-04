@@ -373,7 +373,7 @@ class DocumentRevisionProjectionIT {
         new DriveLedger(c.tx).insert(drive);
         var profile=new ManagedBackendLedger.Profile(new BackendIdentity("test-location","test-location/v1",Map.of("endpoint","synthetic")),"realm");
         String generation="generation-"+UUID.randomUUID(); new ManagedBackendLedger(c.tx).bind(generation,profile);
-        return ManagedDocumentFixture.publish(c.tx,drive,generation,profile,address,DocumentSecurity.getDefaultInstance(),parts,1,version,sparse);
+        return ManagedDocumentFixture.publishBeforePolicyFence(c.tx,drive,generation,profile,address,parts,1,version,sparse);
     }
     private static long count(Context c, String table) {
         return c.tx.readOnly(em -> ((Number)em.createNativeQuery("SELECT count(*) FROM "+table).getSingleResult()).longValue());

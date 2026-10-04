@@ -4515,3 +4515,66 @@ cover exact command staging, no publication from staging, altered commands,
 operation/token mismatch and rollback after artifact insertion. Sol reviewed the
 implementation, fixtures and lock-order design with no remaining blocker for
 this checkpoint. No protobuf contract or public entry point changed.
+
+### Account policy activation and all body-write paths
+
+V59 extends policy activation and existing body writers with a shared account
+fence. Publications use the shared two-integer advisory namespace; activation
+uses its exclusive mode before snapshot and pointer work. SQL first-pointer
+INSERT also takes the exclusive fence. Existing-pointer UPDATE retains its row
+serialization without acquiring an advisory lock late. All decisions compare
+exact account IDs; hash collisions affect scheduling only. READ COMMITTED is
+required so a waiting publication checks the committed policy after acquiring
+its fence.
+
+Extended operations and boundaries:
+
+- `DocumentPublicationCommit` and `DocumentPublicationBatch` acquire the fence
+  and reject configured policy before document locks. Batch destinations enter
+  in stable account order. They still cannot publish typed revisions.
+- `DocumentLedger.save`, guarded saves and locked-reference callbacks acquire
+  the shared account lock before domain locks. Their mixed-purpose updates leave
+  the body-versus-bookkeeping decision to SQL.
+- SQL revision projection INSERT rejects any configured policy without an
+  explicit binding. This covers both native and managed legacy publications.
+- SQL document INSERT and body-changing UPDATE provide the same check for
+  unmanaged legacy rows, which need not create a revision projection. Account
+  retagging is rejected; transfer requires a new document address.
+- Dedupe bookkeeping, lifecycle status and authorization-only mutations remain
+  separate from content admission. They confer no typed verdict. Historical
+  revisions are not rewritten when policy is activated.
+
+An opaque-permitted policy also rejects an older unbound writer. Choosing opaque
+admission must be a recorded decision under the selected policy, not an implicit
+bypass. This remains an internal rollout: no default policy is inserted and no
+public policy-administration API is enabled. Existing accounts without policy
+continue to publish. Typed evidence persistence and the permitted bound-writer
+path remain the next integration work.
+
+Supported Java writers acquire account locks before document locks. A late SQL
+check alone permits a lock-queue cycle: a legacy writer holding a document queues
+behind an exclusive activation, which waits for a native writer already holding
+the shared account lock and waiting for that document. Early Java acquisition
+avoids that order. Direct SQL callers must follow the documented order too;
+deadlock errors propagate and roll back rather than becoming successful writes.
+
+Pre-V59 migration fixtures now use an explicit historical SQL publication helper
+instead of calling today's Java publisher against an older schema. It still
+exercises real revision, drive, attempt and retention locks and inserts the
+actual historical rows; no missing-function fallback was added to production.
+
+Qualification passes 84 tests across policy publication/concurrency/catalog,
+schema artifact/evidence/association migrations, native publication, the real
+provider-backed publication committer and the document ledger. A further 59 tests
+pass across legacy revision projection migrations, part publication and the
+attempt writer. New cases verify both first-activation race directions using
+actual PostgreSQL blockers, shared writers, unrelated-account progress, rejected
+unbound native/legacy/unmanaged publication, direct SQL rejection, immutable
+account identity, unchanged historical rows and permitted dedupe bookkeeping.
+Sol reviewed the implementation, lock order and historical fixture changes with
+no remaining blocker. These checks establish enforcement, not a latency benchmark
+or an enabled typed publisher.
+
+The additional 64-case `DocumentAtomicPublicationIT` suite passes as well,
+including concurrent batch publication, shared-source locks, transactional
+rollback, cancellation and cleanup fencing: 207 affected tests total.

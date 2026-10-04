@@ -2310,9 +2310,26 @@ legacy projection must roll back its document mutation. Until a path can supply
 the complete selected policy and proof binding, it must reject publication under
 configured policy. This also applies to an opaque-permitted policy: an opaque
 decision still needs an explicit policy binding, not an unexamined legacy write.
-Bookkeeping changes that do not publish a body need a separate, documented
-classification. This is an integration requirement, not behavior supplied by
-the V58 catalog alone.
+Unmanaged legacy rows can change without a revision projection. Guard body
+INSERT/UPDATE on `documents` as well; a projection-only guard is insufficient.
+An existing document's account identity cannot be retagged: transfer requires a
+new addressed document. Dedupe counters, lifecycle status and authorization-only
+changes do not constitute a new content admission. They retain their own access
+checks and do not gain a typed-admission claim. Metadata snapshots and typed
+publication still need their transaction integration.
+
+V59 implements the initial-activation fence and rejects unbound body writes under
+any configured policy, including opaque-permitted policy. The native and legacy
+batch writers enter before domain locks; general ledger saves and locked-reference
+callbacks take the shared account lock early, allowing the SQL body guard to
+distinguish content from bookkeeping. This ordering also avoids a three-party
+cycle involving a native writer, a legacy writer and a queued exclusive policy
+activation. Direct SQL writers must follow the same account-before-document order;
+the SQL guards preserve rollback safety but cannot undo locks a caller already
+took in the wrong order. No public policy administration or typed publication is
+enabled by this migration. The next integration replaces the rejection for a
+writer that supplies the complete policy/proof binding; it must preserve these
+guards for all unbound paths.
 
 Expose two materialization modes, independently of admission policy:
 

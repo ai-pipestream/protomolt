@@ -29,6 +29,24 @@ record ManagedDocumentFixture(DocumentRecord row, UUID attempt,
     static ManagedDocumentFixture publish(Tx tx, DriveRecord drive, String generation,
             ManagedBackendLedger.Profile profile, NodeAddress address, DocumentSecurity policy,
             int parts, long coreSize, String version, boolean sparseManifest, WriteProvenance provenance) {
+        return publish(tx, drive, generation, profile, address, policy, parts, coreSize, version, sparseManifest, provenance, false);
+    }
+
+    /** Populate a pre-V59 database using its historical SQL protocol, never today's Java writer. */
+    static ManagedDocumentFixture publishBeforePolicyFence(Tx tx, DriveRecord drive, String generation,
+            ManagedBackendLedger.Profile profile, NodeAddress address, int parts, long coreSize, String version) {
+        return publishBeforePolicyFence(tx, drive, generation, profile, address, parts, coreSize, version, false);
+    }
+
+    static ManagedDocumentFixture publishBeforePolicyFence(Tx tx, DriveRecord drive, String generation,
+            ManagedBackendLedger.Profile profile, NodeAddress address, int parts, long coreSize, String version, boolean sparse) {
+        return publish(tx, drive, generation, profile, address, DocumentSecurity.getDefaultInstance(),
+                parts, coreSize, version, sparse, null, true);
+    }
+
+    private static ManagedDocumentFixture publish(Tx tx, DriveRecord drive, String generation,
+            ManagedBackendLedger.Profile profile, NodeAddress address, DocumentSecurity policy,
+            int parts, long coreSize, String version, boolean sparseManifest, WriteProvenance provenance, boolean historical) {
         UUID node = DocumentIds.nodeId(address); UUID id = UUID.randomUUID();
         var documents = new DocumentLedger(tx);
         var prior = documents.findByNodeId(node).orElse(null);
@@ -71,8 +89,10 @@ record ManagedDocumentFixture(DocumentRecord row, UUID attempt,
                         .setState(PartState.PART_STATE_DELETED).setDeletedReason("Synthetic tombstone"));
         }
         row.writeManifest(manifest.build()); row.checksum = DocumentPartCodec.rootChecksumFromManifest(manifest.build());
-        row = documents.saveVerifiedAttempt(row, prior == null ? null : prior.mutationRevision, Map.of(), id, attempt.token(),
-                new DocumentPublicationTarget(new DriveLedger(tx), drive, generation, profile.identity()), (em, saved) -> {});
+        var target = new DocumentPublicationTarget(new DriveLedger(tx), drive, generation, profile.identity());
+        row = historical ? saveBeforePolicyFence(tx, row, prior, id, attempt.token(), target)
+                : documents.saveVerifiedAttempt(row, prior == null ? null : prior.mutationRevision, Map.of(), id, attempt.token(),
+                        target, (em, saved) -> {});
         var identities = tx.readOnly(em -> {
             var result = new ArrayList<PublicationObjectIdentity>();
             for (var values : em.unwrap(org.hibernate.Session.class).createNativeQuery(
@@ -88,5 +108,31 @@ record ManagedDocumentFixture(DocumentRecord row, UUID attempt,
             return List.copyOf(result);
         });
         return new ManagedDocumentFixture(row, id, List.copyOf(slots), identities);
+    }
+
+    private static DocumentRecord saveBeforePolicyFence(Tx tx, DocumentRecord candidate, DocumentRecord prior,
+            UUID attemptId, UUID token, DocumentPublicationTarget target) {
+        return tx.inTransaction(em -> {
+            var nodes = java.util.Set.of(candidate.nodeId);
+            var locked = DocumentRevisionLocks.lock(em, nodes, java.util.Set.of());
+            Long revision = prior == null ? null : prior.mutationRevision;
+            DocumentLedger.requireRevision(locked.get(candidate.nodeId), revision);
+            target.lock(em);
+            var origins = DocumentPublicationLocks.lockOrigins(em, nodes, java.util.Set.of(attemptId));
+            var attempt = DocumentPartAttemptLedger.requirePublishable(em, attemptId, token, candidate, revision, Map.of());
+            target.requireMatches(em, candidate, attempt);
+            DocumentPublicationLocks.lockRetention(em, origins);
+            var saved = em.merge(candidate); em.flush(); em.refresh(saved);
+            em.createNativeQuery("""
+                    INSERT INTO document_part_publication_history(attempt_id,node_id,publication_revision,body)
+                    SELECT :attempt,node_id,mutation_revision,document_publication_body(documents)
+                    FROM documents WHERE node_id=:node
+                    """).setParameter("attempt", attemptId).setParameter("node", saved.nodeId).executeUpdate();
+            em.createNativeQuery("""
+                    INSERT INTO document_part_publications(node_id,attempt_id) VALUES(:node,:attempt)
+                    ON CONFLICT(node_id) DO UPDATE SET attempt_id=EXCLUDED.attempt_id
+                    """).setParameter("node", saved.nodeId).setParameter("attempt", attemptId).executeUpdate();
+            return saved;
+        });
     }
 }

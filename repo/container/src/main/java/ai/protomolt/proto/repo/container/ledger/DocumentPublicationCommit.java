@@ -61,6 +61,8 @@ final class DocumentPublicationCommit {
         return tx.inTransaction(em -> {
             RepositoryOperationLedger.fenceLiveOwner(em,owner);
             RepositoryOperationLedger.requireCommand(em,owner.key(),command);
+            // Before document locks; the SQL projection trigger also protects legacy paths.
+            DocumentSchemaPolicies.lockUnboundWriter(em, command.intent().getAccountId());
             var locked=DocumentAdmissionAuthorization.lockAndAuthorize(em,caller,plan,authorization);
             for (var placement:placements) {
                 placement.drive().lock(em,drives);

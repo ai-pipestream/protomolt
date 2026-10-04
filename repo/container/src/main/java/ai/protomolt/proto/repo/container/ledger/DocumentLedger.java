@@ -68,6 +68,7 @@ public final class DocumentLedger {
      */
     public DocumentRecord save(DocumentRecord record) {
         return tx.inTransaction(em -> {
+            DocumentSchemaPolicies.lockAccountWriter(em, record.accountId);
             var stored = em.merge(record);
             em.flush();
             // Mutation revision is assigned by PostgreSQL, including on updates.
@@ -139,6 +140,7 @@ public final class DocumentLedger {
         java.util.Objects.requireNonNull(committed, "committed");
         Map<UUID, Long> sources = Map.copyOf(sourceRevisions);
         return tx.inTransaction(em -> {
+            DocumentSchemaPolicies.lockAccountWriter(em, candidate.accountId);
             var locked = lockRevisions(em, java.util.Set.of(candidate.nodeId), sources);
             DocumentRecord current = locked.get(candidate.nodeId);
             requireRevision(current, expectedRevision);
@@ -337,6 +339,7 @@ public final class DocumentLedger {
     public <T> T withLockedReference(NodeAddress address,
             java.util.function.BiFunction<jakarta.persistence.EntityManager, Optional<DocumentRecord>, T> work) {
         return tx.inTransaction(em -> {
+            DocumentSchemaPolicies.lockAccountWriter(em, address.getAccountId());
             TypedQuery<DocumentRecord> query = referenceQuery(em, address);
             query.setLockMode(LockModeType.PESSIMISTIC_WRITE);
             return work.apply(em, query.getResultStream().findFirst());

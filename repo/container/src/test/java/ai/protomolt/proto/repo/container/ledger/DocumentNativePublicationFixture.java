@@ -50,8 +50,10 @@ final class DocumentNativePublicationFixture {
         for (int i=0;i<size;i++) {
             var address=NodeAddress.newBuilder().setAccountId("account").setDocId("doc-"+i)
                     .setGraphId("graph").setGraphAddressId("node").build();
-            var source=ManagedDocumentFixture.publish(c.tx, drive, "native-test", profile, address,
-                    DocumentSecurity.getDefaultInstance(), 2, 5, "fixture-version");
+            var source = c.beforePolicyFence()
+                    ? ManagedDocumentFixture.publishBeforePolicyFence(c.tx, drive, "native-test", profile, address, 2, 5, "fixture-version")
+                    : ManagedDocumentFixture.publish(c.tx, drive, "native-test", profile, address,
+                            DocumentSecurity.getDefaultInstance(), 2, 5, "fixture-version");
             sources.add(source);
             var condition=DocumentRevisionCondition.newBuilder().setAddress(address)
                     .setExpectedMutationRevision(source.row().mutationRevision).build();
@@ -184,7 +186,7 @@ final class DocumentNativePublicationFixture {
     }
 
     static long count(Context c,String table) { return c.tx.readOnly(em -> ((Number)em.createNativeQuery("SELECT count(*) FROM "+table).getSingleResult()).longValue()); }
-    record Context(HikariDataSource pool, EntityManagerFactory emf, Tx tx) implements AutoCloseable {
+    record Context(HikariDataSource pool, EntityManagerFactory emf, Tx tx, boolean beforePolicyFence) implements AutoCloseable {
         public void close() { try { emf.close(); } finally { pool.close(); } }
     }
     static Context context(PostgreSQLContainer postgres) {
@@ -200,7 +202,7 @@ final class DocumentNativePublicationFixture {
         var pool=new HikariDataSource(config);
         try {
             var emf=Persistence.createEntityManagerFactory("document-ledger",Map.of("hibernate.connection.datasource",pool,"hibernate.hbm2ddl.auto","validate"));
-            return new Context(pool,emf,new Tx(emf));
+            return new Context(pool,emf,new Tx(emf), !target.equals("latest") && Integer.parseInt(target) < 59);
         } catch(RuntimeException|Error failure) { pool.close(); throw failure; }
     }
 }

@@ -23,6 +23,18 @@ final class DocumentSchemaPolicies {
     private final Tx tx;
     DocumentSchemaPolicies(Tx tx) { this.tx = Objects.requireNonNull(tx); }
 
+    /** Lock before document rows; body triggers decide whether a mixed-purpose mutation needs admission. */
+    static void lockAccountWriter(EntityManager em, String account) {
+        em.createNativeQuery("SELECT lock_document_schema_policy_account(:account,false)")
+                .setParameter("account", account).getSingleResult();
+    }
+
+    /** Existing body writers must enter before document locks, including unmanaged legacy rows. */
+    static void lockUnboundWriter(EntityManager em, String account) {
+        em.createNativeQuery("SELECT require_document_schema_policy_absent(:account)")
+                .setParameter("account", account).getSingleResult();
+    }
+
     /** Trusted administration only. Expected zero creates the first pointer; every update advances its revision. */
     Selection activate(DocumentAdmissionPolicy policy, long expectedRevision, Runnable control) {
         Objects.requireNonNull(policy); Objects.requireNonNull(control); active(control);
@@ -33,6 +45,8 @@ final class DocumentSchemaPolicies {
         return tx.inTransaction(em -> {
             active(control);
             em.createNativeQuery("SELECT require_repository_read_committed()").getSingleResult();
+            em.createNativeQuery("SELECT lock_document_schema_policy_account(:account,true)")
+                    .setParameter("account", account).getSingleResult();
             em.createNativeQuery("""
                     INSERT INTO document_schema_policies(account_id,policy_sha256,policy_codec,policy_version,policy_bytes)
                     VALUES(:account,:sha,:codec,:version,:bytes) ON CONFLICT(account_id,policy_sha256) DO NOTHING
@@ -82,6 +96,8 @@ final class DocumentSchemaPolicies {
         Objects.requireNonNull(em); Objects.requireNonNull(expected); Objects.requireNonNull(control); active(control);
         if (!em.getTransaction().isActive()) throw new IllegalStateException("Policy lock requires a transaction");
         em.createNativeQuery("SELECT require_repository_read_committed()").getSingleResult();
+        em.createNativeQuery("SELECT lock_document_schema_policy_account(:account,false)")
+                .setParameter("account", expected.account()).getSingleResult();
         // Lock the pointer first. A concurrent activation can change its digest
         // while this SELECT waits; read the referenced immutable body afterwards.
         var pointers = em.createNativeQuery("""

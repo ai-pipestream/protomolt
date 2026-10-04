@@ -107,6 +107,8 @@ final class DocumentPublicationBatch {
         var destinations = prepared.destinations;
         var sources = prepared.sources;
         long candidateParts = prepared.candidateParts;
+        batch.stream().map(p -> p.candidate.accountId).distinct().sorted()
+                .forEach(account -> DocumentSchemaPolicies.lockUnboundWriter(em, account));
         var locked = DocumentRevisionLocks.lock(em, destinations, sources.keySet());
         for (var source : sources.entrySet())
             DocumentLedger.requireRevision(locked.get(source.getKey()), source.getValue());
