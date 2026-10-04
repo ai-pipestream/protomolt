@@ -5535,3 +5535,28 @@ This transition does not choose a predecessor generation for the host, advance
 an already retained recovery to another generation, reconstruct a crashed host's
 session, or create an abort receipt. Those remain explicit recovery work before
 production mounting; uncertain entries are never discarded by timeout or capacity.
+
+### Durable publication-command reconstruction
+
+New internal `DocumentOperationCommands` loads only the authenticated principal's
+operation in an authorized account. It reconstructs the operation UUID from that
+scoped key because the canonical semantic bytes intentionally omit it. Supported
+rows pass the existing ProtoMolt command validator, exact canonical-byte equality,
+stored SHA-256 and account checks. Unsupported codecs/versions report UNSUPPORTED;
+malformed, noncanonical or mismatched supported data reports DATA_LOSS. SQL errors
+and request cancellation are not rewritten as data corruption or absence.
+
+PostgreSQL cases cover member ordering, unknown fields, an embedded operation ID,
+invalid intents, malformed bytes, wrong accounts, unsupported encoding headers,
+principal isolation and post-read cancellation. A separately labeled isolated
+schema fault bypasses SQL immutability and digest constraints to verify the reader's
+digest check. A fresh JVM reconstructs the command using only database connection,
+caller scope and operation UUID. It receives no original request object or bytes.
+
+The real-provider registry recovery test now executes a command reconstructed by
+a new reader, then publishes its generation-two revision. Its payloads, selected
+placements and schema resolver are still supplied by the fixture. This proves
+durable command reconstruction and its use in recovery, not a complete host restart
+or staged-payload recovery. The loader is internal: returning a command grants no
+owner token, document access or permission to publish, and is not a public endpoint
+for reading historical request metadata.

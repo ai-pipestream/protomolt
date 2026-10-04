@@ -660,12 +660,17 @@ class DocumentPublicationCommitIT {
                         }
                         return DocumentSchemaRetentionFixture.definition(com.google.protobuf.StringValue.getDescriptor());
                     };
+            var executionCommand=executionMode==ExecutionMode.REGISTRY_RECOVERY
+                    ? new DocumentOperationCommands(new Tx(database.entityManagerFactory())).load(ADMIN,command.intent().getAccountId(),
+                            command.operationId(),ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE).orElseThrow() : command;
             if (executionMode==ExecutionMode.REGISTRY_RECOVERY) {
-                assertThat(sessions.recover(ADMIN,command,placements,1,modes,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isEmpty();
+                assertThat(executionCommand).isNotSameAs(command);
+                assertThat(executionCommand.canonical()).isEqualTo(command.canonical());
+                assertThat(sessions.recover(ADMIN,executionCommand,placements,1,modes,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isEmpty();
                 assertThat(sessions.retainedSessions()).isEqualTo(1);
-                assertThat(sessions.recover(ADMIN,command,Map.of(),1,modes,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isEmpty();
+                assertThat(sessions.recover(ADMIN,executionCommand,Map.of(),1,modes,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isEmpty();
             }
-            result=registryOwns ? sessions.execute(ADMIN,command,placements,Map.copyOf(shiftedBodies),Map.of(),modes,container,resolver,
+            result=registryOwns ? sessions.execute(ADMIN,executionCommand,placements,Map.copyOf(shiftedBodies),Map.of(),modes,container,resolver,
                     ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)
                     : execution.execute(ADMIN,session,Map.copyOf(shiftedBodies),Map.of(),modes,container,resolver,
                     ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
