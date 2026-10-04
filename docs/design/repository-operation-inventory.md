@@ -5236,3 +5236,27 @@ slots with upload/EMPTY ordinal gaps, exact bytes, capacity refusal, and reader
 pins held through batch consumption or actual cancelled-worker exit. Host shutdown
 and pin release remain explicit. This port supports the facade design recorded in
 `repository-composition.md`; it does not itself mount native publication.
+
+### Protected mixed publication inputs
+
+New internal `DocumentPublicationInputs` combines a borrowed upload view with
+protected retained-reader batches. Before provider I/O it verifies the canonical
+command, operation ID, account, principal and owner generation, then matches the
+complete upload and reuse slot sets. Canonical command bytes deliberately omit
+the operation ID, so their equality alone is insufficient here.
+
+Retained batch positions map to the selected entries' full revision ordinals;
+upload and EMPTY gaps are preserved. Part kind, sub-key, declared digest and size
+must match the selected source. The provider reader verifies actual bytes and
+original physical bindings; candidate admission still checks the complete content.
+The input owner keeps batches and a plan use alive until its consumer has copied
+bytes into an owned candidate. It closes local resources on failure but leaves
+SQL pin closure, drain, release and recovery with the coordinator.
+
+Real-provider tests combine an upload with reordered retained parts and an EMPTY
+slot, copy the complete inputs under a separate reservation, and verify the copies
+after closing the borrowed inputs. A malformed batch shape injected after real
+reads releases its reservations. A different operation with identical canonical
+bytes and a different owner generation are refused before provider reads. This
+adapter prepares the remaining facade wiring; it does not grant publication
+authority or mount a service.

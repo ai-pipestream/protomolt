@@ -809,8 +809,9 @@ class DocumentUploadCoordinatorIT {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
-    void protectedRetainedReadsKeepPinsUntilBatchesAndActualWorkersEnd(boolean cancel) throws Exception {
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"read", "cancel", "inputs", "invalid-inputs", "wrong-operation", "wrong-owner"})
+    void protectedRetainedReadsKeepPinsUntilBatchesAndActualWorkersEnd(String mode) throws Exception {
+        boolean cancel = mode.equals("cancel");
         var base = fixture(3, LEASE);
         var source = retain(base, List.of(0, 2));
         var original = base.command.intent().getMembers(0);
@@ -880,7 +881,61 @@ class DocumentUploadCoordinatorIT {
         try (var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, retainedProfile) -> counted,
                 2, 1024 * 1024, budget)) {
             DocumentRetainedReader retainedReader = reader;
-            if (cancel) {
+            if (mode.equals("inputs") || mode.equals("invalid-inputs") || mode.startsWith("wrong-")) {
+                var uploadBudget = new PayloadBudget(1024 * 1024);
+                var snapshotBudget = new PayloadBudget(1024 * 1024);
+                var bodies = Map.of(new DocumentUploadPayloads.Key("member", 0),
+                        base.bodies.get(new DocumentUploadPayloads.Key("member", 1)));
+                try (var payloads = prepared.preparePayloads(java.util.Set.of("member"), bodies, uploadBudget);
+                        var use = prepared.claimPayloads(payloads, java.util.Set.of("member"));
+                        var view = use.view()) {
+                    if (mode.startsWith("wrong-")) {
+                        var another = new DocumentPublicationCommand(command.intent().toBuilder()
+                                .setOperationId(UUID.randomUUID().toString()).build());
+                        assertThat(another.canonical()).isEqualTo(command.canonical());
+                        var anotherOwner = new RepositoryOperationLedger.Owner(owner.key(), owner.generation() + 1,
+                                UUID.randomUUID(), owner.leaseUntil());
+                        assertThatThrownBy(() -> {
+                            try (var unexpected = DocumentPublicationInputs.capture(mode.equals("wrong-operation") ? another : command,
+                                    mode.equals("wrong-owner") ? anotherOwner : owner, view, protectedPlan,
+                                    retainedReader, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+                                fail("mismatched operation or owner returned inputs");
+                            }
+                        }).hasMessageContaining("differs from publication command or owner");
+                    } else if (mode.equals("invalid-inputs")) {
+                        // Corrupt only the returned batch shape after real provider reads.
+                        DocumentRetainedReader wrongCount = (pinned, id, control) -> {
+                            var actual = retainedReader.readRetained(pinned, id, control);
+                            return new DocumentRetainedReader.Batch() {
+                                @Override public List<PartObject> parts() { return actual.parts().subList(0, 1); }
+                                @Override public void close() { actual.close(); }
+                            };
+                        };
+                        assertThatThrownBy(() -> DocumentPublicationInputs.capture(command, owner, view, protectedPlan,
+                                wrongCount, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                                .hasMessageContaining("wrong part count");
+                    } else {
+                        try (var inputs = DocumentPublicationInputs.capture(command, owner, view, protectedPlan,
+                                retainedReader, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+                                var snapshot = DocumentPublicationFragments.capture(command, inputs.fragments(), snapshotBudget, () -> {})) {
+                            assertThat(inputs.fragments().get("member")).containsOnlyKeys(0, 1, 3);
+                            assertThat(budget.reservedBytes()).isEqualTo(size * 2);
+                            inputs.close();
+                            view.close();
+                            assertThat(budget.reservedBytes()).isZero();
+                            var copied = snapshot.fragments().get("member");
+                            assertThat(copied.get(0).toByteArray()).containsExactly(bodies.values().iterator().next().bytes());
+                            assertThat(copied.get(1).toByteArray()).containsExactly(base.bodies.get(new DocumentUploadPayloads.Key("member", 2)).bytes());
+                            assertThat(copied.get(3).toByteArray()).containsExactly(base.bodies.get(new DocumentUploadPayloads.Key("member", 0)).bytes());
+                            assertThatThrownBy(inputs::fragments).hasMessageContaining("closed");
+                        }
+                    }
+                }
+                assertThat(uploadBudget.reservedBytes()).isZero();
+                assertThat(snapshotBudget.reservedBytes()).isZero();
+                assertThat(budget.reservedBytes()).isZero();
+                protectedPlan.close(); ledger.fence();
+            } else if (cancel) {
                 try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
                     var result = executor.submit(() -> retainedReader.readRetained(protectedPlan, "member",
                             new ai.protomolt.proto.repo.spi.RepositoryReadControl() {
@@ -925,7 +980,7 @@ class DocumentUploadCoordinatorIT {
             ledger.attestLocalQuiescence(); protectedPlan.release();
             assertThat(documentPins(incarnation)).isZero();
         }
-        assertThat(gets.get()).isEqualTo(2);
+        assertThat(gets.get()).isEqualTo(mode.startsWith("wrong-") ? 0 : 2);
         assertThat(budget.reservedBytes()).isZero();
         assertThat(new DocumentPartAttemptLedger(tx).find(attempt)).isEmpty();
     }
