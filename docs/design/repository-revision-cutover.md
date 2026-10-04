@@ -246,15 +246,21 @@ yet wired into assembly or a public repository operation. No lookup of today's
 drive or fallback backend is allowed.
 
 Fresh bytes remain under `DocumentUploadPayloads.Use`; do not fetch them again
-solely for assembly. The current coordinator closes this use before returning
-`Staged`, so integration requires a scoped engine callback or equivalent controlled
-handoff inside the use lifetime. It must also remain inside owner/selection
-heartbeat, cancellation and operation-permit lifetimes. The current heartbeat ends
-before the final selected-attempt verification; appending a callback after that
-verification without extending heartbeat coverage is insufficient. Zero-upload
-preparation still needs owner renewal and must not take the current early return.
-Run the handoff after upload acknowledgments and SQL verification, while heartbeat
-and failure checks remain active; the returned `Staged` snapshot is not that fence.
+solely for assembly. The internal `stageAndPrepare` callback now runs after upload
+acknowledgments and SQL verification, inside payload ownership, owner/selection
+heartbeat, cancellation and operation-permit lifetimes. Its scoped View exposes
+read-only buffers at full member/ordinal keys and is invalidated before releasing
+the Use. Zero-upload preparation renews its owner without creating upload workers
+or an observation flusher. Ordinary stage/retry also keep heartbeat active through
+final verification.
+
+After a custom callback, the coordinator rechecks canonical command, authorization,
+retained source bindings, all initial member selections including zero-upload rows,
+owner lease and exact selected-attempt revisions. These are separate transactions,
+not an atomic admission/publication fence. Heartbeat tasks drain and sticky failure
+is checked before returning. The callback must not publish, perform semantic review
+or let borrowed buffers escape; it is trusted bounded preparation code. Engine
+assembly integration, decoded-memory accounting and schema validation remain open.
 
 Use one shared payload budget for uploads and retained reads, reserving additional
 copies before allocation. `PayloadBudget` accounts for reservations, not actual JVM

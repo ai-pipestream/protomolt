@@ -60,6 +60,140 @@ class DocumentUploadCoordinatorIT {
             DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
             Map<UUID, DocumentUploadPlan.Placement> placements, UUID attempt) {}
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void preparationKeepsOwnerHeartbeatAndBorrowedBytesUntilCallbackEnds(boolean upload) throws Exception {
+        var base = fixture(1, LEASE);
+        var member = base.command.intent().getMembers(0);
+        if (!upload) {
+            var source = retain(base, List.of(0));
+            var measured = source.stored().parts().getFirst();
+            String physical = tx.readOnly(em -> em.createNativeQuery(
+                    "SELECT physical_object_id FROM document_part_attempt_objects WHERE attempt_id=:id")
+                    .setParameter("id", base.attempt).getSingleResult().toString());
+            var identity = PublicationObjectIdentity.newBuilder().setObjectId(physical).setBackendGeneration(GENERATION)
+                    .setStorageRealm(profile.storageRealm()).setNamespace(NAMESPACE).setObjectKey(measured.key())
+                    .setSizeBytes(measured.size()).setSha256(measured.sha256()).setContentType(member.getParts(0).getUpload().getContentType())
+                    .setProviderVersion(measured.providerVersion());
+            var condition = member.getDestination().toBuilder().clearIfAbsent()
+                    .setExpectedMutationRevision(source.published().mutationRevision).build();
+            member = member.toBuilder().setDestination(condition).setParts(0, member.getParts(0).toBuilder().clearUpload()
+                    .setReuse(PublicationReuse.newBuilder().setSource(condition).setSourceSlot(member.getParts(0).getSlot())
+                            .setObject(identity))).build();
+        }
+        var command = new DocumentPublicationCommand(base.command.intent().toBuilder().setOperationId(UUID.randomUUID().toString())
+                .setMembers(0, member).build());
+        Duration lease = Duration.ofSeconds(3);
+        var owner = new RepositoryOperationLedger(tx).admit(new RepositoryOperationLedger.Key("account", "principal", command.operationId()),
+                command, UUID.randomUUID(), lease).owner().orElseThrow();
+        UUID attempt = UUID.randomUUID();
+        var prepared = DocumentOperationUploadAdmission.prepare(command, base.placements, upload ? Map.of("member", attempt) : Map.of(), lease);
+        var budget = new PayloadBudget(1024 * 1024);
+        var gets = new java.util.concurrent.atomic.AtomicInteger();
+        var puts = new java.util.concurrent.atomic.AtomicInteger();
+        var store = intercept((method, args, call) -> {
+            if (method.equals("getBounded")) gets.incrementAndGet();
+            if (method.equals("put")) puts.incrementAndGet();
+            return call.call();
+        });
+        var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
+        var expiredView = new java.util.concurrent.atomic.AtomicReference<DocumentUploadPayloads.View>();
+        try (var coordinator = coordinator(store, budget, Duration.ofMillis(25));
+                var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var pending = executor.submit(() -> coordinator.stageAndPrepare(ADMIN, owner, prepared,
+                    upload ? base.bodies : Map.of(), Map.of(), () -> {}, (staged, bytes, active) -> {
+                        assertThat(staged.members()).hasSize(upload ? 1 : 0);
+                        assertThat(bytes.keys()).hasSize(upload ? 1 : 0);
+                        if (upload) {
+                            var key = new DocumentUploadPayloads.Key("member", 0);
+                            var body = bytes.bytes(key);
+                            assertThat(body).isEqualTo(java.nio.ByteBuffer.wrap(base.bodies.get(key).bytes()));
+                            assertThatThrownBy(() -> body.put(0, (byte) 1)).isInstanceOf(java.nio.ReadOnlyBufferException.class);
+                            assertThat(budget.reservedBytes()).isEqualTo(2L * body.remaining());
+                        }
+                        expiredView.set(bytes); entered.countDown();
+                        try {
+                            if (!release.await(8, TimeUnit.SECONDS)) throw new IllegalStateException("Preparation gate timed out");
+                        } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new IllegalStateException(interrupted); }
+                        active.run();
+                        return "prepared";
+                    }));
+            try {
+                assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+                var before = tx.readOnly(em -> (java.math.BigDecimal) em.createNativeQuery(
+                        "SELECT extract(epoch FROM lease_until) FROM repository_operation_owners WHERE operation_id=:id")
+                        .setParameter("id", command.operationId()).getSingleResult());
+                var attemptBefore = upload ? tx.readOnly(em -> (java.math.BigDecimal) em.createNativeQuery(
+                        "SELECT extract(epoch FROM lease_until) FROM document_part_attempts WHERE attempt_id=:id")
+                        .setParameter("id", attempt).getSingleResult()) : null;
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                boolean renewed;
+                do {
+                    renewed = tx.readOnly(em -> (Boolean) em.createNativeQuery(
+                            "SELECT extract(epoch FROM lease_until)>:before FROM repository_operation_owners WHERE operation_id=:id")
+                            .setParameter("before", before).setParameter("id", command.operationId()).getSingleResult());
+                    if (renewed && upload) renewed = tx.readOnly(em -> (Boolean) em.createNativeQuery(
+                            "SELECT extract(epoch FROM lease_until)>:before FROM document_part_attempts WHERE attempt_id=:id")
+                            .setParameter("before", attemptBefore).setParameter("id", attempt).getSingleResult());
+                    if (renewed || pending.isDone()) break;
+                    Thread.sleep(10);
+                } while (System.nanoTime() < deadline);
+                assertThat(renewed).as("owner heartbeat continues during preparation, including zero uploads").isTrue();
+            } finally { release.countDown(); }
+            assertThat(pending.get(5, TimeUnit.SECONDS)).isEqualTo("prepared");
+        }
+        assertThatThrownBy(() -> expiredView.get().keys()).hasMessageContaining("closed");
+        assertThat(gets.get()).isEqualTo(upload ? 1 : 0);
+        assertThat(puts.get()).isEqualTo(upload ? 1 : 0);
+        assertThat(budget.reservedBytes()).isZero();
+        assertThat(tx.<Long>readOnly(em -> ((Number) em.createNativeQuery(
+                "SELECT count(*) FROM document_revision_current WHERE node_id=:id")
+                .setParameter("id", prepared.members().getFirst().nodeId()).getSingleResult()).longValue())).isEqualTo(upload ? 0 : 1);
+    }
+
+    @Test void preparationRefusesASelectionReplacedDuringItsCallback() {
+        var f = fixture(1, LEASE); var budget = new PayloadBudget(1024 * 1024);
+        UUID next = UUID.randomUUID();
+        var replacement = DocumentOperationUploadAdmission.prepare(f.command, f.placements, Map.of("member", next), LEASE);
+        try (var coordinator = coordinator(opened.store(), budget, Duration.ofMillis(25))) {
+            assertThatThrownBy(() -> coordinator.stageAndPrepare(ADMIN, f.owner, f.prepared, f.bodies, Map.of(), () -> {},
+                    (staged, bytes, active) -> {
+                        admission.retry(ADMIN, f.owner, replacement,
+                                Map.of("member", new DocumentOperationSelection.Expected(1, f.attempt)));
+                        return "must not escape";
+                    })).isInstanceOf(DocumentPartAttemptLedger.FenceException.class);
+        }
+        assertThat(budget.reservedBytes()).isZero();
+        assertThat(tx.<Long>readOnly(em -> ((Number) em.createNativeQuery(
+                "SELECT selection_revision FROM document_operation_selection_current WHERE operation_id=:id")
+                .setParameter("id", f.command.operationId()).getSingleResult()).longValue())).isEqualTo(2);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"callback", "cancel", "owner"})
+    void preparationFailureCannotReturnSuccessOrLeakItsReservation(String failure) {
+        var f = fixture(1, LEASE); var budget = new PayloadBudget(1024 * 1024);
+        var cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        var view = new java.util.concurrent.atomic.AtomicReference<DocumentUploadPayloads.View>();
+        try (var coordinator = coordinator(opened.store(), budget, Duration.ofMillis(25))) {
+            assertThatThrownBy(() -> coordinator.stageAndPrepare(ADMIN, f.owner, f.prepared, f.bodies, Map.of(),
+                    () -> { if (cancelled.get()) throw new IllegalStateException("test cancellation"); }, (staged, bytes, active) -> {
+                        view.set(bytes);
+                        if (failure.equals("callback")) throw new IllegalStateException("test callback failure");
+                        if (failure.equals("cancel")) cancelled.set(true);
+                        if (failure.equals("owner")) tx.inTransaction(em -> {
+                            em.createNativeQuery("UPDATE repository_operation_owners SET lease_until=clock_timestamp()-interval '1 second' WHERE operation_id=:id")
+                                    .setParameter("id", f.command.operationId()).executeUpdate();
+                        });
+                        return "must not escape";
+                    })).isInstanceOf(RuntimeException.class);
+        }
+        assertThat(view.get()).isNotNull();
+        assertThatThrownBy(() -> view.get().keys()).hasMessageContaining("closed");
+        assertThat(budget.reservedBytes()).isZero();
+        assertThat(verified(f)).isEqualTo(1);
+    }
+
     @Test void stages257RealObjectsAndDrainsTailWithoutPublishing() throws Exception {
         var f = fixture(257, LEASE);
         var budget = new PayloadBudget(16 * 1024 * 1024);

@@ -225,4 +225,31 @@ final class DocumentOperationUploadAdmission {
                 || !expected.sha256().equals(HexFormat.of().formatHex((byte[]) row[3])))
             throw new RepositoryOperationLedger.CommandConflictException();
     }
+
+    /** Initial preparation only. Includes immutable zero-upload members, not just selected attempts. */
+    void recheckInitialSelections(RepositoryOperationLedger.Owner owner, Prepared prepared) {
+        var command = prepared.plan.command();
+        if (!owner.key().account().equals(command.intent().getAccountId()) || !owner.key().operationId().equals(command.operationId()))
+            throw new IllegalArgumentException("Prepared selections differ from operation scope");
+        tx.inTransaction(em -> {
+            RepositoryOperationLedger.fenceLiveOwner(em, owner);
+            requireCommand(em, owner.key(), prepared.plan.command());
+            boolean matches = (Boolean) em.createNativeQuery("""
+                    WITH expected AS (
+                      SELECT * FROM jsonb_to_recordset(CAST(:rows AS jsonb)) q(member_id text,node_id uuid,
+                        sampled_revision bigint,drive_id uuid,backend_generation text,storage_realm text,
+                        storage_namespace text,upload_count integer,attempt_id uuid)
+                    ), actual AS (
+                      SELECT member_id,node_id,sampled_revision,drive_id,backend_generation,storage_realm,
+                        storage_namespace,upload_count,attempt_id FROM document_operation_selections
+                      WHERE account_id=:account AND principal=:principal AND operation_id=:operation AND owner_generation=:generation
+                    )
+                    SELECT NOT EXISTS((SELECT * FROM expected EXCEPT SELECT * FROM actual)
+                      UNION ALL (SELECT * FROM actual EXCEPT SELECT * FROM expected))
+                    """).setParameter("rows", prepared.selections).setParameter("account", owner.key().account())
+                    .setParameter("principal", owner.key().principal()).setParameter("operation", owner.key().operationId())
+                    .setParameter("generation", owner.generation()).getSingleResult();
+            if (!matches) throw new DocumentPartAttemptLedger.FenceException("Prepared member selections differ from admission");
+        });
+    }
 }

@@ -3042,3 +3042,35 @@ No guard is disabled, no pruning API is added and no provider deletion is claime
 Sol found no blocker in the tests or their scope. Native-reader and revision-
 projection suites passed 33 cases with no failures or skips. No hosted CI, push,
 merge or deployment ran.
+
+### Scoped fresh-upload preparation handoff
+
+The internal `DocumentUploadCoordinator.stageAndPrepare` callback now runs after
+real upload/read-back and SQL verification while private payload ownership, the
+operation permit and owner/selected-attempt heartbeat remain live. Zero-upload
+commands run the owner heartbeat and callback without inventing an attempt or
+starting a flusher. Ordinary stage/retry keep heartbeat through final verification.
+
+The callback receives a scoped read-only buffer view keyed by full member/ordinal,
+not the payload owner. Its accessors are invalidated and internal references cleared
+before the payload reservation closes. Borrowed buffers remain a trusted internal
+contract: they cannot be retained beyond the callback without separate accounting.
+This avoids an extra provider GET or an unreserved assembly copy. Decoded expansion
+and engine assembly integration still require their own bounds and implementation.
+
+Custom preparation repeats canonical command, authorization and retained-source
+checks; compares every immutable initial member selection including zero-upload
+rows; and renews the owner and exact selected attempts. Control is checked between
+those transactions. These checks refresh staging context, not one atomic admitted
+draft or publication fence. The heartbeat drains and its sticky failure is checked
+before returning. The callback cannot publish or perform semantic review.
+
+Real PostgreSQL/S3 tests verify owner and selected-attempt renewal while preparation
+is held open, zero-upload reuse of retained content, exactly one PUT/read-back per
+fresh part with no additional preparation GET, read-only/expired view behavior,
+callback/cancellation/owner-expiry failures and selection replacement during the
+callback. Failure releases memory but leaves verified attempt data for recovery.
+The initial empty-CORE fixture was rejected by the runtime validator and replaced
+with valid retained-source evidence; content-type fixture construction was corrected.
+Sol found no blocker. All 117 coordinator, upload admission and payload cases passed
+in 33s with no failures or skips. No hosted CI, push, merge or deployment ran.

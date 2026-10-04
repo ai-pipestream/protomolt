@@ -47,6 +47,13 @@ final class DocumentUploadCoordinator implements AutoCloseable {
         Staged { members = List.copyOf(members); }
         List<DocumentPartAttemptLedger.Attempt> attempts() { return members.stream().map(StagedMember::attempt).toList(); }
     }
+    @FunctionalInterface interface Preparation<T> {
+        /**
+         * Trusted synchronous, bounded work; call active between steps. Do not
+         * retain borrowed bytes, publish or perform semantic review here.
+         */
+        T prepare(Staged staged, DocumentUploadPayloads.View bytes, Runnable active);
+    }
     private record Bound(DocumentSelectedAttemptLedger.Selected selection, String namespace, BlobStore store) {}
 
     private final DocumentOperationUploadAdmission admission;
@@ -79,19 +86,26 @@ final class DocumentUploadCoordinator implements AutoCloseable {
     Staged stage(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
             Map<String, String> attributes, Runnable control) {
-        return execute(caller, owner, prepared, bodies, attributes, control, Map.of());
+        return execute(caller, owner, prepared, bodies, attributes, control, Map.of(), (staged, bytes, active) -> staged, false);
+    }
+
+    <T> T stageAndPrepare(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
+            Map<String, String> attributes, Runnable control, Preparation<T> preparation) {
+        return execute(caller, owner, prepared, bodies, attributes, control, Map.of(), Objects.requireNonNull(preparation), true);
     }
 
     Staged retry(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
             Map<String, String> attributes, Runnable control, Map<String, DocumentOperationSelection.Expected> replacements) {
         if (replacements.isEmpty()) throw new IllegalArgumentException("Retry requires explicit replacement members");
-        return execute(caller, owner, prepared, bodies, attributes, control, Map.copyOf(replacements));
+        return execute(caller, owner, prepared, bodies, attributes, control, Map.copyOf(replacements), (staged, bytes, active) -> staged, false);
     }
 
-    private Staged execute(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+    private <T> T execute(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
-            Map<String, String> attributes, Runnable control, Map<String, DocumentOperationSelection.Expected> replacements) {
+            Map<String, String> attributes, Runnable control, Map<String, DocumentOperationSelection.Expected> replacements,
+            Preparation<T> preparation, boolean recheckPreparation) {
         Objects.requireNonNull(control); Objects.requireNonNull(prepared);
         var metadata = Map.copyOf(attributes);
         synchronized (lifecycle) {
@@ -115,16 +129,16 @@ final class DocumentUploadCoordinator implements AutoCloseable {
                 check(control);
                 operations.renew(owner, prepared.lease());
                 check(control);
-                if (selections.isEmpty()) return new Staged(List.of());
-                selected.renew(owner, selections, prepared.lease());
+                if (!selections.isEmpty()) selected.renew(owner, selections, prepared.lease());
                 var failure = new AtomicReference<Throwable>();
                 Runnable active = () -> {
                     rethrow(failure.get());
                     check(control);
                 };
-                var flusher = new DocumentObservationFlusher(selected, owner, selections, flushAge, active,
+                var flusher = selections.isEmpty() ? null : new DocumentObservationFlusher(selected, owner, selections, flushAge, active,
                         cause -> failure.compareAndSet(null, cause));
                 // Both background tasks are drained before Use releases its private bytes.
+                T result;
                 try (var tasks = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
                     var stopHeartbeat = new java.util.concurrent.CountDownLatch(1);
                     try {
@@ -133,44 +147,62 @@ final class DocumentUploadCoordinator implements AutoCloseable {
                                 while (!stopHeartbeat.await(Math.max(1, prepared.lease().toMillis() / 3), TimeUnit.MILLISECONDS)) {
                                     active.run();
                                     operations.renew(owner, prepared.lease());
-                                    selected.renew(owner, selections, prepared.lease());
+                                    if (!selections.isEmpty()) selected.renew(owner, selections, prepared.lease());
                                 }
                             } catch (InterruptedException interrupted) {
                                 failure.compareAndSet(null, interrupted);
                                 Thread.currentThread().interrupt();
                             } catch (Throwable cause) { failure.compareAndSet(null, cause); }
                         });
-                        var flushing = tasks.submit(flusher::run);
-                        var entries = use.entries();
-                        DocumentPartWorkers.run(entries.size(), parallelism, partsInFlight, active, (index, workerCheck) -> {
-                            var entry = entries.get(index);
-                            var binding = bindings.get(entry.attempt());
-                            if (binding == null) throw new IllegalStateException("Payload attempt was not admitted");
-                            var observation = DocumentPartTransfer.upload(binding.store(), binding.namespace(), entry.upload().object(),
-                                    entry.body(), metadata, workerCheck, workerCheck);
-                            flusher.add(binding.selection(), observation);
-                            return Boolean.TRUE;
-                        }, cause -> failure.compareAndSet(null, cause));
-                        flusher.finish();
-                        await(flushing, failure);
+                        if (flusher != null) {
+                            var flushing = tasks.submit(flusher::run);
+                            var entries = use.entries();
+                            DocumentPartWorkers.run(entries.size(), parallelism, partsInFlight, active, (index, workerCheck) -> {
+                                var entry = entries.get(index);
+                                var binding = bindings.get(entry.attempt());
+                                if (binding == null) throw new IllegalStateException("Payload attempt was not admitted");
+                                var observation = DocumentPartTransfer.upload(binding.store(), binding.namespace(), entry.upload().object(),
+                                        entry.body(), metadata, workerCheck, workerCheck);
+                                flusher.add(binding.selection(), observation);
+                                return Boolean.TRUE;
+                            }, cause -> failure.compareAndSet(null, cause));
+                            flusher.finish();
+                            await(flushing, failure);
+                        }
+                        active.run();
+                        var verified = selections.isEmpty() ? List.<DocumentPartAttemptLedger.Attempt>of()
+                                : selected.renew(owner, selections, prepared.lease());
+                        if (verified.stream().anyMatch(a -> !a.state().equals("VERIFIED")))
+                            throw new IllegalStateException("Selected upload did not verify every declared part");
+                        var byId = verified.stream().collect(Collectors.toMap(DocumentPartAttemptLedger.Attempt::id, a -> a));
+                        var staged = new Staged(selections.stream().sorted(java.util.Comparator.comparing(DocumentSelectedAttemptLedger.Selected::member))
+                                .map(selection -> new StagedMember(selection, byId.get(selection.attempt()))).toList());
+                        active.run();
+                        try (var view = use.view()) {
+                            result = preparation.prepare(staged, view, active);
+                        }
+                        active.run();
+                        if (recheckPreparation) {
+                            admission.captureRetainedReads(caller, owner, prepared);
+                            active.run();
+                            admission.recheckInitialSelections(owner, prepared);
+                            active.run();
+                            operations.renew(owner, prepared.lease());
+                            active.run();
+                            if (!selections.isEmpty()) selected.renew(owner, selections, prepared.lease());
+                        }
                         active.run();
                     } catch (RuntimeException | Error cause) {
                         failure.compareAndSet(null, cause);
                         throw cause;
                     } finally {
-                        flusher.finish();
+                        if (flusher != null) flusher.finish();
                         stopHeartbeat.countDown();
                         // Wake its wait without interrupting an in-flight SQL renewal; drain before release.
                     }
                 }
                 active.run();
-                var verified = selected.renew(owner, selections, prepared.lease());
-                if (verified.stream().anyMatch(a -> !a.state().equals("VERIFIED")))
-                    throw new IllegalStateException("Selected upload did not verify every declared part");
-                active.run();
-                var byId = verified.stream().collect(Collectors.toMap(DocumentPartAttemptLedger.Attempt::id, a -> a));
-                return new Staged(selections.stream().sorted(java.util.Comparator.comparing(DocumentSelectedAttemptLedger.Selected::member))
-                        .map(selection -> new StagedMember(selection, byId.get(selection.attempt()))).toList());
+                return result;
             }
         } finally { operationsInFlight.release(); }
     }

@@ -124,11 +124,36 @@ final class DocumentUploadPayloads implements AutoCloseable {
                 return owner.entries;
             }
         }
+        View view() { return new View(entries()); }
         @Override public void close() {
             synchronized (owner) {
                 owner.entries = null;
                 owner.reservation.close();
             }
         }
+    }
+
+    /**
+     * Trusted synchronous preparation only. Buffers are borrowed read-only views,
+     * not owned copies; neither they nor decoded objects using them may escape the
+     * callback without a separate reservation. Closing this view releases no bytes.
+     */
+    static final class View implements AutoCloseable {
+        private Map<Key, byte[]> bodies;
+        private boolean closed;
+        private View(List<Entry> entries) {
+            var bodies = new HashMap<Key, byte[]>();
+            for (var entry : entries) bodies.put(entry.key(), entry.body());
+            this.bodies = Map.copyOf(bodies);
+        }
+        synchronized Set<Key> keys() { requireOpen(); return bodies.keySet(); }
+        synchronized java.nio.ByteBuffer bytes(Key key) {
+            requireOpen();
+            var body = bodies.get(Objects.requireNonNull(key));
+            if (body == null) throw new IllegalArgumentException("Upload slot is absent from preparation");
+            return java.nio.ByteBuffer.wrap(body).asReadOnlyBuffer();
+        }
+        private void requireOpen() { if (closed) throw new IllegalStateException("Upload preparation view is closed"); }
+        @Override public synchronized void close() { closed = true; bodies = Map.of(); }
     }
 }
