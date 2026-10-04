@@ -3116,3 +3116,67 @@ opaque/typed membership, capacity exhaustion, cancellation with scratch live,
 retry, concurrent close/replay refusal, and complete release after close. The
 remaining terminal-decision work must invoke verification before persisting
 assessment bindings and entering the fresh owner/policy/document fence.
+
+#### Durable rejection evidence: inventory and storage boundary
+
+The terminal receipt stays small and immutable. `DocumentPublicationRejection`
+currently binds the scoped operation, command, deciding owner generation,
+database decision time, disposition and fixed reason. `DocumentPublicationRejections`
+emits cancellation and declared-precondition decisions only. The existing
+`ADMISSION_REJECTED` enum does not establish an implemented admission-rejection
+path. V64's 4 KiB receipt bound remains appropriate for a future manifest digest,
+codec and version; the complete candidate does not belong inside the receipt.
+
+The reusable reference contract is now `RepositorySchemaAssetReference`, matching
+`DocumentSchemaAdmission.Reference`: exact type URL, descriptor artifact SHA,
+metadata codec/version/SHA, and optional source archive SHA. Generated and dynamic
+messages enforce the identity bounds through ProtoMolt's validator. Converting
+from the wire refuses unknown fields and malformed identities. Reading an asset
+still has to verify its digest, metadata association, complete import closure and
+scope. The contract neither creates retention nor grants access. JSON Schema
+exposes the URL length and digest pattern; metadata/source correspondence remains
+a runtime check against the referenced assets. No RPC is introduced.
+
+The next manifest reuses `DocumentRootSchemaEvidence` for complete contextual
+occurrences and `RepositorySchemaAsset` for descriptor/compiler provenance.
+References stay normalized instead of embedding descriptor bytes per candidate.
+The operation's canonical command already supplies ordered members, slots and
+upload/reuse hashes. The manifest must additionally bind explicit typed/opaque
+modes, selected policy revision and digest, exact evaluation instant, validation
+profile and observed rule implementation/catalog configuration, all typed root
+and reference identities, and the bounded first internal failure. The protected
+manifest may contain user-controlled paths; the public receipt must not expose
+raw validator messages or those paths. Command/member/ordinal correspondence,
+completeness and policy eligibility are handler checks, not shape validation.
+
+Storage operations are classified as follows:
+
+- Unchanged: successful revision schema retention and historical revision reads.
+  Their rows reference committed revisions and must not be fabricated for rejected
+  candidates. Reuse the account-scoped schema artifact catalog and immutable
+  policy bytes, but not successful revision ownership rows.
+- Extended: terminal receipt encoding gains a manifest binding only after its
+  codec and durable owner exist. Current cancellation/precondition receipts retain
+  their meaning. No admission rejection is emitted before the new evidence gate.
+- New: operation-scoped assessment manifest staging, retained candidate ownership,
+  authenticated re-evaluation and explicit expiry/cleanup. These remain pending.
+
+A durable manifest owner must protect the exact candidate bytes and schema/evidence
+assets before recording rejection. Existing staging claims alone are insufficient:
+replaced-generation claim release does not define final evidence retention, and
+unpublished-attempt cleanup can reclaim expired candidate uploads. A new retention
+pin must participate in cleanup admission under the same attempt/physical-object
+locks; inventing a successful publication-history row to stop cleanup is forbidden.
+Reused source objects also require exact version retention independent of a later
+source revision prune. A cleanup claim that already won cannot be rescued by
+attaching a late evidence pin without proving the object still exists.
+
+The decision transaction will require the verified manifest and complete retained
+associations under the owner, current policy and authorized document/source fences.
+Descriptor validation and provider reads stay outside those locks. Evidence pins
+must not turn a failed terminal insert into an invisible permanent leak: abandoned
+staging has its own bounded recovery, while a committed decision owns retention
+until its explicit replay boundary. Receipt replay remains available after that
+boundary; independent re-evaluation then reports unavailable instead of treating a
+digest as recoverable data. Expiry is an explicit host policy, not an implicit
+fallback to attempt lease expiry. No default replay duration is selected yet.

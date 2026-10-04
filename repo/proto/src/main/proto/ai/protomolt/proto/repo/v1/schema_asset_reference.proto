@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v1;
+
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.v1";
+
+// A normalized association used by retained candidate and revision evidence.
+// These identities do not grant access or prove that any asset is retained.
+// The handler scopes reads to the authorized owner, verifies every digest and
+// codec, and checks the metadata's exact type URL, descriptor identity and source
+// association. Descriptor bytes include the complete import closure. Unknown
+// fields are refused by the evidence codec before trusting this association.
+message RepositorySchemaAssetReference {
+  // Preserve the original prefix as well as the selected message name.
+  string type_url = 1 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 4096}];
+  // SHA-256 of retained descriptor bytes, not the canonical schema fingerprint.
+  string descriptor_sha256 = 2 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$"];
+  // Codec of separately retained RepositorySchemaAsset metadata.
+  string metadata_codec = 3 [(ai.protomolt.proto.validate.v1.field).string.const = "repository-schema-asset"];
+  // Only the current canonical metadata version is supported.
+  uint32 metadata_version = 4 [(ai.protomolt.proto.validate.v1.field).uint32.const = 1];
+  // SHA-256 of the canonical metadata bytes.
+  string metadata_sha256 = 5 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$"];
+  // Present exactly when the metadata identifies a retained source archive.
+  // Presence and matching bytes are checked against the loaded metadata.
+  optional string source_sha256 = 6 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$"];
+}

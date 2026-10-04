@@ -57,6 +57,21 @@ public final class DocumentSchemaAdmission {
             return new DocumentRetainedSchemaAssets.Reference(typeUrl, descriptorSha256, metadataCodec,
                     metadataVersion, metadataSha256, sourceSha256);
         }
+        /** Wire identity only; it does not verify asset bytes or transfer retention ownership. */
+        public RepositorySchemaAssetReference toProto() {
+            var value = RepositorySchemaAssetReference.newBuilder().setTypeUrl(typeUrl)
+                    .setDescriptorSha256(descriptorSha256).setMetadataCodec(metadataCodec)
+                    .setMetadataVersion(metadataVersion).setMetadataSha256(metadataSha256);
+            sourceSha256.ifPresent(value::setSourceSha256);
+            return value.build();
+        }
+        /** Validate the bounded association shape; the reader must still verify all referenced assets. */
+        public static Reference fromProto(RepositorySchemaAssetReference value, Runnable control) {
+            DocumentSchemaEvidenceCodec.measureAndValidate(Objects.requireNonNull(value), control);
+            return new Reference(value.getTypeUrl(), value.getDescriptorSha256(), value.getMetadataCodec(),
+                    value.getMetadataVersion(), value.getMetadataSha256(),
+                    value.hasSourceSha256() ? Optional.of(value.getSourceSha256()) : Optional.empty());
+        }
     }
 
     /** Original canonical storage bytes, not an already parsed approximation. */
