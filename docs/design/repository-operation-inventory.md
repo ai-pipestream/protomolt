@@ -2611,3 +2611,25 @@ passed in 22s; the added no-attempt-row assertions were checked in a focused rer
 No production behavior or public API changed. This proves transfer/routing, not
 Redis restart durability, eviction safety, typed admission, retained CORE reuse
 or publication. Those obligations remain open. No remote publication occurred.
+
+### Observation queue failure propagation
+
+Fixed an internal staging race without a public contract change. On SQL failure,
+the flusher records the failure and clears its queue. That could unblock a timed
+producer offer, which previously returned without checking the newly recorded
+failure. `add` now checks operation failure after a successful offer as well as
+before it. The coordinator already checks the shared failure before returning;
+the observed defect was a producer returning normally, not a published revision
+or a successful completed coordinator operation.
+
+A real-provider regression builds 513 measured observations through S3 PUT and
+bounded GET. It fills a batch, blocks the flusher on a real PostgreSQL attempt
+row, confirms that blocker through `pg_blocking_pids`, fills the queue and proves
+the extra producer retries its timed offer. SQL lock timeout must fail both
+flusher and producer while no rows become verified and the uploaded bytes remain
+available for recovery. The case failed before the fix and passed afterward with
+all eleven coordinator cases in 26s. This directly tests the flusher's full-queue
+failure path; coordinator payload-budget draining has separate integration tests.
+Sol reviewed the test and fix without a blocker. Full container/service validation
+passed: 114 suites, 1,012 cases, 1,009 passed and three skipped, no failures/errors.
+No hosted CI, push, merge or deployment was performed.

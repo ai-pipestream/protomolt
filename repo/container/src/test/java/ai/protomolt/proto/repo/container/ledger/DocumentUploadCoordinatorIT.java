@@ -383,6 +383,68 @@ class DocumentUploadCoordinatorIT {
         }
     }
 
+    @Test @Timeout(45) void sqlFailureReleasesAProducerWaitingOnAFullObservationQueue() throws Exception {
+        var f = fixture(513, LEASE);
+        var admitted = admission.admit(ADMIN, f.owner, f.prepared).getFirst();
+        var selection = new DocumentSelectedAttemptLedger.Selected("member", 1, admitted.id(), admitted.token());
+        var uploads = DocumentUploadPlan.prepare(f.command, f.placements, Map.of("member", f.attempt))
+                .members().getFirst().attempt().orElseThrow().uploads();
+        var observations = DocumentPartWorkers.run(uploads.size(), 8, new java.util.concurrent.Semaphore(8), () -> {}, (index, check) -> {
+            var upload = uploads.get(index);
+            return DocumentPartTransfer.upload(opened.store(), NAMESPACE, upload.object(),
+                    f.bodies.get(new DocumentUploadPayloads.Key("member", upload.revisionOrdinal())).bytes(), Map.of(), check, check);
+        });
+        var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+        var extraProducer = new java.util.concurrent.atomic.AtomicReference<Thread>();
+        var producerChecks = new java.util.concurrent.atomic.AtomicInteger();
+        var retriedOffer = new CountDownLatch(1);
+        Runnable check = () -> {
+            if (failure.get() != null) throw new IllegalStateException("Observation verification failed", failure.get());
+            if (Thread.currentThread() == extraProducer.get() && producerChecks.incrementAndGet() >= 2) retriedOffer.countDown();
+        };
+        var flusher = new DocumentObservationFlusher(new DocumentSelectedAttemptLedger(tx.withTimeouts(
+                new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(10)))), f.owner, List.of(selection),
+                Duration.ofMinutes(1), check, cause -> failure.compareAndSet(null, cause));
+        // A long age isolates aggregate-pressure flushing from age-based flushing.
+        for (int i = 0; i < 256; i++) flusher.add(selection, observations.get(i));
+        try (var blocker = database.entityManagerFactory().createEntityManager();
+                var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            blocker.getTransaction().begin();
+            try {
+                int blockerPid = ((Number) blocker.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue();
+                blocker.createNativeQuery("SELECT attempt_id FROM document_part_attempts WHERE attempt_id=:id FOR UPDATE")
+                        .setParameter("id", f.attempt).getSingleResult();
+                var flushing = executor.submit(flusher::run);
+                long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+                boolean waiting;
+                do {
+                    waiting = tx.readOnly(em -> (Boolean) em.createNativeQuery(
+                            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE :pid = ANY(pg_blocking_pids(pid)))")
+                            .setParameter("pid", blockerPid).getSingleResult());
+                    if (!waiting) Thread.sleep(10);
+                } while (!waiting && System.nanoTime() < until);
+                assertThat(waiting).as("flusher blocked in real SQL after draining first batch").isTrue();
+                for (int i = 256; i < 512; i++) flusher.add(selection, observations.get(i));
+                var producing = executor.submit(() -> {
+                    extraProducer.set(Thread.currentThread());
+                    flusher.add(selection, observations.get(512));
+                });
+                assertThat(retriedOffer.await(1, TimeUnit.SECONDS)).as("producer retried a full-queue offer").isTrue();
+                assertThat(producing.isDone()).isFalse();
+                assertThatThrownBy(() -> flushing.get(8, TimeUnit.SECONDS)).hasStackTraceContaining("lock timeout");
+                assertThatThrownBy(() -> producing.get(2, TimeUnit.SECONDS)).hasStackTraceContaining("lock timeout");
+                assertThat(verified(f)).isZero();
+                // The failed SQL transaction did not erase already written provider bytes.
+                assertThat(opened.store().get(NAMESPACE, uploads.get(512).object().objectKey()).data())
+                        .containsExactly(f.bodies.get(new DocumentUploadPayloads.Key("member", 512)).bytes());
+            } finally {
+                failure.compareAndSet(null, new java.util.concurrent.CancellationException("Test cleanup"));
+                flusher.finish();
+                blocker.getTransaction().rollback();
+            }
+        }
+    }
+
     private static DocumentUploadCoordinator coordinator(BlobStore store, PayloadBudget budget, Duration age) {
         // A fault-injecting wrapper delegates to the real adapter; the underlying handle remains borrowed.
         var borrowed = new OpenedBlobStore(store, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer());

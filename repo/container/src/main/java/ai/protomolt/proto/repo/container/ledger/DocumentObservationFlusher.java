@@ -49,7 +49,12 @@ final class DocumentObservationFlusher {
             while (true) {
                 check.run();
                 if (finished) throw new IllegalStateException("Observation producers already finished");
-                if (queue.offer(completed, 50, TimeUnit.MILLISECONDS)) return;
+                if (queue.offer(completed, 50, TimeUnit.MILLISECONDS)) {
+                    // Failure cleanup can free a slot while this producer is waiting.
+                    // An accepted queue entry is not evidence that verification is still live.
+                    check.run();
+                    return;
+                }
             }
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
