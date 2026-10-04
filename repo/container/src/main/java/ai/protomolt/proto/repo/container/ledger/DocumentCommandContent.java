@@ -3,12 +3,14 @@ package ai.protomolt.proto.repo.container.ledger;
 import ai.protomolt.proto.repo.codec.DocumentRevisionAssembly;
 import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
 import ai.protomolt.proto.repo.v1.DocumentPublicationMember;
+import ai.protomolt.proto.repo.v1.RepositoryAnyResolution;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Internal content check against the sole canonical command. Not an admission
@@ -19,15 +21,19 @@ final class DocumentCommandContent {
     private final DocumentPublicationCommand command;
     private final DocumentPublicationMember member;
     private final DocumentRevisionAssembly.Result assembly;
+    private final Optional<RepositoryAnyResolution> structuredResolution;
 
     private DocumentCommandContent(DocumentPublicationCommand command, DocumentPublicationMember member,
-            DocumentRevisionAssembly.Result assembly) {
+            DocumentRevisionAssembly.Result assembly, Optional<RepositoryAnyResolution> structuredResolution) {
         this.command = command; this.member = member; this.assembly = assembly;
+        this.structuredResolution = structuredResolution;
     }
 
     DocumentPublicationCommand command() { return command; }
     DocumentPublicationMember member() { return member; }
     DocumentRevisionAssembly.Result assembly() { return assembly; }
+    /** Root structured_data observation only; no nested resolution, validation or retention is implied. */
+    Optional<RepositoryAnyResolution> structuredResolution() { return structuredResolution; }
 
     /**
      * Ordinals index the complete member, including EMPTY slots. The host supplies
@@ -75,8 +81,18 @@ final class DocumentCommandContent {
         var assembly = DocumentRevisionAssembly.assemble(fragments, member.getDestination().getAddress().getDocId(), limits, control);
         if (!assembly.document().hasOwnership() || !assembly.document().getOwnership().equals(member.getOwnership()))
             throw new IllegalArgumentException("Decoded ownership differs from command");
+        Optional<RepositoryAnyResolution> resolution = Optional.empty();
+        if (assembly.document().hasStructuredData()) {
+            var any = assembly.document().getStructuredData();
+            String url = any.getTypeUrl();
+            if (url.codePointCount(0, url.length()) > 4096)
+                throw new IllegalArgumentException("Opaque structured data type URL exceeds observation bound");
+            resolution = Optional.of(RepositoryAnyResolution.newBuilder().setTypeUrl(url)
+                    .setValueSha256(sha256(any.getValue(), control)).setValueSizeBytes(any.getValue().size())
+                    .setNotAttempted(true).build());
+        }
         control.run();
-        return new DocumentCommandContent(command, member, assembly);
+        return new DocumentCommandContent(command, member, assembly, resolution);
     }
 
     private static String sha256(ByteString bytes, Runnable control) {

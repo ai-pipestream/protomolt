@@ -3456,3 +3456,14 @@ rules and CEL metadata, while cross-field rules require the runtime validator.
 OpenAPI execution of those rules is not established. Account/revision/attempt/path
 binding, trusted observation capture, validation verdicts and persistence remain
 implementation work. No availability claim is added to public API documentation.
+
+### Opaque resolution capture during content preparation
+
+DocumentCommandContent now emits an optional root structured_data observation
+from checked materialized content. It computes the effective value SHA-256 and
+size, preserves the type URL and sets not_attempted without registry access or
+inner decoding. Absent and present-empty Any values remain distinct. The 4096
+code-point URL bound fails explicitly. All nine content-preparation tests pass,
+including real-validator verification of the generated observation. Sol found no
+blocker. Original fragment identity, nested occurrences, persisted evidence and
+typed admission remain separate obligations; no public operation is enabled.

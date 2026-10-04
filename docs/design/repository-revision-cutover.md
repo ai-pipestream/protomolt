@@ -919,3 +919,17 @@ The resolver supplies one schema version per exact URL for a check; resolving
 different versions at different occurrences needs the future path binding. The
 host must also bound aggregate descriptor and metadata memory returned by the
 resolver, separately from the existing payload and schema-graph limits.
+
+Opaque DocumentCommandContent preparation now derives a RepositoryAnyResolution
+observation for a present root structured_data field. It hashes the exact Any.value
+bytes after fragment integrity and decoded ownership checks, preserves the type
+URL and records not_attempted. No registry call or inner-message deserialization
+occurs. An absent field produces no observation; a present empty Any records the
+empty value's digest. URLs exceeding the observation contract's 4096-code-point
+bound fail explicitly. Hashing adds one linear pass over the packed value without
+copying it into another byte array or opening a SQL transaction. Nested opaque Any
+occurrences are not inspected by this path. The result remains internal preparation
+evidence; it is not persisted or a validated-content claim.
+The observation identifies the effective Any.value after outer-envelope parsing;
+the retained immutable fragments identify the original wire, including duplicate
+fields and encoding differences. These identities must not be conflated.

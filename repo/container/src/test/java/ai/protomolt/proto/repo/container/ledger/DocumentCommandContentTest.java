@@ -44,6 +44,15 @@ class DocumentCommandContentTest {
         var f = fixture(doc);
         var result = DocumentCommandContent.check(f.command, "member", f.bytes, false, LIMITS, () -> {});
         assertThat(result.assembly().document().getStructuredData()).isEqualTo(opaque);
+        var observation = result.structuredResolution().orElseThrow();
+        assertThat(observation.getNotAttempted()).isTrue();
+        assertThat(observation.hasResolved()).isFalse();
+        assertThat(observation.hasFailure()).isFalse();
+        assertThat(observation.getTypeUrl()).isEqualTo(opaque.getTypeUrl());
+        assertThat(observation.getValueSizeBytes()).isEqualTo(opaque.getValue().size());
+        assertThat(observation.getValueSha256()).isEqualTo(java.util.HexFormat.of().formatHex(
+                java.security.MessageDigest.getInstance("SHA-256").digest(opaque.getValue().toByteArray())));
+        assertThat(ai.protomolt.proto.validate.ProtoValidator.create().validate(observation).valid()).isTrue();
         for (var fragment : result.assembly().fragments()) {
             assertThat(f.bytes.values()).contains(fragment.bytes());
         }
@@ -62,6 +71,21 @@ class DocumentCommandContentTest {
         assertThat(result.member()).isEqualTo(f.command.intent().getMembers(0));
         assertThat(result.assembly().document().getOwnership()).isEqualTo(owner("account"));
         assertThat(result.assembly().fragments().getFirst().bytes()).isSameAs(f.bytes.get(0));
+        assertThat(result.structuredResolution()).isEmpty();
+    }
+    @Test void presentEmptyAnyIsDifferentFromAbsentAndObservationUrlIsBounded() throws Exception {
+        var empty = fixture(Document.newBuilder().setDocId("doc").setOwnership(owner("account"))
+                .setStructuredData(com.google.protobuf.Any.getDefaultInstance()).build());
+        var observation = DocumentCommandContent.check(empty.command, "member", empty.bytes, false, LIMITS, () -> {})
+                .structuredResolution().orElseThrow();
+        assertThat(observation.getTypeUrl()).isEmpty();
+        assertThat(observation.getValueSizeBytes()).isZero();
+        assertThat(observation.getValueSha256()).isEqualTo("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        assertThat(observation.getNotAttempted()).isTrue();
+        var oversized = fixture(Document.newBuilder().setDocId("doc").setOwnership(owner("account"))
+                .setStructuredData(com.google.protobuf.Any.newBuilder().setTypeUrl("x".repeat(4097))).build());
+        assertThatThrownBy(() -> DocumentCommandContent.check(oversized.command, "member", oversized.bytes, false, LIMITS, () -> {}))
+                .hasMessageContaining("type URL exceeds observation bound");
     }
     @Test void mismatchedDecodedOwnershipCannotBeRepairedFromTheRequest() {
         var f = fixture("forged");
