@@ -805,3 +805,40 @@ provenance only where the repository needs it. Review the representation for fie
 numbers, repeated positions, typed map keys and Any boundaries before changing
 contracts. Do not use display strings or arbitrary CEL expressions as the sole
 identity of a retained schema binding.
+
+### Staging recovery ownership constraints
+
+The existing operation fence cannot authorize deletion of expired staging claims:
+V34 refuses renewal of an expired owner, and V35 requires a live owner stamped by
+this transaction. Taking over an operation would make that fence available, but
+also changes the operation generation and token and installs a lease. A background
+artifact sweeper must not take business ownership merely to delete staging data.
+Takeover remains appropriate for a coordinator that will recover the command.
+
+Recovery needs proof that it locked the operation owner before touching artifacts
+or claims, without granting publication authority or changing that owner's token,
+generation or lease. Any recovery-only stamp must use the database transaction ID,
+never a caller-supplied value, and must remain separate from the live write fence.
+An expired owner's recovery stamp must not permit staging, publication or renewal.
+Generation and expiry checks establish that a worker cannot use the claim.
+Deletion also requires a retention decision. Retrying the immutable command may
+still need descriptor bytes after the registry disappears. Require a replacement
+retained claim for the recovering operation, or an explicit terminal retention
+decision, before releasing the last staging protection. Published revision and
+historical references remain protected.
+
+Required tests include a live claim refusal, expired and obsolete claims, unchanged
+business ownership after cleanup, attempted write-fence escalation, renewal and
+takeover races with SQL barriers, rollback, repeated recovery and bounded progress.
+Keep claim deletion separate from artifact deletion. Published revision references
+must protect descriptors independently of operation leases. Artifact deletion
+requires a fresh locked absence check for all claims and revision references.
+
+Final artifact collection locks the artifact FOR UPDATE, checks for zero claims
+and zero revision references, then deletes. This collector acquires no operation
+owner locks and deletes no claims. Claim insertion and cleanup take artifact
+KEY SHARE before changing claims, so the artifact lock serializes the absence
+check with both. Concurrent staging may fail and retry; a dangling claim must
+fail to commit. Test that race explicitly. This replaces complete-owner-set
+discovery for final artifact deletion only. Claim cleanup still requires
+owner-first proof and an explicit retention decision.
