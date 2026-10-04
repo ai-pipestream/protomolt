@@ -1732,9 +1732,10 @@ performance qualification is claimed.
 pure upload selector and V36 storage. Its private prepared value couples the
 command to its exact generated upload subset, tokens and encoded batches; callers
 cannot substitute an unrelated encoding. Preparation runs before database locks.
-Admission acquires the V35 owner fence, compares the persisted codec/version,
-exact canonical bytes and digest, then locks distinct sampled drives in UUID
-order and compares their registered backend profiles. It inserts only new-byte
+Admission checks the trusted caller scope, acquires the V35 owner fence and
+compares the persisted codec/version, exact canonical bytes and digest. It then
+locks and authorizes current document revisions before locking distinct sampled
+drives in UUID order and comparing their registered backend profiles. It inserts only new-byte
 objects with original revision ordinals and complete declared source conditions.
 The existing key reservation/catalogue and 256-row batch insertion paths are
 shared with full-revision admission, not duplicated into another ledger.
@@ -1757,17 +1758,19 @@ rollback after this check was added.
 Scope limits: this remains package-private SQL staging. The qualified composition
 supplies the backend selection; comparing it with the unchanged drive and immutable
 registration does not independently derive provider identity from drive config.
-Principal authentication, current-policy enforcement, actual destination/source
-revision checks, retained-content authorization, schema retention, active-attempt
-selection/retry reconciliation and operation-bound provider writes remain pending.
+Host authentication integration, retained physical-content validation, schema retention,
+active-attempt selection/retry reconciliation and operation-bound provider writes
+remain pending. The current-policy extension below consumes a caller already
+authenticated by the host; it does not implement authentication or expose an RPC.
 No successful receipt, semantic review, normal read or public upload API follows
 from staging these synthetic byte declarations.
 
 The real PostgreSQL fixtures cover exact typed command binding, stale drive/profile
 refusal, missing registration, forged owner, zero-upload placement checks,
 duplicate-attempt refusal, sparse subset persistence, later-member rollback and
-lease expiry. For one drive/member/source, 1 and 513 upload cases require 12 and
-14 client statements respectively, each in one transaction; server-side trigger
+lease expiry. At this initial checkpoint, before the authorization extension below,
+one drive/member/source with 1 and 513 uploads required 12 and 14 client statements
+respectively, each in one transaction; server-side trigger
 work and provider latency are not included. All 11 new cases and ten legacy batch
 admission cases passed locally on 2026-10-04. Sol reviewed the implementation and
 the reproduced lease failure without a remaining blocking finding.
@@ -1842,3 +1845,78 @@ for large production manifests. Heap, lock-table capacity, database CPU/WAL,
 concurrent-load latency and the complete admission/provider path remain open
 qualification work. No public API availability, push, hosted CI, merge or
 deployment is claimed by this checkpoint.
+
+### Current policy and revision checks at typed staging admission
+
+`DocumentOperationUploadAdmission.admit` is **extended** to require an explicit
+host-authenticated `RepositoryCaller`; there is no caller-free or automatic
+administrative overload. `DocumentAdmissionAuthorization` is a new internal
+participant. The existing ACL evaluator moves from the engine's package-private
+`DocumentAccessPolicy` to public `ai.protomolt.proto.repo.spi.DocumentAccessPolicy`.
+The engine and container use the same READ/WRITE, typed identity, account, deny,
+inheritance and malformed-policy rules. Its nine unit cases move with it. The SPI
+still depends on protobuf contracts, with no SQL, provider SDK or engine dependency.
+There are no protobuf/RPC changes and no new public upload service.
+
+Before SQL, admission requires the caller's account membership (unless explicitly
+administrative) and exact principal match with the durable operation owner. Missing
+caller/account bindings fail with PERMISSION_DENIED; an unbound requested account
+is masked as NOT_FOUND. Preparation does not authenticate anyone: hosts must also
+apply scope checks before their own placement sampling or repository lookup.
+
+Inside one fresh transaction the sequence is owner fence, exact canonical command,
+all document revision locks, authorization and revision checks, drive/profile
+checks, then attempt insertion. Explicit and reused sources are merged, checked
+once per source revision, and visited in stable UUID order prepared before SQL.
+Every locked row must match its complete four-field address, not just its derived
+UUID. Sources must be available, have no pending purge, and grant READ, including
+self-copy. Destinations require WRITE. Scoped creation remains refused until a
+separate host-bound creation-grant contract exists; scoped existing destinations
+must also be available and preserve ACL, selected drive name, datasource and
+source-deletion policy. Administrative authority remains explicit and still
+validates stored and proposed policy. As on the existing path, it may handle
+legacy missing security; malformed stored policy is never repaired or bypassed
+implicitly. Unresolved inherited policy still fails closed for scoped callers.
+
+The complete source/destination authorization pass precedes **every** revision
+comparison. A stale readable source cannot cause a conflict response before a
+denied destination is checked. A Sol review identified the interleaved version
+of this bug; a real SQL fixture reproduced it, and the two-pass implementation
+corrects it. This masks denied revision state, not every policy problem:
+malformed or unresolved inherited policy still produces FAILED_PRECONDITION
+under the preserved policy semantics.
+
+Zero-upload commands receive the same checks. Failure rolls back the owner fence
+and any transaction work; the tests assert no attempt, key reservation or physical
+catalogue entry survives. Policy revocation committed while admission waits on a
+source row is observed and denied. Another fixture holds a drive lock and proves
+denied access returns without waiting on that drive. Source revision checks and
+protected mutation checks run before any new staging row can be created.
+
+These are **staging** permissions. Publication must reacquire revisions and
+reauthorize after provider work; a successful staging transaction is not enduring
+authority to publish. Retained physical-object/slot proof, validated CORE ownership,
+schema/descriptor retention, operation-bound verification/renewal, exact retry
+selection, zero-upload placement durability and terminal publication/replay remain
+unfinished. No semantic review, receipt, normal read or provider write is enabled
+by this checkpoint. Large existing policy/manifest byte sizes and concurrent-load
+latency remain resource qualification work; bounded row counts alone do not prove
+bounded response latency or heap use.
+
+Local validation on 2026-10-04: nine new refusal cases first reproduced successful
+staging without the caller/policy/revision checks. The mixed stale-source/denied-
+destination case separately reproduced the review finding before the two-pass
+fix. `:protomolt-repo-spi:check`, `:protomolt-repo-engine:test`,
+`:protomolt-repo-container:test` and `:protomolt-repo-service:test` then passed in
+2m21s: 120 suites, 980 cases, 977 passed and three skipped, zero failures/errors.
+The SPI and engine runtime dependency gates passed. Two final explicit-dependency
+fixtures were added afterward; all 41 admission cases then passed in ten seconds.
+Sol reviewed the final implementation and documented scope with no remaining
+blocking finding.
+
+For the tested one-member/drive/source cases, current authorization adds exactly
+two client statements for batched document locking: 1 and 513 uploads now require
+14 and 16 statements respectively in one transaction. Policy evaluation adds no
+per-row SQL. These counts exclude server trigger work and are not latency
+qualification. All work is local; no push, hosted CI, merge or deployment is
+claimed by this checkpoint.

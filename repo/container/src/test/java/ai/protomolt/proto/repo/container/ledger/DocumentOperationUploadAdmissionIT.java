@@ -2,6 +2,9 @@ package ai.protomolt.proto.repo.container.ledger;
 
 import ai.protomolt.proto.repo.blob.spi.BackendIdentity;
 import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
+import ai.protomolt.proto.repo.spi.RepositoryCaller;
+import ai.protomolt.proto.repo.spi.RepositoryException;
+import ai.protomolt.proto.repo.container.blob.DocumentIds;
 import ai.protomolt.proto.repo.v1.*;
 import java.time.Duration;
 import java.util.Map;
@@ -14,7 +17,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import static org.assertj.core.api.Assertions.*;
 
-/** Typed SQL admission using synthetic declarations; no provider bytes or authorization are claimed. */
+/** Real SQL policy and staging checks; synthetic byte declarations are not verified provider content. */
 @Testcontainers
 class DocumentOperationUploadAdmissionIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
@@ -25,6 +28,11 @@ class DocumentOperationUploadAdmissionIT {
     private static DocumentOperationUploadAdmission admission;
     private static final Duration LEASE = Duration.ofMinutes(5);
     private static final String SHA = "a".repeat(64);
+    private static final RepositoryCaller ADMIN = new RepositoryCaller("principal", true);
+    private static final RepositoryCaller SCOPED = new RepositoryCaller("principal", false, java.util.Set.of("account"), java.util.Set.of());
+    private static final DocumentSecurity POLICY = DocumentSecurity.newBuilder()
+            .addPermissions(AccessRule.newBuilder().setIdentityType("public").setIdentity("public").setAccess(Access.ACCESS_READ))
+            .addPermissions(AccessRule.newBuilder().setIdentityType("public").setIdentity("public").setAccess(Access.ACCESS_WRITE)).build();
 
     @BeforeAll static void open() {
         database = new LedgerDatabase(new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()));
@@ -34,12 +42,277 @@ class DocumentOperationUploadAdmissionIT {
     @AfterAll static void close() { if (database != null) database.close(); }
 
     private record Fixture(DocumentPublicationCommand command, RepositoryOperationLedger.Owner owner,
-            DriveRecord drive, DocumentUploadPlan.Placement placement, UUID attempt) {
+            DriveRecord drive, DocumentUploadPlan.Placement placement, UUID attempt,
+            DocumentRecord destination, DocumentRecord source) {
         Map<UUID, DocumentUploadPlan.Placement> placements() { return Map.of(drive.driveId, placement); }
         DocumentOperationUploadAdmission.Prepared prepare() {
             boolean upload = command.intent().getMembers(0).getPartsList().stream().anyMatch(p -> p.hasUpload());
             return DocumentOperationUploadAdmission.prepare(command, placements(), upload ? Map.of("member", attempt) : Map.of(), LEASE);
         }
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"missing", "unbound", "other-account", "other-principal", "admin-other-principal"})
+    void invalidCallerCannotReachSql(String kind) {
+        var f = fixture(1); var prepared = f.prepare();
+        RepositoryCaller caller = switch (kind) {
+            case "missing" -> null;
+            case "unbound" -> new RepositoryCaller("principal", false);
+            case "other-account" -> new RepositoryCaller("principal", false, java.util.Set.of("other"), java.util.Set.of());
+            case "other-principal" -> new RepositoryCaller("other", false, java.util.Set.of("account"), java.util.Set.of());
+            default -> new RepositoryCaller("other", true);
+        };
+        var statistics = database.entityManagerFactory().unwrap(org.hibernate.SessionFactory.class).getStatistics();
+        statistics.setStatisticsEnabled(true); statistics.clear();
+        try {
+            assertThatThrownBy(() -> admission.admit(caller, f.owner, prepared)).isInstanceOfSatisfying(RepositoryException.class,
+                    failure -> assertThat(failure.code()).isEqualTo(kind.equals("other-account")
+                            ? RepositoryException.Code.NOT_FOUND : RepositoryException.Code.PERMISSION_DENIED));
+            assertThat(statistics.getPrepareStatementCount()).isZero();
+        } finally { statistics.setStatisticsEnabled(false); }
+        assertNoAttempt(f.attempt);
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"destination", "source"})
+    void deniedPolicyMasksStaleRevisionAndDoesNotStage(String which) {
+        var f = fixture(1);
+        var row = which.equals("source") ? f.source : f.destination;
+        var denied = POLICY.toBuilder().addPermissions(AccessRule.newBuilder().setIdentityType("public")
+                .setIdentity("public").setAccess(Access.ACCESS_DENY)).build();
+        setPolicy(row, denied);
+        assertThatThrownBy(() -> admission.admit(SCOPED, f.owner, f.prepare()))
+                .isInstanceOfSatisfying(RepositoryException.class, failure -> {
+                    assertThat(failure.code()).isEqualTo(RepositoryException.Code.NOT_FOUND);
+                    assertThat(failure).hasMessage("Document is unavailable");
+                });
+        assertNoAttempt(f.attempt);
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"destination", "source"})
+    void changedAuthorizedRevisionCannotStage(String which) {
+        var f = fixture(1);
+        var row = which.equals("source") ? f.source : f.destination;
+        tx.inTransaction(em -> { em.createNativeQuery("UPDATE documents SET filename='changed' WHERE node_id=:id")
+                .setParameter("id", row.nodeId).executeUpdate(); });
+        assertThatThrownBy(() -> admission.admit(SCOPED, f.owner, f.prepare()))
+                .isInstanceOf(DocumentLedger.RevisionConflictException.class);
+        assertNoAttempt(f.attempt);
+    }
+
+    @Test void scopedCallerCanStageAgainstCurrentReadAndWriteGrants() {
+        var f = fixture(1);
+        assertThat(admission.admit(SCOPED, f.owner, f.prepare())).hasSize(1);
+    }
+
+    @Test void deniedDestinationTakesPrecedenceOverAuthorizedButStaleSource() {
+        var f = fixture(1);
+        tx.inTransaction(em -> { em.createNativeQuery("UPDATE documents SET filename='changed' WHERE node_id=:id")
+                .setParameter("id", f.source.nodeId).executeUpdate(); });
+        setPolicy(f.destination, DocumentSecurity.getDefaultInstance());
+        assertThatThrownBy(() -> admission.admit(SCOPED, f.owner, f.prepare()))
+                .isInstanceOfSatisfying(RepositoryException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.NOT_FOUND));
+        assertNoAttempt(f.attempt);
+    }
+
+    @Test void scopedCreationRequiresAnExplicitFutureGrantButAdminIsExplicit() {
+        var f = fixture(1);
+        var member = f.command.intent().getMembers(0).toBuilder().setDestination(DocumentRevisionCondition.newBuilder()
+                .setAddress(address("new-" + UUID.randomUUID())).setIfAbsent(true));
+        var changed = rebind(f, member.build());
+        assertThatThrownBy(() -> admission.admit(SCOPED, changed.owner, changed.prepare()))
+                .isInstanceOfSatisfying(RepositoryException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.NOT_FOUND));
+        assertNoAttempt(changed.attempt);
+        assertThat(admission.admit(ADMIN, changed.owner, changed.prepare())).hasSize(1);
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"acl", "datasource", "drive", "deletion"})
+    void scopedWritesCannotChangeProtectedOwnershipAndPlacement(String field) {
+        var f = fixture(1);
+        var member = f.command.intent().getMembers(0).toBuilder();
+        switch (field) {
+            case "acl" -> member.setOwnership(member.getOwnership().toBuilder().setSecurity(DocumentSecurity.getDefaultInstance()));
+            case "datasource" -> member.setOwnership(member.getOwnership().toBuilder().setDatasourceId("different"));
+            case "drive" -> tx.inTransaction(em -> { em.createNativeQuery("UPDATE documents SET drive_name='different' WHERE node_id=:id")
+                    .setParameter("id", f.destination.nodeId).executeUpdate(); });
+            default -> tx.inTransaction(em -> { em.createNativeQuery("UPDATE documents SET delete_source_blobs_on_settle=true, source_blob_delete_reason='original' WHERE node_id=:id")
+                    .setParameter("id", f.destination.nodeId).executeUpdate(); });
+        }
+        var changed = rebind(f, member.build());
+        assertThatThrownBy(() -> admission.admit(SCOPED, changed.owner, changed.prepare()))
+                .isInstanceOfSatisfying(RepositoryException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.PERMISSION_DENIED));
+        assertNoAttempt(changed.attempt);
+    }
+
+    @Test void selfCopyStillNeedsReadInAdditionToWrite() {
+        var f = fixture(1);
+        var writeOnly = DocumentSecurity.newBuilder().addPermissions(POLICY.getPermissions(1)).build();
+        setPolicy(f.destination, writeOnly);
+        var current = new DocumentLedger(tx).findByNodeId(f.destination.nodeId).orElseThrow();
+        var member = f.command.intent().getMembers(0).toBuilder();
+        member.setDestination(member.getDestination().toBuilder().setExpectedMutationRevision(current.mutationRevision));
+        member.setOwnership(member.getOwnership().toBuilder().setSecurity(writeOnly));
+        member.setParts(0, member.getParts(0).toBuilder().setReuse(member.getParts(0).getReuse().toBuilder().setSource(member.getDestination())));
+        var changed = rebind(f, member.build());
+        assertThatThrownBy(() -> admission.admit(SCOPED, changed.owner, changed.prepare()))
+                .isInstanceOfSatisfying(RepositoryException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.NOT_FOUND));
+        assertNoAttempt(changed.attempt);
+    }
+
+    @Test void zeroUploadCommandStillRequiresSourceRead() {
+        var f = fixture(0);
+        setPolicy(f.source, DocumentSecurity.getDefaultInstance());
+        assertThatThrownBy(() -> admission.admit(SCOPED, f.owner, f.prepare()))
+                .isInstanceOfSatisfying(RepositoryException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.NOT_FOUND));
+        assertNoAttempt(f.attempt);
+    }
+
+    @Test void explicitDependencyNeedsReadEvenWhenNoPartsAreReused() {
+        var f = fixture(1);
+        var member = f.command.intent().getMembers(0).toBuilder();
+        member.addSources(member.getParts(0).getReuse().getSource());
+        member.setParts(0, DocumentPublicationPart.newBuilder().setSlot(member.getParts(0).getSlot())
+                .setUpload(PublicationUpload.newBuilder().setSha256(SHA).setSizeBytes(1).setContentType("application/protobuf")));
+        var changed = rebind(f, member.build());
+        setPolicy(f.source, DocumentSecurity.getDefaultInstance());
+        assertThatThrownBy(() -> admission.admit(SCOPED, changed.owner, changed.prepare()))
+                .isInstanceOfSatisfying(RepositoryException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.NOT_FOUND));
+        assertNoAttempt(changed.attempt);
+    }
+
+    @Test void explicitAndReuseDependencyOnSameRevisionShareOneSourceFence() {
+        var f = fixture(1);
+        var member = f.command.intent().getMembers(0).toBuilder();
+        member.addSources(member.getParts(0).getReuse().getSource());
+        var changed = rebind(f, member.build());
+        assertThat(admission.admit(SCOPED, changed.owner, changed.prepare())).hasSize(1);
+        long sources = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                "SELECT count(*) FROM document_part_attempt_sources WHERE attempt_id=:id")
+                .setParameter("id", f.attempt).getSingleResult()).longValue());
+        assertThat(sources).isEqualTo(1);
+    }
+
+    @Test void processAuthorityCannotConcealMalformedStoredPolicy() {
+        var f = fixture(1);
+        tx.inTransaction(em -> { em.createNativeQuery("UPDATE documents SET security='[]'::jsonb WHERE node_id=:id")
+                .setParameter("id", f.destination.nodeId).executeUpdate(); });
+        assertThatThrownBy(() -> admission.admit(ADMIN, f.owner, f.prepare()))
+                .isInstanceOfSatisfying(RepositoryException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+        assertNoAttempt(f.attempt);
+    }
+
+    @Test void processAuthorityCannotAdmitMalformedProposedPublicIdentity() {
+        var f = fixture(1);
+        var bad = POLICY.toBuilder().setPermissions(0, POLICY.getPermissions(0).toBuilder().setIdentity("someone"));
+        var member = f.command.intent().getMembers(0).toBuilder();
+        member.setOwnership(member.getOwnership().toBuilder().setSecurity(bad));
+        var changed = rebind(f, member.build());
+        assertThatThrownBy(() -> admission.admit(ADMIN, changed.owner, changed.prepare()))
+                .isInstanceOfSatisfying(RepositoryException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+        assertNoAttempt(changed.attempt);
+    }
+
+    @Test void deniedSourceIsRejectedBeforeWaitingForDriveLock() throws Exception {
+        var f = fixture(1);
+        setPolicy(f.source, DocumentSecurity.getDefaultInstance());
+        try (var holder = database.entityManagerFactory().createEntityManager();
+             var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            holder.getTransaction().begin();
+            holder.createNativeQuery("SELECT drive_id FROM drives WHERE drive_id=:id FOR UPDATE")
+                    .setParameter("id", f.drive.driveId).getSingleResult();
+            var prepared = f.prepare();
+            var future = executor.submit(() -> admission.admit(SCOPED, f.owner, prepared));
+            try {
+                assertThatThrownBy(() -> future.get(5, java.util.concurrent.TimeUnit.SECONDS))
+                        .hasCauseInstanceOf(RepositoryException.class).satisfies(failure ->
+                                assertThat(((RepositoryException) failure.getCause()).code()).isEqualTo(RepositoryException.Code.NOT_FOUND));
+                assertNoAttempt(f.attempt);
+            } finally { holder.getTransaction().rollback(); }
+        }
+    }
+
+    @Test void policyRevocationCommittedDuringRowLockWaitPreventsAdmission() throws Exception {
+        var f = fixture(1);
+        try (var holder = database.entityManagerFactory().createEntityManager();
+             var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            holder.getTransaction().begin();
+            int holderPid = ((Number) holder.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue();
+            holder.createNativeQuery("UPDATE documents SET security='{}'::jsonb WHERE node_id=:id")
+                    .setParameter("id", f.source.nodeId).executeUpdate();
+            var prepared = f.prepare();
+            var future = executor.submit(() -> admission.admit(SCOPED, f.owner, prepared));
+            try {
+                long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+                Integer contender = null;
+                do {
+                    var waiting = tx.readOnly(em -> em.createNativeQuery("""
+                            SELECT pid FROM pg_stat_activity WHERE :holder=ANY(pg_blocking_pids(pid))
+                                AND wait_event_type='Lock'
+                            """).setParameter("holder", holderPid).getResultList());
+                    if (!waiting.isEmpty()) { contender = ((Number) waiting.getFirst()).intValue(); break; }
+                    Thread.sleep(10);
+                } while (System.nanoTime() < deadline);
+                assertThat(contender).as("admission backend waiting on the policy update").isNotNull();
+                holder.getTransaction().commit();
+                assertThatThrownBy(() -> future.get(10, java.util.concurrent.TimeUnit.SECONDS))
+                        .hasCauseInstanceOf(RepositoryException.class).satisfies(failure ->
+                                assertThat(((RepositoryException) failure.getCause()).code()).isEqualTo(RepositoryException.Code.NOT_FOUND));
+                assertNoAttempt(f.attempt);
+            } finally { if (holder.getTransaction().isActive()) holder.getTransaction().rollback(); }
+        }
+    }
+
+    private static Fixture rebind(Fixture f, DocumentPublicationMember member) {
+        var command = new DocumentPublicationCommand(f.command.intent().toBuilder().setOperationId(UUID.randomUUID().toString())
+                .setMembers(0, member).build());
+        var key = new RepositoryOperationLedger.Key("account", "principal", command.operationId());
+        var owner = operations.admit(key, command, UUID.randomUUID(), LEASE).owner().orElseThrow();
+        return new Fixture(command, owner, f.drive, f.placement, f.attempt, f.destination, f.source);
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"missing", "malformed", "inherited", "write-only", "purging", "identity"})
+    void sourcePolicyAndAvailabilityCannotBeBypassedByDeclaredReuse(String kind) {
+        var f = fixture(1);
+        switch (kind) {
+            case "missing" -> tx.inTransaction(em -> { em.createNativeQuery("UPDATE documents SET security=NULL WHERE node_id=:id")
+                    .setParameter("id", f.source.nodeId).executeUpdate(); });
+            case "malformed" -> tx.inTransaction(em -> { em.createNativeQuery("UPDATE documents SET security='[]'::jsonb WHERE node_id=:id")
+                    .setParameter("id", f.source.nodeId).executeUpdate(); });
+            case "inherited" -> setPolicy(f.source, POLICY.toBuilder().setInheritanceEnabled(true).build());
+            case "write-only" -> setPolicy(f.source, DocumentSecurity.newBuilder().addPermissions(POLICY.getPermissions(1)).build());
+            case "purging" -> tx.inTransaction(em -> { em.createNativeQuery("UPDATE documents SET status='PENDING_PURGE' WHERE node_id=:id")
+                    .setParameter("id", f.source.nodeId).executeUpdate(); });
+            default -> tx.inTransaction(em -> { em.createNativeQuery("UPDATE documents SET doc_id='different' WHERE node_id=:id")
+                    .setParameter("id", f.source.nodeId).executeUpdate(); });
+        }
+        assertThatThrownBy(() -> admission.admit(SCOPED, f.owner, f.prepare()))
+                .isInstanceOfSatisfying(RepositoryException.class, failure -> assertThat(failure.code()).isEqualTo(
+                        kind.equals("malformed") || kind.equals("inherited") ? RepositoryException.Code.FAILED_PRECONDITION
+                                : RepositoryException.Code.NOT_FOUND));
+        assertNoAttempt(f.attempt);
+    }
+
+    private static void assertNoAttempt(UUID id) {
+        assertThat(new DocumentPartAttemptLedger(tx).find(id)).isEmpty();
+        long catalog = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                "SELECT count(*) FROM repository_physical_locations WHERE source_id=:id")
+                .setParameter("id", id).getSingleResult()).longValue());
+        long reserved = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                "SELECT count(*) FROM document_part_key_reservations WHERE attempt_id=:id")
+                .setParameter("id", id).getSingleResult()).longValue());
+        assertThat(catalog).isZero(); assertThat(reserved).isZero();
+    }
+
+    private static void setPolicy(DocumentRecord row, DocumentSecurity security) {
+        row.writeSecurity(security);
+        tx.inTransaction(em -> { em.createNativeQuery("UPDATE documents SET security=CAST(:security AS jsonb) WHERE node_id=:id")
+                .setParameter("security", row.security).setParameter("id", row.nodeId).executeUpdate(); });
     }
 
     @ParameterizedTest @ValueSource(ints = {1, 513})
@@ -50,14 +323,14 @@ class DocumentOperationUploadAdmissionIT {
         statistics.setStatisticsEnabled(true); statistics.clear();
         java.util.List<DocumentPartAttemptLedger.Attempt> result;
         try {
-            result = admission.admit(f.owner, prepared);
+            result = admission.admit(ADMIN, f.owner, prepared);
             assertThat(statistics.getTransactionCount()).isEqualTo(1);
-            // owner+command+drive+profile+final lease/fence; then INSERT/reserve/seal/read and batches.
-            assertThat(statistics.getPrepareStatementCount()).isEqualTo(6 + 4 + (chunks + 255) / 256 + 1);
+            // owner+command+revision locks+drive+profile+final lease/fence; then attempt rows and batches.
+            assertThat(statistics.getPrepareStatementCount()).isEqualTo(8 + 4 + (chunks + 255) / 256 + 1);
         } finally { statistics.setStatisticsEnabled(false); }
         assertThat(result).hasSize(1);
         assertThat(result.getFirst().planKind()).isEqualTo("NEW_CONTENT");
-        assertThat(result.getFirst().sampledRevision()).isEqualTo(9);
+        assertThat(result.getFirst().sampledRevision()).isEqualTo(f.destination.mutationRevision);
         var row = tx.readOnly(em -> (Object[]) em.createNativeQuery("""
                 SELECT operation_principal,operation_id,operation_generation,member_id,drive_id,source_count
                 FROM document_part_attempts WHERE attempt_id=:id
@@ -82,11 +355,11 @@ class DocumentOperationUploadAdmissionIT {
 
     @Test void zeroUploadsStillChecksPlacementAndCreatesNoAttempt() {
         var f = fixture(0);
-        assertThat(admission.admit(f.owner, f.prepare())).isEmpty();
+        assertThat(admission.admit(ADMIN, f.owner, f.prepare())).isEmpty();
         assertThat(new DocumentPartAttemptLedger(tx).find(f.attempt)).isEmpty();
         tx.inTransaction(em -> { em.createNativeQuery("UPDATE drives SET prefix='changed' WHERE drive_id=:id")
                 .setParameter("id", f.drive.driveId).executeUpdate(); });
-        assertThatThrownBy(() -> admission.admit(f.owner, f.prepare())).hasMessageContaining("drive changed");
+        assertThatThrownBy(() -> admission.admit(ADMIN, f.owner, f.prepare())).hasMessageContaining("drive changed");
     }
 
     @Test void changedCanonicalCommandCannotUseAnExistingOwner() {
@@ -94,7 +367,7 @@ class DocumentOperationUploadAdmissionIT {
         var changed = new DocumentPublicationCommand(f.command.intent().toBuilder().setMembers(0,
                 f.command.intent().getMembers(0).toBuilder().putMetadata("purpose", "different")).build());
         var prepared = DocumentOperationUploadAdmission.prepare(changed, f.placements(), Map.of("member", f.attempt), LEASE);
-        assertThatThrownBy(() -> admission.admit(f.owner, prepared))
+        assertThatThrownBy(() -> admission.admit(ADMIN, f.owner, prepared))
                 .isInstanceOf(RepositoryOperationLedger.CommandConflictException.class);
         assertThat(new DocumentPartAttemptLedger(tx).find(f.attempt)).isEmpty();
     }
@@ -112,7 +385,7 @@ class DocumentOperationUploadAdmissionIT {
         if (change.equals("owner")) owner = new RepositoryOperationLedger.Owner(owner.key(), owner.generation(), UUID.randomUUID(), owner.leaseUntil());
         var prepared = DocumentOperationUploadAdmission.prepare(f.command, placements, Map.of("member", f.attempt), LEASE);
         var selectedOwner = owner;
-        assertThatThrownBy(() -> admission.admit(selectedOwner, prepared)).satisfies(failure -> {
+        assertThatThrownBy(() -> admission.admit(ADMIN, selectedOwner, prepared)).satisfies(failure -> {
             switch (change) {
                 case "drive" -> assertThat(failure).hasMessageContaining("drive changed");
                 case "profile" -> assertThat(failure).hasMessageContaining("profile differs");
@@ -125,8 +398,8 @@ class DocumentOperationUploadAdmissionIT {
 
     @Test void duplicateAttemptIsNotSilentlyAdopted() {
         var f = fixture(1); var prepared = f.prepare();
-        var original = admission.admit(f.owner, prepared).getFirst();
-        assertThatThrownBy(() -> admission.admit(f.owner, prepared)).hasStackTraceContaining("duplicate key");
+        var original = admission.admit(ADMIN, f.owner, prepared).getFirst();
+        assertThatThrownBy(() -> admission.admit(ADMIN, f.owner, prepared)).hasStackTraceContaining("duplicate key");
         assertThat(new DocumentPartAttemptLedger(tx).find(f.attempt).orElseThrow()).isEqualTo(original);
     }
 
@@ -134,7 +407,7 @@ class DocumentOperationUploadAdmissionIT {
         var f = fixture(1); UUID secondAttempt = UUID.randomUUID();
         var member = f.command.intent().getMembers(0);
         var intent = f.command.intent().toBuilder().setOperationId(UUID.randomUUID().toString()).addMembers(member.toBuilder()
-                .setMemberId("second").setDestination(member.getDestination().toBuilder().setAddress(address("second")))).build();
+                .setMemberId("second").setDestination(member.getDestination().toBuilder().setAddress(address("second")).setIfAbsent(true))).build();
         var command = new DocumentPublicationCommand(intent);
         var key = new RepositoryOperationLedger.Key("account", "principal", command.operationId());
         var owner = operations.admit(key, command, UUID.randomUUID(), LEASE).owner().orElseThrow();
@@ -146,7 +419,7 @@ class DocumentOperationUploadAdmissionIT {
                     .executeUpdate();
         });
         try {
-            assertThatThrownBy(() -> admission.admit(owner, prepared)).hasStackTraceContaining("injected second member failure");
+            assertThatThrownBy(() -> admission.admit(ADMIN, owner, prepared)).hasStackTraceContaining("injected second member failure");
             for (UUID id : java.util.List.of(f.attempt, secondAttempt)) {
                 assertThat(new DocumentPartAttemptLedger(tx).find(id)).isEmpty();
                 long catalog = tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM repository_physical_locations WHERE source_id=:id")
@@ -163,7 +436,7 @@ class DocumentOperationUploadAdmissionIT {
         var member = f.command.intent().getMembers(0);
         var command = new DocumentPublicationCommand(f.command.intent().toBuilder().setOperationId(UUID.randomUUID().toString())
                 .addMembers(member.toBuilder().setMemberId("second").setDestination(member.getDestination().toBuilder()
-                        .setAddress(address("second")))).build());
+                        .setAddress(address("second")).setIfAbsent(true))).build());
         var key = new RepositoryOperationLedger.Key("account", "principal", command.operationId());
         var owner = operations.admit(key, command, UUID.randomUUID(), LEASE).owner().orElseThrow();
         var prepared = DocumentOperationUploadAdmission.prepare(command, f.placements(), Map.of("member", f.attempt, "second", secondAttempt), Duration.ofSeconds(1));
@@ -175,7 +448,7 @@ class DocumentOperationUploadAdmissionIT {
                     .executeUpdate();
         });
         try {
-            assertThatThrownBy(() -> admission.admit(owner, prepared)).hasMessageContaining("attempt expired before admission completed");
+            assertThatThrownBy(() -> admission.admit(ADMIN, owner, prepared)).hasMessageContaining("attempt expired before admission completed");
             assertThat(new DocumentPartAttemptLedger(tx).find(f.attempt)).isEmpty();
             assertThat(new DocumentPartAttemptLedger(tx).find(secondAttempt)).isEmpty();
         } finally { tx.inTransaction(em -> { em.createNativeQuery("DROP FUNCTION delay_first_admission() CASCADE").executeUpdate(); }); }
@@ -188,13 +461,17 @@ class DocumentOperationUploadAdmissionIT {
         var profile = new ManagedBackendLedger.Profile(new BackendIdentity("test-location", "test-location/v1",
                 Map.of("endpoint", "synthetic-sql-fixture")), "realm");
         String generation = "backend-" + UUID.randomUUID(); new ManagedBackendLedger(tx).bind(generation, profile);
+        var destinationAddress = address("destination-" + UUID.randomUUID());
+        var sourceAddress = address("source-" + UUID.randomUUID());
+        var destination = document(destinationAddress, drive.name);
+        var source = document(sourceAddress, drive.name);
         var slot = DocumentPublicationSlot.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE).build();
         var member = DocumentPublicationMember.newBuilder().setMemberId("member").setDriveId(drive.driveId.toString())
-                .setDestination(DocumentRevisionCondition.newBuilder().setAddress(address("destination")).setExpectedMutationRevision(9))
-                .setOwnership(OwnershipContext.newBuilder().setAccountId("account").setDatasourceId("source").setSecurity(DocumentSecurity.getDefaultInstance()))
+                .setDestination(DocumentRevisionCondition.newBuilder().setAddress(destinationAddress).setExpectedMutationRevision(destination.mutationRevision))
+                .setOwnership(OwnershipContext.newBuilder().setAccountId("account").setDatasourceId("source").setSecurity(POLICY))
                 .setRowKind(DocumentPublicationRowKind.DOCUMENT_PUBLICATION_ROW_KIND_PIPELINE)
                 .addParts(DocumentPublicationPart.newBuilder().setSlot(slot).setReuse(PublicationReuse.newBuilder()
-                        .setSource(DocumentRevisionCondition.newBuilder().setAddress(address("source")).setExpectedMutationRevision(7)).setSourceSlot(slot)
+                        .setSource(DocumentRevisionCondition.newBuilder().setAddress(sourceAddress).setExpectedMutationRevision(source.mutationRevision)).setSourceSlot(slot)
                         .setObject(PublicationObjectIdentity.newBuilder().setObjectId(UUID.randomUUID().toString())
                                 .setBackendGeneration("original").setStorageRealm("original-realm").setNamespace("original-namespace")
                                 .setObjectKey("original-key").setSizeBytes(1).setSha256(SHA).setContentType("application/protobuf"))));
@@ -205,7 +482,16 @@ class DocumentOperationUploadAdmissionIT {
                 .setOperationId(UUID.randomUUID().toString()).addMembers(member).build());
         var key = new RepositoryOperationLedger.Key("account", "principal", command.operationId());
         var owner = operations.admit(key, command, UUID.randomUUID(), LEASE).owner().orElseThrow();
-        return new Fixture(command, owner, drive, DocumentUploadPlan.Placement.sample(drive, generation, profile), UUID.randomUUID());
+        return new Fixture(command, owner, drive, DocumentUploadPlan.Placement.sample(drive, generation, profile), UUID.randomUUID(), destination, source);
+    }
+
+    private static DocumentRecord document(NodeAddress address, String drive) {
+        var row = new DocumentRecord(); row.nodeId = DocumentIds.nodeId(address);
+        row.docId = address.getDocId(); row.accountId = address.getAccountId(); row.graphAddressId = address.getGraphAddressId();
+        row.graphId = address.getGraphId(); row.rowKind = DocumentRowKind.PIPELINE; row.datasourceId = "source";
+        row.driveName = drive; row.objectKey = "synthetic-legacy/" + row.nodeId; row.etag = "synthetic"; row.checksum = SHA; row.sizeBytes = 0L;
+        row.writeSecurity(POLICY);
+        return new DocumentLedger(tx).save(row);
     }
 
     private static NodeAddress address(String id) {

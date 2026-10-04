@@ -1,5 +1,6 @@
 package ai.protomolt.proto.repo.engine;
 
+import ai.protomolt.proto.repo.spi.DocumentAccessPolicy;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryOperationControl;
 

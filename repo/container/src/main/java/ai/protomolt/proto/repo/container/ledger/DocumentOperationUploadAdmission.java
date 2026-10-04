@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.container.ledger;
 
 import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
+import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import com.google.protobuf.ByteString;
 import jakarta.persistence.EntityManager;
 import java.time.Duration;
@@ -14,8 +15,9 @@ import java.util.UUID;
 
 /**
  * Internal SQL staging only. The qualified composition supplies sampled physical
- * placement; this does not resolve a provider, authorize a principal, validate
- * retained source content, reconcile retries, or permit provider I/O.
+ * placement and authenticated caller. Current policy and revisions are checked
+ * here, but retained physical content, schema validation, retry reconciliation
+ * and provider I/O remain separate, unimplemented boundaries.
  */
 final class DocumentOperationUploadAdmission {
     private final Tx tx;
@@ -32,9 +34,11 @@ final class DocumentOperationUploadAdmission {
         private final Duration lease;
         private final List<EncodedMember> uploads;
         private final List<DocumentUploadPlan.Placement> placements;
+        private final DocumentAdmissionAuthorization.Prepared authorization;
 
         private Prepared(DocumentUploadPlan.Prepared plan, Duration lease) {
             this.plan = plan;
+            this.authorization = DocumentAdmissionAuthorization.prepare(plan);
             this.lease = lease;
             this.uploads = plan.members().stream().filter(member -> member.attempt().isPresent())
                     .map(member -> new EncodedMember(member, UUID.randomUUID(), DocumentAttemptPlanEncoding.prepare(member))).toList();
@@ -54,14 +58,16 @@ final class DocumentOperationUploadAdmission {
     }
 
     /** All rows commit together; duplicate attempt identity fails without adopting existing bytes. */
-    List<DocumentPartAttemptLedger.Attempt> admit(RepositoryOperationLedger.Owner owner, Prepared prepared) {
+    List<DocumentPartAttemptLedger.Attempt> admit(RepositoryCaller caller, RepositoryOperationLedger.Owner owner, Prepared prepared) {
         Objects.requireNonNull(owner); Objects.requireNonNull(prepared);
         var command = prepared.plan.command();
+        DocumentAdmissionAuthorization.requireCaller(caller, owner, command.intent().getAccountId());
         if (!owner.key().account().equals(command.intent().getAccountId()) || !owner.key().operationId().equals(command.operationId()))
             throw new IllegalArgumentException("Upload command differs from operation scope");
         return tx.inTransaction(em -> {
             RepositoryOperationLedger.fenceLiveOwner(em, owner);
             requireCommand(em, owner.key(), command);
+            DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, prepared.plan, prepared.authorization);
             for (var placement : prepared.placements) {
                 placement.drive().lock(em, drives);
                 var actual = ManagedBackendLedger.find(em, placement.generation())

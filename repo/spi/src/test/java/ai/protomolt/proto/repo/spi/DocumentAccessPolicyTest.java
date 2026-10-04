@@ -1,7 +1,5 @@
-package ai.protomolt.proto.repo.engine;
+package ai.protomolt.proto.repo.spi;
 
-import ai.protomolt.proto.repo.spi.RepositoryCaller;
-import ai.protomolt.proto.repo.spi.RepositoryException;
 import ai.protomolt.proto.repo.v1.*;
 import org.junit.jupiter.api.Test;
 import java.util.List;
