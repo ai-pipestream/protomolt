@@ -5502,6 +5502,36 @@ object-store adapter, verifies fresh attempt IDs and disjoint upload keys, and
 checks old-owner fencing after takeover. The committed result records generation
 two and retains the existing authorized replay behavior.
 
-This qualifies the retained recovery-session component. The bounded registry
-still needs exclusive recovery transitions and host-controlled restart selection;
-no recovery transport or automatic abandoned-session eviction is enabled here.
+This qualifies the retained recovery-session component. The registry transition
+below supplies local exclusivity; host-controlled restart selection remains
+unfinished. No recovery transport or automatic abandoned-session eviction is enabled.
+
+### Exclusive registry recovery transition
+
+The internal registry now offers an explicit recovery operation. It authenticates
+scope and observes an authorized committed result before requiring a free slot or
+placement. Pending recovery reserves an exclusive entry only when no invocation
+holds it. Normal execution and another recovery cannot borrow that entry until
+the transition finishes. Preparation and SQL remain outside the registry monitor.
+
+An existing session's fixed admission modes must match. Pure preparation failure
+keeps the previous session, or returns the reservation when there was none. The
+registry installs the replacement's private identities before takeover SQL and
+retains them after exceptions. Exact recovery retries accept only the original
+predecessor generation and reuse the installed session, including its placement
+and attempt identities. A successful takeover returns no publication result;
+publication still runs through the ordinary guarded execution path. Committed
+replay marks a retained entry terminal but waits for active references before
+evicting it.
+
+SQL fault tests hold an actual committed takeover before returning its response,
+exercise competing registry calls, then lose the acknowledgment or cancel and
+recover the same token, generation and lease. Tests also cover failed preparation, retained
+capacity, mode downgrade rejection and generation-two typed publication through
+the registry with real provider writes and persisted attempt/key assertions. No successful byte-provider substitute is
+used in the ownership-only tests: those ports reject any attempted provider I/O.
+
+This transition does not choose a predecessor generation for the host, advance
+an already retained recovery to another generation, reconstruct a crashed host's
+session, or create an abort receipt. Those remain explicit recovery work before
+production mounting; uncertain entries are never discarded by timeout or capacity.

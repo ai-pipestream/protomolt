@@ -2729,8 +2729,14 @@ recorded selection evidence from durable state, without assuming the in-process
 registry survived. Internal typed/opaque choices must be recovered or selected by
 an explicit deterministic policy; do not add an unbound caller downgrade flag.
 
+The internal registry now implements exclusive preparation and exact retry of one
+explicitly selected recovery transition. It preserves the same recovered session
+after acknowledgment loss or cancellation and refuses a different predecessor
+while that transition is retained. Advancing recovery again requires additional
+host reconciliation; this is not automatic restart recovery.
+
 Aborted/rejected retirement requires the durable terminal decision described in
 the commit design. It cannot be inferred from NOT_OBSERVED, PENDING, a timeout or
-an expired lease. Host recovery, terminal rejection receipts and registry recovery
-state are still required; the command-bound ledger fence is their prerequisite,
-not a claim that those paths are mounted or complete.
+an expired lease. Restart reconstruction, subsequent recovery transitions and
+terminal rejection receipts are still required. The internal registry transition
+does not claim that those paths are mounted or complete.

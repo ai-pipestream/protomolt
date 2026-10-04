@@ -78,6 +78,7 @@ final class DocumentPublicationSession {
     }
 
     DocumentOperationUploadAdmission.Prepared prepared() { return prepared; }
+    long predecessorGeneration() { return predecessorGeneration; }
 
     private Map<String, DocumentPublicationCandidate.Mode> checkedModes(Map<String, DocumentPublicationCandidate.Mode> requested) {
         var copy = Map.copyOf(requested);
@@ -108,11 +109,17 @@ final class DocumentPublicationSession {
 
         /** Host choices remain fixed even when admission or publication fails. */
         synchronized Map<String, DocumentPublicationCandidate.Mode> bindModes(Map<String, DocumentPublicationCandidate.Mode> requested) {
+            var copy = checkModes(requested);
+            if (modes == null) modes = copy;
+            return modes;
+        }
+
+        /** Validate replacement choices without mutating a session that preparation may leave intact. */
+        synchronized Map<String, DocumentPublicationCandidate.Mode> checkModes(Map<String, DocumentPublicationCandidate.Mode> requested) {
             if (closed.get()) throw new IllegalStateException("Publication execution is closed");
             var copy = checkedModes(requested);
-            if (modes == null) modes = copy;
-            else if (!modes.equals(copy)) throw new IllegalArgumentException("Publication session admission modes changed");
-            return modes;
+            if (modes != null && !modes.equals(copy)) throw new IllegalArgumentException("Publication session admission modes changed");
+            return copy;
         }
 
         @Override public synchronized void close() {

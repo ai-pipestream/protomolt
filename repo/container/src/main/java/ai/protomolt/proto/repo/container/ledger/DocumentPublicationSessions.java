@@ -32,6 +32,7 @@ final class DocumentPublicationSessions {
         DocumentPublicationSession session;
         int users = 1;
         boolean committed;
+        boolean recovering;
         Entry(DocumentPublicationCommand command) {
             this.command = command;
             commandBytes = (long) command.canonical().size() + command.intent().getSerializedSize();
@@ -86,11 +87,9 @@ final class DocumentPublicationSessions {
     private synchronized Entry existing(RepositoryOperationLedger.Key key, DocumentPublicationCommand command) {
         var entry = entries.get(key);
         if (entry == null) return null;
-        if (!entry.command.canonical().equals(command.canonical())) {
-            throw new RepositoryException(RepositoryException.Code.CONFLICT, "Publication operation command changed");
-        }
-        if (entry.session == null) throw new RepositoryException(RepositoryException.Code.CONFLICT,
-                "Publication session preparation is already in progress");
+        requireCommand(entry, command);
+        if (entry.session == null || entry.recovering) throw new RepositoryException(RepositoryException.Code.CONFLICT,
+                "Publication session preparation or recovery is already in progress");
         entry.users = Math.incrementExact(entry.users);
         return entry;
     }
@@ -131,4 +130,91 @@ final class DocumentPublicationSessions {
 
     synchronized int retainedSessions() { return entries.size(); }
     synchronized long retainedCommandBytes() { return commandBytes; }
+
+    /**
+     * Explicit, host-authorized takeover preparation. Empty means takeover returned
+     * ownership, not publication. A retained recovery transition accepts only its
+     * original predecessor generation; advancing another generation needs separate
+     * host reconciliation. Never infer that decision from an exception or timeout.
+     */
+    Optional<DocumentPublicationResult> recover(RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<UUID, DocumentUploadPlan.Placement> placements, long predecessorGeneration,
+            Map<String, DocumentPublicationCandidate.Mode> modes, RepositoryReadControl control) {
+        Objects.requireNonNull(command); Objects.requireNonNull(control).check();
+        if (predecessorGeneration < 1 || predecessorGeneration == Long.MAX_VALUE)
+            throw new IllegalArgumentException("Recovery requires a replaceable predecessor generation");
+        if (caller == null) throw new RepositoryException(RepositoryException.Code.UNAUTHENTICATED,
+                "Authenticated repository caller is required");
+        var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
+        DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+        var observed = replay.observe(caller, command);
+        control.check();
+        if (observed.result().isPresent()) {
+            committed(key, command);
+            return observed.result();
+        }
+        var entry = reserveRecovery(key, command);
+        boolean terminal = false;
+        try {
+            var previous = entry.session;
+            if (previous != null) {
+                if (previous.predecessorGeneration() != 0 && previous.predecessorGeneration() != predecessorGeneration)
+                    throw new RepositoryException(RepositoryException.Code.CONFLICT, "Retained recovery predecessor changed");
+                try (var scope = previous.begin(caller, control)) { scope.checkModes(modes); }
+            }
+            if (previous == null || previous.predecessorGeneration() == 0) {
+                var replacement = DocumentPublicationSession.recovering(tx, caller, entry.command, placements, lease, predecessorGeneration, modes);
+                // Publish the private identities before SQL; every uncertain retry must find them.
+                synchronized (this) { entry.session = replacement; }
+            }
+            try {
+                entry.session.admit(caller, control).orElseThrow(() -> new IllegalStateException("Recovery returned no owner"));
+                return Optional.empty();
+            } catch (RepositoryOperationLedger.TerminalOperationException completed) {
+                var result = replay.observe(caller, command);
+                control.check();
+                if (result.result().isEmpty()) throw new RepositoryException(RepositoryException.Code.CONFLICT,
+                        "Terminal operation has no replayable success");
+                terminal = true;
+                return result.result();
+            }
+        } finally {
+            synchronized (this) {
+                entry.recovering = false;
+                release(key, entry, terminal);
+                if (entry.session == null && entry.users == 0) remove(key, entry);
+            }
+        }
+    }
+
+    private synchronized Entry reserveRecovery(RepositoryOperationLedger.Key key, DocumentPublicationCommand command) {
+        var entry = entries.get(key);
+        if (entry == null) {
+            entry = new Entry(command);
+            if (entries.size() >= capacity || entry.commandBytes > maxCommandBytes - commandBytes)
+                throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED, "Publication session capacity exhausted");
+            entries.put(key, entry);
+            commandBytes += entry.commandBytes;
+        } else {
+            requireCommand(entry, command);
+            if (entry.users != 0 || entry.recovering || entry.session == null)
+                throw new RepositoryException(RepositoryException.Code.CONFLICT, "Publication session is in use");
+            entry.users = 1;
+        }
+        entry.recovering = true;
+        return entry;
+    }
+
+    private synchronized void committed(RepositoryOperationLedger.Key key, DocumentPublicationCommand command) {
+        var entry = entries.get(key);
+        if (entry == null) return;
+        requireCommand(entry, command);
+        entry.committed = true;
+        if (entry.users == 0) remove(key, entry);
+    }
+
+    private static void requireCommand(Entry entry, DocumentPublicationCommand command) {
+        if (!entry.command.canonical().equals(command.canonical()))
+            throw new RepositoryException(RepositoryException.Code.CONFLICT, "Publication operation command changed");
+    }
 }

@@ -124,6 +124,10 @@ class DocumentPublicationSessionIT {
             var expected = Map.copyOf(modes);
             try (var execution = session.begin(CALLER, RepositoryReadControl.NONE)) {
                 assertThatThrownBy(() -> execution.bindModes(Map.of())).isInstanceOf(IllegalArgumentException.class);
+                var inspected = new java.util.HashMap<>(modes);
+                inspected.replaceAll((member, mode) -> DocumentPublicationCandidate.Mode.OPAQUE);
+                assertThat(execution.checkModes(inspected)).isEqualTo(inspected);
+                // Checking a possible replacement must not bind the current session.
                 assertThat(execution.bindModes(modes)).isEqualTo(expected);
             }
             modes.replaceAll((member, mode) -> DocumentPublicationCandidate.Mode.OPAQUE);
