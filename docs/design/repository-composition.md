@@ -3219,7 +3219,39 @@ attestations. JSON Schema exposes count bounds and retains cross-field CEL as
 `x-protomolt-cel`; OpenAPI consumers still need server-side checks for those rules
 and for every state-dependent obligation. No generator change is included.
 
-This is an additive contract only. Canonical manifest encoding and allocation
-limits, the observed-runtime producer, conversion from completed assessments,
+The contract does not itself provide persistence. Canonical manifest encoding
+and bounds are described below; the observed-runtime producer, conversion from completed assessments,
 retained candidate/schema ownership, receipt binding and the fenced durable
 rejection path remain required before advertising or emitting admission rejection.
+
+#### Canonical assessment manifest codec
+
+`DocumentAssessmentManifestCodec` now encodes owned canonical bytes and verifies
+stored bytes before returning a parsed manifest. It reuses the bounded evidence
+wire implementation: at most 4 MiB, 16,384 wire values and depth 16, with raw input
+bounds before parsing, exact SHA-256, unknown-field rejection and canonical
+protobuf encoding. These are allocation/work ceilings, not a promise that every
+combination of per-field maxima fits. In particular, the wire-value bound normally
+rejects large root lists before the separate 4,096-root operation ceiling.
+
+Canonical ordering is member ID, runtime artifact name, payload schema exact URL
+then descriptor digest, and root ordinal then evidence digest. Text comparisons
+use unsigned UTF-8 order. Duplicate member IDs, runtime names, schema association
+keys (including the container) and root references are rejected rather than
+collapsed. The deduplicated schema artifact identity set has a 64-artifact cap.
+Stored set order must already be canonical; decode does not silently repair it.
+Loaded root-locator uniqueness and all referenced asset bytes remain replay checks.
+
+A typed member can have no separate payload schema references when its payload
+reuses the container association. A real admission/replay test now exercises a
+Document payload inside Document's Any field with exactly one retained schema
+association. The contract permits this case without duplicating metadata.
+
+Canonical output is reserved until its `Encoded` owner closes; decode comparison
+scratch releases before return. Input and parsed heap remain caller-owned and
+bounded. A borrowed ByteString cannot be revoked after close, so callers must
+finish all consumers before releasing its owner. Tests cover canonical set
+permutations, exact nanos, conflicting duplicates, nested unknown fields,
+corrupt/truncated/unsupported wire input, aggregate artifact/wire limits,
+reservation refusal, cancellation and closure. The codec establishes identity,
+not observed runtime provenance, policy authority or durable retention.

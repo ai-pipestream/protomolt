@@ -88,6 +88,21 @@ class DocumentSchemaAssessmentReplayTest {
         assertThat(budget.live).isZero();
     }
 
+    @Test void payloadCanReuseTheContainingDocumentSchemaWithoutADuplicateReference() throws Exception {
+        var base = fixture(false).document().toBuilder().clearStructuredData().clearParserResults().build();
+        var f = fixture(false, base.toBuilder().setStructuredData(Any.pack(base, "type.test")).build());
+        var budget = new Reservations();
+        try (var assessment = POLICY.assess(ByteString.copyFrom(new byte[32]), f.member(), f.fragments(),
+                f.container().definition(), selection -> f.container().definition(), budget, AT, () -> {})) {
+            assertThat(assessment.references()).hasSize(1);
+            var request = DocumentSchemaAssessmentReplay.Request.from(assessment.view());
+            assertThat(request.candidate().references()).isEmpty();
+            DocumentSchemaAssessmentReplay.verify(request, POLICY,
+                    hash -> Optional.ofNullable(assessment.artifacts().get(hash)), budget, () -> {});
+        }
+        assertThat(budget.live).isZero();
+    }
+
     @Test void missingEvidenceCannotHideLaterRoots() throws Exception {
         var captured = capture("false");
         var evidence = new HashMap<>(captured.request().candidate().evidence());

@@ -35,7 +35,8 @@ class DocumentAssessmentContractTest {
         check(DocumentMemberAssessment.newBuilder().setMemberId("m").setOpaque(false).build(), false);
         check(DocumentMemberAssessment.newBuilder().setMemberId("m").setTyped(DocumentTypedAssessment.getDefaultInstance()).build(), false);
         var typed = typed().build();
-        for (var field : typed.getDescriptorForType().getFields()) check(typed.toBuilder().clearField(field).build(), false);
+        for (var field : typed.getDescriptorForType().getFields())
+            check(typed.toBuilder().clearField(field).build(), field.getName().equals("payload_schemas"));
         check(root().setOrdinal(10000).build(), false);
         check(root().setCodec("other").build(), false);
         check(root().setVersion(2).build(), false);

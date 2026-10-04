@@ -301,7 +301,7 @@ final class DocumentSchemaEvidenceCodec {
     }
 
     /** Validated Unicode scalar order equals unsigned UTF-8 byte order, without key buffers. */
-    private static int compareUtf8Keys(String left, String right, Runnable control) {
+    static int compareUtf8Keys(String left, String right, Runnable control) {
         int a = 0, b = 0;
         while (a < left.length() && b < right.length()) {
             if ((a & 1023) == 0) active(control);

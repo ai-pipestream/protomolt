@@ -106,9 +106,10 @@ message DocumentTypedAssessment {
   // Descriptor/metadata association for the containing Document layout.
   RepositorySchemaAssetReference container = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
   // Unique payload associations; together with container at most 64 per member.
+  // Empty is valid when every payload reuses the containing schema association.
   // Handler requires all and only the associations consumed by frozen replay.
-  repeated RepositorySchemaAssetReference payload_schemas = 2 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 63}];
-  // Complete roots sorted by ordinal and canonical root locator; unique locators.
+  repeated RepositorySchemaAssetReference payload_schemas = 2 [(ai.protomolt.proto.validate.v1.field).repeated.max_items = 63];
+  // Complete roots sorted by ordinal then evidence SHA; unique loaded locators.
   repeated DocumentAssessmentRootReference roots = 3 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 1024}];
 }
 
