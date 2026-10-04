@@ -2331,6 +2331,43 @@ enabled by this migration. The next integration replaces the rejection for a
 writer that supplies the complete policy/proof binding; it must preserve these
 guards for all unbound paths.
 
+The permitted bound-writer path needs an immutable admission row before mutating
+the document, since the V59 body guard runs before a revision commit row exists.
+Allocate the revision UUID first. After owner, command, account policy and
+physical selection locks, insert the admission binding for that exact revision,
+node, member and owner generation in the same transaction. Bind both the selected
+policy revision and immutable policy digest, the canonical command identity,
+the expected publication body and metadata snapshot, and the exact selected
+physical objects at their full member ordinals. Do not attach a historical row
+to the mutable current-policy pointer with a foreign key; compare the pointer
+under the held lock and retain the immutable snapshot reference.
+
+Freeze complete expected sets of artifact digests, schema associations (exact
+type URL, descriptor, metadata and optional source identities), and root evidence
+(fragment ordinal, locator and evidence digests). Counts alone do not establish
+completeness: replacing a root or schema with another of the same size/count
+must fail. Use bounded normalized rows or a SQL-comparable manifest and compare
+exact sets at sealing. Keep descriptor and source bytes normalized in the
+existing catalog; the admission manifest contains identities rather than copies.
+
+The document guard may allow a configured-policy write only with the exact
+current-transaction admission binding for its account, node, body and metadata.
+The projection guard must additionally match the allocated revision, member,
+operation and decision. Deferred completion must require the corresponding sealed
+native revision, exact physical-part and evidence sets, and terminal operation
+outcome. An unused admission row, missing member, late substitution or caught
+writer failure cannot commit. The evidence writer itself marks a failed outer
+transaction rollback-only. SQL checks identity and storage consistency; the
+trusted Java proof constructor remains responsible for descriptor-based rules.
+
+Support both explicit decisions already defined by the policy contract. Typed
+admission requires the complete verified proof and at least one supported payload
+root. Explicit opaque admission is allowed only when the decoded selected policy
+and member contract permit omission; it retains no typed verdict. A failed typed
+attempt never chooses the opaque branch automatically. Existing unbound writers
+continue to reject configured policy. This admission-row integration is planned;
+neither the catalog nor the evidence-storage helper alone enables it.
+
 Expose two materialization modes, independently of admission policy:
 
 - **Preserve:** return the exact archived fragment or its authorized claim-check

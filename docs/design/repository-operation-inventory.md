@@ -4578,3 +4578,55 @@ or an enabled typed publisher.
 The additional 64-case `DocumentAtomicPublicationIT` suite passes as well,
 including concurrent batch publication, shared-source locks, transactional
 rollback, cancellation and cleanup fencing: 207 affected tests total.
+
+### Retaining a checked member's complete schema evidence
+
+`DocumentSchemaRetention.prepare` and `write` are new internal storage operations.
+Preparation takes a member proof from the complete checked command batch and
+orders its fragment declarations, artifact digests, associations and root bundles.
+It performs no registry access. The write requires an active transaction with the
+owner, policy, selected physical objects and complete artifact set already locked.
+It rechecks the durable command and current owner fence, then requires the exact
+current-transaction, unsealed native revision for the member and destination node.
+
+Before inserting evidence, the writer compares every persisted nonempty part with
+the proof's complete member ordinals, part/sub-key, size and digest. Left joins keep
+extra or invalid physical rows visible so qualification cannot silently filter
+them out. Provider generation, realm, namespace, key, verification and account
+must agree. Native sealing additionally enforces selected-attempt, manifest and
+retention consistency. Descriptor validation and raw-byte hashing happened before
+this transaction; their work is not repeated while holding SQL locks.
+
+JDBC batches of at most 16 insert the exact normalized artifact references, schema
+associations and root evidence into V55, V57 and V56 tables, respectively. Optional
+source roles and multiple descriptor versions remain separate identities. JDBC
+insert counts are checked; SQL errors and cancellation propagate. Any failure
+marks the enclosing transaction rollback-only, including a failure caught by an
+internal caller. Staged catalog bytes and claims remain available for retry after
+a failed publication, while no revision or terminal success is committed.
+
+The helper is not connected to the production publisher and grants no typed
+admission verdict. The next binding must freeze exact expected evidence and
+physical-part sets, selected policy revision/digest, body/metadata and the owner
+attempt before document mutation, then enforce their equality at seal and terminal
+commit. Counts alone are insufficient. The composition design records this
+requirement for both typed and explicitly permitted opaque decisions. V59 still
+rejects every configured-policy body writer without that integration.
+
+The PostgreSQL fixture builds real document bytes, complete descriptors, a
+canonical command and a proof through ProtoMolt's runtime validator. Physical
+provider observations are explicitly synthetic SQL fixtures, not SDK success
+claims. It leaves a native OPAQUE revision unsealed for the retention callback;
+this tests storage consistency without advertising a typed publisher or replacing
+real-provider qualification. The selected policy is internal preparation data,
+not an activated account policy or an authorization grant.
+
+Qualification: 39 tests pass across the six new retention cases, six batch
+preparation cases, and existing V55/V56/V57 SQL suites (8/9/10). Retention tests
+compare exact catalog bytes, associations and root evidence, reject a missing
+physical fragment and wrong revision, preserve immutability after commit, and
+roll back even when a caller catches a retention failure. Cancellation is injected
+only after the test observes inserted artifact references in the same transaction.
+Sol reviewed the helper, fixture and tests with no remaining blocker. This small
+positive fixture has one payload root; multi-root ordering, full JDBC batch
+boundaries, near-limit latency and policy-bound sealing remain integration work.
