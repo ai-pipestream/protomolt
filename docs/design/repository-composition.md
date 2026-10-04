@@ -3382,3 +3382,22 @@ anchor set, discover all classloader dependencies, or produce a completed runtim
 identity for admission. Fixed production anchors, actual deployment classloader
 composition and observed JVM/configuration identity remain to be wired and
 qualified before terminal admission rejection is enabled.
+
+The container's `admissionRuntimeTest` task qualifies the generated production
+bundle and is included in `check`. It compiles a test-only probe against only the
+inventory JARs with annotation processing disabled. A fresh URL classloader uses
+the platform loader as parent, so neither ordinary test dependencies nor host
+application classes can fill gaps. The thread context loader is also switched
+for the invocation and restored afterward.
+
+The probe invokes the exact `DocumentSchemaAdmission.VALIDATOR`, checks accepted
+and rejected native annotations and Buf-compatible rules, and checks the specific
+constant, string length and message CEL failures. The harness verifies attributed
+origins for admission, validator, both rule sources, CEL bridge/compiler/runtime,
+formats and protobuf classes. A second case runs the same compiled probe with a
+complete bundle, removes only the rule-adapter JAR from a fresh loader, and requires
+the missing-class failure even though that adapter exists on the test classpath.
+The probe itself is a test fixture and is not part of the production inventory.
+This proves that these validation paths run with the bundled dependencies and
+that a missing adapter cannot use the surrounding test classpath. It does not
+claim all code paths were exercised or that a deployed host uses this loader.

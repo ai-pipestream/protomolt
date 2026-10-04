@@ -47,3 +47,20 @@ tasks.named('test') {
         systemProperty 'protomolt.test.runtimeClasspath', sourceSets.test.runtimeClasspath.asPath
     }
 }
+
+// Qualify the resolved production admission bundle without ambient test dependencies.
+// The ordinary test task excludes this fixture because it requires the generated bundle.
+tasks.named('test') { exclude '**/DocumentAdmissionRuntimeTest*' }
+def admissionInventory = project(':protomolt-repo-admission').layout.buildDirectory.dir('admission-runtime')
+tasks.register('admissionRuntimeTest', Test) {
+    group = 'verification'
+    description = 'Run the admission validator in an isolated production bundle classloader'
+    dependsOn ':protomolt-repo-admission:admissionRuntimeInventory'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    filter { includeTestsMatching 'ai.protomolt.proto.repo.container.ledger.DocumentAdmissionRuntimeTest' }
+    inputs.dir(admissionInventory)
+    systemProperty 'protomolt.test.admissionRuntimeBundle', admissionInventory.get().asFile.absolutePath
+    useJUnitPlatform()
+}
+tasks.named('check') { dependsOn tasks.named('admissionRuntimeTest') }
