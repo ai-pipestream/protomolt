@@ -3285,3 +3285,39 @@ nanosecond time, match protected failure paths and root hashes, prove independen
 output lifetime and no repeated registry resolver calls, refuse wrong owner scope,
 and exercise invalid runtime shape, cancellation, capacity pressure and reentrant
 close/encode with retry. No terminal receipt or retention guarantee is introduced.
+
+#### Observing runtime origin content
+
+`DocumentRuntimeArtifact` is an internal bounded reader for a local class's
+`CodeSource` origin or an explicitly enumerated build artifact. Regular artifacts
+use their exact byte SHA-256. Exploded directories use tree/v1: a domain prefix,
+relative file paths in Java UTF-16 order, UTF-8 path lengths/bytes, file sizes and
+file content. Empty-directory topology is not part of the digest, although all
+directories count toward traversal bounds. Relative paths must round-trip losslessly. The version label explicitly
+identifies a file or tree content digest; it is not an inferred release version.
+No missing package manifest version becomes a guessed Gradle dependency version.
+
+The reader limits total bytes, visited entries including empty directories, and
+depth. It refuses nonlocal/missing code origins, links, special files and empty
+artifact directories. File identity/size/mtime checks before and after reads and
+a second tree inventory detect changed input. One 8 KiB buffer is reused across
+files. Tests compile a real Java class and load it from both a JAR and exploded
+classes, then exercise resource changes, renamed files, links, bounds, missing
+origins, cancellation and mutation between observation and read.
+
+This observes filesystem content at the classloader-attributed origin, not JVM loaded-byte
+attestation. Hosts must keep code immutable while an identity is used; an agent,
+custom classloader or later file replacement can invalidate a stronger claim.
+Separate classes/resources directories and every transitive dependency require
+explicit inventory entries. A shaded JAR identifies a bundle unless packaging
+supplies verified component provenance. This reader neither discovers that
+closure nor proves that a declared list is complete.
+
+The next runtime producer must generate a versioned production dependency
+inventory from resolved build artifacts, compare actual loaded anchor origins
+against it, include both fixed rule sources, the CEL bridge/engine, formats and
+protobuf dependencies, and record observed JVM vendor/build identity. Existing
+runtime dependency gates only reject unwanted modules and do not supply such a
+content inventory. Runtime provenance is not yet sufficient to enable terminal
+admission rejection; durable candidate/evidence retention and decision fencing
+remain required as well.
