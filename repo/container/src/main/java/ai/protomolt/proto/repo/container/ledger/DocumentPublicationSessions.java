@@ -131,6 +131,36 @@ final class DocumentPublicationSessions {
     synchronized int retainedSessions() { return entries.size(); }
     synchronized long retainedCommandBytes() { return commandBytes; }
 
+    /** Releases only local capacity after durable ownership has permanently fenced this nonce. */
+    boolean retireSuperseded(RepositoryCaller caller, DocumentPublicationCommand command, RepositoryReadControl control) {
+        Objects.requireNonNull(command); Objects.requireNonNull(control).check();
+        if (caller == null) throw new RepositoryException(RepositoryException.Code.UNAUTHENTICATED,
+                "Authenticated repository caller is required");
+        var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
+        DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+        final Entry entry;
+        synchronized (this) {
+            entry = entries.get(key);
+            if (entry == null) return false;
+            requireCommand(entry, command);
+            if (entry.users != 0 || entry.recovering || entry.session == null)
+                throw new RepositoryException(RepositoryException.Code.CONFLICT, "Publication session is in use");
+            entry.users = 1;
+            entry.recovering = true;
+        }
+        boolean superseded = false;
+        try {
+            superseded = entry.session.isSuperseded(caller, control);
+            return superseded;
+        } finally {
+            synchronized (this) {
+                entry.recovering = false;
+                release(key, entry, false);
+                if (superseded && entry.users == 0) remove(key, entry);
+            }
+        }
+    }
+
     /**
      * Explicit, host-authorized takeover preparation. Empty means takeover returned
      * ownership, not publication. Advancing one further generation requires database

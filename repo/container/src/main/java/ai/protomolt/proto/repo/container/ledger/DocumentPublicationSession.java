@@ -80,6 +80,14 @@ final class DocumentPublicationSession {
     DocumentOperationUploadAdmission.Prepared prepared() { return prepared; }
     long predecessorGeneration() { return predecessorGeneration; }
 
+    boolean isSuperseded(RepositoryCaller caller, RepositoryReadControl control) {
+        Objects.requireNonNull(control).check();
+        DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+        boolean superseded = operations.isSuperseded(key, command, predecessorGeneration + 1, ownerNonce);
+        control.check();
+        return superseded;
+    }
+
     void requireRecoveryAdvance(RepositoryCaller caller, long nextPredecessor, RepositoryReadControl control) {
         Objects.requireNonNull(control).check();
         DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());

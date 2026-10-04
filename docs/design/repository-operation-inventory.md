@@ -5583,5 +5583,20 @@ ledger takes ownership after the expiry-observation transaction commits but befo
 the local takeover; the local CAS and its retry both refuse ownership. This adds
 explicit advancement, not automatic retirement, abort receipts or crash recovery.
 When another host wins, the losing entry retains its ungranted nonce and cannot
-adopt that host's owner or advance on its behalf. Explicit host reconciliation
-or replacement of that losing registry state remains necessary.
+adopt that host's owner or advance on its behalf.
+
+### Superseded local session reconciliation
+
+The new internal `retireSuperseded` operation releases an idle session only after
+the exact command and durable ownership prove its nonce can no longer own its
+target generation. A higher durable generation or equal generation with another
+nonce suffices. Missing or lower generations, and expiry of the same nonce, do
+not. The registry excludes execution, recovery and another reconciliation for
+that entry while checking SQL; unrelated entries remain usable.
+
+PostgreSQL fixtures cover missing, earlier, equal and later generations, command
+conflicts, principal isolation, concurrent exclusion, SQL acknowledgment loss,
+and cancellation after the observation. Failed observations retain count and
+command bytes; positive proof removes only that entry. Retrying normal execution
+after retirement still cannot take ownership. This is local capacity management,
+not an abort receipt, provider cleanup, automatic takeover or public endpoint.

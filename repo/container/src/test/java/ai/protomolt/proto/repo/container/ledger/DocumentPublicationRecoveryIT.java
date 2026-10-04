@@ -75,6 +75,9 @@ class DocumentPublicationRecoveryIT {
                     assertThatThrownBy(() -> sessions.recover(CALLER, input.command(), Map.of(), 1, input.modes(), RepositoryReadControl.NONE))
                             .isInstanceOfSatisfying(RepositoryException.class,
                                     failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.CONFLICT));
+                    assertThatThrownBy(() -> sessions.retireSuperseded(CALLER, input.command(), RepositoryReadControl.NONE))
+                            .isInstanceOfSatisfying(RepositoryException.class,
+                                    failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.CONFLICT));
                 } finally { release.countDown(); }
                 if (cancel) assertThatThrownBy(() -> recovering.get(10, TimeUnit.SECONDS))
                         .cause().isInstanceOfSatisfying(RepositoryException.class,
@@ -151,6 +154,8 @@ class DocumentPublicationRecoveryIT {
             var sessions = resources.sessions();
             assertThatThrownBy(() -> sessions.recover(CALLER, input.command(), input.placements(), 1, input.modes(), RepositoryReadControl.NONE))
                     .isInstanceOf(RepositoryOperationLedger.OwnerFencedException.class);
+            assertThat(sessions.retireSuperseded(CALLER, input.command(), RepositoryReadControl.NONE)).isFalse();
+            assertThat(sessions.retainedSessions()).isEqualTo(1);
             expire(c, input);
             var ledger = new RepositoryOperationLedger(c.tx());
             var other = ledger.takeOver(input.key(), input.command(), 1, UUID.randomUUID(), Duration.ofSeconds(1));
@@ -160,6 +165,10 @@ class DocumentPublicationRecoveryIT {
             assertThat(token(c, input)).isEqualTo(other.token());
             assertThat(ledger.find(input.key()).orElseThrow().generation()).isEqualTo(2);
             assertThat(sessions.retainedCommandBytes()).isEqualTo(input.bytes());
+            assertThat(sessions.retireSuperseded(CALLER, input.command(), RepositoryReadControl.NONE)).isTrue();
+            assertThat(sessions.retainedSessions()).isZero();
+            assertThat(sessions.retainedCommandBytes()).isZero();
+            assertThat(token(c, input)).isEqualTo(other.token());
         }
     }
 
@@ -218,6 +227,127 @@ class DocumentPublicationRecoveryIT {
             expire(c, input);
             assertThat(sessions.recover(CALLER, input.command(), input.placements(), 1, input.modes(), RepositoryReadControl.NONE)).isEmpty();
             assertThat(sessions.retainedCommandBytes()).isEqualTo(input.bytes());
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void failedSupersessionObservationRetainsCapacityAndRetryIdentity(boolean cancel) {
+        try (var c = context(POSTGRES)) {
+            var input = input(c);
+            var armed = new AtomicBoolean();
+            var cancelled = new AtomicBoolean();
+            var source = DocumentJdbcFaults.afterCommit(c.pool(), () -> {
+                if (armed.compareAndSet(true, false)) {
+                    if (cancel) cancelled.set(true);
+                    else throw new java.sql.SQLException("Supersession observation acknowledgment lost", "08006");
+                }
+            });
+            try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                    Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"));
+                    var resources = resources(new Tx(emf))) {
+                var sessions = resources.sessions();
+                pending(sessions, input);
+                var stored = new RepositoryOperationLedger(c.tx()).find(input.key());
+                var ownerToken = token(c, input);
+                var control = new RepositoryReadControl() {
+                    @Override public long remainingNanos() { return Long.MAX_VALUE; }
+                    @Override public boolean isCancelled() { return cancelled.get(); }
+                };
+                armed.set(true);
+                if (cancel) assertThatThrownBy(() -> sessions.retireSuperseded(CALLER, input.command(), control))
+                        .isInstanceOfSatisfying(RepositoryException.class,
+                                failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.CANCELLED));
+                else assertThatThrownBy(() -> sessions.retireSuperseded(CALLER, input.command(), control))
+                        .hasStackTraceContaining("Supersession observation acknowledgment lost");
+                assertThat(armed).isFalse();
+                assertThat(sessions.retainedCommandBytes()).isEqualTo(input.bytes());
+                assertThat(sessions.retainedSessions()).isEqualTo(1);
+                cancelled.set(false);
+                assertThat(sessions.retireSuperseded(CALLER, input.command(), control)).isTrue();
+                assertThat(sessions.retainedCommandBytes()).isZero();
+                assertThat(sessions.retainedSessions()).isZero();
+                assertThat(sessions.retireSuperseded(CALLER, input.command(), control)).isFalse();
+                assertThat(new RepositoryOperationLedger(c.tx()).find(input.key())).isEqualTo(stored);
+                assertThat(token(c, input)).isEqualTo(ownerToken);
+                pending(sessions, input); // Retirement grants neither admission nor takeover.
+            }
+        }
+    }
+
+    @Test void supersessionExcludesSameSessionButDoesNotHoldTheRegistryDuringSql() throws Exception {
+        try (var c = context(POSTGRES)) {
+            var input = input(c);
+            var otherCommand = new DocumentPublicationCommand(input.command().intent().toBuilder()
+                    .setOperationId(UUID.randomUUID().toString()).build());
+            var other = new Input(otherCommand, input.placements(), input.modes());
+            new RepositoryOperationLedger(c.tx()).admit(other.key(), other.command(), UUID.randomUUID(), LEASE);
+            var armed = new AtomicBoolean();
+            var entered = new CountDownLatch(1);
+            var release = new CountDownLatch(1);
+            var source = DocumentJdbcFaults.afterCommit(c.pool(), () -> {
+                if (armed.compareAndSet(true, false)) {
+                    entered.countDown();
+                    try {
+                        if (!release.await(10, TimeUnit.SECONDS)) throw new java.sql.SQLException("Retirement test gate timed out");
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new java.sql.SQLException("Retirement test gate interrupted", interrupted);
+                    }
+                }
+            });
+            try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                    Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"));
+                    var resources = resources(new Tx(emf)); var executor = Executors.newSingleThreadExecutor()) {
+                var sessions = resources.sessions();
+                pending(sessions, input);
+                armed.set(true);
+                var retirement = executor.submit(() -> sessions.retireSuperseded(CALLER, input.command(), RepositoryReadControl.NONE));
+                try {
+                    assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+                    pending(sessions, input);
+                    assertThatThrownBy(() -> sessions.recover(CALLER, input.command(), input.placements(), 1, input.modes(), RepositoryReadControl.NONE))
+                            .isInstanceOfSatisfying(RepositoryException.class,
+                                    failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.CONFLICT));
+                    assertThatThrownBy(() -> sessions.retireSuperseded(CALLER, input.command(), RepositoryReadControl.NONE))
+                            .isInstanceOfSatisfying(RepositoryException.class,
+                                    failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.CONFLICT));
+                    pending(sessions, other);
+                    assertThat(sessions.retainedCommandBytes()).isEqualTo(input.bytes() + other.bytes());
+                } finally { release.countDown(); }
+                assertThat(retirement.get(10, TimeUnit.SECONDS)).isTrue();
+                assertThat(sessions.retainedSessions()).isEqualTo(1);
+                assertThat(sessions.retainedCommandBytes()).isEqualTo(other.bytes());
+            }
+        }
+    }
+
+    @Test void supersessionRequiresDurableProofAndTheSameCommand() {
+        try (var c = context(POSTGRES); var resources = resources(c.tx(), Duration.ofSeconds(1))) {
+            var input = input(c);
+            var ledger = new RepositoryOperationLedger(c.tx());
+            var missing = new DocumentPublicationCommand(input.command().intent().toBuilder()
+                    .setOperationId(UUID.randomUUID().toString()).build());
+            var missingSession = new DocumentPublicationSession(c.tx(), CALLER, missing, input.placements(), LEASE);
+            assertThat(missingSession.isSuperseded(CALLER, RepositoryReadControl.NONE)).isFalse();
+            expire(c, input);
+            var sessions = resources.sessions();
+            sessions.recover(CALLER, input.command(), input.placements(), 1, input.modes(), RepositoryReadControl.NONE);
+            assertThat(sessions.retireSuperseded(CALLER, input.command(), RepositoryReadControl.NONE)).isFalse();
+            expire(c, input);
+            assertThat(sessions.retireSuperseded(CALLER, input.command(), RepositoryReadControl.NONE)).isFalse();
+            var owner = ledger.takeOver(input.key(), input.command(), 2, UUID.randomUUID(), LEASE);
+            var changed = new DocumentPublicationCommand(input.command().intent().toBuilder()
+                    .setMembers(0, input.command().intent().getMembers(0).toBuilder().setMemberId("changed")).build());
+            assertThatThrownBy(() -> sessions.retireSuperseded(CALLER, changed, RepositoryReadControl.NONE))
+                    .hasMessageContaining("command changed");
+            assertThatThrownBy(() -> ledger.isSuperseded(input.key(), changed, 2, UUID.randomUUID()))
+                    .isInstanceOf(RepositoryOperationLedger.CommandConflictException.class);
+            assertThat(sessions.retireSuperseded(new RepositoryCaller("other", true), input.command(), RepositoryReadControl.NONE)).isFalse();
+            assertThat(sessions.retainedCommandBytes()).isEqualTo(input.bytes());
+            assertThat(sessions.retireSuperseded(CALLER, input.command(), RepositoryReadControl.NONE)).isTrue();
+            assertThat(sessions.retainedCommandBytes()).isZero();
+            assertThat(token(c, input)).isEqualTo(owner.token());
         }
     }
 

@@ -2739,6 +2739,16 @@ still win. Failure before replacement installation preserves the prior session;
 uncertainty after installation preserves the replacement. This is not automatic
 restart recovery or permission to skip generations.
 
+An explicit internal reconciliation can retire an idle local session when the
+database proves its nonce is permanently superseded: the durable generation is
+higher than the session's target, or equal with a different nonce. Verify the
+exact command under the owner lock. Missing or lower generations and an expired
+matching nonce are not sufficient. Reserve the entry exclusively during the
+observation without holding the shared registry monitor across SQL. Errors and
+cancellation retain the entry; positive proof releases only local count and byte
+capacity, without changing the durable operation or its cleanup obligations.
+This does not admit a new execution or select recovery on the caller's behalf.
+
 Aborted/rejected retirement requires the durable terminal decision described in
 the commit design. It cannot be inferred from NOT_OBSERVED, PENDING, a timeout or
 an expired lease. Full restart reconstruction and terminal rejection receipts

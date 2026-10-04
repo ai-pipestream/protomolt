@@ -209,10 +209,23 @@ final class RepositoryOperationLedger {
     }
 
     /**
-     * Confirm that a retained recovery nonce actually became the expired owner.
-     * This observation grants no replacement ownership; a subsequent typed CAS
-     * must still win after this short transaction releases its lock.
+     * Observe permanent fencing only. Missing or earlier generations do not prove
+     * supersession; expiry of the same nonce does not permit its retirement.
      */
+    boolean isSuperseded(Key key, DocumentPublicationCommand command, long generation, UUID nonce) {
+        Objects.requireNonNull(key); Objects.requireNonNull(command); Objects.requireNonNull(nonce);
+        if (generation < 1 || !key.account.equals(command.intent().getAccountId()) || !key.operationId.equals(command.operationId()))
+            throw new IllegalArgumentException("Ownership observation differs from operation scope");
+        return tx.inTransaction(em -> {
+            var found = readOwner(em, key, true);
+            if (found.isEmpty()) return false;
+            requireCommand(em, key, command);
+            var row = found.orElseThrow();
+            return row.generation > generation || (row.generation == generation && !row.token.equals(nonce));
+        });
+    }
+
+    /** Confirm the exact expired recovery owner; the later takeover must still win its CAS. */
     void requireExpiredRecovery(Key key, DocumentPublicationCommand command, long generation, UUID nonce) {
         Objects.requireNonNull(key); Objects.requireNonNull(command); Objects.requireNonNull(nonce);
         if (generation < 1 || !key.account.equals(command.intent().getAccountId()) || !key.operationId.equals(command.operationId()))
