@@ -4,12 +4,10 @@ import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
 import ai.protomolt.proto.repo.codec.PartObject;
-import com.google.protobuf.ByteString;
 import jakarta.persistence.EntityManager;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -96,7 +94,7 @@ final class DocumentOperationUploadAdmission {
             RepositoryOperationLedger.fenceLiveOwner(em, owner);
             if (reader != null) em.createNativeQuery("SELECT require_active_repository_reader(:reader)")
                     .setParameter("reader", reader).getSingleResult();
-            requireCommand(em, owner.key(), command);
+            RepositoryOperationLedger.requireCommand(em, owner.key(), command);
             DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, prepared.plan, prepared.authorization);
             var captured = DocumentReuseAdmission.capture(em, prepared.reuse, prepared.plan, owner);
             var protectedReads = pins == null ? new DocumentReadPins.Captured(captured, null, List.of())
@@ -150,7 +148,7 @@ final class DocumentOperationUploadAdmission {
                 .toList();
         return tx.inTransaction(em -> {
             RepositoryOperationLedger.fenceLiveOwner(em, owner);
-            requireCommand(em, owner.key(), command);
+            RepositoryOperationLedger.requireCommand(em, owner.key(), command);
             DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, prepared.plan, prepared.authorization);
             DocumentReuseAdmission.requireBoundSources(em, prepared.reuse);
             for (var placement : prepared.placements) {
@@ -211,21 +209,6 @@ final class DocumentOperationUploadAdmission {
         });
     }
 
-    private static void requireCommand(EntityManager em, RepositoryOperationLedger.Key key, DocumentPublicationCommand expected) {
-        var rows = em.createNativeQuery("""
-                SELECT command_codec,command_version,command,command_sha256 FROM repository_operations
-                WHERE account_id=:account AND principal=:principal AND operation_id=:operation
-                """).setParameter("account", key.account()).setParameter("principal", key.principal())
-                .setParameter("operation", key.operationId()).getResultList();
-        if (rows.size() != 1) throw new RepositoryOperationLedger.CommandConflictException();
-        Object[] row = (Object[]) rows.getFirst();
-        if (!DocumentPublicationCommand.CODEC.equals(row[0])
-                || DocumentPublicationCommand.ENCODING_VERSION != ((Number) row[1]).intValue()
-                || !expected.canonical().equals(ByteString.copyFrom((byte[]) row[2]))
-                || !expected.sha256().equals(HexFormat.of().formatHex((byte[]) row[3])))
-            throw new RepositoryOperationLedger.CommandConflictException();
-    }
-
     /** Initial preparation only. Includes immutable zero-upload members, not just selected attempts. */
     void recheckInitialSelections(RepositoryOperationLedger.Owner owner, Prepared prepared) {
         var command = prepared.plan.command();
@@ -233,7 +216,7 @@ final class DocumentOperationUploadAdmission {
             throw new IllegalArgumentException("Prepared selections differ from operation scope");
         tx.inTransaction(em -> {
             RepositoryOperationLedger.fenceLiveOwner(em, owner);
-            requireCommand(em, owner.key(), prepared.plan.command());
+            RepositoryOperationLedger.requireCommand(em, owner.key(), prepared.plan.command());
             boolean matches = (Boolean) em.createNativeQuery("""
                     WITH expected AS (
                       SELECT * FROM jsonb_to_recordset(CAST(:rows AS jsonb)) q(member_id text,node_id uuid,

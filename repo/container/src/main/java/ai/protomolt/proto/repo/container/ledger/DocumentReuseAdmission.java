@@ -73,13 +73,20 @@ final class DocumentReuseAdmission {
             long matched = ((Number) em.createNativeQuery("""
                     SELECT count(*) FROM jsonb_to_recordset(CAST(:rows AS jsonb)) q(node_id uuid)
                     JOIN documents d ON d.node_id=q.node_id
-                    JOIN document_part_publications p ON p.node_id=d.node_id
-                    JOIN document_part_publication_history h ON h.attempt_id=p.attempt_id AND h.node_id=d.node_id
-                    JOIN document_part_attempts a ON a.attempt_id=p.attempt_id
-                    WHERE a.node_id=d.node_id AND a.account_id=d.account_id
-                        AND a.plan_kind='FULL_REVISION' AND a.state='VERIFIED'
-                        AND h.body=document_publication_body(d)
-                        AND NOT EXISTS(SELECT 1 FROM document_part_attempt_cleanup c WHERE c.attempt_id=a.attempt_id)
+                    JOIN document_revision_current current_revision ON current_revision.node_id=d.node_id
+                    JOIN document_revision_publications r ON r.revision_id=current_revision.revision_id AND r.node_id=d.node_id
+                    LEFT JOIN document_part_publications p ON p.node_id=d.node_id
+                    LEFT JOIN document_part_publication_history h ON h.attempt_id=p.attempt_id AND h.node_id=d.node_id
+                    LEFT JOIN document_part_attempts a ON a.attempt_id=p.attempt_id
+                    WHERE r.projection_sealed AND r.body=document_publication_body(d)
+                        AND CASE WHEN r.native_binding IS NOT NULL THEN
+                            p.attempt_id IS NULL AND EXISTS(SELECT 1 FROM document_revision_commits c
+                                JOIN repository_operation_success s USING(account_id,principal,operation_id,owner_generation)
+                                WHERE c.revision_id=r.revision_id AND c.account_id=d.account_id)
+                        ELSE r.legacy_attempt_id=p.attempt_id AND h.body=r.body
+                            AND a.node_id=d.node_id AND a.account_id=d.account_id
+                            AND a.plan_kind='FULL_REVISION' AND a.state='VERIFIED'
+                            AND NOT EXISTS(SELECT 1 FROM document_part_attempt_cleanup c WHERE c.attempt_id=a.attempt_id) END
                     """).setParameter("rows", batch.json).getSingleResult()).longValue();
             if (matched != batch.size) refuse();
         }
@@ -88,21 +95,24 @@ final class DocumentReuseAdmission {
                     SELECT count(*) FROM jsonb_to_recordset(CAST(:rows AS jsonb)) q(
                         node_id uuid,part integer,sub_key text,object_id uuid,generation text,realm text,
                         namespace text,object_key text,version text,size bigint,sha256 text,content_type text)
-                    JOIN document_part_publications p ON p.node_id=q.node_id
-                    JOIN document_part_publication_history h ON h.attempt_id=p.attempt_id AND h.node_id=q.node_id
-                    JOIN document_part_attempts a ON a.attempt_id=p.attempt_id
-                    JOIN document_part_attempt_objects o ON o.attempt_id=p.attempt_id AND o.part=q.part
+                    JOIN document_revision_current p ON p.node_id=q.node_id
+                    JOIN documents d ON d.node_id=p.node_id
+                    JOIN document_revision_publications h ON h.revision_id=p.revision_id AND h.node_id=q.node_id AND h.projection_sealed
+                    JOIN document_revision_parts part ON part.revision_id=h.revision_id AND part.part=q.part AND part.sub_key=q.sub_key
+                    JOIN repository_physical_locations l ON l.object_id=part.object_id AND l.source_kind='DOCUMENT_PART'
+                    JOIN document_part_attempt_objects o ON o.attempt_id=l.source_id AND o.ordinal=l.source_ordinal
+                        AND o.physical_object_id=l.object_id AND o.part=q.part
                         AND o.sub_key_digest=sha256(convert_to(q.sub_key,'UTF8')) AND o.sub_key=q.sub_key
-                    JOIN repository_physical_locations l ON l.object_id=o.physical_object_id
-                        AND l.source_kind='DOCUMENT_PART' AND l.source_id=o.attempt_id AND l.source_ordinal=o.ordinal
-                    JOIN repository_object_retention r ON r.object_id=l.object_id AND NOT r.reclaiming
+                    JOIN document_part_attempts a ON a.attempt_id=o.attempt_id AND a.account_id=d.account_id
+                    JOIN repository_object_retention r ON r.object_id=l.object_id AND NOT r.reclaiming AND NOT r.retiring
                     JOIN repository_object_references historical ON historical.object_id=l.object_id
-                        AND historical.owner_kind='DOCUMENT_HISTORY' AND historical.owner_id=p.attempt_id
+                        AND historical.owner_kind='DOCUMENT_HISTORY' AND historical.owner_id=p.revision_id
                         AND historical.owner_revision=h.publication_revision
                     JOIN repository_object_references current_ref ON current_ref.object_id=l.object_id
                         AND current_ref.owner_kind='DOCUMENT_CURRENT' AND current_ref.owner_id=p.node_id
                         AND current_ref.owner_revision=h.publication_revision
-                    WHERE a.plan_kind='FULL_REVISION' AND a.state='VERIFIED' AND o.verified
+                    WHERE a.state='VERIFIED' AND o.verified
+                        AND NOT EXISTS(SELECT 1 FROM document_part_attempt_cleanup c WHERE c.attempt_id=a.attempt_id)
                         AND l.object_id=q.object_id AND l.backend_generation=q.generation
                         AND a.backend_generation=l.backend_generation AND a.storage_realm=l.storage_realm
                         AND l.storage_realm=q.realm AND o.storage_realm=l.storage_realm

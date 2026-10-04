@@ -3586,3 +3586,32 @@ checks establish SQL linkage and physical evidence, not protobuf payload semanti
 typed schema retention, authorized replay, or concurrent throughput qualification.
 The separate Kafka relay and recovery-fence run passes another 10 tests without
 failures or skips; relay behavior remains unchanged.
+
+### Authorized result replay and native source reuse
+
+Added an internal DocumentPublicationReplay observer. It scopes lookup to the
+authenticated principal/account and exact command, distinguishes not observed,
+pending and committed, and rechecks current READ policy for every committed
+destination under ordered locks. It validates the stored result with the real
+codec and compares its members with immutable revision commits. Corruption is
+DATA_LOSS; no error path substitutes an absent result or starts new work. Original
+results remain replayable after owner expiry and later revisions, subject to
+current authorization. This adds no public wire operation.
+
+Extended DocumentReuseAdmission to accept sealed native sources through their
+exact retained physical origins. A regression that publishes a second native
+revision initially failed because this check required legacy upload history.
+The native branch now requires committed authority; both branches require exact
+verified objects plus history/current retention references. Legacy FULL_REVISION
+checks remain intact. The canonical command check is shared from the operation
+ledger by staging and replay.
+
+The PostgreSQL suites cover operation and policy lock waits, revoked read access,
+account/principal isolation, malformed stored wire with a correct digest, a valid
+result naming the wrong revision, expired leases, later revisions and no duplicate
+events. Shared direct-SQL setup lives in DocumentNativePublicationFixture; replay
+and publication tests have separate classes. The production publisher, transport
+entry point and typed schema-retention integration remain pending.
+All 170 affected PostgreSQL tests pass without failures or skips, including native
+publication, replay, reuse admission, upload admission, reader pins and operation
+admission. Sol reviewed the replay and native reuse changes without a blocker.

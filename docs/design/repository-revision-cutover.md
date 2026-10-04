@@ -219,7 +219,7 @@ This is an internal SQL and reader checkpoint. Integration fixtures publish thro
 SQL with explicitly synthetic provider observations. The production Java publisher
 must still bind the canonical command to checked content, authorization, Any
 observations, actual event payloads and the encoded result. SQL does not decode
-those protobuf messages. Authorized replay, typed schema references, concurrent
+those protobuf messages. Typed schema references, concurrent
 publication/retirement qualification and latency measurements remain pending.
 No new publication API is available from this checkpoint.
 
@@ -237,8 +237,45 @@ ownership to manufacture a new result. The publisher must separately verify actu
 revision IDs/counters against the committed rows, commit the immutable outcome with
 all members and the outbox, and authorize replay against current access policy.
 Failure to validate a response after commit does not roll back the database; retry
-must recover the same durable result. Outcome persistence and this replay path are
-still unimplemented. Errors/cancellation are not encoded as successful member results.
+must recover the same durable result. V52 stores the outcome and the internal replay
+path below reads it. The production publisher remains pending. Errors/cancellation
+are not encoded as successful member results.
+
+### Authorized outcome replay
+
+DocumentPublicationReplay observes the exact account/principal/operation scope.
+The principal comes from the authenticated host caller. Account membership is
+checked before SQL; process authority is an explicit host grant. The operation's
+stored command codec, version, bytes and digest must match the supplied command.
+An exact match never renews a lease or grants an executable owner.
+
+The observer takes a shared owner-row lock before reading the outcome in a fresh
+READ COMMITTED statement. It waits for an in-flight publisher that already holds
+the owner lock, then sees its commit or rollback. NOT_OBSERVED and PENDING do not
+prove rollback or authorize a replacement operation. Pending state and command
+conflicts are private to the authenticated operation principal and account; they
+contain no document result. A pending creation may have no destination row yet.
+
+A committed result requires current READ access to every destination under shared,
+ordered document locks. Missing, deleted or pending-purge destinations are unavailable
+even to process authority. Malformed or unresolved inherited policy fails closed.
+Old expected revisions and historical ACLs are not used to authorize replay.
+Later revisions and expired leases do not change the original outcome identity.
+The bounded result codec checks integrity and shape, and replay compares every
+member with its immutable commit and sealed revision. Invalid stored bytes or
+revision linkage produce DATA_LOSS, never an absent result or automatic restart.
+Replay creates no revisions or events and performs no provider or registry I/O.
+
+Native reuse admission now follows the current sealed revision to each retained
+physical origin. Legacy sources keep their FULL_REVISION checks. Both require the
+exact verified object and current/history references; cleanup, retirement and
+reclamation remain disqualifying. This permits a native revision to become the
+source of another revision without reconstructing a legacy attempt.
+
+This is an internal Java boundary, not an advertised RPC or complete commit
+coordinator. Tests use the real PostgreSQL constraints and explicit synthetic
+physical observations. They do not qualify provider throughput, historical content
+decoding, transport authentication or the production publisher's admission checks.
 
 ### Atomic outcome and independent revision implementation plan
 

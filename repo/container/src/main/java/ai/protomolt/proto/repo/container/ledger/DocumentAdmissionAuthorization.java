@@ -2,6 +2,7 @@ package ai.protomolt.proto.repo.container.ledger;
 
 import ai.protomolt.proto.repo.container.blob.DocumentIds;
 import ai.protomolt.proto.repo.spi.DocumentAccessPolicy;
+import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryException;
 import ai.protomolt.proto.repo.v1.Access;
@@ -50,11 +51,30 @@ final class DocumentAdmissionAuthorization {
 
     /** Trusted caller comes from the host, never from the command's proposed ownership. */
     static void requireCaller(RepositoryCaller caller, RepositoryOperationLedger.Owner owner, String account) {
+        requireCaller(caller, owner.key(), account);
+    }
+
+    static void requireCaller(RepositoryCaller caller, RepositoryOperationLedger.Key key, String account) {
         if (caller == null || (!caller.processAuthority() && caller.accountIds().isEmpty()))
             throw new RepositoryException(RepositoryException.Code.PERMISSION_DENIED, "Repository account bindings are required");
         if (!caller.processAuthority() && !caller.accountIds().contains(account)) throw unavailable();
-        if (!caller.principalName().equals(owner.key().principal()))
+        if (!caller.principalName().equals(key.principal()))
             throw new RepositoryException(RepositoryException.Code.PERMISSION_DENIED, "Operation principal differs from authenticated caller");
+    }
+
+    /** Replay checks current read policy, without reapplying old write/revision preconditions. */
+    static void authorizeReplay(EntityManager em, RepositoryCaller caller, DocumentPublicationCommand command) {
+        var nodes = command.intent().getMembersList().stream()
+                .map(member -> DocumentIds.nodeId(member.getDestination().getAddress()))
+                .collect(java.util.stream.Collectors.toSet());
+        var locked = DocumentRevisionLocks.lock(em, Set.of(), nodes);
+        for (var member : command.intent().getMembersList()) {
+            var address = member.getDestination().getAddress();
+            var row = locked.get(DocumentIds.nodeId(address));
+            requireIdentity(row, address);
+            if (!DocumentStatus.AVAILABLE.equals(row.status) || row.pendingPurgeId != null) throw unavailable();
+            requireAccess(caller, row, Access.ACCESS_READ);
+        }
     }
 
     static void lockAndAuthorize(EntityManager em, RepositoryCaller caller,

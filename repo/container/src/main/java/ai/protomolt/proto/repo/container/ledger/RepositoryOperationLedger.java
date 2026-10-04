@@ -63,6 +63,21 @@ final class RepositoryOperationLedger {
         CommandConflictException() { super("Operation identity already belongs to another command"); }
     }
 
+    /** Exact stored command check shared by staging and outcome replay in their own transaction. */
+    static void requireCommand(EntityManager em, Key key, DocumentPublicationCommand expected) {
+        var rows = bind(em.createNativeQuery("""
+                SELECT command_codec,command_version,command,command_sha256 FROM repository_operations
+                WHERE account_id=:account AND principal=:principal AND operation_id=:id
+                """), key).getResultList();
+        if (rows.size() != 1) throw new CommandConflictException();
+        Object[] row = (Object[]) rows.getFirst();
+        if (!DocumentPublicationCommand.CODEC.equals(row[0])
+                || DocumentPublicationCommand.ENCODING_VERSION != ((Number) row[1]).intValue()
+                || !expected.canonical().equals(ByteString.copyFrom((byte[]) row[2]))
+                || !expected.sha256().equals(java.util.HexFormat.of().formatHex((byte[]) row[3])))
+            throw new CommandConflictException();
+    }
+
     static final class OwnerFencedException extends RuntimeException {
         OwnerFencedException() { super("Repository operation owner is absent, expired or replaced"); }
     }
