@@ -5367,3 +5367,28 @@ acknowledgment-loss tests and delegates every database operation to PostgreSQL.
 This qualifies the lifecycle component, not a complete `RepoServices` deployment:
 production scheduling, authenticated publication setup, transport mounting and
 full host restart qualification remain outstanding.
+
+### Shared native publication execution
+
+New internal `DocumentPublicationExecution` connects authorized replay, active
+policy selection, protected source capture, owned preparation, schema staging
+and atomic native publication. It accepts an already-admitted owner and prepared
+plan; owner nonce, takeover, attempt identity retention and qualified placement
+remain host admission obligations. It does not create replacement operations.
+The owner account and operation must match the command before the replay path.
+
+A committed replay rechecks current document access and request control, then
+returns the exact stored result without payload, registry or provider work. New
+execution closes its candidate after staging/commit and always closes the source
+plan locally. The ledger retains SQL cleanup ownership for lifecycle passes;
+cleanup is not performed as an untracked after-commit action. Schema and event
+writes remain in their existing fenced transactions, including the event delivery
+setting.
+
+The real-provider native commit tests now invoke this execution path for typed
+and opaque revisions, retained-only and mixed uploads, EMPTY ordinal gaps, and
+schema resolution failure. They replay successfully after stopping the upload
+coordinator and reader, reject mismatched owner accounts and denied callers,
+check cancellation after replay lookup, and verify event delivery state. No
+public transport is mounted by this change. Production admission/configuration,
+error mapping, scheduling and full host restart qualification remain required.
