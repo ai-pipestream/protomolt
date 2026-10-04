@@ -5112,3 +5112,21 @@ width boundaries and supplementary characters. Additional cases verify exact
 serialized-byte peak, owned lifetime, prompt decode-scratch release, capacity
 refusal, cancellation and idempotent close. Existing canonical format and hash
 contracts remain unchanged.
+
+### Owned root-evidence sorting and replay
+
+The root-evidence codec now has additive owned encode and budgeted decode paths.
+Each canonical occurrence buffer has a lease while it participates in sorting
+and duplicate checks. All those leases close before allocating the final encoded
+root evidence; only the final output lease escapes. Byte-bound checks precede
+these allocations. UTF-8 text lengths are measured without creating encoded
+string buffers.
+
+Budgeted decode closes the generic canonical comparison buffer, then independently
+checks occurrence ordering with owned sorting/output buffers and closes those
+before returning. Tests use capacity equal to the larger of the path-buffer sum
+and final output size, proving these phases do not overlap their reservations.
+They also cover second-path capacity refusal, cancellation after an earlier path,
+duplicate selectors and noncanonical ordering, with zero residual reservation.
+Canonical bytes and hashes are unchanged. Full preparation/proof ownership is
+still pending; these are internal codec building blocks.

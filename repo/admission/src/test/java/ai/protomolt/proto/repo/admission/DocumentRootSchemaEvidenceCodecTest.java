@@ -9,6 +9,75 @@ import static org.assertj.core.api.Assertions.*;
 
 /** Structural codec fixtures; their placeholder hashes do not assert retained artifact existence. */
 class DocumentRootSchemaEvidenceCodecTest {
+    @Test void releasesSortingBuffersBeforeReservingFinalEvidence() throws Exception {
+        var evidence = fixture();
+        var expected = DocumentRootSchemaEvidenceCodec.encode(evidence, () -> {});
+        long paths = evidence.getOccurrencesList().stream()
+                .mapToLong(path -> DocumentSchemaOccurrenceCodec.encode(path, () -> {}).bytes().size()).sum();
+        var budget = new Reservations(Math.max(paths, expected.bytes().size()));
+        try (var owned = DocumentRootSchemaEvidenceCodec.encodeOwned(evidence, expected.bytes().size(), budget, () -> {})) {
+            assertThat(owned.value().bytes()).isEqualTo(expected.bytes());
+            assertThat(owned.value().sha256()).isEqualTo(expected.sha256());
+            assertThat(budget.current).isEqualTo(expected.bytes().size());
+            assertThat(budget.peak).isEqualTo(Math.max(paths, expected.bytes().size()));
+            assertThat(budget.calls).isEqualTo(evidence.getOccurrencesCount() + 1);
+        }
+        assertThat(budget.current).isZero();
+        var decoded = DocumentRootSchemaEvidenceCodec.decode(DocumentRootSchemaEvidenceCodec.CODEC, 1,
+                expected.bytes(), expected.sha256(), budget, () -> {});
+        assertThat(decoded).isEqualTo(read(expected.bytes()));
+        assertThat(budget.current).isZero();
+        assertThat(budget.peak).isEqualTo(Math.max(paths, expected.bytes().size()));
+    }
+
+    @Test void releasesEarlierPathReservationsOnCapacityAndCancellationFailures() {
+        var evidence = fixture();
+        long first = DocumentSchemaOccurrenceCodec.encode(evidence.getOccurrences(0), () -> {}).bytes().size();
+        var tiny = new Reservations(first);
+        assertThatThrownBy(() -> DocumentRootSchemaEvidenceCodec.encodeOwned(evidence, Long.MAX_VALUE, tiny, () -> {}))
+                .isSameAs(tiny.exhausted);
+        assertThat(tiny.peak).isEqualTo(first);
+        assertThat(tiny.current).isZero();
+        var budget = new Reservations(1_000_000);
+        var cancelled = new CancellationException("cancel second path allocation");
+        assertThatThrownBy(() -> DocumentRootSchemaEvidenceCodec.encodeOwned(evidence, Long.MAX_VALUE, budget, () -> {
+            if (budget.calls == 2) throw cancelled;
+        })).isSameAs(cancelled);
+        assertThat(budget.calls).isEqualTo(2);
+        assertThat(budget.current).isZero();
+    }
+
+    @Test void rejectsNoncanonicalOrderAndDuplicatePathsWithoutLeakingScratch() throws Exception {
+        var canonical = DocumentRootSchemaEvidenceCodec.encode(fixture(), () -> {});
+        var parsed = read(canonical.bytes());
+        var reversed = parsed.toBuilder().clearOccurrences().addOccurrences(parsed.getOccurrences(1))
+                .addOccurrences(parsed.getOccurrences(0)).build();
+        var wire = DocumentSchemaEvidenceCodec.encode(reversed, () -> {});
+        var budget = new Reservations(1_000_000);
+        assertThatThrownBy(() -> DocumentRootSchemaEvidenceCodec.decode(DocumentRootSchemaEvidenceCodec.CODEC, 1,
+                wire.bytes(), wire.sha256(), budget, () -> {})).hasMessageContaining("ordering");
+        assertThat(budget.current).isZero();
+        var duplicate = fixture().toBuilder().addOccurrences(fixture().getOccurrences(1)).build();
+        assertThatThrownBy(() -> DocumentRootSchemaEvidenceCodec.encodeOwned(duplicate, Long.MAX_VALUE, budget, () -> {}))
+                .hasMessageContaining("duplicate");
+        assertThat(budget.current).isZero();
+    }
+
+    private static final class Reservations implements DocumentAdmissionReservations {
+        final long capacity;
+        final IllegalStateException exhausted = new IllegalStateException("test byte capacity exhausted");
+        long current, peak;
+        int calls;
+        Reservations(long capacity) { this.capacity = capacity; }
+        @Override public Lease reserve(long bytes) {
+            calls++;
+            if (bytes > capacity - current) throw exhausted;
+            current += bytes; peak = Math.max(peak, current);
+            var closed = new java.util.concurrent.atomic.AtomicBoolean();
+            return () -> { if (closed.compareAndSet(false, true)) current -= bytes; };
+        }
+    }
+
     @Test void enforcesRemainingMemberBytesBeforeCanonicalPathProcessing() {
         var evidence = fixture();
         var encoded = DocumentRootSchemaEvidenceCodec.encode(evidence, () -> {});

@@ -208,7 +208,7 @@ final class DocumentSchemaEvidenceCodec {
         return (int) size;
     }
 
-    private static int utf8Length(String text, Runnable control) {
+    static int utf8Length(String text, Runnable control) {
         long size = 0;
         for (int i = 0; i < text.length(); i++) {
             if ((i & 1023) == 0) active(control);
