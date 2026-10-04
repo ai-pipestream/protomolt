@@ -137,6 +137,13 @@ each lock class in a single documented order across the entire change set. A
 per-member loop that locks an origin attempt after earlier members already acquired
 retention locks is unacceptable. Trigger-induced locks count in this audit.
 
+The existing Java FULL_REVISION batch path now prelocks current-pin rows, then
+the complete new/displaced-current origin set before validating members. It locks
+their retention rows only after validation and before the first publication write.
+This uses three client statements for a batch of up to 64 destinations. It is a
+baseline ordering fix, not the mixed-revision boundary: that boundary must include
+all reused origins and enforce its complete lock-set admission for direct SQL too.
+
 With today's exclusive durable-reference guards, prelock the sorted distinct union
 of origin attempts from all old and new reference sets, then the sorted union of
 physical retention rows before executing any per-row reference mirrors. Install

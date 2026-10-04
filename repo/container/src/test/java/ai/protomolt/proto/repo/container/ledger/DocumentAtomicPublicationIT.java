@@ -840,6 +840,85 @@ class DocumentAtomicPublicationIT {
         }
     }
 
+    @ParameterizedTest @ValueSource(booleans={false,true})
+    void allPriorOriginsAreLockedBeforeAnyNewRetention(boolean multiple) throws Exception {
+        var old=fixture(null); var prior=publish(old,(em,row) -> {});
+        var replacement=fixture(prior); var additional=multiple?fixture(null):null;
+        var locked=new java.util.concurrent.CountDownLatch(1);
+        var release=new java.util.concurrent.CountDownLatch(1);
+        var blockerPid=new java.util.concurrent.atomic.AtomicInteger();
+        try (var executor=java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var blocker=executor.submit(() -> tx.inTransaction(em -> {
+                blockerPid.set(((Number)em.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue());
+                em.createNativeQuery("SELECT attempt_id FROM document_part_attempts WHERE attempt_id=:id FOR UPDATE")
+                        .setParameter("id",old.attempt.id()).getSingleResult();
+                locked.countDown(); awaitRelease(release);
+            }));
+            assertThat(locked.await(5,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var entries=new java.util.ArrayList<DocumentPublicationBatch.Publication>();
+            entries.add(entry(replacement,List.of(),(em,row) -> {}));
+            if(multiple) entries.add(entry(additional,List.of(),(em,row) -> {}));
+            var writer=executor.submit(() -> DocumentPublicationBatch.save(tx,entries));
+            try {
+                awaitDatabaseWait(blockerPid.get());
+                // While publication waits for a prior origin, none of the new
+                // retention rows may be held. This tests order, not a claimed
+                // deadlock in today's single-origin publication model.
+                tx.inTransaction(em -> {
+                    for(var candidate:entries) em.createNativeQuery("""
+                            SELECT r.object_id FROM repository_object_retention r
+                             JOIN document_part_attempt_objects o ON o.physical_object_id=r.object_id
+                             WHERE o.attempt_id=:id FOR UPDATE OF r NOWAIT
+                            """).setParameter("id",candidate.attemptId()).getResultList();
+                });
+            } finally { release.countDown(); }
+            blocker.get(5,java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(writer.get(5,java.util.concurrent.TimeUnit.SECONDS)).hasSize(multiple?2:1);
+        } finally { release.countDown(); }
+    }
+
+    @ParameterizedTest @ValueSource(ints={1,64})
+    void publicationPrelockUsesThreeClientStatements(int count) {
+        var fixtures=new java.util.ArrayList<Fixture>();
+        for(int i=0;i<count;i++) fixtures.add(fixture(null));
+        var nodes=fixtures.stream().map(f -> f.row.nodeId).collect(java.util.stream.Collectors.toSet());
+        var attempts=fixtures.stream().map(f -> f.attempt.id()).collect(java.util.stream.Collectors.toSet());
+        var statistics=database.entityManagerFactory().unwrap(org.hibernate.SessionFactory.class).getStatistics();
+        statistics.setStatisticsEnabled(true);
+        try {
+            tx.inTransaction(em -> {
+                DocumentLedger.lockRevisions(em,nodes,Map.of());
+                DocumentSourceSnapshot.lockDrives(em,fixtures.stream().map(Fixture::target).toList(),List.of());
+                long before=statistics.getPrepareStatementCount();
+                var origins=DocumentPublicationLocks.lockOrigins(em,nodes,attempts);
+                DocumentPublicationLocks.lockRetention(em,origins);
+                assertThat(statistics.getPrepareStatementCount()-before).isEqualTo(3);
+            });
+        } finally { statistics.setStatisticsEnabled(false); }
+    }
+
+    @Test void completeRetentionSetIsHeldBeforeFirstPublicationCallback() throws Exception {
+        var first=fixture(null); var second=fixture(null);
+        var inspected=new java.util.concurrent.atomic.AtomicBoolean();
+        try(var executor=java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            java.util.function.BiConsumer<jakarta.persistence.EntityManager,DocumentRecord> inspect=(em,row) -> {
+                if(!inspected.compareAndSet(false,true)) return;
+                var other=row.nodeId.equals(first.row.nodeId)?second:first;
+                var probe=executor.submit(() -> tx.inTransaction(probeEm -> {
+                    probeEm.createNativeQuery("""
+                            SELECT r.object_id FROM repository_object_retention r
+                             JOIN document_part_attempt_objects o ON o.physical_object_id=r.object_id
+                             WHERE o.attempt_id=:id FOR UPDATE OF r NOWAIT
+                            """).setParameter("id",other.attempt.id()).getResultList();
+                }));
+                assertThatThrownBy(() -> probe.get(5,java.util.concurrent.TimeUnit.SECONDS))
+                        .hasStackTraceContaining("could not obtain lock on row in relation \"repository_object_retention\"");
+            };
+            assertThat(DocumentPublicationBatch.save(tx,List.of(entry(first,List.of(),inspect),entry(second,List.of(),inspect)))).hasSize(2);
+        }
+        assertThat(inspected).isTrue();
+    }
+
     private static DocumentPublicationBatch.Publication entry(Fixture f, List<DocumentSourceSnapshot> snapshots,
             java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> callback) {
         var sources = snapshots.stream().collect(java.util.stream.Collectors.toMap(

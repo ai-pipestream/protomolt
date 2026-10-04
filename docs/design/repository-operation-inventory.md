@@ -2054,3 +2054,48 @@ Local validation for the per-part read change on 2026-10-04: the full engine,
 container and service suites passed in 2m21s, 120 suites and 997 cases (994 passed,
 three skipped, no failures/errors). The engine runtime dependency gate passed.
 This is local verification, not hosted CI, merge or deployment evidence.
+
+### Publication origin and retention lock ordering
+
+The sanctioned Java FULL_REVISION publication batch now stabilizes current-pin
+rows and locks the complete union of new and displaced-current attempts before
+member validation. After validation it locks their retention rows, before inserting
+any history/current references. Document and drive locks remain earlier phases;
+each later phase uses PostgreSQL UUID ordering for its own complete set. This
+extends internal publication coordination without changing protobuf contracts,
+current reference ownership or provider execution.
+
+The previous V26 ordering acquired new retention while inserting history, then
+acquired the old origin during current-pin replacement. Real PostgreSQL fixtures
+reproduced that ordering for single- and two-member publication: while the old
+origin was held, an independent NOWAIT query could not acquire new retention.
+The fixed path waits on that origin before taking any new retention. This is a
+proven order violation, not evidence of a deadlock reachable through today's legal
+FULL_REVISION public path. Multi-origin reuse would make the inverse ordering a
+concrete risk, so this fix precedes revision-owned mirrors.
+
+The helper adds three client queries per batch, independent of member count up
+to 64: current pins, origins, and retention. The retention query returns counts
+instead of all physical UUIDs and rejects missing retention rows. Existing part
+budgets still apply; rows locked, server work and lock hold time are not constant.
+Exclusive origin locking remains a throughput qualification concern. Shared
+immutable-origin validation needs a separate reviewed change across acquisition,
+retirement and reclamation rather than a local lock-mode substitution.
+
+This helper intentionally covers existing FULL_REVISION publications only. It does
+not add reused origins, change direct-SQL trigger ordering, or claim a general
+multi-domain transaction proof. Future mixed publication must include every reused
+origin/object and provide an enforceable admission boundary before new native
+reference mirrors can be activated. Revision-owned retention remains unfinished.
+
+Local validation on 2026-10-04: both new order cases first failed with PostgreSQL
+NOWAIT retention-lock errors, then passed after the prelock change. All 57 atomic
+publication cases passed, including 1/64-member three-statement checks and a
+cross-member NOWAIT probe confirming the complete retention set is held before
+the first publication callback. The container suite passed in the broader run;
+that run's service suite hit a LocalStack startup failure (`Text file busy`, exit
+126) before RemoteBlobStoreIT initialized. A service-only rerun passed in 1m02s
+without application changes. Combined final container/service results: 108 suites,
+921 cases, 918 passed, three skipped, no failures/errors. Sol reviewed the final
+helper and tests without a blocking finding. No push, hosted CI, merge or deployment
+is claimed.

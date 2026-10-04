@@ -127,7 +127,10 @@ final class DocumentPublicationBatch {
         }
         DocumentSourceSnapshot.lockDrives(em, ordered.stream().map(Publication::target).toList(),
                 ordered.stream().flatMap(p -> p.snapshots.stream()).toList());
+        var origins=DocumentPublicationLocks.lockOrigins(em,destinations,
+                ordered.stream().map(Publication::attemptId).collect(java.util.stream.Collectors.toSet()));
         for (var publication : ordered) validate(em, publication, locked.get(publication.candidate.nodeId));
+        DocumentPublicationLocks.lockRetention(em,origins);
         var saved = new HashMap<UUID, DocumentRecord>();
         for (var publication : ordered) saved.put(publication.candidate.nodeId, publish(em, publication));
         // Cancellation during a later member must also abort earlier members.
