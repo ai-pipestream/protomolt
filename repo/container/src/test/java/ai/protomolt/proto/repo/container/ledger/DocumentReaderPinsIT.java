@@ -329,6 +329,83 @@ class DocumentReaderPinsIT {
         assertThat(references(pin)).isZero();
     }
 
+    @Test void logicalDeletionKeepsReaderAndHistoryReferencesIndependently() {
+        var source = source(); UUID reader = reader(), pin = UUID.randomUUID();
+        pin(pin, reader, source, source.fixture.attempt());
+        new DocumentLedger(tx).deleteByNodeId(source.fixture.row().nodeId);
+        var kinds = tx.readOnly(em -> {
+            java.util.List<?> rows = em.createNativeQuery(
+                    "SELECT owner_kind FROM repository_object_references WHERE object_id=:id ORDER BY owner_kind")
+                    .setParameter("id", source.object()).getResultList();
+            return rows.stream().map(String.class::cast).toList();
+        });
+        assertThat(kinds).containsExactly("DOCUMENT_HISTORY", "DOCUMENT_READER");
+        assertThatThrownBy(() -> pin(UUID.randomUUID(), reader, source, source.fixture.attempt()))
+                .hasStackTraceContaining("open retained current source");
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            em.createNativeQuery("DELETE FROM document_revision_publications WHERE revision_id=:id")
+                    .setParameter("id", source.fixture.attempt()).executeUpdate();
+        })).hasStackTraceContaining("immutable");
+        release(pin, reader, source.object());
+        assertThat(references(pin)).isZero();
+        // History still owns the bytes; this is deliberately not a sole-reader reclaim proof.
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            retire(em, source);
+            em.createNativeQuery("UPDATE repository_object_retention SET reclaiming=true WHERE object_id=:id")
+                    .setParameter("id", source.object()).executeUpdate();
+        })).hasStackTraceContaining("Retained repository objects cannot be reclaimed");
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void pinAdmissionAndRetirementRespectBothLockOrders(boolean pinFirst) throws Exception {
+        var source = source(); UUID reader = reader(), pin = UUID.randomUUID();
+        try (var holder = database.entityManagerFactory().createEntityManager();
+                var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            holder.getTransaction().begin();
+            try {
+                if (pinFirst) insert(holder, pin, reader, source, source.fixture.attempt());
+                else retire(holder, source);
+                int pid = ((Number) holder.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue();
+                var waiting = executor.submit(() -> {
+                    if (pinFirst) tx.inTransaction(em -> { retire(em, source); });
+                    else pin(pin, reader, source, source.fixture.attempt());
+                });
+                long deadline = System.nanoTime() + java.time.Duration.ofSeconds(5).toNanos();
+                boolean blocked;
+                do {
+                    blocked = tx.readOnly(em -> !em.createNativeQuery(
+                            "SELECT pid FROM pg_stat_activity WHERE :holder=ANY(pg_blocking_pids(pid))")
+                            .setParameter("holder", pid).getResultList().isEmpty());
+                    if (blocked || waiting.isDone()) break;
+                    Thread.sleep(10);
+                } while (System.nanoTime() < deadline);
+                assertThat(blocked).as("contender waits for the actual origin/retention transaction").isTrue();
+                holder.getTransaction().commit();
+                if (pinFirst) waiting.get(5, java.util.concurrent.TimeUnit.SECONDS);
+                else assertThatThrownBy(() -> waiting.get(5, java.util.concurrent.TimeUnit.SECONDS))
+                        .hasStackTraceContaining("retained");
+            } finally { if (holder.getTransaction().isActive()) holder.getTransaction().rollback(); }
+        }
+        assertThat(references(pin)).isEqualTo(pinFirst ? 1 : 0);
+        assertThatThrownBy(() -> pin(UUID.randomUUID(), reader, source, source.fixture.attempt()))
+                .isInstanceOf(RuntimeException.class);
+        if (pinFirst) {
+            // Retirement fences new admission but must not discard an earlier reader.
+            release(pin, reader, source.object());
+            assertThat(references(pin)).isZero();
+        }
+    }
+
+    private static void retire(jakarta.persistence.EntityManager em, Source source) {
+        em.createNativeQuery("SELECT attempt_id FROM document_part_attempts WHERE attempt_id=:id FOR UPDATE")
+                .setParameter("id", source.fixture.attempt()).getSingleResult();
+        em.createNativeQuery("SELECT object_id FROM repository_object_retention WHERE object_id=:id FOR UPDATE")
+                .setParameter("id", source.object()).getSingleResult();
+        em.createNativeQuery("UPDATE repository_object_retention SET retiring=true WHERE object_id=:id")
+                .setParameter("id", source.object()).executeUpdate();
+    }
+
     @Test void twoReadersAcquireSharedObjectWithoutSerializingTheirTransactions() throws Exception {
         var source = source(); UUID firstReader = reader(), secondReader = reader();
         UUID first = UUID.randomUUID(), second = UUID.randomUUID();

@@ -3020,3 +3020,25 @@ Final qualification passed 111 cases across native document pins, upload admissi
 and archive-reader incarnations with no failures or skips in 29s. An initial
 ambiguous transaction lambda was corrected before the successful runs. No hosted
 CI, push, merge or deployment ran.
+
+### Reader admission, retirement and legal document deletion
+
+Real PostgreSQL qualification now races pin admission with guarded retirement in
+both transaction orders. The test observes the contender blocked by the holder
+before committing it: an earlier pin survives retirement and remains releasable;
+retirement committed first prevents a later pin. Retirement takes origin locks
+before retention locks. These tests establish transaction ordering, not measured
+production latency or throughput.
+
+A separate case deletes through `DocumentLedger.deleteByNodeId` and proves that
+exactly HISTORY and READER references remain for the object. A new reader cannot
+pin the deleted current source. Existing reader release succeeds, but reclamation
+still fails because history retains the bytes. V38's immutable history/parts and
+the published-attempt cleanup guard prevent a supported sole-reader state today.
+The cutover plan therefore retains sole-reader reclaim as an open acceptance case
+for the future reviewed history-pruning path, including its JCR/restore assessment.
+No guard is disabled, no pruning API is added and no provider deletion is claimed.
+
+Sol found no blocker in the tests or their scope. Native-reader and revision-
+projection suites passed 33 cases with no failures or skips. No hosted CI, push,
+merge or deployment ran.

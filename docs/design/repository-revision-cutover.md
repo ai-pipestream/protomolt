@@ -362,6 +362,17 @@ caller authentication still belongs to the host under the trusted database-write
 boundary. Record lock waits and
 client statement counts as well as correctness; avoid an origin lock per object.
 
+Current qualification covers legal document deletion with both HISTORY and READER
+references surviving, plus pin admission versus retirement in both transaction
+orders using observed PostgreSQL blocking. It does not establish sole-reader
+reclamation safety: V38 forbids revision/part deletion, V39 retains the history
+reference, and attempt cleanup refuses any published history. Removing only the
+current document cannot produce a reader-only object. Keep that acceptance case
+open until a reviewed history-pruning path exists; do not disable guards to claim
+it passes. Pruning must first be assessed against retained-schema decoding,
+restoration, references and the optional JCR capability boundary. This checkpoint
+adds no pruning API and changes no transaction semantics.
+
 ### Implementation order and acceptance
 
 1. Expose the controlled exact read plan and extend the reader. Real SQL/provider
