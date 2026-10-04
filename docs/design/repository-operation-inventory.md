@@ -4106,3 +4106,35 @@ was reached before rejection; a generic database failure is insufficient. These
 fixtures use synthetic physical observations and evidence bytes. They qualify
 SQL storage guards, not provider integrity or successful typed admission. Sol
 reviewed the migration and tests without a remaining correctness blocker.
+
+### Canonical retained schema provenance metadata
+
+`DocumentSchemaAssetCodec` introduces the internal `repository-schema-asset`
+encoding at version 1 with a 512 KiB limit. It preserves the existing
+`RepositorySchemaAsset` contract, including the selected type, exact descriptor
+artifact digest, compiler evidence classification, inert compiler options,
+admission runtime and optional retained-source digest. This is a representation
+change only; operations, receipts and idempotency are unchanged.
+
+String-to-string maps in the shared evidence writer sort by unsigned UTF-8 key
+bytes. Each entry emits both key and value, including an empty value; non-map
+repeated fields retain their original order. Canonical lengths are measured by
+the writer, not inferred from generated-message serialization sizes. Unknown
+fields, duplicate dynamic map keys and unsupported map layouts are rejected.
+Decoding bounds the wire before parsing and requires the exact canonical bytes,
+so a generated parser collapsing duplicate raw keys cannot make them acceptable.
+
+The codec uses ProtoMolt's runtime validator for metadata annotations. Compiler
+identity remains a claim until trusted admission establishes its evidence
+classification. The codec does not resolve descriptors, prove the selected type
+exists, authenticate a compiler, retain source bytes, authorize a revision or
+activate typed publication. Durable metadata/source retention and binding to the
+published revision's exact artifact union remain required integration work.
+
+Five affected suites pass 357 tests, including six new metadata-codec tests.
+Fixtures exercise local/imported provenance, generated/dynamic empty-value
+equivalence, UTF-8 ordering distinct from Java UTF-16 ordering, duplicate map
+entries, reversed wire order, omitted default values, invalid provenance,
+encoding/digest mismatch, bounded decode and cancellation. Existing occurrence
+and root codec regression tests remain green. Sol reviewed the code and tests
+without a remaining blocker. These fixtures do not authenticate compiler claims.

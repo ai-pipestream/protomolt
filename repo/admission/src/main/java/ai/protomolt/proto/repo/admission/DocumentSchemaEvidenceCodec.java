@@ -94,9 +94,26 @@ final class DocumentSchemaEvidenceCodec {
         long size = 0;
         for (var entry : message.getAllFields().entrySet()) {
             var field = entry.getKey();
-            if (field.isExtension() || field.isMapField() || field.isPacked())
+            if (field.isExtension() || field.isPacked())
                 throw new IllegalArgumentException("unsupported schema evidence field layout");
             var items = field.isRepeated() ? (List<?>) entry.getValue() : List.of(entry.getValue());
+            if (field.isMapField()) {
+                requireStringMap(field);
+                if (items.size() > MAX_WIRE_VALUES)
+                    throw new IllegalArgumentException("schema evidence wire value bound exceeded");
+                var keys = new java.util.HashSet<String>();
+                long keyBytes = 0;
+                for (var item : items) {
+                    active(control);
+                    var mapEntry = (Message) item;
+                    String key = mapString(mapEntry, 1);
+                    keyBytes += utf8Length(key, control);
+                    if (keyBytes > MAX_BYTES)
+                        throw new IllegalArgumentException("schema evidence byte bound exceeded");
+                    if (!keys.add(key))
+                        throw new IllegalArgumentException("duplicate schema evidence map key");
+                }
+            }
             for (var value : items) {
                 active(control);
                 if (++values[0] > MAX_WIRE_VALUES) throw new IllegalArgumentException("schema evidence wire value bound exceeded");
@@ -104,6 +121,15 @@ final class DocumentSchemaEvidenceCodec {
                 size += switch (field.getType()) {
                     case MESSAGE -> {
                         int child = measure((Message) value, depth + 1, values, control);
+                        if (field.isMapField()) {
+                            var mapEntry = (Message) value;
+                            for (int n = 1; n <= 2; n++) {
+                                if (!mapEntry.hasField(mapEntry.getDescriptorForType().findFieldByNumber(n))
+                                        && ++values[0] > MAX_WIRE_VALUES)
+                                    throw new IllegalArgumentException("schema evidence wire value bound exceeded");
+                            }
+                            child = mapSize(mapEntry, control);
+                        }
                         yield CodedOutputStream.computeTagSize(number) + CodedOutputStream.computeUInt32SizeNoTag(child) + child;
                     }
                     case STRING -> {
@@ -141,6 +167,27 @@ final class DocumentSchemaEvidenceCodec {
         return (int) size;
     }
 
+    private static void requireStringMap(com.google.protobuf.Descriptors.FieldDescriptor field) {
+        var type = field.getMessageType();
+        if (type.getFields().size() != 2 || type.findFieldByNumber(1) == null || type.findFieldByNumber(2) == null
+                || type.findFieldByNumber(1).getType() != com.google.protobuf.Descriptors.FieldDescriptor.Type.STRING
+                || type.findFieldByNumber(2).getType() != com.google.protobuf.Descriptors.FieldDescriptor.Type.STRING)
+            throw new IllegalArgumentException("unsupported schema evidence map layout");
+    }
+
+    private static String mapString(Message entry, int number) {
+        return (String) entry.getField(entry.getDescriptorForType().findFieldByNumber(number));
+    }
+
+    private static int mapSize(Message entry, Runnable control) {
+        int key = utf8Length(mapString(entry, 1), control);
+        int value = utf8Length(mapString(entry, 2), control);
+        // Both entry fields are explicit, including an empty value. Generated and
+        // dynamic messages therefore have identical map bytes despite presence.
+        return 2 + CodedOutputStream.computeUInt32SizeNoTag(key) + key
+                + CodedOutputStream.computeUInt32SizeNoTag(value) + value;
+    }
+
     // V1: ascending field numbers, repeated order preserved, shortest varints and
     // lengths, normal protobuf signed integer encoding, and semantic presence.
     // This deliberately does not depend on a runtime's deterministic-output flag.
@@ -150,6 +197,26 @@ final class DocumentSchemaEvidenceCodec {
         for (var entry : fields) {
             var field = entry.getKey();
             var values = field.isRepeated() ? (List<?>) entry.getValue() : List.of(entry.getValue());
+            if (field.isMapField()) {
+                // V1 string maps use unsigned UTF-8 key order, not insertion order
+                // or a protobuf runtime's deterministic serialization convention.
+                record MapItem(Message message, ByteString key) {}
+                var sorted = new java.util.ArrayList<MapItem>(values.size());
+                for (var value : values) {
+                    active(control);
+                    var item = (Message) value;
+                    sorted.add(new MapItem(item, ByteString.copyFromUtf8(mapString(item, 1))));
+                }
+                sorted.sort((a, b) -> ByteString.unsignedLexicographicalComparator().compare(a.key(), b.key()));
+                for (var item : sorted) {
+                    active(control);
+                    output.writeTag(field.getNumber(), 2);
+                    output.writeUInt32NoTag(mapSize(item.message(), control));
+                    output.writeString(1, mapString(item.message(), 1));
+                    output.writeString(2, mapString(item.message(), 2));
+                }
+                continue;
+            }
             for (var value : values) {
                 active(control);
                 int number = field.getNumber();
@@ -157,7 +224,9 @@ final class DocumentSchemaEvidenceCodec {
                     case MESSAGE -> {
                         var child = (Message) value;
                         output.writeTag(number, 2);
-                        output.writeUInt32NoTag(child.getSerializedSize());
+                        // Nested string maps can normalize entry presence, so use
+                        // the canonical length rather than the runtime wire size.
+                        output.writeUInt32NoTag(measure(child, 0, new int[1], control));
                         write(child, output, control);
                     }
                     case STRING -> output.writeString(number, (String) value);
