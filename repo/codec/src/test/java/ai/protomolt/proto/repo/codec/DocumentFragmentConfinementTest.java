@@ -19,6 +19,8 @@ class DocumentFragmentConfinementTest {
         for (var part : DocumentPartCodec.split(document, PartLayouts.document())) {
             var parsed = Document.parseFrom(part.bytes());
             assertThatCode(() -> DocumentFragmentConfinement.requireConfined(parsed, part.part(), "doc")).doesNotThrowAnyException();
+            var dynamic = com.google.protobuf.DynamicMessage.parseFrom(Document.getDescriptor(), part.bytes());
+            assertThatCode(() -> DocumentFragmentConfinement.requireConfined(dynamic, part.part(), "doc")).doesNotThrowAnyException();
         }
     }
     @Test void rejectsContentInTheWrongSlotBeforeMerge() {

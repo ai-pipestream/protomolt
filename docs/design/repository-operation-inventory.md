@@ -3811,3 +3811,42 @@ not sort or deduplicate a set, identify the containing root, match a path to liv
 candidate bytes, authorize access or retain schema assets. Its digest describes
 evidence bytes, not a payload or admission verdict. Stored schema references still
 require the enclosing revision/publication transaction and trusted candidate checks.
+
+### Root discovery from retained fragments
+
+New internal `DocumentAnyRootInventory` inspects exact CORE and PARSED fragment
+bytes under an independently bound complete Document descriptor closure. This
+implementation supports the current Document closure and
+`protomolt-document-parts/v1` confinement policy; a different closure is rejected,
+not interpreted through the current generated class. Historical support for other
+layout versions requires an explicit implementation and retained definitions.
+
+The inventory checks raw byte and wire-value/depth limits, parses dynamically
+once, applies the shared confinement policy and expected document identity, and
+rejects unknown fields on the selected root access paths. It records CORE field 4
+and PARSED field 5/key/7/1 roots. Duplicate parser keys are rejected even for entries
+without shapes; generated map collapse cannot choose a winner. Missing roots are
+distinct from present empty Any envelopes. Payload definitions are not looked up,
+and Any.value is not parsed: invalid inner wire and unavailable types remain
+representable observations. Strict typed admission must separately validate them;
+failure cannot silently become opaque success.
+
+Results preserve the original ByteString, its exact SHA-256, slot, containing
+schema binding, layout policy and immutable root access paths/envelopes. The raw
+byte count is the retained ByteString size. These hashes do not authorize a
+revision part, prove provider receipt identity or retain schema artifacts. Unknown
+fields elsewhere in owned subtrees are not exhaustively validated by root discovery.
+This helper covers the two named root families, not every possible Any in Document.
+
+The shared confinement helper now also accepts Message, so the inventory can
+check DynamicMessage directly. The existing Document overload and public consumers
+remain intact. `repo/admission` adds only the pure `repo/codec` dependency. The
+operation coordinator still needs aggregate root, parser-entry, byte and metadata
+budgets across all fragments/members, plus accounting for assembly and inventory
+allocations. Per-fragment limits are not an operation-wide memory bound.
+
+Sol reviewed this slice. The contract, codec, admission and engine suites pass
+228 tests, including runtime dependency gates. Fixtures use actual split output,
+duplicate/default parser keys, absent/empty roots, malformed opaque payloads,
+noncanonical original bytes, wrong slots/identity/schema and independent limits.
+No typed publication or durable root-locator contract is enabled by this change.
