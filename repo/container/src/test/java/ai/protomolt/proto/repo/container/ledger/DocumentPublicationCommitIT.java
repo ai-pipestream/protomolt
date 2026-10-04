@@ -513,8 +513,8 @@ class DocumentPublicationCommitIT {
         var command=new DocumentPublicationCommand(first.command.intent().toBuilder().setOperationId(UUID.randomUUID().toString()).setMembers(0,member).build());
         var placements=new HashMap<UUID,DocumentUploadPlan.Placement>();
         first.prepared.members().forEach(m -> placements.put(m.placement().drive().id(),m.placement()));
-        var owner=new RepositoryOperationLedger(tx).admit(new RepositoryOperationLedger.Key(command.intent().getAccountId(),"principal",command.operationId()),command,UUID.randomUUID(),LEASE).owner().orElseThrow();
-        var prepared=DocumentOperationUploadAdmission.prepare(command,placements,mixed ? Map.of(member.getMemberId(),UUID.randomUUID()) : Map.of(),LEASE);
+        var session=new DocumentPublicationSession(tx,ADMIN,command,placements,LEASE);
+        var prepared=session.prepared();
         var policy=ai.protomolt.proto.repo.admission.DocumentAdmissionPolicy.of(DocumentSchemaPolicy.newBuilder()
                 .setEncodingVersion(1).setAccountId(command.intent().getAccountId())
                 .setMode(typed ? DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_TYPED_REQUIRED
@@ -533,7 +533,17 @@ class DocumentPublicationCommitIT {
                         (generation,p)->new DocumentUploadCoordinator.Backend(profile.identity(),opened),4,Duration.ofMillis(25),
                         new SqlTimeouts(Duration.ofSeconds(2),Duration.ofSeconds(5)))) {
             var execution=new DocumentPublicationExecution(tx,new DriveLedger(tx),readLedger,coordinator,reader,sharedBudget,LIMITS,mixed);
-            result=execution.execute(ADMIN,owner,prepared,Map.copyOf(shiftedBodies),Map.of(),
+            session.admit(ADMIN,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE).orElseThrow();
+            var contender=new DocumentPublicationSession(tx,ADMIN,command,placements,LEASE);
+            assertThatThrownBy(()->execution.execute(ADMIN,contender,Map.of(),Map.of(),
+                    Map.of(member.getMemberId(),typed ? DocumentPublicationCandidate.Mode.TYPED : DocumentPublicationCandidate.Mode.OPAQUE),
+                    java.util.Optional.empty(),(m,occurrence)->{ throw new AssertionError("Unowned operation must not resolve schemas"); },
+                    ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            failure->assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.CONFLICT));
+            assertThat(readLedger.outstandingReads()).isZero();
+            assertThat(sharedBudget.reservedBytes()).isZero();
+            result=execution.execute(ADMIN,session,Map.copyOf(shiftedBodies),Map.of(),
                     Map.of(member.getMemberId(),typed ? DocumentPublicationCandidate.Mode.TYPED : DocumentPublicationCandidate.Mode.OPAQUE),
                     typed ? java.util.Optional.of(DocumentSchemaRetentionFixture.definition(Document.getDescriptor())) : java.util.Optional.empty(),
                     (m,occurrence)->{
@@ -546,22 +556,25 @@ class DocumentPublicationCommitIT {
             assertThat(readLedger.outstandingReads()).isEqualTo(1); // cleanup remains owned after commit
             reader.close(); coordinator.close();
             // Exact authorized replay works with stopped providers and no payload/schema inputs.
-            assertThat(execution.execute(ADMIN,owner,prepared,Map.of(),Map.of(),Map.of(),java.util.Optional.empty(),
+            assertThat(execution.execute(ADMIN,session,Map.of(),Map.of(),Map.of(),java.util.Optional.empty(),
                     (m,occurrence)->{ throw new AssertionError("Committed replay must not resolve schemas"); },
                     ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isEqualTo(result);
+            assertThat(execution.execute(ADMIN,contender,Map.of(),Map.of(),Map.of(),java.util.Optional.empty(),
+                    (m,occurrence)->{ throw new AssertionError("Contender may replay only the stored outcome"); },
+                    ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isEqualTo(result);
             assertThat(readLedger.outstandingReads()).isEqualTo(1); // replay creates no new pins
-            var denied=new RepositoryCaller(owner.key().principal(),false,java.util.Set.of(command.intent().getAccountId()),java.util.Set.of());
-            assertThatThrownBy(()->execution.execute(denied,owner,prepared,Map.of(),Map.of(),Map.of(),java.util.Optional.empty(),
+            var denied=new RepositoryCaller("principal",false,java.util.Set.of(command.intent().getAccountId()),java.util.Set.of());
+            assertThatThrownBy(()->execution.execute(denied,session,Map.of(),Map.of(),Map.of(),java.util.Optional.empty(),
                     (m,occurrence)->{ throw new AssertionError("Denied replay must not resolve schemas"); },
                     ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
                     .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
                             failure->assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.NOT_FOUND));
             var checks=new java.util.concurrent.atomic.AtomicInteger();
-            assertThatThrownBy(()->execution.execute(ADMIN,owner,prepared,Map.of(),Map.of(),Map.of(),java.util.Optional.empty(),
+            assertThatThrownBy(()->execution.execute(ADMIN,session,Map.of(),Map.of(),Map.of(),java.util.Optional.empty(),
                     (m,occurrence)->{ throw new AssertionError("Cancelled replay must not resolve schemas"); },
                     new ai.protomolt.proto.repo.spi.RepositoryReadControl() {
                         @Override public long remainingNanos() { return Long.MAX_VALUE; }
-                        @Override public boolean isCancelled() { return checks.incrementAndGet()>=2; }
+                        @Override public boolean isCancelled() { return checks.incrementAndGet()>=3; }
                     })).isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
                             failure->assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.CANCELLED));
             var event=tx.readOnly(em->(String)em.createNativeQuery("""
@@ -570,7 +583,7 @@ class DocumentPublicationCommitIT {
                     """).setParameter("revision",UUID.fromString(result.getMembers(0).getRevisionId())).getSingleResult());
             assertThat(event).isEqualTo(mixed ? "PENDING" : "RECORDED");
             var wrongOwner=new RepositoryOperationLedger.Owner(new RepositoryOperationLedger.Key("different-account",
-                    owner.key().principal(),owner.key().operationId()),owner.generation(),owner.token(),owner.leaseUntil());
+                    "principal",command.operationId()),1,UUID.randomUUID(),java.time.Instant.now().plusSeconds(30));
             assertThatThrownBy(()->execution.execute(ADMIN,wrongOwner,prepared,Map.of(),Map.of(),Map.of(),java.util.Optional.empty(),
                     (m,occurrence)->{ throw new AssertionError("Wrong owner must not resolve schemas"); },
                     ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).hasMessageContaining("owner differs from command");
@@ -579,6 +592,10 @@ class DocumentPublicationCommitIT {
             assertThat(failure).isSameAs(schemaFailure);
             assertThat(new DocumentLedger(tx).findByNodeId(node).orElseThrow().mutationRevision).isEqualTo(prior.mutationRevision);
             assertThat(new DocumentPublicationReplay(tx).observe(ADMIN,command).result()).isEmpty();
+            try (var retry=session.begin(ADMIN,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+                assertThatThrownBy(()->retry.bindModes(Map.of(member.getMemberId(),DocumentPublicationCandidate.Mode.OPAQUE)))
+                        .hasMessageContaining("modes changed");
+            }
             return;
         } finally {
             assertThat(readLedger.releaseDrained(1)).isEqualTo(1);

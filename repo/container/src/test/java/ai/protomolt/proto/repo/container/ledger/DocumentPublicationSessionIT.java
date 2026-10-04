@@ -23,6 +23,54 @@ class DocumentPublicationSessionIT {
     private static final RepositoryCaller CALLER = new RepositoryCaller("principal", true);
     private static final Duration LEASE = Duration.ofMinutes(5);
 
+    @Test void executionExcludesConcurrentUseAndOldCloseCannotUnlockItsSuccessor() throws Exception {
+        try (var c = context(POSTGRES)) {
+            var input = input(c);
+            var session = new DocumentPublicationSession(c.tx(), CALLER, input.command(), input.placements(), LEASE);
+            var first = session.begin(CALLER, RepositoryReadControl.NONE);
+            try (var executor = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+                executor.submit(() -> assertThatThrownBy(() -> session.begin(CALLER, RepositoryReadControl.NONE))
+                        .isInstanceOfSatisfying(RepositoryException.class,
+                                failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.CONFLICT)))
+                        .get(10, java.util.concurrent.TimeUnit.SECONDS);
+            }
+            first.close();
+            try (var second = session.begin(CALLER, RepositoryReadControl.NONE)) {
+                first.close();
+                assertThatThrownBy(() -> session.begin(CALLER, RepositoryReadControl.NONE))
+                        .isInstanceOf(RepositoryException.class);
+            }
+            try (var third = session.begin(CALLER, RepositoryReadControl.NONE)) {
+                assertThat(new RepositoryOperationLedger(c.tx()).find(key(input.command()))).isEmpty();
+            }
+        }
+    }
+
+    @Test void cancelledAcquisitionReleasesLeaseAndAdmissionModesRemainFixedAcrossRetries() {
+        try (var c = context(POSTGRES)) {
+            var input = input(c);
+            var session = new DocumentPublicationSession(c.tx(), CALLER, input.command(), input.placements(), LEASE);
+            var checks = new AtomicInteger();
+            assertThatThrownBy(() -> session.begin(CALLER, new RepositoryReadControl() {
+                @Override public long remainingNanos() { return Long.MAX_VALUE; }
+                @Override public boolean isCancelled() { return checks.incrementAndGet() >= 2; }
+            })).isInstanceOfSatisfying(RepositoryException.class,
+                    failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.CANCELLED));
+            var modes = new java.util.HashMap<String, DocumentPublicationCandidate.Mode>();
+            input.command().intent().getMembersList().forEach(member -> modes.put(member.getMemberId(), DocumentPublicationCandidate.Mode.TYPED));
+            var expected = Map.copyOf(modes);
+            try (var execution = session.begin(CALLER, RepositoryReadControl.NONE)) {
+                assertThatThrownBy(() -> execution.bindModes(Map.of())).isInstanceOf(IllegalArgumentException.class);
+                assertThat(execution.bindModes(modes)).isEqualTo(expected);
+            }
+            modes.replaceAll((member, mode) -> DocumentPublicationCandidate.Mode.OPAQUE);
+            try (var retry = session.begin(CALLER, RepositoryReadControl.NONE)) {
+                assertThatThrownBy(() -> retry.bindModes(modes)).hasMessageContaining("modes changed");
+                assertThat(retry.bindModes(expected)).isEqualTo(expected);
+            }
+        }
+    }
+
     @Test void committedAdmissionWithLostAcknowledgmentReusesNonceAndEveryAttemptIdentity() {
         try (var c = context(POSTGRES)) {
             var input = input(c);

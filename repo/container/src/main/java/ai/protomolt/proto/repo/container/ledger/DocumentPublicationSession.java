@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Host-private identities minted before operation admission SQL and retained across uncertain outcomes. */
 final class DocumentPublicationSession {
@@ -19,6 +20,8 @@ final class DocumentPublicationSession {
     private final UUID ownerNonce;
     private final Duration lease;
     private final DocumentOperationUploadAdmission.Prepared prepared;
+    private final AtomicBoolean executing = new AtomicBoolean();
+    private Map<String, DocumentPublicationCandidate.Mode> modes;
 
     DocumentPublicationSession(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
             Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease) {
@@ -54,4 +57,40 @@ final class DocumentPublicationSession {
     }
 
     DocumentOperationUploadAdmission.Prepared prepared() { return prepared; }
+
+    /** Fail fast rather than queue borrowed payloads behind another execution. */
+    Execution begin(RepositoryCaller caller, RepositoryReadControl control) {
+        Objects.requireNonNull(control).check();
+        DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+        if (!executing.compareAndSet(false, true)) throw new RepositoryException(
+                RepositoryException.Code.CONFLICT, "Publication session already has an active execution");
+        var execution = new Execution();
+        try {
+            control.check();
+            return execution;
+        } catch (RuntimeException | Error failure) {
+            execution.close();
+            throw failure;
+        }
+    }
+
+    final class Execution implements AutoCloseable {
+        private final AtomicBoolean closed = new AtomicBoolean();
+
+        /** Host choices remain fixed even when admission or publication fails. */
+        synchronized Map<String, DocumentPublicationCandidate.Mode> bindModes(Map<String, DocumentPublicationCandidate.Mode> requested) {
+            if (closed.get()) throw new IllegalStateException("Publication execution is closed");
+            var copy = Map.copyOf(requested);
+            var members = command.intent().getMembersList().stream()
+                    .map(member -> member.getMemberId()).collect(java.util.stream.Collectors.toSet());
+            if (!copy.keySet().equals(members)) throw new IllegalArgumentException("Admission modes differ from command members");
+            if (modes == null) modes = copy;
+            else if (!modes.equals(copy)) throw new IllegalArgumentException("Publication session admission modes changed");
+            return modes;
+        }
+
+        @Override public synchronized void close() {
+            if (closed.compareAndSet(false, true)) executing.set(false);
+        }
+    }
 }

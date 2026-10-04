@@ -5411,12 +5411,35 @@ plan. They also cover cancellation after commit, rejected caller bindings withou
 an operation row, a competing session that receives no owner, and no implicit
 lease extension. The host must retain this session across uncertain outcomes;
 this component is not a persistent session registry or a restart/takeover manager,
-and does not serialize concurrent publication execution for the host.
+and its admission method alone does not serialize publication execution. The
+session execution scope below supplies that local guard.
 
-Typed/opaque selections currently remain internal host policy choices, outside
+Typed/opaque selections remain internal host policy choices, outside
 `DocumentPublicationIntent`. Before mounting a caller-facing publication API,
-keep those choices stable for each retained session or derive them deterministically
-from its command and selected policy. Any new caller-selectable preference that
+retain the session's stable choices or derive them deterministically from its
+command and selected policy. Any new caller-selectable preference that
 changes admission meaning must become part of canonical request identity; do not
 accept an unbound request flag. Existing structured-schema requirements and
 commit-time policy fences remain in force. No protobuf fields change here.
+
+### Serialized publication-session execution
+
+The internal session execution path now holds a fail-fast local lease across
+authorized replay, operation admission, preparation and commit. Concurrent callers
+receive a conflict rather than queuing borrowed payloads. Closing an old lease
+twice cannot unlock a newer execution. Cancellation during lease acquisition
+releases it, and the outer execution scope releases it on success or failure.
+
+Before admission, the session captures an immutable, complete member-to-admission-mode
+map. Subsequent unfinished retries must use the same typed/opaque selections;
+failure never silently switches typed admission to opaque admission. A committed
+replay requires neither this map nor payload/schema inputs. Admission without an
+owner and terminal admission races trigger another authorized result observation;
+only a committed result can succeed, otherwise the call reports conflict without
+provider work or takeover.
+
+This lease serializes the retained session in this process. SQL ownership fences
+remain responsible for competing sessions and hosts; the older internal owner-based
+execution entry is not covered by the session lease. Durable session recovery,
+bounded session retention, qualified host placement, production mounting and
+transport conformance remain outstanding. No public contract changes.

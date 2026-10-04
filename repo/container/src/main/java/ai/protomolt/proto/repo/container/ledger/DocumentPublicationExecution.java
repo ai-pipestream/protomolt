@@ -5,6 +5,7 @@ import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
 import ai.protomolt.proto.repo.codec.DocumentRevisionAssembly;
 import ai.protomolt.proto.repo.codec.PartObject;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
+import ai.protomolt.proto.repo.spi.RepositoryException;
 import ai.protomolt.proto.repo.spi.RepositoryReadControl;
 import ai.protomolt.proto.repo.v1.DocumentPublicationResult;
 import com.google.protobuf.InvalidProtocolBufferException;
@@ -34,6 +35,38 @@ final class DocumentPublicationExecution {
         publication = new DocumentPublicationCommit(tx, drives, false, deliverEvents);
     }
 
+    /** Retained host session: serial execution, exact admission retry, and authorized terminal replay. */
+    DocumentPublicationResult execute(RepositoryCaller caller, DocumentPublicationSession session,
+            Map<DocumentUploadPayloads.Key, PartObject> bodies, Map<String, String> attributes,
+            Map<String, DocumentPublicationCandidate.Mode> modes,
+            Optional<DocumentSchemaAdmission.Definition> container, DocumentPublicationCandidate.Resolver resolver,
+            RepositoryReadControl control) throws InvalidProtocolBufferException {
+        try (var execution = session.begin(caller, control)) {
+            var prepared = session.prepared();
+            var observed = replay.observe(caller, prepared.plan().command());
+            control.check();
+            if (observed.result().isPresent()) return observed.result().orElseThrow();
+            var selectedModes = execution.bindModes(modes);
+            final RepositoryOperationLedger.Owner owner;
+            try {
+                var admitted = session.admit(caller, control);
+                if (admitted.isEmpty()) return replayWithoutOwner(caller, prepared, control);
+                owner = admitted.orElseThrow();
+            } catch (RepositoryOperationLedger.TerminalOperationException terminal) {
+                return replayWithoutOwner(caller, prepared, control);
+            }
+            return executeNew(caller, owner, prepared, bodies, attributes, selectedModes, container, resolver, control);
+        }
+    }
+
+    private DocumentPublicationResult replayWithoutOwner(RepositoryCaller caller,
+            DocumentOperationUploadAdmission.Prepared prepared, RepositoryReadControl control) {
+        var completed = replay.observe(caller, prepared.plan().command());
+        control.check();
+        return completed.result().orElseThrow(() -> new RepositoryException(
+                RepositoryException.Code.CONFLICT, "Publication session has neither executable ownership nor a committed result"));
+    }
+
     /**
      * The host retains owner nonce and attempt identities across uncertain outcomes.
      * This method never admits/takes over an operation or changes its identity.
@@ -55,6 +88,15 @@ final class DocumentPublicationExecution {
         var observed = replay.observe(caller, command);
         control.check();
         if (observed.result().isPresent()) return observed.result().orElseThrow();
+        return executeNew(caller, owner, prepared, bodies, attributes, modes, container, resolver, control);
+    }
+
+    private DocumentPublicationResult executeNew(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
+            Map<String, String> attributes, Map<String, DocumentPublicationCandidate.Mode> modes,
+            Optional<DocumentSchemaAdmission.Definition> container, DocumentPublicationCandidate.Resolver resolver,
+            RepositoryReadControl control) throws InvalidProtocolBufferException {
+        var command = prepared.plan().command();
         var policy = policies.read(command.intent().getAccountId(), control::check);
         var settings = new DocumentPublicationPreparation.Admission(policy, modes, container, resolver, opaqueLimits);
         var pinned = reads.capture(admission, caller, owner, prepared);
