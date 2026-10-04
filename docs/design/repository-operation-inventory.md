@@ -4667,3 +4667,39 @@ qualification work; this checkpoint does not claim those are complete.
 Sol reviewed the Java/SQL parity and tests with no blocker. Its suggested
 substitution coverage now includes every part, association and root field;
 native physical sealing remains an independent required guard.
+
+### Freezing a candidate's body and metadata before mutation
+
+`DocumentAdmissionSnapshot.prepare` is a new internal read operation for the
+forthcoming admission binding. It projects the complete candidate through
+`document_publication_body` and `document_revision_metadata_v1` using a synthetic
+`documents` composite. No document is inserted. Explicit SQL parameter casts and
+the actual column types preserve integer precision, nullable fields and timestamp
+conversion; the Java implementation does not duplicate the snapshot JSON format.
+Comparisons use JSONB equality, not textual key order.
+
+The native query explicitly uses `FlushModeType.COMMIT`: computing an admission
+snapshot must not flush pending managed entity changes. Callers still prepare the
+final candidate after authorization, physical selection and reuse resolution,
+then freeze its body, metadata and manifest before merging any document. A later
+admission guard must reject mutations that differ from these frozen snapshots.
+The helper itself grants no authorization or typed admission verdict.
+
+Metadata text is limited to the existing 1 MiB native revision bound. The new
+internal admission body snapshot is bounded at 16 MiB. These are SQL snapshot
+limits, not changes to the byte SPI's conditional payload bound. SQL checks sizes
+before returning JSON text to Java. Oversized values are rejected explicitly.
+
+Integration cases compare pre-write snapshots with actual committed native body
+and metadata across UTC, New York and Kathmandu sessions, including nanosecond
+inputs that round across a second boundary. Metadata rewrites compare the new row
+against its pre-write snapshot while preserving the original revision metadata.
+A dirty managed entity test proves snapshot preparation does not auto-flush and
+that explicit flushing subsequently produces the expected metadata. Separate
+synthetic codec cases exercise BIGINT values beyond double precision, explicit
+nulls, and oversized body and metadata JSON; they do not claim those synthetic
+inputs are validated repository documents. Sol reviewed the implementation and
+tests with no blocker. Admission-row enforcement and production integration are
+still required.
+Qualification: 15 tests pass across six snapshot cases, six retention cases and
+three manifest comparison cases. Both size-rejection branches are exercised.

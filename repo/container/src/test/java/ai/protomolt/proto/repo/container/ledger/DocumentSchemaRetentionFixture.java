@@ -101,7 +101,17 @@ final class DocumentSchemaRetentionFixture {
         return publish(c, f, omitCore, (em, revision, manifest) -> beforeSeal.accept(em, revision));
     }
 
+    static UUID publishWithSnapshot(Context c, Fixture f, BiConsumer<EntityManager, DocumentCommitWriter.Candidate> beforeWrite) {
+        return publish(c, f, false, (em, revision, manifest) ->
+                f.retention().write(em, f.owner(), revision, () -> {}), beforeWrite);
+    }
+
     private static UUID publish(Context c, Fixture f, boolean omitCore, ManifestCheck beforeSeal) {
+        return publish(c, f, omitCore, beforeSeal, (em, candidate) -> {});
+    }
+
+    private static UUID publish(Context c, Fixture f, boolean omitCore, ManifestCheck beforeSeal,
+            BiConsumer<EntityManager, DocumentCommitWriter.Candidate> beforeWrite) {
         return c.tx().inTransaction(em -> {
             RepositoryOperationLedger.fenceLiveOwner(em, f.owner());
             RepositoryOperationLedger.requireCommand(em, f.owner().key(), f.command());
@@ -113,6 +123,7 @@ final class DocumentSchemaRetentionFixture {
             var manifest = DocumentSchemaManifest.prepare(f.batch(), "member", parts, () -> {});
             f.batch().lockArtifacts(em, f.owner(), () -> {});
             var candidate = DocumentCommitWriter.prepare(plan.members().getFirst(), f.content(), parts, locked, Map.of(), Instant.now(), () -> {});
+            beforeWrite.accept(em, candidate);
             var row = em.merge(candidate.row()); em.flush(); em.refresh(row);
             var event = DocumentEventFactory.savedWithoutDelivery(row, row.updatedAt);
             var revision = candidate.revision();
