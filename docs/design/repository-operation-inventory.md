@@ -2920,3 +2920,24 @@ quiescence/recovery and overlapping large-plan races remain unqualified. No publ
 API or provider path uses this internal handle yet.
 The final 91 admission/native-pin cases passed in 27s after fixing an ambiguous
 test assertion overload. No hosted CI, push, merge or deployment ran.
+
+### Atomic document pin release
+
+V45 adds `release_document_read_pins` for 1–10,000 complete, unique pin claims;
+multiple pins may protect the same object. The function validates extant identities,
+requires registered document objects and durable origins, locks all origins then
+retention objects then native pin rows in PostgreSQL UUID order, rechecks identities,
+and deletes the matching native/mirror ownership in one transaction. Missing pins
+allow lost-acknowledgement replay, but a still-existing mismatched pin aborts the
+batch. `DocumentReadPins.release` encodes before opening the transaction and uses
+one client statement; an empty captured set requires no SQL.
+
+Real PostgreSQL tests cover a wrong identity preserving both pins, duplicate pin
+and unregistered object refusal, successful release/replay, and concurrent reverse-
+order requests for two pins sharing one object. The latter exercises overlap but
+does not establish large-plan cleanup fairness or throughput. Caller drain proof,
+host integration and recovery remain separate requirements: this release function
+must never be used to infer that provider I/O has stopped.
+All 94 admission/native-pin cases passed in 27s. Sol found no blocker; cross-object
+partial-overlap and large-plan cleanup races remain qualification work. No hosted
+CI, push, merge or deployment ran.

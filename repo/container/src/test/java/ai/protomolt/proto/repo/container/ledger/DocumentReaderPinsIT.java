@@ -65,6 +65,53 @@ class DocumentReaderPinsIT {
                 .setParameter("pin", pin).getSingleResult()).longValue());
     }
 
+    static String claim(UUID pin, UUID object) {
+        return "{\"pin\":\"" + pin + "\",\"object\":\"" + object + "\"}";
+    }
+    static void releaseBatch(UUID reader, String claims) {
+        tx.inTransaction(em -> { assertThat(em.createNativeQuery("SELECT release_document_read_pins(:reader,CAST(:claims AS jsonb))")
+                .setParameter("reader", reader).setParameter("claims", claims).getSingleResult()).isEqualTo(true); });
+    }
+
+    @Test void batchReleaseChecksAllIdentitiesAndRetriesWithoutPartialRelease() {
+        var first = source(); var second = source(); UUID reader = reader();
+        UUID a = UUID.randomUUID(), b = UUID.randomUUID();
+        pin(a, reader, first, first.fixture.attempt()); pin(b, reader, second, second.fixture.attempt());
+        String wrong = "[" + claim(a, first.object()) + "," + claim(b, first.object()) + "]";
+        assertThatThrownBy(() -> releaseBatch(reader, wrong)).isInstanceOf(RuntimeException.class);
+        assertThat(references(a)).isEqualTo(1); assertThat(references(b)).isEqualTo(1);
+        String claims = "[" + claim(b, second.object()) + "," + claim(a, first.object()) + "]";
+        releaseBatch(reader, claims); releaseBatch(reader, claims);
+        assertThat(references(a)).isZero(); assertThat(references(b)).isZero();
+    }
+
+    @Test void batchReleaseRejectsDuplicatePinsAndUnregisteredObjects() {
+        var source = source(); UUID reader = reader(), pin = UUID.randomUUID();
+        pin(pin, reader, source, source.fixture.attempt());
+        String duplicate = "[" + claim(pin, source.object()) + "," + claim(pin, source.object()) + "]";
+        assertThatThrownBy(() -> releaseBatch(reader, duplicate)).isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> releaseBatch(reader, "[" + claim(UUID.randomUUID(), UUID.randomUUID()) + "]"))
+                .isInstanceOf(RuntimeException.class);
+        assertThat(references(pin)).isEqualTo(1);
+        release(pin, reader, source.object());
+    }
+
+    @Test void overlappingReverseOrderReleasesOfSharedObjectsAreRetryable() throws Exception {
+        var source = source(); UUID reader = reader(), a = UUID.randomUUID(), b = UUID.randomUUID();
+        pin(a, reader, source, source.fixture.attempt()); pin(b, reader, source, source.fixture.attempt());
+        String first = "[" + claim(a, source.object()) + "," + claim(b, source.object()) + "]";
+        String second = "[" + claim(b, source.object()) + "," + claim(a, source.object()) + "]";
+        var start = new java.util.concurrent.CountDownLatch(1);
+        try (var tasks = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var one = tasks.submit(() -> { start.await(); releaseBatch(reader, first); return true; });
+            var two = tasks.submit(() -> { start.await(); releaseBatch(reader, second); return true; });
+            start.countDown();
+            assertThat(one.get(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(two.get(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        }
+        assertThat(references(a)).isZero(); assertThat(references(b)).isZero();
+    }
+
     @Test void nativePinMirrorsAndExactReleaseIsRetryable() {
         var source = source(); UUID reader = reader(), pin = UUID.randomUUID();
         pin(pin, reader, source, source.fixture.attempt());

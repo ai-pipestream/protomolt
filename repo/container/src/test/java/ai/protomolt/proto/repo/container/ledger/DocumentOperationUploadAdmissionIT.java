@@ -560,9 +560,9 @@ class DocumentOperationUploadAdmissionIT {
             for (var pin : captured.pins()) tx.inTransaction(em -> {
                 assertThat(((Number) em.createNativeQuery("SELECT count(*) FROM repository_object_references WHERE owner_kind='DOCUMENT_READER' AND owner_id=:pin")
                         .setParameter("pin", pin.id()).getSingleResult()).longValue()).isEqualTo(1);
-                em.createNativeQuery("SELECT release_document_read_pin(:pin,:reader,:object)")
-                        .setParameter("pin", pin.id()).setParameter("reader", reader).setParameter("object", pin.object()).getSingleResult();
             });
+            DocumentReadPins.release(tx, captured);
+            DocumentReadPins.release(tx, captured);
             assertThat(readPins(reader)).isZero();
         }
         assertNoAttempt(changed.attempt);

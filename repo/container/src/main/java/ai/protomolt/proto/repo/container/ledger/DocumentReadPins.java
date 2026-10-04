@@ -49,6 +49,27 @@ final class DocumentReadPins {
     }
     private static Value text(UUID value) { return Value.newBuilder().setStringValue(value.toString()).build(); }
 
+    /** Caller must drain all provider work and batch owners first; failures retain the complete set. */
+    static void release(Tx tx, Captured captured) {
+        java.util.Objects.requireNonNull(captured.reader(), "Pinned reader identity");
+        if (captured.pins().size() > DocumentPublicationCommand.MAX_PARTS)
+            throw new IllegalArgumentException("Read pin release exceeds command bounds");
+        if (captured.pins().isEmpty()) return;
+        var rows = ListValue.newBuilder();
+        for (var pin : captured.pins()) rows.addValues(Value.newBuilder().setStructValue(Struct.newBuilder()
+                .putFields("pin", text(pin.id())).putFields("object", text(pin.object()))));
+        final String encoded;
+        try { encoded = JsonFormat.printer().omittingInsignificantWhitespace().print(rows); }
+        catch (com.google.protobuf.InvalidProtocolBufferException failure) {
+            throw new IllegalArgumentException("Cannot encode read pin release", failure);
+        }
+        tx.inTransaction(em -> {
+            if (!Boolean.TRUE.equals(em.createNativeQuery("SELECT release_document_read_pins(:reader,CAST(:claims AS jsonb))")
+                    .setParameter("reader", captured.reader()).setParameter("claims", encoded).getSingleResult()))
+                throw new DocumentPartAttemptLedger.FenceException("Read pin release did not complete");
+        });
+    }
+
     /** Caller holds owner, active reader and authorized source/destination revision locks. */
     static Captured acquire(EntityManager em, Prepared prepared, DocumentRetainedReadPlan plan, UUID reader,
             DocumentReuseAdmission.Prepared reuse) {

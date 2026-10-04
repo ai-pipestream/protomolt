@@ -275,7 +275,9 @@ performs its own atomic fence; neither a read plan nor a checked draft grants it
 ### Document reader protection before activation
 
 V44 implements the native document pin table, mirror/reference guards and exact
-single-pin release primitive. Internal whole-plan acquisition now validates all
+single-pin release primitive. V45 adds bounded atomic batch release with complete
+origin, retention and native-pin lock sets and identity checks before/after locking.
+Internal whole-plan acquisition now validates all
 claims, locks complete sorted origin/retention sets and inserts deduplicated pins
 atomically. Host lifetime ownership and quiescence recovery are still unimplemented;
 provider reads do not yet acquire
