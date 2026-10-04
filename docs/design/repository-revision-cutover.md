@@ -891,3 +891,18 @@ establish OpenAPI execution of those rules or change the generators. The host
 must verify the retained bytes, source asset, tool identities and access policy.
 Revision/occurrence binding, durable provenance storage and automatic toolchain
 capture remain implementation work; the contract does not expose a new RPC.
+
+Schema storage is shared within an account: the artifact catalog key is
+`(account_id, artifact_sha256)`, and operation claims reference it. Revision
+bindings must reference retained assets rather than copy the descriptor bytes
+into each object. Deduplication currently operates on exact complete-closure
+bytes, not on individual imported files. Two distinct closures can contain the
+same imports, and different encodings of the same canonical schema can occupy
+separate artifacts. Preserve exact-byte identity when considering later storage
+optimizations.
+
+DocumentSchemaAssetBinding checks parsed metadata, complete descriptor closure,
+canonical identity and the exact byte digest together. It retains immutable
+metadata without asserting compiler authenticity or source retention. Its future
+payload consumer must compare the exact metadata type URL with the admitted URL.
+It is an internal preparation primitive, not a persisted revision reference.
