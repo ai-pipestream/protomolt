@@ -3227,3 +3227,26 @@ with no failures or skips in 2s, including the runtime dependency gate.
 The helper is not yet connected to admission. Any URL policy, schema preparation,
 candidate validation and durable retention remain required steps. This binding is
 not validation evidence, authorization or a publication receipt.
+
+### Typed payload checks
+
+MessageWireBudget moved from repo-codec to core/descriptors. Document assembly
+reuses the same wire counter. Codec now depends on descriptors; the dependency gate
+passes. The scanner limits occurrences and nesting, not exact heap use.
+
+DocumentPayloadCheck requires an exact host-selected Any URL matching the schema.
+It limits payload bytes, checks reachable types, prepares rules, scans wire format
+and verifies complete decoding before invoking ProtoValidator. Errors and
+cancellation prevent a checked result. Successful results retain original bytes.
+
+The host supplies required rule dialects and manages byte and decoded memory.
+Nested Any and extension-bearing schemas are unsupported, including unset fields.
+Unknown candidate fields retain byte/occurrence limits but receive no rule checks.
+Admission policy must decide whether to permit them. This internal helper provides
+no semantic review, authorization, retention or receipt. Publication stays disabled.
+
+Sol found no blocker. Tests exercise real length and CEL rules, exclusive choices,
+invalid schema CEL, URL/type mismatch, malformed bytes, limits, duplicate tags,
+unsupported schemas, cancellation and unknown fields. All 94 descriptor, 51 codec
+and 95 engine tests passed without failures or skips in 3s. Both repository runtime
+dependency gates passed. No protobuf definitions changed.

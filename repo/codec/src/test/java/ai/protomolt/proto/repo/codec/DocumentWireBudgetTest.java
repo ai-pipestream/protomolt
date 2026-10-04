@@ -1,5 +1,7 @@
 package ai.protomolt.proto.repo.codec;
 
+import ai.protomolt.proto.descriptors.MessageWireBudget;
+
 import ai.protomolt.proto.repo.v1.Document;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.CodedOutputStream;
@@ -58,11 +60,11 @@ class DocumentWireBudgetTest {
             }
         });
         assertThat(DynamicMessage.parseFrom(descriptor, packed)).isEqualTo(DynamicMessage.parseFrom(descriptor, unpacked));
-        new DocumentWireBudget(4, 10, () -> {}).check(packed, descriptor); // one envelope plus three values
-        assertThatThrownBy(() -> new DocumentWireBudget(3, 10, () -> {}).check(packed, descriptor))
+        new MessageWireBudget(4, 10, () -> {}).check(packed, descriptor); // one envelope plus three values
+        assertThatThrownBy(() -> new MessageWireBudget(3, 10, () -> {}).check(packed, descriptor))
                 .hasMessageContaining("value count");
-        new DocumentWireBudget(3, 10, () -> {}).check(unpacked, descriptor);
-        assertThatThrownBy(() -> new DocumentWireBudget(2, 10, () -> {}).check(unpacked, descriptor))
+        new MessageWireBudget(3, 10, () -> {}).check(unpacked, descriptor);
+        assertThatThrownBy(() -> new MessageWireBudget(2, 10, () -> {}).check(unpacked, descriptor))
                 .hasMessageContaining("value count");
     }
 
@@ -74,10 +76,10 @@ class DocumentWireBudgetTest {
             out.writeTag(1000, WireFormat.WIRETYPE_END_GROUP);
         });
         assertThat(Document.parseFrom(bytes).getDocId()).isEqualTo("last");
-        new DocumentWireBudget(5, 1, () -> {}).check(bytes, Document.getDescriptor());
-        assertThatThrownBy(() -> new DocumentWireBudget(4, 1, () -> {}).check(bytes, Document.getDescriptor()))
+        new MessageWireBudget(5, 1, () -> {}).check(bytes, Document.getDescriptor());
+        assertThatThrownBy(() -> new MessageWireBudget(4, 1, () -> {}).check(bytes, Document.getDescriptor()))
                 .hasMessageContaining("value count");
-        assertThatThrownBy(() -> new DocumentWireBudget(5, 0, () -> {}).check(bytes, Document.getDescriptor()))
+        assertThatThrownBy(() -> new MessageWireBudget(5, 0, () -> {}).check(bytes, Document.getDescriptor()))
                 .hasMessageContaining("depth");
     }
 
@@ -85,21 +87,21 @@ class DocumentWireBudgetTest {
         var descriptor = scalar(DescriptorProtos.FieldDescriptorProto.Type.TYPE_FIXED32);
         var bytes = wire(out -> { out.writeString(2, "opaque"); out.writeUInt32(1, 9); });
         assertThat(DynamicMessage.parseFrom(descriptor, bytes).getUnknownFields().asMap()).hasSize(2);
-        new DocumentWireBudget(2, 1, () -> {}).check(bytes, descriptor);
+        new MessageWireBudget(2, 1, () -> {}).check(bytes, descriptor);
     }
 
     @Test void malformedPackedFieldsAndGroupsCannotPassPreflight() throws Exception {
         var fixed = scalar(DescriptorProtos.FieldDescriptorProto.Type.TYPE_FIXED32);
         var misaligned = wire(out -> out.writeBytes(1, ByteString.copyFrom(new byte[] {1, 2, 3})));
-        assertThatThrownBy(() -> new DocumentWireBudget(100, 10, () -> {}).check(misaligned, fixed))
+        assertThatThrownBy(() -> new MessageWireBudget(100, 10, () -> {}).check(misaligned, fixed))
                 .isInstanceOf(InvalidProtocolBufferException.class);
         var integer = scalar(DescriptorProtos.FieldDescriptorProto.Type.TYPE_INT32);
         // Unterminated varint must not consume a following outer field.
         var truncated = wire(out -> { out.writeBytes(1, ByteString.copyFrom(new byte[] {(byte) 0x80})); out.writeInt32(2, 1); });
-        assertThatThrownBy(() -> new DocumentWireBudget(100, 10, () -> {}).check(truncated, integer))
+        assertThatThrownBy(() -> new MessageWireBudget(100, 10, () -> {}).check(truncated, integer))
                 .isInstanceOf(InvalidProtocolBufferException.class);
         for (var bytes : new byte[][] {{11}, {11, 20}, {12}, {10, 5, 1}}) {
-            assertThatThrownBy(() -> new DocumentWireBudget(100, 10, () -> {}).check(ByteString.copyFrom(bytes), Document.getDescriptor()))
+            assertThatThrownBy(() -> new MessageWireBudget(100, 10, () -> {}).check(ByteString.copyFrom(bytes), Document.getDescriptor()))
                     .isInstanceOf(InvalidProtocolBufferException.class);
         }
     }
@@ -109,7 +111,7 @@ class DocumentWireBudgetTest {
         var packed = wire(out -> out.writeBytes(1, ByteString.copyFrom(new byte[100])));
         var checks = new java.util.concurrent.atomic.AtomicInteger();
         var cancelled = new java.util.concurrent.CancellationException("stop preflight");
-        assertThatThrownBy(() -> new DocumentWireBudget(1000, 10, () -> {
+        assertThatThrownBy(() -> new MessageWireBudget(1000, 10, () -> {
             if (checks.incrementAndGet() == 20) throw cancelled;
         }).check(packed, descriptor)).isSameAs(cancelled);
     }
@@ -123,8 +125,8 @@ class DocumentWireBudgetTest {
             out.writeTag(1000, WireFormat.WIRETYPE_END_GROUP);
         });
         Document.parseFrom(bytes);
-        new DocumentWireBudget(5, 4, () -> {}).check(bytes, Document.getDescriptor());
-        assertThatThrownBy(() -> new DocumentWireBudget(4, 4, () -> {}).check(bytes, Document.getDescriptor()))
+        new MessageWireBudget(5, 4, () -> {}).check(bytes, Document.getDescriptor());
+        assertThatThrownBy(() -> new MessageWireBudget(4, 4, () -> {}).check(bytes, Document.getDescriptor()))
                 .hasMessageContaining("value count");
     }
 
@@ -133,7 +135,7 @@ class DocumentWireBudgetTest {
         for (var body : new byte[][] {{10, (byte) 0xff, (byte) 0xff, (byte) 0xff, (byte) 0xff, 15}, {10, 5, 1}}) {
             var bytes = wire(out -> out.writeBytes(bag, ByteString.copyFrom(body)));
             assertThatThrownBy(() -> Document.parseFrom(bytes)).isInstanceOf(InvalidProtocolBufferException.class);
-            assertThatThrownBy(() -> new DocumentWireBudget(100, 10, () -> {}).check(bytes, Document.getDescriptor()))
+            assertThatThrownBy(() -> new MessageWireBudget(100, 10, () -> {}).check(bytes, Document.getDescriptor()))
                     .isInstanceOf(InvalidProtocolBufferException.class);
         }
     }

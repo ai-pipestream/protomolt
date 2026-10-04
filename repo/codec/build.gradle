@@ -3,6 +3,7 @@ description = 'Descriptor-driven document parts and assembly without storage pro
 dependencies {
     api project(':protomolt-repo-proto')
     api libs.protobuf.java
+    implementation project(':protomolt-descriptors')
     implementation libs.protobuf.java.util
 }
 

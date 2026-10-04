@@ -1,5 +1,7 @@
 package ai.protomolt.proto.repo.codec;
 
+import ai.protomolt.proto.descriptors.MessageWireBudget;
+
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.DocumentPart;
 import com.google.protobuf.ByteString;
@@ -64,7 +66,7 @@ public final class DocumentRevisionAssembly {
         if (cores != 1) throw new IllegalArgumentException("Exactly one CORE fragment required");
         // Scan all fragments before creating a decoded Document. Packed values,
         // map entries and unknown groups share this structural allocation budget.
-        var wire = new DocumentWireBudget(limits.maxWireValues(), limits.maxDepth(), control);
+        var wire = new MessageWireBudget(limits.maxWireValues(), limits.maxDepth(), control);
         for (var fragment : original) wire.check(fragment.bytes(), Document.getDescriptor());
         var chunks = new DocumentChunkSequence(expectedDocId, limits.maxChunkElements());
         var assembled = Document.newBuilder();

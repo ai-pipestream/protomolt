@@ -1,4 +1,4 @@
-package ai.protomolt.proto.repo.codec;
+package ai.protomolt.proto.descriptors;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.CodedInputStream;
@@ -9,19 +9,31 @@ import com.google.protobuf.WireFormat;
 import java.io.IOException;
 import java.util.concurrent.CancellationException;
 
-/** Counts allocation-driving wire occurrences before decoding; not a JVM heap estimator. */
-final class DocumentWireBudget {
+/**
+ * Counts allocation-driving wire occurrences before decoding; not a JVM heap estimator.
+ * A caller must separately bound raw bytes and own their memory. Reuse one instance
+ * for an aggregate of fragments on one thread; discard it after any failed check.
+ * Unknown length-delimited fields stay opaque. Extension-registry fields and Any
+ * payload bytes need separate checks with their resolved descriptors.
+ */
+public final class MessageWireBudget {
     private final long limit;
     private final int maxDepth;
     private final Runnable control;
     private long values;
 
-    DocumentWireBudget(long limit, int maxDepth, Runnable control) {
+    public MessageWireBudget(long limit, int maxDepth, Runnable control) {
+        if (limit < 1 || maxDepth < 0 || maxDepth > 100) {
+            throw new IllegalArgumentException("positive wire value limit and depth from 0 to 100 required");
+        }
+        java.util.Objects.requireNonNull(control, "control");
         this.limit = limit; this.maxDepth = maxDepth; this.control = control;
     }
 
     /** Reuse the same budget for every fragment. No field payload is copied or materialized. */
-    void check(ByteString bytes, Descriptor descriptor) throws InvalidProtocolBufferException {
+    public void check(ByteString bytes, Descriptor descriptor) throws InvalidProtocolBufferException {
+        java.util.Objects.requireNonNull(bytes, "bytes");
+        java.util.Objects.requireNonNull(descriptor, "descriptor");
         var input = bytes.newCodedInput();
         try {
             scan(input, descriptor, 0, 0);
@@ -31,7 +43,7 @@ final class DocumentWireBudget {
     }
 
     private void scan(CodedInputStream input, Descriptor descriptor, int depth, int endGroup) throws IOException {
-        if (depth > maxDepth) throw malformed("Document wire depth exceeds bound");
+        if (depth > maxDepth) throw malformed("Message wire depth exceeds bound");
         while (true) {
             active();
             int tag = input.readTag();
@@ -95,12 +107,12 @@ final class DocumentWireBudget {
     }
 
     private void charge(long count) {
-        if (count > limit - values) throw new IllegalArgumentException("Document wire value count exceeds bound");
+        if (count > limit - values) throw new IllegalArgumentException("Message wire value count exceeds bound");
         values += count;
     }
 
     private void active() {
-        if (Thread.currentThread().isInterrupted()) throw new CancellationException("Document wire scan interrupted");
+        if (Thread.currentThread().isInterrupted()) throw new CancellationException("Message wire scan interrupted");
         control.run();
     }
 
