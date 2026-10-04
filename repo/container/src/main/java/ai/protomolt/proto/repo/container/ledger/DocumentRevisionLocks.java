@@ -9,19 +9,26 @@ import java.util.TreeSet;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
-/** Staging locks only; callers authorize all rows before comparing requested revisions. */
-final class DocumentAdmissionLocks {
-    private DocumentAdmissionLocks() {}
+/** Ordered read/write revision locks. Callers own authorization and expected-revision checks. */
+final class DocumentRevisionLocks {
+    private DocumentRevisionLocks() {}
 
     static Map<UUID,DocumentRecord> lock(EntityManager em, Set<UUID> destinations, Set<UUID> sources) {
-        if (!em.getTransaction().isActive()) throw new IllegalStateException("Admission locks require an active transaction");
+        if (!em.getTransaction().isActive()) throw new IllegalStateException("Revision locks require an active transaction");
         if (destinations.size()>64 || sources.size()>10000)
-            throw new IllegalArgumentException("Admission exceeds 64 destinations or 10000 sources");
+            throw new IllegalArgumentException("Revision locks exceed 64 destinations or 10000 sources");
         var identities=new TreeSet<>(sources); identities.addAll(destinations);
         if (identities.isEmpty()) return Map.of();
-        // SQL promotes collisions to the strongest mode before acquiring any key.
-        em.createNativeQuery("SELECT lock_document_admission_keys(CAST(:reads AS bigint[]),CAST(:writes AS bigint[]))")
-                .setParameter("reads",keys(sources)).setParameter("writes",keys(destinations)).getSingleResult();
+        if (destinations.containsAll(sources)) {
+            // An all-write set uses the established exclusive batch protocol.
+            // No database capability probing or alternate correctness path.
+            em.createNativeQuery("SELECT lock_document_revision_keys(CAST(:keys AS bigint[]))")
+                    .setParameter("keys",keys(destinations)).getSingleResult();
+        } else {
+            // SQL promotes collisions to the strongest mode before acquiring any key.
+            em.createNativeQuery("SELECT lock_document_admission_keys(CAST(:reads AS bigint[]),CAST(:writes AS bigint[]))")
+                    .setParameter("reads",keys(sources)).setParameter("writes",keys(destinations)).getSingleResult();
+        }
         var ordered=List.copyOf(identities);
         Map<UUID,DocumentRecord> locked=new HashMap<>();
         identities.forEach(id -> locked.put(id,null));

@@ -167,7 +167,7 @@ against exclusive retirement/reclamation, with stable global ordering and no loc
 upgrades. Cleanup and publication must use the same discipline. Merely changing a
 single trigger's lock mode is insufficient to establish safety.
 
-V41 removes exclusive source locking from typed staging. `DocumentAdmissionLocks`
+V41 removes exclusive source locking from typed staging. `DocumentRevisionLocks`
 classifies destinations as writes and source-only identities as reads, choosing
 the strongest advisory mode across identity/hash collisions before any row lock.
 It preserves global Java UUID row order through same-mode runs of at most 256 IDs;
@@ -175,8 +175,12 @@ read-only rows use FOR SHARE and destinations use FOR UPDATE. Destination-first
 row locking would conflict with existing multi-document deletion, which follows
 UUID row order without the advisory protocol. Current policy and raw mutation
 revision checks remain protected, and requested revisions are compared only after
-authorization. Publication must repeat these checks; its existing lock paths and
-the exclusive origin/retention guards have not changed.
+authorization. FULL_REVISION publication now uses the same shared-source/exclusive-
+destination row protocol and explicitly rechecks source revisions before any
+drive/attempt work. Native origin/retention guards remain exclusive. Publication
+callbacks may update destination bindings/outbox but must not modify source-only
+documents or upgrade their locks. Arbitrary `saveIfRevision` callbacks retain the
+older exclusive path.
 
 Performance acceptance includes independent destinations sharing one origin,
 independent origins, deliberate same-destination conflicts, multi-destination

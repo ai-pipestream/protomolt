@@ -41,10 +41,10 @@ class DocumentRevisionLockBatchIT {
         try (var holder=database.entityManagerFactory().createEntityManager()) {
             holder.getTransaction().begin();
             try {
-                DocumentAdmissionLocks.lock(holder,Set.of(first),Set.of(source));
+                DocumentRevisionLocks.lock(holder,Set.of(first),Set.of(source));
                 tx.inTransaction(em -> {
                     em.createNativeQuery("SET LOCAL lock_timeout='300ms'").executeUpdate();
-                    assertThat(DocumentAdmissionLocks.lock(em,Set.of(second),Set.of(source))).hasSize(2);
+                    assertThat(DocumentRevisionLocks.lock(em,Set.of(second),Set.of(source))).hasSize(2);
                 });
             } finally { holder.getTransaction().rollback(); }
         }
@@ -59,7 +59,7 @@ class DocumentRevisionLockBatchIT {
         statistics.setStatisticsEnabled(true); statistics.clear();
         long started=System.nanoTime();
         try {
-            var locked=tx.inTransaction(em -> { return DocumentAdmissionLocks.lock(em,destinations,sources); });
+            var locked=tx.inTransaction(em -> { return DocumentRevisionLocks.lock(em,destinations,sources); });
             assertThat(locked).hasSize(10064);
             assertThat(statistics.getPrepareStatementCount()).isLessThanOrEqualTo(1+40+128);
             System.out.printf("mixed_revision_lock sources=10000 destinations=64 client_statements=%d elapsed_ms=%.3f%n",
@@ -73,7 +73,7 @@ class DocumentRevisionLockBatchIT {
             em.find(DocumentRecord.class,id);
             tx.inTransaction(other -> { other.createNativeQuery("UPDATE documents SET security='{\"inheritanceEnabled\":true}' WHERE node_id=:id")
                     .setParameter("id",id).executeUpdate(); });
-            assertThatThrownBy(() -> DocumentAdmissionLocks.lock(em,Set.of(),Set.of(id)))
+            assertThatThrownBy(() -> DocumentRevisionLocks.lock(em,Set.of(),Set.of(id)))
                     .isInstanceOf(DocumentLedger.RevisionConflictException.class);
         });
     }
@@ -94,7 +94,7 @@ class DocumentRevisionLockBatchIT {
         try (var holder=database.entityManagerFactory().createEntityManager()) {
             holder.getTransaction().begin();
             try {
-                DocumentAdmissionLocks.lock(holder,Set.of(),Set.of(source));
+                DocumentRevisionLocks.lock(holder,Set.of(),Set.of(source));
                 for (String sql : List.of("UPDATE documents SET security='{}' WHERE node_id=:id",
                         "DELETE FROM documents WHERE node_id=:id")) {
                     assertThatThrownBy(() -> tx.inTransaction(em -> {
@@ -112,7 +112,7 @@ class DocumentRevisionLockBatchIT {
         try (var holder=database.entityManagerFactory().createEntityManager()) {
             holder.getTransaction().begin();
             try {
-                DocumentAdmissionLocks.lock(holder,Set.of(destination),Set.of(source,destination));
+                DocumentRevisionLocks.lock(holder,Set.of(destination),Set.of(source,destination));
                 long sharedAdvisories=((Number)holder.createNativeQuery("""
                         SELECT count(*) FROM pg_locks WHERE pid=pg_backend_pid()
                         AND locktype='advisory' AND mode='ShareLock'
@@ -120,7 +120,7 @@ class DocumentRevisionLockBatchIT {
                 assertThat(sharedAdvisories).isZero();
                 assertThatThrownBy(() -> tx.inTransaction(em -> {
                     em.createNativeQuery("SET LOCAL lock_timeout='100ms'").executeUpdate();
-                    DocumentAdmissionLocks.lock(em,Set.of(),Set.of(source));
+                    DocumentRevisionLocks.lock(em,Set.of(),Set.of(source));
                 })).hasStackTraceContaining("lock timeout");
                 tx.inTransaction(em -> {
                     // Promotion of the aliased advisory key must not turn a
@@ -147,7 +147,7 @@ class DocumentRevisionLockBatchIT {
             var pid=new CompletableFuture<Integer>();
             var future=executor.submit(() -> tx.inTransaction(em -> {
                 pid.complete(pid(em));
-                return DocumentAdmissionLocks.lock(em,Set.of(destination),Set.of(source));
+                return DocumentRevisionLocks.lock(em,Set.of(destination),Set.of(source));
             }));
             try {
                 awaitLock(pid.get(10,TimeUnit.SECONDS));

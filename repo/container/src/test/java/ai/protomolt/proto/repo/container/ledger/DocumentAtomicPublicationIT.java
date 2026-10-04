@@ -541,6 +541,78 @@ class DocumentAtomicPublicationIT {
         assertThat(documents.findByNodeId(source.nodeId).orElseThrow().mutationRevision).isEqualTo(source.mutationRevision);
     }
 
+    @ParameterizedTest @ValueSource(booleans={false,true})
+    void independentPublicationsShareSourceUntilCommitOrRollback(boolean commitFirst) throws Exception {
+        var source=publish(fixture(null),(em,row) -> {});
+        var snapshot=DocumentSourceSnapshot.bound(tx,source);
+        var first=fixture(null,Duration.ofMinutes(5),Map.of(source.nodeId,source.mutationRevision));
+        var second=fixture(null,Duration.ofMinutes(5),Map.of(source.nodeId,source.mutationRevision));
+        var entered=new java.util.concurrent.CompletableFuture<Void>();
+        var release=new java.util.concurrent.CompletableFuture<Void>();
+        try (var executor=java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var held=executor.submit(() -> DocumentPublicationBatch.save(tx,List.of(entry(first,List.of(snapshot),(em,row) -> {
+                new JdbcEventOutbox(tx).enqueue(em,DocumentEventFactory.saved(row,Instant.now()));
+                entered.complete(null);
+                try { release.get(15,java.util.concurrent.TimeUnit.SECONDS); }
+                catch (Exception failure) { throw new IllegalStateException("Publication test barrier failed",failure); }
+                if (!commitFirst) throw new IllegalStateException("rollback first publication");
+            }))));
+            try {
+                entered.get(10,java.util.concurrent.TimeUnit.SECONDS);
+                var independent=executor.submit(() -> DocumentPublicationBatch.save(tx,List.of(
+                        entry(second,List.of(snapshot),(em,row) ->
+                                new JdbcEventOutbox(tx).enqueue(em,DocumentEventFactory.saved(row,Instant.now()))))));
+                assertThat(independent.get(3,java.util.concurrent.TimeUnit.SECONDS)).hasSize(1);
+                assertThat(held.isDone()).isFalse();
+                assertThat(documents.findByNodeId(first.row.nodeId)).isEmpty();
+                for (String sql : List.of("UPDATE documents SET security='{}' WHERE node_id=:id",
+                        "DELETE FROM documents WHERE node_id=:id")) {
+                    assertThatThrownBy(() -> tx.inTransaction(em -> {
+                        em.createNativeQuery("SET LOCAL lock_timeout='100ms'").executeUpdate();
+                        em.createNativeQuery(sql).setParameter("id",source.nodeId).executeUpdate();
+                    })).hasStackTraceContaining("lock timeout");
+                }
+                release.complete(null);
+                if (commitFirst) assertThat(held.get(10,java.util.concurrent.TimeUnit.SECONDS)).hasSize(1);
+                else assertThatThrownBy(() -> held.get(10,java.util.concurrent.TimeUnit.SECONDS))
+                        .hasCauseInstanceOf(IllegalStateException.class).hasRootCauseMessage("rollback first publication");
+                assertThat(historyCount(first.attempt.id())).isEqualTo(commitFirst ? 1 : 0);
+                assertThat(sharedReferences(first.attempt.id())).isEqualTo(commitFirst ? 2 : 0);
+                assertThat(eventCount(first.row.docId)).isEqualTo(commitFirst ? 1 : 0);
+                assertThat(historyCount(second.attempt.id())).isEqualTo(1);
+                assertThat(sharedReferences(second.attempt.id())).isEqualTo(2);
+                assertThat(eventCount(second.row.docId)).isEqualTo(1);
+                assertThat(documents.findByNodeId(source.nodeId).orElseThrow().mutationRevision).isEqualTo(source.mutationRevision);
+            } finally { release.complete(null); }
+        }
+    }
+
+    @Test void publicationRejectsSourceChangedWhileWaitingForSharedRowLock() throws Exception {
+        var source=publish(fixture(null),(em,row) -> {});
+        var snapshot=DocumentSourceSnapshot.bound(tx,source);
+        var copy=fixture(null,Duration.ofMinutes(5),Map.of(source.nodeId,source.mutationRevision));
+        var callbacks=new java.util.concurrent.atomic.AtomicInteger();
+        try (var holder=database.entityManagerFactory().createEntityManager();
+             var executor=java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            holder.getTransaction().begin();
+            int pid=((Number)holder.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue();
+            holder.createNativeQuery("UPDATE documents SET filename='changed-before-publication' WHERE node_id=:id")
+                    .setParameter("id",source.nodeId).executeUpdate();
+            var pending=executor.submit(() -> DocumentPublicationBatch.save(tx,List.of(
+                    entry(copy,List.of(snapshot),(em,row) -> callbacks.incrementAndGet()))));
+            try {
+                awaitDatabaseWait(pid);
+                holder.getTransaction().commit();
+                assertThatThrownBy(() -> pending.get(10,java.util.concurrent.TimeUnit.SECONDS))
+                        .hasCauseInstanceOf(DocumentLedger.RevisionConflictException.class);
+                assertThat(callbacks.get()).isZero();
+                assertThat(historyCount(copy.attempt.id())).isZero();
+                assertThat(sharedReferences(copy.attempt.id())).isZero();
+                assertThat(documents.findByNodeId(copy.row.nodeId)).isEmpty();
+            } finally { if(holder.getTransaction().isActive()) holder.getTransaction().rollback(); }
+        }
+    }
+
     @Test void failureAfterBothMergesRollsBackEveryPublicationReferenceAndOutbox() {
         var first = fixture(null);
         var second = fixture(null);

@@ -61,7 +61,7 @@ final class DocumentAdmissionAuthorization {
             DocumentUploadPlan.Prepared plan, Prepared prepared) {
         // Lock every address first, but authorize before exposing revision mismatches.
         // Otherwise a source revision conflict can disclose a document the caller cannot read.
-        var locked = DocumentAdmissionLocks.lock(em, prepared.destinations(), prepared.sources().keySet());
+        var locked = DocumentRevisionLocks.lock(em, prepared.destinations(), prepared.sources().keySet());
         for (var source : prepared.sources().entrySet()) {
             var row = locked.get(source.getKey());
             requireIdentity(row, source.getValue().getAddress());

@@ -14,7 +14,8 @@ import java.util.function.BiConsumer;
  * Internal SQL publication primitive, not the public repository commit contract.
  * All provider work must finish before entry. Callbacks may persist outbox rows,
  * but must not perform network I/O, start another transaction, or lock unrelated
- * documents/attempts. Cross-document immutable part reuse needs a new lock audit.
+ * documents/attempts or modify read-only sources. Cross-document immutable part
+ * reuse needs a new lock audit.
  * Prepared candidate records are thread-confined for the duration of save.
  */
 final class DocumentPublicationBatch {
@@ -106,7 +107,9 @@ final class DocumentPublicationBatch {
         var destinations = prepared.destinations;
         var sources = prepared.sources;
         long candidateParts = prepared.candidateParts;
-        var locked = DocumentLedger.lockRevisions(em, destinations, sources);
+        var locked = DocumentRevisionLocks.lock(em, destinations, sources.keySet());
+        for (var source : sources.entrySet())
+            DocumentLedger.requireRevision(locked.get(source.getKey()), source.getValue());
 
         if (batch.size() > 1) {
             long affectedParts = candidateParts;

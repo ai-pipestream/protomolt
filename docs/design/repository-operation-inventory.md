@@ -2202,9 +2202,10 @@ destinations sharing a source timed out, and a source-row share probe failed aft
 an advisory collision. Tests now also cover a complete pair of admissions with
 one held after selection insertion, direct policy/deletion conflicts, self-source
 and alias promotion, mixed-mode row ordering against a direct writer, malformed
-SQL arrays, cached-policy staleness and a large interleaved batch. Publication and
-retention lock modes are unchanged. This is staging concurrency evidence, not
-mixed-publication or provider throughput qualification.
+SQL arrays, cached-policy staleness and a large interleaved batch. Native retention
+lock modes remain exclusive. FULL_REVISION publication subsequently adopted the
+same shared-source protocol as described below; neither change qualifies mixed
+publication or provider throughput.
 
 Local validation on 2026-10-04: container/service regression passed in 2m31s:
 108 suites, 944 cases, 941 passed, 3 skipped, no failures/errors. Sol reviewed the
@@ -2213,3 +2214,40 @@ final SQL, Java, tests and design with no blocker. The interleaved 10000-source,
 this uncontrolled run. That is a diagnostic measurement, not a throughput or
 production tail-latency result. The held-selection test establishes concurrent
 staging progress; provider I/O and mixed publication remain outside its scope.
+
+### Shared source documents during FULL_REVISION publication
+
+Extended existing publication behavior. The internal mixed lock helper is now
+`DocumentRevisionLocks`, shared by typed staging and `DocumentPublicationBatch`.
+Publication explicitly compares every locked source revision before drive/attempt
+validation. Source snapshots continue to acquire shared row locks; self-sources
+are destinations and receive exclusive locks from the start. The older generic
+`DocumentLedger.lockRevisions` path is retained for arbitrary revision-save
+callbacks. Protobuf contracts and native retention guards are unchanged.
+
+The supported publication callback updates destination raw bindings and outbox;
+it must not modify a source-only document or acquire a stronger source lock.
+Raw-object reference maintenance still has its own locks, and the concurrency
+cases here do not qualify shared raw-object contention or provider throughput.
+FULL_REVISION owners cannot yet reuse another owner's physical origin. Changing
+only the common retention guard would therefore neither demonstrate that future
+concurrency nor remove the exclusive locks in the surrounding V22/V39 paths.
+Independent revision publication still needs a complete shared-reference and
+exclusive-retirement protocol with no lock upgrades before activation.
+
+Real PostgreSQL tests hold one publication after native history/current insertion
+and outbox enqueue, then require another destination reading the same source to
+commit before release. Both commit and rollback cases first timed out against the
+old exclusive source path, then passed after the change. The tests also verify
+source UPDATE/DELETE conflicts, source revision changes during an observed row-lock
+wait, and no history/reference/outbox leakage from an aborted publication. SQL
+fixtures use synthetic verification observations; they do not represent new
+provider qualification.
+
+Validation on 2026-10-04 UTC: the final container/service run passed in 2m22s:
+108 suites, 947 cases, 944 passed, 3 skipped, no failures/errors. All 60 atomic
+publication cases passed. The first full run exposed pre-V41 migration fixtures
+calling the mixed-mode SQL function. All-write sets now explicitly use the V37
+exclusive batch function; source-only reads require V41. The populated migration
+cases passed after this change. There is no database capability probe. Sol reviewed
+the final dispatch and documentation with no blocker. Work remains local.
