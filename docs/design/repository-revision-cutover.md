@@ -1363,3 +1363,44 @@ only `type_url` (field 1, string) and `value` (field 2, bytes), without repeated
 required fields, oneof membership or explicit defaults. Additional known fields
 must not escape validation through the special Any traversal. This check does not
 require ordinary opaque archival intake to resolve or decode an Any payload.
+
+### Reviewed occurrence representation
+
+Implement the in-memory representation before adding persisted protobuf fields.
+Each occurrence is an immutable path beginning with the root Any boundary. Its
+steps distinguish a numbered field, a zero-based repeated index, a typed map key,
+and an Any boundary. A boundary contains the exact type URL, SHA-256 of the
+effective `Any.value`, and the exact descriptor artifact SHA-256. Ordinary nested
+messages remain covered by that boundary's complete descriptor closure. Keep the
+root part/rendition selector outside the payload path.
+
+`Field(map_number), MapKey(declared_scalar_type, decoded_key)` selects the map
+value directly. Do not include synthetic map-entry field 2 in persisted identity.
+Still inspect the entry message and its unknown fields during validation. An
+omitted message value has protobuf's default-message semantics; an omitted Any
+therefore has an empty type URL and cannot pass strict typed admission. The real
+wire-decode fixture `archivalMapCannotSkipAnOmittedAnyValue` verifies that the
+current parser/traversal already rejects it before invoking the schema resolver.
+No special omission fallback is needed.
+
+Emit evidence only after the entire candidate passes the real validator. Apply
+independent positive limits to occurrence count, total retained path steps and
+total UTF-8 path text bytes, using overflow-safe accounting before copying a
+retained path. Charge each retained occurrence for its ancestor steps, repeated
+URLs and string map keys, even when immutable step objects share storage. Existing
+aggregate decoded-byte limits bound payload hashing separately. Reject duplicate
+final paths. Evidence is semantically an unordered set; before persistence, sort
+its canonical path encodings rather than depending on map iteration order.
+
+The eventual protobuf encoding needs a version and a step oneof. Map keys need
+an explicit allowed-key-type enum and signed, unsigned, boolean or string value
+oneof. Java descriptor enum ordinals are not a wire format. Handler checks must
+verify that each step agrees with the retained descriptor, including field kind,
+index bounds and key type. Reject unknown evidence fields and unsupported encoding
+versions. Shape validation alone cannot prove that a path belongs to the admitted
+candidate. Root and nested paths must be emitted by the same trusted traversal
+and committed with that candidate's revision and admission identity.
+
+This representation was reviewed before implementation. The collector, persisted
+contract, canonical encoding and revision references remain acceptance work;
+this section does not claim that occurrence evidence is already emitted.

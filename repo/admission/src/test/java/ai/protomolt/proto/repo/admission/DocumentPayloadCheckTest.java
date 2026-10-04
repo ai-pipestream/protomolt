@@ -32,6 +32,32 @@ class DocumentPayloadCheckTest {
     private static final DocumentPayloadCheck.Limits LIMITS = new DocumentPayloadCheck.Limits(1024, 100, 10, 100, 1000);
 
     @Test
+    void archivalMapCannotSkipAnOmittedAnyValue() throws Exception {
+        var entry = DescriptorProto.newBuilder().setName("ItemsEntry")
+                .setOptions(MessageOptions.newBuilder().setMapEntry(true))
+                .addField(FieldDescriptorProto.newBuilder().setName("key").setNumber(1).setType(FieldDescriptorProto.Type.TYPE_STRING))
+                .addField(FieldDescriptorProto.newBuilder().setName("value").setNumber(2).setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                        .setTypeName(".google.protobuf.Any"));
+        var definition = DescriptorProto.newBuilder().setName("MapWrapper").addNestedType(entry)
+                .addField(FieldDescriptorProto.newBuilder().setName("items").setNumber(1)
+                        .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED).setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                        .setTypeName(".payload.MapWrapper.ItemsEntry"));
+        var file = FileDescriptorProto.newBuilder().setName("map-wrapper.proto").setPackage("payload").setSyntax("proto3")
+                .addDependency("google/protobuf/any.proto").addMessageType(definition).build();
+        var schema = binding(FileDescriptor.buildFrom(file, new FileDescriptor[]{Any.getDescriptor().getFile()})
+                .findMessageTypeByName("MapWrapper"));
+        var field = schema.type().findFieldByNumber(1);
+        var missing = DynamicMessage.newBuilder(field.getMessageType())
+                .setField(field.getMessageType().findFieldByNumber(1), "missing").build();
+        var data = DynamicMessage.newBuilder(schema.type()).addRepeatedField(field, missing).build();
+        String url = "type.protomolt.test/payload.MapWrapper";
+        var candidate = Any.newBuilder().setTypeUrl(url).setValue(data.toByteString()).build();
+        assertThatThrownBy(() -> DocumentPayloadCheck.checkAssets(asset(schema, url), candidate, url, validator(), LIMITS,
+                () -> {}, nested -> { throw new AssertionError("empty Any must not reach resolver"); }))
+                .hasMessageContaining("invalid Any type URL");
+    }
+
+    @Test
     void rejectsAlteredAnyEnvelopeSemanticsBeforeResolution() throws Exception {
         var canonical = DescriptorProto.newBuilder().setName("Any")
                 .addField(FieldDescriptorProto.newBuilder().setName("type_url").setNumber(1)
