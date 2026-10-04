@@ -5287,3 +5287,36 @@ reader incarnation, pin drain/release and recoverable cleanup handles. Transport
 error mapping must distinguish invalid candidate input from corrupt retained
 content before a public adapter is mounted. Schema staging and the native commit
 remain explicit after preparation; no protobuf fields or public RPCs change.
+
+### Bounded ownership of document reader cleanup
+
+Extended `DocumentReadLedger` retains successfully captured handles until their
+SQL release or recovery succeeds. Capture admission reserves a slot before SQL;
+failed captures return it. Closed but undrained handles and drained handles with
+failed releases still consume capacity. The default is 32 outstanding reads per
+ledger, with an explicit constructor limit for the host. This bounds handle
+count, not total JVM heap or physical pin count; per-command limits and payload
+reservations remain separate.
+
+New `releaseDrained(limit)` retries a bounded selection of closed, actually
+drained handles. It performs SQL outside the lifetime monitor, reports failures
+with their causes, keeps failed handles for retry and rotates them behind other
+candidates. Direct and sweep releases share the same per-handle serialization;
+concurrent sweep calls count a successful local release transition only once.
+Open plans are never closed automatically, and future cancellation is not proof
+that a provider stopped. `outstandingReads()` includes captures in progress.
+
+PostgreSQL tests cover capacity before and after drain, denied and concurrent
+capture, competing release passes, real lock-timeout failures for multiple pin
+sets, and successful bounded retries after the lock is removed. Caller references
+are dropped after closing the plans in the SQL-failure test, so the ledger must
+retain their cleanup handles itself.
+
+This does not complete durable host recovery. An unknown SQL capture outcome
+still requires incarnation-scoped discovery after proven quiescence. A lost
+release acknowledgment followed by physical-object cleanup also needs explicit
+reconciliation of the exact captured pin identities: V45 currently requires
+registered objects even for an absent pin. Preserve its rejection of unregistered
+or mismatched claims rather than weakening that check to make retries appear
+successful. Add fault tests for both unknown outcomes before claiming the mounted
+host recovery path complete.

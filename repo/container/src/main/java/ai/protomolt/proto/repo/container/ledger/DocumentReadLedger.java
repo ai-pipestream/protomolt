@@ -4,6 +4,7 @@ import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.LinkedHashSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -21,9 +22,19 @@ public final class DocumentReadLedger {
     private int activeLifetimes;
     private boolean fenced;
     private boolean quiesced;
+    private final int maxOutstandingReads;
+    private int outstandingReads;
+    private final LinkedHashSet<PinnedRead<?>> retainedReads = new LinkedHashSet<>();
 
     /** Duplicate identities fail; a restarted owner must register a fresh UUID. */
     public DocumentReadLedger(Tx tx, UUID incarnation) {
+        this(tx, incarnation, 32);
+    }
+
+    /** Bounds captures, active batches and drained handles awaiting successful SQL release together. */
+    public DocumentReadLedger(Tx tx, UUID incarnation, int maxOutstandingReads) {
+        if (maxOutstandingReads < 1) throw new IllegalArgumentException("Outstanding read limit must be positive");
+        this.maxOutstandingReads = maxOutstandingReads;
         this.tx = Objects.requireNonNull(tx);
         this.incarnation = Objects.requireNonNull(incarnation);
         tx.inTransaction(em -> {
@@ -35,17 +46,15 @@ public final class DocumentReadLedger {
     /** Counts capture itself, so fencing cannot attest quiescence during SQL admission. */
     PinnedPlan capture(DocumentOperationUploadAdmission admission, RepositoryCaller caller,
             RepositoryOperationLedger.Owner owner, DocumentOperationUploadAdmission.Prepared prepared) {
-        synchronized (lifetime) {
-            if (admissionClosed) throw new IllegalStateException("Reader admission is closed");
-            activeLifetimes++;
-        }
+        beginCapture();
         boolean handedOff = false;
         try {
             var result = new PinnedPlan(admission.capturePinnedReads(caller, owner, prepared, incarnation));
+            synchronized (lifetime) { retainedReads.add(result); }
             handedOff = true;
             return result;
         } finally {
-            if (!handedOff) synchronized (lifetime) { activeLifetimes--; }
+            if (!handedOff) failedCapture();
         }
     }
 
@@ -56,10 +65,7 @@ public final class DocumentReadLedger {
     public PinnedHistory captureHistorical(RepositoryCaller caller,
             ai.protomolt.proto.repo.v1.NodeAddress address, UUID revision) {
         Objects.requireNonNull(address); Objects.requireNonNull(revision);
-        synchronized (lifetime) {
-            if (admissionClosed) throw new IllegalStateException("Reader admission is closed");
-            activeLifetimes++;
-        }
+        beginCapture();
         boolean handedOff = false;
         try {
             var captured = tx.inTransaction(em -> {
@@ -70,11 +76,58 @@ public final class DocumentReadLedger {
                 return DocumentReadPins.acquireHistorical(em, plan, incarnation);
             });
             var result = new PinnedHistory(captured, caller);
+            synchronized (lifetime) { retainedReads.add(result); }
             handedOff = true;
             return result;
         } finally {
-            if (!handedOff) synchronized (lifetime) { activeLifetimes--; }
+            if (!handedOff) failedCapture();
         }
+    }
+
+    private void beginCapture() {
+        synchronized (lifetime) {
+            if (admissionClosed) throw new IllegalStateException("Reader admission is closed");
+            if (outstandingReads == maxOutstandingReads)
+                throw new ai.protomolt.proto.repo.spi.RepositoryException(
+                        ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED,
+                        "Outstanding document read capacity exhausted");
+            outstandingReads++; activeLifetimes++;
+        }
+    }
+
+    private void failedCapture() {
+        synchronized (lifetime) { outstandingReads--; activeLifetimes--; }
+    }
+
+    /** Includes in-progress captures and drained handles whose SQL release has not succeeded. */
+    public int outstandingReads() { synchronized (lifetime) { return outstandingReads; } }
+
+    /**
+     * Retry at most limit drained handles without holding the lifetime monitor over
+     * SQL. Never closes active plans or treats cancellation as drain. Failures stay
+     * owned and move behind other candidates; all failures in this pass are reported.
+     * The host supplies bounded SQL timeouts and schedules retries/shutdown itself.
+     */
+    public int releaseDrained(int limit) {
+        if (limit < 1) throw new IllegalArgumentException("Release batch limit must be positive");
+        final java.util.List<PinnedRead<?>> ready;
+        synchronized (lifetime) {
+            ready = retainedReads.stream().filter(PinnedRead::isDrained).limit(limit).toList();
+        }
+        int completed = 0;
+        IllegalStateException failures = null;
+        for (var read : ready) {
+            try { if (read.finish(false)) completed++; }
+            catch (RuntimeException failure) {
+                synchronized (lifetime) {
+                    if (retainedReads.remove(read)) retainedReads.add(read);
+                }
+                if (failures == null) failures = new IllegalStateException("Document read pin release failed; handles retained for retry", failure);
+                else failures.addSuppressed(failure);
+            }
+        }
+        if (failures != null) throw failures;
+        return completed;
     }
 
     /** Stops new capture and new Uses permanently; existing Uses still own their work. */
@@ -221,13 +274,17 @@ public final class DocumentReadLedger {
         /** Requires local drain and V46's durable QUIESCED proof; does not attest that proof. */
         public void recover() { finish(true); }
 
-        private void finish(boolean recovery) {
+        private boolean finish(boolean recovery) {
             if (!isDrained()) throw new IllegalStateException("Read plan must be closed and drained before release");
             synchronized (releaseLock) {
-                if (released) return;
+                if (released) return false;
                 if (recovery) DocumentReadPins.recover(tx, captured);
                 else DocumentReadPins.release(tx, captured);
                 released = true;
+                synchronized (lifetime) {
+                    if (retainedReads.remove(this)) outstandingReads--;
+                }
+                return true;
             }
         }
 
