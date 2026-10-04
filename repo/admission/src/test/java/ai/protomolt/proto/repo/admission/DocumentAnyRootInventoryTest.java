@@ -18,6 +18,39 @@ class DocumentAnyRootInventoryTest {
     private static final Any OPAQUE = Any.newBuilder().setTypeUrl("missing/unknown.Record")
             .setValue(ByteString.copyFrom(new byte[]{(byte) 0xff})).build();
 
+    @Test void inventoriesEveryDeclaredAnyLocationInTheCurrentDocumentDescriptorGraph() {
+        var paths = new java.util.TreeSet<String>();
+        collectAnyPaths(Document.getDescriptor(), "", new java.util.HashSet<>(), paths);
+        assertThat(paths).containsExactly("parser_results.value.document.shape", "structured_data");
+    }
+
+    private static void collectAnyPaths(com.google.protobuf.Descriptors.Descriptor type, String prefix,
+            java.util.Set<com.google.protobuf.Descriptors.Descriptor> ancestors, java.util.Set<String> paths) {
+        if (!ancestors.add(type)) {
+            assertThat(reachesAny(type, new java.util.HashSet<>()))
+                    .as("recursive Any-bearing root route needs explicit inventory coverage: %s", prefix).isFalse();
+            return;
+        }
+        for (var field : type.getFields()) {
+            if (field.getJavaType() != com.google.protobuf.Descriptors.FieldDescriptor.JavaType.MESSAGE) continue;
+            String path = prefix.isEmpty() ? field.getName() : prefix + "." + field.getName();
+            if (field.getMessageType().getFullName().equals("google.protobuf.Any")) paths.add(path);
+            else collectAnyPaths(field.getMessageType(), path, ancestors, paths);
+        }
+        ancestors.remove(type);
+    }
+
+    private static boolean reachesAny(com.google.protobuf.Descriptors.Descriptor type,
+            java.util.Set<com.google.protobuf.Descriptors.Descriptor> visited) {
+        if (!visited.add(type)) return false;
+        for (var field : type.getFields()) {
+            if (field.getJavaType() != com.google.protobuf.Descriptors.FieldDescriptor.JavaType.MESSAGE) continue;
+            if (field.getMessageType().getFullName().equals("google.protobuf.Any") || reachesAny(field.getMessageType(), visited))
+                return true;
+        }
+        return false;
+    }
+
     @Test void inventoriesActualSplitPartsWithoutResolvingOpaquePayloads() throws Exception {
         var document = Document.newBuilder().setDocId("doc").setStructuredData(OPAQUE)
                 .putParserResults("one", parser()).putParserResults("two", parser()).build();

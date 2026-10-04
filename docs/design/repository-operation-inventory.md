@@ -4035,3 +4035,36 @@ binding are runtime/handler obligations, not claims of OpenAPI parity.
 
 The five affected suites pass 346 tests. Scoped new-file Buf lint and complete
 import compatibility against `4f65a42bea3d74956b6dac6d989371d4dcb3ec3e` pass.
+
+### Strict evidence binding to one exact fragment
+
+`DocumentFragmentSchemaReplay` inventories an exact CORE or PARSED fragment once,
+using the caller-selected immutable slot, document ID and bound containing schema.
+It requires a one-to-one match between every discovered root and a complete
+recorded locator, including fragment hash/size, schema, layout and access path.
+Duplicate, missing, extra or mismatched root evidence fails before payload schema
+loading. Each effective root envelope then passes exact recorded-path replay;
+the helper returns a list only after every root succeeds.
+
+The fragment budget bounds root count and serialized bundle bytes. One decoded
+payload-byte allowance covers every root and its nested Any decodes; completed
+checks report their actual charged bytes before the next root starts. Exhausted
+allowance fails closed. Wire/schema/path limits also apply per root, so their
+aggregate upper bound is multiplied by the bounded root count. Descriptor and
+metadata allocation still require the host's operation-wide accounting.
+
+This is strict replay of all currently supported roots, not optional opaque
+materialization. An empty discovered root set is not proof that a typed-required
+document contract was met. A descriptor-graph regression now enumerates the
+current Document entry points: `structured_data` and
+`parser_results.value.document.shape`. It fails on another declared Any entry
+point or an Any-bearing recursive route needing explicit discovery support.
+Nested payload Any values remain the strict payload checker's responsibility.
+Other archival message contracts, future schema layouts, complete document
+coverage, revision authorization and atomic SQL evidence storage remain
+publisher/integration obligations.
+
+All five affected suites pass 351 tests. Actual split CORE/PARSED fixtures cover
+complete locator matching, absent/extra evidence, raw content and identity
+changes, aggregate budgets, exact exhaustion and cancellation during a later
+root's retained-schema read. No public operation or SQL publication path changes.

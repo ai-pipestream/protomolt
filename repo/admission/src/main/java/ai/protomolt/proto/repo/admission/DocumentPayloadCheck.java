@@ -39,14 +39,16 @@ final class DocumentPayloadCheck {
     private final DynamicMessage decoded;
     private final Map<SchemaKey, DocumentSchemaBinding> resolvedSchemas;
     private final java.util.List<DocumentSchemaOccurrences.Occurrence> occurrences;
+    private final long decodedBytes;
 
     private DocumentPayloadCheck(DocumentSchemaBinding schema, Any original, DynamicMessage decoded, Map<SchemaKey, DocumentSchemaBinding> resolvedSchemas,
-            java.util.List<DocumentSchemaOccurrences.Occurrence> occurrences) {
+            java.util.List<DocumentSchemaOccurrences.Occurrence> occurrences, long decodedBytes) {
         this.schema = schema;
         this.original = original;
         this.decoded = decoded;
         this.resolvedSchemas = Map.copyOf(resolvedSchemas);
         this.occurrences = java.util.List.copyOf(occurrences);
+        this.decodedBytes = decodedBytes;
     }
 
     DocumentSchemaBinding schema() { return schema; }
@@ -54,6 +56,7 @@ final class DocumentPayloadCheck {
     DynamicMessage decoded() { return decoded; }
     Map<SchemaKey, DocumentSchemaBinding> resolvedSchemas() { return resolvedSchemas; }
     java.util.List<DocumentSchemaOccurrences.Occurrence> occurrences() { return occurrences; }
+    long decodedBytes() { return decodedBytes; }
 
     /** In-memory evidence only; neither retention nor trusted compiler provenance is established. */
     record AssetResult(DocumentPayloadCheck payload, Map<SchemaKey, DocumentSchemaAssetBinding> assets) {
@@ -172,7 +175,7 @@ final class DocumentPayloadCheck {
         session.bindings.put(new SchemaKey(acceptedTypeUrl, schema.artifactSha256()), schema);
         DynamicMessage decoded = session.decodeBoundary(acceptedTypeUrl, schema, candidate.getValue(), 0);
         return new DocumentPayloadCheck(schema, candidate, decoded, session.bindings,
-                evidence == null ? java.util.List.of() : evidence.result());
+                evidence == null ? java.util.List.of() : evidence.result(), session.decodedBytes);
     }
 
     private static void requireUrl(String url, DocumentSchemaBinding schema) {
