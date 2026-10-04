@@ -5221,3 +5221,18 @@ it, and replays the retained custom type in a fresh JVM. This proves the compose
 internal path. The production host still needs to supply this orchestration,
 authorized schema/backend resolution and shutdown/recovery lifecycle; no new
 public RPC is available from this change.
+
+### Retained-read composition port
+
+New `DocumentRetainedReader` is a container-owned host port accepting a
+ledger-issued `PinnedPlan`, member identity and read control. Its closeable batch
+exposes ordered borrowed `PartObject` values. `DocumentPartReader` and
+`DocumentReadBatch` implement these interfaces directly; existing engine callers
+retain their concrete return types. No production container-to-engine dependency
+or protobuf change is introduced.
+
+The real-provider retained-read tests invoke the port and verify reordered source
+slots with upload/EMPTY ordinal gaps, exact bytes, capacity refusal, and reader
+pins held through batch consumption or actual cancelled-worker exit. Host shutdown
+and pin release remain explicit. This port supports the facade design recorded in
+`repository-composition.md`; it does not itself mount native publication.

@@ -22,7 +22,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 /** Original-backend reads of an already-authorized, published document snapshot. */
-public final class DocumentPartReader implements AutoCloseable {
+public final class DocumentPartReader implements AutoCloseable,
+        ai.protomolt.proto.repo.container.ledger.DocumentRetainedReader {
     @FunctionalInterface
     public interface BackendResolver {
         /**
@@ -173,7 +174,7 @@ public final class DocumentPartReader implements AutoCloseable {
      * and returned batch ownership. The coordinator closes the plan, awaits drain
      * and releases its SQL pins separately. Cancellation does not imply drain.
      */
-    public DocumentReadBatch readRetained(DocumentReadLedger.PinnedPlan plan,
+    @Override public DocumentReadBatch readRetained(DocumentReadLedger.PinnedPlan plan,
             String memberId, RepositoryReadControl control) {
         try (var setup = Objects.requireNonNull(plan).use()) {
             return readRetained(setup.plan(), memberId, control, setup);

@@ -11,7 +11,7 @@ import java.util.concurrent.CancellationException;
  * source reuse/staging, then close. Arrays or lists retained after close are outside
  * budget accounting. Closing never closes the borrowed provider.
  */
-public final class DocumentReadBatch implements AutoCloseable {
+public final class DocumentReadBatch implements ai.protomolt.proto.repo.container.ledger.DocumentRetainedReader.Batch {
     private final PayloadBudget.Lease reservation;
     private final DocumentReadLedger.PinnedRead<?>.Use protection;
     private List<PartObject> parts;
@@ -43,7 +43,7 @@ public final class DocumentReadBatch implements AutoCloseable {
         this.parts = List.copyOf(parts);
     }
 
-    public synchronized List<PartObject> parts() {
+    @Override public synchronized List<PartObject> parts() {
         if (closed) throw new IllegalStateException("Document read batch is closed");
         if (parts == null) throw new IllegalStateException("Document read batch is incomplete");
         return parts;

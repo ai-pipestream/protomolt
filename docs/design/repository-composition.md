@@ -2661,3 +2661,41 @@ through proof use; the returned proof reference is borrowed until its owner clos
 The host coordinator must compose fragment and proof owners through staging and
 commit, account for provider/SQL/transport copies, and drain consumers before
 closing them. That full host integration remains required.
+
+### Production publication boundary and retained-reader port
+
+Keep the native publication facade in `repo-container`, where it can compose
+operation admission, policy selection, placement checks, reader-pin capture,
+upload preparation, candidate ownership, staging and commit without exposing
+their package-private handles. Owner tokens and executable plans are not public
+request data. A separate shared publication operation should use the existing
+canonical command and result contracts; it must not silently change the current
+`DocumentRepository.saveDocument` or current-read semantics.
+
+`RepoServices` is the composition root for the container and engine. Inject the
+new `DocumentRetainedReader` port into the publication facade. The engine's
+`DocumentPartReader` implements it directly, and its closeable batch implements
+the port's borrowed-payload contract. The container gains no engine dependency.
+Only the pinned read overload is part of this port; an unprotected plan must not
+replace a ledger-issued lifetime. The host owns reader shutdown and backend handles.
+
+For each member, associate the returned batch positions with the filtered
+`DocumentRetainedReadPlan.Entry` sequence and its full revision ordinals. Preserve
+upload/EMPTY gaps and original physical identities. Keep the batch and its plan
+use open until candidate capture has copied the bytes under its own reservation.
+Close batches, close the plan, await actual drain, and then release SQL pins.
+A drain or release failure must leave a recoverable handle with the host; neither
+a cancelled future nor a timeout proves provider quiescence.
+
+The facade must select the current policy before I/O and re-fence it at commit.
+Placement comes from an authorized host selector for the exact immutable backend
+generation/profile, never from unchecked request coordinates or a current-drive
+fallback. Maintain operation idempotency and owner reconciliation across unknown
+outcomes; do not mint another operation merely because a response was lost.
+
+Before mounting this operation, `RepoServices` must compose the qualified backend
+resolver, shared payload budget, managed reader, reader incarnation and recovery
+lifecycle. Its current document operation construction does not do that. Keep
+the private library flow as the qualification target first, including mixed
+upload/reuse/EMPTY ordinals, revocation, policy changes, cancellation and restart;
+add the thin public transport only after those checks pass.

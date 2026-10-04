@@ -879,9 +879,10 @@ class DocumentUploadCoordinatorIT {
         });
         try (var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, retainedProfile) -> counted,
                 2, 1024 * 1024, budget)) {
+            DocumentRetainedReader retainedReader = reader;
             if (cancel) {
                 try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
-                    var result = executor.submit(() -> reader.readRetained(protectedPlan, "member",
+                    var result = executor.submit(() -> retainedReader.readRetained(protectedPlan, "member",
                             new ai.protomolt.proto.repo.spi.RepositoryReadControl() {
                                 @Override public long remainingNanos() { return Long.MAX_VALUE; }
                                 @Override public boolean isCancelled() { return cancelled.get(); }
@@ -901,13 +902,13 @@ class DocumentUploadCoordinatorIT {
                 reader.close();
                 assertThat(reader.awaitIdle(Duration.ofSeconds(5))).isTrue();
             } else {
-                assertThatThrownBy(() -> reader.readRetained(protectedPlan, "unknown",
+                assertThatThrownBy(() -> retainedReader.readRetained(protectedPlan, "unknown",
                         ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isInstanceOf(IllegalArgumentException.class);
-                try (var batch = reader.readRetained(protectedPlan, "member", ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+                try (var batch = retainedReader.readRetained(protectedPlan, "member", ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
                     assertThat(batch.parts()).hasSize(2);
                     assertThat(batch.parts().get(0).bytes()).containsExactly(base.bodies.get(new DocumentUploadPayloads.Key("member", 2)).bytes());
                     assertThat(batch.parts().get(1).bytes()).containsExactly(base.bodies.get(new DocumentUploadPayloads.Key("member", 0)).bytes());
-                    assertThatThrownBy(() -> reader.readRetained(protectedPlan, "member",
+                    assertThatThrownBy(() -> retainedReader.readRetained(protectedPlan, "member",
                             ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
                             .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
                                     error -> assertThat(error.code()).isEqualTo(
