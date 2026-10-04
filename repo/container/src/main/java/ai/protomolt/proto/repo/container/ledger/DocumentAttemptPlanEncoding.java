@@ -17,14 +17,26 @@ record DocumentAttemptPlanEncoding(String keys, List<String> objects, List<Strin
     }
 
     static DocumentAttemptPlanEncoding prepare(DocumentPartAttemptLedger.Plan plan) {
+        return prepare(plan.objects(), ordinal -> ordinal, plan.sources());
+    }
+
+    static DocumentAttemptPlanEncoding prepare(DocumentUploadPlan.Member member) {
+        var uploads = member.attempt().orElseThrow().uploads();
+        return prepare(uploads.stream().map(DocumentUploadPlan.Upload::object).toList(),
+                ordinal -> uploads.get(ordinal).revisionOrdinal(), member.sources());
+    }
+
+    private static DocumentAttemptPlanEncoding prepare(List<DocumentPartAttemptLedger.PlannedObject> planned,
+            java.util.function.IntUnaryOperator originalOrdinal, java.util.Map<java.util.UUID, Long> sourceRevisions) {
         var objects = new ArrayList<String>();
         var batch = ListValue.newBuilder();
-        for (int ordinal = 0; ordinal < plan.objects().size(); ordinal++) {
-            var object = plan.objects().get(ordinal);
+        for (int ordinal = 0; ordinal < planned.size(); ordinal++) {
+            var object = planned.get(ordinal);
             // Integers are decimal strings, not Struct's double-valued numbers.
             // PostgreSQL recordset conversion parses them directly as INT/BIGINT.
             batch.addValues(Value.newBuilder().setStructValue(Struct.newBuilder()
                     .putFields("ordinal", text(Integer.toString(ordinal)))
+                    .putFields("revision_ordinal", text(Integer.toString(originalOrdinal.applyAsInt(ordinal))))
                     .putFields("part", text(Integer.toString(object.part().getNumber())))
                     .putFields("sub_key", text(object.subKey()))
                     .putFields("object_key", text(object.objectKey()))
@@ -35,7 +47,7 @@ record DocumentAttemptPlanEncoding(String keys, List<String> objects, List<Strin
         }
         flush(batch, objects);
         var sources = new ArrayList<String>();
-        plan.sources().entrySet().stream().sorted(java.util.Map.Entry.comparingByKey()).forEach(source -> {
+        sourceRevisions.entrySet().stream().sorted(java.util.Map.Entry.comparingByKey()).forEach(source -> {
             batch.addValues(Value.newBuilder().setStructValue(Struct.newBuilder()
                     .putFields("source_node_id", text(source.getKey().toString()))
                     .putFields("revision", text(Long.toString(source.getValue())))));
@@ -43,7 +55,7 @@ record DocumentAttemptPlanEncoding(String keys, List<String> objects, List<Strin
         });
         flush(batch, sources);
         return new DocumentAttemptPlanEncoding(DocumentKeyReservations.encode(
-                plan.objects().stream().map(DocumentPartAttemptLedger.PlannedObject::objectKey).toList()), objects, sources);
+                planned.stream().map(DocumentPartAttemptLedger.PlannedObject::objectKey).toList()), objects, sources);
     }
 
     private static Value text(String value) { return Value.newBuilder().setStringValue(value).build(); }

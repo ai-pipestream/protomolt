@@ -145,26 +145,7 @@ public final class DocumentPartAttemptLedger {
                     .setParameter("realm", realm).setParameter("namespace", location.namespace()).setParameter("count", plan.objects().size())
                     .setParameter("sources", plan.sources().size()).setParameter("token", UUID.randomUUID())
                     .setParameter("millis", lease.toMillis()).executeUpdate();
-            DocumentKeyReservations.reserveEncoded(em, encoded.keys(), id);
-            for (String batch : encoded.objects()) {
-                em.createNativeQuery("""
-                        INSERT INTO document_part_attempt_objects(attempt_id,ordinal,part,sub_key,storage_realm,storage_namespace,
-                            object_key,expected_size,expected_sha256,content_type)
-                        SELECT :id,p.ordinal,p.part,p.sub_key,:realm,:namespace,p.object_key,p.expected_size,p.expected_sha256,p.content_type
-                        FROM jsonb_to_recordset(CAST(:batch AS jsonb)) AS p(ordinal integer,part integer,sub_key text,
-                            object_key text,expected_size bigint,expected_sha256 text,content_type text)
-                        ORDER BY p.ordinal
-                        """).setParameter("id", id).setParameter("realm", realm).setParameter("namespace", location.namespace())
-                        .setParameter("batch", batch).executeUpdate();
-            }
-            for (String batch : encoded.sources()) {
-                em.createNativeQuery("""
-                        INSERT INTO document_part_attempt_sources(attempt_id,source_node_id,revision)
-                        SELECT :id,s.source_node_id,s.revision
-                        FROM jsonb_to_recordset(CAST(:batch AS jsonb)) AS s(source_node_id uuid,revision bigint)
-                        ORDER BY s.source_node_id
-                        """).setParameter("id", id).setParameter("batch", batch).executeUpdate();
-            }
+            insertEncodedRows(em, encoded, id, realm, location.namespace());
             em.createNativeQuery("UPDATE document_part_attempts SET state='STAGING' WHERE attempt_id=:id").setParameter("id", id).executeUpdate();
             return read(em, id, true).orElseThrow();
         } catch (RuntimeException | Error failure) {
@@ -173,6 +154,30 @@ public final class DocumentPartAttemptLedger {
                 if (markingFailure != failure) failure.addSuppressed(markingFailure);
             }
             throw failure;
+        }
+    }
+
+    /** Shared storage representation for full revisions and operation-bound new bytes. */
+    static void insertEncodedRows(EntityManager em, DocumentAttemptPlanEncoding encoded, UUID id, String realm, String namespace) {
+        DocumentKeyReservations.reserveEncoded(em, encoded.keys(), id);
+        for (String batch : encoded.objects()) {
+            em.createNativeQuery("""
+                    INSERT INTO document_part_attempt_objects(attempt_id,ordinal,revision_ordinal,part,sub_key,storage_realm,storage_namespace,
+                        object_key,expected_size,expected_sha256,content_type)
+                    SELECT :id,p.ordinal,p.revision_ordinal,p.part,p.sub_key,:realm,:namespace,p.object_key,p.expected_size,p.expected_sha256,p.content_type
+                    FROM jsonb_to_recordset(CAST(:batch AS jsonb)) AS p(ordinal integer,revision_ordinal integer,part integer,sub_key text,
+                        object_key text,expected_size bigint,expected_sha256 text,content_type text)
+                    ORDER BY p.ordinal
+                    """).setParameter("id", id).setParameter("realm", realm).setParameter("namespace", namespace)
+                    .setParameter("batch", batch).executeUpdate();
+        }
+        for (String batch : encoded.sources()) {
+            em.createNativeQuery("""
+                    INSERT INTO document_part_attempt_sources(attempt_id,source_node_id,revision)
+                    SELECT :id,s.source_node_id,s.revision
+                    FROM jsonb_to_recordset(CAST(:batch AS jsonb)) AS s(source_node_id uuid,revision bigint)
+                    ORDER BY s.source_node_id
+                    """).setParameter("id", id).setParameter("batch", batch).executeUpdate();
         }
     }
 
@@ -272,7 +277,7 @@ public final class DocumentPartAttemptLedger {
         return attempt;
     }
 
-    private static Optional<Attempt> read(EntityManager em, UUID id, boolean lock) {
+    static Optional<Attempt> read(EntityManager em, UUID id, boolean lock) {
         List<?> rows = em.createNativeQuery("""
                 SELECT attempt_id,node_id,account_id,backend_generation,storage_namespace,storage_realm,
                        sampled_revision,lease_token,EXTRACT(EPOCH FROM lease_until),state,planned_count,plan_kind

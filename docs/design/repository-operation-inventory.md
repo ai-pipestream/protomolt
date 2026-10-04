@@ -1725,3 +1725,54 @@ plan-kind/binding/ordinal defaults. Sol reviewed the SQL guard preservation,
 trigger order, recovery semantics and removal of redundant legacy parent reads.
 No provider upload, public admission API, hosted CI, push, merge, deployment or
 performance qualification is claimed.
+
+### Typed internal upload admission
+
+`DocumentOperationUploadAdmission` connects the validated publication command,
+pure upload selector and V36 storage. Its private prepared value couples the
+command to its exact generated upload subset, tokens and encoded batches; callers
+cannot substitute an unrelated encoding. Preparation runs before database locks.
+Admission acquires the V35 owner fence, compares the persisted codec/version,
+exact canonical bytes and digest, then locks distinct sampled drives in UUID
+order and compares their registered backend profiles. It inserts only new-byte
+objects with original revision ordinals and complete declared source conditions.
+The existing key reservation/catalogue and 256-row batch insertion paths are
+shared with full-revision admission, not duplicated into another ledger.
+
+All members commit in one transaction. A later member failure rolls back earlier
+attempts, key reservations and physical locations. Duplicate attempt IDs fail;
+this method does not infer success, adopt prior bytes or reconcile a lost commit
+acknowledgement. Reuse-only members still undergo placement checks and create no
+attempt. Their sampled placement is not durably captured by an attempt row;
+persisting that evidence for replay/publication remains an explicit prerequisite.
+
+A final aggregate checks every newly inserted attempt's state and earliest lease
+against database time, followed by the operation-owner check. This prevents a
+slow later member from returning success with an already-expired earlier attempt.
+It is a pre-commit liveness check, not a guarantee against expiry after that check;
+each later provider boundary must recheck its authority. A real SQL delay fixture
+first demonstrated the incorrect successful return, then passed with full batch
+rollback after this check was added.
+
+Scope limits: this remains package-private SQL staging. The qualified composition
+supplies the backend selection; comparing it with the unchanged drive and immutable
+registration does not independently derive provider identity from drive config.
+Principal authentication, current-policy enforcement, actual destination/source
+revision checks, retained-content authorization, schema retention, active-attempt
+selection/retry reconciliation and operation-bound provider writes remain pending.
+No successful receipt, semantic review, normal read or public upload API follows
+from staging these synthetic byte declarations.
+
+The real PostgreSQL fixtures cover exact typed command binding, stale drive/profile
+refusal, missing registration, forged owner, zero-upload placement checks,
+duplicate-attempt refusal, sparse subset persistence, later-member rollback and
+lease expiry. For one drive/member/source, 1 and 513 upload cases require 12 and
+14 client statements respectively, each in one transaction; server-side trigger
+work and provider latency are not included. All 11 new cases and ten legacy batch
+admission cases passed locally on 2026-10-04. Sol reviewed the implementation and
+the reproduced lease failure without a remaining blocking finding.
+
+The broader container/service `*Document*` regression passed in 1m20s: 37 suites,
+346 cases, 344 passed, two skipped and zero failures/errors. This is a document
+regression run, not every repository test. No push, hosted CI, merge, deployment
+or production performance qualification is claimed.
