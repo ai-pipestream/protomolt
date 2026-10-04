@@ -21,6 +21,45 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 
 class DocumentSchemaPreparationTest {
+    @Test void authoritativePolicyChecksAllPayloadsAndRejectsClaimedIdentityWithDifferentLimits() throws Exception {
+        var f = fixture(false);
+        var base = DocumentAdmissionPolicyTest.policy();
+        var allowed = DocumentSchemaPolicyAllowList.newBuilder()
+                .addBindings(DocumentSchemaPolicyBinding.newBuilder().setTypeUrl(f.string.metadata.getTypeUrl()).setSchema(f.string.metadata.getSchema()))
+                .addBindings(DocumentSchemaPolicyBinding.newBuilder().setTypeUrl(f.timestamp.metadata.getTypeUrl()).setSchema(f.timestamp.metadata.getSchema()));
+        var snapshot = DocumentAdmissionPolicy.of(base.toBuilder().setAllowedSchemas(allowed).build(), () -> {});
+        DocumentSchemaAdmission.Resolver resolver = s -> s.typeUrl().endsWith("StringValue") ? f.string.definition() : f.timestamp.definition();
+        var proof = snapshot.prepareAndCheck(ByteString.copyFrom(new byte[32]), f.member, f.fragments, f.container.definition(), resolver, () -> {});
+        snapshot.verifyProof(proof, () -> {});
+        assertThat(proof.limits()).isEqualTo(snapshot.limits());
+        var disallowed = DocumentAdmissionPolicy.of(base.toBuilder().setAllowedSchemas(allowed.clone().removeBindings(1)).build(), () -> {});
+        assertThatThrownBy(() -> disallowed.prepareAndCheck(ByteString.copyFrom(new byte[32]), f.member, f.fragments,
+                f.container.definition(), resolver, () -> {})).hasMessageContaining("not eligible");
+        assertThatThrownBy(() -> disallowed.verifyProof(proof, () -> {})).hasMessageContaining("differs from policy snapshot");
+        // Knowing the policy digest is not proof that its limits were applied.
+        var claimed = DocumentSchemaAdmission.prepareAndCheck(new DocumentSchemaAdmission.Preparation(proof.commandSha256(),
+                snapshot.sha256(), true, f.member, f.fragments, f.container.definition()), resolver, limits(2_000_000), () -> {});
+        assertThatThrownBy(() -> snapshot.verifyProof(claimed, () -> {})).hasMessageContaining("differs from policy snapshot");
+        // A correctly bound digest/limits still cannot hide an ineligible PARSED payload.
+        var ineligible = DocumentSchemaAdmission.prepareAndCheck(new DocumentSchemaAdmission.Preparation(proof.commandSha256(),
+                disallowed.sha256(), true, f.member, f.fragments, f.container.definition()), resolver, disallowed.limits(), () -> {});
+        assertThatThrownBy(() -> disallowed.verifyProof(ineligible, () -> {})).hasMessageContaining("not eligible");
+    }
+
+    @Test void opaquePermissionDoesNotBypassExplicitSchemaOrAllowZeroRootTypedVerdicts() throws Exception {
+        var f = fixture(false);
+        var permissive = DocumentAdmissionPolicy.of(DocumentAdmissionPolicyTest.policy().toBuilder()
+                .setMode(DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_OPAQUE_ALLOWED).setRequireStructuredRoot(false).build(), () -> {});
+        assertThat(permissive.requiresTyped(f.member)).isFalse();
+        assertThat(permissive.requiresTyped(f.member.toBuilder().setStructuredSchema(f.string.metadata.getSchema()).build())).isTrue();
+        var anotherAccount = f.member.toBuilder().setOwnership(f.member.getOwnership().toBuilder().setAccountId("other")).build();
+        assertThatThrownBy(() -> permissive.requiresTyped(anotherAccount)).hasMessageContaining("policy account");
+        var empty = fixture(false, f.document.toBuilder().clearStructuredData().clearParserResults().build());
+        assertThatThrownBy(() -> permissive.prepareAndCheck(ByteString.copyFrom(new byte[32]), empty.member, empty.fragments,
+                empty.container.definition(), s -> { throw new AssertionError("no payload resolution expected"); }, () -> {}))
+                .hasMessageContaining("typed policy verdict requires a payload root");
+    }
+
     @Test void preparesAllCoreAndParsedRootsAndDoesNotResolveAgainDuringReplay() throws Exception {
         var f = fixture(false);
         var calls = new ArrayList<DocumentSchemaAdmission.Selection>();
@@ -150,6 +189,21 @@ class DocumentSchemaPreparationTest {
                 .collect(java.util.stream.Collectors.toMap(p -> p.getSteps(p.getStepsCount() - 2).getFieldNumber(),
                         p -> p.getSteps(p.getStepsCount() - 1).getAnyBoundary().getResolved().getArtifactSha256())))
                 .isEqualTo(Map.of(1, oldAsset.reference.descriptorSha256(), 2, newAsset.reference.descriptorSha256()));
+        // Allow the outer definition and the old version, but not the new version
+        // at field 2 even though it has exactly the same type URL.
+        var restricted = DocumentAdmissionPolicy.of(DocumentAdmissionPolicyTest.policy().toBuilder()
+                .setAllowedSchemas(DocumentSchemaPolicyAllowList.newBuilder()
+                        .addBindings(DocumentSchemaPolicyBinding.newBuilder().setTypeUrl(outerAsset.metadata.getTypeUrl())
+                                .setSchema(outerAsset.metadata.getSchema()))
+                        .addBindings(DocumentSchemaPolicyBinding.newBuilder().setTypeUrl(oldAsset.metadata.getTypeUrl())
+                                .setSchema(oldAsset.metadata.getSchema()))).build(), () -> {});
+        DocumentSchemaAdmission.Resolver resolver = selection -> selection.prefix().isEmpty() ? outerAsset.definition()
+                : selection.prefix().getLast().getFieldNumber() == 1 ? oldAsset.definition() : newAsset.definition();
+        assertThatThrownBy(() -> restricted.prepareAndCheck(proof.commandSha256(), f.member, f.fragments,
+                f.container.definition(), resolver, () -> {})).hasMessageContaining("not eligible");
+        var claimed = DocumentSchemaAdmission.prepareAndCheck(new DocumentSchemaAdmission.Preparation(proof.commandSha256(),
+                restricted.sha256(), true, f.member, f.fragments, f.container.definition()), resolver, restricted.limits(), () -> {});
+        assertThatThrownBy(() -> restricted.verifyProof(claimed, () -> {})).hasMessageContaining("not eligible");
     }
 
     @Test void invalidAnnotatedPayloadReturnsNoProofAndPropagatesValidationFailure() throws Exception {

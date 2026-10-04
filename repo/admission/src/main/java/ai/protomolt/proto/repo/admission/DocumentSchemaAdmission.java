@@ -29,15 +29,16 @@ public final class DocumentSchemaAdmission {
      * Member-wide serialized byte/count budgets, not a heap reservation. V1 additionally
      * limits descriptor artifacts to 16 MiB/256 files/4096 edges/depth 64, structural
      * depth to 64, wire values to 1 million per fragment/root, and schema traversal to
-     * 4096 types/65536 fields per root. Hosts reserve memory for decoded forms and I/O.
+     * 4096 types/65536 fields per root. Raw fragments and decoded payloads each
+     * have a 256 MiB ceiling. Hosts reserve memory for decoded forms and I/O.
      */
     public record Limits(int maxFragments, long maxFragmentBytes, int maxRoots, long maxEvidenceBytes,
                          int maxBindings, long maxRetainedBytes, int maxDecodedBytes) {
         public Limits {
-            if (maxFragments < 1 || maxFragments > 10000 || maxFragmentBytes < 1
+            if (maxFragments < 1 || maxFragments > 10000 || maxFragmentBytes < 1 || maxFragmentBytes > 256L * MIB
                     || maxRoots < 1 || maxRoots > 1024 || maxEvidenceBytes < 1 || maxEvidenceBytes > 16L * MIB
                     || maxBindings < 1 || maxBindings > 64 || maxRetainedBytes < 1 || maxRetainedBytes > 64L * MIB
-                    || maxDecodedBytes < 1)
+                    || maxDecodedBytes < 1 || maxDecodedBytes > 256 * MIB)
                 throw new IllegalArgumentException("invalid member admission limits");
         }
     }
@@ -118,22 +119,25 @@ public final class DocumentSchemaAdmission {
         private final ByteString commandSha256;
         private final String policySha256;
         private final boolean requireStructuredRoot;
+        private final Limits limits;
         private final DocumentPublicationMember member;
         private final Document document;
         private final Map<Integer, ByteString> fragments;
         private final List<RootEvidence> roots;
         private final List<Reference> references;
         private final Map<String, ByteString> artifacts;
-        private Proof(Request request, Document document, Map<Integer, ByteString> fragments,
+        private Proof(Request request, Limits limits, Document document, Map<Integer, ByteString> fragments,
                       List<RootEvidence> roots, List<Reference> references, Map<String, ByteString> artifacts) {
             this.commandSha256 = request.commandSha256(); this.policySha256 = request.policySha256();
             this.requireStructuredRoot = request.requireStructuredRoot();
+            this.limits = limits;
             this.member = request.member(); this.document = document; this.fragments = Map.copyOf(fragments);
             this.roots = List.copyOf(roots); this.references = List.copyOf(references); this.artifacts = Map.copyOf(artifacts);
         }
         public ByteString commandSha256() { return commandSha256; }
         public String policySha256() { return policySha256; }
         public boolean requireStructuredRoot() { return requireStructuredRoot; }
+        public Limits limits() { return limits; }
         public String validationProfile() { return PROFILE; }
         public DocumentPublicationMember member() { return member; }
         public Document document() { return document; }
@@ -229,7 +233,7 @@ public final class DocumentSchemaAdmission {
         if (!artifacts.keySet().equals(expectedArtifacts))
             throw new IllegalArgumentException("retained artifacts differ from complete bounded union");
         active(control);
-        return new Proof(request, assembly.document(), fragments, roots, references, artifacts);
+        return new Proof(request, limits, assembly.document(), fragments, roots, references, artifacts);
     }
 
     private static Map<Integer, List<DocumentRootSchemaEvidence>> decodeEvidence(

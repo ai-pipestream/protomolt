@@ -4360,3 +4360,64 @@ aggregate limits and cancellation. The mixed-version fixture pairs nested fields
 pairs in canonical evidence. Resolver call counts prove that final replay does
 not consult the registry. Sol reviewed production code and tests with no blocker.
 These are library tests, not hosted publication or historical SQL qualification.
+
+### Schema policy contract and library enforcement
+
+`schema_policy.proto` adds `DocumentSchemaPolicy`, with immutable account identity,
+encoding version, fixed validation profile, admission mode, resource limits and
+explicit schema eligibility. Existing message names, tags and Any URLs are
+unchanged. The eligible set can contain 1024 distinct exact URL/closure identities
+within 512 KiB; that catalog limit is independent of the smaller per-member
+binding count. Every nested payload uses the same eligibility check. The runtime
+Document container is not a payload exemption: a Document used inside Any still
+needs payload eligibility.
+
+`DocumentAdmissionPolicy` normalizes allowlist order, rejects duplicates and
+unknown content, and decodes exact canonical policy bytes. It supplies configured
+limits and checks selected definitions before payload processing. The final proof
+check independently verifies all occurrence identities, account, policy digest,
+validation profile, root requirement and the exact limits used. A zero-root
+content proof cannot become a typed verdict. `Proof.limits()` records those
+limits so a claimed policy digest cannot hide weaker checking. The pure wrapper
+still does not authenticate the active catalog pointer, command or caller.
+
+V1 raw-fragment and decoded-payload ceilings are now each 256 MiB, matching the
+existing bounded read selection default. Hosts can lower them and must reserve
+memory for decoding and temporary copies. This restricts the new typed checking
+path; it does not change provider conditional-write limits or enable unbounded
+uploads. Operation-wide V48/V56 artifact and evidence limits still require
+aggregation across members before staging and during commit.
+
+OPAQUE_ALLOWED permits an explicit opaque operation. A member with a declared
+schema still requires typed admission, and a failed typed attempt cannot retry
+as opaque. TYPED_REQUIRED needs a complete proof with a payload root; when
+require_structured_root is set, that includes CORE structured_data. Without that
+flag, PARSED payloads can meet the root requirement. All publication entry points
+must enforce these decisions when the policy catalog is activated.
+
+Real validator fixtures cover generated and dynamic policy messages, oneof
+presence, false permission flags, enums, every resource boundary, URL/schema
+agreement and required fields. JSON Schema fixtures verify scalar bounds and
+CEL metadata export. Cross-field eligibility, mode/root conditions and URL/schema
+agreement still require runtime validation; canonical ordering, duplicates,
+active-pointer freshness, proof correspondence, authorization and operation-wide
+limits are handler obligations. No OpenAPI generator changes are included.
+
+The contract compiles with complete imports, passes scoped Buf lint and passes
+FILE compatibility against checkpoint b2ca8d7d. The next integration is the
+account policy catalog and shared-lock freshness guard described above, followed
+by native publication evidence writes. No policy administration RPC or typed
+publisher is mounted by these definitions.
+
+Operation classification for this checkpoint: canonical policy encode/decode,
+policy-guided preparation and proof/policy correspondence checks are new library
+operations. Existing member preparation and consuming verification are extended
+with fixed byte ceilings and recorded checking limits. Public RPCs, opaque
+storage operations, policy activation and transaction writers are unchanged.
+
+The affected modules pass 397 tests, including 6 new contract tests and 5 new
+policy library tests. The existing mixed-version fixture now also rejects a
+nested disallowed fingerprint under an allowed URL, both during selection and
+when independently checking a proof. Runtime dependency gates pass. Sol reviewed
+the contracts, implementation and tests with no remaining blocker. These checks
+do not qualify the planned SQL policy race or native publication activation.
