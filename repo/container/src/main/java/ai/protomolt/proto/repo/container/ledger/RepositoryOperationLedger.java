@@ -136,6 +136,35 @@ final class RepositoryOperationLedger {
         }
     }
 
+    /**
+     * Establish SQL-checkable proof before dependent row locks. One owner-only
+     * update; no command bytes or lease extension. The V34 guard checks liveness
+     * after a lock wait and V35 stamps the actual transaction ID.
+     */
+    static Owner fenceLiveOwner(EntityManager em, Owner expected) {
+        Objects.requireNonNull(expected);
+        if (!em.getTransaction().isActive() || em.getTransaction().getRollbackOnly())
+            throw new IllegalStateException("Operation fence requires an active writable transaction");
+        try {
+            var rows = bind(em.createNativeQuery("""
+                    UPDATE repository_operation_owners SET write_fence_xid=pg_current_xact_id()
+                    WHERE account_id=:account AND principal=:principal AND operation_id=:id
+                      AND owner_generation=:generation AND owner_token=:token AND lease_until > clock_timestamp()
+                    RETURNING owner_token,owner_generation,lease_until
+                    """), expected.key).setParameter("generation", expected.generation)
+                    .setParameter("token", expected.token).getResultList();
+            if (rows.isEmpty()) throw new OwnerFencedException();
+            Object[] row = (Object[]) rows.getFirst();
+            return new Owner(expected.key, ((Number) row[1]).longValue(), (UUID) row[0], instant(row[2]));
+        } catch (RuntimeException | Error failure) {
+            try { em.getTransaction().setRollbackOnly(); }
+            catch (RuntimeException markingFailure) {
+                if (markingFailure != failure) failure.addSuppressed(markingFailure);
+            }
+            throw failure;
+        }
+    }
+
     Owner renew(Owner owner, Duration lease) {
         Objects.requireNonNull(owner);
         long millis = leaseMillis(lease);

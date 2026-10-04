@@ -1606,3 +1606,58 @@ regression completed in 55 seconds: 25 suites, 231 cases, 230 passed, one skippe
 and no failures/errors. The existing statement-count assertions passed through
 10,000 objects and sources. These counts are not production latency evidence.
 No push, hosted CI, merge or deployment is claimed.
+
+### SQL owner-write proof, before upload integration
+
+V35 adds an internal transaction-specific owner-write proof. The existing owner
+guard remains authoritative for scope, generation and lease transitions. A new
+trigger stamps every owner INSERT/UPDATE with the actual top-level transaction's
+`xid8`, ignoring any caller-supplied value. Existing rows start with a null stamp.
+The new Java `fenceLiveOwner` checks the exact account/principal/operation,
+generation and token in one owner-only UPDATE, without extending the lease or
+reading the command payload. The existing guard checks expiry after lock waits.
+
+`require_repository_operation_write_fence` checks exact scope, generation, live
+lease and current transaction ID with a plain indexed read. It acquires no owner
+row lock. A dependent row trigger can therefore reject an unfenced write without
+waiting for ownership after it has locked its own row. This is the selected
+foundation for owner-first enforcement; production dependent tables are not yet
+wired to it. A SELECT FOR UPDATE alone does not produce this proof.
+
+The stamp proves prior owner-row write locking, not caller authorization or
+possession of a token. A trusted database writer with UPDATE rights on the owner
+table can obtain a stamp. Principal authentication and current-policy enforcement
+remain coordinator obligations; this does not protect against a database
+administrator disabling triggers. Every guarded boundary must still check the
+bound generation and lease, and publication requires its final ownership check.
+An initial stamp does not promise that a lease remains live until commit.
+
+Cost: one owner-row UPDATE per coordinator transaction, with its WAL and row
+version, shared by a batch of dependent writes. This serializes transactions for
+the same operation, not unrelated operations. Do not stamp per object or claim
+that reduced client calls eliminate trigger-side work. The existing renewal
+method keeps its statement budget. Contended latency/WAL qualification remains
+required when uploads and publication use this mechanism.
+
+PostgreSQL documents that the transaction functions return the top-level ID even
+inside subtransactions, and that rollback to a savepoint releases subsequent
+locks and changes. The stamp rolls back with the owner row; retaining the same
+top-level transaction ID after rollback does not preserve the proof. See
+[transaction ID functions](https://www.postgresql.org/docs/18/functions-info.html#FUNCTIONS-PG-SNAPSHOT)
+and [lock lifetime](https://www.postgresql.org/docs/18/explicit-locking.html).
+
+Real PostgreSQL tests use a clearly test-only child table and guard to exercise
+the primitive. They cover 256 guarded rows with one owner client statement,
+cross-transaction replay, exact scope/generation, forged token, savepoint release
+and rollback, refusal without waiting on a competing owner, independent-operation
+progress, lease expiry, replacement while a writer actually waits on a lock, and
+V34-to-V35 migration with an existing owner. They also demonstrate the trusted
+database-writer limitation rather than claiming authorization. All 16 new cases
+and 31 existing operation-admission cases passed locally on 2026-10-04.
+NEW_CONTENT scope, production child guards and terminal outcomes remain pending.
+
+The full container and service suites subsequently passed in 2m29s: 103 suites,
+804 cases, 801 passed, three skipped, zero failures/errors. Sol's review requested
+identifying the exact blocked backend in the lock-wait cases; that improvement
+passed all 16 focused cases in a 14-second rerun. No production throughput,
+hosted CI, push, merge or deployment is claimed by these local results.
