@@ -4,6 +4,7 @@ dependencies {
     api project(':protomolt-repo-container')
     api project(':protomolt-repo-blob-spi')
     implementation project(':protomolt-repo-codec')
+    implementation project(':protomolt-descriptors')
     implementation project(':protomolt-protobuf-validation')
     implementation project(':protomolt-formats')
     implementation libs.jackson.databind

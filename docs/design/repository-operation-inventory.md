@@ -3204,3 +3204,26 @@ to bind this step to retained schema identity and candidate validation.
 Sol found no blocker. All 226 validation-core, 40 dialect and 13 harness unit tests
 passed with no failures or skips in 7s. No protobuf definitions changed. The
 external upstream test suite was not run.
+
+### Publication schema identity binding
+
+DocumentSchemaBinding is an internal engine helper using the existing
+PublicationSchemaCondition. It validates that condition, rejects unknown condition
+fields, loads a bounded complete descriptor artifact, finds the exact full message
+name and checks the canonical root-import closure fingerprint. Extra files outside
+that closure are rejected. Nested message names are supported.
+
+The binding preserves the original immutable artifact bytes and computes a separate
+SHA-256 for those exact bytes. File ordering and unknown set-envelope fields can
+change that hash without changing the canonical schema fingerprint. Both identities
+retain their existing meanings; no protobuf definitions changed. The engine adds
+only the descriptors utility dependency, without a registry or mesh client.
+
+Sol reviewed the code and tests without a blocker. Tests cover nested types,
+missing types/imports, descriptor changes, extra files, invalid conditions,
+cancellation and distinct digest meanings. All 86 engine tests in 13 suites passed
+with no failures or skips in 2s, including the runtime dependency gate.
+
+The helper is not yet connected to admission. Any URL policy, schema preparation,
+candidate validation and durable retention remain required steps. This binding is
+not validation evidence, authorization or a publication receipt.
