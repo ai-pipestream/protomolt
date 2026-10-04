@@ -67,6 +67,11 @@ final class RepositoryOperationLedger {
         OwnerFencedException() { super("Repository operation owner is absent, expired or replaced"); }
     }
 
+    /** A coordinator must perform authorized result replay instead of acquiring ownership. */
+    static final class TerminalOperationException extends RuntimeException {
+        TerminalOperationException() { super("Repository operation already completed"); }
+    }
+
     /** Typed document admission; scope binding is checked before opening a transaction. */
     Admission admit(Key key, DocumentPublicationCommand command, UUID ownerNonce, Duration lease) {
         Objects.requireNonNull(key); Objects.requireNonNull(command);
@@ -102,7 +107,8 @@ final class RepositoryOperationLedger {
             var row = read(em, key, true).orElseThrow();
             if (!row.snapshot.command.equals(command) || !Arrays.equals(row.digest, digest))
                 throw new CommandConflictException();
-            var owner = row.token.equals(ownerNonce) && live(em, key)
+            boolean live = live(em, key);
+            var owner = row.token.equals(ownerNonce) && live
                     ? Optional.of(row.owner()) : Optional.<Owner>empty();
             return new Admission(row.snapshot, owner);
         });
@@ -125,7 +131,8 @@ final class RepositoryOperationLedger {
             throw new IllegalStateException("Operation fence requires an active writable transaction");
         try {
             var current = readOwner(em, expected.key, true).orElseThrow(OwnerFencedException::new);
-            if (current.generation != expected.generation || !current.token.equals(expected.token) || !live(em, expected.key))
+            boolean live = live(em, expected.key);
+            if (current.generation != expected.generation || !current.token.equals(expected.token) || !live)
                 throw new OwnerFencedException();
             return current;
         } catch (RuntimeException | Error failure) {
@@ -189,9 +196,10 @@ final class RepositoryOperationLedger {
         long millis = leaseMillis(lease);
         return tx.inTransaction(em -> {
             var row = readOwner(em, key, true).orElseThrow(OwnerFencedException::new);
-            if (row.generation == expectedGeneration + 1 && row.token.equals(nextNonce) && live(em, key))
+            boolean live = live(em, key);
+            if (row.generation == expectedGeneration + 1 && row.token.equals(nextNonce) && live)
                 return row;
-            if (row.generation != expectedGeneration || row.token.equals(nextNonce) || live(em, key))
+            if (row.generation != expectedGeneration || row.token.equals(nextNonce) || live)
                 throw new OwnerFencedException();
             bind(em.createNativeQuery("""
                     UPDATE repository_operation_owners SET owner_token=:owner,owner_generation=owner_generation+1,
@@ -241,10 +249,14 @@ final class RepositoryOperationLedger {
 
     private static boolean live(EntityManager em, Key key) {
         // Evaluate DB time after the owner row lock, never before a lock wait.
-        return (Boolean) bind(em.createNativeQuery("""
-                SELECT lease_until > clock_timestamp() FROM repository_operation_owners
-                WHERE account_id=:account AND principal=:principal AND operation_id=:id
+        var state = (Object[]) bind(em.createNativeQuery("""
+                SELECT lease_until > clock_timestamp(), EXISTS(SELECT 1 FROM repository_operation_success s
+                    WHERE s.account_id=o.account_id AND s.principal=o.principal AND s.operation_id=o.operation_id)
+                FROM repository_operation_owners o
+                WHERE o.account_id=:account AND o.principal=:principal AND o.operation_id=:id
                 """), key).getSingleResult();
+        if (Boolean.TRUE.equals(state[1])) throw new TerminalOperationException();
+        return Boolean.TRUE.equals(state[0]);
     }
 
     private static jakarta.persistence.Query bind(jakarta.persistence.Query query, Key key) {

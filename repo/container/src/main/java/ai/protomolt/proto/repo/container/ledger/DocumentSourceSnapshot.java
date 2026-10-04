@@ -130,7 +130,12 @@ public final class DocumentSourceSnapshot {
 
     private static UUID publication(EntityManager em, UUID node) {
         var rows = em.createNativeQuery("""
-                SELECT c.revision_id,p.attempt_id,r.legacy_attempt_id FROM documents d
+                SELECT c.revision_id,p.attempt_id,r.legacy_attempt_id,
+                    r.native_binding IS NOT NULL AND p.attempt_id IS NULL AND r.projection_sealed
+                    AND r.node_id=d.node_id AND r.body=document_publication_body(d)
+                    AND EXISTS(SELECT 1 FROM document_revision_commits b JOIN repository_operation_success s
+                        USING(account_id,principal,operation_id,owner_generation) WHERE b.revision_id=r.revision_id)
+                FROM documents d
                 LEFT JOIN document_part_publications p ON p.node_id=d.node_id
                 LEFT JOIN document_revision_current c ON c.node_id=d.node_id
                 LEFT JOIN document_revision_publications r ON r.revision_id=c.revision_id
@@ -140,6 +145,7 @@ public final class DocumentSourceSnapshot {
         if (rows.isEmpty()) return null;
         var row=(Object[])rows.getFirst();
         if (row[0]==null && row[1]==null) return null;
+        if (row[0]!=null && Boolean.TRUE.equals(row[3])) return (UUID)row[0];
         if (row[0]==null || row[1]==null || !Objects.equals(row[1],row[2]))
             throw new DocumentPartAttemptLedger.FenceException("Source revision projection differs from its publication");
         return (UUID)row[0];

@@ -3558,3 +3558,31 @@ recovery of unused schema claims and complete event-set binding. Those atomic
 publication and replay behaviors still require implementation and qualification.
 All 80 existing atomic-publication and revision-projection PostgreSQL tests also
 pass against the new migration, with no skips.
+
+### Independent revision SQL boundary
+
+V52 adds internal immutable operation outcomes and per-member revision commits.
+It extends publication consistency, physical-key quarantine, current-pointer
+mirroring and read/source lookup to recognize sealed native revisions. It extends
+owner admission, renewal and takeover to reject terminal operations while keeping
+the existing recovery-only fence. Existing wire operations and protobuf identities
+are unchanged. No production native publisher or authorized result-replay entry
+point is available yet.
+
+Real PostgreSQL fixtures cover a multi-member operation with mixed uploaded/reused
+parts and a zero-upload member, exact stored result decoding, late-failure rollback,
+missing outcomes/events, terminal writes after immediate constraint checks, later
+policy changes, and retained event delivery-state updates. Physical observations
+are synthetic and do not qualify a storage provider. Verified-but-unpublished keys
+and keys belonging to a different document are rejected. A red timezone fixture
+showed metadata timestamps changing with session settings; exact epoch-microsecond
+fields fix that snapshot instability.
+
+The final affected run passes 173 tests with no failures or skips, including legacy
+atomic publication, revision projection, owner admission/write fencing, physical
+location/key migration, retention and outbox tests. Sol reviewed the native SQL
+boundary and the final regression additions without a remaining blocker. These
+checks establish SQL linkage and physical evidence, not protobuf payload semantics,
+typed schema retention, authorized replay, or concurrent throughput qualification.
+The separate Kafka relay and recovery-fence run passes another 10 tests without
+failures or skips; relay behavior remains unchanged.

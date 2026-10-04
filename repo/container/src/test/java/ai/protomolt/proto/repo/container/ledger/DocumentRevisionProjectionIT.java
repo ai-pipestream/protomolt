@@ -26,11 +26,8 @@ class DocumentRevisionProjectionIT {
     void selectionMigrationDoesNotChooseBetweenExistingOperationAttempts(boolean selected) {
         try (var context=context(selected ? "41" : "39")) {
             var source=publish(context,false,"retained");
-            var operations=new RepositoryOperationLedger(context.tx);
             var key=new RepositoryOperationLedger.Key("account","principal",UUID.randomUUID());
-            var owner=operations.admit(key,new RepositoryOperationLedger.EncodedCommand("migration-test",1,
-                    com.google.protobuf.ByteString.copyFromUtf8("synthetic migration command")),UUID.randomUUID(),
-                    java.time.Duration.ofMinutes(5)).owner().orElseThrow();
+            var owner=admitBeforeTerminalOutcomes(context,key);
             context.tx.inTransaction(em -> {
                 RepositoryOperationLedger.fenceLiveOwner(em,owner);
                 // Two V36 attempts for one member, sealed with synthetic declarations.
@@ -338,6 +335,29 @@ class DocumentRevisionProjectionIT {
             assertThat(relation).isNull();
             assertThat(count(context, "document_part_publication_history")).isEqualTo(1);
         }
+    }
+
+    /** Populate the old schema directly; current admission correctly requires the terminal-outcome schema. */
+    private static RepositoryOperationLedger.Owner admitBeforeTerminalOutcomes(Context c, RepositoryOperationLedger.Key key) {
+        UUID token=UUID.randomUUID();
+        return c.tx.inTransaction(em -> {
+            em.createNativeQuery("""
+                    INSERT INTO repository_operations(account_id,principal,operation_id,command_codec,command_version,command,command_sha256)
+                    VALUES(:account,:principal,:operation,'migration-test',1,decode('01','hex'),sha256(decode('01','hex')))
+                    """).setParameter("account",key.account()).setParameter("principal",key.principal())
+                    .setParameter("operation",key.operationId()).executeUpdate();
+            Object expiry=em.createNativeQuery("""
+                    INSERT INTO repository_operation_owners(account_id,principal,operation_id,owner_token,owner_generation,lease_until)
+                    VALUES(:account,:principal,:operation,:token,1,clock_timestamp()+interval '5 minutes') RETURNING lease_until
+                    """).setParameter("account",key.account()).setParameter("principal",key.principal())
+                    .setParameter("operation",key.operationId()).setParameter("token",token).getSingleResult();
+            java.time.Instant instant;
+            if (expiry instanceof java.time.Instant value) instant=value;
+            else if (expiry instanceof java.time.OffsetDateTime value) instant=value.toInstant();
+            else if (expiry instanceof java.sql.Timestamp value) instant=value.toInstant();
+            else throw new IllegalStateException("Unsupported migration timestamp type");
+            return new RepositoryOperationLedger.Owner(key,1,token,instant);
+        });
     }
 
     private static ManagedDocumentFixture publish(Context c, boolean sparse, String version) {

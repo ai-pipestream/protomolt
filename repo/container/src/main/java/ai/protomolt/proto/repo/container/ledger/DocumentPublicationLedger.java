@@ -68,9 +68,16 @@ public final class DocumentPublicationLedger {
             if (current == null || current.mutationRevision != sampled.mutationRevision)
                 throw new DocumentLedger.RevisionConflictException();
             List<?> bindings = em.createNativeQuery("""
-                    SELECT p.attempt_id,c.revision_id,r.projection_sealed,a.planned_count,
-                        r.legacy_attempt_id=p.attempt_id AND r.node_id=d.node_id
-                        AND r.body=h.body AND r.body=document_publication_body(d)
+                    SELECT p.attempt_id,c.revision_id,r.projection_sealed,
+                        CASE WHEN r.native_binding IS NOT NULL THEN
+                            (SELECT count(*) FROM jsonb_array_elements(r.body->'part_manifest'->'parts') entry
+                             WHERE entry->>'state'='PART_STATE_PRESENT') ELSE a.planned_count END,
+                        CASE WHEN r.native_binding IS NOT NULL THEN
+                            p.attempt_id IS NULL AND r.node_id=d.node_id AND r.body=document_publication_body(d)
+                            AND EXISTS(SELECT 1 FROM document_revision_commits b JOIN repository_operation_success s
+                                USING(account_id,principal,operation_id,owner_generation) WHERE b.revision_id=r.revision_id)
+                        ELSE r.legacy_attempt_id=p.attempt_id AND r.node_id=d.node_id
+                            AND r.body=h.body AND r.body=document_publication_body(d) END
                     FROM documents d LEFT JOIN document_part_publications p ON p.node_id=d.node_id
                     LEFT JOIN document_revision_current c ON c.node_id=d.node_id
                     LEFT JOIN document_revision_publications r ON r.revision_id=c.revision_id
@@ -80,7 +87,7 @@ public final class DocumentPublicationLedger {
                     """).setParameter("node",sampled.nodeId).getResultList();
             Object[] binding = (Object[])bindings.getFirst();
             if (binding[0]==null && binding[1]==null) return Optional.empty();
-            if (binding[0]==null || binding[1]==null || !Boolean.TRUE.equals(binding[2]) || !Boolean.TRUE.equals(binding[4]))
+            if (binding[1]==null || !Boolean.TRUE.equals(binding[2]) || !Boolean.TRUE.equals(binding[4]))
                 throw new IllegalStateException("Document revision projection disagrees with its publication");
             UUID revision = (UUID)binding[1];
             var rows=em.unwrap(org.hibernate.Session.class).createNativeQuery("""
@@ -120,7 +127,7 @@ public final class DocumentPublicationLedger {
                 verified.add(new DocumentPartPublication.VerifiedPart(verified.size(),part.part(),part.subKey(),
                         part.key(),part.size(),part.sha256(),part.providerVersion(),part.etag()));
             }
-            // Legacy FULL_REVISION remains authoritative until retention/publication cutover.
+            // The same ordered manifest proof applies to legacy and mixed-origin revisions.
             DocumentPartPublication.validate(current,verified);
             return Optional.of(new Publication(revision,manifest,parts));
     }

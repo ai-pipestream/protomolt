@@ -11,7 +11,8 @@ managed object identities and immutable history, including deleted documents.
 V22/V36 publication guards remain authoritative. Managed reads now
 use the shadow's ordered parts and revision ID, validating them against that legacy
 authority, and the read model carries per-part backend bindings. Independent-ID
-allocation for new mixed revisions remains unimplemented. V39 derives document
+allocation for new mixed revisions is now supported by the V52 SQL boundary below;
+the production publisher remains unimplemented. V39 derives document
 retention ownership from sealed revision parts and current revision pointers,
 preserving existing reference keys and V29 reclamation guards. It refuses missing
 or extra references during migration rather than repairing them. This bridge does
@@ -99,11 +100,12 @@ FULL_REVISION writer and deletion-only recovery path remain unchanged.
 
 - `DocumentPublicationLedger.Publication` now carries an independent revision ID
   and per-part backend bindings. Its query reads ordered shadow revision parts
-  while still checking the legacy FULL_REVISION publication authority. The reader
+  while checking either legacy FULL_REVISION authority or a sealed native revision
+  bound to a successful operation. The reader
   resolves original bindings per part under one aggregate budget/window.
 - `DocumentSourceSnapshot` now fences the current revision UUID and mutation
-  revision, cross-checking the legacy publication bridge. New mixed or zero-upload
-  revision publication still needs the independent authoritative commit path.
+  revision, cross-checking the applicable legacy or native publication authority.
+  New mixed or zero-upload publication still needs the production transaction entry point.
 - V22 history is keyed by attempt UUID. Its guards require a live full attempt,
   exact ordered manifest and matching current document body. V36 deliberately
   prevents NEW_CONTENT attempts from entering that path.
@@ -188,6 +190,38 @@ locking in that same live transaction. This checks lock coverage, not caller
 authority, canonical command validity or verified physical content. Failed locking
 marks the transaction rollback-only. The independent publisher and activation
 gates above remain unimplemented; this primitive is not a commit operation.
+
+### Native SQL publication checkpoint
+
+V52 adds independent revision commits and immutable operation outcomes. Deferred
+constraints require the complete ordered member set, one newly inserted saved
+event per member, exact current pointers, and sealed physical-part evidence in the
+same transaction. A revision retains its previous revision, selection identity,
+and versioned metadata snapshot. Timestamp fields in metadata version 1 are exact
+epoch microseconds, independent of database session timezone. Existing revisions
+keep their legacy provenance; migration does not invent native admission evidence.
+
+Native publication permits reused and newly uploaded parts in one revision and
+zero-upload members in the same operation. Each new part must belong to the live,
+verified selected attempt. Reused parts require retained history/current evidence.
+The manifest version advances by one per document; the global mutation sequence
+may have gaps. Native reads resolve the retained per-part physical identity.
+The key quarantine guard recognizes sealed native history for the same document;
+registration or verification alone does not authorize a published key.
+
+The terminal outcome is inserted last. Ordinary admission, renewal, takeover,
+and write fencing reject completed operations, including writes after deferred
+constraints have already been checked. Recovery-only fencing remains available.
+Linked saved events cannot be removed; requested delivery may advance their relay
+state later. Later live-policy changes do not rewrite the admitted metadata.
+
+This is an internal SQL and reader checkpoint. Integration fixtures publish through
+SQL with explicitly synthetic provider observations. The production Java publisher
+must still bind the canonical command to checked content, authorization, Any
+observations, actual event payloads and the encoded result. SQL does not decode
+those protobuf messages. Authorized replay, typed schema references, concurrent
+publication/retirement qualification and latency measurements remain pending.
+No new publication API is available from this checkpoint.
 
 DocumentPublicationResult now defines the success payload required by durable
 outcome storage. It binds account, principal, operation UUID, canonical command
