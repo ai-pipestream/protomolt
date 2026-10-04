@@ -693,3 +693,64 @@ repository primitives. Document paths are one consumer of them. They do not defi
 JCR node types, sessions, workspaces or version histories. The eventual content
 extension can compose schema references within a larger atomic change set. Keep
 JCR dependencies out of this catalog and preserve existing protobuf identities.
+
+### Runtime Any resolution is required
+
+Runtime type resolution is a core ProtoMolt feature. Typed archival admission must
+support `Any` values, including nested values, when their definitions are available.
+The current internal payload helper's blanket rejection of schemas containing Any
+is a temporary implementation gap, not the intended contract. An absent optional
+Any field does not require a payload type lookup.
+
+Reuse `StoredSchemaSources` for stored schema versions and transitive references,
+`ProtoSourceCompiler` for source-to-descriptor compilation, and the existing
+`DescriptorLoader` type lookup for descriptor sources. The repository engine must
+consume resolved immutable bindings without depending on a registry service or
+its storage implementation. Generated Java classes are not required for dynamic
+decoding; Java generation can consume the same definitions as a separate facility.
+Its existing coverage must be inventoried before adding a new generation path.
+
+A resolution session must bind each actual Any occurrence to its full type URL,
+selected schema version or content identity, complete descriptor closure and
+validated payload. Resolve a type once within that session and reuse its frozen
+binding. A type URL alone does not select a schema version. Conflicting definitions
+must fail explicitly rather than depend on lookup order or a later registry value.
+Historical reads use retained bindings and bytes, without consulting a mutable
+latest version in the registry.
+
+Walk ordinary message fields, repeated fields and map values to find populated
+Any envelopes. Resolve and validate embedded messages recursively. Preserve the
+original bytes. Charge nested work against shared byte, depth, wire-value, schema
+and resolution budgets; do not reset the budget at each envelope. Retain every
+resolved closure needed to reconstruct the revision. Apply authorization to schema
+resolution as well as document access. Registry I/O and compilation stay outside
+publication SQL transactions.
+
+Acceptance includes source-only definitions absent from the application classpath,
+valid and invalid nested payloads, unset Any fields, missing definitions, mismatched
+types, conflicting versions, recursion and aggregate limits, repeated lookup reuse,
+and historical decode with the registry unavailable. Annotation rules on the outer
+Any envelope and on each decoded payload must both run. These cases are required
+before treating typed archival admission as complete.
+
+### Java classes and SPI execution
+
+ProtoMolt also needs a path from schema definitions to executable Java providers.
+`GenerateStubsAction` and `WasmProtoc` already generate Java message source and
+service stubs. `Composer.builder()` already discovers `ServiceModule` providers
+through `ServiceLoader`. Runtime compilation and loading of newly generated
+classes between those steps have not been verified as existing functionality.
+
+Use an optional module to generate source from a pinned schema, compile with
+explicit dependencies, load the artifact, and discover a shared SPI provider.
+Generated protobuf messages need a provider adapter; implementing `Message` does
+not make them SPI providers. The shared SPI and protobuf runtime need a common
+parent class loader so providers agree on Java type identity. Versioned artifacts
+need an explicit loader lifecycle, admission policy, error reporting and resource
+cleanup. A class loader is not an execution sandbox.
+
+Keep compilation optional and outside base storage. Descriptor-based Any admission
+must work without Java generation. Both paths use the same selected schema identity
+and validation rules. Before claiming runtime provider execution, test source
+generation, compilation, SPI discovery, invocation, version isolation, failures
+and loader cleanup with actual generated artifacts.

@@ -3263,3 +3263,19 @@ The design covers account isolation, historical ownership, explicit legacy gaps,
 operation-first lock order, implicit SQL locks, bounded obsolete-claim cleanup and
 aggregate limits. It preserves the optional JCR boundary and existing protobuf
 identities. This is design work; no migration or retention API was implemented.
+
+### Schema artifact staging checkpoint
+
+V48 adds account-scoped immutable descriptor bytes and operation-generation staging
+claims. Java stages a sorted batch under the existing owner fence. SQL verifies
+byte identity and enforces per-artifact and accumulated per-generation limits.
+Exact retries reuse claims, and a new artifact cannot commit without its creator's
+claim. No public operation or protobuf identity changes.
+
+Twelve new PostgreSQL tests and sixteen existing owner-fence tests pass. Coverage
+includes exact descriptor bytes, account scope, replay at count and byte limits,
+rollback, missing creator claims, invalid digest, expired and replaced owners, and
+refusal of catalog/claim mutation. Cleanup, revision references, historical reads,
+publication and performance qualification remain unfinished. This is internal
+staging storage, not completed schema retention. Runtime Any resolution remains a
+required integration, as recorded in the cutover design.
