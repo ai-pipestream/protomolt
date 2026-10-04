@@ -223,6 +223,22 @@ those protobuf messages. Typed schema references, concurrent
 publication/retirement qualification and latency measurements remain pending.
 No new publication API is available from this checkpoint.
 
+V53 removes the legacy assumption that every document has one physical prefix.
+New native commits require documents.object_key to be null: the manifest and
+retained per-part bindings hold the actual locations. documents.drive_name names
+the selected logical drive, not a claim that all reused bytes live there. Existing
+rows and historical bodies are preserved by migration, without invented coordinates.
+Legacy publications still require a nonblank shared prefix. A surviving document
+with no prefix must have sealed native current authority and a committed outcome;
+an unbound row cannot use the relaxed column nullability.
+
+The legacy SaveDocument response has only one storage_prefix field. Its save path
+therefore rejects a native destination explicitly before provider work and rechecks
+the boundary under its deduplication lock. The response helper also rejects native
+rows rather than fabricating a prefix or emitting an ambiguous empty string.
+The independent result contract already identifies revisions without a physical
+prefix. No protobuf names, field numbers or stored type URLs change here.
+
 DocumentPublicationResult now defines the success payload required by durable
 outcome storage. It binds account, principal, operation UUID, canonical command
 encoding version/digest and the committing owner generation to the complete ordered

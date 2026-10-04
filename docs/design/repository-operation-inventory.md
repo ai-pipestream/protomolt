@@ -3615,3 +3615,23 @@ entry point and typed schema-retention integration remain pending.
 All 170 affected PostgreSQL tests pass without failures or skips, including native
 publication, replay, reuse admission, upload admission, reader pins and operation
 admission. Sol reviewed the replay and native reuse changes without a blocker.
+
+### Native storage coordinates
+
+V53 makes the legacy shared-prefix column nullable and requires new native revision
+commits to leave it absent. Per-part retained locations remain authoritative. The
+selected logical drive is not a substitute for those bindings. Deferred checks
+refuse unbound null/blank-prefix rows, and legacy publication keeps a nonblank
+prefix requirement. The migration preserves existing rows and historical bodies.
+
+Legacy save paths now reject native destinations they cannot represent, before
+provider work and under the deduplication lock. The response builder returns
+UNSUPPORTED instead of crashing or inventing a shared prefix. These are internal
+SQL and Java extensions; protobuf fields and the independent result remain unchanged.
+Initial regressions reproduced the SQL NOT NULL failure and response-builder
+NullPointerException. Fixtures now cover the populated V52 migration, native null
+prefixes, refusal of fabricated prefixes, and refusal of unbound null/blank rows.
+This prerequisite does not activate the production native publisher.
+All 125 affected container/engine tests and 34 repository service integration
+tests pass without failures or skips. Sol reviewed the migration, trigger order
+and legacy response boundary without a blocker.

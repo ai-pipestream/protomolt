@@ -277,6 +277,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         boolean writesCore = request.getPartsWrittenList().isEmpty()
                 || request.getPartsWrittenList().contains(DocumentPart.DOCUMENT_PART_CORE);
         requireWrite(caller, destination, r.doc(), request, writesCore);
+        SaveResolution.requireLegacyStoragePrefix(destination);
         if (managedWriter == null) requireLegacyWriteTarget(destination);
         DriveRecord drive = drives.findByName(r.address().getAccountId(), request.getDrive())
                 .orElseThrow(() -> readMissing(caller, "drive '" + request.getDrive() + "' not found for account '"
@@ -326,6 +327,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
                 return new Decision(false, null, 1L);
             }
             DocumentRecord row = existing.get();
+            SaveResolution.requireLegacyStoragePrefix(row);
             long nextVersion = SaveResolution.manifestVersion(row) + 1;
             if (intake && !request.getForceSave()
                     && DocumentStatus.AVAILABLE.equals(row.status)

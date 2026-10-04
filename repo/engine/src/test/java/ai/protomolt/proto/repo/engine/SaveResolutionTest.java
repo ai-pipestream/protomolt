@@ -21,6 +21,15 @@ import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
  */
 class SaveResolutionTest {
 
+    @Test void legacyResponseCannotInventAPrefixForNativeRevision() {
+        var row = new ai.protomolt.proto.repo.container.ledger.DocumentRecord();
+        row.nodeId = UUID.randomUUID();
+        row.driveName = "selected-drive";
+        assertThatThrownBy(() -> SaveResolution.saveResponse(row, "a".repeat(64)))
+                .isInstanceOfSatisfying(RepositoryException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.UNSUPPORTED));
+    }
+
     private static final String ACCOUNT = "acct-1";
     private static final String DATASOURCE = "ds-1";
 

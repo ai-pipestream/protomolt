@@ -158,6 +158,7 @@ final class SaveResolution {
     }
 
     static SaveDocumentResponse saveResponse(DocumentRecord row, String rootChecksum) {
+        requireLegacyStoragePrefix(row);
         return SaveDocumentResponse.newBuilder()
                 .setNodeId(row.nodeId.toString())
                 .setDrive(row.driveName)
@@ -168,6 +169,17 @@ final class SaveResolution {
                 .setDeduplicated(false)
                 .setAddress(addressOf(row))
                 .build();
+    }
+
+    /** The legacy save response cannot describe independently located revision parts. */
+    static void requireLegacyStoragePrefix(DocumentRecord row) {
+        if (row == null) return; // New legacy destination; its writer will supply the prefix.
+        if (row.objectKey == null)
+            throw new ai.protomolt.proto.repo.spi.RepositoryException(
+                    ai.protomolt.proto.repo.spi.RepositoryException.Code.UNSUPPORTED,
+                    "Legacy save cannot represent a native revision's per-part storage locations");
+        if (row.objectKey.isBlank())
+            throw RepositoryErrors.failedPrecondition("Legacy document storage prefix is blank");
     }
 
     /** Part-object key root: {@code <drive.prefix>/documents/<accountId>/<nodeId>}. */

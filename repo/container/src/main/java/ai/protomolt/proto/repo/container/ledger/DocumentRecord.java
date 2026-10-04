@@ -146,12 +146,12 @@ public class DocumentRecord {
     @Column(name = "checksum", nullable = false)
     public String checksum;
 
-    /** Name of the drive whose bucket holds the part objects. */
+    /** Selected logical drive. Native parts retain their own physical backend bindings. */
     @Column(name = "drive_name", nullable = false)
     public String driveName;
 
-    /** Storage prefix of the part objects (their keys share this root). */
-    @Column(name = "object_key", nullable = false, length = 1024)
+    /** Legacy shared physical prefix; null for native revisions with per-part locations. */
+    @Column(name = "object_key", length = 1024)
     public String objectKey;
 
     /** Object version identifier of the stored CORE part (nullable). */

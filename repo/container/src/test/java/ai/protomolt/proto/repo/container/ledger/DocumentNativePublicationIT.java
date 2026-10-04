@@ -18,6 +18,49 @@ import static ai.protomolt.proto.repo.container.ledger.DocumentNativePublication
 class DocumentNativePublicationIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
+    @Test void prefixMigrationPreservesLegacyRowsAndAllowsNativeTransition() {
+        try (var c=DocumentNativePublicationFixture.context(POSTGRES,"52")) {
+            var prepared=prepare(c,1);
+            Object before=c.tx().readOnly(em -> em.createNativeQuery("SELECT body::text FROM document_part_publication_history").getSingleResult());
+            org.flywaydb.core.Flyway.configure().dataSource(c.pool()).schemas(c.pool().getSchema())
+                    .defaultSchema(c.pool().getSchema()).locations("classpath:db/migration/repo").load().migrate();
+            Object after=c.tx().readOnly(em -> em.createNativeQuery("SELECT body::text FROM document_part_publication_history").getSingleResult());
+            assertThat(after).isEqualTo(before);
+            assertThat(new DocumentLedger(c.tx()).findByNodeId(prepared.sources().getFirst().row().nodeId).orElseThrow().objectKey)
+                    .isEqualTo(prepared.sources().getFirst().row().objectKey);
+            publish(c,prepared,Fault.NONE,em -> {});
+            assertThat(new DocumentLedger(c.tx()).findByNodeId(prepared.sources().getFirst().row().nodeId).orElseThrow().objectKey).isNull();
+        }
+    }
+
+    @Test void unboundDocumentCannotUseMissingOrBlankPrefix() {
+        for (String prefix:new String[]{null,""}) try (var c=context()) {
+            assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+                em.createNativeQuery("""
+                        INSERT INTO documents(node_id,doc_id,graph_address_id,graph_id,row_kind,account_id,datasource_id,
+                            checksum,drive_name,object_key,etag,size_bytes)
+                        VALUES(:node,'unbound','node','graph','PIPELINE','account','source',:checksum,'native',:prefix,'',0)
+                        """).setParameter("node",UUID.randomUUID()).setParameter("checksum","a".repeat(64))
+                        .setParameter("prefix",prefix).executeUpdate();
+            })).hasStackTraceContaining("Document without a shared prefix requires a committed native revision");
+            assertThat(count(c,"documents")).isZero();
+        }
+    }
+
+    @Test void nativeRevisionCannotClaimOrAcquireASharedPrefix() {
+        try (var c=context()) {
+            var prepared=prepare(c,1);
+            assertThatThrownBy(() -> publish(c,prepared,Fault.SHARED_NATIVE_PREFIX,em -> {}))
+                    .hasStackTraceContaining("Native revision must not claim a shared physical storage prefix");
+            assertThat(count(c,"repository_operation_success")).isZero();
+            publish(c,prepared,Fault.NONE,em -> {});
+            assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+                em.createNativeQuery("UPDATE documents SET object_key='invented/prefix'").executeUpdate();
+            })).hasStackTraceContaining("Independent document requires its exact committed revision");
+            assertThat(new DocumentLedger(c.tx()).findByNodeId(prepared.sources().getFirst().row().nodeId).orElseThrow().objectKey).isNull();
+        }
+    }
+
     @Test void zeroUploadMultiMemberPublicationRetainsExactResultsAndReads() throws Exception {
         try (var c = context()) {
             var prepared = prepare(c, 2);
@@ -31,6 +74,7 @@ class DocumentNativePublicationIT {
                 var row = new DocumentLedger(c.tx()).findByNodeId(
                         ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(member.getAddress())).orElseThrow();
                 var publication = new DocumentPublicationLedger(c.tx()).findForRead(row).orElseThrow();
+                assertThat(row.objectKey).as("native revisions have no shared physical prefix").isNull();
                 assertThat(publication.revisionId().toString()).isEqualTo(member.getRevisionId());
                 assertThat(publication.parts()).hasSize(2);
                 assertThat(publication.parts().getFirst().providerVersion()).isEqualTo("fixture-version");
@@ -53,7 +97,7 @@ class DocumentNativePublicationIT {
                 if (fault==Fault.NONE) throw new IllegalStateException("Failure after outcome");
             }));
             if (fault==Fault.NONE) failure.hasMessage("Failure after outcome");
-            else failure.hasStackTraceContaining("Independent document requires its exact committed revision");
+            else failure.hasStackTraceContaining("Document without a shared prefix requires a committed native revision");
             assertThat(count(c, "document_revision_commits")).isZero();
             assertThat(count(c, "repository_operation_success")).isZero();
             assertThat(count(c, "document_events_outbox")).isZero();

@@ -95,7 +95,7 @@ final class DocumentNativePublicationFixture {
     }
 
     /** Exercises SQL directly, not a substitute for the forthcoming production publisher/content validation. */
-    enum Fault { NONE, OMIT_OUTCOME, OMIT_EVENT, WRONG_COUNT, WRONG_RESULT_REVISION, INVALID_RESULT_WIRE }
+    enum Fault { NONE, OMIT_OUTCOME, OMIT_EVENT, WRONG_COUNT, WRONG_RESULT_REVISION, INVALID_RESULT_WIRE, SHARED_NATIVE_PREFIX }
 
     static DocumentPublicationResult publish(Context c, Prepared p, Fault fault, Consumer<EntityManager> beforeCommit) {
         return publish(c,p,fault,false,beforeCommit);
@@ -120,8 +120,9 @@ final class DocumentNativePublicationFixture {
                 var manifest=source.row().readManifest().toBuilder().setDocVersion(source.row().readManifest().getDocVersion()+1);
                 if (p.uploads.containsKey(i)) manifest.setParts(1,manifest.getParts(1).toBuilder().setObjectKey(p.uploads.get(i).key));
                 em.createNativeQuery("""
-                        UPDATE documents SET filename='native revision',part_manifest=CAST(:manifest AS jsonb) WHERE node_id=:node
+                        UPDATE documents SET filename='native revision',object_key=:prefix,part_manifest=CAST(:manifest AS jsonb) WHERE node_id=:node
                         """).setParameter("manifest",ai.protomolt.proto.repo.codec.DocumentPartCodec.manifestToJson(manifest.build()))
+                        .setParameter("prefix",fault==Fault.SHARED_NATIVE_PREFIX ? source.row().objectKey : null)
                         .setParameter("node",source.row().nodeId).executeUpdate();
                 var row=em.find(DocumentRecord.class,source.row().nodeId); em.refresh(row);
                 var event=deliver ? DocumentEventFactory.saved(row,Instant.now())
@@ -181,9 +182,13 @@ final class DocumentNativePublicationFixture {
         public void close() { try { emf.close(); } finally { pool.close(); } }
     }
     static Context context(PostgreSQLContainer postgres) {
+        return context(postgres,"latest");
+    }
+
+    static Context context(PostgreSQLContainer postgres,String target) {
         String schema="native_"+UUID.randomUUID().toString().replace("-","");
         Flyway.configure().dataSource(postgres.getJdbcUrl(),postgres.getUsername(),postgres.getPassword())
-                .schemas(schema).defaultSchema(schema).locations("classpath:db/migration/repo").load().migrate();
+                .schemas(schema).defaultSchema(schema).locations("classpath:db/migration/repo").target(target).load().migrate();
         var config=new HikariConfig(); config.setJdbcUrl(postgres.getJdbcUrl()); config.setUsername(postgres.getUsername());
         config.setPassword(postgres.getPassword()); config.setSchema(schema); config.setMaximumPoolSize(3);
         var pool=new HikariDataSource(config);
