@@ -22,12 +22,7 @@ class TxTimeoutIT {
 
     @BeforeAll static void open() {
         database = new LedgerDatabase(new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword(),
-                2, LedgerConfig.DEFAULT_MIGRATION_LOCATION));
-        // Flyway uses a separate migration connection. Restrict the runtime pool only after migration.
-        var pool = (com.zaxxer.hikari.HikariDataSource) database.dataSource();
-        pool.setMinimumIdle(1);
-        pool.setMaximumPoolSize(1);
-        pool.getHikariPoolMXBean().softEvictConnections();
+                1, LedgerConfig.DEFAULT_MIGRATION_LOCATION));
         tx = new Tx(database.entityManagerFactory());
         tx.inTransaction(em -> {
             em.createNativeQuery("CREATE TABLE timeout_probe(id integer PRIMARY KEY, value integer NOT NULL)").executeUpdate();

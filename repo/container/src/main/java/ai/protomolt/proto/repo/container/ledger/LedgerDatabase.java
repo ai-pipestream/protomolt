@@ -64,7 +64,10 @@ public final class LedgerDatabase implements AutoCloseable {
 
         try {
             Flyway.configure()
-                    .dataSource(dataSource)
+                    // Flyway may hold its metadata connection while borrowing a migration
+                    // connection. Keep both outside the explicitly sized runtime pool.
+                    .dataSource(config.jdbcUrl(), config.username(), config.password())
+                    .initSql("SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL READ COMMITTED")
                     .locations(config.migrationLocation())
                     .load()
                     .migrate();

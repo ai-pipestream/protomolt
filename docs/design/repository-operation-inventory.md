@@ -2445,6 +2445,17 @@ count/latency measurements. This initial coordinator checkpoint lacked SQL lock
 and statement timeouts. The scoped policy added below addresses those database
 waits without claiming a whole-operation deadline.
 
+Provider inventory for the remaining cross-provider case: the S3 registration
+currently supplies all three capabilities required by this selected-upload path.
+Redis supplies non-expiring writes only when TTL is zero, but does not advertise
+bounded reads or physical reclamation. Qualifying Redis for this path requires
+implementing and testing those behaviors; setting capability flags alone is not
+sufficient. This restriction does not remove its existing byte-SPI operations.
+The Redis review must also cover its literal namespace/key concatenation and
+`$meta` suffix, separately issued byte/metadata commands and ignored requested
+version in `get`. Add real-provider collision, concurrent read/write and explicit
+unsupported-version cases before admitting it to retained document storage.
+
 Local validation: the full container/service run passed in 2m37s, with 112 suites
 and 1,001 cases (998 passed, 3 skipped, no failures/errors). The subsequent staged
 result pairing correction passed all seven coordinator integration tests in 16s.
@@ -2486,8 +2497,38 @@ Local focused validation passed 14 tests: five transaction-policy cases and nine
 coordinator integration cases. Sol reviewed the policy, wiring and evidence with
 no blocker. No full-suite rerun or remote publication was performed for this
 checkpoint. The one-connection test initially exposed a separate migration-pool
-startup defect; its current fixture migrates with two connections then restricts
-the runtime pool to one. Fresh one-connection startup is not yet proven here.
+startup defect; at that checkpoint its fixture migrated with two connections and
+then restricted the runtime pool to one. The subsequent startup fix below removes
+that fixture workaround.
+
+### Single-connection ledger startup
+
+Fixed existing startup behavior; no repository operation or protobuf change.
+Flyway previously borrowed its metadata and migration connections from the runtime
+Hikari pool. A configured maximum of one therefore exhausted that pool during
+fresh migration. `LedgerSingleConnectionStartupIT` reproduced the ten-second pool
+checkout failure before the fix.
+
+Flyway now owns separate migration connections using the same JDBC URL and
+credentials. Their initialization explicitly retains READ COMMITTED isolation.
+The runtime pool keeps its configured limit throughout startup; migration sessions
+are additional temporary database connections, not runtime pool members. Future
+connection/session settings must be assessed for both paths rather than assuming
+Hikari-only settings automatically reach Flyway.
+
+Real PostgreSQL tests prove fresh startup at maximum pool size one, migration,
+restart with persisted data, and closure of migration and runtime connections.
+The timeout-policy fixture now also starts with one connection rather than
+shrinking a larger pool. The startup regression and five timeout-policy cases
+passed locally in 10s. Sol reviewed the connection ownership and isolation change
+with no blocker. A further real failed-migration case proves constructor failure
+closes both connection paths; the final two startup cases passed in 8s.
+
+The full container/service suites passed in 2m34s: 114 suites, 1,009 cases,
+1,006 passed and 3 skipped, with no failures/errors. The added migration-failure
+test ran afterward against the same production code. Sol also reviewed that
+failure-path test with no blocker. No hosted CI, push, merge or deployment was
+performed.
 
 ### Credential-to-ownership integration gap
 
