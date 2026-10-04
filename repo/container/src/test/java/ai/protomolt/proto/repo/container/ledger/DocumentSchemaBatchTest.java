@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 
 class DocumentSchemaBatchTest {
-    private static final ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits OPAQUE_LIMITS =
+    static final ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits OPAQUE_LIMITS =
             new ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000);
 
     @Test void candidateOwnsTypedAndExplicitOpaqueMembersTogether() throws Exception {
@@ -105,13 +105,13 @@ class DocumentSchemaBatchTest {
         assertThat(budget.reservedBytes()).isZero();
     }
 
-    private static Map<String, Map<Integer, ByteString>> fragments(CommandData f) {
+    static Map<String, Map<Integer, ByteString>> fragments(CommandData f) {
         var result = new HashMap<String, Map<Integer, ByteString>>();
         f.data.forEach((id, value) -> result.put(id, value.fragments));
         return result;
     }
 
-    private static long fragmentBytes(CommandData f) {
+    static long fragmentBytes(CommandData f) {
         return f.data.values().stream().flatMap(member -> member.fragments.values().stream()).mapToLong(ByteString::size).sum();
     }
 
@@ -276,11 +276,11 @@ class DocumentSchemaBatchTest {
                 member.fragments, assets.container.definition(), selection -> assets.payload.definition(), () -> {});
     }
 
-    private static DocumentSchemaPolicies.Selection selection(DocumentAdmissionPolicy policy) {
+    static DocumentSchemaPolicies.Selection selection(DocumentAdmissionPolicy policy) {
         return new DocumentSchemaPolicies.Selection(policy.definition().getAccountId(), 1, policy);
     }
 
-    private static DocumentAdmissionPolicy policy(String account, boolean opaque, int maxFragments) {
+    static DocumentAdmissionPolicy policy(String account, boolean opaque, int maxFragments) {
         var mode = opaque ? DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_OPAQUE_ALLOWED
                 : DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_TYPED_REQUIRED;
         return DocumentAdmissionPolicy.of(DocumentSchemaPolicy.newBuilder().setEncodingVersion(1).setAccountId(account)
@@ -291,11 +291,11 @@ class DocumentSchemaBatchTest {
                         .setMaxDecodedBytes(1_000_000)).build(), () -> {});
     }
 
-    private static CommandData command(String account, List<DocumentPublicationMember> members) throws Exception {
+    static CommandData command(String account, List<DocumentPublicationMember> members) throws Exception {
         return command(account, members, assets());
     }
 
-    private static CommandData command(String account, List<DocumentPublicationMember> members, Assets assets) throws Exception {
+    static CommandData command(String account, List<DocumentPublicationMember> members, Assets assets) throws Exception {
         var data = new HashMap<String, MemberData>();
         for (var member : members) data.put(member.getMemberId(), memberData(member));
         var intent = DocumentPublicationIntent.newBuilder().setOperationId(UUID.randomUUID().toString())
@@ -303,7 +303,7 @@ class DocumentSchemaBatchTest {
         return new CommandData(new DocumentPublicationCommand(intent), Map.copyOf(data), assets);
     }
 
-    private static DocumentPublicationMember member(String memberId, String docId) {
+    static DocumentPublicationMember member(String memberId, String docId) {
         var ownership = OwnershipContext.newBuilder().setAccountId("account").setDatasourceId("source")
                 .setSecurity(DocumentSecurity.getDefaultInstance()).build();
         var document = Document.newBuilder().setDocId(docId).setOwnership(ownership)
@@ -337,7 +337,7 @@ class DocumentSchemaBatchTest {
         return new Assets(asset(Document.getDescriptor()), asset(StringValue.getDescriptor()));
     }
 
-    private static Asset asset(com.google.protobuf.Descriptors.Descriptor type) throws Exception {
+    static Asset asset(com.google.protobuf.Descriptors.Descriptor type) throws Exception {
         var closure = DescriptorFingerprints.closure(type); var descriptors = closure.toByteString(); var descriptorHash = sha(descriptors);
         var schema = PublicationSchemaCondition.newBuilder().setTypeName(type.getFullName())
                 .setDescriptorFingerprint(DescriptorFingerprints.fingerprint(closure)).build();
@@ -355,8 +355,8 @@ class DocumentSchemaBatchTest {
         catch (Exception impossible) { throw new AssertionError(impossible); }
     }
 
-    private record Asset(DocumentSchemaAdmission.Definition definition) {}
-    private record Assets(Asset container, Asset payload) {}
-    private record MemberData(DocumentPublicationMember member, Map<Integer, ByteString> fragments) {}
-    private record CommandData(DocumentPublicationCommand command, Map<String, MemberData> data, Assets assets) {}
+    record Asset(DocumentSchemaAdmission.Definition definition) {}
+    record Assets(Asset container, Asset payload) {}
+    record MemberData(DocumentPublicationMember member, Map<Integer, ByteString> fragments) {}
+    record CommandData(DocumentPublicationCommand command, Map<String, MemberData> data, Assets assets) {}
 }

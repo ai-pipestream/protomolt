@@ -112,7 +112,7 @@ final class DocumentCommandContent {
                 new DocumentRevisionAssembly.Result(proof.document(), fragments), Optional.empty());
     }
 
-    private static String sha256(ByteString bytes, Runnable control) {
+    static String sha256(ByteString bytes, Runnable control) {
         try {
             var hash = java.security.MessageDigest.getInstance("SHA-256");
             for (var buffer : bytes.asReadOnlyByteBufferList()) { control.run(); hash.update(buffer); }

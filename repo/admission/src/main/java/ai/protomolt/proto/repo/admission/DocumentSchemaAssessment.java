@@ -149,6 +149,19 @@ public final class DocumentSchemaAssessment implements AutoCloseable {
         }
     }
 
+    /** Borrowed access without the ability to release this owner's resources. */
+    public final class View {
+        private View() {}
+        public DocumentSchemaAdmission.Preparation request() { return DocumentSchemaAssessment.this.request(); }
+        public Instant evaluatedAt() { return DocumentSchemaAssessment.this.evaluatedAt(); }
+        public List<DocumentSchemaAdmission.RootEvidence> roots() { return DocumentSchemaAssessment.this.roots(); }
+        public List<DocumentSchemaAdmission.Reference> references() { return DocumentSchemaAssessment.this.references(); }
+        public Map<String, ByteString> artifacts() { return DocumentSchemaAssessment.this.artifacts(); }
+        public Optional<Failure> failure() { return DocumentSchemaAssessment.this.failure(); }
+    }
+
+    /** The host must still drain consumers before closing; previously borrowed bytes cannot be revoked. */
+    public synchronized View view() { requireOpen(); return new View(); }
     public synchronized DocumentSchemaAdmission.Preparation request() { requireOpen(); return request; }
     public synchronized Instant evaluatedAt() { requireOpen(); return evaluatedAt; }
     public synchronized List<DocumentSchemaAdmission.RootEvidence> roots() { requireOpen(); return roots; }

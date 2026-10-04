@@ -53,23 +53,7 @@ final class DocumentPublicationCandidate implements AutoCloseable {
         Objects.requireNonNull(command); Objects.requireNonNull(policy); Objects.requireNonNull(modes);
         Objects.requireNonNull(container); Objects.requireNonNull(resolver); Objects.requireNonNull(budget);
         Objects.requireNonNull(opaqueLimits); active(control);
-        if (!policy.account().equals(command.intent().getAccountId()))
-            throw new IllegalArgumentException("Policy account differs from command");
-        if (modes.size() != command.intent().getMembersCount())
-            throw new IllegalArgumentException("Admission modes differ from command members");
-        var selectedModes = Map.copyOf(modes);
-        var expected = new HashSet<String>();
-        for (var member : command.intent().getMembersList()) {
-            active(control);
-            expected.add(member.getMemberId());
-            var mode = selectedModes.get(member.getMemberId());
-            if (mode == null) throw new IllegalArgumentException("Admission mode is missing for member");
-            if (mode == Mode.OPAQUE && policy.policy().requiresTyped(member))
-                throw new IllegalArgumentException("Policy requires typed admission for member");
-            if (mode == Mode.TYPED && container.isEmpty())
-                throw new IllegalArgumentException("Typed admission requires a container definition");
-        }
-        if (!expected.equals(selectedModes.keySet())) throw new IllegalArgumentException("Unknown admission mode member");
+        var selectedModes = requireModes(command, policy, modes, container, control);
         DocumentAdmissionReservations reservations = bytes -> {
             try {
                 var lease = budget.reserve(bytes);
@@ -111,6 +95,28 @@ final class DocumentPublicationCandidate implements AutoCloseable {
                 snapshot.close();
             }
         }
+    }
+
+    static Map<String, Mode> requireModes(DocumentPublicationCommand command, DocumentSchemaPolicies.Selection policy,
+            Map<String, Mode> modes, Optional<DocumentSchemaAdmission.Definition> container, Runnable control) {
+        if (!policy.account().equals(command.intent().getAccountId()))
+            throw new IllegalArgumentException("Policy account differs from command");
+        if (modes.size() != command.intent().getMembersCount())
+            throw new IllegalArgumentException("Admission modes differ from command members");
+        var selectedModes = Map.copyOf(modes);
+        var expected = new HashSet<String>();
+        for (var member : command.intent().getMembersList()) {
+            active(control);
+            expected.add(member.getMemberId());
+            var mode = selectedModes.get(member.getMemberId());
+            if (mode == null) throw new IllegalArgumentException("Admission mode is missing for member");
+            if (mode == Mode.OPAQUE && policy.policy().requiresTyped(member))
+                throw new IllegalArgumentException("Policy requires typed admission for member");
+            if (mode == Mode.TYPED && container.isEmpty())
+                throw new IllegalArgumentException("Typed admission requires a container definition");
+        }
+        if (!expected.equals(selectedModes.keySet())) throw new IllegalArgumentException("Unknown admission mode member");
+        return selectedModes;
     }
 
     /** Borrow until close; callers must drain all staging/commit consumers first. */

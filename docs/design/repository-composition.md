@@ -3024,3 +3024,41 @@ same-length corruption of a later fragment before any resolver call, complete
 asset ownership after resolver buffers are reclaimed, refusal at every reservation,
 later-root cancellation, aggregate budgets charged for invalid roots, fixed-time
 verdicts across both root kinds and rejection of a rootless typed assessment.
+
+#### Operation-wide assessment and policy selection
+
+`DocumentPublicationAssessment.prepare` now owns the complete fragment snapshot
+and all typed member assessments under one explicit mode map, immutable policy
+selection and evaluation instant. Snapshot capture verifies every private copy's
+size and content digest against the canonical command before the first schema
+lookup. Member checks still independently verify those identities; the additional
+hash pass is deliberate until a trusted verified-snapshot interface can eliminate
+it without weakening the library boundary.
+
+The operation loop continues after a payload violation. A later typed member's
+missing/disallowed schema, an opaque member's structural or ownership mismatch,
+cancellation or resource failure closes all member owners before releasing the
+fragment snapshot, and returns no assessment. Opaque members remain explicitly
+selected and do not trigger schema resolution or receive a typed verdict.
+`DocumentAdmissionPolicy.assess` binds its own policy digest, limits and structured
+root requirement and applies the account/eligibility checks to every resolved
+occurrence. The retained selection is not proof of current policy authorization.
+
+Successful proof batches and invalid-value assessments now share
+`DocumentSchemaUnion`: at most 4,096 roots, 64 MiB encoded root evidence, 64 distinct
+schema artifacts and 64 MiB in the deduplicated artifact union. These limits apply
+in addition to per-member limits and live serialized-byte reservations. Duplicate
+artifact identities must have identical bytes. The operation result retains the
+full member assessments and normalized artifact union; only the first payload
+failure is selected as its tentative diagnostic identity.
+Consumers receive non-closeable member views. The operation retains exclusive
+ownership, and closing it invalidates subsequent view access. Consumers must
+still drain before close; previously borrowed byte references cannot be revoked.
+
+This completes candidate assessment across current roots and members, not durable
+admission rejection. Frozen-evidence independent verification, retention/binding
+contracts and the fresh owner/policy/document-fenced decision are still required.
+Tests cover a bad later fragment before every resolver, invalid-first/missing-later
+and invalid-first/ineligible-later members, later opaque ownership failure, explicit
+opaque mode, cancellation, shared capacity refusal, private snapshot lifetime and
+32 invalid descriptor variants exceeding the operation artifact count.

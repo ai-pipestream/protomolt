@@ -24,7 +24,8 @@ final class DocumentPublicationFragments implements AutoCloseable {
      * Input maps and bytes must remain stable throughout capture and have their own
      * host reservation. Preflight the complete command before allocating payload copies.
      * This lease accounts only the copies here, not descriptors, proofs or decoded objects.
-     * Source pins remain the caller's responsibility. Hash, schema, authorization and
+     * All private copies must match their declared hashes before capture returns.
+     * Source pins remain the caller's responsibility. Schema, authorization and
      * physical-selection checks still belong to admission and commit.
      */
     static DocumentPublicationFragments capture(DocumentPublicationCommand command,
@@ -74,7 +75,13 @@ final class DocumentPublicationFragments implements AutoCloseable {
                     active(control);
                     // The fresh array is exclusively owned here and never exposed or mutated.
                     // Avoid flattening a rope and then allocating a second copy of it.
-                    parts.put(entry.getKey(), com.google.protobuf.UnsafeByteOperations.unsafeWrap(entry.getValue().toByteArray()));
+                    var copy = com.google.protobuf.UnsafeByteOperations.unsafeWrap(entry.getValue().toByteArray());
+                    var declaration = member.getParts(entry.getKey());
+                    String digest = declaration.hasUpload() ? declaration.getUpload().getSha256()
+                            : declaration.getReuse().getObject().getSha256();
+                    if (!DocumentCommandContent.sha256(copy, () -> active(control)).equals(digest))
+                        throw new IllegalArgumentException("Fragment hash differs from command declaration");
+                    parts.put(entry.getKey(), copy);
                 }
                 copied.put(member.getMemberId(), Map.copyOf(parts));
             }

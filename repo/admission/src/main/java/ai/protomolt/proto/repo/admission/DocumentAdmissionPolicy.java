@@ -130,6 +130,22 @@ public final class DocumentAdmissionPolicy {
         }
     }
 
+    /** Own a complete member assessment under this policy; the host still authorizes and fences its active pointer. */
+    public DocumentSchemaAssessment assess(ByteString commandSha256, DocumentPublicationMember member,
+            Map<Integer, ByteString> fragments, DocumentSchemaAdmission.Definition container,
+            DocumentSchemaAdmission.Resolver resolver, DocumentAdmissionReservations reservations,
+            java.time.Instant evaluatedAt, Runnable control) throws InvalidProtocolBufferException {
+        Objects.requireNonNull(resolver); Objects.requireNonNull(control).run();
+        requireAccount(member);
+        return DocumentSchemaAssessment.prepare(new DocumentSchemaAdmission.Preparation(commandSha256, sha256,
+                policy.getRequireStructuredRoot(), member, fragments, container), occurrence -> {
+            var selected = resolver.select(occurrence);
+            control.run();
+            if (selected != null) requireEligible(selected.metadata().getTypeUrl(), selected.metadata().getSchema());
+            return selected;
+        }, limits, reservations, evaluatedAt, control);
+    }
+
     /** Pure correspondence check; commit must additionally fence the authoritative policy pointer. */
     public void verifyProof(DocumentSchemaAdmission.Proof proof, Runnable control) throws InvalidProtocolBufferException {
         verifyProofInternal(proof, null, control);

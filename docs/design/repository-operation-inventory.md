@@ -5720,3 +5720,18 @@ continues after payload violations, shares budgets across roots and releases
 owned schema/evidence reservations on failure or close. It does not authorize
 policy, independently replay a proof, assess other operation members or emit a
 terminal receipt. Those integrations remain required before public adoption.
+
+### Operation-wide candidate assessment
+
+New: internal `DocumentPublicationAssessment`, retaining a complete mode map,
+policy selection, evaluation instant, all member assessments and normalized assets.
+Extended: `DocumentAdmissionPolicy.assess` enforces member account and resolved
+schema eligibility; fragment snapshot capture verifies the hashes of all private
+copies before schema resolution. Refactored: successful proof batches and invalid
+assessments share the same operation-wide root/evidence/artifact limit accumulator.
+
+No publication or terminal receipt is emitted. A tentative value failure becomes
+available only after every typed and opaque member completes its applicable
+checks. Independent frozen-evidence verification and durable decision integration
+remain open; current-policy and authorization fences are not replaced by an
+in-memory selection. Existing protobuf names, fields and public RPCs are unchanged.

@@ -46,8 +46,7 @@ final class DocumentSchemaBatch {
         if (supplied.size() > command.intent().getMembersCount()) throw new IllegalArgumentException("Too many member schema proofs");
         var remaining = new HashMap<>(supplied);
         var accepted = new HashMap<String, DocumentSchemaAdmission.Proof>();
-        var artifacts = new TreeMap<String, ByteString>();
-        long artifactBytes = 0, evidenceBytes = 0; int roots = 0;
+        var union = new DocumentSchemaUnion();
         var commandDigest = ByteString.copyFrom(HexFormat.of().parseHex(command.sha256()));
         for (var member : command.intent().getMembersList()) {
             active(control);
@@ -62,30 +61,12 @@ final class DocumentSchemaBatch {
                 throw new IllegalArgumentException("Schema proof differs from canonical command member");
             if (reservations == null) policy.policy().verifyProof(proof, () -> active(control));
             else policy.policy().verifyProof(proof, reservations, () -> active(control));
-            roots += proof.roots().size();
-            if (roots > 4096) throw new IllegalArgumentException("Operation schema root count exceeds limit");
-            for (var root : proof.roots()) {
-                active(control);
-                evidenceBytes += root.encoded().bytes().size();
-                if (evidenceBytes > 64L * 1024 * 1024) throw new IllegalArgumentException("Operation schema evidence bytes exceed limit");
-            }
-            for (var asset : proof.artifacts().entrySet()) {
-                active(control);
-                var prior = artifacts.get(asset.getKey());
-                if (prior != null) {
-                    if (!prior.equals(asset.getValue())) throw new IllegalArgumentException("Schema artifact digest collision");
-                } else {
-                    if (artifacts.size() >= RepositorySchemaArtifacts.MAX_ARTIFACTS
-                            || asset.getValue().size() > RepositorySchemaArtifacts.MAX_BATCH_BYTES - artifactBytes)
-                        throw new IllegalArgumentException("Operation schema artifact union exceeds limit");
-                    artifacts.put(asset.getKey(), asset.getValue()); artifactBytes += asset.getValue().size();
-                }
-            }
+            union.add(proof.roots(), proof.artifacts(), () -> active(control));
             accepted.put(member.getMemberId(), proof);
         }
         if (!remaining.isEmpty()) throw new IllegalArgumentException("Schema proof names an unknown command member");
         active(control);
-        return new DocumentSchemaBatch(command, policy, accepted, artifacts);
+        return new DocumentSchemaBatch(command, policy, accepted, union.artifacts());
     }
 
     Map<String, DocumentSchemaAdmission.Proof> proofs() { return proofs; }
