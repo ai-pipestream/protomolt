@@ -4879,3 +4879,31 @@ the other exposed DATA_LOSS details. Both failed as expected; restoring the gate
 returned both to green. The final nine historical tests were rerun after the last
 control-flow adjustment. Sol reviewed the SQL reader, replay boundary and tests
 with no blocker.
+
+### Historical scope for physical read pins
+
+V63 extends `document_read_pins` and its insertion guard with CURRENT and
+HISTORICAL scopes. Existing rows and callers default to CURRENT, preserving the
+current-revision checks used by publication reuse. HISTORICAL can pin a superseded
+sealed revision with its exact retained DOCUMENT_HISTORY reference. Both scopes
+require the same active reader, verified origin/object, exact node/revision/part
+identity, and open retention state. The host must acquire the complete origin set
+before retention rows and separately authorize the current document.
+
+The DOCUMENT_READER mirror, release functions and quiescent recovery functions
+are unchanged. Pin identity and scope remain immutable. Releasing a drained pin
+does not require its source revision to remain current. Existing historical
+references still prevent reclamation after reader release; this does not implement
+history pruning. The SQL capability is internal and does not yet add an authorized
+historical Java read plan, provider I/O, or public read endpoint.
+
+Qualification: 134 tests pass across existing reader pins (17), upload admission
+(90), upload coordination (20), historical pin guards/lifecycle (5) and migration
+and native-turnover compatibility (2). The new cases cover superseded legacy
+revisions and native revisions whose objects are reused by a newer native
+revision. CURRENT still refuses those old revisions. Tests verify exact reader
+references, immutable scope, identity mismatches, retirement, reader fencing,
+release rollback/idempotence and quiescent recovery. A live V62 pin migrates to
+CURRENT with its identity intact and can release after upgrade. These are real
+PostgreSQL cases with synthetic physical observations, not provider-read evidence.
+Sol reviewed the migration and final tests with no blocker.

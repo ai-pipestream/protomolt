@@ -2485,11 +2485,13 @@ checked again before exposing decoded data or detailed errors to the caller.
 A schema snapshot alone does not establish validated historical content. Acquire
 reader pins for the exact historical provider objects, verify their retained
 identities and hashes, then replay the recorded occurrence bindings against those
-bytes. The existing `DocumentReadPins.acquire` and V44 `guard_document_read_pin`
-require a current revision and its DOCUMENT_CURRENT reference. They cannot pin an
-arbitrary old revision unchanged. Add explicit historical admission against the
-sealed revision's DOCUMENT_HISTORY references while preserving current-source
-checks for publication reuse and the shared reader drain/recovery lifecycle.
+bytes. `DocumentReadPins.acquire` still captures current revisions. V63 extends
+the SQL pin protocol with explicit CURRENT and HISTORICAL scopes; existing pins
+and Java inserts default to CURRENT. HISTORICAL retains the sealed revision and
+DOCUMENT_HISTORY checks while omitting the current-pointer/current-reference
+requirement. Authorized Java capture and provider lifetime integration are still
+required. Preserve current-source checks for publication reuse and share the
+reader drain/recovery lifecycle with historical reads.
 Pins remain until provider work drains, including cancellation. Use the
 current runtime against retained definitions without consulting registry latest;
 do not claim to rerun a historical compiler or executable validator.
