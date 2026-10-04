@@ -1417,6 +1417,9 @@ steps and text. Strict schema preparation rejects noncanonical map-entry shapes
 before suppressing the synthetic value-field path. A red test proved that the
 protobuf descriptor builder alone did not reject an extra map-entry field.
 
-The persisted contract, canonical encoding and revision references remain
-acceptance work. Internal path evidence does not authenticate compiler provenance,
-authorize a read, retain an artifact or enable typed publication.
+The versioned path contract, collector projection and bounded canonical
+single-path codec are now implemented in `repo/proto` and `repo/admission`.
+The operation inventory records their exact verification and limits. The
+containing-root locator, canonical evidence-set encoding and revision references
+remain acceptance work. Internal path evidence does not authenticate compiler
+provenance, authorize a read, retain an artifact or enable typed publication.

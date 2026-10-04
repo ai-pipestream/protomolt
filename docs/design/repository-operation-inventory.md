@@ -3757,7 +3757,8 @@ before parsing; reject unknown evidence fields; validate transitions
 against retained descriptors and candidate values; verify effective Any.value
 bytes, size, URL and artifact/condition binding; apply aggregate UTF-8 text/step
 bounds; reject duplicate paths; and bind account, operation/attempt, revision and
-policy. Canonical encoding and its decoder/re-encode checks are not implemented.
+policy. The single-path codec below implements canonical encoding and decoder
+re-encode checks; canonical evidence-set encoding remains unfinished.
 The collector-to-protobuf bridge obtains actual value sizes from traversal;
 it does not substitute an unknown size with zero. No public API consumes this
 contract yet, and typed publication remains disabled.
@@ -3784,3 +3785,29 @@ no untrusted-byte reader, root locator, revision binding or admission capability
 in this helper. Compiler provenance, source retention and atomic publication
 remain separate obligations. Evidence projection must not enable typed success
 until those publication checks are implemented.
+
+### Single-path occurrence codec
+
+`DocumentSchemaOccurrenceCodec` defines codec `repository-schema-occurrence`,
+version 1. Fields are written in ascending numeric order, repeated steps retain
+their order, varints and length prefixes use their shortest protobuf encoding,
+and semantic presence determines omission. Oneof zero, false and empty-string
+values remain explicitly present. `signed_value` uses the contract's int64 wire
+encoding, including ten-byte negative values, even when the original map key
+type was sint or sfixed. Unknown fields, malformed UTF-16 strings, maps, packed
+fields, extensions and unsupported scalar layouts are rejected. A fixed 225-byte
+fixture pins the encoding independently of the protobuf deterministic-output flag.
+
+Encoding measures byte size with bounded long arithmetic before allocating the
+output. Decoding checks the 4 MiB byte ceiling and digest before a descriptor-aware
+wire scan; at most 16384 wire values and 16 nesting levels are permitted. Parsing
+uses the same recursion limit and must consume the entire input. Recursive unknown
+field rejection and the runtime validator precede exact canonical re-encoding.
+Alternate tag order, duplicate singular tags and overlong varints are rejected
+even if their supplied digest matches and a normal protobuf parser accepts them.
+
+These are single-path limits, not an operation's aggregate budget. The codec does
+not sort or deduplicate a set, identify the containing root, match a path to live
+candidate bytes, authorize access or retain schema assets. Its digest describes
+evidence bytes, not a payload or admission verdict. Stored schema references still
+require the enclosing revision/publication transaction and trusted candidate checks.
