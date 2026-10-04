@@ -2988,3 +2988,39 @@ members before a tentative value failure becomes verified-invalid evidence.
 Tests cover distinct definitions under one URL, invalid-first/missing-later and
 invalid-first/unsupported-later sequences, malformed later bytes, cancellation,
 occurrence exhaustion, fixed-time verdicts and later CEL evaluation errors.
+
+#### Owned assessment across a member's roots
+
+`DocumentSchemaAssessment.prepare` now verifies one member's complete fragment
+inventory, sizes and hashes before resolving payload schemas. It applies the
+explicit evaluation instant to structural member/document validation and every
+CORE/PARSED payload root. Structural failures remain incomplete assessments;
+only supported payload value violations become the optional failure identity.
+The loop continues through later roots after a violation, and a missing definition,
+unsupported rule, corrupt bytes, exceeded bound or cancellation prevents return.
+An assessment without any payload root is refused.
+
+The result owns normalized descriptor, metadata, optional source and final root
+evidence bytes through an explicit close operation. Fragment bytes remain borrowed
+and must stay stable/alive until that owner is closed. Root count, decoded bytes
+and encoded evidence bytes are charged across accepted and invalid roots alike.
+Schema assets use the same extracted `DocumentSchemaDefinitions` implementation
+as successful preparation. Failure identity includes root ordinal and locator,
+contextual occurrence path and bounded rule identity, without raw message text.
+Closing releases reservations and invalidates accessors; all failed preparation
+paths release their acquired leases.
+
+Standard occurrence bundles describe complete schema resolution even when values
+are invalid. They are not successful admission proofs: the assessment never calls
+a success-only verifier to manufacture a `Proof`. Even a result with no payload
+failure is not an independently replayed admission capability. The next integration
+must assess every operation member, enforce the authoritative policy/eligibility,
+replay frozen evidence at the same instant, and retain the required bindings before
+recording a durable rejection. The assessment itself has no database, provider,
+publication or public RPC side effect.
+
+Tests cover invalid CORE followed by missing/unsupported PARSED schemas,
+same-length corruption of a later fragment before any resolver call, complete
+asset ownership after resolver buffers are reclaimed, refusal at every reservation,
+later-root cancellation, aggregate budgets charged for invalid roots, fixed-time
+verdicts across both root kinds and rejection of a rootless typed assessment.

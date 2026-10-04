@@ -5705,3 +5705,18 @@ This is a library building block. Command-wide fragment verification, continued
 assessment across all roots/members, frozen evidence replay and the durable
 schema-admission rejection decision remain required. No public outcome endpoint
 or automatic admission-rejection receipt is added by this change.
+
+### Owned member schema assessment
+
+New: `DocumentSchemaAssessment.prepare`, an owned library assessment spanning all
+CORE/PARSED roots of one member. Refactored unchanged behavior: descriptor,
+metadata and source normalization now lives in the shared
+`DocumentSchemaDefinitions` helper. Extended: structural member validation can
+use an explicit evaluation instant, and occurrence projection accepts completed
+invalid-value traversals without constructing a successful payload proof.
+
+The assessment verifies the whole member's fragment hashes before resolution,
+continues after payload violations, shares budgets across roots and releases
+owned schema/evidence reservations on failure or close. It does not authorize
+policy, independently replay a proof, assess other operation members or emit a
+terminal receipt. Those integrations remain required before public adoption.

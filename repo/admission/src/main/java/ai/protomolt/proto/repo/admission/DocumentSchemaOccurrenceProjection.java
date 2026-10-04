@@ -21,15 +21,21 @@ final class DocumentSchemaOccurrenceProjection {
 
     static List<RepositorySchemaOccurrencePath> project(DocumentPayloadCheck checked, Runnable control) {
         Objects.requireNonNull(checked, "checked");
+        return project(checked.occurrences(), checked.resolvedSchemas(), control);
+    }
+
+    /** Projects completed traversal identities; it does not assert that the payload values passed. */
+    static List<RepositorySchemaOccurrencePath> project(List<DocumentSchemaOccurrences.Occurrence> occurrences,
+            java.util.Map<DocumentPayloadCheck.SchemaKey, DocumentSchemaBinding> schemas, Runnable control) {
         Objects.requireNonNull(control, "control");
         active(control);
-        if (checked.occurrences().isEmpty())
+        if (occurrences.isEmpty())
             throw new IllegalArgumentException("strict archival occurrence evidence required");
         var result = new ArrayList<RepositorySchemaOccurrencePath>();
-        for (var occurrence : checked.occurrences()) {
+        for (var occurrence : occurrences) {
             active(control);
             var path = RepositorySchemaOccurrencePath.newBuilder().setEncodingVersion(1);
-            path.addAllSteps(projectSteps(occurrence.path(), checked.resolvedSchemas(), control));
+            path.addAllSteps(projectSteps(occurrence.path(), schemas, control));
             var built = path.build();
             VALIDATOR.validate(built).throwIfInvalid();
             active(control);

@@ -403,7 +403,7 @@ class DocumentSchemaPreparationTest {
         return DocumentSchemaAdmission.prepareAndCheck(request, resolver, limits, control);
     }
 
-    private static DocumentSchemaAdmission.Limits limits(int decoded) {
+    static DocumentSchemaAdmission.Limits limits(int decoded) {
         return new DocumentSchemaAdmission.Limits(32, 4_000_000, 100, 4_000_000, 20, 16_000_000, decoded);
     }
 
@@ -414,7 +414,7 @@ class DocumentSchemaPreparationTest {
                 reservations, control);
     }
 
-    private static Asset borrowed(Asset asset, List<byte[]> buffers) {
+    static Asset borrowed(Asset asset, List<byte[]> buffers) {
         byte[] descriptors = asset.descriptors.toByteArray();
         buffers.add(descriptors);
         ByteString source = null;
@@ -426,7 +426,7 @@ class DocumentSchemaPreparationTest {
         return new Asset(asset.metadata, com.google.protobuf.UnsafeByteOperations.unsafeWrap(descriptors), source, asset.reference);
     }
 
-    private static final class Reservations implements DocumentAdmissionReservations {
+    static final class Reservations implements DocumentAdmissionReservations {
         long live;
         long peak;
         int calls;
@@ -441,7 +441,7 @@ class DocumentSchemaPreparationTest {
         }
     }
 
-    private static Fixture fixture(boolean withSource) throws Exception {
+    static Fixture fixture(boolean withSource) throws Exception {
         var ownership = OwnershipContext.newBuilder().setAccountId("account").setDatasourceId("source")
                 .setSecurity(DocumentSecurity.getDefaultInstance()).build();
         var document = Document.newBuilder().setDocId("doc").setOwnership(ownership)
@@ -451,7 +451,7 @@ class DocumentSchemaPreparationTest {
         return fixture(withSource, document);
     }
 
-    private static Fixture fixture(boolean withSource, Document document) throws Exception {
+    static Fixture fixture(boolean withSource, Document document) throws Exception {
         var container = asset(Document.getDescriptor(), false);
         var string = asset(StringValue.getDescriptor(), withSource);
         var timestamp = asset(Timestamp.getDescriptor(), false);
@@ -471,11 +471,11 @@ class DocumentSchemaPreparationTest {
         return new Fixture(document, member.build(), Map.copyOf(fragments), container, string, timestamp);
     }
 
-    private static Asset asset(com.google.protobuf.Descriptors.Descriptor type, boolean withSource) throws Exception {
+    static Asset asset(com.google.protobuf.Descriptors.Descriptor type, boolean withSource) throws Exception {
         return asset(type, withSource, "type.test/" + type.getFullName());
     }
 
-    private static Asset asset(com.google.protobuf.Descriptors.Descriptor type, boolean withSource, String typeUrl) throws Exception {
+    static Asset asset(com.google.protobuf.Descriptors.Descriptor type, boolean withSource, String typeUrl) throws Exception {
         var closure = DescriptorFingerprints.closure(type); var descriptors = closure.toByteString(); var descriptorHash = sha(descriptors);
         var condition = PublicationSchemaCondition.newBuilder().setTypeName(type.getFullName())
                 .setDescriptorFingerprint(DescriptorFingerprints.fingerprint(closure)).build();
@@ -519,10 +519,10 @@ class DocumentSchemaPreparationTest {
     private static String sha(ByteString value) { try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.toByteArray())); }
         catch (Exception impossible) { throw new AssertionError(impossible); } }
 
-    private record Asset(RepositorySchemaAsset metadata, ByteString descriptors, ByteString source,
+    record Asset(RepositorySchemaAsset metadata, ByteString descriptors, ByteString source,
             DocumentSchemaAdmission.Reference reference) {
         DocumentSchemaAdmission.Definition definition() { return new DocumentSchemaAdmission.Definition(metadata, descriptors, Optional.ofNullable(source)); }
     }
-    private record Fixture(Document document, DocumentPublicationMember member, Map<Integer, ByteString> fragments,
+    record Fixture(Document document, DocumentPublicationMember member, Map<Integer, ByteString> fragments,
             Asset container, Asset string, Asset timestamp) {}
 }

@@ -334,15 +334,21 @@ public final class DocumentSchemaAdmission {
 
     static DocumentRevisionAssembly.Result checkMember(DocumentPublicationMember member, Map<Integer, ByteString> fragments,
             boolean requireStructuredRoot, Limits limits, Runnable control) throws InvalidProtocolBufferException {
+        return checkMember(member, fragments, requireStructuredRoot, limits, java.time.Instant.now(), control);
+    }
+
+    static DocumentRevisionAssembly.Result checkMember(DocumentPublicationMember member, Map<Integer, ByteString> fragments,
+            boolean requireStructuredRoot, Limits limits, java.time.Instant evaluatedAt, Runnable control)
+            throws InvalidProtocolBufferException {
         if (member.getPartsCount() > limits.maxFragments() || fragments.size() > limits.maxFragments())
             throw new IllegalArgumentException("member admission count exceeds limit");
         if (member.getSerializedSize() > MIB) throw new IllegalArgumentException("publication member exceeds byte limit");
-        VALIDATOR.validate(member).throwIfInvalid();
+        VALIDATOR.validate(member, evaluatedAt).throwIfInvalid();
         var assembly = assemble(member, fragments, limits, control);
         if (!assembly.document().hasOwnership() || !assembly.document().getOwnership().equals(member.getOwnership()))
             throw new IllegalArgumentException("decoded ownership differs from publication member");
         requireKnownDocument(assembly.document(), "", 0, new int[1], control);
-        VALIDATOR.validate(assembly.document()).throwIfInvalid();
+        VALIDATOR.validate(assembly.document(), evaluatedAt).throwIfInvalid();
         if ((requireStructuredRoot || member.hasStructuredSchema()) && !assembly.document().hasStructuredData())
             throw new IllegalArgumentException("required structured root is absent");
         return assembly;
