@@ -32,6 +32,75 @@ class DocumentPayloadCheckTest {
     private static final DocumentPayloadCheck.Limits LIMITS = new DocumentPayloadCheck.Limits(1024, 100, 10, 100, 1000);
 
     @Test
+    void projectsMeasuredBoundaryIdentityAndRejectsUncheckedEvidence() throws Exception {
+        var root = wrapper();
+        var inner = binding(choice("true"));
+        var leaf = candidate(inner, "valid", "");
+        var candidate = wrapped(root, leaf);
+        var checked = DocumentPayloadCheck.checkAssets(asset(root, candidate.getTypeUrl()), candidate, candidate.getTypeUrl(),
+                validator(), LIMITS, () -> {}, url -> asset(inner, url)).payload();
+        var paths = DocumentSchemaOccurrenceProjection.project(checked, () -> {});
+        assertThat(paths).hasSize(2);
+        var boundary = paths.get(1).getSteps(3).getAnyBoundary();
+        assertThat(boundary.getTypeUrl()).isEqualTo(URL);
+        assertThat(boundary.getValueSizeBytes()).isEqualTo(leaf.getValue().size());
+        assertThat(boundary.getValueSha256()).isEqualTo(digest(leaf.getValue()));
+        assertThat(boundary.getResolved().getArtifactSha256()).isEqualTo(inner.artifactSha256());
+        assertThat(boundary.getResolved().getSchema()).isEqualTo(inner.condition());
+        for (var path : paths) {
+            assertThat(validator().validate(path).valid()).isTrue();
+            assertThat(ai.protomolt.proto.repo.v1.RepositorySchemaOccurrencePath.parseFrom(path.toByteString())).isEqualTo(path);
+        }
+        assertThatThrownBy(() -> paths.clear()).isInstanceOf(UnsupportedOperationException.class);
+        var permissive = DocumentPayloadCheck.check(root, candidate, candidate.getTypeUrl(), validator(), LIMITS, () -> {}, url -> inner);
+        assertThatThrownBy(() -> DocumentSchemaOccurrenceProjection.project(permissive, () -> {}))
+                .hasMessageContaining("strict archival occurrence evidence required");
+        var calls = new java.util.concurrent.atomic.AtomicInteger();
+        assertThatThrownBy(() -> DocumentSchemaOccurrenceProjection.project(checked, () -> {
+            if (calls.incrementAndGet() == 4) throw new CancellationException("stop projection");
+        })).isInstanceOf(CancellationException.class);
+        assertThat(DocumentSchemaOccurrenceProjection.project(checked, () -> {})).isEqualTo(paths);
+    }
+
+    @Test
+    void projectsEveryMapKeyTypeWithoutLosingUnsignedBits() throws Exception {
+        var inner = binding(choice("true"));
+        var leaf = candidate(inner, "valid", "");
+        var types = List.of(FieldDescriptorProto.Type.TYPE_STRING, FieldDescriptorProto.Type.TYPE_BOOL,
+                FieldDescriptorProto.Type.TYPE_INT32, FieldDescriptorProto.Type.TYPE_SINT32, FieldDescriptorProto.Type.TYPE_SFIXED32,
+                FieldDescriptorProto.Type.TYPE_UINT32, FieldDescriptorProto.Type.TYPE_FIXED32,
+                FieldDescriptorProto.Type.TYPE_INT64, FieldDescriptorProto.Type.TYPE_SINT64, FieldDescriptorProto.Type.TYPE_SFIXED64,
+                FieldDescriptorProto.Type.TYPE_UINT64, FieldDescriptorProto.Type.TYPE_FIXED64);
+        for (var type : types) {
+            Object key = switch (type) {
+                case TYPE_STRING -> "";
+                case TYPE_BOOL -> false;
+                case TYPE_INT32, TYPE_SINT32, TYPE_SFIXED32, TYPE_UINT32, TYPE_FIXED32 -> -1;
+                default -> -1L;
+            };
+            var root = mapWrapper(false, type);
+            var field = root.type().findFieldByNumber(1);
+            var entry = DynamicMessage.newBuilder(field.getMessageType())
+                    .setField(field.getMessageType().findFieldByNumber(1), key)
+                    .setField(field.getMessageType().findFieldByNumber(2), leaf).build();
+            String url = "type.protomolt.test/payload.MapWrapper";
+            var candidate = Any.newBuilder().setTypeUrl(url).setValue(DynamicMessage.newBuilder(root.type())
+                    .addRepeatedField(field, entry).build().toByteString()).build();
+            var checked = DocumentPayloadCheck.checkAssets(asset(root, url), candidate, url, validator(), LIMITS,
+                    () -> {}, nested -> asset(inner, nested)).payload();
+            var projected = DocumentSchemaOccurrenceProjection.project(checked, () -> {}).get(1).getSteps(2).getMapKey();
+            assertThat(projected.getType().name()).isEqualTo("REPOSITORY_OCCURRENCE_KEY_" + type.name());
+            switch (type) {
+                case TYPE_STRING -> { assertThat(projected.hasStringValue()).isTrue(); assertThat(projected.getStringValue()).isEmpty(); }
+                case TYPE_BOOL -> { assertThat(projected.hasBoolValue()).isTrue(); assertThat(projected.getBoolValue()).isFalse(); }
+                case TYPE_UINT32, TYPE_FIXED32 -> assertThat(projected.getUnsignedValue()).isEqualTo(4294967295L);
+                case TYPE_UINT64, TYPE_FIXED64 -> assertThat(Long.toUnsignedString(projected.getUnsignedValue())).isEqualTo("18446744073709551615");
+                default -> assertThat(projected.getSignedValue()).isEqualTo(-1L);
+            }
+        }
+    }
+
+    @Test
     void archivalOccurrencesDistinguishEqualRepeatedValuesAndBindExactBytes() throws Exception {
         var root = wrapper();
         var inner = binding(choice("true"));
@@ -41,8 +110,8 @@ class DocumentPayloadCheckTest {
                 validator(), LIMITS, () -> {}, url -> asset(inner, url));
         var occurrences = result.payload().occurrences();
         assertThat(occurrences).hasSize(3);
-        var rootBoundary = new DocumentSchemaOccurrences.Boundary(candidate.getTypeUrl(), digest(candidate.getValue()), root.artifactSha256());
-        var childBoundary = new DocumentSchemaOccurrences.Boundary(URL, digest(item.getValue()), inner.artifactSha256());
+        var rootBoundary = new DocumentSchemaOccurrences.Boundary(candidate.getTypeUrl(), digest(candidate.getValue()), root.artifactSha256(), candidate.getValue().size());
+        var childBoundary = new DocumentSchemaOccurrences.Boundary(URL, digest(item.getValue()), inner.artifactSha256(), item.getValue().size());
         assertThat(occurrences.get(0).path()).containsExactly(rootBoundary);
         for (int i = 0; i < 2; i++) {
             assertThat(occurrences.get(i + 1).path()).containsExactly(rootBoundary,
@@ -124,12 +193,12 @@ class DocumentPayloadCheckTest {
         for (int i = 0; i < 2; i++) {
             var path = result.payload().occurrences().get(2 + i * 2).path();
             assertThat(path).containsExactly(
-                    new DocumentSchemaOccurrences.Boundary(url, digest(candidate.getValue()), root.artifactSha256()),
+                    new DocumentSchemaOccurrences.Boundary(url, digest(candidate.getValue()), root.artifactSha256(), candidate.getValue().size()),
                     new DocumentSchemaOccurrences.Field(1),
                     new DocumentSchemaOccurrences.MapKey(com.google.protobuf.Descriptors.FieldDescriptor.Type.UINT64, i == 0 ? 0L : -1L),
-                    new DocumentSchemaOccurrences.Boundary(nested.getTypeUrl(), digest(nested.getValue()), middle.artifactSha256()),
+                    new DocumentSchemaOccurrences.Boundary(nested.getTypeUrl(), digest(nested.getValue()), middle.artifactSha256(), nested.getValue().size()),
                     new DocumentSchemaOccurrences.Field(1), new DocumentSchemaOccurrences.Index(0),
-                    new DocumentSchemaOccurrences.Boundary(URL, digest(leaf.getValue()), inner.artifactSha256()));
+                    new DocumentSchemaOccurrences.Boundary(URL, digest(leaf.getValue()), inner.artifactSha256(), leaf.getValue().size()));
         }
     }
 
@@ -187,7 +256,7 @@ class DocumentPayloadCheckTest {
                 assertThat(path.get(2)).isEqualTo(new DocumentSchemaOccurrences.MapKey(
                         com.google.protobuf.Descriptors.FieldDescriptor.Type.STRING,
                         order.get(i).getField(field.getMessageType().findFieldByNumber(1))));
-                assertThat(path.get(3)).isEqualTo(new DocumentSchemaOccurrences.Boundary(URL, digest(item.getValue()), inner.artifactSha256()));
+                assertThat(path.get(3)).isEqualTo(new DocumentSchemaOccurrences.Boundary(URL, digest(item.getValue()), inner.artifactSha256(), item.getValue().size()));
             }
             assertThatThrownBy(() -> DocumentPayloadCheck.checkAssets(asset(root, url), candidate, url, validator(), LIMITS,
                     () -> {}, nested -> asset(inner, nested), new DocumentSchemaOccurrences.Limits(3, 9, text - 1)))

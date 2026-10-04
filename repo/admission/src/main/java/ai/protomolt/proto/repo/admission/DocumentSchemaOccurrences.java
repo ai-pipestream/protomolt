@@ -36,7 +36,7 @@ final class DocumentSchemaOccurrences {
             if (!valid) throw new IllegalArgumentException("invalid protobuf map key");
         }
     }
-    record Boundary(String typeUrl, String valueSha256, String artifactSha256) implements Step {}
+    record Boundary(String typeUrl, String valueSha256, String artifactSha256, long valueSizeBytes) implements Step {}
     record Occurrence(List<Step> path) {
         Occurrence { path = List.copyOf(path); }
     }
@@ -78,7 +78,7 @@ final class DocumentSchemaOccurrences {
         if (pathTextBytes > limits.maxTextBytes() - retainedTextBytes
                 || text > limits.maxTextBytes() - retainedTextBytes - pathTextBytes)
             throw new IllegalArgumentException("aggregate occurrence text limit exceeded");
-        push(new Boundary(url, sha256(bytes, control), schema.artifactSha256()));
+        push(new Boundary(url, sha256(bytes, control), schema.artifactSha256(), bytes.size()));
         var occurrence = new Occurrence(path);
         if (!distinct.add(occurrence)) throw new IllegalArgumentException("duplicate schema occurrence path");
         occurrences.add(occurrence);

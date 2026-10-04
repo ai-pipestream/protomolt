@@ -3758,11 +3758,29 @@ against retained descriptors and candidate values; verify effective Any.value
 bytes, size, URL and artifact/condition binding; apply aggregate UTF-8 text/step
 bounds; reject duplicate paths; and bind account, operation/attempt, revision and
 policy. Canonical encoding and its decoder/re-encode checks are not implemented.
-The collector-to-protobuf bridge must obtain actual value sizes from traversal;
-it must not substitute an unknown size with zero. No existing API consumes this
+The collector-to-protobuf bridge obtains actual value sizes from traversal;
+it does not substitute an unknown size with zero. No public API consumes this
 contract yet, and typed publication remains disabled.
 
 Validation for this additive contract: 163 contract/admission/engine tests pass,
 including both runtime dependency gates. Scoped Buf lint passes. Complete-import
 descriptor compilation and unwaived FILE compatibility pass against checkpoint
 `354d8fbbf80d17ff577992acf927d85e02388e51`. Sol reviewed the contract and fixtures.
+
+### Completed-check occurrence projection
+
+`DocumentSchemaOccurrenceProjection` converts a completed strict archival check
+to immutable version 1 protobuf paths. It refuses the lower-level permissive
+check, uses the exact resolved binding from the completed check, and validates
+each output through the real runtime validator. The collector records each
+effective Any.value size alongside its digest. Key conversion uses explicit enum
+mapping, widens unsigned 32-bit values without sign extension, and preserves all
+unsigned 64-bit bits. Cancellation and thread interruption stop conversion without
+returning partial paths. A completed input remains reusable after cancellation.
+
+This is an internal representation conversion. Ordinary protobuf serialization
+round-trips the messages but is not yet a canonical identity encoding. There is
+no untrusted-byte reader, root locator, revision binding or admission capability
+in this helper. Compiler provenance, source retention and atomic publication
+remain separate obligations. Evidence projection must not enable typed success
+until those publication checks are implemented.
