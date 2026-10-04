@@ -4762,3 +4762,52 @@ blocker. The final migration includes the indexed node/transaction lookup and
 stored snapshot sizes. Public caller integration, a populated bound-revision
 upgrade/restore rehearsal, binding-specific cancellation and near-limit batch
 measurements remain to be completed before this capability is exposed.
+
+### Native publisher integration with checked schema batches
+
+`DocumentPublicationCommit.commit` is extended with an internal checked-batch
+entry. The existing unbound entry is unchanged and still refuses typed or
+configured-policy publication. The new entry requires the exact canonical command,
+staged schema assets for its owner generation, and checked ordinary content for
+exactly the proofless members. Typed members derive their assembled document and
+fragments directly from the immutable runtime proof. They do not resolve schemas,
+deserialize again or repeat runtime validation under SQL locks. No second caller
+content value can compete with the proof for a typed member.
+
+The commit locks the selected policy before document locks, then locks the full
+schema artifact union after physical binding. It prepares every candidate and
+inserts every admission header before merging any document. The shared member
+writer retains artifact references, schema associations and root evidence after
+physical part rows and before sealing. TYPED requires its retention writer;
+explicit OPAQUE requires no schema evidence. Seal and terminal checks remain the
+same V61 checks. A stricter host requirement still rejects an opaque-only member.
+
+For typed revisions, occurrence-specific retained evidence replaces the legacy
+single-root `structured_resolution` observation. The publisher does not report
+`not_attempted` for a value it has validated. Opaque publication preserves its
+explicit not-attempted observation. Both decisions retain exact physical manifests
+and the existing canonical result/replay binding.
+
+Tests exercise the actual native committer for typed and explicit opaque members,
+including an explicit structured-schema contract, replay, missing opaque content
+and a stricter host policy. A LocalStack case uses real versioned provider writes
+for a two-member operation: one member carries a checked StringValue payload and
+the other preserves an unresolved opaque Any. It verifies both decisions, exact
+result replay and subsequent provider-version/digest reads. These internal APIs
+are not yet connected to the public repository host or policy administration;
+public examples must not advertise that integration as available.
+
+Recovery qualification injects a real PostgreSQL failure immediately before root
+evidence insertion, after observing the admission, document, native commit and
+unsealed projection in that same transaction. All publication/evidence rows roll
+back; normalized staging bytes and owner claims remain. Retrying the same prepared
+operation then publishes once and replays the exact result. This uses synthetic
+physical observations for the focused SQL recovery case, separately from the
+mixed real-provider case above.
+
+Qualification: 100 tests pass across typed native publication (5), retention
+failure/retry (1), provider-backed native commit (11), admission binding (10),
+atomic publication (64) and content checks (9). Sol reviewed the integration and
+recovery test with no blocker. Historical decoding through authorized retained
+schema reads, host/policy administration integration, typed cross-transport
+conformance and large-batch latency remain required work.

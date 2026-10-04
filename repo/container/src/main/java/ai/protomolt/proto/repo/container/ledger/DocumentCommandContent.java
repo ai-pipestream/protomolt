@@ -51,7 +51,7 @@ final class DocumentCommandContent {
         var member = command.intent().getMembersList().stream().filter(m -> m.getMemberId().equals(memberId))
                 .findFirst().orElseThrow(() -> new IllegalArgumentException("Unknown publication member"));
         if (schemaRequired || member.hasStructuredSchema())
-            throw new UnsupportedOperationException("Typed schema validation and retention are not yet available");
+            throw new UnsupportedOperationException("Typed content requires a checked schema batch");
         var expected = new HashSet<Integer>();
         for (int ordinal = 0; ordinal < member.getPartsCount(); ordinal++)
             if (!member.getParts(ordinal).hasEmpty()) expected.add(ordinal);
@@ -93,6 +93,23 @@ final class DocumentCommandContent {
         }
         control.run();
         return new DocumentCommandContent(command, member, assembly, resolution);
+    }
+
+    /** The checked batch already verifies the command, policy and immutable runtime proof. */
+    static DocumentCommandContent fromSchema(DocumentSchemaBatch batch, String memberId, Runnable control) {
+        Objects.requireNonNull(batch); Objects.requireNonNull(control); control.run();
+        var proof = batch.proofs().get(memberId);
+        if (proof == null) throw new IllegalArgumentException("Typed content requires a checked member proof");
+        var fragments = new ArrayList<DocumentRevisionAssembly.Fragment>();
+        for (var ordinal : proof.fragments().keySet().stream().sorted().toList()) {
+            control.run();
+            var part = proof.member().getParts(ordinal);
+            fragments.add(new DocumentRevisionAssembly.Fragment(part.getSlot().getPart(), part.getSlot().getSubKey(), proof.fragments().get(ordinal)));
+        }
+        // The full occurrence-specific retained evidence is authoritative. Do not
+        // label a typed document with the legacy opaque not-attempted observation.
+        return new DocumentCommandContent(batch.command(), proof.member(),
+                new DocumentRevisionAssembly.Result(proof.document(), fragments), Optional.empty());
     }
 
     private static String sha256(ByteString bytes, Runnable control) {

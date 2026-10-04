@@ -27,6 +27,13 @@ final class DocumentPublicationCommit {
     DocumentPublicationResult commit(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentOperationUploadAdmission.Prepared prepared, Map<String,DocumentCommandContent> content,
             Map<String,DocumentSelectedAttemptLedger.Selected> selections, Runnable callerControl) {
+        return commit(caller, owner, prepared, content, selections, null, callerControl);
+    }
+
+    /** Schema artifacts must already be staged; content contains exactly the proofless members. */
+    DocumentPublicationResult commit(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentOperationUploadAdmission.Prepared prepared, Map<String,DocumentCommandContent> content,
+            Map<String,DocumentSelectedAttemptLedger.Selected> selections, DocumentSchemaBatch schemas, Runnable callerControl) {
         Objects.requireNonNull(owner); Objects.requireNonNull(prepared); Objects.requireNonNull(callerControl);
         Runnable control=() -> {
             if (Thread.currentThread().isInterrupted())
@@ -39,17 +46,33 @@ final class DocumentPublicationCommit {
         DocumentAdmissionAuthorization.requireCaller(caller,owner,command.intent().getAccountId());
         if (!owner.key().account().equals(command.intent().getAccountId()) || !owner.key().operationId().equals(command.operationId()))
             throw new IllegalArgumentException("Publication command differs from operation scope");
-        if (requireTypedSchema || plan.members().stream().anyMatch(m -> m.intent().hasStructuredSchema()))
-            throw new UnsupportedOperationException("Typed publication requires retained schema integration");
+        if (schemas == null && (requireTypedSchema || plan.members().stream().anyMatch(m -> m.intent().hasStructuredSchema())))
+            throw new UnsupportedOperationException("Typed publication requires a checked schema batch");
         if (content.size()>64 || selections.size()>64) throw new IllegalArgumentException("Publication preparation exceeds member bounds");
-        var checked=Map.copyOf(content); var selected=Map.copyOf(selections);
+        var checked=new java.util.HashMap<>(Map.copyOf(content)); var selected=Map.copyOf(selections);
+        if (schemas != null && !schemas.command().canonical().equals(command.canonical()))
+            throw new IllegalArgumentException("Schema batch differs from publication command");
+        var retention = new java.util.HashMap<String,DocumentSchemaRetention>();
         Set<String> members=plan.members().stream().map(m -> m.intent().getMemberId()).collect(Collectors.toSet());
         Set<String> uploads=plan.members().stream().filter(m -> m.attempt().isPresent())
                 .map(m -> m.intent().getMemberId()).collect(Collectors.toSet());
-        if (!checked.keySet().equals(members) || !selected.keySet().equals(uploads))
+        var requiredContent = new java.util.HashSet<>(members);
+        if (schemas != null) requiredContent.removeAll(schemas.proofs().keySet());
+        if (!checked.keySet().equals(requiredContent) || !selected.keySet().equals(uploads))
             throw new IllegalArgumentException("Publication preparation differs from the complete command member set");
         for (var member:plan.members()) {
-            var actual=checked.get(member.intent().getMemberId());
+            String id = member.intent().getMemberId();
+            if (schemas != null) {
+                var proof = schemas.proofs().get(id);
+                if (proof == null && (requireTypedSchema || member.intent().hasStructuredSchema()))
+                    throw new IllegalArgumentException("Required typed publication proof is absent");
+                if (proof != null) {
+                    checked.put(id, DocumentCommandContent.fromSchema(schemas, id, control));
+                    retention.put(id, DocumentSchemaRetention.prepare(schemas, id));
+                    continue;
+                }
+            }
+            var actual=checked.get(id);
             if (!actual.command().canonical().equals(command.canonical()) || !actual.member().equals(member.intent()))
                 throw new IllegalArgumentException("Checked document content belongs to another command or member");
         }
@@ -62,7 +85,8 @@ final class DocumentPublicationCommit {
             RepositoryOperationLedger.fenceLiveOwner(em,owner);
             RepositoryOperationLedger.requireCommand(em,owner.key(),command);
             // Before document locks; the SQL projection trigger also protects legacy paths.
-            DocumentSchemaPolicies.lockUnboundWriter(em, command.intent().getAccountId());
+            if (schemas == null) DocumentSchemaPolicies.lockUnboundWriter(em, command.intent().getAccountId());
+            else schemas.lockPolicy(em, owner, control);
             var locked=DocumentAdmissionAuthorization.lockAndAuthorize(em,caller,plan,authorization);
             for (var placement:placements) {
                 placement.drive().lock(em,drives);
@@ -71,6 +95,7 @@ final class DocumentPublicationCommit {
                     throw new IllegalArgumentException("Selected backend differs from its immutable profile");
             }
             var parts=DocumentCommitParts.bind(em,owner,plan,selected,reuse,control);
+            if (schemas != null) schemas.lockArtifacts(em, owner, control);
             control.run();
             // Snapshot all sources and candidates before any destination changes; a
             // source may also be another member's destination in this same commit.
@@ -81,12 +106,22 @@ final class DocumentPublicationCommit {
                 control.run();
                 candidates.add(DocumentCommitWriter.prepare(member,checked.get(member.intent().getMemberId()),parts,locked,sources,now,control));
             }
+            var decisions = new java.util.HashMap<String,String>();
+            if (schemas != null) {
+                for (var candidate : candidates) {
+                    control.run();
+                    decisions.put(candidate.member(), DocumentSchemaAdmissionBinding.insert(em, owner, schemas, candidate, parts, control));
+                }
+            }
             var result=DocumentPublicationResult.newBuilder().setOperationId(command.operationId().toString())
                     .setAccountId(owner.key().account()).setPrincipal(owner.key().principal()).setOwnerGeneration(owner.generation())
                     .setCommandEncodingVersion(ai.protomolt.proto.repo.spi.DocumentPublicationCommand.ENCODING_VERSION).setCommandSha256(command.sha256());
             for (int i=0;i<candidates.size();i++) {
                 control.run();
-                result.addMembers(DocumentCommitWriter.write(em,owner,candidates.get(i),i,deliverEvents));
+                var candidate = candidates.get(i);
+                result.addMembers(schemas == null
+                        ? DocumentCommitWriter.write(em,owner,candidate,i,deliverEvents)
+                        : DocumentCommitWriter.write(em,owner,candidate,i,deliverEvents,decisions.get(candidate.member()),retention.get(candidate.member()),control));
             }
             em.flush();
             var success=result.build();

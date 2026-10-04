@@ -103,18 +103,26 @@ final class DocumentCommitWriter {
     }
 
     static DocumentPublishedRevision write(EntityManager em, RepositoryOperationLedger.Owner owner, Candidate candidate, int ordinal, boolean deliver) {
+        return write(em, owner, candidate, ordinal, deliver, "OPAQUE", null, () -> {});
+    }
+
+    static DocumentPublishedRevision write(EntityManager em, RepositoryOperationLedger.Owner owner, Candidate candidate,
+            int ordinal, boolean deliver, String decision, DocumentSchemaRetention retention, Runnable control) {
+        if (!("TYPED".equals(decision) && retention != null) && !("OPAQUE".equals(decision) && retention == null))
+            throw new IllegalArgumentException("Publication decision differs from its retention writer");
+        control.run();
         var row=em.merge(candidate.row()); em.flush(); em.refresh(row);
         var event=deliver ? DocumentEventFactory.saved(row,row.updatedAt) : DocumentEventFactory.savedWithoutDelivery(row,row.updatedAt);
         em.createNativeQuery("""
                 INSERT INTO document_revision_commits(revision_id,node_id,publication_revision,account_id,principal,operation_id,
                     owner_generation,member_id,member_ordinal,selection_revision,event_id,metadata_version,admission_mode,structured_resolution)
-                VALUES(:revision,:node,:mutation,:account,:principal,:operation,:generation,:member,:ordinal,:selection,:event,1,'OPAQUE',:resolution)
+                VALUES(:revision,:node,:mutation,:account,:principal,:operation,:generation,:member,:ordinal,:selection,:event,1,:decision,:resolution)
                 """).setParameter("revision",candidate.revision()).setParameter("node",row.nodeId).setParameter("mutation",row.mutationRevision)
                 .setParameter("account",owner.key().account()).setParameter("principal",owner.key().principal())
                 .setParameter("operation",owner.key().operationId()).setParameter("generation",owner.generation())
                 .setParameter("member",candidate.member()).setParameter("ordinal",ordinal)
                 .setParameter("selection",candidate.selection()).setParameter("event",event.eventId)
-                .setParameter("resolution",candidate.resolution()).executeUpdate();
+                .setParameter("resolution",candidate.resolution()).setParameter("decision",decision).executeUpdate();
         em.createNativeQuery("""
                 INSERT INTO document_revision_publications(revision_id,node_id,publication_revision,body,published_at,native_binding)
                 SELECT :revision,node_id,mutation_revision,document_publication_body(documents),clock_timestamp(),:revision
@@ -125,6 +133,8 @@ final class DocumentCommitWriter {
                 SELECT :revision,q.ordinal,q.part,q.sub_key,q.object_id
                 FROM jsonb_to_recordset(CAST(:parts AS jsonb)) q(ordinal integer,part integer,sub_key text,object_id uuid)
                 """).setParameter("revision",candidate.revision()).setParameter("parts",candidate.references()).executeUpdate();
+        if (retention != null) retention.write(em, owner, candidate.revision(), control);
+        control.run();
         em.createNativeQuery("UPDATE document_revision_publications SET projection_sealed=true WHERE revision_id=:revision")
                 .setParameter("revision",candidate.revision()).executeUpdate();
         em.createNativeQuery("""

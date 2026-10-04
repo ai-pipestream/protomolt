@@ -2367,9 +2367,11 @@ and member contract permit omission; it retains no typed verdict. A failed typed
 attempt never chooses the opaque branch automatically. Existing unbound writers
 continue to reject configured policy. V61 and the internal Java binding helper now
 implement the admission-row and seal/terminal guards, including an exact pre-change
-mutation baseline and policy rechecks. Production publisher and authorized policy
-administration integration remain pending; the catalog and storage helpers alone
-do not expose typed publication.
+mutation baseline and policy rechecks. The internal native committer now accepts
+checked schema batches, derives typed content from proofs, and retains their
+evidence before sealing. Public repository host and authorized policy
+administration integration remain pending; the internal APIs do not expose that
+public capability by themselves.
 
 Expose two materialization modes, independently of admission policy:
 

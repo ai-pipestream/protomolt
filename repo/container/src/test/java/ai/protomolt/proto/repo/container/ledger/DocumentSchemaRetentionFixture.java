@@ -32,7 +32,9 @@ final class DocumentSchemaRetentionFixture {
 
     static Fixture prepare(Context c) throws Exception { return prepare(c, true); }
 
-    static Fixture prepare(Context c, boolean typed) throws Exception {
+    static Fixture prepare(Context c, boolean typed) throws Exception { return prepare(c, typed, false); }
+
+    static Fixture prepare(Context c, boolean typed, boolean explicitSchema) throws Exception {
         var ownership = OwnershipContext.newBuilder().setAccountId("account").setDatasourceId("source")
                 .setSecurity(DocumentSecurity.getDefaultInstance()).build();
         var document = Document.newBuilder().setDocId("typed-fixture").setOwnership(ownership)
@@ -56,6 +58,9 @@ final class DocumentSchemaRetentionFixture {
                     .setSizeBytes(part.bytes().length).setSha256(DocumentPartCodec.sha256Hex(part.bytes()))
                     .setContentType("application/protobuf")));
         }
+        if (explicitSchema) member.setStructuredSchema(PublicationSchemaCondition.newBuilder()
+                .setTypeName(StringValue.getDescriptor().getFullName())
+                .setDescriptorFingerprint(DescriptorFingerprints.fingerprint(DescriptorFingerprints.closure(StringValue.getDescriptor()))));
         var command = new DocumentPublicationCommand(DocumentPublicationIntent.newBuilder().setEncodingVersion(1)
                 .setAccountId("account").setOperationId(UUID.randomUUID().toString()).addMembers(member).build());
         var owner = new RepositoryOperationLedger(c.tx()).admit(new RepositoryOperationLedger.Key("account", "principal", command.operationId()),
@@ -81,7 +86,8 @@ final class DocumentSchemaRetentionFixture {
             return new DocumentSelectedAttemptLedger.Observation(object.objectKey(), object.size(), object.sha256(),
                     object.contentType(), "fixture-version", "fixture-etag");
         }).toList());
-        var content = DocumentCommandContent.check(command, "member", fragments, false,
+        var content = explicitSchema ? DocumentCommandContent.fromSchema(batch, "member", () -> {})
+                : DocumentCommandContent.check(command, "member", fragments, false,
                 new DocumentRevisionAssembly.Limits(4_000_000, 100, 100, 100, 1_000_000), () -> {});
         return new Fixture(command, owner, batch, typed ? DocumentSchemaRetention.prepare(batch, "member") : null, prepared, selected, content);
     }
@@ -185,7 +191,7 @@ final class DocumentSchemaRetentionFixture {
         });
     }
 
-    private static DocumentSchemaAdmission.Definition definition(com.google.protobuf.Descriptors.Descriptor type) {
+    static DocumentSchemaAdmission.Definition definition(com.google.protobuf.Descriptors.Descriptor type) {
         return definition(type, false);
     }
 

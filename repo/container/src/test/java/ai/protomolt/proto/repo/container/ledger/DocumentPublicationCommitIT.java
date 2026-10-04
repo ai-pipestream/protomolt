@@ -350,6 +350,46 @@ class DocumentPublicationCommitIT {
         assertThat(new DocumentPublicationReplay(tx).observe(ADMIN,command).result()).contains(result);
     }
 
+    @Test void publishesMixedTypedAndOpaqueMembersFromRealVersionedProviderWrites() throws Exception {
+        var fixture=fixture(2,1,DocumentSecurity.getDefaultInstance(),"typed-"+UUID.randomUUID(),true);
+        var checked=stage(fixture);
+        var policy=ai.protomolt.proto.repo.admission.DocumentAdmissionPolicy.of(DocumentSchemaPolicy.newBuilder()
+                .setEncodingVersion(1).setAccountId(fixture.command.intent().getAccountId())
+                .setMode(DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_OPAQUE_ALLOWED).setAnyResolvedSchema(true)
+                .setValidationProfile("protomolt-retained-schema-admission/v1")
+                .setLimits(DocumentSchemaPolicyLimits.newBuilder().setMaxFragments(32).setMaxFragmentBytes(4_000_000)
+                        .setMaxRoots(100).setMaxEvidenceBytes(4_000_000).setMaxBindings(20)
+                        .setMaxRetainedBytes(16_000_000).setMaxDecodedBytes(1_000_000)).build(),()->{});
+        var typedMember=fixture.command.intent().getMembers(0);
+        var fragments=new HashMap<Integer,ByteString>();
+        for(int i=0;i<typedMember.getPartsCount();i++) fragments.put(i,ByteString.copyFrom(
+                fixture.bodies.get(new DocumentUploadPayloads.Key(typedMember.getMemberId(),i)).bytes()));
+        var proof=policy.prepareAndCheck(ByteString.copyFrom(java.util.HexFormat.of().parseHex(fixture.command.sha256())),
+                typedMember,fragments,DocumentSchemaRetentionFixture.definition(Document.getDescriptor()),
+                ignored->DocumentSchemaRetentionFixture.definition(com.google.protobuf.StringValue.getDescriptor()),()->{});
+        var selectedPolicy=new DocumentSchemaPolicies(tx).activate(policy,0,()->{});
+        var batch=DocumentSchemaBatch.prepare(fixture.command,selectedPolicy,Map.of(typedMember.getMemberId(),proof),()->{});
+        batch.stage(new RepositorySchemaArtifacts(tx),fixture.owner,()->{});
+        var result=publisher().commit(ADMIN,fixture.owner,fixture.prepared,
+                Map.of("member-1",checked.content.get("member-1")),checked.selected,batch,()->{});
+        assertThat(new DocumentPublicationReplay(tx).observe(ADMIN,fixture.command).result()).contains(result);
+        var modes=tx.readOnly(em->em.createNativeQuery("""
+                SELECT member_id,admission_mode FROM document_revision_commits WHERE operation_id=:operation ORDER BY member_ordinal
+                """).setParameter("operation",fixture.command.operationId()).getResultList());
+        assertThat((Object[])modes.get(0)).containsExactly("member-0","TYPED");
+        assertThat((Object[])modes.get(1)).containsExactly("member-1","OPAQUE");
+        for(var revision:result.getMembersList()) {
+            var node=ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(revision.getAddress());
+            var row=new DocumentLedger(tx).findByNodeId(node).orElseThrow();
+            var retained=new DocumentPublicationLedger(tx).findForRead(row).orElseThrow();
+            for(var part:retained.boundParts()) {
+                var actual=opened.store().getBounded(part.binding().namespace(),part.part().key(),part.part().providerVersion(),Math.toIntExact(part.part().size()));
+                assertThat(actual.versionId()).isEqualTo(part.part().providerVersion());
+                assertThat(DocumentPartCodec.sha256Hex(actual.data())).isEqualTo(part.part().sha256());
+            }
+        }
+    }
+
     private static Checked stage(Fixture fixture) {
         return stage(fixture,Map.of());
     }
@@ -386,25 +426,29 @@ class DocumentPublicationCommitIT {
     }
 
     private static Fixture fixture(int count,int chunks,DocumentSecurity policy) {
-        var drive=new DriveRecord(); drive.driveId=UUID.randomUUID(); drive.accountId="account"; drive.name="native-"+drive.driveId;
+        return fixture(count, chunks, policy, "account", false);
+    }
+
+    private static Fixture fixture(int count,int chunks,DocumentSecurity policy,String account,boolean typedFirst) {
+        var drive=new DriveRecord(); drive.driveId=UUID.randomUUID(); drive.accountId=account; drive.name="native-"+drive.driveId;
         drive.driveType="CUSTOM"; drive.provider="s3"; drive.bucket=NAMESPACE; new DriveLedger(tx).insert(drive);
         var placements=Map.of(drive.driveId,DocumentUploadPlan.Placement.sample(drive,GENERATION,profile));
-        var intent=DocumentPublicationIntent.newBuilder().setEncodingVersion(1).setAccountId("account").setOperationId(UUID.randomUUID().toString());
+        var intent=DocumentPublicationIntent.newBuilder().setEncodingVersion(1).setAccountId(account).setOperationId(UUID.randomUUID().toString());
         var bodies=new HashMap<DocumentUploadPayloads.Key,PartObject>();
         var attempts=new HashMap<String,UUID>();
         for (int index=0;index<count;index++) {
             String id="member-"+index, docId=UUID.randomUUID().toString();
-            var ownership=OwnershipContext.newBuilder().setAccountId("account").setDatasourceId("source").setSecurity(policy).build();
+            var ownership=OwnershipContext.newBuilder().setAccountId(account).setDatasourceId("source").setSecurity(policy).build();
             var metadata=SearchMetadata.newBuilder();
             for (int chunk=0;chunk<chunks;chunk++) metadata.addSemanticResults(SemanticProcessingResult.newBuilder().setResultId("original-"+chunk));
             var document=Document.newBuilder().setDocId(docId).setOwnership(ownership)
                     .setSearchMetadata(metadata)
-                    .setStructuredData(Any.newBuilder()
-                    .setTypeUrl("archive.example/unavailable.Record").setValue(ByteString.copyFrom(new byte[]{0,(byte)255,1}))).build();
+                    .setStructuredData(typedFirst && index==0 ? Any.pack(com.google.protobuf.StringValue.of("typed provider payload"), "type.test") : Any.newBuilder()
+                    .setTypeUrl("archive.example/unavailable.Record").setValue(ByteString.copyFrom(new byte[]{0,(byte)255,1})).build()).build();
             var member=DocumentPublicationMember.newBuilder().setMemberId(id).setDriveId(drive.driveId.toString()).setOwnership(ownership)
                     .setRowKind(DocumentPublicationRowKind.DOCUMENT_PUBLICATION_ROW_KIND_PIPELINE)
                     .setDestination(DocumentRevisionCondition.newBuilder().setIfAbsent(true).setAddress(NodeAddress.newBuilder()
-                            .setAccountId("account").setGraphId("graph").setGraphAddressId("node").setDocId(docId)));
+                            .setAccountId(account).setGraphId("graph").setGraphAddressId("node").setDocId(docId)));
             var fragments=DocumentPartCodec.split(document,PartLayouts.document());
             for (int i=0;i<fragments.size();i++) {
                 var part=fragments.get(i); bodies.put(new DocumentUploadPayloads.Key(id,i),part);
@@ -415,7 +459,7 @@ class DocumentPublicationCommitIT {
             intent.addMembers(member); attempts.put(id,UUID.randomUUID());
         }
         var command=new DocumentPublicationCommand(intent.build());
-        var owner=new RepositoryOperationLedger(tx).admit(new RepositoryOperationLedger.Key("account","principal",command.operationId()),command,UUID.randomUUID(),LEASE).owner().orElseThrow();
+        var owner=new RepositoryOperationLedger(tx).admit(new RepositoryOperationLedger.Key(account,"principal",command.operationId()),command,UUID.randomUUID(),LEASE).owner().orElseThrow();
         return new Fixture(command,owner,DocumentOperationUploadAdmission.prepare(command,placements,attempts,LEASE),Map.copyOf(bodies));
     }
 }
