@@ -2360,11 +2360,10 @@ until after a cleanup ABSENT observation. Stale completions cannot be verified;
 exact-key recovery uses the retained backend and reclaims late versions on a
 subsequent pass. The tests do not fabricate successful provider observations.
 
-The operation-wide provider coordinator remains unimplemented: it must share byte
-and concurrency limits across all members/backends, batch its heartbeat, flush
-observations by count and maximum age, and drain started calls before releasing
-borrowed handles. No SQL transaction may span provider I/O. These tests qualify
-specific transfer/recovery cases, not a public pipeline or end-to-end latency.
+At this extraction checkpoint, the operation-wide coordinator remained pending.
+The internal coordinator added below shares byte/concurrency limits, batches its
+heartbeat and flushes observations by count and age. These transfer tests qualify
+specific recovery cases, not a public pipeline or end-to-end latency.
 
 Local container and service suites passed in 2m17s: 110 suites, 987 cases,
 984 passed and 3 skipped, with no failures or errors. Sol reviewed the transfer
@@ -2392,13 +2391,66 @@ this accounting. No new limit is added to the blob SPI's conditional writes.
 Unit coverage checks sparse ordinals, retained-only members, wrong slots and
 checksums, replacement-plan rejection, explicit subset binding, shared capacity,
 partial-preparation failure and the admission facade. These synthetic payload
-fixtures establish byte/declaration binding, not protobuf semantic validity or a
-working operation-wide provider coordinator. That coordinator remains pending.
+fixtures establish byte/declaration binding, not protobuf semantic validity. The
+subsequent internal coordinator is described below.
 
 Local payload and upload-plan tests passed: 17 cases, no failures or skips. Sol
 reviewed resource ownership and command/attempt binding with no blocker. This
 checkpoint did not rerun the full container/service suites or hosted CI, and was
 not pushed, merged or deployed.
+
+### Internal selected-upload coordinator
+
+Extended internal staging, with no new RPC or publication path.
+`DocumentUploadCoordinator` prepares and claims payloads, resolves each original
+backend generation once, then invokes SQL admission itself. Backend identity and
+required capabilities are checked before admission. Committed attempts must match
+the exact prepared UUID set, captured location, realm and declaration count. Retry
+uses only explicitly named members and their expected selection revisions.
+
+One coordinator instance shares 32 operation permits and 32 provider-call permits
+across its backends, plus the host-supplied byte budget. The host must share that
+instance; creating one per backend would multiply these limits. One operation
+heartbeat renews its owner and then the complete selected attempt set. Part
+workers perform no per-part SQL renewal. The independent observation flusher has
+a 256-entry queue and at most 256 pending rows; aggregate pressure flushes the
+oldest partial batch even when no individual attempt has 256 observations.
+Otherwise it flushes by maximum age and drains tails. Database latency can delay
+an age-triggered flush; this is not a bounded-latency guarantee.
+
+Observed worker, heartbeat and flusher failures stop new work; already-entered
+provider calls or SQL transactions may still complete. Timed queue offers
+recheck cancellation instead of waiting forever after a flusher failure. Every
+started task drains before the private payload reservation is released. Closing
+the coordinator stops new work; `awaitIdle` reports whether borrowed providers
+and SQL resources are still in use. It never closes borrowed provider handles.
+Loss of a PUT acknowledgment remains an error and never triggers another PUT.
+
+The returned staging snapshot pairs each exact selection identity with its
+verified attempt by UUID, never by separate list positions. It is not durable
+publication success: a concurrent replacement may
+occur immediately afterward, so publication must re-fence those identities.
+Typed/schema admission, mixed revision publication and terminal outcomes remain
+disabled. The currently tested paths cover 257 real objects, 64 members sharing a
+backend, finite-age flushing during a blocked PUT, lease renewal during that wait,
+caller interruption/draining, lost acknowledgment, explicit retries and unsupported
+backend capabilities. Tests use PostgreSQL and the actual versioned S3 adapter in
+LocalStack. Serialized fixture bytes establish transfer identity, not slot-level
+protobuf semantic validity.
+
+Remaining coordinator qualification includes a fully retained CORE with a sparse
+upload subset, multiple distinct provider implementations sharing limits, forced
+flusher failure under queue saturation, owner takeover/deadline races and query
+count/latency measurements. SQL transactions currently lack a bounded lock or
+statement timeout; lock waits can keep staging busy and retain its resources.
+Qualify a timeout policy and test held-lock failure before public activation.
+
+Local validation: the full container/service run passed in 2m37s, with 112 suites
+and 1,001 cases (998 passed, 3 skipped, no failures/errors). The subsequent staged
+result pairing correction passed all seven coordinator integration tests in 16s.
+Sol reviewed failure draining, resource bounds and final result identity pairing;
+the positional-list hazard it identified is corrected. No hosted CI, push, merge
+or deployment was performed.
 
 ### Credential-to-ownership integration gap
 

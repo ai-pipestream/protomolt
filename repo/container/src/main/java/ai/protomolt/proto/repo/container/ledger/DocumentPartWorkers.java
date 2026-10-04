@@ -15,6 +15,12 @@ final class DocumentPartWorkers {
     private DocumentPartWorkers() {}
 
     static <T> List<T> run(int count, int parallelism, Semaphore shared, Runnable check, BiFunction<Integer, Runnable, T> action) {
+        return run(count, parallelism, shared, check, action, failure -> {});
+    }
+
+    /** Notify the operation's other tasks of failure, including caller interruption, before draining workers. */
+    static <T> List<T> run(int count, int parallelism, Semaphore shared, Runnable check,
+            BiFunction<Integer, Runnable, T> action, java.util.function.Consumer<Throwable> failed) {
         var next = new AtomicInteger();
         var failure = new AtomicReference<Throwable>();
         Object[] results = new Object[count];
@@ -40,19 +46,19 @@ final class DocumentPartWorkers {
                                     results[ordinal] = action.apply(ordinal, active);
                                 } finally { shared.release(); }
                             }
-                        } catch (Throwable cause) { record(failure, cause); }
+                        } catch (Throwable cause) { record(failure, cause, failed); }
                     }));
                 }
-            } catch (Throwable cause) { record(failure, cause); }
+            } catch (Throwable cause) { record(failure, cause, failed); }
             for (var future : futures) {
                 boolean done = false;
                 while (!done) {
                     try { future.get(); done = true; }
                     catch (InterruptedException cause) {
                         interrupted = true;
-                        record(failure, new CancellationException("Document staging caller interrupted"));
+                        record(failure, new CancellationException("Document staging caller interrupted"), failed);
                     } catch (java.util.concurrent.ExecutionException cause) {
-                        record(failure, cause.getCause()); done = true;
+                        record(failure, cause.getCause(), failed); done = true;
                     }
                 }
             }
@@ -67,7 +73,10 @@ final class DocumentPartWorkers {
         return ordered;
     }
 
-    private static void record(AtomicReference<Throwable> failure, Throwable cause) {
+    private static void record(AtomicReference<Throwable> failure, Throwable cause, java.util.function.Consumer<Throwable> failed) {
+        // Callback failures cannot bypass worker draining or hide the original error.
+        try { failed.accept(cause); }
+        catch (Throwable notificationFailure) { if (notificationFailure != cause) cause.addSuppressed(notificationFailure); }
         if (!failure.compareAndSet(null, cause)) {
             var first = failure.get();
             if (first != cause) first.addSuppressed(cause);

@@ -62,6 +62,9 @@ final class DocumentOperationUploadAdmission {
         DocumentUploadPayloads.Use claimPayloads(DocumentUploadPayloads payloads, Set<String> members) {
             return payloads.claim(plan, members);
         }
+
+        List<DocumentUploadPlan.Member> members() { return plan.members(); }
+        Duration lease() { return lease; }
     }
 
     private record EncodedMember(DocumentUploadPlan.Member member, UUID token, DocumentAttemptPlanEncoding encoded) {}
