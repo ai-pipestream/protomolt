@@ -3398,3 +3398,19 @@ the obsolete claim. Tests also check scope, token, expiry and cancellation. A fr
 component uses the existing database factory; this is not a process-restart test.
 Sol found no blocker. This supports operation retry, not historical document access
 or completed revision-level schema retention.
+
+### Schema asset and compilation provenance contract
+
+Added RepositorySchemaAsset and compilation provenance messages, reusing
+PublicationSchemaCondition. The contract records exact descriptor bytes by hash,
+the preserved Any type URL, compiler identity/evidence and admission runtime.
+Local compilation requires a source-bundle hash. Imported descriptors distinguish
+producer-reported compiler metadata from an explicit unknown reason.
+
+All 33 repository protobuf tests pass, including five new tests using the real
+runtime validator with generated and dynamic messages. Buf lint for the new file
+and workspace compatibility against the preceding HEAD pass. JSON Schema tests
+verify bounds, patterns and exposed CEL metadata; cross-field rules require the
+runtime validator. OpenAPI rule translation is not established by this checkpoint.
+The new messages are not mounted RPCs. Trusted host capture, retained source
+assets, revision/occurrence binding and durable provenance storage remain pending.

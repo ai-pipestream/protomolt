@@ -875,3 +875,19 @@ after registry removal, preserve access checks, exercise unknown imported compil
 provenance, and reject unsupported descriptor syntax/edition explicitly. Retained
 bytes and metadata enable recovery; they do not promise compatibility with every
 future protobuf runtime. Keep a tested decoding path and record its toolchain.
+
+The additive `RepositorySchemaAsset` contract now reuses
+`PublicationSchemaCondition` for canonical identity and records the exact artifact
+digest, preserved type URL, compilation origin and compiler evidence. Local source
+compilation requires the retained source bundle digest and observed compiler
+identity. Imported descriptors accept producer-reported compiler information or
+an explicit unknown reason. Admission runtime identity is recorded separately.
+Compiler options are inert provenance, not instructions to execute.
+
+Validation fixtures exercise generated and dynamic messages through ProtoMolt's
+runtime validator. JSON Schema emits bounds and patterns plus CEL metadata;
+cross-field coherence remains a runtime constraint. This checkpoint does not
+establish OpenAPI execution of those rules or change the generators. The host
+must verify the retained bytes, source asset, tool identities and access policy.
+Revision/occurrence binding, durable provenance storage and automatic toolchain
+capture remain implementation work; the contract does not expose a new RPC.
