@@ -1776,3 +1776,69 @@ The broader container/service `*Document*` regression passed in 1m20s: 37 suites
 346 cases, 344 passed, two skipped and zero failures/errors. This is a document
 regression run, not every repository test. No push, hosted CI, merge, deployment
 or production performance qualification is claimed.
+
+### Batched document revision locking
+
+`DocumentLedger.lockRevisions` is **extended** for existing guarded writes and
+multi-document publication. V37 adds `lock_document_revision_keys(bigint[])`;
+no protobuf field, name, import, Any URL or public RPC changes. This is a
+prerequisite for the pending typed-admission authorization/revision checks,
+not evidence that those checks or provider writes are enabled.
+
+The lock sequence remains all distinct signed-bigint advisory keys, followed by
+document rows in Java UUID order. The advisory phase runs in one PL/pgSQL call
+with an explicit ordered loop. Row reads use batches of 256 with array ordinality,
+because PostgreSQL's UUID order differs from Java's signed-half order. Each row
+query sorts the supplied immutable ordinality before `FOR UPDATE OF d`; it does
+not move the locking clause into an unordered subquery. See PostgreSQL's
+[locking-clause ordering](https://www.postgresql.org/docs/18/sql-select.html#SQL-FOR-UPDATE-SHARE).
+Missing destinations remain protected by advisory keys. XOR key collisions only
+serialize unrelated identities; they never substitute for document identity.
+
+The internal boundary accepts at most 10,064 distinct identities (10,000 source
+conditions plus 64 destinations), refuses oversized inputs before SQL, and
+requires an active transaction. V37 independently bounds and validates its array
+and requires READ COMMITTED. Empty Java input issues no statements. For nonempty
+input the client statement bound is `1 + ceil(unique identities / 256)`, including
+the advisory call. PostgreSQL still acquires O(N) locks and the method still
+returns O(N) document snapshots; this is not a reduction to constant server work
+or a byte-size bound on existing manifests. Transactions enter this method before
+staging document mutations and retain their locks until commit/rollback.
+
+Every native row result includes the actual locked database revision alongside
+the Hibernate entity. A stale first-level-cache entity causes revision conflict,
+before it can supply policy or content information. Matching cached entities are
+valid. This avoids per-row refresh calls. V8's sequence revision covers SQL policy
+updates as well as ORM/body changes. The enclosing participant must roll back
+its transaction on failure; the low-level helper does not commit, retry, renew
+leases or silently refresh stale caller state.
+
+The new real PostgreSQL tests first reproduced excessive client statements at
+257/10,000 identities and stale cached-row acceptance after external policy and
+same-transaction SQL changes. They also exercise missing/stale sources, source
+changes during a row-lock wait, absent-row creation, Java/PostgreSQL UUID-order
+differences with colliding advisory keys, completion of the advisory phase before
+row locking, independent-operation progress, overlapping reversed 257-row batches,
+timeout rollback, invalid SQL arrays and no-SQL input bounds. Wait assertions
+observe the specific contender's PostgreSQL backend PID, rather than assuming a
+sleep means it reached a lock.
+
+Local validation on 2026-10-04: the full container/service regression passed in
+2m19s, with 106 suites, 846 cases, 843 passed and three skipped, no failures or
+errors. Sol reviewed the implementation and concurrency assertions. Subsequent
+test refinements explicitly observe acquired advisory locks before timeout and
+row ordering across the 256/257 boundary; all 15 final focused cases passed in
+17 seconds, including an eight-second controlled lock timeout.
+
+The full-run diagnostic observed 41 client statements and approximately 419 ms
+for locking 10,000 synthetic existing documents. Fixture insertion was timed
+separately at approximately 1.56 seconds; the revised fixture read took 36 ms.
+An earlier test helper's `ANY(CAST(:ids AS uuid[]))` query accounted for a roughly
+45-second test delay: live database activity identified that query, and replacing
+it with an `unnest` join removed the delay without disabling database guards.
+That helper was only in this new test, not the production path. These are local
+diagnostics, not quiet-host comparative benchmarks, p95/p99 targets or evidence
+for large production manifests. Heap, lock-table capacity, database CPU/WAL,
+concurrent-load latency and the complete admission/provider path remain open
+qualification work. No public API availability, push, hosted CI, merge or
+deployment is claimed by this checkpoint.

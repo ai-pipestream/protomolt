@@ -151,21 +151,54 @@ public final class DocumentLedger {
         });
     }
 
-    /** Shared ordering for guarded single writes and multi-document publication. */
+    /**
+     * Shared ordering for guarded single writes and multi-document publication.
+     * Enter before staging document mutations in this transaction. A cached row
+     * whose revision differs from the locked database tuple is rejected, never
+     * refreshed one row at a time or used for policy decisions.
+     */
     static Map<UUID, DocumentRecord> lockRevisions(jakarta.persistence.EntityManager em,
             java.util.Set<UUID> destinations, Map<UUID, Long> sources) {
+        if (!em.getTransaction().isActive())
+            throw new IllegalStateException("Document revision locks require an active transaction");
+        if (destinations.size() > 10064 || sources.size() > 10064)
+            throw new IllegalArgumentException("Document revision locks exceed 10064 identities");
         var identities = new java.util.TreeSet<>(sources.keySet());
         identities.addAll(destinations);
+        // The typed command admits at most 10,000 sources and 64 destinations.
+        if (identities.size() > 10064)
+            throw new IllegalArgumentException("Document revision locks exceed 10064 identities");
+        if (identities.isEmpty()) return Map.of();
         // Missing rows need advisory locks. Sort actual keys, since distinct UUIDs
         // may alias a key; collisions serialize but never authenticate identity.
-        identities.stream().mapToLong(id -> id.getMostSignificantBits() ^ id.getLeastSignificantBits())
-                .distinct().sorted().forEach(key ->
-                        em.createNativeQuery("SELECT 1 FROM pg_advisory_xact_lock(:key)", Integer.class)
-                                .setParameter("key", key).getSingleResult());
+        String keys = identities.stream().mapToLong(id -> id.getMostSignificantBits() ^ id.getLeastSignificantBits())
+                .distinct().sorted().mapToObj(Long::toString).collect(java.util.stream.Collectors.joining(",", "{", "}"));
+        em.createNativeQuery("SELECT lock_document_revision_keys(CAST(:keys AS bigint[]))", Boolean.class)
+                .setParameter("keys", keys).getSingleResult();
         Map<UUID, DocumentRecord> locked = new HashMap<>();
+        var ordered = List.copyOf(identities);
+        identities.forEach(id -> locked.put(id, null));
+        for (int start = 0; start < ordered.size(); start += 256) {
+            String ids = ordered.subList(start, Math.min(start + 256, ordered.size())).stream()
+                    .map(UUID::toString).collect(java.util.stream.Collectors.joining(",", "{", "}"));
+            // PostgreSQL's UUID comparison differs from Java's signed halves.
+            // Ordinality preserves the old Java order, including across batches.
+            var rows = em.unwrap(org.hibernate.Session.class).createNativeQuery("""
+                    SELECT d.*, d.mutation_revision AS locked_revision
+                    FROM unnest(CAST(:ids AS uuid[])) WITH ORDINALITY AS requested(id, position)
+                    JOIN documents d ON d.node_id=requested.id
+                    ORDER BY requested.position FOR UPDATE OF d
+                    """, Object[].class)
+                    .addEntity("d", DocumentRecord.class).addScalar("locked_revision", Long.class)
+                    .setParameter("ids", ids).getResultList();
+            for (Object[] result : rows) {
+                DocumentRecord row = (DocumentRecord) result[0];
+                if (row.mutationRevision != (Long) result[1]) throw new RevisionConflictException();
+                locked.put(row.nodeId, row);
+            }
+        }
         for (UUID id : identities) {
-            DocumentRecord row = em.find(DocumentRecord.class, id, LockModeType.PESSIMISTIC_WRITE);
-            locked.put(id, row);
+            DocumentRecord row = locked.get(id);
             Long revision = sources.get(id);
             if (revision != null && (row == null || row.mutationRevision != revision.longValue()))
                 throw new RevisionConflictException();
