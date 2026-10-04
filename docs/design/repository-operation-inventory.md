@@ -2727,3 +2727,24 @@ The codec suite and dependency gate passed in 2s. No provider qualification,
 annotation/Any validation, descriptor retention, authority or publication follows
 from a structural result. Host memory reservations must cover decoded expansion;
 raw byte limits alone are not heap bounds. Repository preparation remains open.
+
+### Canonical command to decoded content binding
+
+New package-private `DocumentCommandContent` checks a canonical member's exact
+full-ordinal materialized byte set, including retained declarations and EMPTY gaps.
+It checks aggregate bounds before hashing/parsing, hashes ByteString buffer views
+without cloning the entire body, invokes structural assembly and requires decoded
+ownership to equal the command. A host-required schema policy or an explicit schema
+condition fails unsupported until validation and retention are available. Omission
+of the request field cannot bypass the supplied host requirement.
+
+A review found and a deterministic regression reproduced a map-view race: checking
+the live key set before copying could miss an extra copied ordinal. The exact-set
+check now uses the same immutable snapshot used for hashing and assembly. The host
+must still supply a stable bounded map; copying an adversarial growing collection
+is not a heap bound. Seven content cases plus the codec suite passed in 3s, including
+wrong decoded ownership, corrupt bytes, missing/sparse ordinals, retained digest
+mismatch, schema-policy refusal, cancellation and limits. Sol reviewed the final
+fix without a blocker. These tests do not fabricate provider success or establish
+retained storage provenance. The helper is not yet integrated with live repository
+preparation, authorization or publication. No remote publication occurred.

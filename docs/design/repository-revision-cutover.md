@@ -166,6 +166,12 @@ between fragments. Repository resolution, full manifest preparation and publicat
 wiring remain unimplemented. Byte bounds are not a heap limit; hosts must reserve
 resources for protobuf object expansion and apply concrete policy. A single parse
 is not interruptible through the between-fragment control callback.
+`DocumentCommandContent` now binds materialized full-ordinal bytes to the canonical
+member, checks declared sizes/digests and decoded ownership, and refuses an explicit
+schema condition or host-required typed policy until schema admission is available.
+It checks content only; no returned value proves physical provenance, authorization
+or that a current selection is still live. The host supplies a stable bounded map
+and resource reservation before invoking it.
 Presence follows the codec: an explicitly present empty BlobBag
 is a BLOBS fragment, while repeated PARSED/CHUNKS content requires entries.
 
