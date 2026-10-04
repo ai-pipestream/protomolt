@@ -2641,10 +2641,10 @@ replay can temporarily hold both original and re-encoded evidence; account for
 that overlap rather than releasing the original prematurely. Failure and
 cancellation must release all reservations without delivering a partial proof.
 
-The canonical encoder currently allocates an output array and a ByteString copy.
-Budget both while they overlap or transfer an exclusively owned array without a
-second copy. Include UTF-8 map-key buffers and every nested codec call; a callback
-only at the top-level evidence encoder is insufficient. Resolver-provided schema
+The canonical encoder transfers an exclusively owned output array to ByteString
+without a second copy. String-map sorting avoids encoded UTF-8 key buffers.
+Every nested codec call still needs explicit accounting; a callback only at the
+top-level evidence encoder is insufficient. Resolver-provided schema
 bytes need an explicit borrowed/owned handoff under a reservation before copying
 or retaining them. Never reinterpret a schema-artifact cap as a document cap or
 reserve all policy maxima up front instead of charging actual allocations.

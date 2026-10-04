@@ -5130,3 +5130,19 @@ They also cover second-path capacity refusal, cancellation after an earlier path
 duplicate selectors and noncanonical ordering, with zero residual reservation.
 Canonical bytes and hashes are unchanged. Full preparation/proof ownership is
 still pending; these are internal codec building blocks.
+
+### Fragment replay scratch lifetime
+
+Fragment replay accepts an explicit reservation provider for canonical evidence
+scratch. Sorting and output leases close before descriptor lookup; capacity or
+cancellation failures propagate without selecting the caller-accounted overload.
+Occurrence replay validates and measures paths without serializing a buffer that
+would only be used to count bytes. Canonical wire validation remains the evidence
+decoder's responsibility before replay.
+
+Tests replay both parser roots with the real validator, compare the resulting
+locators with the existing path, check the peak against the largest bundle, and
+assert zero scratch bytes at descriptor lookup. Refused capacity and cancellation
+after reservation leave zero leases and never reach schema loading. Input bytes,
+retained schema assets and parsed results remain caller-owned; preparation and
+the returned proof still need complete reservation propagation.

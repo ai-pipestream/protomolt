@@ -43,6 +43,25 @@ final class DocumentFragmentSchemaReplay {
             Map<DocumentPayloadCheck.SchemaKey, RepositorySchemaAsset> metadata,
             DocumentRetainedSchemaAssets retained, ProtoValidator validator, Limits limits, Runnable control)
             throws InvalidProtocolBufferException {
+        return checkInternal(container, expectedSlot, fragment, expectedDocumentId, bundles, metadata,
+                retained, validator, limits, null, control);
+    }
+
+    /** Reserves canonical scratch bytes only; callers own inputs, retained assets and parsed results. */
+    static List<CheckedRoot> check(DocumentSchemaBinding container, DocumentPublicationSlot expectedSlot,
+            ByteString fragment, String expectedDocumentId, List<DocumentRootSchemaEvidence> bundles,
+            Map<DocumentPayloadCheck.SchemaKey, RepositorySchemaAsset> metadata,
+            DocumentRetainedSchemaAssets retained, ProtoValidator validator, Limits limits,
+            DocumentAdmissionReservations reservations, Runnable control) throws InvalidProtocolBufferException {
+        return checkInternal(container, expectedSlot, fragment, expectedDocumentId, bundles, metadata,
+                retained, validator, limits, java.util.Objects.requireNonNull(reservations), control);
+    }
+
+    private static List<CheckedRoot> checkInternal(DocumentSchemaBinding container, DocumentPublicationSlot expectedSlot,
+            ByteString fragment, String expectedDocumentId, List<DocumentRootSchemaEvidence> bundles,
+            Map<DocumentPayloadCheck.SchemaKey, RepositorySchemaAsset> metadata,
+            DocumentRetainedSchemaAssets retained, ProtoValidator validator, Limits limits,
+            DocumentAdmissionReservations reservations, Runnable control) throws InvalidProtocolBufferException {
         active(control);
         if (bundles.size() > limits.fragment().maxRoots())
             throw new IllegalArgumentException("fragment evidence root count exceeds limit");
@@ -52,8 +71,16 @@ final class DocumentFragmentSchemaReplay {
             active(control);
             if (bundle.getSerializedSize() > limits.maxEvidenceBytes() - evidenceBytes)
                 throw new IllegalArgumentException("aggregate fragment evidence bytes exceed limit");
-            var canonical = DocumentRootSchemaEvidenceCodec.encode(bundle, () -> active(control));
-            evidenceBytes += canonical.bytes().size();
+            long available = limits.maxEvidenceBytes() - evidenceBytes;
+            if (reservations == null) {
+                evidenceBytes += DocumentRootSchemaEvidenceCodec.encode(bundle, available,
+                        () -> active(control)).bytes().size();
+            } else {
+                try (var canonical = DocumentRootSchemaEvidenceCodec.encodeOwned(bundle, available,
+                        reservations, () -> active(control))) {
+                    evidenceBytes += canonical.value().bytes().size();
+                }
+            }
             if (!bundle.getRoot().getSlot().equals(expectedSlot))
                 throw new IllegalArgumentException("evidence slot differs from selected revision fragment");
             if (byRoot.putIfAbsent(bundle.getRoot(), bundle) != null)

@@ -57,8 +57,13 @@ final class DocumentSchemaReplay {
             if (path.getSerializedSize() > limits.maxEncodedBytes() - bytes
                     || path.getStepsCount() > limits.maxSteps() - steps)
                 throw new IllegalArgumentException("aggregate schema replay evidence exceeds limit");
-            var encoded = DocumentSchemaOccurrenceCodec.encode(path, () -> active(control));
-            bytes += encoded.bytes().size();
+            // Replay consumes the parsed path, not its encoded bytes or digest.
+            // The codec's validated measurement enforces the same canonical wire
+            // bounds without allocating an output buffer solely to count it.
+            int measured = DocumentSchemaEvidenceCodec.measureAndValidate(path, () -> active(control));
+            if (measured > limits.maxEncodedBytes() - bytes)
+                throw new IllegalArgumentException("aggregate schema replay evidence exceeds limit");
+            bytes += measured;
             steps += path.getStepsCount();
             if (!expected.add(path)) throw new IllegalArgumentException("duplicate schema replay path");
             var prefix = new ArrayList<DocumentSchemaOccurrences.Step>();

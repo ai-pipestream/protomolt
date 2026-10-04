@@ -54,6 +54,68 @@ class DocumentFragmentSchemaReplayTest {
     }
 
     @Test
+    void releasesCanonicalScratchBeforeLoadingSchemasAndReturnsTheSameValidatedRoots() throws Exception {
+        var fixture = fixture();
+        var parsed = part(fixture, DocumentPart.DOCUMENT_PART_PARSED);
+        var bundles = bundles(parsed, fixture);
+        var live = new java.util.concurrent.atomic.AtomicLong();
+        var peak = new java.util.concurrent.atomic.AtomicLong();
+        DocumentAdmissionReservations reservations = bytes -> {
+            peak.accumulateAndGet(live.addAndGet(bytes), Math::max);
+            var closed = new java.util.concurrent.atomic.AtomicBoolean();
+            return () -> {
+                if (closed.compareAndSet(false, true)) live.addAndGet(-bytes);
+            };
+        };
+        var reads = new AtomicInteger();
+        var reader = new DocumentRetainedSchemaAssets(hash -> {
+            assertThat(live.get()).as("scratch released before retained descriptor lookup").isZero();
+            reads.incrementAndGet();
+            return Optional.ofNullable(fixture.descriptors().get(hash));
+        }, new DocumentRetainedSchemaAssets.Limits(20, 16_000_000,
+                new ClosedDescriptorSet.Limits(4_000_000, 1024, 10_000, 100)));
+        var checked = DocumentFragmentSchemaReplay.check(CONTAINER, slot(parsed.part()), parsed.bytes(), "doc",
+                bundles, fixture.metadata(), reader, VALIDATOR, limits(1_000_000), reservations, () -> {});
+        var expected = check(parsed, bundles, fixture, limits(1_000_000), retained(fixture), () -> {});
+        assertThat(checked).extracting(DocumentFragmentSchemaReplay.CheckedRoot::root)
+                .containsExactlyElementsOf(expected.stream().map(DocumentFragmentSchemaReplay.CheckedRoot::root).toList());
+        assertThat(reads).hasValue(2);
+        assertThat(live.get()).isZero();
+        long maximumBundleBytes = bundles.stream().mapToLong(bundle ->
+                DocumentRootSchemaEvidenceCodec.encode(bundle, () -> {}).bytes().size()).max().orElseThrow();
+        assertThat(peak.get()).isEqualTo(maximumBundleBytes);
+    }
+
+    @Test
+    void scratchRefusalAndCancellationCannotAdvanceToSchemaLoading() throws Exception {
+        var fixture = fixture();
+        var parsed = part(fixture, DocumentPart.DOCUMENT_PART_PARSED);
+        var bundles = bundles(parsed, fixture);
+        var reads = new AtomicInteger();
+        var reader = new DocumentRetainedSchemaAssets(hash -> {
+            reads.incrementAndGet();
+            return Optional.ofNullable(fixture.descriptors().get(hash));
+        }, new DocumentRetainedSchemaAssets.Limits(20, 16_000_000,
+                new ClosedDescriptorSet.Limits(4_000_000, 1024, 10_000, 100)));
+        var refused = new IllegalArgumentException("host capacity refused");
+        assertThatThrownBy(() -> DocumentFragmentSchemaReplay.check(CONTAINER, slot(parsed.part()), parsed.bytes(),
+                "doc", bundles, fixture.metadata(), reader, VALIDATOR, limits(1_000_000), bytes -> {
+                    throw refused;
+                }, () -> {})).isSameAs(refused);
+        var live = new java.util.concurrent.atomic.AtomicLong();
+        var stopped = new CancellationException("cancel after reservation");
+        assertThatThrownBy(() -> DocumentFragmentSchemaReplay.check(CONTAINER, slot(parsed.part()), parsed.bytes(),
+                "doc", bundles, fixture.metadata(), reader, VALIDATOR, limits(1_000_000), bytes -> {
+                    live.addAndGet(bytes);
+                    return () -> live.addAndGet(-bytes);
+                }, () -> {
+                    if (live.get() > 0) throw stopped;
+                })).isSameAs(stopped);
+        assertThat(live.get()).isZero();
+        assertThat(reads).hasValue(0);
+    }
+
+    @Test
     void requiresExactOneToOneEvidenceCoverageAndSelectedFragmentIdentity() throws Exception {
         var fixture = fixture();
         var core = part(fixture, DocumentPart.DOCUMENT_PART_CORE);
