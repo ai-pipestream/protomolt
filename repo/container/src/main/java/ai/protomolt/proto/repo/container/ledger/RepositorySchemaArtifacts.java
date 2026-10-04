@@ -64,6 +64,43 @@ final class RepositorySchemaArtifacts {
         return identities;
     }
 
+    /**
+     * Reads bytes already claimed by this operation, including an earlier generation.
+     * Ownership and claim visibility are checked at the database read, without locking
+     * the owner across descriptor decoding. The returned bytes belong to the caller.
+     * This is retry preparation, not document authorization or a historical read API.
+     * A later publication must recheck ownership and all admission requirements.
+     */
+    ByteString readRetained(RepositoryOperationLedger.Owner owner, String artifactSha256, Runnable control) {
+        Objects.requireNonNull(owner); Objects.requireNonNull(artifactSha256); Objects.requireNonNull(control);
+        active(control);
+        if (!artifactSha256.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("schema artifact identity requires lowercase SHA-256");
+        }
+        byte[] bytes = tx.readOnly(em -> {
+            var rows = em.createNativeQuery("""
+                    SELECT a.artifact_bytes FROM repository_operation_owners o
+                    JOIN repository_schema_artifacts a ON a.account_id=o.account_id AND a.artifact_sha256=:sha
+                    WHERE o.account_id=:account AND o.principal=:principal AND o.operation_id=:operation
+                     AND o.owner_generation=:generation AND o.owner_token=:token AND o.lease_until>clock_timestamp()
+                     AND EXISTS(SELECT 1 FROM repository_schema_artifact_claims c
+                      WHERE c.account_id=o.account_id AND c.principal=o.principal AND c.operation_id=o.operation_id
+                       AND c.artifact_sha256=a.artifact_sha256)
+                    """).setParameter("sha", HexFormat.of().parseHex(artifactSha256))
+                    .setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())
+                    .setParameter("operation", owner.key().operationId()).setParameter("generation", owner.generation())
+                    .setParameter("token", owner.token()).getResultList();
+            if (rows.isEmpty()) throw new IllegalStateException("Retained schema is unavailable to the live operation owner");
+            return (byte[]) rows.getFirst();
+        });
+        active(control);
+        if (bytes.length == 0 || bytes.length > MAX_ARTIFACT_BYTES) throw new IllegalStateException("Invalid retained schema size");
+        var retained = ByteString.copyFrom(bytes);
+        if (!sha256(retained).equals(artifactSha256)) throw new IllegalStateException("Retained schema digest mismatch");
+        active(control);
+        return retained;
+    }
+
     private static String sha256(ByteString bytes) {
         try {
             var hash = MessageDigest.getInstance("SHA-256");

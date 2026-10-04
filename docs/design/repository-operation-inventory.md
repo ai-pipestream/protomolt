@@ -3380,3 +3380,21 @@ current protection and a three-generation chain. Sol found no blocker.
 This releases redundant claims while preserving retry assets. Current claims and
 catalog artifacts remain protected. Terminal retention policy, artifact collection
 and durable revision references are still unfinished.
+
+### Retained descriptors for operation retry
+
+RepositorySchemaArtifacts.readRetained reads an exact artifact only when the
+current live owner identity and a claim from that same operation match. Claims
+from prior generations are eligible for recovery reads. Another operation's claim
+in the same account does not grant access. The method copies JDBC bytes, checks
+size and SHA-256, and returns immutable bytes after the database read completes.
+Missing, unclaimed and stale-owner reads return the same explicit unavailable
+error. Publication still requires fresh ownership and admission checks.
+
+All 22 staging/recovery PostgreSQL tests pass. New cases cover takeover followed
+by reading prior-generation schema bytes, descriptor reconstruction and dynamic
+payload decoding without a registry or generated class, restaging and release of
+the obsolete claim. Tests also check scope, token, expiry and cancellation. A fresh
+component uses the existing database factory; this is not a process-restart test.
+Sol found no blocker. This supports operation retry, not historical document access
+or completed revision-level schema retention.

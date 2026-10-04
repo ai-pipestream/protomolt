@@ -295,6 +295,61 @@ class RepositorySchemaArtifactsIT {
         assertThat(count(third, "repository_schema_artifacts")).isEqualTo(1);
     }
 
+    @Test void takeoverReadsClaimedSchemaAndDecodesWithoutRegistryOrGeneratedClass() throws Exception {
+        var first = shortOwner();
+        var file = DescriptorProtos.FileDescriptorProto.newBuilder().setName("archived.proto").setPackage("archived")
+                .setSyntax("proto3").addMessageType(DescriptorProtos.DescriptorProto.newBuilder().setName("Record")
+                        .addField(DescriptorProtos.FieldDescriptorProto.newBuilder().setName("value").setNumber(1)
+                                .setType(DescriptorProtos.FieldDescriptorProto.Type.TYPE_STRING))).build();
+        var bytes = DescriptorProtos.FileDescriptorSet.newBuilder().addFile(file).build().toByteString();
+        String hash = artifacts.stage(first, List.of(bytes), () -> {}).getFirst();
+        var next = takeover(first);
+        assertThatThrownBy(() -> artifacts.readRetained(first, hash, () -> {})).hasMessageContaining("unavailable");
+        var reopened = new RepositorySchemaArtifacts(new Tx(database.entityManagerFactory()));
+        ByteString retained = reopened.readRetained(next, hash, () -> {});
+        assertThat(retained).isEqualTo(bytes);
+        var restoredFile = com.google.protobuf.Descriptors.FileDescriptor.buildFrom(
+                DescriptorProtos.FileDescriptorSet.parseFrom(retained).getFile(0),
+                new com.google.protobuf.Descriptors.FileDescriptor[0]);
+        var type = restoredFile.findMessageTypeByName("Record");
+        var payload = ByteString.copyFrom(new byte[]{10, 2, 'o', 'k'});
+        var decoded = com.google.protobuf.DynamicMessage.parseFrom(type, payload);
+        assertThat(decoded.getField(type.findFieldByName("value"))).isEqualTo("ok");
+        assertThat(decoded.toByteString()).isEqualTo(payload);
+        // Re-stage the retained bytes before releasing the prior generation's claim.
+        assertThat(reopened.stage(next, List.of(retained), () -> {})).containsExactly(hash);
+        assertThat(release(next, 256)).isEqualTo(1);
+        assertThat(reopened.readRetained(next, hash, () -> {})).isEqualTo(bytes);
+    }
+
+    @Test void retainedReadRequiresOwnerIdentityAndAnOperationClaim() {
+        var owner = owner();
+        String hash = artifacts.stage(owner, List.of(descriptor("private.proto")), () -> {}).getFirst();
+        var unclaimed = owner(owner.key().account());
+        var otherAccount = owner();
+        for (var wrong : List.of(unclaimed, otherAccount,
+                new RepositoryOperationLedger.Owner(owner.key(), owner.generation(), UUID.randomUUID(), owner.leaseUntil()),
+                new RepositoryOperationLedger.Owner(new RepositoryOperationLedger.Key(owner.key().account(), "other", owner.key().operationId()),
+                        owner.generation(), owner.token(), owner.leaseUntil()))) {
+            assertThatThrownBy(() -> artifacts.readRetained(wrong, hash, () -> {})).hasMessageContaining("unavailable");
+        }
+        assertThatThrownBy(() -> artifacts.readRetained(owner, "0".repeat(64), () -> {})).hasMessageContaining("unavailable");
+        assertThatThrownBy(() -> artifacts.readRetained(owner, hash.toUpperCase(java.util.Locale.ROOT), () -> {}))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test void retainedReadRejectsExpiredOwnerAndCancellation() {
+        var owner = shortOwner();
+        String hash = artifacts.stage(owner, List.of(descriptor("expired-read.proto")), () -> {}).getFirst();
+        var stop = new CancellationException("cancel retained read");
+        var calls = new AtomicInteger();
+        assertThatThrownBy(() -> artifacts.readRetained(owner, hash, () -> {
+            if (calls.incrementAndGet() == 2) throw stop;
+        })).isSameAs(stop);
+        awaitExpiry(owner);
+        assertThatThrownBy(() -> artifacts.readRetained(owner, hash, () -> {})).hasMessageContaining("unavailable");
+    }
+
     private static int release(RepositoryOperationLedger.Owner owner, int limit) {
         return tx.inTransaction(em -> { return release(em, owner, limit); });
     }
