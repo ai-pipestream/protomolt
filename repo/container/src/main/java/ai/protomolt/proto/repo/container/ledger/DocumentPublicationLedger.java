@@ -15,7 +15,13 @@ public final class DocumentPublicationLedger {
     public DocumentPublicationLedger(Tx tx) { this.tx = Objects.requireNonNull(tx); }
 
     public record Part(DocumentPart part, String subKey, String key, long size, String sha256,
-            String providerVersion, String etag) {}
+            String providerVersion, String etag, String contentType) {
+        /** Legacy snapshots lack a retained content type; managed SQL reads always supply it. */
+        public Part(DocumentPart part, String subKey, String key, long size, String sha256,
+                String providerVersion, String etag) {
+            this(part, subKey, key, size, sha256, providerVersion, etag, null);
+        }
+    }
     public record Binding(String generation, ManagedBackendLedger.Profile profile, String namespace) {
         public Binding {
             if (generation == null || generation.isBlank() || namespace == null || namespace.isBlank())
@@ -79,7 +85,7 @@ public final class DocumentPublicationLedger {
             UUID revision = (UUID)binding[1];
             var rows=em.unwrap(org.hibernate.Session.class).createNativeQuery("""
                     SELECT r.revision_ordinal,r.part,r.sub_key,l.object_key,o.expected_size,o.expected_sha256,
-                        o.provider_version,o.etag,l.backend_generation,l.storage_namespace,l.storage_realm
+                        o.provider_version,o.etag,l.backend_generation,l.storage_namespace,l.storage_realm,o.content_type
                     FROM document_revision_parts r
                     JOIN repository_physical_locations l ON l.object_id=r.object_id AND l.source_kind='DOCUMENT_PART'
                     JOIN document_part_attempt_objects o ON o.physical_object_id=l.object_id
@@ -99,8 +105,10 @@ public final class DocumentPublicationLedger {
             var manifest=current.readManifest();
             for (var p : rows) {
                 int position=((Number)p[0]).intValue();
+                if (!(p[11] instanceof String contentType) || contentType.isBlank())
+                    throw new IllegalStateException("Published document part has no retained content type");
                 var part=new Part(DocumentPart.forNumber(((Number)p[1]).intValue()),(String)p[2],(String)p[3],
-                        ((Number)p[4]).longValue(),(String)p[5],(String)p[6],(String)p[7]);
+                        ((Number)p[4]).longValue(),(String)p[5],(String)p[6],(String)p[7],contentType);
                 if (position<0 || position>=manifest.getPartsCount()) throw new IllegalStateException("Published part position is invalid");
                 var entry=manifest.getParts(position);
                 if (entry.getState()!=ai.protomolt.proto.repo.v1.PartState.PART_STATE_PRESENT

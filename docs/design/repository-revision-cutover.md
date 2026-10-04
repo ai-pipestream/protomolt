@@ -228,9 +228,11 @@ and `DocumentPartReader.readSourceSlots` currently selects by slot only.
 
 The engine consumes that plan through the reader's existing aggregate reservation
 and scheduling window. Read the exact retained generation, namespace, key and
-provider version; verify size, digest and content type against the plan. Existing
-`DocumentPublicationLedger.Part` and its reader do not carry or check content type,
-so this is an explicit extension, not an already-satisfied guarantee. No lookup of
+provider version; verify size, digest and content type against the plan.
+`DocumentPublicationLedger.Part` now carries the retained content type from managed
+SQL reads, and the reader checks the exact provider value. Legacy snapshots without
+a retained type remain explicitly unknown; they do not satisfy an exact typed read
+plan. The complete command-to-object plan is still unimplemented. No lookup of
 today's drive or fallback backend is allowed.
 
 Fresh bytes remain under `DocumentUploadPayloads.Use`; do not fetch them again

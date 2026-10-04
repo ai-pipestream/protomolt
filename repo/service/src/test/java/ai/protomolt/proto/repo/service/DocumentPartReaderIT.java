@@ -492,6 +492,8 @@ class DocumentPartReaderIT {
 
     @Test void boundReadUsesOriginalNamespaceLocallyAndOverGrpcAfterDriveChanges() throws Exception {
         var seeded = bound();
+        assertThat(new DocumentPublicationLedger(tx).findForRead(seeded.row()).orElseThrow().parts())
+                .extracting(DocumentPublicationLedger.Part::contentType).containsExactly("application/protobuf");
         tx.inTransaction(em -> {
             em.createNativeQuery("UPDATE drives SET bucket='unrelated-current-bucket' WHERE drive_id=:id")
                     .setParameter("id", seeded.drive().driveId).executeUpdate();
@@ -516,7 +518,7 @@ class DocumentPartReaderIT {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"missing-reader", "missing-backend", "missing-version", "unavailable", "wrong-etag"})
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"missing-reader", "missing-backend", "missing-version", "unavailable", "wrong-etag", "wrong-content-type", "missing-content-type"})
     void boundFailuresHaveTheSameMeaningLocallyAndOverGrpc(String defect) throws Exception {
         var seeded = bound();
         var publication = new DocumentPublicationLedger(tx).findForRead(seeded.row()).orElseThrow();
@@ -533,6 +535,12 @@ class DocumentPartReaderIT {
                             if (defect.equals("wrong-etag")) {
                                 var actual = (BlobStore.GetResult) result;
                                 return new BlobStore.GetResult(actual.data(), actual.contentType(), "wrong-etag", actual.versionId());
+                            }
+                            if (defect.equals("wrong-content-type") || defect.equals("missing-content-type")) {
+                                var actual = (BlobStore.GetResult) result;
+                                return new BlobStore.GetResult(actual.data(),
+                                        defect.equals("missing-content-type") ? null : "text/plain",
+                                        actual.eTag(), actual.versionId());
                             }
                         }
                         return result;

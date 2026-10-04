@@ -408,6 +408,7 @@ public final class DocumentPartReader implements AutoCloseable {
         byte[] bytes = result == null || result.data() == null ? null : result.data().clone();
         if (bytes==null || bytes.length!=part.size()
                 || !DocumentPartCodec.sha256Hex(bytes).equals(part.sha256())
+                || (part.contentType()!=null && !part.contentType().equals(result.contentType()))
                 || (part.providerVersion()!=null && !part.providerVersion().equals(result.versionId()))
                 || (part.etag()!=null && !part.etag().equals(result.eTag())))
             throw new RepositoryException(RepositoryException.Code.DATA_LOSS,"Document part disagrees with its published byte or provider identity");

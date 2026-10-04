@@ -2776,3 +2776,26 @@ Those acceptance cases remain required by the updated cutover design.
 Sol reviewed the boundary against the implementation without a design blocker;
 its memory-accounting clarification is included. Documentation whitespace checks
 passed. No code, protobuf, hosted CI or deployed behavior changed.
+
+### Retained content type on managed reads
+
+Extended the existing managed publication read projection to carry the mandatory
+SQL content type into `DocumentPublicationLedger.Part`. Missing or blank managed
+evidence fails instead of becoming unknown. `DocumentPartReader` now checks the
+provider's exact content type alongside length, digest, version and etag. The
+seven-argument Java constructor preserves explicitly unknown legacy snapshots;
+no protobuf field or provider request changed and no extra provider call was added.
+
+Real PostgreSQL/S3 tests first reproduced acceptance of incorrect and missing
+content types. Fault injection modifies only the type on a real bounded GET result.
+Both cases now return DATA_LOSS through local and in-process gRPC invocation.
+A positive managed-read assertion checks the retained SQL type. Legacy reads retain
+their existing behavior because old manifests have no content-type evidence.
+This closes a production read integrity gap; it does not implement the exact
+preparation plan or establish typed schema validity.
+
+All 55 managed/legacy reader cases passed, followed by 102 publication and revision
+projection cases in 37s and the engine runtime dependency gate. An initial ledger
+filter matched no tests; the corrected explicit class filters produced that ledger
+result. Sol reviewed the final implementation without a blocker. No hosted CI,
+push, merge or deployment ran.
