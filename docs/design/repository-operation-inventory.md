@@ -3314,3 +3314,14 @@ GenerateStubsAction already emits source for Java, Kotlin, Python, C++, C#, Ruby
 PHP and Objective-C, plus grpc-java service stubs. Generated-source ZIP packaging
 was reported by the user; its exact codegen download route is still being located.
 Do not equate source generation or ZIP download with executable peer code loading.
+
+### Direct SQL staging limit verification
+
+Additional PostgreSQL cases fill a generation to the artifact-count or byte limit,
+then attempt a direct claim INSERT for an artifact staged by another operation
+in the same account. The claim trigger rejects both attempts. Previously committed
+claims remain intact. All 14 staging tests pass; Sol found no blocker.
+
+The cutover design records reuse of MappingHelper, the mapper's Any-aware field
+access, MetadataExtractor's CEL selectors and MessageProjection. The remaining
+path work is persisted occurrence provenance, not another selector engine.

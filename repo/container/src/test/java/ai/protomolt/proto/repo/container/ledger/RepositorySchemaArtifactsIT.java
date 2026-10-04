@@ -85,6 +85,32 @@ class RepositorySchemaArtifactsIT {
         assertThat(count(owner, "repository_schema_artifacts")).isEqualTo(4);
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void directClaimInsertCannotBypassAccumulatedLimits(boolean byteLimit) {
+        var owner = owner();
+        if (byteLimit) {
+            for (int i = 0; i < 4; i++) {
+                byte[] bytes = new byte[RepositorySchemaArtifacts.MAX_ARTIFACT_BYTES];
+                bytes[0] = (byte) i;
+                artifacts.stage(owner, List.of(ByteString.copyFrom(bytes)), () -> {});
+            }
+        } else {
+            artifacts.stage(owner, IntStream.range(0, 64).mapToObj(i -> descriptor("direct" + i + ".proto")).toList(), () -> {});
+        }
+        var other = owner(owner.key().account());
+        String extra = artifacts.stage(other, List.of(descriptor("extra.proto")), () -> {}).getFirst();
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            RepositoryOperationLedger.fenceLiveOwner(em, owner);
+            em.createNativeQuery("""
+                    INSERT INTO repository_schema_artifact_claims(account_id,principal,operation_id,owner_generation,artifact_sha256)
+                    VALUES(:account,'principal',:operation,:generation,:sha)
+                    """).setParameter("account", owner.key().account()).setParameter("operation", owner.key().operationId())
+                    .setParameter("generation", owner.generation()).setParameter("sha", java.util.HexFormat.of().parseHex(extra)).executeUpdate();
+        })).hasStackTraceContaining("operation generation limits");
+        assertThat(count(owner, "repository_schema_artifact_claims")).isEqualTo(byteLimit ? 5 : 65);
+    }
+
     @Test void newCatalogRowCannotCommitWithoutItsCreatorsClaim() {
         var owner = owner();
         assertThatThrownBy(() -> tx.inTransaction(em -> {

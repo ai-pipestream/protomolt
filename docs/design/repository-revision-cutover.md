@@ -778,3 +778,30 @@ For archival admission, freeze the selected reflected definition and retain its
 complete closure. Discovery of a current remote definition alone cannot recreate
 an older revision after that definition changes. No executable peer library is
 needed for the dynamic reflection path.
+
+### Existing selection, mapping and projection tools
+
+Reuse the existing descriptor and transform libraries:
+
+- `MappingHelper` and `MappingHelperJsonSupport` expose descriptor field paths,
+  field metadata and mapping validation for clients and UIs.
+- `ProtoFieldMapperImpl.FieldAccessor` resolves dotted paths and unpacks Any values
+  through `AnyHandler` and `DescriptorRegistry` during traversal.
+- `MetadataExtractor` evaluates named CEL selectors with descriptor validation.
+- `MessageProjection` uses the mapper and CEL to build annotated target messages;
+  it also derives source and target field masks.
+
+These APIs already provide discovery, selection and transformation. Repository
+admission must use definitions frozen for the operation when composing them.
+Do not create another general selector engine for archival work.
+
+Persisted admission evidence has an additional requirement: identify each selected
+occurrence in one exact revision. The mapper's dotted traversal refuses repeated
+intermediate fields; a repeated field selected as a whole is not one occurrence.
+CEL can select or transform values, but the returned value alone does not identify
+its source occurrence. A field mask likewise selects fields, not individual list
+positions or map entries. Preserve these existing semantics and add explicit
+provenance only where the repository needs it. Review the representation for field
+numbers, repeated positions, typed map keys and Any boundaries before changing
+contracts. Do not use display strings or arbitrary CEL expressions as the sole
+identity of a retained schema binding.
