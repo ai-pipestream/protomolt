@@ -27,6 +27,20 @@ final class DocumentSchemaBatch {
 
     static DocumentSchemaBatch prepare(DocumentPublicationCommand command, DocumentSchemaPolicies.Selection policy,
             Map<String, DocumentSchemaAdmission.Proof> supplied, Runnable control) throws InvalidProtocolBufferException {
+        return prepareInternal(command, policy, supplied, null, control);
+    }
+
+    static DocumentSchemaBatch prepare(DocumentPublicationCommand command, DocumentSchemaPolicies.Selection policy,
+            Map<String, DocumentSchemaAdmission.Proof> supplied,
+            ai.protomolt.proto.repo.admission.DocumentAdmissionReservations reservations, Runnable control)
+            throws InvalidProtocolBufferException {
+        return prepareInternal(command, policy, supplied, Objects.requireNonNull(reservations), control);
+    }
+
+    private static DocumentSchemaBatch prepareInternal(DocumentPublicationCommand command, DocumentSchemaPolicies.Selection policy,
+            Map<String, DocumentSchemaAdmission.Proof> supplied,
+            ai.protomolt.proto.repo.admission.DocumentAdmissionReservations reservations, Runnable control)
+            throws InvalidProtocolBufferException {
         Objects.requireNonNull(command); Objects.requireNonNull(policy); Objects.requireNonNull(supplied); active(control);
         if (!policy.account().equals(command.intent().getAccountId())) throw new IllegalArgumentException("Policy account differs from command");
         if (supplied.size() > command.intent().getMembersCount()) throw new IllegalArgumentException("Too many member schema proofs");
@@ -46,7 +60,8 @@ final class DocumentSchemaBatch {
             }
             if (!proof.commandSha256().equals(commandDigest) || !proof.member().equals(member))
                 throw new IllegalArgumentException("Schema proof differs from canonical command member");
-            policy.policy().verifyProof(proof, () -> active(control));
+            if (reservations == null) policy.policy().verifyProof(proof, () -> active(control));
+            else policy.policy().verifyProof(proof, reservations, () -> active(control));
             roots += proof.roots().size();
             if (roots > 4096) throw new IllegalArgumentException("Operation schema root count exceeds limit");
             for (var root : proof.roots()) {

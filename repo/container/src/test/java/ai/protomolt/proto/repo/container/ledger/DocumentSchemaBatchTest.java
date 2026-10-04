@@ -21,6 +21,100 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 
 class DocumentSchemaBatchTest {
+    private static final ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits OPAQUE_LIMITS =
+            new ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000);
+
+    @Test void candidateOwnsTypedAndExplicitOpaqueMembersTogether() throws Exception {
+        var f = command("account", List.of(member("member-a", "doc-a"), member("member-b", "doc-b")));
+        var supplied = fragments(f);
+        var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(16_000_000);
+        var resolved = new java.util.ArrayList<String>();
+        var candidate = DocumentPublicationCandidate.prepare(f.command, selection(policy("account", true, 20)),
+                Map.of("member-a", DocumentPublicationCandidate.Mode.TYPED, "member-b", DocumentPublicationCandidate.Mode.OPAQUE),
+                supplied, Optional.of(f.assets.container.definition()), (member, occurrence) -> {
+                    resolved.add(member.getMemberId());
+                    return f.assets.payload.definition();
+                }, budget, OPAQUE_LIMITS, () -> {});
+        try {
+            assertThat(resolved).containsExactly("member-a");
+            assertThat(candidate.schemas().proofs()).containsOnlyKeys("member-a");
+            assertThat(candidate.opaque()).containsOnlyKeys("member-b");
+            var proof = candidate.schemas().proofs().get("member-a");
+            long retained = fragmentBytes(f) + proof.artifacts().values().stream().mapToLong(ByteString::size).sum()
+                    + proof.roots().stream().mapToLong(root -> root.encoded().bytes().size()).sum();
+            assertThat(budget.reservedBytes()).isEqualTo(retained);
+            supplied.clear();
+            assertThat(proof.document().getDocId()).isEqualTo("doc-a");
+            assertThat(candidate.opaque().get("member-b").assembly().document().getDocId()).isEqualTo("doc-b");
+        } finally { candidate.close(); }
+        candidate.close();
+        assertThat(budget.reservedBytes()).isZero();
+        assertThatThrownBy(candidate::schemas).hasMessageContaining("closed");
+        assertThatThrownBy(candidate::opaque).hasMessageContaining("closed");
+    }
+
+    @Test void candidateRejectsMissingModesAndForbiddenOpaqueBeforeResolving() throws Exception {
+        var f = command("account", List.of(member("member-a", "doc-a")));
+        var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(16_000_000);
+        DocumentPublicationCandidate.Resolver unused = (member, occurrence) -> { throw new AssertionError("unexpected schema lookup"); };
+        assertThatThrownBy(() -> DocumentPublicationCandidate.prepare(f.command, selection(policy("account", false, 20)),
+                Map.of(), fragments(f), Optional.empty(), unused, budget, OPAQUE_LIMITS, () -> {}))
+                .hasMessageContaining("modes differ");
+        assertThatThrownBy(() -> DocumentPublicationCandidate.prepare(f.command, selection(policy("account", false, 20)),
+                Map.of("member-a", DocumentPublicationCandidate.Mode.OPAQUE), fragments(f), Optional.empty(), unused,
+                budget, OPAQUE_LIMITS, () -> {})).hasMessageContaining("requires typed");
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    @Test void failedLaterTypedMemberClosesEarlierProofAndNeverFallsBackToOpaque() throws Exception {
+        var f = command("account", List.of(member("member-a", "doc-a"), member("member-b", "doc-b")));
+        var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(16_000_000);
+        var calls = new java.util.ArrayList<String>();
+        var outage = new IllegalStateException("second member registry unavailable");
+        assertThatThrownBy(() -> DocumentPublicationCandidate.prepare(f.command, selection(policy("account", true, 20)),
+                Map.of("member-a", DocumentPublicationCandidate.Mode.TYPED, "member-b", DocumentPublicationCandidate.Mode.TYPED),
+                fragments(f), Optional.of(f.assets.container.definition()), (member, occurrence) -> {
+                    calls.add(member.getMemberId());
+                    if (member.getMemberId().equals("member-b")) {
+                        assertThat(budget.reservedBytes()).isGreaterThan(fragmentBytes(f));
+                        throw outage;
+                    }
+                    return f.assets.payload.definition();
+                }, budget, OPAQUE_LIMITS, () -> {})).isSameAs(outage);
+        assertThat(calls).containsExactly("member-a", "member-b");
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    @Test void opaqueNeedsNoSchemaAndTypedCapacityFailureReleasesTheFragmentSnapshot() throws Exception {
+        var f = command("account", List.of(member("member-a", "doc-a")));
+        var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(fragmentBytes(f));
+        var policy = selection(policy("account", true, 20));
+        try (var candidate = DocumentPublicationCandidate.prepare(f.command, policy,
+                Map.of("member-a", DocumentPublicationCandidate.Mode.OPAQUE), fragments(f), Optional.empty(),
+                (member, occurrence) -> { throw new AssertionError("opaque mode resolved a schema"); }, budget, OPAQUE_LIMITS, () -> {})) {
+            assertThat(candidate.schemas().proofs()).isEmpty();
+            assertThat(candidate.schemas().artifacts()).isEmpty();
+            assertThat(candidate.opaque()).containsOnlyKeys("member-a");
+            assertThat(budget.reservedBytes()).isEqualTo(fragmentBytes(f));
+        }
+        assertThatThrownBy(() -> DocumentPublicationCandidate.prepare(f.command, policy,
+                Map.of("member-a", DocumentPublicationCandidate.Mode.TYPED), fragments(f), Optional.of(f.assets.container.definition()),
+                (member, occurrence) -> f.assets.payload.definition(), budget, OPAQUE_LIMITS, () -> {}))
+                .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED));
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    private static Map<String, Map<Integer, ByteString>> fragments(CommandData f) {
+        var result = new HashMap<String, Map<Integer, ByteString>>();
+        f.data.forEach((id, value) -> result.put(id, value.fragments));
+        return result;
+    }
+
+    private static long fragmentBytes(CommandData f) {
+        return f.data.values().stream().flatMap(member -> member.fragments.values().stream()).mapToLong(ByteString::size).sum();
+    }
+
     @Test void ownsBudgetedFragmentCopiesThroughRealPolicyValidation() throws Exception {
         var f = command("account", List.of(member("member-a", "doc-a"), member("member-b", "doc-b")));
         var supplied = new HashMap<String, Map<Integer, ByteString>>();

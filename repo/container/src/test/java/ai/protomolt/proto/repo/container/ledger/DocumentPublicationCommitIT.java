@@ -651,7 +651,6 @@ class DocumentPublicationCommitIT {
         var payload=com.google.protobuf.DynamicMessage.newBuilder(descriptor)
                 .setField(descriptor.findFieldByName("docket"),"2026-ARCHIVE-42").build();
         var fixture=fixture(1,1,publicReadGrant(),"restart-"+UUID.randomUUID(),true,Any.pack(payload,"type.test"));
-        var checked=stage(fixture);
         var policy=ai.protomolt.proto.repo.admission.DocumentAdmissionPolicy.of(DocumentSchemaPolicy.newBuilder()
                 .setEncodingVersion(1).setAccountId(fixture.command.intent().getAccountId())
                 .setMode(DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_TYPED_REQUIRED).setAnyResolvedSchema(true)
@@ -660,24 +659,40 @@ class DocumentPublicationCommitIT {
                         .setMaxRoots(100).setMaxEvidenceBytes(4_000_000).setMaxBindings(20)
                         .setMaxRetainedBytes(16_000_000).setMaxDecodedBytes(1_000_000)).build(),()->{});
         var member=fixture.command.intent().getMembers(0);
-        var fragments=new HashMap<Integer,ByteString>();
-        for(int i=0;i<member.getPartsCount();i++) fragments.put(i,ByteString.copyFrom(
-                fixture.bodies.get(new DocumentUploadPayloads.Key(member.getMemberId(),i)).bytes()));
         var definition=DocumentSchemaRetentionFixture.definition(descriptor);
         var snapshotBudget=new PayloadBudget(4_000_000);
+        var selected=new DocumentSchemaPolicies(tx).activate(policy,0,()->{});
+        var selectedUploads=new HashMap<String,DocumentSelectedAttemptLedger.Selected>();
         DocumentPublishedRevision published;
         String expected;
         String customDescriptor;
-        try(var snapshot=DocumentPublicationFragments.capture(fixture.command,Map.of(member.getMemberId(),fragments),snapshotBudget,()->{});
-            var ownedProof=policy.prepareAndCheck(ByteString.copyFrom(java.util.HexFormat.of().parseHex(fixture.command.sha256())),
-                    member,snapshot.fragments().get(member.getMemberId()),DocumentSchemaRetentionFixture.definition(Document.getDescriptor()),
-                    ignored->definition, bytes->{var lease=snapshotBudget.reserve(bytes);return lease::close;},()->{})) {
-            var proof=ownedProof.proof();
-            var selected=new DocumentSchemaPolicies(tx).activate(policy,0,()->{});
-            var admission=DocumentSchemaBatch.prepare(fixture.command,selected,Map.of(member.getMemberId(),proof),()->{});
+        try(var coordinator=new DocumentUploadCoordinator(tx,new DriveLedger(tx),snapshotBudget,
+                    (generation,retained)->new DocumentUploadCoordinator.Backend(profile.identity(),opened),4,Duration.ofMillis(25),
+                    new SqlTimeouts(Duration.ofSeconds(2),Duration.ofSeconds(5)));
+            var candidate=coordinator.stageAndPrepareOwned(ADMIN,fixture.owner,fixture.prepared,fixture.bodies,Map.of(),()->{},
+                    (staged,view,active)->{
+                        var fragments=new HashMap<Integer,ByteString>();
+                        for(int i=0;i<member.getPartsCount();i++) {
+                            // Borrow only during candidate capture; it copies under its own reservation.
+                            fragments.put(i,com.google.protobuf.UnsafeByteOperations.unsafeWrap(
+                                    view.bytes(new DocumentUploadPayloads.Key(member.getMemberId(),i))));
+                        }
+                        staged.members().forEach(upload->selectedUploads.put(upload.selection().member(),upload.selection()));
+                        try {
+                            return DocumentPublicationCandidate.prepare(fixture.command,selected,
+                                    Map.of(member.getMemberId(),DocumentPublicationCandidate.Mode.TYPED),
+                                    Map.of(member.getMemberId(),fragments),
+                                    java.util.Optional.of(DocumentSchemaRetentionFixture.definition(Document.getDescriptor())),
+                                    (selectedMember,occurrence)->definition,snapshotBudget,LIMITS,active);
+                        } catch(com.google.protobuf.InvalidProtocolBufferException failure) {
+                            throw new IllegalArgumentException("Invalid publication candidate",failure);
+                        }
+                    })) {
+            var admission=candidate.schemas();
+            var proof=admission.proofs().get(member.getMemberId());
             admission.stage(new RepositorySchemaArtifacts(tx),fixture.owner,()->{});
             assertThat(snapshotBudget.reservedBytes()).isPositive();
-            published=publisher().commit(ADMIN,fixture.owner,fixture.prepared,Map.of(),checked.selected,admission,()->{}).getMembers(0);
+            published=publisher().commit(ADMIN,fixture.owner,fixture.prepared,candidate.opaque(),selectedUploads,admission,()->{}).getMembers(0);
             expected="REPLAY_OK|"+published.getRevisionId()+"|"+DocumentPartCodec.sha256Hex(proof.document().toByteArray())+"|"+proof.policySha256();
             customDescriptor=proof.references().stream().filter(r->r.typeUrl().equals("type.test/archive.runtime.ArchivedCase"))
                     .findFirst().orElseThrow().descriptorSha256();

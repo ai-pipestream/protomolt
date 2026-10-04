@@ -5197,3 +5197,27 @@ Expiry is injected explicitly in the test database; ordinary SQL renewal guards
 reject shortening a live lease. The earlier expiry fixture was corrected to test
 the intended post-preparation owner fence. The native publication coordinator
 still needs to use this handoff with its combined fragment/proof owner.
+
+### Combined publication candidate ownership
+
+New internal `DocumentPublicationCandidate` owns the complete command's fragment
+snapshot, typed proof owners, checked opaque content and schema batch. Every member
+has an explicit typed or opaque mode; required typed policy and explicit schema
+conditions reject opaque selection before copying bytes. The resolver receives
+the command member and occurrence context for host-scoped schema access. A later
+member failure releases earlier proofs and fragments without changing modes.
+
+Opaque members require no descriptor lookup and use independently supplied assembly
+limits. Typed members use the budgeted policy path, and batch verification now has
+an additive overload for its canonical scratch reservations. Candidate accessors
+are borrowed through close; source pins, authorization, current policy selection,
+provider/SQL copies and parsed object heap remain separate host obligations.
+
+Tests cover mixed modes, exact surviving reservation totals, preflight refusal,
+later-member registry failure, and capacity exhaustion after fragment capture.
+The real-provider historical test now prepares this candidate inside
+`stageAndPrepareOwned`, holds it through schema staging and native commit, closes
+it, and replays the retained custom type in a fresh JVM. This proves the composed
+internal path. The production host still needs to supply this orchestration,
+authorized schema/backend resolution and shutdown/recovery lifecycle; no new
+public RPC is available from this change.
