@@ -64,6 +64,9 @@ class DocumentOperationUploadAdmissionIT {
         var statistics = database.entityManagerFactory().unwrap(org.hibernate.SessionFactory.class).getStatistics();
         statistics.setStatisticsEnabled(true); statistics.clear();
         try {
+            assertThatThrownBy(() -> admission.captureRetainedReads(caller, f.owner, prepared)).isInstanceOfSatisfying(RepositoryException.class,
+                    failure -> assertThat(failure.code()).isEqualTo(kind.equals("other-account")
+                            ? RepositoryException.Code.NOT_FOUND : RepositoryException.Code.PERMISSION_DENIED));
             assertThatThrownBy(() -> admission.admit(caller, f.owner, prepared)).isInstanceOfSatisfying(RepositoryException.class,
                     failure -> assertThat(failure.code()).isEqualTo(kind.equals("other-account")
                             ? RepositoryException.Code.NOT_FOUND : RepositoryException.Code.PERMISSION_DENIED));
@@ -79,6 +82,9 @@ class DocumentOperationUploadAdmissionIT {
         var denied = POLICY.toBuilder().addPermissions(AccessRule.newBuilder().setIdentityType("public")
                 .setIdentity("public").setAccess(Access.ACCESS_DENY)).build();
         setPolicy(row, denied);
+        assertThatThrownBy(() -> admission.captureRetainedReads(SCOPED, f.owner, f.prepare()))
+                .isInstanceOfSatisfying(RepositoryException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.NOT_FOUND));
         assertThatThrownBy(() -> admission.admit(SCOPED, f.owner, f.prepare()))
                 .isInstanceOfSatisfying(RepositoryException.class, failure -> {
                     assertThat(failure.code()).isEqualTo(RepositoryException.Code.NOT_FOUND);
@@ -93,6 +99,8 @@ class DocumentOperationUploadAdmissionIT {
         var row = which.equals("source") ? f.source : f.destination;
         tx.inTransaction(em -> { em.createNativeQuery("UPDATE documents SET filename='changed' WHERE node_id=:id")
                 .setParameter("id", row.nodeId).executeUpdate(); });
+        assertThatThrownBy(() -> admission.captureRetainedReads(SCOPED, f.owner, f.prepare()))
+                .isInstanceOf(DocumentLedger.RevisionConflictException.class);
         assertThatThrownBy(() -> admission.admit(SCOPED, f.owner, f.prepare()))
                 .isInstanceOf(DocumentLedger.RevisionConflictException.class);
         assertNoAttempt(f.attempt);
@@ -464,9 +472,43 @@ class DocumentOperationUploadAdmissionIT {
         }
         member.setParts(0, requestedPart);
         var changed = rebind(f, member.build());
+        assertThatThrownBy(() -> admission.captureRetainedReads(SCOPED, changed.owner, changed.prepare()))
+                .isInstanceOf(DocumentPartAttemptLedger.FenceException.class).hasMessageContaining("retained current managed source binding");
         assertThatThrownBy(() -> admission.admit(SCOPED, changed.owner, changed.prepare()))
                 .isInstanceOf(DocumentPartAttemptLedger.FenceException.class).hasMessageContaining("retained current managed source binding");
         assertNoAttempt(changed.attempt);
+    }
+
+    @Test void retainedReadPlanPreservesFullOrdinalsWithoutStaging() {
+        var f = fixture(1);
+        var original = f.command.intent().getMembers(0);
+        var changed = rebind(f, original.toBuilder().clearParts()
+                .addParts(original.getParts(1)).addParts(original.getParts(0)).build());
+        var plan = admission.captureRetainedReads(SCOPED, changed.owner, changed.prepare());
+        assertThat(plan.command()).isSameAs(changed.command);
+        assertThat(plan.principal()).isEqualTo(changed.owner.key().principal());
+        assertThat(plan.generation()).isEqualTo(changed.owner.generation());
+        assertThat(plan.entries()).singleElement().satisfies(entry -> {
+            assertThat(entry.memberId()).isEqualTo("member");
+            assertThat(entry.revisionOrdinal()).isEqualTo(1);
+            assertThat(entry.source()).isEqualTo(original.getParts(0).getReuse());
+            assertThat(entry.destinationSlot()).isEqualTo(original.getParts(0).getSlot());
+            assertThat(entry.binding().profile()).isEqualTo(changed.placement.profile());
+        });
+        assertThatThrownBy(() -> plan.entries().clear()).isInstanceOf(UnsupportedOperationException.class);
+        assertNoAttempt(changed.attempt);
+        assertThat(selectionHistoryCount(changed)).isZero();
+        setPolicy(changed.source, DocumentSecurity.getDefaultInstance());
+        assertThatThrownBy(() -> admission.captureRetainedReads(SCOPED, changed.owner, changed.prepare()))
+                .isInstanceOfSatisfying(RepositoryException.class, e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.NOT_FOUND));
+    }
+
+    @Test void reuseOnlyReadPlanDoesNotInventAnUpload() {
+        var f = fixture(0);
+        var plan = admission.captureRetainedReads(SCOPED, f.owner, f.prepare());
+        assertThat(plan.entries()).singleElement().satisfies(entry -> assertThat(entry.revisionOrdinal()).isZero());
+        assertNoAttempt(f.attempt);
+        assertThat(selectionHistoryCount(f)).isZero();
     }
 
     @Test void deniedDestinationTakesPrecedenceOverAuthorizedButStaleSource() {

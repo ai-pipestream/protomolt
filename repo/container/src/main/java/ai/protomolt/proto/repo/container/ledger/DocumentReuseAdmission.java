@@ -115,6 +115,31 @@ final class DocumentReuseAdmission {
         }
     }
 
+    /** Same transaction and source locks as authorization; no provider calls or retention acquisition. */
+    static DocumentRetainedReadPlan capture(EntityManager em, Prepared prepared,
+            DocumentUploadPlan.Prepared plan, RepositoryOperationLedger.Owner owner) {
+        requireBoundSources(em, prepared);
+        var generations = new java.util.HashSet<String>();
+        for (var member : plan.members()) for (var part : member.intent().getPartsList())
+            if (part.hasReuse()) generations.add(part.getReuse().getObject().getBackendGeneration());
+        var profiles = ManagedBackendLedger.requireAll(em, generations);
+        var entries = new ArrayList<DocumentRetainedReadPlan.Entry>();
+        for (var member : plan.members()) {
+            for (int ordinal = 0; ordinal < member.intent().getPartsCount(); ordinal++) {
+                var part = member.intent().getParts(ordinal);
+                if (!part.hasReuse()) continue;
+                var source = part.getReuse();
+                var object = source.getObject();
+                var profile = profiles.get(object.getBackendGeneration());
+                if (!profile.storageRealm().equals(object.getStorageRealm())) refuse();
+                entries.add(new DocumentRetainedReadPlan.Entry(member.intent().getMemberId(), ordinal,
+                        part.getSlot(), source, new DocumentPublicationLedger.Binding(
+                                object.getBackendGeneration(), profile, object.getNamespace())));
+            }
+        }
+        return new DocumentRetainedReadPlan(plan.command(), owner, entries);
+    }
+
     private static Value text(String value) { return Value.newBuilder().setStringValue(value).build(); }
     private static List<Batch> encode(List<Struct> rows) {
         var batches = new ArrayList<Batch>();

@@ -2799,3 +2799,29 @@ projection cases in 37s and the engine runtime dependency gate. An initial ledge
 filter matched no tests; the corrected explicit class filters produced that ledger
 result. Sol reviewed the final implementation without a blocker. No hosted CI,
 push, merge or deployment ran.
+
+### Ledger-issued retained read evidence
+
+New internal `captureRetainedReads` returns an immutable `DocumentRetainedReadPlan`
+bound to the canonical command, authenticated principal and owner generation. The
+same SQL transaction checks live ownership, persisted command bytes, current
+source/destination permissions and mutation revisions, full retained object claims,
+and registered backend profiles. It checks owner expiry again after those waits.
+Entries preserve command order and full ordinals, including gaps for fresh parts.
+It creates no upload attempts or operation selections, including reuse-only cases.
+
+Tests exercise eleven forged physical/slot claims, invalid callers before SQL,
+source/destination denials and stale revisions, sparse ordinals, immutable entries,
+policy revocation and reuse-only capture. The coordinator's existing real PostgreSQL
+and S3 source fixture captures the exact published CORE identity and reads its
+recorded version, checking hash and content type. Other admission fixtures remain
+synthetic SQL declarations; they do not establish provider success.
+
+The plan is point-in-time evidence, not a reader pin, fresh-selection fence,
+semantic validation result or publication permission. Engine consumption, reader
+protection, payload lifetime and post-I/O checks remain required. No new RPC or
+protobuf field is introduced. Sol reviewed the SQL boundary; its public-accessor
+finding was fixed by exposing principal text rather than an inaccessible ledger
+key type. Account and operation UUID remain available from the canonical command.
+The final 82 selected admission/coordinator cases passed in 27s. No hosted CI,
+push, merge or deployment ran.

@@ -217,10 +217,12 @@ reuse `DocumentPartReader`, move provider orchestration into the ledger, or inve
 a `Publication` for unpublished content. Extend the existing bounded reader rather
 than introducing another executor, concurrency limit or provider lookup path.
 
-The container must issue an immutable preparation read plan after authorization
-and durable source checks. It binds the canonical member and full part ordinals,
+The container now issues `DocumentRetainedReadPlan` through its internal upload
+admission boundary after authorization and durable source checks. It binds the
+canonical command, authenticated principal and operation generation, plus member/full part ordinals,
 source revision and slot, complete physical object identity and retained backend
-binding. Fresh selections additionally bind attempt, selection revision and token.
+binding. This first plan covers retained objects only; the preparation integration
+must additionally bind fresh attempt, selection revision and token.
 Construction is controlled by the ledger; a caller-supplied object declaration is
 not equivalent evidence. Reuse the batched comparisons in `DocumentReuseAdmission`.
 `DocumentSourceSnapshot` alone does not contain the complete command object claim,
@@ -232,7 +234,7 @@ provider version; verify size, digest and content type against the plan.
 `DocumentPublicationLedger.Part` now carries the retained content type from managed
 SQL reads, and the reader checks the exact provider value. Legacy snapshots without
 a retained type remain explicitly unknown; they do not satisfy an exact typed read
-plan. The complete command-to-object plan is still unimplemented. No lookup of
+plan. Engine consumption of the ledger-issued plan is still unimplemented. No lookup of
 today's drive or fallback backend is allowed.
 
 Fresh bytes remain under `DocumentUploadPayloads.Use`; do not fetch them again

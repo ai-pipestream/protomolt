@@ -489,6 +489,20 @@ class DocumentUploadCoordinatorIT {
                 command, UUID.randomUUID(), LEASE).owner().orElseThrow();
         UUID next = UUID.randomUUID();
         var prepared = DocumentOperationUploadAdmission.prepare(command, base.placements, Map.of("member", next), LEASE);
+        var readPlan = new DocumentOperationUploadAdmission(tx, new DriveLedger(tx))
+                .captureRetainedReads(ADMIN, owner, prepared);
+        assertThat(readPlan.entries()).singleElement().satisfies(entry -> {
+            assertThat(entry.revisionOrdinal()).isZero();
+            assertThat(entry.source().getObject()).isEqualTo(identity);
+            assertThat(entry.binding().profile()).isEqualTo(profile);
+            var object = entry.source().getObject();
+            var actual = opened.store().getBounded(entry.binding().namespace(), object.getObjectKey(),
+                    object.getProviderVersion(), Math.toIntExact(object.getSizeBytes()));
+            assertThat(actual.versionId()).isEqualTo(object.getProviderVersion());
+            assertThat(actual.contentType()).isEqualTo(object.getContentType());
+            assertThat(DocumentPartCodec.sha256Hex(actual.data())).isEqualTo(object.getSha256());
+        });
+        assertThat(new DocumentPartAttemptLedger(tx).find(next)).isEmpty();
         var bodies = Map.of(new DocumentUploadPayloads.Key("member", 1), base.bodies.get(new DocumentUploadPayloads.Key("member", 1)));
         var puts = new java.util.concurrent.atomic.AtomicInteger();
         var store = intercept((method, args, call) -> {

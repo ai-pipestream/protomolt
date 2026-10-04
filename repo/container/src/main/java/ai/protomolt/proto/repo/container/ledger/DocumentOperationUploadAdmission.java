@@ -70,6 +70,27 @@ final class DocumentOperationUploadAdmission {
     private record EncodedMember(DocumentUploadPlan.Member member, UUID token, DocumentAttemptPlanEncoding encoded) {}
     private record UploadMember(DocumentUploadPlan.Member member, UUID token) {}
 
+    /** Capture exact retained reads without creating attempts or claiming fresh upload selection. */
+    DocumentRetainedReadPlan captureRetainedReads(RepositoryCaller caller,
+            RepositoryOperationLedger.Owner owner, Prepared prepared) {
+        Objects.requireNonNull(owner); Objects.requireNonNull(prepared);
+        var command = prepared.plan.command();
+        DocumentAdmissionAuthorization.requireCaller(caller, owner, command.intent().getAccountId());
+        if (!owner.key().account().equals(command.intent().getAccountId()) || !owner.key().operationId().equals(command.operationId()))
+            throw new IllegalArgumentException("Read command differs from operation scope");
+        return tx.inTransaction(em -> {
+            RepositoryOperationLedger.fenceLiveOwner(em, owner);
+            requireCommand(em, owner.key(), command);
+            DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, prepared.plan, prepared.authorization);
+            var captured = DocumentReuseAdmission.capture(em, prepared.reuse, prepared.plan, owner);
+            // Source/profile waits must not allow an expired owner to receive a new plan.
+            em.createNativeQuery("SELECT require_repository_operation_write_fence(:account,:principal,:operation,:generation)")
+                    .setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())
+                    .setParameter("operation", owner.key().operationId()).setParameter("generation", owner.generation()).getSingleResult();
+            return captured;
+        });
+    }
+
     static Prepared prepare(DocumentPublicationCommand command, Map<UUID, DocumentUploadPlan.Placement> placements,
             Map<String, UUID> attempts, Duration lease) {
         Objects.requireNonNull(lease);
