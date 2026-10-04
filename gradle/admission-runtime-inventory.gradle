@@ -33,7 +33,7 @@ tasks.register('admissionRuntimeInventory') {
             throw new GradleException('Admission runtime artifact count exceeds 64')
         def names = new HashSet<String>()
         selected.each { entry ->
-            if (entry.name.length() > 200 || entry.name.any { it == '\t' || it == '\n' || it == '\r' } || !names.add(entry.name))
+            if (entry.name.length() > 200 || entry.name.any { Character.isISOControl(it.charAt(0)) } || !names.add(entry.name))
                 throw new GradleException('Invalid or ambiguous runtime artifact identity: ' + entry.name)
         }
         selected.sort { a, b -> a.name <=> b.name }

@@ -3335,8 +3335,8 @@ The UTF-8 TSV starts with `protomolt-admission-runtime-inventory/v1`. Each follo
 line has four tab-separated fields: resolved component identity plus artifact
 filename, lowercase SHA-256, decimal byte length, and `artifacts/<sha256>.jar`.
 Lines are sorted by Java string order of logical identity and end with LF.
-Ambiguous identities and names longer than 200 characters or containing tabs or
-line breaks are refused. Artifact filenames distinguish ordinary classifier
+Ambiguous identities and names longer than 200 characters or containing ISO
+control characters are refused. Artifact filenames distinguish ordinary classifier
 artifacts; unresolved identity collisions fail rather than collapse entries.
 
 The task permits at most 64 regular JAR files and 1 GiB aggregate bytes. It uses
@@ -3356,6 +3356,29 @@ disabled so every invocation observes the actual files again.
 Qualification checked all 38 resolved artifact hashes and lengths, identical
 manifests across repeated runs, refusal of a deliberately corrupted output blob,
 preservation of the prior manifest on failure, and successful rerun after exact
-restoration. Runtime manifest parsing and comparison against actual attributed
-class origins remain to be implemented before this inventory can establish a
-runtime identity for admission decisions.
+restoration.
+
+`DocumentRuntimeInventory` reads this local build format with a 128 KiB manifest
+bound, strict UTF-8 decoding, exact header/columns/hash paths, canonical decimal
+sizes and sorted unique names. It preflights all rows and the 1 GiB aggregate
+bound before opening artifacts. Distinct logical identities may share a blob;
+each row still counts toward the aggregate bound. Each blob must have the exact
+size and SHA-256 and open as a ZIP. Bundle and artifact directories, manifest and
+blob paths reject final-component symlinks. The local directory tree must remain
+immutable during use; these checks do not protect against concurrent replacement
+of ancestor directories by an adversary.
+
+The resulting immutable identity snapshot can check a caller-selected list of
+loaded class anchors against their attributed JAR origins. Empty lists, repeated
+classes, absent artifact names, missing origins and mismatched origin content are
+refused. No classes are loaded from names or code supplied by the inventory.
+Tests compile and load real fixture classes in isolated classloaders, change the
+origin independently of a valid bundle, and exercise malformed inventories,
+non-archive content, corruption, missing files, links and cancellation.
+
+A self-consistent inventory is not trusted merely because its bytes verify.
+It requires trusted build provenance. The reader does not enforce the production
+anchor set, discover all classloader dependencies, or produce a completed runtime
+identity for admission. Fixed production anchors, actual deployment classloader
+composition and observed JVM/configuration identity remain to be wired and
+qualified before terminal admission rejection is enabled.
