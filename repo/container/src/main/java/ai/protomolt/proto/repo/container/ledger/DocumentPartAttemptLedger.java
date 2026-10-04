@@ -284,12 +284,26 @@ public final class DocumentPartAttemptLedger {
                 FROM document_part_attempts WHERE attempt_id=:id
                 """ + (lock ? " FOR UPDATE" : "")).setParameter("id", id).getResultList();
         if (rows.isEmpty()) return Optional.empty();
-        Object[] r = (Object[]) rows.getFirst();
+        return Optional.of(decode((Object[]) rows.getFirst()));
+    }
+
+    /** Bounded operation-wide locking, in PostgreSQL UUID order. */
+    static List<Attempt> lockAll(EntityManager em, List<UUID> ids) {
+        if (ids.isEmpty() || ids.size() > 64) throw new IllegalArgumentException("Attempt lock batch requires one to 64 IDs");
+        List<?> rows = em.createNativeQuery("""
+                SELECT attempt_id,node_id,account_id,backend_generation,storage_namespace,storage_realm,
+                       sampled_revision,lease_token,EXTRACT(EPOCH FROM lease_until),state,planned_count,plan_kind
+                FROM document_part_attempts WHERE attempt_id IN (:ids) ORDER BY attempt_id FOR UPDATE
+                """).setParameter("ids", ids).getResultList();
+        return rows.stream().map(row -> decode((Object[]) row)).toList();
+    }
+
+    private static Attempt decode(Object[] r) {
         var epoch = (java.math.BigDecimal) r[8];
         long seconds = epoch.longValue();
         Instant until = Instant.ofEpochSecond(seconds, epoch.subtract(java.math.BigDecimal.valueOf(seconds)).movePointRight(9).intValueExact());
-        return Optional.of(new Attempt((UUID) r[0], new Location((UUID) r[1], (String) r[2], (String) r[3], (String) r[4]),
-                (String) r[5], ((Number) r[6]).longValue(), (UUID) r[7], until, (String) r[9], ((Number) r[10]).intValue(), (String) r[11]));
+        return new Attempt((UUID) r[0], new Location((UUID) r[1], (String) r[2], (String) r[3], (String) r[4]),
+                (String) r[5], ((Number) r[6]).longValue(), (UUID) r[7], until, (String) r[9], ((Number) r[10]).intValue(), (String) r[11]);
     }
 
     private static void requireLease(Duration lease) {

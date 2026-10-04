@@ -50,6 +50,7 @@ class OperationBoundDocumentAttemptIT {
         assertThat(count("repository_physical_locations", "source_id", f.id)).isEqualTo(2);
         assertThat(count("document_part_key_reservations", "attempt_id", f.id)).isEqualTo(2);
         assertThat(count("document_part_attempt_sources", "attempt_id", f.id)).isEqualTo(1);
+        select(f);
         tx.inTransaction(em -> {
             RepositoryOperationLedger.fenceLiveOwner(em, f.owner);
             em.createNativeQuery("UPDATE document_part_attempt_objects SET verified=true WHERE attempt_id=:id")
@@ -227,6 +228,27 @@ class OperationBoundDocumentAttemptIT {
         var owner = operations.admit(key, new RepositoryOperationLedger.EncodedCommand("test.fixture", 1, ByteString.copyFromUtf8("unexecuted")),
                 UUID.randomUUID(), lease).owner().orElseThrow();
         return new Fixture(owner, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+    }
+
+    private static void select(Fixture f) {
+        var drive = new DriveRecord();
+        drive.driveId = tx.readOnly(em -> (UUID) em.createNativeQuery("SELECT drive_id FROM document_part_attempts WHERE attempt_id=:id")
+                .setParameter("id",f.id).getSingleResult());
+        drive.accountId="account"; drive.name="bound-"+drive.driveId; drive.driveType="CUSTOM";
+        drive.provider="test-location"; drive.bucket="namespace";
+        new DriveLedger(tx).insert(drive);
+        tx.inTransaction(em -> {
+            RepositoryOperationLedger.fenceLiveOwner(em,f.owner);
+            em.createNativeQuery("""
+                    INSERT INTO document_operation_selections(account_id,principal,operation_id,owner_generation,
+                        member_id,node_id,sampled_revision,drive_id,drive_snapshot,drive_sha256,backend_generation,
+                        storage_realm,storage_namespace,upload_count,attempt_id)
+                    SELECT a.account_id,a.operation_principal,a.operation_id,a.operation_generation,a.member_id,
+                        a.node_id,a.sampled_revision,a.drive_id,document_operation_drive_snapshot(d),document_operation_drive_digest_v1(d),
+                        a.backend_generation,a.storage_realm,a.storage_namespace,a.planned_count,a.attempt_id
+                    FROM document_part_attempts a JOIN drives d ON d.drive_id=a.drive_id WHERE a.attempt_id=:id
+                    """).setParameter("id",f.id).executeUpdate();
+        });
     }
 
     private static void admit(Fixture f, boolean core, int seconds) {

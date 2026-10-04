@@ -2294,3 +2294,46 @@ Final local validation: container and service suites passed in 2m41s, covering
 108 suites and 964 cases: 961 passed, 3 skipped, no failures/errors. Sol reviewed
 the final initial/retry lock ordering, subset behavior, migration and documentation
 with no remaining blocker. No hosted CI, push, merge or deployment was performed.
+
+### Selected-attempt lifecycle (V43)
+
+New internal `DocumentSelectedAttemptLedger` renewal and verification batches;
+extended SQL guards for NEW_CONTENT post-seal mutations. Existing FULL_REVISION
+begin, renewal, verification and publication interfaces are unchanged. No new
+protobuf fields, RPCs or provider execution path are exposed.
+
+Renewal accepts 1–64 distinct expected selections under one operation owner.
+It locks attempts in PostgreSQL UUID order, checks every member/revision/attempt/
+token and current lease/cleanup state, then renews the batch atomically.
+Verification accepts 1–256 distinct observations, encodes them before SQL and
+updates only exact staged key/size/SHA-256/content-type matches. Already verified
+parts also require identical nullable provider version and ETag. Missing keys,
+identity mismatches and selection conflicts roll back the whole batch.
+
+V43 extends the V36 guards without changing stored bindings or legacy behavior.
+Declarations and PLANNING-to-STAGING sealing remain possible before selection;
+post-seal writes require the current selection even when a caller bypasses the
+Java helper. The proof is checked after acquiring the attempt row. A fresh lookup
+also rejects an old attempt after a selection CAS in the same transaction.
+The first red run disabled these trigger checks: displaced renewal and direct
+verification incorrectly succeeded, including both same-transaction cases.
+
+Real PostgreSQL cases cover bounded verification, partial completion, replay,
+wrong token/revision/member/attempt, duplicate observations, identity mismatch
+rollback, displaced direct writes, same-transaction replacement, cleanup winning
+an attempt-lock wait, and 64-member renewal with whole-batch failure. These use
+explicit synthetic observations and do not establish real-provider verification.
+Both verification (1 and 256 observations) and renewal (64 members) pass a ceiling
+of nine client statements per transaction. Server trigger work remains linear;
+no end-to-end latency or throughput is qualified.
+
+Provider execution still needs preflight/postflight integration, shared byte and
+concurrency limits, cancellation and lost-acknowledgment reconciliation with real
+adapters. Deletion-only recovery is not upload resumption. Typed admission,
+retained descriptors, mixed revision publication and durable terminal outcomes
+remain prerequisites before exposing the new operation path publicly.
+
+Final local validation: container and service suites passed in 2m18s, covering
+109 suites and 983 cases: 980 passed, 3 skipped, no failures/errors. Sol reviewed
+the final SQL, Java batching, lock order, rollback tests and documentation with no
+remaining blocker. No hosted CI, push, merge or deployment was performed.

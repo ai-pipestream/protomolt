@@ -57,6 +57,41 @@ activation.
   Provider I/O remains outside this transaction. These are structural bounds,
   not evidence of qualified end-to-end throughput or tail latency.
 
+### Selected-attempt renewal and verification
+
+V43 requires the exact current attempt for NEW_CONTENT renewal, state changes and
+post-seal object updates, including no-op updates. Initial plan declaration and
+PLANNING-to-STAGING sealing still precede selection. The owner write fence is
+acquired first, and the attempt row is locked before checking current selection,
+lease and cleanup. A fresh indexed lookup sees a selection replacement performed
+in the same transaction; a transaction-ID-only proof would miss that change.
+An attempt can appear in only one selection-history row, preventing an old attempt
+from being reselected at another revision. The Java boundary also requires the
+explicit expected selection revision and worker token.
+
+`DocumentSelectedAttemptLedger` is an internal lifecycle boundary. Its renewal
+batch accepts 1–64 distinct attempts, locks them in PostgreSQL UUID order, checks
+the entire expected set and renews atomically. Verification accepts 1–256 distinct
+key observations and matches size, SHA-256 and content type against the staged
+plan. Replaying verification requires identical nullable provider version and
+ETag. Any mismatch rolls back the entire batch. VERIFIED remains a byte-evidence
+state; it does not mean the document passed typed or semantic admission.
+
+Both operations have a tested client-statement ceiling of nine per batch. SQL
+trigger work remains proportional to affected rows, and batches for one operation
+serialize through its owner fence. Inputs and JSON encoding are bounded before
+SQL. This does not establish a latency or throughput target. Provider scheduling
+must use an operation-wide concurrency window and byte budget rather than
+multiply limits for every backend or member.
+
+Provider execution is not connected to this lifecycle yet. A preflight selection
+check cannot prevent replacement during a remote PUT. Attempt-specific keys
+isolate late writes; the post-I/O verification fence must reject a displaced
+worker. Lost PUT acknowledgments require exact-key, qualified read-back or an
+explicit replacement followed by expired-attempt cleanup. Do not invent a receipt
+or retry PUT blindly. No SQL transaction may span that provider I/O. The existing
+FULL_REVISION writer and deletion-only recovery path remain unchanged.
+
 ## Current coupling that must change together
 
 - `DocumentPublicationLedger.Publication` carries one attempt, backend profile
