@@ -5531,9 +5531,8 @@ capacity, mode downgrade rejection and generation-two typed publication through
 the registry with real provider writes and persisted attempt/key assertions. No successful byte-provider substitute is
 used in the ownership-only tests: those ports reject any attempted provider I/O.
 
-This transition does not choose a predecessor generation for the host, advance
-an already retained recovery to another generation, reconstruct a crashed host's
-session, or create an abort receipt. Those remain explicit recovery work before
+This transition does not choose a predecessor generation for the host, reconstruct
+a crashed host's session, or create an abort receipt. Those remain explicit recovery work before
 production mounting; uncertain entries are never discarded by timeout or capacity.
 
 ### Durable publication-command reconstruction
@@ -5560,3 +5559,29 @@ durable command reconstruction and its use in recovery, not a complete host rest
 or staged-payload recovery. The loader is internal: returning a command grants no
 owner token, document access or permission to publish, and is not a public endpoint
 for reading historical request metadata.
+
+### Explicit advancement of an expired recovered owner
+
+A retained recovery session can now advance one further generation after an
+explicit host request. The database must first confirm its exact command,
+generation and private nonce under the owner lock, with expiry evaluated using
+database time after that lock is acquired. A live owner, a skipped generation,
+or a nonce that never became owner cannot advance. This observation grants no
+ownership; preparation runs after its transaction ends, and the replacement must
+still win typed takeover CAS.
+
+Registry exclusivity covers observation, preparation, installation and takeover.
+Observation or preparation failure preserves the previous session. Once installed,
+the replacement survives SQL failure or acknowledgment loss with its nonce and
+attempt identities unchanged. Terminal races use authorized result replay. Count
+and command-byte reservations remain attached to the same registry entry.
+
+PostgreSQL tests prove live-owner refusal without changing its token or lease,
+generation-three acknowledgment reconciliation, skipped-generation rejection,
+foreign-owner refusal and preservation after failed preparation. Another real
+ledger takes ownership after the expiry-observation transaction commits but before
+the local takeover; the local CAS and its retry both refuse ownership. This adds
+explicit advancement, not automatic retirement, abort receipts or crash recovery.
+When another host wins, the losing entry retains its ungranted nonce and cannot
+adopt that host's owner or advance on its behalf. Explicit host reconciliation
+or replacement of that losing registry state remains necessary.

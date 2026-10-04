@@ -80,6 +80,15 @@ final class DocumentPublicationSession {
     DocumentOperationUploadAdmission.Prepared prepared() { return prepared; }
     long predecessorGeneration() { return predecessorGeneration; }
 
+    void requireRecoveryAdvance(RepositoryCaller caller, long nextPredecessor, RepositoryReadControl control) {
+        Objects.requireNonNull(control).check();
+        DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+        if (predecessorGeneration == 0 || nextPredecessor != predecessorGeneration + 1)
+            throw new RepositoryException(RepositoryException.Code.CONFLICT, "Retained recovery predecessor changed");
+        operations.requireExpiredRecovery(key, command, nextPredecessor, ownerNonce);
+        control.check();
+    }
+
     private Map<String, DocumentPublicationCandidate.Mode> checkedModes(Map<String, DocumentPublicationCandidate.Mode> requested) {
         var copy = Map.copyOf(requested);
         var members = command.intent().getMembersList().stream()

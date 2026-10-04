@@ -209,6 +209,24 @@ final class RepositoryOperationLedger {
     }
 
     /**
+     * Confirm that a retained recovery nonce actually became the expired owner.
+     * This observation grants no replacement ownership; a subsequent typed CAS
+     * must still win after this short transaction releases its lock.
+     */
+    void requireExpiredRecovery(Key key, DocumentPublicationCommand command, long generation, UUID nonce) {
+        Objects.requireNonNull(key); Objects.requireNonNull(command); Objects.requireNonNull(nonce);
+        if (generation < 1 || !key.account.equals(command.intent().getAccountId()) || !key.operationId.equals(command.operationId()))
+            throw new IllegalArgumentException("Recovery observation differs from operation scope");
+        tx.inTransaction(em -> {
+            var row = readOwner(em, key, true).orElseThrow(OwnerFencedException::new);
+            requireCommand(em, key, command);
+            boolean active = live(em, key);
+            if (row.generation != generation || !row.token.equals(nonce) || active) throw new OwnerFencedException();
+            return null;
+        });
+    }
+
+    /**
      * Document recovery verifies the immutable command under the same owner lock
      * as takeover, including an exact retry after an uncertain acknowledgement.
      * Trusted caller authorization remains the host's responsibility.

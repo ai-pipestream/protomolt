@@ -133,9 +133,9 @@ final class DocumentPublicationSessions {
 
     /**
      * Explicit, host-authorized takeover preparation. Empty means takeover returned
-     * ownership, not publication. A retained recovery transition accepts only its
-     * original predecessor generation; advancing another generation needs separate
-     * host reconciliation. Never infer that decision from an exception or timeout.
+     * ownership, not publication. Advancing one further generation requires database
+     * confirmation that the retained recovery nonce became that expired owner.
+     * Never infer that decision from an exception or timeout.
      */
     Optional<DocumentPublicationResult> recover(RepositoryCaller caller, DocumentPublicationCommand command,
             Map<UUID, DocumentUploadPlan.Placement> placements, long predecessorGeneration,
@@ -157,27 +157,26 @@ final class DocumentPublicationSessions {
         boolean terminal = false;
         try {
             var previous = entry.session;
+            boolean advance = previous != null && previous.predecessorGeneration() != 0
+                    && previous.predecessorGeneration() != predecessorGeneration;
             if (previous != null) {
-                if (previous.predecessorGeneration() != 0 && previous.predecessorGeneration() != predecessorGeneration)
-                    throw new RepositoryException(RepositoryException.Code.CONFLICT, "Retained recovery predecessor changed");
                 try (var scope = previous.begin(caller, control)) { scope.checkModes(modes); }
+                if (advance) previous.requireRecoveryAdvance(caller, predecessorGeneration, control);
             }
-            if (previous == null || previous.predecessorGeneration() == 0) {
+            if (previous == null || previous.predecessorGeneration() == 0 || advance) {
                 var replacement = DocumentPublicationSession.recovering(tx, caller, entry.command, placements, lease, predecessorGeneration, modes);
                 // Publish the private identities before SQL; every uncertain retry must find them.
                 synchronized (this) { entry.session = replacement; }
             }
-            try {
-                entry.session.admit(caller, control).orElseThrow(() -> new IllegalStateException("Recovery returned no owner"));
-                return Optional.empty();
-            } catch (RepositoryOperationLedger.TerminalOperationException completed) {
-                var result = replay.observe(caller, command);
-                control.check();
-                if (result.result().isEmpty()) throw new RepositoryException(RepositoryException.Code.CONFLICT,
-                        "Terminal operation has no replayable success");
-                terminal = true;
-                return result.result();
-            }
+            entry.session.admit(caller, control).orElseThrow(() -> new IllegalStateException("Recovery returned no owner"));
+            return Optional.empty();
+        } catch (RepositoryOperationLedger.TerminalOperationException completed) {
+            var result = replay.observe(caller, command);
+            control.check();
+            if (result.result().isEmpty()) throw new RepositoryException(RepositoryException.Code.CONFLICT,
+                    "Terminal operation has no replayable success");
+            terminal = true;
+            return result.result();
         } finally {
             synchronized (this) {
                 entry.recovering = false;

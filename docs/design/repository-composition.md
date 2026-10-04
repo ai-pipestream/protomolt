@@ -2729,14 +2729,18 @@ recorded selection evidence from durable state, without assuming the in-process
 registry survived. Internal typed/opaque choices must be recovered or selected by
 an explicit deterministic policy; do not add an unbound caller downgrade flag.
 
-The internal registry now implements exclusive preparation and exact retry of one
+The internal registry implements exclusive preparation and exact retry of an
 explicitly selected recovery transition. It preserves the same recovered session
-after acknowledgment loss or cancellation and refuses a different predecessor
-while that transition is retained. Advancing recovery again requires additional
-host reconciliation; this is not automatic restart recovery.
+after acknowledgment loss or cancellation. An explicit next-generation request
+must first confirm under the database owner lock that the retained nonce became
+the expected owner and that its lease expired. The observation releases its lock
+before preparation and grants no replacement ownership: the later typed CAS must
+still win. Failure before replacement installation preserves the prior session;
+uncertainty after installation preserves the replacement. This is not automatic
+restart recovery or permission to skip generations.
 
 Aborted/rejected retirement requires the durable terminal decision described in
 the commit design. It cannot be inferred from NOT_OBSERVED, PENDING, a timeout or
-an expired lease. Restart reconstruction, subsequent recovery transitions and
-terminal rejection receipts are still required. The internal registry transition
+an expired lease. Full restart reconstruction and terminal rejection receipts
+are still required. The internal registry transition
 does not claim that those paths are mounted or complete.
