@@ -842,3 +842,36 @@ check with both. Concurrent staging may fail and retry; a dangling claim must
 fail to commit. Test that race explicitly. This replaces complete-owner-set
 discovery for final artifact deletion only. Claim cleanup still requires
 owner-first proof and an explicit retention decision.
+
+### Archived Any assets and compiler provenance
+
+An archived Any value includes the original payload bytes, exact type URL and
+complete retained descriptor closure. Schema dependencies and validation options
+are part of those assets. Bind them to the immutable revision and occurrence so
+future readers can reconstruct the message without the original registry,
+application classes or remote service. Preserve the original wire bytes even when
+a decoded message can also be serialized; reserialization need not reproduce the
+original byte order or encoding.
+
+Capture the protobuf compilation provenance with the schema assets: compiler name
+and version, compiler artifact or build identity where available, input schema
+identity, relevant compiler options, and the protobuf runtime version used at
+admission. Preserve declared proto syntax or edition in the descriptor files.
+Distinguish protoc generation, ProtoMolt source compilation through Wire, and
+imported descriptors obtained through reflection. Include generator/plugin versions
+when generated code is retained or offered for reproducible client generation.
+Reuse existing codegen provenance rather than inventing a second version source.
+
+A FileDescriptorSet does not supply trustworthy compiler provenance by itself.
+For an imported artifact, retain supplied provenance with its origin and trust
+status. When the producer does not supply a compiler version, record it as unknown;
+do not substitute the current local compiler version for the remote producer.
+Local compilation records the actual toolchain. Provenance is immutable admission
+metadata and must participate in the binding evidence without redefining existing
+canonical descriptor fingerprints or protobuf type URLs.
+
+Acceptance must reconstruct and serialize an archived value from retained assets
+after registry removal, preserve access checks, exercise unknown imported compiler
+provenance, and reject unsupported descriptor syntax/edition explicitly. Retained
+bytes and metadata enable recovery; they do not promise compatibility with every
+future protobuf runtime. Keep a tested decoding path and record its toolchain.

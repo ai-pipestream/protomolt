@@ -3338,3 +3338,23 @@ calls. Only test dependencies changed; production code was reused.
 All 25 service-workspace tests pass without failures or skips. This proves client
 reconstruction from retained service definitions. Repository revision retention,
 archival authorization and publication remain separate unfinished work.
+
+### Recovery lock proof checkpoint
+
+V49 adds a recovery-only operation lock proof. A dedicated update preserves the
+owner token, generation, lease and write authority while recording the actual
+transaction ID. Ordinary admission, renewal and takeover clear that recovery proof.
+The nonlocking check uses the exact operation and transaction. Expired-owner
+recovery does not grant live-write permission.
+
+All 37 PostgreSQL cases pass: 7 recovery cases, 16 existing write-authority cases
+and 14 schema-staging cases. Tests cover unchanged ownership, repeated calls,
+rollback, proof isolation, forged identifiers and rejected renewal or staging after
+expiry. A SQL barrier confirms that competing takeover waits on the recovery lock;
+a separate test uses the Java takeover API and checks the resulting generation.
+Sol found no blocker. Claim deletion, artifact collection and terminal retention
+policy remain disabled and unfinished.
+
+The design also requires compiler and runtime provenance with archived Any schema
+assets. Remote compiler versions remain explicitly unknown when not supplied;
+local toolchain versions must come from actual build metadata.
