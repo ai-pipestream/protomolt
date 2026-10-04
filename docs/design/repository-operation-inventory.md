@@ -4068,3 +4068,41 @@ All five affected suites pass 351 tests. Actual split CORE/PARSED fixtures cover
 complete locator matching, absent/extra evidence, raw content and identity
 changes, aggregate budgets, exact exhaustion and cancellation during a later
 root's retained-schema read. No public operation or SQL publication path changes.
+
+### Atomic storage for revision-root evidence
+
+V56 adds immutable `document_revision_schema_evidence` rows for an exact native
+revision and part ordinal. Each row carries the operation owner and generation,
+root-locator digest, original fragment hash/size, and versioned bundle bytes with
+a verified digest. The physical-location and attempt-object joins require the
+same verified CORE or PARSED source, slot and backend identity. Native projection
+sealing additionally verifies the complete retained manifest. Insertion requires
+the live operation write fence and the current unsealed publication transaction;
+rollback removes evidence together with the revision. Existing revisions receive
+no backfilled evidence.
+
+Storage limits are 4 MiB per bundle, 1024 rows and 16 MiB per revision, and 4096
+rows and 64 MiB per operation. The existing owner write lock serializes aggregate
+checks across all member revisions. Stored generated lengths keep accounting
+independent of bundle decoding. These are storage ceilings, not a promise that
+every below-limit candidate fits the stricter validator and host memory budgets.
+Near-limit insertion latency needs measurement before activating a typed writer:
+per-row aggregates currently perform a bounded quadratic number of row visits.
+
+The SQL columns are claims until the trusted publisher canonically decodes and
+replays their bundles. SQL does not prove that the locator digest describes the
+bundle, that every required root exists, or that all referenced assets and their
+compiler/source provenance are retained. The future writer must prove those
+relationships, authorization and policy binding before committing. Descriptor
+bytes remain normalized in the existing artifact catalog; this table does not
+duplicate them. Typed production publication remains disabled. No public
+operation, protobuf identity, receipt or idempotency contract changes here.
+
+Four targeted PostgreSQL suites pass 31 tests, including populated V55 migration,
+exact fragment and owner rejection, immutable/sealed/terminal windows, transaction
+rollback and retry, 16/64 MiB and 1024/4096-row limits, and an observed PostgreSQL
+owner-lock wait from a second connection. The budget cases prove the exact limit
+was reached before rejection; a generic database failure is insufficient. These
+fixtures use synthetic physical observations and evidence bytes. They qualify
+SQL storage guards, not provider integrity or successful typed admission. Sol
+reviewed the migration and tests without a remaining correctness blocker.
