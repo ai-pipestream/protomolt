@@ -161,7 +161,8 @@ public final class DocumentPartCodec {
 
     /**
      * One CHUNKS fragment per consecutive run of elements sharing the key
-     * field's value. Blank keys group as singleton runs named {@code set-<index>}.
+     * field's effective value. Blank keys become {@code set-<global-index>}; an
+     * adjacent explicit key with that same value belongs to the same run.
      * A repeated run of an already-seen key gets a {@code #n} disambiguator so
      * object keys stay unique while the manifest order still reproduces the
      * original element order exactly.
@@ -171,7 +172,7 @@ public final class DocumentPartCodec {
         List<PartObject> out = new ArrayList<>();
         List<Message> elements = elements(doc, cf);
 
-        List<String> seen = new ArrayList<>();
+        var names = new ChunkRunNames();
         int i = 0;
         while (i < elements.size()) {
             String runKey = rawKeyOf(elements.get(i), i, cf.keyField());
@@ -179,12 +180,7 @@ public final class DocumentPartCodec {
             while (j < elements.size() && rawKeyOf(elements.get(j), j, cf.keyField()).equals(runKey)) {
                 j++;
             }
-            String subKey = runKey;
-            int dup = 2;
-            while (seen.contains(subKey)) {
-                subKey = runKey + "#" + dup++;
-            }
-            seen.add(subKey);
+            String subKey = names.claim(runKey);
 
             Message.Builder frag = doc.newBuilderForType();
             if (layout.identityField() != null) {
@@ -201,7 +197,7 @@ public final class DocumentPartCodec {
 
     private static String rawKeyOf(Message element, int index, Descriptors.FieldDescriptor keyFd) {
         String raw = element.getField(keyFd).toString();
-        return raw.isBlank() ? "set-" + index : raw;
+        return ChunkRunNames.key(raw, index);
     }
 
     private static PartObject toPartObject(DocumentPart part, String subKey, Message fragment) {

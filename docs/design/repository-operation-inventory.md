@@ -2690,3 +2690,20 @@ subkeys/order, schema validation, authority and publication are not established 
 this helper. It is not yet wired into repository admission or an advertised RPC.
 The final codec suite and its runtime dependency boundary check passed in 2s.
 No hosted CI, push, merge or deployment was performed.
+
+### Ordered CHUNKS confinement
+
+New `DocumentChunkSequence` checks one revision's CHUNKS in manifest order. It
+applies fragment confinement, bounds the aggregate semantic-result count, rejects
+adjacent fragments that split an effective-key run and validates exact generated
+subkeys. Failed instances cannot be reused. It consumes parsed views without
+rewriting physical bytes. Complete assembly/admission wiring remains outstanding.
+
+The splitter and checker share `ChunkRunNames`, preserving first-unused suffix
+behavior with a set and suffix cursor instead of repeated list scans. A seeded
+5,000-name compatibility case compares against the original allocator. Existing
+generated-name/explicit-ID collisions are retained and explicitly tested. Codec
+and dependency-boundary checks passed in 2s. This establishes structural lookup
+improvement, not measured end-to-end latency. No protobuf contract changed.
+Sol reviewed the allocator, bounds and rejection behavior without a blocker. Run
+naming is part of the pinned v1 fragment policy. No hosted CI or publication ran.

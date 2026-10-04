@@ -158,8 +158,9 @@ parse/reserialize or overwrite original bytes with a normalized representation.
 `DocumentFragmentConfinement` now implements the single-fragment field checks
 below for the fixed `protomolt-document-parts/v1` policy. It accepts an already
 bounded, parsed Document; it neither resolves descriptors nor persists policy
-identity. Global chunk ordering, complete assembly and repository wiring remain
-unimplemented. Presence follows the codec: an explicitly present empty BlobBag
+identity. `DocumentChunkSequence` now checks global ordered run names, partitions
+and a caller-specified aggregate element bound. Complete assembly and repository
+wiring remain unimplemented. Presence follows the codec: an explicitly present empty BlobBag
 is a BLOBS fragment, while repeated PARSED/CHUNKS content requires entries.
 
 For the initial Document layout, require one CORE, matching nonblank document IDs
@@ -174,10 +175,13 @@ in all PRESENT fragments, and field confinement before merging:
   fragments are rejected as unowned content. Unknown fields within an owned
   subtree retain their original bytes; that does not establish semantic validity.
 - Validate CHUNKS in global manifest order against the existing run rules:
-  consecutive equal IDs stay together, blank IDs use global element positions,
+  consecutive equal effective IDs stay together, blank IDs use global element positions,
   and repeated/generated names use the first unused suffix. Reject a run split
   across adjacent fragments and incorrect subkeys. Preserve command ordinals;
-  compact upload ordinals are not complete revision positions.
+  compact upload ordinals are not complete revision positions. Existing behavior
+  treats a generated `set-N` and an adjacent explicit ID of that same value as
+  one run. The sequence checker preserves this collision rule rather than
+  introducing a new layout identity.
 
 Pin descriptor and layout identities with admission evidence; future code must not
 reinterpret a historical unknown CORE field using today's layout. Derive document
