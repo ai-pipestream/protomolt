@@ -103,6 +103,11 @@ final class DocumentNativePublicationFixture {
 
     static DocumentPublicationResult publish(Context c, Prepared p, Fault fault, boolean deliver,
                                                       Consumer<EntityManager> beforeCommit) {
+        return publish(c,p,fault,deliver,(em,revision) -> {},beforeCommit);
+    }
+
+    static DocumentPublicationResult publish(Context c, Prepared p, Fault fault, boolean deliver,
+            java.util.function.BiConsumer<EntityManager,UUID> beforeSeal, Consumer<EntityManager> beforeCommit) {
         return c.tx.inTransaction(em -> {
             RepositoryOperationLedger.fenceLiveOwner(em,p.owner);
             var destinations=p.sources.stream().map(s -> s.row().nodeId).collect(java.util.stream.Collectors.toSet());
@@ -148,6 +153,7 @@ final class DocumentNativePublicationFixture {
                         INSERT INTO document_revision_parts(revision_id,revision_ordinal,part,sub_key,object_id)
                         SELECT :revision,revision_ordinal,part,sub_key,physical_object_id FROM document_part_attempt_objects WHERE physical_object_id=:object
                         """).setParameter("revision",revision).setParameter("object",p.uploads.get(i).object).executeUpdate();
+                beforeSeal.accept(em,revision);
                 em.createNativeQuery("UPDATE document_revision_publications SET projection_sealed=true WHERE revision_id=:revision")
                         .setParameter("revision",revision).executeUpdate();
                 em.createNativeQuery("UPDATE document_revision_current SET revision_id=:revision WHERE node_id=:node")

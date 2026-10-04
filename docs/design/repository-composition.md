@@ -2261,3 +2261,107 @@ never satisfy it by copying unchanged content. Attempt verification/renewal and
 publication must all fence operation takeover in owner-before-attempt lock order.
 A document batch's transaction participant must accept that already-held owner
 fence before taking revision locks, without starting a nested transaction.
+
+### Contextual Any resolution and optional materialization
+
+This is a design requirement, not an available read API. The current admission
+helper resolves once per exact type URL through a `Function<String, ...>` and
+stores bindings by URL. That is an implementation limitation: the URL alone does
+not reliably identify a schema revision. Keep definitions immutable during an
+attempt, but pin them by occurrence and exact artifact identity rather than
+requiring every occurrence of a URL to share one definition.
+
+The resolution request must carry the trusted account/registry context, selected
+type URL, containing root and occurrence path, and an explicit schema artifact
+binding or immutable registry version. The resulting evidence binds that
+occurrence to the exact descriptor artifact and its complete import closure.
+Two occurrences may use different definitions of the same full type name in
+separate descriptor contexts. An unversioned lookup can be pinned once for an
+attempt; it cannot infer which of several definitions the producer intended.
+Ambiguity is an explicit outcome, never a mutable-latest or simple-name guess.
+Existing occurrence projection and URL-keyed asset maps must change together.
+
+Expose two materialization modes, independently of admission policy:
+
+- **Preserve:** return the exact archived fragment or its authorized claim-check
+  reference, with an effective Any envelope view and its serialized payload when
+  requested. Do not resolve schemas or decode inner payloads. Current parsing
+  does not retain individual raw Any envelope wire slices. Reconstructing an
+  envelope is not a byte-for-byte substitute for the original fragment; returning
+  exact envelope slices would require separate extraction/storage work.
+- **Materialize when available:** resolve the pinned definition and decode a
+  bounded dynamic view when requested. A genuinely unavailable definition leaves
+  the original bytes/reference intact with an explicit unresolved status.
+  Distinguish missing, ambiguous, denied, unavailable, corrupt-definition,
+  malformed-payload and resource-limit outcomes. Do not turn errors into missing
+  definitions or mark an opaque value as validated.
+
+`Any.value` is already serialized protobuf bytes. A `DynamicMessage` requires a
+descriptor; it needs no generated Java class. Without a definition there is no
+trustworthy typed field view. Expanded protobuf JSON requires descriptors for
+the Any types it expands. An unresolved value may instead use a separately
+documented JSON envelope containing type URL, resolution status and base64 bytes
+or a claim-check reference. Do not advertise that envelope as expanded ProtoJSON.
+Mixed schema versions under the same full name require occurrence-specific JSON
+conversion, not one global name-indexed type registry. Treat that output as a
+custom representation with explicit schema identities unless a standards-compatible
+conversion is demonstrated. Bound JSON expansion and avoid embedding large
+payloads by default.
+
+Admission remains a separate decision. Opaque archival can accept unresolved
+payloads when the contract permits it, subject to ownership, integrity and size
+rules. Required typed validation must resolve and validate every required
+occurrence before semantic review; selecting preserve mode never bypasses it.
+An optional decoded view may report a failure alongside readable opaque content,
+but required field operations fail explicitly. No automatic remote code loading
+or Java compilation is needed merely to preserve or dynamically decode Any.
+
+Reuse the existing `SchemaRegistryStore`, descriptor-loader and resolver-provider
+boundaries through adapters where their contracts fit. Introduce the contextual
+resolution seam in a dependency-light module; registry I/O and caching belong in
+implementations. Existing name-only `DescriptorRegistry` lookup catches loader
+exceptions and negative-caches misses. It is not an acceptable archival resolver
+until failure distinctions and immutable identity are preserved.
+
+Cache immutable descriptor artifacts and linked descriptor contexts by exact
+artifact hash and selected type, including compiler/configuration identity when
+compiling source. Scope discovery results by registry and authorization context.
+Recheck access on use and result delivery, including shared loads that finish
+after access revocation; a cached artifact is not an authorization grant. Bound
+cache bytes, entries and in-flight work, deduplicate concurrent identical loads,
+and propagate cancellation without cancelling other callers' shared work.
+Mutable discovery and authoritative negative results need bounded freshness and
+refresh/invalidation. Never negative-cache outages or denied access as absence.
+Historical reads use retained exact artifacts and imports, not registry latest;
+their success must not depend on a warm process cache.
+If a historical revision requires an exact retained artifact and it is missing
+or corrupt, report data loss rather than ordinary unknown-type status. An
+authorized preserve read may still retrieve intact raw content separately;
+materialization must not hide the broken retention guarantee.
+
+Before closing this repository goal, the acceptance inventory must include:
+
+- Every document Any location: record which roots are discovered, intentionally
+  opaque, or unsupported for typed admission. CORE structured data and PARSED
+  parser shapes are the current implemented discovery coverage. Add fixtures for
+  other identified roots or explicit rejection under typed-required policy; do
+  not silently skip them. Nested occurrences within discovered roots remain part
+  of strict checking.
+- Historical restore tests after registry removal, cache clearing and process
+  restart, including complete imports, old schema/compiler provenance, layout
+  selection, revoked access, missing/corrupt retained assets and unchanged bytes.
+  Historical support is not established by design text or catalog rows alone.
+- Same URL with two explicitly bound definitions in one candidate; wrong binding,
+  ambiguous unversioned lookup, registry changes during an attempt and replay of
+  the recorded occurrence bindings. No descriptor cross-contamination.
+- Both materialization modes against real serialized payloads: known and unknown
+  Any, nested unresolved Any, malformed known payload, explicit JSON envelope,
+  claim-check authorization, and required validation refusing unresolved values.
+- Cache tests covering concurrent load deduplication, bounded eviction, newly
+  registered types after a miss, outages, recovery, tenant isolation and revoked
+  access. Measure warm/cold lookup counts and latency; preserve mode must perform
+  no inner-payload decode or schema lookup.
+
+These gates refine stages 5 through 7. Production typed publication stays disabled
+until candidate binding, retention and validation evidence are complete. This
+section does not activate a resolver, cache, read mode or new public RPC.

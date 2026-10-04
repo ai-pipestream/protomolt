@@ -3874,3 +3874,38 @@ Generated/dynamic validation and actual split-fragment projection fixtures pass.
 JSON Schema reports syntax and runtime CEL metadata, not execution of cross-field
 rules or OpenAPI parity. The four affected suites pass 231 tests; scoped Buf lint
 and complete-import FILE compatibility pass against `fab66378e81c713d0eb4a135d255203482ab41c3`.
+
+### Required resolution and historical-read follow-up
+
+The [contextual resolution design](repository-composition.md#contextual-any-resolution-and-optional-materialization)
+adds completion gates, not available operations: occurrence-specific immutable
+schema binding, preserve/materialize read modes, bounded contextual caching,
+explicit failure outcomes, and historical restore tests with the registry absent
+and process cache empty. Inventory every remaining document Any root before goal
+closure, with coverage or an explicit typed-admission rejection. The current
+URL-only admission resolver and CORE/PARSED root discovery are still the
+implemented limits. Unknown schemas may remain opaque under an allowing contract;
+required typed validation may not downgrade to opaque success.
+
+### Immutable revision-to-schema retention prerequisite
+
+V55 adds `document_revision_schema_artifacts`, linking an immutable native
+revision to normalized account-scoped descriptor artifacts. Insertion requires
+the live operation owner fence, matching account/principal/operation/generation,
+the creating transaction's unsealed native projection, and a current-generation
+staging claim. References are immutable and retain catalog rows independently of
+claim lifetime. A revision can reference at most 64 artifacts. No existing
+publication receives inferred or backfilled schema evidence.
+
+Real PostgreSQL fixtures cover shared artifact bytes across revisions, scope and
+owner rejection, sealing and terminal success, missing artifacts, rollback/retry,
+lease expiry, and migration from populated V54 legacy/native publication history.
+The fixture injects references before projection sealing; it is not a production
+writer or a provider/typed-admission qualification.
+
+Production insertion remains disabled. Complete root/path/candidate binding,
+sorted artifact prelocking, aggregate operation evidence bounds, historical
+decoding, and reference-aware terminal claim cleanup/GC remain required. A row in
+this table proves retention only; neither it nor `structured_resolution` grants
+typed-validation status. This migration changes no protobuf contract or public
+operation behavior.
