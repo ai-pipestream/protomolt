@@ -51,6 +51,15 @@ final class DocumentReadPins {
 
     /** Caller must drain all provider work and batch owners first; failures retain the complete set. */
     static void release(Tx tx, Captured captured) {
+        finish(tx, captured, false);
+    }
+
+    /** Recovery consumes durable QUIESCED evidence; it cannot establish local or remote drain. */
+    static void recover(Tx tx, Captured captured) {
+        finish(tx, captured, true);
+    }
+
+    private static void finish(Tx tx, Captured captured, boolean recovery) {
         java.util.Objects.requireNonNull(captured.reader(), "Pinned reader identity");
         if (captured.pins().size() > DocumentPublicationCommand.MAX_PARTS)
             throw new IllegalArgumentException("Read pin release exceeds command bounds");
@@ -64,7 +73,9 @@ final class DocumentReadPins {
             throw new IllegalArgumentException("Cannot encode read pin release", failure);
         }
         tx.inTransaction(em -> {
-            if (!Boolean.TRUE.equals(em.createNativeQuery("SELECT release_document_read_pins(:reader,CAST(:claims AS jsonb))")
+            String query = recovery ? "SELECT recover_quiesced_document_read_pins(:reader,CAST(:claims AS jsonb))"
+                    : "SELECT release_document_read_pins(:reader,CAST(:claims AS jsonb))";
+            if (!Boolean.TRUE.equals(em.createNativeQuery(query)
                     .setParameter("reader", captured.reader()).setParameter("claims", encoded).getSingleResult()))
                 throw new DocumentPartAttemptLedger.FenceException("Read pin release did not complete");
         });

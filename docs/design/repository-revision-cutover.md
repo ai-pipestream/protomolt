@@ -279,9 +279,10 @@ single-pin release primitive. V45 adds bounded atomic batch release with complet
 origin, retention and native-pin lock sets and identity checks before/after locking.
 Internal whole-plan acquisition now validates all
 claims, locks complete sorted origin/retention sets and inserts deduplicated pins
-atomically. Host lifetime ownership and quiescence recovery are still unimplemented;
-provider reads do not yet acquire
-these pins. The remaining integration must reuse the existing
+atomically. V46 adds recovery of exact pin batches only after durable QUIESCED
+evidence; it does not establish that evidence. Host lifetime ownership remains
+unimplemented, and provider reads do not yet acquire these pins. The remaining
+integration must reuse the existing
 `repository_reader_incarnations` lifecycle from V31/V32: fresh ACTIVE incarnations,
 permanent fencing, and trusted LOCAL_DRAIN attestation before QUIESCED recovery.
 Pins do not expire. A deadline, cancelled Future or expired operation lease cannot
@@ -321,6 +322,18 @@ workers and batch owners, then attest local quiescence. `DocumentPartReader.awai
 alone is insufficient: it does not count returned `DocumentReadBatch` lifetimes.
 A stale remote host or UNKNOWN incarnation needs external proof of shutdown;
 elapsed time alone cannot authorize recovery.
+
+For the engine integration, reuse the batch's existing synchronized admission
+barrier: `enterWorker` rejects a closed batch before provider I/O, and release is
+eligible only when the batch is closed and its entered-worker count is zero.
+Queued tasks therefore need no separate lifetime counter as long as every provider
+call remains behind this barrier. A separate setup lifetime must cover capture,
+resolver work and ownership handoff, including failures before a batch exists.
+Closing a batch or cancelling a Future must remain prompt even when a provider
+ignores interruption. Signal release once outside the batch monitor; retain an
+observable release outcome and retry ownership if SQL fails. An exception from a
+cancelled worker's Future is not an adequate reporting channel. This is the reviewed
+integration design, not an activated provider path.
 
 Acceptance requires atomic multi-object rollback, acquisition versus cleanup in
 both lock orders, logical source deletion while a pin still blocks reclaim,

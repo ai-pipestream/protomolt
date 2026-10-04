@@ -574,6 +574,21 @@ class DocumentOperationUploadAdmissionIT {
         assertThat(readPins(reader)).isZero();
     }
 
+    @Test void capturedPinRecoveryUsesTheDurableQuiescenceGate() {
+        var f = fixture(0); UUID reader = activeReader();
+        var captured = admission.capturePinnedReads(SCOPED, f.owner, f.prepare(), reader);
+        assertThatThrownBy(() -> DocumentReadPins.recover(tx, captured)).isInstanceOf(RuntimeException.class);
+        assertThat(readPins(reader)).isEqualTo(1);
+        // Synthetic lifecycle evidence tests the SQL gate, not actual provider drain.
+        tx.inTransaction(em -> {
+            em.createNativeQuery("SELECT fence_repository_reader(:id)").setParameter("id", reader).getSingleResult();
+            em.createNativeQuery("SELECT attest_local_reader_quiescence(:id)").setParameter("id", reader).getSingleResult();
+        });
+        DocumentReadPins.recover(tx, captured);
+        DocumentReadPins.recover(tx, captured);
+        assertThat(readPins(reader)).isZero();
+    }
+
     @Test void twoMembersSharingOneObjectRetainEveryClaimButAcquireOnePin() {
         var f = fixture(0);
         var first = f.command.intent().getMembers(0);

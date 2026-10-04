@@ -370,7 +370,8 @@ public final class DocumentPartReader implements AutoCloseable {
                     throw new IllegalStateException("Document part read failed",failed.getCause());
                 } finally { for (var future : pending) if (!future.isDone()) future.cancel(true); }
             } finally {
-                // ExecutorService.close waits for provider calls even if they ignore interruption.
+                // shutdownNow requests cancellation; it does not wait for provider completion.
+                // The batch retains its reservation until entered workers actually return.
                 // Cancel outstanding work without holding the caller until provider timeouts expire.
                 // The host owns the borrowed client and must configure finite request timeouts.
                 executor.shutdownNow();

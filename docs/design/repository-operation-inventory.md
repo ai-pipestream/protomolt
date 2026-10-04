@@ -2941,3 +2941,22 @@ must never be used to infer that provider I/O has stopped.
 All 94 admission/native-pin cases passed in 27s. Sol found no blocker; cross-object
 partial-overlap and large-plan cleanup races remain qualification work. No hosted
 CI, push, merge or deployment ran.
+
+### Quiescence-gated document pin recovery
+
+V46 adds `recover_quiesced_document_read_pins`, which requires an existing reader
+in permanent QUIESCED state before invoking V45's atomic, identity-bound batch
+release. ACTIVE, FENCED and unknown readers cannot recover pins; another quiesced
+reader cannot release them either. `DocumentReadPins.recover` uses this gate and
+preserves retry semantics. No time-based expiry or provider-drain inference is added.
+
+Real PostgreSQL tests exercise refusal, retained references after refusal, successful
+recovery and replay, including the Java captured-plan wrapper. Their direct SQL
+quiescence attestation is synthetic lifecycle evidence, not proof that a host has
+drained provider work. The 103 admission, document-pin and archive-incarnation cases
+passed in 29s with no failures or skips. Actual read/batch lifetime ownership,
+recovery discovery and cleanup races remain integration work. No hosted CI, push,
+merge or deployment ran.
+Sol found no blocking recovery-gate or identity issue. The cutover plan records the
+reviewed batch-admission barrier and separate setup lifetime for the next integration;
+the current provider path does not yet use this protection.

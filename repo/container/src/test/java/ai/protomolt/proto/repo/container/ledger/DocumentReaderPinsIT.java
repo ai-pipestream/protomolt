@@ -73,6 +73,34 @@ class DocumentReaderPinsIT {
                 .setParameter("reader", reader).setParameter("claims", claims).getSingleResult()).isEqualTo(true); });
     }
 
+    static void recoverBatch(UUID reader, String claims) {
+        tx.inTransaction(em -> { assertThat(em.createNativeQuery("SELECT recover_quiesced_document_read_pins(:reader,CAST(:claims AS jsonb))")
+                .setParameter("reader", reader).setParameter("claims", claims).getSingleResult()).isEqualTo(true); });
+    }
+    // This SQL fixture asserts the durable gate only, not actual host/provider drain.
+    static void quiesce(UUID reader) {
+        tx.inTransaction(em -> {
+            em.createNativeQuery("SELECT fence_repository_reader(:id)").setParameter("id", reader).getSingleResult();
+            em.createNativeQuery("SELECT attest_local_reader_quiescence(:id)").setParameter("id", reader).getSingleResult();
+        });
+    }
+
+    @Test void recoveryRequiresQuiescenceAndExactReaderIdentity() {
+        var source = source(); UUID reader = reader(), a = UUID.randomUUID(), b = UUID.randomUUID();
+        pin(a, reader, source, source.fixture.attempt()); pin(b, reader, source, source.fixture.attempt());
+        String claims = "[" + claim(a, source.object()) + "," + claim(b, source.object()) + "]";
+        assertThatThrownBy(() -> recoverBatch(reader, claims)).isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> recoverBatch(UUID.randomUUID(), claims)).isInstanceOf(RuntimeException.class);
+        tx.inTransaction(em -> { em.createNativeQuery("SELECT fence_repository_reader(:id)").setParameter("id", reader).getSingleResult(); });
+        assertThatThrownBy(() -> recoverBatch(reader, claims)).isInstanceOf(RuntimeException.class);
+        UUID other = reader(); quiesce(other);
+        assertThatThrownBy(() -> recoverBatch(other, claims)).isInstanceOf(RuntimeException.class);
+        assertThat(references(a)).isEqualTo(1); assertThat(references(b)).isEqualTo(1);
+        quiesce(reader);
+        recoverBatch(reader, claims); recoverBatch(reader, claims);
+        assertThat(references(a)).isZero(); assertThat(references(b)).isZero();
+    }
+
     @Test void batchReleaseChecksAllIdentitiesAndRetriesWithoutPartialRelease() {
         var first = source(); var second = source(); UUID reader = reader();
         UUID a = UUID.randomUUID(), b = UUID.randomUUID();
