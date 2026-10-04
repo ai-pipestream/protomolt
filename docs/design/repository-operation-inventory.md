@@ -3467,3 +3467,18 @@ code-point URL bound fails explicitly. All nine content-preparation tests pass,
 including real-validator verification of the generated observation. Sol found no
 blocker. Original fragment identity, nested occurrences, persisted evidence and
 typed admission remain separate obligations; no public operation is enabled.
+
+### Independent publication integration baseline
+
+Rechecked the live source call path and SQL activation gates. Publication still
+runs through DocumentLedger.saveVerifiedAttempt and DocumentPublicationBatch;
+DocumentAtomicPublicationIT is its integration suite, not an independent writer.
+V22 deferred document consistency, V38 shadow guards, V39 retention mirrors and
+both publication/source readers must change together for independent revisions.
+In particular, a new revision pointer does not bypass V22's legacy body check.
+The detailed activation inventory is in repository-revision-cutover.md.
+
+All 76 DocumentRevisionProjectionIT and DocumentAtomicPublicationIT cases pass
+against real PostgreSQL with populated migration fixtures and no skips. This is
+a refreshed legacy regression baseline, not evidence that independent publication
+is implemented. The full mixed/zero-upload and multi-destination scope remains.

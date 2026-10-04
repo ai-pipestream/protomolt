@@ -121,6 +121,58 @@ FULL_REVISION writer and deletion-only recovery path remain unchanged.
 These are internal Java/SQL extensions. Preserve protobuf names, numbers, imports,
 manifest ordering and stored Any URLs. No new public RPC is needed for this cutover.
 
+### Independent publisher activation inventory
+
+The current call path is DocumentLedger.saveVerifiedAttempt through
+DocumentPublicationBatch.publish. DocumentAtomicPublicationIT tests that batch;
+there is no separate production DocumentAtomicPublication implementation. The
+batch requires an attempt per destination and cannot represent zero-upload
+revisions. Keep that legacy path intact while implementing a separate independent
+transaction entry point. Do not attach new admission claims to V38 shadow rows.
+
+Activation must change the following coupled boundaries together:
+
+- V22 require_document_publication_consistency runs deferred on document and
+  legacy-current changes. It requires exact legacy body equality or rejects
+  managed parts without a legacy publication. Adding an independent current
+  pointer alone cannot pass this constraint. Its replacement must recognize a
+  sealed independent current revision with an exact document body, while retaining
+  the existing legacy checks and explicit unbound-row behavior.
+- V38 guard_document_revision_projection, populate_document_revision_parts,
+  require_document_revision_projection, guard_document_revision_current and
+  mirror_document_revision_current all
+  assume legacy history. Add an explicit independent creation/seal/current branch;
+  a null legacy_attempt_id by itself grants no insertion authority. A live owner
+  fence, canonical command and complete verified draft must authorize creation.
+  The legacy-current mirror can delete or overwrite the independent pointer when
+  an old legacy pin changes. Define the legacy-to-independent transition ordering
+  and guarded mirror behavior explicitly; deferred consistency checks the final
+  independent state. Test that transition from a populated legacy current row.
+- V39 history/current reference mirrors already use revision IDs, but acquire
+  physical-origin and retention locks. The independent transaction must prelock
+  the complete old/new origin and retention union across all members before any
+  mirror fires, then acquire schema artifact and reference rows. Do not rely on
+  per-document trigger ordering to establish batch safety.
+- DocumentPublicationLedger.findForRead and DocumentSourceSnapshot.publication
+  require the legacy bridge. Both need an explicit sealed-independent branch at
+  activation. Neither may fall back to current drive configuration or accept a
+  missing revision binding. Legacy historical evidence remains unchanged.
+
+The independent transaction must commit fresh revision UUIDs, ordered full-slot
+parts, exact domain snapshots, resolution/admission observations, physical/schema
+references, current pointers, operation outcomes and outbox rows together. Owner,
+selection, source revision and authorization checks precede that commit. An opaque
+root observation is a useful first integration fixture, but is not completion of
+the publisher: mixed and zero-upload revisions, multiple destinations and later
+typed bindings remain required on the same transaction path. No single-destination
+shortcut may become the new public contract.
+
+Before activation, prove rollback after late evidence/outcome failure, stale
+owner/selection/source rejection, authorization changes, concurrent retirement and
+current switches, exact replay after lost acknowledgment, and migration of populated
+legacy rows without fabricated observations. The existing projection and atomic
+publication integration suites are the regression baseline for those changes.
+
 ## Identity and ownership
 
 A revision receives an immutable UUID independently of upload attempts, document
