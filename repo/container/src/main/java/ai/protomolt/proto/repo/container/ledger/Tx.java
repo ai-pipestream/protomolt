@@ -37,12 +37,24 @@ import java.util.function.Function;
 public final class Tx implements AutoCloseable {
 
     private final EntityManagerFactory emf;
+    private final SqlTimeouts timeouts;
 
     /**
      * @param emf the entity manager factory to open sessions from
      */
     public Tx(EntityManagerFactory emf) {
         this.emf = emf;
+        this.timeouts = null;
+    }
+
+    private Tx(EntityManagerFactory emf, SqlTimeouts timeouts) {
+        this.emf = emf;
+        this.timeouts = java.util.Objects.requireNonNull(timeouts);
+    }
+
+    /** Borrowed transactional view; it owns no pool and closing it does not close the factory. */
+    Tx withTimeouts(SqlTimeouts timeouts) {
+        return new Tx(emf, timeouts);
     }
 
     /**
@@ -59,6 +71,7 @@ public final class Tx implements AutoCloseable {
             EntityTransaction tx = em.getTransaction();
             tx.begin();
             try {
+                if (timeouts != null) timeouts.apply(em);
                 T result = work.apply(em);
                 // Some RESOURCE_LOCAL implementations silently roll back on
                 // commit() when marked rollback-only. Never return a successful
@@ -107,6 +120,8 @@ public final class Tx implements AutoCloseable {
     /**
      * {@link #readOnly(Function)} with EntityManager creation hints (e.g.
      * Hibernate's {@code org.hibernate.readOnly}).
+     * Borrowed timeout views require {@code inTransaction} for reads as well,
+     * because their settings are transaction-local.
      *
      * @param work  the read
      * @param hints hints passed to {@link EntityManagerFactory#createEntityManager(Map)}
@@ -114,6 +129,8 @@ public final class Tx implements AutoCloseable {
      * @return the read's result (any returned entities are detached)
      */
     public <T> T readOnly(Function<EntityManager, T> work, Map<String, Object> hints) {
+        if (timeouts != null)
+            throw new IllegalStateException("Bounded transaction views require inTransaction, including reads");
         EntityManager em = hints == null || hints.isEmpty()
                 ? emf.createEntityManager()
                 : emf.createEntityManager(hints);
@@ -144,9 +161,10 @@ public final class Tx implements AutoCloseable {
      * own the EMF lifecycle in try-with-resources; harmless when the factory
      * is owned elsewhere (e.g. {@link LedgerDatabase}) since
      * {@code EntityManagerFactory.close()} is idempotent.
+     * Borrowed timeout views own no factory lifecycle; their close is a no-op.
      */
     @Override
     public void close() {
-        emf.close();
+        if (timeouts == null) emf.close();
     }
 }

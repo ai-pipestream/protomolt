@@ -33,6 +33,7 @@ class DocumentUploadCoordinatorIT {
     private static final String GENERATION="selected-transfer";
     private static final String NAMESPACE="selected-transfer";
     private static final Duration LEASE=Duration.ofMinutes(5);
+    private static final SqlTimeouts SQL_LIMITS = new SqlTimeouts(Duration.ofSeconds(2), Duration.ofSeconds(5));
     private static final RepositoryCaller ADMIN=new RepositoryCaller("principal",true);
 
     @BeforeAll static void open() {
@@ -203,13 +204,65 @@ class DocumentUploadCoordinatorIT {
         var budget = new PayloadBudget(1024 * 1024);
         var noCapabilities = new OpenedBlobStore(opened.store(), () -> {});
         try (var coordinator = new DocumentUploadCoordinator(tx, new DriveLedger(tx), budget,
-                (generation, retained) -> new DocumentUploadCoordinator.Backend(profile.identity(), noCapabilities), 4, Duration.ofMillis(25))) {
+                (generation, retained) -> new DocumentUploadCoordinator.Backend(profile.identity(), noCapabilities), 4, Duration.ofMillis(25), SQL_LIMITS)) {
             assertThatThrownBy(() -> coordinator.stage(ADMIN, f.owner, f.prepared, f.bodies, Map.of(), () -> {}))
                     .hasMessageContaining("capabilities");
             assertThat(tx.<Long>readOnly(em -> ((Number) em.createNativeQuery(
                     "SELECT count(*) FROM document_part_attempts WHERE attempt_id=:id")
                     .setParameter("id", f.attempt).getSingleResult()).longValue())).isZero();
             assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @Test void admissionLockTimeoutReturnsWhileBlockerStillOwnsRow() throws Exception {
+        var f = fixture(1, LEASE);
+        var budget = new PayloadBudget(1024 * 1024);
+        try (var blocker = database.entityManagerFactory().createEntityManager();
+                var coordinator = coordinator(opened.store(), budget, Duration.ofMillis(25));
+                var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            blocker.getTransaction().begin();
+            try {
+                blocker.createNativeQuery("SELECT operation_id FROM repository_operation_owners WHERE operation_id=:id FOR UPDATE")
+                        .setParameter("id", f.command.operationId()).getSingleResult();
+                var pending = executor.submit(() -> coordinator.stage(ADMIN, f.owner, f.prepared, f.bodies, Map.of(), () -> {}));
+                assertThatThrownBy(() -> pending.get(5, TimeUnit.SECONDS)).hasStackTraceContaining("lock timeout");
+                assertThat(budget.reservedBytes()).isZero();
+                assertThat(tx.<Long>readOnly(em -> ((Number) em.createNativeQuery(
+                        "SELECT count(*) FROM document_part_attempts WHERE attempt_id=:id")
+                        .setParameter("id", f.attempt).getSingleResult()).longValue())).isZero();
+            } finally { blocker.getTransaction().rollback(); }
+        }
+    }
+
+    @Test void flusherLockTimeoutReturnsFailureAfterRealUploadWithoutFalseVerification() throws Exception {
+        var f = fixture(1, LEASE);
+        var read = new CountDownLatch(1); var release = new CountDownLatch(1);
+        var store = intercept((method, args, call) -> {
+            var result = call.call();
+            if (method.equals("getBounded")) {
+                read.countDown();
+                if (!release.await(15, TimeUnit.SECONDS)) throw new IllegalStateException("Read gate timed out");
+            }
+            return result;
+        });
+        var budget = new PayloadBudget(1024 * 1024);
+        try (var blocker = database.entityManagerFactory().createEntityManager();
+                var coordinator = coordinator(store, budget, Duration.ofMillis(25));
+                var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var pending = executor.submit(() -> coordinator.stage(ADMIN, f.owner, f.prepared, f.bodies, Map.of(), () -> {}));
+            try {
+                assertThat(read.await(5, TimeUnit.SECONDS)).isTrue();
+                blocker.getTransaction().begin();
+                blocker.createNativeQuery("SELECT attempt_id FROM document_part_attempts WHERE attempt_id=:id FOR UPDATE")
+                        .setParameter("id", f.attempt).getSingleResult();
+                release.countDown();
+                assertThatThrownBy(() -> pending.get(5, TimeUnit.SECONDS)).hasStackTraceContaining("lock timeout");
+                assertThat(verified(f)).isZero();
+                assertThat(budget.reservedBytes()).isZero();
+            } finally {
+                release.countDown();
+                if (blocker.getTransaction().isActive()) blocker.getTransaction().rollback();
+            }
         }
     }
 
@@ -236,7 +289,7 @@ class DocumentUploadCoordinatorIT {
         try (var coordinator = new DocumentUploadCoordinator(tx, new DriveLedger(tx), budget, (generation, retained) -> {
             resolutions.incrementAndGet();
             return new DocumentUploadCoordinator.Backend(profile.identity(), opened);
-        }, 8, Duration.ofSeconds(1))) {
+        }, 8, Duration.ofSeconds(1), SQL_LIMITS)) {
             var result = coordinator.stage(ADMIN, owner, prepared, bodies, Map.of(), () -> {});
             assertThat(result.attempts()).hasSize(64).allSatisfy(a -> {
                 assertThat(a.state()).isEqualTo("VERIFIED");
@@ -259,7 +312,7 @@ class DocumentUploadCoordinatorIT {
             assertThat(generation).isEqualTo(GENERATION);
             assertThat(retained).isEqualTo(profile);
             return new DocumentUploadCoordinator.Backend(profile.identity(), borrowed);
-        }, 4, age);
+        }, 4, age, SQL_LIMITS);
     }
 
     private static long verified(Fixture f) {

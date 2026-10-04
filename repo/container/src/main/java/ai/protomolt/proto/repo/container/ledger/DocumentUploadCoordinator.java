@@ -62,13 +62,14 @@ final class DocumentUploadCoordinator implements AutoCloseable {
     private final Object lifecycle = new Object();
 
     DocumentUploadCoordinator(Tx tx, DriveLedger drives, PayloadBudget budget, Resolver resolver,
-            int parallelism, Duration flushAge) {
+            int parallelism, Duration flushAge, SqlTimeouts timeouts) {
         if (parallelism < 1 || parallelism > 32) throw new IllegalArgumentException("Part parallelism must be one to 32");
         if (flushAge.compareTo(Duration.ofMillis(1)) < 0 || flushAge.compareTo(Duration.ofSeconds(1)) > 0)
             throw new IllegalArgumentException("Observation flush age must be one millisecond to one second");
-        this.admission = new DocumentOperationUploadAdmission(tx, drives);
-        this.selected = new DocumentSelectedAttemptLedger(tx);
-        this.operations = new RepositoryOperationLedger(tx);
+        var bounded = tx.withTimeouts(timeouts);
+        this.admission = new DocumentOperationUploadAdmission(bounded, drives);
+        this.selected = new DocumentSelectedAttemptLedger(bounded);
+        this.operations = new RepositoryOperationLedger(bounded);
         this.budget = Objects.requireNonNull(budget);
         this.resolver = Objects.requireNonNull(resolver);
         this.parallelism = parallelism;

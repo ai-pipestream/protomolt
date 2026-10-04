@@ -2441,9 +2441,9 @@ protobuf semantic validity.
 Remaining coordinator qualification includes a fully retained CORE with a sparse
 upload subset, multiple distinct provider implementations sharing limits, forced
 flusher failure under queue saturation, owner takeover/deadline races and query
-count/latency measurements. SQL transactions currently lack a bounded lock or
-statement timeout; lock waits can keep staging busy and retain its resources.
-Qualify a timeout policy and test held-lock failure before public activation.
+count/latency measurements. This initial coordinator checkpoint lacked SQL lock
+and statement timeouts. The scoped policy added below addresses those database
+waits without claiming a whole-operation deadline.
 
 Local validation: the full container/service run passed in 2m37s, with 112 suites
 and 1,001 cases (998 passed, 3 skipped, no failures/errors). The subsequent staged
@@ -2451,6 +2451,43 @@ result pairing correction passed all seven coordinator integration tests in 16s.
 Sol reviewed failure draining, resource bounds and final result identity pairing;
 the positional-list hazard it identified is corrected. No hosted CI, push, merge
 or deployment was performed.
+
+### Scoped upload SQL timeouts
+
+Extended internal transaction execution; protobuf contracts are unchanged.
+`DocumentUploadCoordinator` now requires explicit `SqlTimeouts` from its host.
+Positive whole-millisecond lock and statement limits must satisfy lock <= statement
+and each be at most one day. No production latency default is inferred from the
+test values. Admission, owner renewal and selected-attempt renewal/verification
+all use one borrowed `Tx` view with this policy.
+
+The view applies PostgreSQL transaction-local settings before application SQL,
+inside rollback handling. One configuration query is added per transaction.
+Closing the view does not close its shared entity-manager factory. It rejects
+nontransactional `readOnly` calls instead of silently leaving those queries
+unbounded. Existing unscoped transaction consumers keep their current behavior.
+
+Real PostgreSQL tests prove lock timeout (55P03), statement timeout (57014),
+rollback of preceding writes and settings restoration on the same pooled
+connection after both success and failure. A restricted database role makes
+timeout setup itself fail; the application callback never runs. Coordinator
+tests hold the owner row during admission and the attempt row during verification
+after a real S3 upload. Staging fails while those locks remain held, releases
+its drained payload reservation and records no false verification.
+
+These are per-lock-acquisition and per-statement limits. They do not bound pool
+checkout, network failure, total transaction/operation duration, or provider I/O.
+Already-started work must still drain before borrowed resources can be released;
+a lost commit acknowledgment still requires reconciliation, not a fabricated
+outcome. Whole-operation deadlines and the remaining provider/failure cases
+remain qualification work.
+
+Local focused validation passed 14 tests: five transaction-policy cases and nine
+coordinator integration cases. Sol reviewed the policy, wiring and evidence with
+no blocker. No full-suite rerun or remote publication was performed for this
+checkpoint. The one-connection test initially exposed a separate migration-pool
+startup defect; its current fixture migrates with two connections then restricts
+the runtime pool to one. Fresh one-connection startup is not yet proven here.
 
 ### Credential-to-ownership integration gap
 
