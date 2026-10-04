@@ -664,17 +664,25 @@ class DocumentPublicationCommitIT {
         for(int i=0;i<member.getPartsCount();i++) fragments.put(i,ByteString.copyFrom(
                 fixture.bodies.get(new DocumentUploadPayloads.Key(member.getMemberId(),i)).bytes()));
         var definition=DocumentSchemaRetentionFixture.definition(descriptor);
-        var proof=policy.prepareAndCheck(ByteString.copyFrom(java.util.HexFormat.of().parseHex(fixture.command.sha256())),
-                member,fragments,DocumentSchemaRetentionFixture.definition(Document.getDescriptor()),ignored->definition,()->{});
-        var selected=new DocumentSchemaPolicies(tx).activate(policy,0,()->{});
-        var admission=DocumentSchemaBatch.prepare(fixture.command,selected,Map.of(member.getMemberId(),proof),()->{});
-        admission.stage(new RepositorySchemaArtifacts(tx),fixture.owner,()->{});
-        var published=publisher().commit(ADMIN,fixture.owner,fixture.prepared,Map.of(),checked.selected,admission,()->{}).getMembers(0);
-        String expected="REPLAY_OK|"+published.getRevisionId()+"|"+DocumentPartCodec.sha256Hex(proof.document().toByteArray())+"|"+proof.policySha256();
+        var snapshotBudget=new PayloadBudget(4_000_000);
+        DocumentPublishedRevision published;
+        String expected;
+        String customDescriptor;
+        try(var snapshot=DocumentPublicationFragments.capture(fixture.command,Map.of(member.getMemberId(),fragments),snapshotBudget,()->{})) {
+            var proof=policy.prepareAndCheck(ByteString.copyFrom(java.util.HexFormat.of().parseHex(fixture.command.sha256())),
+                    member,snapshot.fragments().get(member.getMemberId()),DocumentSchemaRetentionFixture.definition(Document.getDescriptor()),ignored->definition,()->{});
+            var selected=new DocumentSchemaPolicies(tx).activate(policy,0,()->{});
+            var admission=DocumentSchemaBatch.prepare(fixture.command,selected,Map.of(member.getMemberId(),proof),()->{});
+            admission.stage(new RepositorySchemaArtifacts(tx),fixture.owner,()->{});
+            assertThat(snapshotBudget.reservedBytes()).isPositive();
+            published=publisher().commit(ADMIN,fixture.owner,fixture.prepared,Map.of(),checked.selected,admission,()->{}).getMembers(0);
+            expected="REPLAY_OK|"+published.getRevisionId()+"|"+DocumentPartCodec.sha256Hex(proof.document().toByteArray())+"|"+proof.policySha256();
+            customDescriptor=proof.references().stream().filter(r->r.typeUrl().equals("type.test/archive.runtime.ArchivedCase"))
+                    .findFirst().orElseThrow().descriptorSha256();
+        }
+        assertThat(snapshotBudget.reservedBytes()).isZero();
         String success=runHistoricalWorker(published,temp.resolve("fresh-success.log"),0);
         assertThat(success).contains(expected).doesNotContain("REPLAY_FAILURE|");
-        String customDescriptor=proof.references().stream().filter(r->r.typeUrl().equals("type.test/archive.runtime.ArchivedCase"))
-                .findFirst().orElseThrow().descriptorSha256();
         // A second fresh JVM cannot use an earlier JVM's resolved descriptors.
         tx.inTransaction(em->{
             em.createNativeQuery("SET LOCAL session_replication_role='replica'").executeUpdate();

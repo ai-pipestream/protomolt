@@ -21,6 +21,78 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 
 class DocumentSchemaBatchTest {
+    @Test void ownsBudgetedFragmentCopiesThroughRealPolicyValidation() throws Exception {
+        var f = command("account", List.of(member("member-a", "doc-a"), member("member-b", "doc-b")));
+        var supplied = new HashMap<String, Map<Integer, ByteString>>();
+        var borrowedArrays = new java.util.ArrayList<byte[]>();
+        f.data.forEach((id, value) -> {
+            var parts = new HashMap<Integer, ByteString>();
+            value.fragments.forEach((ordinal, bytes) -> {
+                var array = bytes.toByteArray(); borrowedArrays.add(array);
+                parts.put(ordinal, com.google.protobuf.UnsafeByteOperations.unsafeWrap(array));
+            });
+            supplied.put(id, parts);
+        });
+        long size = supplied.values().stream().flatMap(parts -> parts.values().stream()).mapToLong(ByteString::size).sum();
+        var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(size);
+        var snapshot = DocumentPublicationFragments.capture(f.command, supplied, budget, () -> {});
+        try {
+            assertThat(budget.reservedBytes()).isEqualTo(size);
+            assertThat(snapshot.command()).isSameAs(f.command);
+            // Model a borrowed staging buffer being overwritten after the capture boundary.
+            borrowedArrays.forEach(array -> java.util.Arrays.fill(array, (byte) 0));
+            var policy = policy("account", false, 20);
+            var proofs = new HashMap<String, DocumentSchemaAdmission.Proof>();
+            for (var entry : f.data.entrySet()) {
+                var copied = snapshot.fragments().get(entry.getKey());
+                for (var part : copied.entrySet())
+                    assertThat(part.getValue()).isEqualTo(entry.getValue().fragments.get(part.getKey()))
+                            .isNotSameAs(entry.getValue().fragments.get(part.getKey()));
+                supplied.get(entry.getKey()).clear();
+                proofs.put(entry.getKey(), proof(f.command, new MemberData(entry.getValue().member, copied), policy, f.assets));
+            }
+            supplied.clear();
+            assertThat(DocumentSchemaBatch.prepare(f.command, selection(policy), proofs, () -> {}).proofs()).hasSize(2);
+            assertThatThrownBy(() -> snapshot.fragments().clear()).isInstanceOf(UnsupportedOperationException.class);
+            assertThatThrownBy(() -> snapshot.fragments().get("member-a").clear()).isInstanceOf(UnsupportedOperationException.class);
+        } finally { snapshot.close(); }
+        snapshot.close();
+        assertThat(budget.reservedBytes()).isZero();
+        assertThatThrownBy(snapshot::fragments).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test void rejectsIncompleteFragmentSetsBeforeReservingOrResolvingSchemas() throws Exception {
+        var f = command("account", List.of(member("member-a", "doc-a")));
+        var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(1_000_000);
+        assertThatThrownBy(() -> DocumentPublicationFragments.capture(f.command, Map.of(), budget, () -> {}))
+                .hasMessageContaining("members differ");
+        assertThatThrownBy(() -> DocumentPublicationFragments.capture(f.command, Map.of("member-a", Map.of()), budget, () -> {}))
+                .hasMessageContaining("ordinal differs");
+        var wrong = new HashMap<>(f.data.get("member-a").fragments);
+        wrong.put(0, ByteString.EMPTY);
+        assertThatThrownBy(() -> DocumentPublicationFragments.capture(f.command, Map.of("member-a", wrong), budget, () -> {}))
+                .hasMessageContaining("size or ordinal");
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    @Test void releasesFragmentReservationOnCancellationAndRefusesCapacityWithoutWaiting() throws Exception {
+        var f = command("account", List.of(member("member-a", "doc-a")));
+        var supplied = Map.of("member-a", f.data.get("member-a").fragments);
+        var tiny = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(1);
+        assertThatThrownBy(() -> DocumentPublicationFragments.capture(f.command, supplied, tiny, () -> {}))
+                .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED));
+        assertThat(tiny.reservedBytes()).isZero();
+        var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(1_000_000);
+        var cancelled = new java.util.concurrent.CancellationException("cancel after reservation");
+        var copyChecks = new java.util.concurrent.atomic.AtomicInteger();
+        assertThatThrownBy(() -> DocumentPublicationFragments.capture(f.command, supplied, budget, () -> {
+            if (budget.reservedBytes() > 0 && copyChecks.incrementAndGet() == 2) throw cancelled;
+        })).isSameAs(cancelled);
+        assertThat(copyChecks.get()).isEqualTo(2);
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
     @Test void requiresProofsForTypedMembersAndRejectsNullOrUnknownProofEntries() throws Exception {
         var f = command("account", List.of(member("member-a", "doc-a")));
         var policy = policy("account", false, 20);

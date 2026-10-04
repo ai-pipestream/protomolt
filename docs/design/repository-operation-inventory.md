@@ -5056,3 +5056,26 @@ advertises a mounted historical endpoint.
 
 The [host integration sequence](repository-composition.md#host-integration-sequence-after-historical-replay-qualification)
 defines the required local/gRPC conformance flow and the optional JCR boundary.
+
+### Owned publication fragment snapshots
+
+New internal `DocumentPublicationFragments.capture` preflights the complete
+canonical member/nonempty ordinal sets and declared sizes, reserves the aggregate
+serialized size from a caller-supplied `PayloadBudget`, then makes private byte
+copies. Its closeable owner keeps those reservations through preparation and
+commit; any failure releases them. No fixed schema-artifact limit is reused as
+a document-byte limit. Capacity exhaustion is explicit RESOURCE_EXHAUSTED.
+
+Input bytes require their own reservation and must stay stable during capture.
+Returned immutable maps are borrowed: a candidate or proof using their bytes
+must finish before the owner closes. This helper accounts only its fragment
+copies. It neither reserves descriptor/proof/decoded memory nor establishes
+authorization, provider durability, physical selection or schema validity.
+Those remain coordinator/admission/commit obligations. No host or RPC is mounted.
+
+Tests overwrite borrowed source arrays after capture, mutate the source maps,
+and validate the independent snapshots with the real policy engine. They cover
+incomplete sets, wrong sizes, exhausted capacity, cancellation after a copy,
+immutable views and idempotent close. The real PostgreSQL/provider publication
+test keeps the snapshot open through schema staging and native commit, releases
+its budget, then verifies retained-schema replay from a fresh JVM.
