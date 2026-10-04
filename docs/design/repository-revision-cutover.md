@@ -1401,6 +1401,22 @@ versions. Shape validation alone cannot prove that a path belongs to the admitte
 candidate. Root and nested paths must be emitted by the same trusted traversal
 and committed with that candidate's revision and admission identity.
 
-This representation was reviewed before implementation. The collector, persisted
-contract, canonical encoding and revision references remain acceptance work;
-this section does not claim that occurrence evidence is already emitted.
+This representation was reviewed before implementation. The internal
+`DocumentSchemaOccurrences` collector now emits immutable root and nested boundary
+paths through `DocumentPayloadCheck.checkAssets`, returned only after the complete
+candidate passes validation. The lower-level check does not collect paths. Default
+limits are 4096 occurrences, 65536 aggregate path steps and 1 MiB of aggregate
+UTF-8 path text; the trusted caller can supply explicit positive limits. Transient
+traversal paths also respect the step/text ceilings. Scalar map keys retain their
+declared protobuf type; unsigned numeric keys retain their Java bit representation
+and must be encoded as unsigned values by a future wire encoder.
+
+Fixtures cover equal repeated values, exact payload/artifact hashes, immutable
+results, map order, empty and multibyte string keys, and exact/over-limit counts,
+steps and text. Strict schema preparation rejects noncanonical map-entry shapes
+before suppressing the synthetic value-field path. A red test proved that the
+protobuf descriptor builder alone did not reject an extra map-entry field.
+
+The persisted contract, canonical encoding and revision references remain
+acceptance work. Internal path evidence does not authenticate compiler provenance,
+authorize a read, retain an artifact or enable typed publication.

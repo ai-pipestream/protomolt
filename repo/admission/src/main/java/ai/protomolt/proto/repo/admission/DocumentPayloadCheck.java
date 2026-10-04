@@ -32,18 +32,22 @@ final class DocumentPayloadCheck {
     private final Any original;
     private final DynamicMessage decoded;
     private final Map<String, DocumentSchemaBinding> resolvedSchemas;
+    private final java.util.List<DocumentSchemaOccurrences.Occurrence> occurrences;
 
-    private DocumentPayloadCheck(DocumentSchemaBinding schema, Any original, DynamicMessage decoded, Map<String, DocumentSchemaBinding> resolvedSchemas) {
+    private DocumentPayloadCheck(DocumentSchemaBinding schema, Any original, DynamicMessage decoded, Map<String, DocumentSchemaBinding> resolvedSchemas,
+            java.util.List<DocumentSchemaOccurrences.Occurrence> occurrences) {
         this.schema = schema;
         this.original = original;
         this.decoded = decoded;
         this.resolvedSchemas = Map.copyOf(resolvedSchemas);
+        this.occurrences = java.util.List.copyOf(occurrences);
     }
 
     DocumentSchemaBinding schema() { return schema; }
     Any original() { return original; }
     DynamicMessage decoded() { return decoded; }
     Map<String, DocumentSchemaBinding> resolvedSchemas() { return resolvedSchemas; }
+    java.util.List<DocumentSchemaOccurrences.Occurrence> occurrences() { return occurrences; }
 
     /** In-memory evidence only; neither retention nor trusted compiler provenance is established. */
     record AssetResult(DocumentPayloadCheck payload, Map<String, DocumentSchemaAssetBinding> assets) {
@@ -62,6 +66,14 @@ final class DocumentPayloadCheck {
     static AssetResult checkAssets(DocumentSchemaAssetBinding root, Any candidate, String acceptedTypeUrl,
             ProtoValidator validator, Limits limits, Runnable control,
             Function<String, DocumentSchemaAssetBinding> resolver) throws InvalidProtocolBufferException {
+        return checkAssets(root, candidate, acceptedTypeUrl, validator, limits, control, resolver,
+                DocumentSchemaOccurrences.Limits.DEFAULT);
+    }
+
+    static AssetResult checkAssets(DocumentSchemaAssetBinding root, Any candidate, String acceptedTypeUrl,
+            ProtoValidator validator, Limits limits, Runnable control,
+            Function<String, DocumentSchemaAssetBinding> resolver, DocumentSchemaOccurrences.Limits evidenceLimits)
+            throws InvalidProtocolBufferException {
         Objects.requireNonNull(root, "root");
         Objects.requireNonNull(resolver, "resolver");
         Objects.requireNonNull(control, "control");
@@ -80,7 +92,7 @@ final class DocumentPayloadCheck {
             }
             assets.put(url, asset);
             return asset.schema();
-        }, true);
+        }, new DocumentSchemaOccurrences(evidenceLimits));
         return new AssetResult(payload, assets);
     }
 
@@ -109,12 +121,12 @@ final class DocumentPayloadCheck {
     static DocumentPayloadCheck check(DocumentSchemaBinding schema, Any candidate, String acceptedTypeUrl,
             ProtoValidator validator, Limits limits, Runnable control,
             Function<String, DocumentSchemaBinding> resolver) throws InvalidProtocolBufferException {
-        return check(schema,candidate,acceptedTypeUrl,validator,limits,control,resolver,false);
+        return check(schema,candidate,acceptedTypeUrl,validator,limits,control,resolver,null);
     }
 
     private static DocumentPayloadCheck check(DocumentSchemaBinding schema, Any candidate, String acceptedTypeUrl,
             ProtoValidator validator, Limits limits, Runnable control,
-            Function<String, DocumentSchemaBinding> resolver, boolean archival) throws InvalidProtocolBufferException {
+            Function<String, DocumentSchemaBinding> resolver, DocumentSchemaOccurrences evidence) throws InvalidProtocolBufferException {
         Objects.requireNonNull(schema, "schema");
         Objects.requireNonNull(candidate, "candidate");
         Objects.requireNonNull(acceptedTypeUrl, "acceptedTypeUrl");
@@ -130,10 +142,11 @@ final class DocumentPayloadCheck {
         if (!candidate.getUnknownFields().asMap().isEmpty()) {
             throw new IllegalArgumentException("unsupported Any envelope fields");
         }
-        var session = new Session(validator, limits, control, resolver, archival);
+        var session = new Session(validator, limits, control, resolver, evidence);
         session.bindings.put(acceptedTypeUrl, schema);
-        DynamicMessage decoded = session.decode(schema, candidate.getValue(), 0);
-        return new DocumentPayloadCheck(schema, candidate, decoded, session.bindings);
+        DynamicMessage decoded = session.decodeBoundary(acceptedTypeUrl, schema, candidate.getValue(), 0);
+        return new DocumentPayloadCheck(schema, candidate, decoded, session.bindings,
+                evidence == null ? java.util.List.of() : evidence.result());
     }
 
     private static void requireUrl(String url, DocumentSchemaBinding schema) {
@@ -149,6 +162,7 @@ final class DocumentPayloadCheck {
         private final Runnable control;
         private final Function<String, DocumentSchemaBinding> resolver;
         private final boolean archival;
+        private final DocumentSchemaOccurrences evidence;
         private final MessageWireBudget wire;
         private final Map<String, DocumentSchemaBinding> bindings = new LinkedHashMap<>();
         private final java.util.Set<Descriptor> schemas = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -157,13 +171,26 @@ final class DocumentPayloadCheck {
         private long anyCount;
 
         Session(ProtoValidator validator, Limits limits, Runnable control,
-                Function<String, DocumentSchemaBinding> resolver, boolean archival) {
+                Function<String, DocumentSchemaBinding> resolver, DocumentSchemaOccurrences evidence) {
             this.validator = validator;
             this.limits = limits;
             this.control = control;
             this.resolver = resolver;
-            this.archival = archival;
+            this.archival = evidence != null;
+            this.evidence = evidence;
             this.wire = new MessageWireBudget(limits.maxWireValues(), limits.maxDepth(), () -> active(control));
+        }
+
+        DynamicMessage decodeBoundary(String url, DocumentSchemaBinding schema, com.google.protobuf.ByteString bytes, int depth)
+                throws InvalidProtocolBufferException {
+            active(control);
+            depth(depth);
+            if (bytes.size() > limits.maxBytes() - decodedBytes)
+                throw new IllegalArgumentException("aggregate payload bytes exceed limit");
+            if (evidence == null) return decode(schema, bytes, depth);
+            evidence.boundary(url, bytes, schema, () -> active(control));
+            try { return decode(schema, bytes, depth); }
+            finally { evidence.pop(); }
         }
 
         DynamicMessage decode(DocumentSchemaBinding schema, com.google.protobuf.ByteString bytes, int depth)
@@ -195,6 +222,10 @@ final class DocumentPayloadCheck {
         }
 
         void walk(Message message, int depth) throws InvalidProtocolBufferException {
+            walk(message, depth, false);
+        }
+
+        void walk(Message message, int depth, boolean mapEntry) throws InvalidProtocolBufferException {
             active(control);
             depth(depth);
             if (archival && !message.getUnknownFields().asMap().isEmpty())
@@ -224,26 +255,39 @@ final class DocumentPayloadCheck {
                     requireUrl(url, binding);
                     bindings.put(url, binding);
                 }
-                decode(binding, (com.google.protobuf.ByteString) message.getField(valueField), depth + 1);
+                decodeBoundary(url, binding, (com.google.protobuf.ByteString) message.getField(valueField), depth + 1);
                 return;
             }
             for (var entry : message.getAllFields().entrySet()) {
                 active(control);
                 var field = entry.getKey();
                 if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
-                if (field.isRepeated()) {
-                    java.util.Set<Object> keys=archival && field.isMapField() ? new java.util.HashSet<>() : null;
-                    for (Object item : (java.util.List<?>) entry.getValue()) {
-                        active(control);
-                        var value=(Message)item;
-                        if (keys!=null) {
-                            // getField supplies the declared protobuf default for omitted keys.
-                            Object key=value.getField(field.getMessageType().findFieldByNumber(1));
-                            if (!keys.add(key)) throw new IllegalArgumentException("duplicate map keys cannot receive typed archival evidence");
+                // A map-key step selects its value, not the synthetic entry field 2.
+                boolean fieldStep = evidence != null && !mapEntry;
+                if (fieldStep) evidence.push(new DocumentSchemaOccurrences.Field(field.getNumber()));
+                try {
+                    if (field.isRepeated()) {
+                        java.util.Set<Object> keys = archival && field.isMapField() ? new java.util.HashSet<>() : null;
+                        int index = 0;
+                        for (Object item : (java.util.List<?>) entry.getValue()) {
+                            active(control);
+                            var value = (Message) item;
+                            if (keys != null) {
+                                // getField supplies the declared protobuf default for omitted keys.
+                                Object key = value.getField(field.getMessageType().findFieldByNumber(1));
+                                if (!keys.add(key)) throw new IllegalArgumentException("duplicate map keys cannot receive typed archival evidence");
+                            }
+                            if (evidence != null) {
+                                var keyField = field.isMapField() ? field.getMessageType().findFieldByNumber(1) : null;
+                                evidence.push(keyField == null ? new DocumentSchemaOccurrences.Index(index)
+                                        : new DocumentSchemaOccurrences.MapKey(keyField.getType(), value.getField(keyField)));
+                            }
+                            try { walk(value, depth + 1, field.isMapField()); }
+                            finally { if (evidence != null) evidence.pop(); }
+                            index++;
                         }
-                        walk(value, depth + 1);
-                    }
-                } else walk((Message) entry.getValue(), depth + 1);
+                    } else walk((Message) entry.getValue(), depth + 1);
+                } finally { if (fieldStep) evidence.pop(); }
             }
         }
 
@@ -264,10 +308,28 @@ final class DocumentPayloadCheck {
                 schemaFields += type.getFields().size();
                 if (schemaFields > limits.maxSchemaFields()) throw new IllegalArgumentException("schema field count exceeds limit");
                 for (var field : type.getFields()) {
+                    if (archival && field.isMapField()) checkMapEntry(field.getMessageType());
                     if (field.getJavaType() == FieldDescriptor.JavaType.MESSAGE) add(field.getMessageType(), pending);
                 }
             }
             validator.prepareSchema(root, limits.maxSchemaTypes(), limits.maxSchemaFields(), () -> active(control));
+        }
+
+        private void checkMapEntry(Descriptor entry) {
+            var key = entry.findFieldByNumber(1);
+            var value = entry.findFieldByNumber(2);
+            if (entry.getFields().size() != 2 || key == null || value == null
+                    || !key.getName().equals("key") || !value.getName().equals("value")
+                    || key.isRepeated() || value.isRepeated() || key.isRequired() || value.isRequired()
+                    || key.getContainingOneof() != null || value.getContainingOneof() != null
+                    || key.hasDefaultValue() || value.hasDefaultValue()) {
+                throw new IllegalArgumentException("invalid map entry descriptor");
+            }
+            switch (key.getType()) {
+                case STRING, BOOL, INT32, SINT32, SFIXED32, UINT32, FIXED32,
+                        INT64, SINT64, SFIXED64, UINT64, FIXED64 -> { }
+                default -> throw new IllegalArgumentException("invalid map entry descriptor key type");
+            }
         }
 
         void add(Descriptor type, ArrayList<Descriptor> pending) {

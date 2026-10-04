@@ -32,20 +32,120 @@ class DocumentPayloadCheckTest {
     private static final DocumentPayloadCheck.Limits LIMITS = new DocumentPayloadCheck.Limits(1024, 100, 10, 100, 1000);
 
     @Test
-    void archivalMapCannotSkipAnOmittedAnyValue() throws Exception {
+    void archivalOccurrencesDistinguishEqualRepeatedValuesAndBindExactBytes() throws Exception {
+        var root = wrapper();
+        var inner = binding(choice("true"));
+        var item = candidate(inner, "same", "");
+        var candidate = wrapped(root, item, item);
+        var result = DocumentPayloadCheck.checkAssets(asset(root, candidate.getTypeUrl()), candidate, candidate.getTypeUrl(),
+                validator(), LIMITS, () -> {}, url -> asset(inner, url));
+        var occurrences = result.payload().occurrences();
+        assertThat(occurrences).hasSize(3);
+        var rootBoundary = new DocumentSchemaOccurrences.Boundary(candidate.getTypeUrl(), digest(candidate.getValue()), root.artifactSha256());
+        var childBoundary = new DocumentSchemaOccurrences.Boundary(URL, digest(item.getValue()), inner.artifactSha256());
+        assertThat(occurrences.get(0).path()).containsExactly(rootBoundary);
+        for (int i = 0; i < 2; i++) {
+            assertThat(occurrences.get(i + 1).path()).containsExactly(rootBoundary,
+                    new DocumentSchemaOccurrences.Field(1), new DocumentSchemaOccurrences.Index(i), childBoundary);
+        }
+        assertThat(result.payload().original()).isSameAs(candidate);
+        assertThatThrownBy(() -> occurrences.clear()).isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> occurrences.get(0).path().clear()).isInstanceOf(UnsupportedOperationException.class);
+        assertThat(DocumentPayloadCheck.check(root, candidate, candidate.getTypeUrl(), validator(), LIMITS, () -> {}, url -> inner)
+                .occurrences()).isEmpty();
+    }
+
+    @Test
+    void archivalEvidenceEnforcesAggregateLimitsBeforeReturningAResult() throws Exception {
+        var root = wrapper();
+        var inner = binding(choice("true"));
+        var candidate = wrapped(root, candidate(inner, "same", ""), candidate(inner, "same", ""));
+        int text = candidate.getTypeUrl().getBytes(java.nio.charset.StandardCharsets.UTF_8).length * 3
+                + URL.getBytes(java.nio.charset.StandardCharsets.UTF_8).length * 2;
+        var exact = new DocumentSchemaOccurrences.Limits(3, 9, text);
+        assertThat(DocumentPayloadCheck.checkAssets(asset(root, candidate.getTypeUrl()), candidate, candidate.getTypeUrl(),
+                validator(), LIMITS, () -> {}, url -> asset(inner, url), exact).payload().occurrences()).hasSize(3);
+        for (var bound : List.of(new DocumentSchemaOccurrences.Limits(2, 9, text),
+                new DocumentSchemaOccurrences.Limits(3, 8, text), new DocumentSchemaOccurrences.Limits(3, 9, text - 1))) {
+            assertThatThrownBy(() -> DocumentPayloadCheck.checkAssets(asset(root, candidate.getTypeUrl()), candidate, candidate.getTypeUrl(),
+                    validator(), LIMITS, () -> {}, url -> asset(inner, url), bound)).hasMessageContaining("limit exceeded");
+        }
+    }
+
+    private static String digest(ByteString bytes) throws Exception {
+        return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes.toByteArray()));
+    }
+
+    private static DocumentSchemaBinding mapWrapper() throws Exception {
+        return mapWrapper(false);
+    }
+
+    private static DocumentSchemaBinding mapWrapper(boolean extraField) throws Exception {
+        return mapWrapper(extraField, FieldDescriptorProto.Type.TYPE_STRING);
+    }
+
+    private static DocumentSchemaBinding mapWrapper(boolean extraField, FieldDescriptorProto.Type keyType) throws Exception {
         var entry = DescriptorProto.newBuilder().setName("ItemsEntry")
                 .setOptions(MessageOptions.newBuilder().setMapEntry(true))
-                .addField(FieldDescriptorProto.newBuilder().setName("key").setNumber(1).setType(FieldDescriptorProto.Type.TYPE_STRING))
+                .addField(FieldDescriptorProto.newBuilder().setName("key").setNumber(1).setType(keyType))
                 .addField(FieldDescriptorProto.newBuilder().setName("value").setNumber(2).setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
                         .setTypeName(".google.protobuf.Any"));
+        if (extraField) entry.addField(FieldDescriptorProto.newBuilder().setName("extra").setNumber(3)
+                .setType(FieldDescriptorProto.Type.TYPE_MESSAGE).setTypeName(".google.protobuf.Any"));
         var definition = DescriptorProto.newBuilder().setName("MapWrapper").addNestedType(entry)
                 .addField(FieldDescriptorProto.newBuilder().setName("items").setNumber(1)
                         .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED).setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
                         .setTypeName(".payload.MapWrapper.ItemsEntry"));
         var file = FileDescriptorProto.newBuilder().setName("map-wrapper.proto").setPackage("payload").setSyntax("proto3")
                 .addDependency("google/protobuf/any.proto").addMessageType(definition).build();
-        var schema = binding(FileDescriptor.buildFrom(file, new FileDescriptor[]{Any.getDescriptor().getFile()})
+        return binding(FileDescriptor.buildFrom(file, new FileDescriptor[]{Any.getDescriptor().getFile()})
                 .findMessageTypeByName("MapWrapper"));
+    }
+
+    @Test
+    void archivalOccurrencesRetainUnsignedMapKeysAndNestedBoundaries() throws Exception {
+        var root = mapWrapper(false, FieldDescriptorProto.Type.TYPE_UINT64);
+        var middle = wrapper();
+        var inner = binding(choice("true"));
+        var leaf = candidate(inner, "valid", "");
+        var nested = wrapped(middle, leaf);
+        var field = root.type().findFieldByNumber(1);
+        var data = DynamicMessage.newBuilder(root.type());
+        for (long key : new long[]{0L, -1L}) {
+            data.addRepeatedField(field, DynamicMessage.newBuilder(field.getMessageType())
+                    .setField(field.getMessageType().findFieldByNumber(1), key)
+                    .setField(field.getMessageType().findFieldByNumber(2), nested).build());
+        }
+        String url = "type.protomolt.test/payload.MapWrapper";
+        var candidate = Any.newBuilder().setTypeUrl(url).setValue(data.build().toByteString()).build();
+        var result = DocumentPayloadCheck.checkAssets(asset(root, url), candidate, url, validator(), LIMITS, () -> {},
+                requested -> asset(requested.equals(URL) ? inner : middle, requested));
+        assertThat(result.payload().occurrences()).hasSize(5);
+        for (int i = 0; i < 2; i++) {
+            var path = result.payload().occurrences().get(2 + i * 2).path();
+            assertThat(path).containsExactly(
+                    new DocumentSchemaOccurrences.Boundary(url, digest(candidate.getValue()), root.artifactSha256()),
+                    new DocumentSchemaOccurrences.Field(1),
+                    new DocumentSchemaOccurrences.MapKey(com.google.protobuf.Descriptors.FieldDescriptor.Type.UINT64, i == 0 ? 0L : -1L),
+                    new DocumentSchemaOccurrences.Boundary(nested.getTypeUrl(), digest(nested.getValue()), middle.artifactSha256()),
+                    new DocumentSchemaOccurrences.Field(1), new DocumentSchemaOccurrences.Index(0),
+                    new DocumentSchemaOccurrences.Boundary(URL, digest(leaf.getValue()), inner.artifactSha256()));
+        }
+    }
+
+    @Test
+    void archivalEvidenceRejectsNoncanonicalMapEntryDescriptors() throws Exception {
+        var root = mapWrapper(true);
+        String url = "type.protomolt.test/payload.MapWrapper";
+        var candidate = Any.newBuilder().setTypeUrl(url).build();
+        assertThatThrownBy(() -> DocumentPayloadCheck.checkAssets(asset(root, url), candidate, url, validator(), LIMITS,
+                () -> {}, nested -> { throw new AssertionError("malformed map reached resolver"); }))
+                .hasMessageContaining("invalid map entry descriptor");
+    }
+
+    @Test
+    void archivalMapCannotSkipAnOmittedAnyValue() throws Exception {
+        var schema = mapWrapper();
         var field = schema.type().findFieldByNumber(1);
         var missing = DynamicMessage.newBuilder(field.getMessageType())
                 .setField(field.getMessageType().findFieldByNumber(1), "missing").build();
@@ -55,6 +155,44 @@ class DocumentPayloadCheckTest {
         assertThatThrownBy(() -> DocumentPayloadCheck.checkAssets(asset(schema, url), candidate, url, validator(), LIMITS,
                 () -> {}, nested -> { throw new AssertionError("empty Any must not reach resolver"); }))
                 .hasMessageContaining("invalid Any type URL");
+    }
+
+    @Test
+    void archivalMapPathsUseTypedKeysAndChargeUtf8Bytes() throws Exception {
+        var root = mapWrapper();
+        var inner = binding(choice("true"));
+        var item = candidate(inner, "same", "");
+        var field = root.type().findFieldByNumber(1);
+        String url = "type.protomolt.test/payload.MapWrapper";
+        var entries = new java.util.ArrayList<DynamicMessage>();
+        for (String key : List.of("", "é水")) {
+            entries.add(DynamicMessage.newBuilder(field.getMessageType())
+                    .setField(field.getMessageType().findFieldByNumber(1), key)
+                    .setField(field.getMessageType().findFieldByNumber(2), item).build());
+        }
+        int text = 3 * url.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
+                + 2 * URL.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
+                + "é水".getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+        for (var order : List.of(entries, List.of(entries.get(1), entries.get(0)))) {
+            var data = DynamicMessage.newBuilder(root.type());
+            order.forEach(entry -> data.addRepeatedField(field, entry));
+            var candidate = Any.newBuilder().setTypeUrl(url).setValue(data.build().toByteString()).build();
+            var result = DocumentPayloadCheck.checkAssets(asset(root, url), candidate, url, validator(), LIMITS,
+                    () -> {}, nested -> asset(inner, nested), new DocumentSchemaOccurrences.Limits(3, 9, text));
+            assertThat(result.payload().occurrences()).hasSize(3);
+            for (int i = 0; i < 2; i++) {
+                var path = result.payload().occurrences().get(i + 1).path();
+                assertThat(path).hasSize(4);
+                assertThat(path.get(1)).isEqualTo(new DocumentSchemaOccurrences.Field(1));
+                assertThat(path.get(2)).isEqualTo(new DocumentSchemaOccurrences.MapKey(
+                        com.google.protobuf.Descriptors.FieldDescriptor.Type.STRING,
+                        order.get(i).getField(field.getMessageType().findFieldByNumber(1))));
+                assertThat(path.get(3)).isEqualTo(new DocumentSchemaOccurrences.Boundary(URL, digest(item.getValue()), inner.artifactSha256()));
+            }
+            assertThatThrownBy(() -> DocumentPayloadCheck.checkAssets(asset(root, url), candidate, url, validator(), LIMITS,
+                    () -> {}, nested -> asset(inner, nested), new DocumentSchemaOccurrences.Limits(3, 9, text - 1)))
+                    .hasMessageContaining("text limit exceeded");
+        }
     }
 
     @Test
