@@ -906,3 +906,16 @@ canonical identity and the exact byte digest together. It retains immutable
 metadata without asserting compiler authenticity or source retention. Its future
 payload consumer must compare the exact metadata type URL with the admitted URL.
 It is an internal preparation primitive, not a persisted revision reference.
+
+DocumentPayloadCheck.checkAssets now connects this binding to the existing bounded
+payload validator. Root metadata must agree with the host's exact URL policy;
+nested resolution must return metadata naming the exact requested URL. Successful
+preparation retains an immutable URL-to-asset map alongside the original payload
+and decoded value. Each URL is resolved once, while every occurrence is validated.
+This map does not replace occurrence-specific revision evidence or authenticate
+compiler claims. Publication, durable asset references and trusted host capture
+remain pending.
+The resolver supplies one schema version per exact URL for a check; resolving
+different versions at different occurrences needs the future path binding. The
+host must also bound aggregate descriptor and metadata memory returned by the
+resolver, separately from the existing payload and schema-graph limits.

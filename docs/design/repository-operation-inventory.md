@@ -3414,3 +3414,16 @@ verify bounds, patterns and exposed CEL metadata; cross-field rules require the
 runtime validator. OpenAPI rule translation is not established by this checkpoint.
 The new messages are not mounted RPCs. Trusted host capture, retained source
 assets, revision/occurrence binding and durable provenance storage remain pending.
+
+### Schema asset binding during payload preparation
+
+DocumentSchemaAssetBinding verifies parsed metadata and exact descriptor bytes,
+preserving the distinction between canonical schema identity and artifact digest.
+DocumentPayloadCheck.checkAssets uses the existing bounded validator and rejects
+root-policy or nested-resolution URL mismatches, including changed prefixes.
+The result retains immutable metadata bindings and the original payload bytes.
+All 106 engine tests and runtime dependency gates pass. Cases cover reordered
+descriptor artifacts, unknown metadata fields, compiler options, bounds,
+cancellation, repeated nested resolution, URL mismatches and invalid nested values.
+These are internal preparation APIs; durable revision references, compiler trust
+verification and per-occurrence binding remain incomplete.

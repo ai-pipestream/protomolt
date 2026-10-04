@@ -45,6 +45,43 @@ final class DocumentPayloadCheck {
     DynamicMessage decoded() { return decoded; }
     Map<String, DocumentSchemaBinding> resolvedSchemas() { return resolvedSchemas; }
 
+    /** In-memory evidence only; neither retention nor trusted compiler provenance is established. */
+    record AssetResult(DocumentPayloadCheck payload, Map<String, DocumentSchemaAssetBinding> assets) {
+        AssetResult { assets = Map.copyOf(assets); }
+    }
+
+    /**
+     * Checks values against structurally bound archival assets while preserving the
+     * host's independent URL policy. Every resolved asset must name the exact URL
+     * requested, including its prefix. The host still verifies provenance and access.
+     * One URL identifies one binding per check; the host accounts for aggregate
+     * descriptor and metadata memory returned by its resolver.
+     */
+    static AssetResult checkAssets(DocumentSchemaAssetBinding root, Any candidate, String acceptedTypeUrl,
+            ProtoValidator validator, Limits limits, Runnable control,
+            Function<String, DocumentSchemaAssetBinding> resolver) throws InvalidProtocolBufferException {
+        Objects.requireNonNull(root, "root");
+        Objects.requireNonNull(resolver, "resolver");
+        Objects.requireNonNull(control, "control");
+        active(control);
+        if (!root.metadata().getTypeUrl().equals(acceptedTypeUrl)) {
+            throw new IllegalArgumentException("schema asset type URL differs from host policy");
+        }
+        var assets = new LinkedHashMap<String, DocumentSchemaAssetBinding>();
+        assets.put(acceptedTypeUrl, root);
+        var payload = check(root.schema(), candidate, acceptedTypeUrl, validator, limits, control, url -> {
+            var asset = resolver.apply(url);
+            active(control);
+            if (asset == null) throw new IllegalArgumentException("unresolved Any schema asset: " + url);
+            if (!asset.metadata().getTypeUrl().equals(url)) {
+                throw new IllegalArgumentException("resolved schema asset type URL mismatch");
+            }
+            assets.put(url, asset);
+            return asset.schema();
+        });
+        return new AssetResult(payload, assets);
+    }
+
     /**
      * The caller supplies every required rule dialect and owns byte/decoded-memory
      * accounting. This verifies values under that validator, not policy completeness,

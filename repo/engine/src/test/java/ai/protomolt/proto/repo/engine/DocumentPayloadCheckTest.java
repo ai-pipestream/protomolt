@@ -32,6 +32,44 @@ class DocumentPayloadCheckTest {
     private static final DocumentPayloadCheck.Limits LIMITS = new DocumentPayloadCheck.Limits(1024, 100, 10, 100, 1000);
 
     @Test
+    void archivalAssetUrlsMustMatchRootPolicyAndEveryNestedResolution() throws Exception {
+        var wrapper = wrapper();
+        var inner = binding(choice("(this.left != '') != (this.right != '')"));
+        var payload = wrapped(wrapper, candidate(inner, "valid", ""), candidate(inner, "again", ""));
+        var rootAsset = asset(wrapper, payload.getTypeUrl());
+        var innerAsset = asset(inner, URL);
+        var resolutions = new java.util.concurrent.atomic.AtomicInteger();
+        var result = DocumentPayloadCheck.checkAssets(rootAsset, payload, payload.getTypeUrl(), validator(), LIMITS,
+                () -> {}, url -> { resolutions.incrementAndGet(); return innerAsset; });
+        assertThat(resolutions.get()).isEqualTo(1);
+        assertThat(result.assets()).containsExactlyInAnyOrderEntriesOf(java.util.Map.of(payload.getTypeUrl(), rootAsset, URL, innerAsset));
+        assertThat(result.payload().original()).isSameAs(payload);
+        assertThatThrownBy(() -> result.assets().clear()).isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> DocumentPayloadCheck.checkAssets(rootAsset, payload, "other/payload.Wrapper", validator(), LIMITS,
+                () -> {}, url -> innerAsset)).hasMessageContaining("differs from host policy");
+        assertThatThrownBy(() -> DocumentPayloadCheck.checkAssets(rootAsset, payload, payload.getTypeUrl(), validator(), LIMITS,
+                () -> {}, url -> asset(inner, "other/payload.Choice"))).hasMessageContaining("asset type URL mismatch");
+        assertThatThrownBy(() -> DocumentPayloadCheck.checkAssets(rootAsset, payload, payload.getTypeUrl(), validator(), LIMITS,
+                () -> {}, url -> null)).hasMessageContaining("unresolved Any schema asset");
+        var invalid = wrapped(wrapper, candidate(inner, "both", "filled"));
+        assertThatThrownBy(() -> DocumentPayloadCheck.checkAssets(rootAsset, invalid, invalid.getTypeUrl(), validator(), LIMITS,
+                () -> {}, url -> innerAsset)).isInstanceOf(ValidationResult.ValidationException.class);
+    }
+
+    private static DocumentSchemaAssetBinding asset(DocumentSchemaBinding schema, String url) {
+        var metadata = ai.protomolt.proto.repo.v1.RepositorySchemaAsset.newBuilder()
+                .setSchema(schema.condition()).setArtifactSha256(schema.artifactSha256()).setTypeUrl(url)
+                .setCompilation(ai.protomolt.proto.repo.v1.SchemaCompilationProvenance.newBuilder()
+                        .setOrigin(ai.protomolt.proto.repo.v1.SchemaCompilationOrigin.SCHEMA_COMPILATION_ORIGIN_IMPORTED_DESCRIPTOR)
+                        .setEvidence(ai.protomolt.proto.repo.v1.SchemaCompilerEvidence.SCHEMA_COMPILER_EVIDENCE_UNKNOWN)
+                        .setUnknownCompilerReason("Fixture producer did not report compiler")
+                        .setAdmissionRuntime(ai.protomolt.proto.repo.v1.SchemaToolIdentity.newBuilder().setName("test-runtime").setVersion("1")))
+                .build();
+        return DocumentSchemaAssetBinding.bind(metadata, schema.artifact(),
+                new ClosedDescriptorSet.Limits(4_000_000, 100, 1000, 100), () -> {});
+    }
+
+    @Test
     void validatesRealAnnotationsAgainstBoundRetainedSchema() throws Exception {
         var schema = binding(choice("(this.left != '') != (this.right != '')"));
         var original = candidate(schema, "correct", "");
