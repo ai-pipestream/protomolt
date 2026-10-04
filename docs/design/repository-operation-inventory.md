@@ -5260,3 +5260,30 @@ reads releases its reservations. A different operation with identical canonical
 bytes and a different owner generation are refused before provider reads. This
 adapter prepares the remaining facade wiring; it does not grant publication
 authority or mount a service.
+
+### Composed native publication preparation
+
+New internal `DocumentPublicationPreparation` connects upload staging, protected
+retained reads and owned candidate admission. It returns the candidate and the
+exact staged upload selections together. The upload coordinator transfers that
+owner only after its post-preparation fences succeed; rejection closes it. Request
+deadline/cancellation checks and upload worker failure checks both remain active
+while reading retained bytes and checking the candidate. Checked parser failures
+retain their identity across the synchronous callback, rather than being labeled
+as caller errors regardless of their source.
+
+The native commit integration suite now uses this composition for opaque and
+typed revisions, both retained-only and mixed with fresh uploads. An EMPTY slot
+shifts the full ordinals. Tests verify unchanged physical provider versions for
+reused bytes, new versions for uploads, atomic revision publication, exact
+idempotent replay and superseded reads. The larger retained-parts case still
+crosses the SQL batch boundary. A schema resolver failure during the composed
+flow leaves the previous revision current, produces no successful operation
+result and releases the shared serialized-byte reservations and source pins.
+
+This is a private library composition, not the mounted host operation. The host
+still owns authenticated placement and schema access, initial policy selection,
+reader incarnation, pin drain/release and recoverable cleanup handles. Transport
+error mapping must distinguish invalid candidate input from corrupt retained
+content before a public adapter is mounted. Schema staging and the native commit
+remain explicit after preparation; no protobuf fields or public RPCs change.

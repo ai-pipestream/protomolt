@@ -452,15 +452,29 @@ class DocumentPublicationCommitIT {
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans={false,true})
     void publishesNewRevisionWithRetainedCoreAndOptionalFreshParts(boolean mixed) throws Exception {
-        publishRetainedRevision(mixed,1);
+        publishRetainedRevision(mixed,1,false);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans={false,true})
+    void admitsTypedRetainedRevisionWithEmptySlotAndOptionalFreshParts(boolean mixed) throws Exception {
+        publishRetainedRevision(mixed,1,true);
     }
 
     @Test void projectsRetainedProvenanceAcrossSqlBatchBoundary() throws Exception {
-        publishRetainedRevision(false,40);
+        publishRetainedRevision(false,40,false);
     }
 
-    private static void publishRetainedRevision(boolean mixed,int chunks) throws Exception {
-        var first=fixture(1,chunks);
+    @Test void composedAdmissionFailureLeavesPriorRevisionAndReleasesOwnedBytes() throws Exception {
+        publishRetainedRevision(true,1,true,true);
+    }
+
+    private static void publishRetainedRevision(boolean mixed,int chunks,boolean typed) throws Exception {
+        publishRetainedRevision(mixed,chunks,typed,false);
+    }
+
+    private static void publishRetainedRevision(boolean mixed,int chunks,boolean typed,boolean rejectSchema) throws Exception {
+        var first=fixture(1,chunks,DocumentSecurity.getDefaultInstance(),"composed-"+UUID.randomUUID(),typed);
         var checked=stage(first);
         var original=publisher().commit(ADMIN,first.owner,first.prepared,checked.content,checked.selected,()->{});
         var revision=original.getMembers(0);
@@ -470,7 +484,6 @@ class DocumentPublicationCommitIT {
         var member=first.command.intent().getMembers(0).toBuilder();
         var condition=member.getDestination().toBuilder().clearIfAbsent().setExpectedMutationRevision(prior.mutationRevision).build();
         member.setDestination(condition);
-        var retainedBytes=new HashMap<DocumentUploadPayloads.Key,ByteString>();
         var freshBodies=new HashMap<DocumentUploadPayloads.Key,PartObject>();
         assertThat(member.getPartsCount()).isGreaterThan(1);
         for (int i=0;i<member.getPartsCount();i++) {
@@ -490,19 +503,63 @@ class DocumentPublicationCommitIT {
                     .setProviderVersion(part.providerVersion()).setSizeBytes(part.size()).setSha256(part.sha256()).setContentType(part.contentType());
             member.setParts(i,declaration.toBuilder().clearUpload().setReuse(PublicationReuse.newBuilder()
                     .setSource(condition).setSourceSlot(declaration.getSlot()).setObject(identity)));
-            var actual=opened.store().getBounded(bound.binding().namespace(),part.key(),part.providerVersion(),Math.toIntExact(part.size()));
-            assertThat(DocumentPartCodec.sha256Hex(actual.data())).isEqualTo(part.sha256());
-            retainedBytes.put(key,ByteString.copyFrom(actual.data()));
         }
+        // The empty slot changes full revision ordinals without adding a payload.
+        var parts=java.util.List.copyOf(member.getPartsList());
+        member.clearParts().addParts(DocumentPublicationPart.newBuilder().setSlot(DocumentPublicationSlot.newBuilder()
+                .setPart(DocumentPart.DOCUMENT_PART_BLOBS)).setEmpty(true)).addAllParts(parts);
+        var shiftedBodies=new HashMap<DocumentUploadPayloads.Key,PartObject>();
+        freshBodies.forEach((key,value)->shiftedBodies.put(new DocumentUploadPayloads.Key(key.member(),key.revisionOrdinal()+1),value));
         var command=new DocumentPublicationCommand(first.command.intent().toBuilder().setOperationId(UUID.randomUUID().toString()).setMembers(0,member).build());
         var placements=new HashMap<UUID,DocumentUploadPlan.Placement>();
         first.prepared.members().forEach(m -> placements.put(m.placement().drive().id(),m.placement()));
-        var owner=new RepositoryOperationLedger(tx).admit(new RepositoryOperationLedger.Key("account","principal",command.operationId()),command,UUID.randomUUID(),LEASE).owner().orElseThrow();
+        var owner=new RepositoryOperationLedger(tx).admit(new RepositoryOperationLedger.Key(command.intent().getAccountId(),"principal",command.operationId()),command,UUID.randomUUID(),LEASE).owner().orElseThrow();
         var prepared=DocumentOperationUploadAdmission.prepare(command,placements,mixed ? Map.of(member.getMemberId(),UUID.randomUUID()) : Map.of(),LEASE);
-        var next=new Fixture(command,owner,prepared,Map.copyOf(freshBodies));
-        var nextChecked=stage(next,Map.copyOf(retainedBytes));
-        assertThat(nextChecked.selected.size()).isEqualTo(mixed ? 1 : 0);
-        var result=publisher().commit(ADMIN,owner,prepared,nextChecked.content,nextChecked.selected,()->{});
+        var policy=ai.protomolt.proto.repo.admission.DocumentAdmissionPolicy.of(DocumentSchemaPolicy.newBuilder()
+                .setEncodingVersion(1).setAccountId(command.intent().getAccountId())
+                .setMode(typed ? DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_TYPED_REQUIRED
+                        : DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_OPAQUE_ALLOWED).setAnyResolvedSchema(true)
+                .setValidationProfile("protomolt-retained-schema-admission/v1")
+                .setLimits(DocumentSchemaPolicyLimits.newBuilder().setMaxFragments(100).setMaxFragmentBytes(4_000_000)
+                        .setMaxRoots(100).setMaxEvidenceBytes(4_000_000).setMaxBindings(20)
+                        .setMaxRetainedBytes(16_000_000).setMaxDecodedBytes(1_000_000)).build(),()->{});
+        var selectedPolicy=new DocumentSchemaPolicies(tx).activate(policy,0,()->{});
+        var readLedger=new DocumentReadLedger(tx,UUID.randomUUID());
+        var pins=readLedger.capture(new DocumentOperationUploadAdmission(tx,new DriveLedger(tx)),ADMIN,owner,prepared);
+        var sharedBudget=new PayloadBudget(8_000_000);
+        var schemaFailure=new IllegalStateException("Schema registry unavailable during composed admission");
+        DocumentPublicationResult result;
+        try (var reader=new ai.protomolt.proto.repo.engine.DocumentPartReader((generation,p)->opened.store(),4,1_000_000,sharedBudget);
+                var coordinator=new DocumentUploadCoordinator(tx,new DriveLedger(tx),sharedBudget,
+                        (generation,p)->new DocumentUploadCoordinator.Backend(profile.identity(),opened),4,Duration.ofMillis(25),
+                        new SqlTimeouts(Duration.ofSeconds(2),Duration.ofSeconds(5)));
+                var ready=new DocumentPublicationPreparation(coordinator,reader,sharedBudget).prepare(ADMIN,owner,prepared,
+                        Map.copyOf(shiftedBodies),Map.of(),pins,new DocumentPublicationPreparation.Admission(selectedPolicy,
+                                Map.of(member.getMemberId(),typed ? DocumentPublicationCandidate.Mode.TYPED : DocumentPublicationCandidate.Mode.OPAQUE),
+                                typed ? java.util.Optional.of(DocumentSchemaRetentionFixture.definition(Document.getDescriptor())) : java.util.Optional.empty(),
+                                (m,occurrence)->{
+                                    if (!typed) throw new AssertionError("Opaque admission must not resolve schemas");
+                                    if (rejectSchema) throw schemaFailure;
+                                    return DocumentSchemaRetentionFixture.definition(com.google.protobuf.StringValue.getDescriptor());
+                                },LIMITS),
+                        ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+            assertThat(ready.selections()).hasSize(mixed ? 1 : 0);
+            assertThat(sharedBudget.reservedBytes()).isPositive();
+            ready.candidate().schemas().stage(new RepositorySchemaArtifacts(tx),owner,()->{});
+            result=publisher().commit(ADMIN,owner,prepared,ready.candidate().opaque(),ready.selections(),ready.candidate().schemas(),()->{});
+            assertThat(rejectSchema).as("Schema failure must prevent publication").isFalse();
+        } catch (RuntimeException failure) {
+            if (!rejectSchema) throw failure;
+            assertThat(failure).isSameAs(schemaFailure);
+            assertThat(new DocumentLedger(tx).findByNodeId(node).orElseThrow().mutationRevision).isEqualTo(prior.mutationRevision);
+            assertThat(new DocumentPublicationReplay(tx).observe(ADMIN,command).result()).isEmpty();
+            return;
+        } finally {
+            pins.close();
+            assertThat(pins.awaitDrained(Duration.ofSeconds(5))).isTrue();
+            pins.release(); readLedger.fence(); readLedger.attestLocalQuiescence();
+            assertThat(sharedBudget.reservedBytes()).isZero();
+        }
         var current=new DocumentLedger(tx).findByNodeId(node).orElseThrow();
         assertThat(current.readManifest().getDocVersion()).isEqualTo(prior.readManifest().getDocVersion()+1);
         var priorCore=prior.readManifest().getPartsList().stream().filter(p -> p.getPart()==DocumentPart.DOCUMENT_PART_CORE).findFirst().orElseThrow();
