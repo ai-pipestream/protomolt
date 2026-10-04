@@ -5443,3 +5443,27 @@ remain responsible for competing sessions and hosts; the older internal owner-ba
 execution entry is not covered by the session lease. Durable session recovery,
 bounded session retention, qualified host placement, production mounting and
 transport conformance remain outstanding. No public contract changes.
+
+### Bounded publication session retention
+
+New internal `DocumentPublicationSessions` owns retry sessions by authenticated
+account, principal and operation ID, with exact canonical-command conflict checks.
+It enforces both a session-count limit and an aggregate estimate of retained
+canonical and intent serialization bytes. Those estimates do not claim to measure
+parsed Java heap. Payloads, resolvers and caller buffers are not retained.
+
+New operations first check for an authorized committed outcome without requiring
+current placement or a free session slot. Preparation reserves capacity under a
+short registry lock, then constructs the session outside it. A concurrent request
+for an entry still being prepared receives conflict. Failed preparation releases
+its reservation because no operation-admission SQL has run. Existing sessions
+keep their original placement and admission choices. Execution and all SQL/provider
+I/O run outside the registry lock.
+
+Exceptions retain the session and its capacity, including uncertain outcomes.
+Only an execution returning an authorized committed result marks the entry terminal, and eviction
+waits for every active invocation reference to leave. A full registry refuses new
+work without evicting uncertain identities; it still permits committed replay.
+This is an internal host component, not durable restart recovery. Explicit recovery
+and retirement of abandoned pending sessions remain necessary before production
+mounting; there is no expiry-based eviction or implicit takeover.

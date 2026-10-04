@@ -469,11 +469,19 @@ class DocumentPublicationCommitIT {
         publishRetainedRevision(true,1,true,true);
     }
 
+    @Test void boundedRegistryOwnsTypedPublicationAndRetiresItsCommittedSession() throws Exception {
+        publishRetainedRevision(true,1,true,false,true);
+    }
+
     private static void publishRetainedRevision(boolean mixed,int chunks,boolean typed) throws Exception {
         publishRetainedRevision(mixed,chunks,typed,false);
     }
 
     private static void publishRetainedRevision(boolean mixed,int chunks,boolean typed,boolean rejectSchema) throws Exception {
+        publishRetainedRevision(mixed,chunks,typed,rejectSchema,false);
+    }
+
+    private static void publishRetainedRevision(boolean mixed,int chunks,boolean typed,boolean rejectSchema,boolean registryOwns) throws Exception {
         var first=fixture(1,chunks,DocumentSecurity.getDefaultInstance(),"composed-"+UUID.randomUUID(),typed);
         var checked=stage(first);
         var original=publisher().commit(ADMIN,first.owner,first.prepared,checked.content,checked.selected,()->{});
@@ -533,8 +541,25 @@ class DocumentPublicationCommitIT {
                         (generation,p)->new DocumentUploadCoordinator.Backend(profile.identity(),opened),4,Duration.ofMillis(25),
                         new SqlTimeouts(Duration.ofSeconds(2),Duration.ofSeconds(5)))) {
             var execution=new DocumentPublicationExecution(tx,new DriveLedger(tx),readLedger,coordinator,reader,sharedBudget,LIMITS,mixed);
-            session.admit(ADMIN,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE).orElseThrow();
+            long commandBytes=(long)command.canonical().size()+command.intent().getSerializedSize();
+            var sessions=new DocumentPublicationSessions(tx,execution,LEASE,1,commandBytes*2);
+            var tooSmall=new DocumentPublicationSessions(tx,execution,LEASE,10,commandBytes-1);
+            assertThatThrownBy(()->tooSmall.execute(ADMIN,command,placements,Map.of(),Map.of(),Map.of(),java.util.Optional.empty(),
+                    (m,occurrence)->{ throw new AssertionError("Command byte cap must precede provider work"); },
+                    ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            failure->assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED));
+            assertThat(tooSmall.retainedCommandBytes()).isZero();
+            assertThat(tooSmall.retainedSessions()).isZero();
             var contender=new DocumentPublicationSession(tx,ADMIN,command,placements,LEASE);
+            // Failed preparation has not admitted SQL and must return its reserved slot.
+            assertThatThrownBy(()->sessions.execute(ADMIN,command,Map.of(),Map.of(),Map.of(),Map.of(),java.util.Optional.empty(),
+                    (m,occurrence)->{ throw new AssertionError("Invalid placement must not resolve schemas"); },
+                    ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isInstanceOf(IllegalArgumentException.class);
+            assertThat(sessions.retainedSessions()).isZero();
+            assertThat(sessions.retainedCommandBytes()).isZero();
+            if (!registryOwns) {
+            session.admit(ADMIN,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE).orElseThrow();
             assertThatThrownBy(()->execution.execute(ADMIN,contender,Map.of(),Map.of(),
                     Map.of(member.getMemberId(),typed ? DocumentPublicationCandidate.Mode.TYPED : DocumentPublicationCandidate.Mode.OPAQUE),
                     java.util.Optional.empty(),(m,occurrence)->{ throw new AssertionError("Unowned operation must not resolve schemas"); },
@@ -543,19 +568,91 @@ class DocumentPublicationCommitIT {
                             failure->assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.CONFLICT));
             assertThat(readLedger.outstandingReads()).isZero();
             assertThat(sharedBudget.reservedBytes()).isZero();
-            result=execution.execute(ADMIN,session,Map.copyOf(shiftedBodies),Map.of(),
+            assertThatThrownBy(()->sessions.execute(ADMIN,command,placements,Map.of(),Map.of(),
                     Map.of(member.getMemberId(),typed ? DocumentPublicationCandidate.Mode.TYPED : DocumentPublicationCandidate.Mode.OPAQUE),
-                    typed ? java.util.Optional.of(DocumentSchemaRetentionFixture.definition(Document.getDescriptor())) : java.util.Optional.empty(),
-                    (m,occurrence)->{
+                    java.util.Optional.empty(),(m,occurrence)->{ throw new AssertionError("Unowned registry session must not resolve schemas"); },
+                    ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            failure->assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.CONFLICT));
+            assertThat(sessions.retainedSessions()).isEqualTo(1);
+            assertThat(sessions.retainedCommandBytes()).isEqualTo(commandBytes);
+            var changed=new DocumentPublicationCommand(command.intent().toBuilder().setMembers(0,command.intent().getMembers(0).toBuilder()
+                    .putMetadata("changed","true")).build());
+            assertThatThrownBy(()->sessions.execute(ADMIN,changed,Map.of(),Map.of(),Map.of(),Map.of(),java.util.Optional.empty(),
+                    (m,occurrence)->{ throw new AssertionError("Conflicting command must not resolve schemas"); },
+                    ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).hasMessageContaining("command changed");
+            var wrongAccount=new RepositoryCaller("principal",false,java.util.Set.of("another-account"),java.util.Set.of());
+            assertThatThrownBy(()->sessions.execute(wrongAccount,changed,Map.of(),Map.of(),Map.of(),Map.of(),java.util.Optional.empty(),
+                    (m,occurrence)->{ throw new AssertionError("Unauthorized lookup must not resolve schemas"); },
+                    ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            failure->assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.NOT_FOUND));
+            assertThat(sessions.retainedCommandBytes()).isEqualTo(commandBytes);
+            var other=new DocumentPublicationCommand(command.intent().toBuilder().setOperationId(UUID.randomUUID().toString()).build());
+            assertThatThrownBy(()->sessions.execute(ADMIN,other,placements,Map.of(),Map.of(),Map.of(),java.util.Optional.empty(),
+                    (m,occurrence)->{ throw new AssertionError("Full registry must not resolve schemas"); },
+                    ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            failure->assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED));
+            assertThat(new RepositoryOperationLedger(tx).find(new RepositoryOperationLedger.Key(
+                    other.intent().getAccountId(),"principal",other.operationId()))).isEmpty();
+            }
+            var modes=Map.of(member.getMemberId(),typed ? DocumentPublicationCandidate.Mode.TYPED : DocumentPublicationCandidate.Mode.OPAQUE);
+            var container=typed ? java.util.Optional.of(DocumentSchemaRetentionFixture.definition(Document.getDescriptor()))
+                    : java.util.Optional.<ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition>empty();
+            var nested=new java.util.concurrent.atomic.AtomicBoolean();
+            DocumentPublicationCandidate.Resolver resolver=(m,occurrence)->{
                         if (!typed) throw new AssertionError("Opaque admission must not resolve schemas");
                         if (rejectSchema) throw schemaFailure;
+                        if (registryOwns && nested.compareAndSet(false,true)) {
+                            // A second invocation borrows this entry while the first still owns execution.
+                            assertThatThrownBy(()->sessions.execute(ADMIN,command,Map.of(),Map.of(),Map.of(),modes,container,
+                                    (ignored,selection)->{ throw new AssertionError("Overlapping execution must not resolve schemas"); },
+                                    ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                                            failure->assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.CONFLICT));
+                            assertThat(sessions.retainedSessions()).isEqualTo(1);
+                            assertThat(sessions.retainedCommandBytes()).isEqualTo(commandBytes);
+                        }
                         return DocumentSchemaRetentionFixture.definition(com.google.protobuf.StringValue.getDescriptor());
-                    },ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+                    };
+            result=registryOwns ? sessions.execute(ADMIN,command,placements,Map.copyOf(shiftedBodies),Map.of(),modes,container,resolver,
+                    ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)
+                    : execution.execute(ADMIN,session,Map.copyOf(shiftedBodies),Map.of(),modes,container,resolver,
+                    ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
             assertThat(rejectSchema).as("Schema failure must prevent publication").isFalse();
+            if (registryOwns) {
+                assertThat(nested).isTrue();
+                assertThat(sessions.retainedSessions()).isZero();
+                assertThat(sessions.retainedCommandBytes()).isZero();
+            }
             assertThat(sharedBudget.reservedBytes()).isZero();
             assertThat(readLedger.outstandingReads()).isEqualTo(1); // cleanup remains owned after commit
             reader.close(); coordinator.close();
+            assertThat(sessions.execute(ADMIN,command,Map.of(),Map.of(),Map.of(),Map.of(),java.util.Optional.empty(),
+                    (m,occurrence)->{ throw new AssertionError("Registry replay must not resolve schemas"); },
+                    ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isEqualTo(result);
+            assertThat(sessions.retainedSessions()).isZero();
+            assertThat(sessions.retainedCommandBytes()).isZero();
+            // A terminal entry has been evicted: replay still needs no original placement.
+            assertThat(sessions.execute(ADMIN,command,Map.of(),Map.of(),Map.of(),Map.of(),java.util.Optional.empty(),
+                    (m,occurrence)->{ throw new AssertionError("Evicted replay must not resolve schemas"); },
+                    ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isEqualTo(result);
+            assertThat(sessions.retainedSessions()).isZero();
             // Exact authorized replay works with stopped providers and no payload/schema inputs.
+            var pending=new DocumentPublicationCommand(command.intent().toBuilder().setOperationId(UUID.randomUUID().toString()).build());
+            new DocumentPublicationSession(tx,ADMIN,pending,placements,LEASE)
+                    .admit(ADMIN,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE).orElseThrow();
+            assertThatThrownBy(()->sessions.execute(ADMIN,pending,placements,Map.of(),Map.of(),modes,java.util.Optional.empty(),
+                    (m,occurrence)->{ throw new AssertionError("Pending contender must not resolve schemas"); },
+                    ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            failure->assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.CONFLICT));
+            assertThat(sessions.retainedSessions()).isEqualTo(1);
+            assertThat(sessions.execute(ADMIN,command,Map.of(),Map.of(),Map.of(),Map.of(),java.util.Optional.empty(),
+                    (m,occurrence)->{ throw new AssertionError("Full capacity must not block committed replay"); },
+                    ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isEqualTo(result);
+            assertThat(sessions.retainedSessions()).isEqualTo(1);
             assertThat(execution.execute(ADMIN,session,Map.of(),Map.of(),Map.of(),java.util.Optional.empty(),
                     (m,occurrence)->{ throw new AssertionError("Committed replay must not resolve schemas"); },
                     ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isEqualTo(result);
