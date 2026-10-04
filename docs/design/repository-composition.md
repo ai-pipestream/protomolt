@@ -2282,6 +2282,38 @@ attempt; it cannot infer which of several definitions the producer intended.
 Ambiguity is an explicit outcome, never a mutable-latest or simple-name guess.
 Existing occurrence projection and URL-keyed asset maps must change together.
 
+Before policy activation reaches public callers, close the initial-activation
+race across every body-publication path. The current-policy row cannot protect
+an account that has no policy yet: there is no row to lock. There is also no
+guaranteed account row in this ledger, and optional drive/document rows cannot
+stand in for one. Use an account-scoped transaction advisory fence: publications
+take a shared lock, and first activation takes an exclusive lock. Keep its
+two-integer namespace separate from the existing document advisory key space;
+hash collisions may delay unrelated accounts but must never grant access or
+substitute account identity. All authorization and policy lookups still compare
+the exact account string.
+
+The native publisher acquires this fence after operation ownership and before
+policy, document, drive and part locks. It then checks the selected policy
+revision and canonical body. Ordinary publications can share the account lock.
+Activation must acquire its exclusive fence before pointer or document locks;
+it does not acquire document locks. Do not introduce the reverse order by
+acquiring the exclusive fence in a pointer UPDATE trigger after PostgreSQL has
+already locked that row. Existing-pointer changes additionally serialize through
+the pointer row lock. Exercise both race directions with actual blocked backend
+observations, including another account that continues to publish.
+
+Enforce the publication boundary in SQL as well as the early Java check.
+`document_revision_publications` receives both native and legacy revisions;
+guarding only `document_revision_commits` misses legacy writers. A rejected
+legacy projection must roll back its document mutation. Until a path can supply
+the complete selected policy and proof binding, it must reject publication under
+configured policy. This also applies to an opaque-permitted policy: an opaque
+decision still needs an explicit policy binding, not an unexamined legacy write.
+Bookkeeping changes that do not publish a body need a separate, documented
+classification. This is an integration requirement, not behavior supplied by
+the V58 catalog alone.
+
 Expose two materialization modes, independently of admission policy:
 
 - **Preserve:** return the exact archived fragment or its authorized claim-check

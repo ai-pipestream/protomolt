@@ -4468,3 +4468,50 @@ update rejects a waiting stale writer. The blocker assertion accepts either
 initial MultiXact holder, then verifies the remaining holder after one releases.
 Sol reviewed code and tests with no blocker. Admission and engine runtime
 dependency gates pass. Publication-path integration remains required.
+
+### Complete-command schema preparation and staging
+
+`DocumentSchemaBatch.prepare` is a new internal operation. It checks the complete
+command against one selected account policy before staging: each supplied proof
+must name the exact canonical command digest and full member, and must pass the
+policy's independent proof checks. Required members cannot omit a proof. An
+explicit null proof is an error even when opaque admission is permitted; unknown
+member identifiers are rejected. An absent proof is allowed only as an explicit
+opaque decision under policy, not as recovery from typed validation failure.
+
+The immutable batch preserves each accepted proof and deduplicates their complete
+artifact union. Operation bounds are 4096 roots, 64 MiB of encoded root evidence,
+64 distinct artifacts and 64 MiB of unique artifact bytes. All checks happen
+before staging. The new command-bound `RepositorySchemaArtifacts.stage` overload
+checks account/operation scope, then fences ownership and compares the durable
+command bytes and digest inside the staging transaction. Its generic byte-staging
+overload remains unchanged. Cancellation or a failed command check rolls back
+artifact rows and claims. A semantic command digest excludes operation ID, so it
+cannot substitute for operation scope or owner-token checks.
+
+The batch provides internal policy and artifact lock helpers for the forthcoming
+publication integration. Artifact checks require current-generation claims and
+lock immutable catalog and claim rows in digest order without fetching byte
+payloads. These helpers are not yet called by the native publisher. Their
+integration tests, aggregate admission boundary fixtures and all-path policy
+enforcement remain outstanding; SQL staging limits already have separate tests.
+Staging does not authorize document access or expose a revision. A policy change
+after staging may leave retained staged claims, but must prevent stale publication.
+
+The initial-policy absence race was also reviewed: use an account-scoped shared
+publication fence and exclusive first-activation fence. Existing-pointer updates
+serialize through the pointer row. Acquire exclusive advisory locks before row
+locks, not in a pointer UPDATE trigger after its row lock; that reverse order
+would deadlock with a native writer. The design records the legacy projection
+boundary and the required real concurrency tests. This fence is not implemented
+by this checkpoint and the catalog remains internal.
+
+Qualification: 39 tests pass across `DocumentSchemaBatchTest` (6),
+`DocumentSchemaCommandStagingIT` (4), `RepositorySchemaArtifactsIT` (22) and
+`RepositoryOperationRecoveryFenceIT` (7). The preparation tests use real admission
+proofs and cover independent command/member/policy mismatches, account mismatch,
+proof-map snapshot behavior, cancellation and shared artifacts. PostgreSQL tests
+cover exact command staging, no publication from staging, altered commands,
+operation/token mismatch and rollback after artifact insertion. Sol reviewed the
+implementation, fixtures and lock-order design with no remaining blocker for
+this checkpoint. No protobuf contract or public entry point changed.

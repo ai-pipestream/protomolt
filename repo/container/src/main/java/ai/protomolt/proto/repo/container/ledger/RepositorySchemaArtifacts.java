@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.container.ledger;
 
 import com.google.protobuf.ByteString;
+import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -24,6 +25,20 @@ final class RepositorySchemaArtifacts {
      * Lowercase fixed-length hex order matches PostgreSQL BYTEA hash order.
      */
     List<String> stage(RepositoryOperationLedger.Owner owner, List<ByteString> artifacts, Runnable control) {
+        return stage(owner, artifacts, control, em -> {});
+    }
+
+    /** Publication staging additionally binds the exact durable command in the staging transaction. */
+    List<String> stage(RepositoryOperationLedger.Owner owner, DocumentPublicationCommand command,
+            List<ByteString> artifacts, Runnable control) {
+        Objects.requireNonNull(command);
+        if (!owner.key().account().equals(command.intent().getAccountId()) || !owner.key().operationId().equals(command.operationId()))
+            throw new IllegalArgumentException("Schema staging command differs from owner scope");
+        return stage(owner, artifacts, control, em -> RepositoryOperationLedger.requireCommand(em, owner.key(), command));
+    }
+
+    private List<String> stage(RepositoryOperationLedger.Owner owner, List<ByteString> artifacts, Runnable control,
+            java.util.function.Consumer<jakarta.persistence.EntityManager> commandCheck) {
         Objects.requireNonNull(owner); Objects.requireNonNull(artifacts); Objects.requireNonNull(control);
         active(control);
         if (artifacts.isEmpty() || artifacts.size() > MAX_ARTIFACTS) {
@@ -49,6 +64,7 @@ final class RepositorySchemaArtifacts {
         var identities = List.copyOf(sorted.keySet());
         tx.inTransaction(em -> {
             RepositoryOperationLedger.fenceLiveOwner(em, owner);
+            commandCheck.accept(em);
             for (var entry : sorted.entrySet()) {
                 active(control);
                 em.createNativeQuery("""

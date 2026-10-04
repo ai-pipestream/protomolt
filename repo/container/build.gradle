@@ -2,6 +2,7 @@ description = 'Claim-check part storage and Postgres ledger over the provider-ne
 
 dependencies {
     implementation project(':protomolt-repo-admission')
+    testImplementation project(':protomolt-descriptors')
     api project(':protomolt-repo-codec')
     api project(':protomolt-repo-blob-spi')
     testImplementation project(':protomolt-repo-blob-s3')
