@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -103,6 +104,63 @@ class DocumentAttemptBatchAdmissionIT {
         } finally {
             tx.inTransaction(em -> { em.createNativeQuery("DROP FUNCTION fail_test_admission_batch() CASCADE").executeUpdate(); });
         }
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void twoAdmissionsShareOuterCommitOrRollback(boolean rollback) {
+        var first = plan(2, 1);
+        var second = plan(3, 1);
+        var preparedFirst = DocumentPartAttemptLedger.prepareAdmission(first, LEASE);
+        var preparedSecond = DocumentPartAttemptLedger.prepareAdmission(second, LEASE);
+        var statistics = database.entityManagerFactory().unwrap(org.hibernate.SessionFactory.class).getStatistics();
+        statistics.setStatisticsEnabled(true);
+        statistics.clear();
+        try {
+            Runnable work = () -> tx.inTransaction(em -> {
+                DocumentPartAttemptLedger.beginInTransaction(em, preparedFirst);
+                DocumentPartAttemptLedger.beginInTransaction(em, preparedSecond);
+                if (rollback) throw new IllegalStateException("cancel before admission commit");
+            });
+            if (rollback) assertThatThrownBy(work::run).hasMessage("cancel before admission commit");
+            else work.run();
+            assertThat(statistics.getTransactionCount()).isEqualTo(1);
+        } finally { statistics.setStatisticsEnabled(false); }
+        for (var plan : java.util.List.of(first, second)) {
+            assertThat(new DocumentPartAttemptLedger(tx).find(plan.attemptId()).isPresent()).isEqualTo(!rollback);
+            assertThat(count("document_part_attempt_objects", "attempt_id", plan.attemptId()))
+                    .isEqualTo(rollback ? 0 : plan.objects().size());
+            assertThat(count("document_part_attempt_sources", "attempt_id", plan.attemptId()))
+                    .isEqualTo(rollback ? 0 : plan.sources().size());
+            assertThat(count("document_part_key_reservations", "attempt_id", plan.attemptId()))
+                    .isEqualTo(rollback ? 0 : plan.objects().size());
+            assertThat(count("repository_physical_locations", "source_id", plan.attemptId()))
+                    .isEqualTo(rollback ? 0 : plan.objects().size());
+        }
+    }
+
+    @Test void caughtAdmissionFailureCannotCommitEarlierMember() {
+        var first = plan(2, 1);
+        var original = plan(1, 0);
+        var missing = new DocumentPartAttemptLedger.Plan(original.attemptId(),
+                new DocumentPartAttemptLedger.Location(original.location().nodeId(), "account", "missing-profile", "container"),
+                original.sampledRevision(), original.sources(), original.objects());
+        var preparedFirst = DocumentPartAttemptLedger.prepareAdmission(first, LEASE);
+        var preparedMissing = DocumentPartAttemptLedger.prepareAdmission(missing, LEASE);
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            DocumentPartAttemptLedger.beginInTransaction(em, preparedFirst);
+            assertThatThrownBy(() -> DocumentPartAttemptLedger.beginInTransaction(em, preparedMissing))
+                    .hasMessage("Original backend generation is not registered");
+            return "must not report committed";
+        })).isInstanceOf(jakarta.persistence.RollbackException.class);
+        assertThat(new DocumentPartAttemptLedger(tx).find(first.attemptId())).isEmpty();
+        assertThat(count("repository_physical_locations", "source_id", first.attemptId())).isZero();
+        assertThat(count("document_part_key_reservations", "attempt_id", first.attemptId())).isZero();
+    }
+
+    @Test void participantRequiresAnActiveTransaction() {
+        var prepared = DocumentPartAttemptLedger.prepareAdmission(plan(1, 0), LEASE);
+        assertThatThrownBy(() -> tx.readOnly(em -> DocumentPartAttemptLedger.beginInTransaction(em, prepared)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("active writable transaction");
     }
 
     private static long count(String table, String column, UUID id) {

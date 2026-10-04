@@ -1558,3 +1558,51 @@ admission cases and 52 real PostgreSQL atomic publication cases passed, with no
 skips, failures or errors (28-second Gradle run). Sol reviewed the mapper, tests
 and inventory without a blocking finding. No hosted CI, push, deployment or
 end-to-end performance qualification is claimed for this checkpoint.
+
+### Composable attempt admission and remaining owner-fence boundary
+
+Existing full-revision attempt admission is extended internally to participate
+in a caller-owned transaction. `prepareAdmission` binds the immutable plan,
+lease and encoded batches before acquiring database locks; callers cannot pair
+encoded inputs with a different plan. `beginInTransaction` neither starts nor
+commits a transaction. Its returned attempt is provisional until the outer
+commit, and any participant failure marks the transaction rollback-only. The
+existing `begin` method uses this same implementation and retains its statement
+budget of five fixed calls plus one per object/source batch.
+
+This enables one coordinator transaction to admit multiple members and their
+key reservations and physical-location rows together. It does not enable
+NEW_CONTENT plans, validate a publication command, enforce current policy or
+establish an operation-owner fence. Existing exactly-one-uploaded-CORE admission
+semantics remain intact.
+
+The next owner-bound admission change must resolve these database boundaries:
+
+- Persist immutable operation/account/principal/member/generation binding and
+  exact command-derived scope with admission. Store compact upload ordinals and
+  original revision ordinals separately. NEW_CONTENT permits zero or one uploaded
+  CORE; its complete revision still requires CORE. Zero-upload members have no
+  attempt. Preserve legacy sealing and all V23/V25 key/catalogue guards.
+- Acquire operation ownership before attempt/domain locks in admission, renew,
+  verification, publication and recovery paths. Adding an owner-lock query to a
+  row trigger is insufficient: the triggering statement may already hold a
+  target-row lock. Direct SQL mutation must not bypass the ordered fence. Assess
+  restricted-role ordered routines or an equivalent enforceable boundary before
+  enabling NEW_CONTENT; do not rely on callers following a comment.
+- Legacy V22 publication requires a complete manifest with uploaded CORE. Both
+  Java and SQL entry points must reject NEW_CONTENT until full revision/slot
+  ownership can combine verified new bytes with retained references. V24 cleanup
+  must reclaim abandoned new-content uploads while respecting that ownership.
+- Prove takeover races and direct-SQL rejection, including verification, renewal
+  and cleanup; measure contention under bounded timeouts. Passing single-writer
+  fixtures is insufficient evidence for this owner-bound path.
+
+Sol reviewed this admission extraction and the remaining lock-order assessment.
+These are implementation prerequisites, not completed owner-bound behavior.
+
+Local validation on 2026-10-04: all ten admission cases passed, including the
+four new transaction-participation cases. The broader container `*Document*`
+regression completed in 55 seconds: 25 suites, 231 cases, 230 passed, one skipped
+and no failures/errors. The existing statement-count assertions passed through
+10,000 objects and sources. These counts are not production latency evidence.
+No push, hosted CI, merge or deployment is claimed.

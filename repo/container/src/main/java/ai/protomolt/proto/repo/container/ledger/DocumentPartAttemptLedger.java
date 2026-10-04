@@ -91,10 +91,44 @@ public final class DocumentPartAttemptLedger {
 
     /** Reserve the complete immutable plan in one transaction before any PUT/COPY. */
     public Attempt begin(Plan plan, Duration lease) {
+        var prepared = prepareAdmission(plan, lease);
+        return tx.inTransaction(em -> { return beginInTransaction(em, prepared); });
+    }
+
+    /** Encoded inputs cannot be paired with a different plan after preparation. */
+    static final class PreparedAdmission {
+        private final Plan plan;
+        private final Duration lease;
+        private final DocumentAttemptPlanEncoding encoded;
+
+        private PreparedAdmission(Plan plan, Duration lease) {
+            this.plan = plan;
+            this.lease = lease;
+            this.encoded = DocumentAttemptPlanEncoding.prepare(plan);
+        }
+    }
+
+    /** Prepare all JSON before taking coordinator or domain locks. */
+    static PreparedAdmission prepareAdmission(Plan plan, Duration lease) {
         Objects.requireNonNull(plan, "plan");
         requireLease(lease);
-        var encoded = DocumentAttemptPlanEncoding.prepare(plan);
-        return tx.inTransaction(em -> {
+        return new PreparedAdmission(plan, lease);
+    }
+
+    /**
+     * Participate in the caller's transaction without committing. The result is
+     * provisional until that transaction commits; provider I/O must wait for it.
+     * This preserves FULL_REVISION semantics and does not bind an operation owner.
+     */
+    static Attempt beginInTransaction(EntityManager em, PreparedAdmission prepared) {
+        Objects.requireNonNull(em, "em");
+        if (!em.getTransaction().isActive() || em.getTransaction().getRollbackOnly())
+            throw new IllegalStateException("Admission requires an active writable transaction");
+        try {
+            Objects.requireNonNull(prepared, "prepared");
+            var plan = prepared.plan;
+            var lease = prepared.lease;
+            var encoded = prepared.encoded;
             var location = plan.location();
             List<?> realms = em.createNativeQuery("SELECT storage_realm FROM managed_backend_profiles WHERE generation=:generation")
                     .setParameter("generation", location.backendGeneration()).getResultList();
@@ -133,7 +167,13 @@ public final class DocumentPartAttemptLedger {
             }
             em.createNativeQuery("UPDATE document_part_attempts SET state='STAGING' WHERE attempt_id=:id").setParameter("id", id).executeUpdate();
             return read(em, id, true).orElseThrow();
-        });
+        } catch (RuntimeException | Error failure) {
+            try { em.getTransaction().setRollbackOnly(); }
+            catch (RuntimeException markingFailure) {
+                if (markingFailure != failure) failure.addSuppressed(markingFailure);
+            }
+            throw failure;
+        }
     }
 
     public Optional<Attempt> find(UUID id) {
