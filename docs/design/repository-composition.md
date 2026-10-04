@@ -302,6 +302,45 @@ nor `source_owner` establishes account membership. The existing two-argument
 `RepositoryCaller` constructor supplies no account or ACL bindings. An operator
 retains explicit process authority, distinct from ordinary account membership.
 
+Credential integration requirement: externally exposed clients authenticate, and
+the host binds effective account and ACL grants to that authenticated call. An API
+key identifies the principal and its permitted scope; it does not make a requested
+account ID authoritative. Credential-specific restrictions must survive resolution
+even when several keys identify the same principal. Creation must check an explicit
+creation grant and establish ownership from the authorized context. Existing
+ownership and ACLs govern updates; another account ID in a request cannot transfer
+ownership. Source-owner metadata remains provenance, not the authenticated creator.
+
+Resolve a stable effective repository grant at the transport edge: permitted
+operations, account IDs, typed ACL identities and key-specific limits. Preserve
+that grant or its trusted identity before discarding credential context. The
+current actions `Caller` loses key identity, so a later principal-only binding
+cannot distinguish two keys with different grants. Method scopes alone do not
+establish repository permissions. Never pass raw keys into repository or provider
+modules.
+
+Current host gap, audited at `87331b50`: `RepoServices` constructs the default
+two-argument document caller binding. Standalone and module Netty startup supply
+the optional operator token with no caller resolver. `ApiTokenServerInterceptor`
+maps that token to process authority; an open listener's absent caller context also
+defaults to operator. HTTP upload checks one optional token and invokes ingestion
+as `http-upload` with process authority. These paths do not implement per-client
+credential-to-account ownership. Scoped repository tests use injected trusted
+bindings and are not proof of production credential wiring.
+
+Before client-key exposure, wire a host-controlled credential binding through the
+actual gRPC/HTTP entry points and test two keys with different account grants,
+missing/revoked credentials, forged account IDs and attempted authority escalation.
+Require an authenticated operator credential for externally exposed raw HTTP
+upload until a scoped upload boundary is implemented. The current tokenless
+listener grants operator authority without authenticating an operator. Missing
+authentication on externally exposed endpoints must fail
+closed; trusted in-process library calls receive their caller from the host.
+Delegated agents retain the initiating caller's effective scope instead of gaining
+coordinator authority. Feed and connector credentials likewise need explicit
+datasource/account grants. All adapters must use the shared repository checks;
+credential storage does not belong in the byte SPI or provider modules.
+
 ACL matching requires both identity type and value, compared without case; account
 IDs remain case-sensitive. Principal and group grants use the same typed identity
 matching. A public rule requires both type and identity to be `public`, and cannot

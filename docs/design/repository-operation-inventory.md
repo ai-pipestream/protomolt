@@ -2337,3 +2337,65 @@ Final local validation: container and service suites passed in 2m18s, covering
 109 suites and 983 cases: 980 passed, 3 skipped, no failures/errors. Sol reviewed
 the final SQL, Java batching, lock order, rollback tests and documentation with no
 remaining blocker. No hosted CI, push, merge or deployment was performed.
+
+### Provider transfer extraction and selected-attempt adapter evidence
+
+Extended internal composition, no public contract change. `DocumentPartTransfer`
+now owns the admitted single-part PUT and bounded read-back comparison shared by
+future selected execution and the existing full-revision stager. It checks content
+size, SHA-256, content type, provider version and ETag before returning evidence.
+It accepts an individual planned part without manufacturing a legacy full plan.
+The full stager retains admission, private payload copies, byte reservations,
+worker limits, lease renewal, SQL verification and resource draining. Original
+exceptions remain the cause of phase-specific staging failures. Read-back bytes
+are hashed once rather than again when recording the already matched identity.
+
+`DocumentSelectedTransferIT` explicitly composes the transfer with the selected SQL
+lifecycle against PostgreSQL and the real versioned S3 adapter in LocalStack.
+It transfers one non-CORE part of a command that also declares an uploaded CORE,
+leaving the attempt STAGING. This does not yet prove a complete uploaded subset
+with a retained CORE. Other cases hold an actual PUT acknowledgment across a
+selection replacement, lose acknowledgment after the real PUT, and delay PUT
+until after a cleanup ABSENT observation. Stale completions cannot be verified;
+exact-key recovery uses the retained backend and reclaims late versions on a
+subsequent pass. The tests do not fabricate successful provider observations.
+
+The operation-wide provider coordinator remains unimplemented: it must share byte
+and concurrency limits across all members/backends, batch its heartbeat, flush
+observations by count and maximum age, and drain started calls before releasing
+borrowed handles. No SQL transaction may span provider I/O. These tests qualify
+specific transfer/recovery cases, not a public pipeline or end-to-end latency.
+
+Local container and service suites passed in 2m17s: 110 suites, 987 cases,
+984 passed and 3 skipped, with no failures or errors. Sol reviewed the transfer
+extraction and adapter evidence with no remaining blocker. No hosted CI, push,
+merge or deployment was performed.
+
+### Credential-to-ownership integration gap
+
+New required host integration; existing shared ownership checks remain unchanged.
+At `87331b50`, `RepoServices` uses `DocumentGrpcService`'s default caller binding,
+which copies principal and process authority but supplies no account/ACL identities.
+`RepoServiceMain` and `RepoServiceModule` pass the optional operator token and no
+resolver to Netty startup. The interceptor maps that token to `Caller.operator()`;
+without interception, `CallerContexts.current()` also defaults to operator.
+`UploadHttpServer` checks one optional token, then uses the hardcoded
+`http-upload` process caller. The lower-level actions caller and credential
+resolvers do not carry repository account membership.
+
+Consequently an operator token must not be described as automatic per-client
+ownership. Scoped caller behavior is proven through injected bindings, including
+`RepoServiceIT`'s policy server, but production credential mapping is still absent.
+The host must bind each credential's effective account/ACL grants, preserve that
+scope through delegation and transport adapters, and reject caller-supplied
+ownership outside it. Required acceptance uses the actual host wiring with two
+keys, forged account IDs, missing/revoked keys and attempted operator escalation.
+Scoped creation needs an explicit creation grant. Resolve repository operation
+capabilities, account IDs, typed ACL identities and key-specific limits at the
+transport edge, preserving an effective grant or grant identity. Current actions
+`Caller` resolution discards key identity; principal-only binding cannot recover
+key-specific restrictions, and its method scopes are not repository account grants.
+Require authenticated operator credentials for externally exposed HTTP raw upload
+until its scoped contract exists; today's optional token does not guarantee this.
+Keep raw keys outside repository and provider modules. See the composition design's trusted-caller
+section; do not place credential storage in the byte SPI or provider modules.

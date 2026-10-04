@@ -176,30 +176,16 @@ final class DocumentPartStager implements AutoCloseable {
         try {
             check.run();
             attempts.renew(owner.id(), owner.token(), lease);
-            phase = "PUT";
-            check.run();
-            var put = store.put(new BlobStore.PutSpec(owner.location().namespace(), expected.objectKey(),
-                    expected.contentType(), attributes, expected.sha256()), body);
-            check.run();
-            if (put == null) throw new IllegalStateException("Provider did not return a PUT receipt");
-            attempts.renew(owner.id(), owner.token(), lease);
-            phase = "read-back verification";
-            check.run();
-            var actual = store.getBounded(owner.location().namespace(), expected.objectKey(), put.versionId(), body.length);
-            check.run();
-            if (actual == null || actual.data() == null || actual.data().length != expected.size()
-                    || !DocumentPartCodec.sha256Hex(actual.data()).equals(expected.sha256())
-                    || !Objects.equals(expected.contentType(), actual.contentType())
-                    || !Objects.equals(put.versionId(), actual.versionId()) || !Objects.equals(put.eTag(), actual.eTag()))
-                throw new ai.protomolt.proto.repo.blob.spi.BlobStoreException(
-                        ai.protomolt.proto.repo.blob.spi.BlobStoreException.Code.DATA_LOSS,
-                        "Read-back differs from planned bytes or PUT identity", null);
+            var actual = DocumentPartTransfer.upload(store, owner.location().namespace(), expected, body, attributes, check,
+                    () -> attempts.renew(owner.id(), owner.token(), lease));
             phase = "verification record";
             check.run();
-            attempts.verify(owner.id(), owner.token(), expected.objectKey(), actual.data().length,
-                    DocumentPartCodec.sha256Hex(actual.data()), actual.versionId(), actual.eTag());
+            attempts.verify(owner.id(), owner.token(), expected.objectKey(), expected.size(),
+                    expected.sha256(), actual.version(), actual.etag());
             return new DocumentPublicationLedger.Part(expected.part(), expected.subKey(), expected.objectKey(),
-                    expected.size(), expected.sha256(), actual.versionId(), actual.eTag());
+                    expected.size(), expected.sha256(), actual.version(), actual.etag());
+        } catch (DocumentPartTransfer.Failure failure) {
+            throw new StageFailure(owner.id(), failure.phase(), failure.getCause());
         } catch (RuntimeException failure) { throw new StageFailure(owner.id(), phase, failure); }
     }
 
