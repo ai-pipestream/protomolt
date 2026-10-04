@@ -4002,3 +4002,36 @@ The five affected suites pass 338 tests, including the unchanged occurrence gold
 bytes, actual split-fragment locator round trips, noncanonical wire alternatives,
 unknown nested fields, parser/descriptor mismatch and cancellation. This is codec
 qualification, not proof of persisted revision evidence or a historical read API.
+
+### One-root schema evidence bundle
+
+New additive `DocumentRootSchemaEvidence` groups the existing root locator and
+relative occurrence paths. Version, required root, repeated bounds and exactly
+one root-only path are runtime annotation checks exercised on generated and
+dynamic messages. Existing operations, schema references, receipt/idempotency
+bindings, protobuf names and field identities are unchanged. This is a new
+representation, not a new public operation or admission verdict.
+
+`DocumentRootSchemaEvidenceCodec` bounds the whole message before allocating
+per-path encoded buffers: 4 MiB, 16384 wire values and depth 16, with additional
+65536 aggregate path steps and 1 MiB path text. It sorts each path's V1 canonical
+bytes using unsigned lexicographic order and rejects duplicate or conflicting
+selector prefixes, duplicate paths and disagreement on the root boundary.
+Decode requires the exact canonical representation and digest. The format is
+`document-root-schema-evidence`, version 1; no descriptor bytes are duplicated
+inside it. Assets and provenance remain normalized outside this one-root bundle.
+
+The future publication handler must resolve its slot to exactly one immutable
+revision-part object, compare original fragment hash/size and effective root
+envelope, reproduce the entire path set through the trusted validator, establish
+complete required root coverage and retain the exact union of required assets.
+Those checks, revision policy binding and atomic persistence remain unfinished.
+This contract does not impose a new document-only transaction model on the
+reusable repository foundation or optional JCR extension.
+
+JSON Schema exports repeated bounds and CEL metadata. CEL execution, canonical
+ordering, selector identity, candidate completeness, memory budgets and SQL
+binding are runtime/handler obligations, not claims of OpenAPI parity.
+
+The five affected suites pass 346 tests. Scoped new-file Buf lint and complete
+import compatibility against `4f65a42bea3d74956b6dac6d989371d4dcb3ec3e` pass.

@@ -29,13 +29,7 @@ final class DocumentSchemaEvidenceCodec {
     record Encoded(ByteString bytes, String sha256) {}
 
     static Encoded encode(Message path, Runnable control) {
-        Objects.requireNonNull(path, "path");
-        Objects.requireNonNull(control, "control");
-        active(control);
-        int size = measure(path, 0, new int[1], control);
-        requireSize(size);
-        VALIDATOR.validate(path).throwIfInvalid();
-        active(control);
+        int size = measureAndValidate(path, control);
         byte[] bytes = new byte[size];
         var output = CodedOutputStream.newInstance(bytes);
         try {
@@ -46,6 +40,17 @@ final class DocumentSchemaEvidenceCodec {
         }
         var encoded = ByteString.copyFrom(bytes);
         return new Encoded(encoded, digest(encoded, control));
+    }
+
+    static int measureAndValidate(Message path, Runnable control) {
+        Objects.requireNonNull(path, "path");
+        Objects.requireNonNull(control, "control");
+        active(control);
+        int size = measure(path, 0, new int[1], control);
+        requireSize(size);
+        VALIDATOR.validate(path).throwIfInvalid();
+        active(control);
+        return size;
     }
 
     static <T extends Message> T decode(String expectedCodec, String codec, int version, ByteString bytes, String sha256,
