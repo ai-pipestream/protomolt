@@ -3,6 +3,7 @@ package ai.protomolt.proto.repo.container.ledger;
 import ai.protomolt.proto.repo.admission.DocumentAdmissionReservations;
 import ai.protomolt.proto.repo.admission.DocumentSchemaAdmission;
 import ai.protomolt.proto.repo.admission.DocumentSchemaAssessment;
+import ai.protomolt.proto.repo.admission.DocumentSchemaAssessmentReplay;
 import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
 import ai.protomolt.proto.repo.codec.DocumentRevisionAssembly;
 import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
@@ -24,17 +25,19 @@ final class DocumentPublicationAssessment implements AutoCloseable {
     private final DocumentPublicationFragments fragments;
     private final DocumentSchemaPolicies.Selection policy;
     private final Instant evaluatedAt;
+    private final PayloadBudget budget;
     private Map<String, DocumentPublicationCandidate.Mode> modes;
     private Map<String, DocumentSchemaAssessment.View> typed;
     private Map<String, DocumentCommandContent> opaque;
     private Map<String, ByteString> artifacts;
     private final List<DocumentSchemaAssessment> owners;
     private MemberFailure failure;
+    private boolean verifying;
 
     private DocumentPublicationAssessment(DocumentPublicationFragments fragments, DocumentSchemaPolicies.Selection policy,
             Instant evaluatedAt, Map<String, DocumentPublicationCandidate.Mode> modes,
             Map<String, DocumentSchemaAssessment> typed, Map<String, DocumentCommandContent> opaque,
-            Map<String, ByteString> artifacts, MemberFailure failure) {
+            Map<String, ByteString> artifacts, MemberFailure failure, PayloadBudget budget) {
         this.fragments = fragments; this.policy = policy; this.evaluatedAt = evaluatedAt;
         this.modes = modes; this.opaque = Map.copyOf(opaque);
         var views = new LinkedHashMap<String, DocumentSchemaAssessment.View>();
@@ -42,6 +45,7 @@ final class DocumentPublicationAssessment implements AutoCloseable {
         this.typed = Map.copyOf(views);
         this.owners = new ArrayList<>(typed.values()); this.failure = failure;
         this.artifacts = artifacts;
+        this.budget = budget;
     }
 
     /**
@@ -59,14 +63,7 @@ final class DocumentPublicationAssessment implements AutoCloseable {
         Objects.requireNonNull(container); Objects.requireNonNull(resolver); Objects.requireNonNull(budget);
         Objects.requireNonNull(opaqueLimits); Objects.requireNonNull(evaluatedAt); active(control);
         var selectedModes = DocumentPublicationCandidate.requireModes(command, policy, modes, container, control);
-        DocumentAdmissionReservations reservations = bytes -> {
-            try {
-                var lease = budget.reserve(bytes);
-                return lease::close;
-            } catch (PayloadBudget.CapacityExceededException exhausted) {
-                throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED, "Publication assessment capacity exhausted");
-            }
-        };
+        var reservations = reservations(budget);
         var typed = new LinkedHashMap<String, DocumentSchemaAssessment>();
         var owners = new ArrayList<DocumentSchemaAssessment>();
         var snapshot = DocumentPublicationFragments.capture(command, supplied, budget, control);
@@ -93,7 +90,7 @@ final class DocumentPublicationAssessment implements AutoCloseable {
             }
             active(control);
             var result = new DocumentPublicationAssessment(snapshot, policy, evaluatedAt, selectedModes, typed, opaque,
-                    union.artifacts(), failure);
+                    union.artifacts(), failure, budget);
             transferred = true;
             return result;
         } finally {
@@ -102,6 +99,66 @@ final class DocumentPublicationAssessment implements AutoCloseable {
                 snapshot.close();
             }
         }
+    }
+
+    /**
+     * Reproduce all typed verdicts from owned evidence before a terminal decision.
+     * No resolver, provider or SQL calls occur here. Scratch uses the original
+     * shared budget and is released per member. This grants no commit authority.
+     * Close and another verification are refused until this invocation drains.
+     */
+    void verifySchemas(Runnable control) throws InvalidProtocolBufferException {
+        synchronized (this) {
+            requireOpen();
+            if (verifying) throw new IllegalStateException("Publication assessment verification is active");
+            verifying = true;
+        }
+        try {
+            active(control);
+            var command = fragments.command();
+            if (typed.size() + opaque.size() != command.intent().getMembersCount()
+                    || modes.size() != command.intent().getMembersCount())
+                throw new IllegalArgumentException("Assessment membership differs from operation");
+            var digest = ByteString.copyFrom(HexFormat.of().parseHex(command.sha256()));
+            var union = new DocumentSchemaUnion();
+            MemberFailure first = null;
+            for (var member : command.intent().getMembersList()) {
+                active(control);
+                var id = member.getMemberId();
+                if (modes.get(id) == DocumentPublicationCandidate.Mode.OPAQUE) {
+                    if (!opaque.containsKey(id) || typed.containsKey(id))
+                        throw new IllegalArgumentException("Opaque member has inconsistent assessment mode");
+                    continue;
+                }
+                if (modes.get(id) != DocumentPublicationCandidate.Mode.TYPED || opaque.containsKey(id))
+                    throw new IllegalArgumentException("Typed member has inconsistent assessment mode");
+                var view = Objects.requireNonNull(typed.get(id), "Missing typed assessment");
+                var request = DocumentSchemaAssessmentReplay.Request.from(view);
+                if (!request.candidate().commandSha256().equals(digest) || !request.candidate().member().equals(member)
+                        || !request.evaluatedAt().equals(evaluatedAt))
+                    throw new IllegalArgumentException("Member assessment differs from operation identity");
+                DocumentSchemaAssessmentReplay.verify(request, policy.policy(), hash -> Optional.ofNullable(artifacts.get(hash)),
+                        reservations(budget), () -> active(control));
+                union.add(view.roots(), view.artifacts(), () -> active(control));
+                if (first == null && view.failure().isPresent()) first = new MemberFailure(id, view.failure().orElseThrow());
+            }
+            if (!union.artifacts().equals(artifacts) || !Objects.equals(first, failure))
+                throw new IllegalArgumentException("Replayed assessment differs from operation result");
+            active(control);
+        } finally {
+            synchronized (this) { verifying = false; }
+        }
+    }
+
+    private static DocumentAdmissionReservations reservations(PayloadBudget budget) {
+        return bytes -> {
+            try {
+                var lease = budget.reserve(bytes);
+                return lease::close;
+            } catch (PayloadBudget.CapacityExceededException exhausted) {
+                throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED, "Publication assessment capacity exhausted");
+            }
+        };
     }
 
     synchronized DocumentPublicationCommand command() { requireOpen(); return fragments.command(); }
@@ -116,6 +173,7 @@ final class DocumentPublicationAssessment implements AutoCloseable {
     private void requireOpen() { if (typed == null) throw new IllegalStateException("Publication assessment is closed"); }
     @Override public synchronized void close() {
         if (typed == null) return;
+        if (verifying) throw new IllegalStateException("Publication assessment verification is active");
         typed = null; opaque = Map.of(); modes = Map.of(); artifacts = Map.of(); failure = null;
         for (int i = owners.size() - 1; i >= 0; i--) owners.get(i).close();
         owners.clear(); fragments.close();

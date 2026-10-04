@@ -56,11 +56,16 @@ class DocumentPublicationAssessmentTest {
             }
             supplied.clear();
             assertThat(budget.reservedBytes()).isPositive();
+            long owned = budget.reservedBytes();
+            result.verifySchemas(() -> {});
+            assertThat(budget.reservedBytes()).isEqualTo(owned);
+            assertThat(calls).containsExactly("member-a", "member-b");
         } finally { result.close(); }
         result.close();
         assertThat(budget.reservedBytes()).isZero();
         assertThatThrownBy(result::failure).hasMessageContaining("closed");
         assertThatThrownBy(borrowed::roots).hasMessageContaining("closed");
+        assertThatThrownBy(() -> result.verifySchemas(() -> {})).hasMessageContaining("closed");
     }
 
     @Test void laterMissingSchemaCannotBeHiddenByAnEarlierInvalidMember() throws Exception {
@@ -116,11 +121,76 @@ class DocumentPublicationAssessmentTest {
             assertThat(result.failure()).isPresent();
             assertThat(result.opaque()).containsOnlyKeys("member-b");
             assertThat(result.typed()).containsOnlyKeys("member-a");
+            long owned = budget.reservedBytes();
+            result.verifySchemas(() -> {});
+            assertThat(budget.reservedBytes()).isEqualTo(owned);
         }
         assertThat(budget.reservedBytes()).isZero();
         assertThatThrownBy(() -> assess(f, modes, selection(policy("account", false, 20)),
                 (member, occurrence) -> { throw new AssertionError("Policy preflight must precede resolution"); }, budget))
                 .hasMessageContaining("requires typed");
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    @Test void replayCapacityFailureAndCancellationPreserveOwnerForRetry() throws Exception {
+        var f = twoMembers();
+        var invalid = invalidSchema("invalid");
+        var budget = new PayloadBudget(32_000_000);
+        try (var result = assess(f, TYPED, selection(policy("account", false, 20)),
+                (member, occurrence) -> invalid.definition(), budget)) {
+            long owned = budget.reservedBytes();
+            try (var pressure = budget.reserve(budget.capacity() - owned)) {
+                assertThatThrownBy(() -> result.verifySchemas(() -> {}))
+                        .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                                failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED));
+                assertThat(budget.reservedBytes()).isEqualTo(budget.capacity());
+            }
+            assertThat(budget.reservedBytes()).isEqualTo(owned);
+            var cancelled = new java.util.concurrent.CancellationException("replay cancelled with scratch live");
+            assertThatThrownBy(() -> result.verifySchemas(() -> {
+                if (budget.reservedBytes() > owned) throw cancelled;
+            })).isSameAs(cancelled);
+            assertThat(budget.reservedBytes()).isEqualTo(owned);
+            result.verifySchemas(() -> {});
+            assertThat(result.failure()).isPresent();
+            assertThat(budget.reservedBytes()).isEqualTo(owned);
+        }
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    @Test void activeReplayRefusesCloseAndConcurrentReplayWithoutReleasingItsOwner() throws Exception {
+        var f = twoMembers();
+        var budget = new PayloadBudget(32_000_000);
+        try (var result = assess(f, TYPED, selection(policy("account", false, 20)),
+                (member, occurrence) -> f.assets().payload().definition(), budget)) {
+            long owned = budget.reservedBytes();
+            var entered = new java.util.concurrent.CountDownLatch(1);
+            var release = new java.util.concurrent.CountDownLatch(1);
+            try (var workers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+                var replay = workers.submit(() -> {
+                    result.verifySchemas(() -> {
+                        if (entered.getCount() == 0) return;
+                        entered.countDown();
+                        try {
+                            if (!release.await(10, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("Replay release timed out");
+                        } catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt();
+                            throw new java.util.concurrent.CancellationException("Replay interrupted");
+                        }
+                    });
+                    return null;
+                });
+                try {
+                    assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                    assertThatThrownBy(result::close).hasMessageContaining("verification is active");
+                    assertThatThrownBy(() -> result.verifySchemas(() -> {})).hasMessageContaining("verification is active");
+                    assertThat(budget.reservedBytes()).isEqualTo(owned);
+                } finally { release.countDown(); }
+                replay.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            }
+            assertThat(budget.reservedBytes()).isEqualTo(owned);
+            result.verifySchemas(() -> {});
+        }
         assertThat(budget.reservedBytes()).isZero();
     }
 

@@ -2891,16 +2891,16 @@ failures leave no fabricated receipt.
 
 The next terminal decision requires an explicit assessment result. Neither a
 `ValidationException` nor an `IllegalArgumentException` escaping preparation is
-sufficient. Current preparation verifies and resolves members incrementally;
+sufficient. The successful-proof preparation path resolves members incrementally;
 validation can fail before another fragment's digest or nested Any definition has
 been checked. Failed preparation returns no `PreparedProof`.
 
 The canonical publication command already binds ordered members, slots, upload
 or reused-object sizes and content hashes. It does not bind the chosen admission
 modes, active policy revision, contextual schema selections or evaluation time.
-`DocumentPublicationFragments.capture` owns copies and checks sizes; the later
-admission check verifies their hashes. A durable rejection must not confuse those
-two guarantees.
+`DocumentPublicationFragments.capture` now owns copies and checks every size and
+hash before schema resolution. Member admission checks independently verify those
+hashes again. A durable rejection must also bind the selected policy and schemas.
 
 The assessment pipeline will establish these facts in order:
 
@@ -2946,9 +2946,9 @@ The validator now offers `validate(Message, Instant)` as the first prerequisite.
 CEL `now`, relative timestamp rules, nested messages and collection elements all
 use that exact instant; the existing overload samples once per call. Descriptor
 and compiled-rule caches remain shared, but evaluation time is invocation-local.
-This does not yet pin one instant across separate repository admission calls or
-record it in a receipt. Historical structural decoding remains distinct from
-re-evaluating time-sensitive admission rules.
+Operation assessments now pin one instant across their member admission calls
+and frozen replay; it is not yet recorded in a durable receipt. Historical
+structural decoding remains distinct from re-evaluating time-sensitive rules.
 
 Acceptance for the remaining implementation includes a stale policy activation
 race, changed owner generation, altered candidate hash, mixed nested schema
@@ -3056,8 +3056,9 @@ ownership, and closing it invalidates subsequent view access. Consumers must
 still drain before close; previously borrowed byte references cannot be revoked.
 
 This completes candidate assessment across current roots and members, not durable
-admission rejection. Frozen-evidence independent verification, retention/binding
-contracts and the fresh owner/policy/document-fenced decision are still required.
+admission rejection. Frozen-evidence verification is described below; durable
+retention/binding contracts and the fresh owner/policy/document-fenced decision
+are still required.
 Tests cover a bad later fragment before every resolver, invalid-first/missing-later
 and invalid-first/ineligible-later members, later opaque ownership failure, explicit
 opaque mode, cancellation, shared capacity refusal, private snapshot lifetime and
@@ -3088,5 +3089,30 @@ verdicts after the original assessment closes, changed evaluation time, erased
 failure identity, missing later-root evidence, duplicate roots/references, policy
 mismatch, corrupt evidence, every missing/corrupt retained asset including source
 archives, read cancellation and each reservation refusal point. Operation-level
-replay integration, durable assessment bindings and the fresh fenced terminal
-rejection decision remain unfinished.
+replay is described below. Durable assessment bindings and the fresh fenced
+terminal rejection decision remain unfinished.
+
+#### Operation assessment replay
+
+`DocumentPublicationAssessment.verifySchemas` applies frozen-evidence replay to
+all typed members in canonical command order. It verifies each member's command,
+member content and evaluation instant, then compares the complete artifact union
+and first failure with the operation assessment. Explicit opaque members remain
+outside schema replay; their original content checks still apply. Verification
+uses only the parent's owned bytes and policy snapshot, with no registry, SQL or
+provider calls. It does not authorize publication or persist a terminal decision.
+
+Replay runs outside the object's monitor. A busy guard refuses another replay or
+close until the current invocation drains, including cancellation and failure.
+Scratch reservations use the same shared `PayloadBudget` as preparation and are
+released per member. Hosts must provision headroom above the retained assessment;
+capacity exhaustion remains an operational failure and never an invalid-value
+verdict. The original assessment remains usable for an explicit retry after
+capacity pressure or cancellation clears. Verification is explicit so ordinary
+preparation does not automatically pay for a second traversal.
+
+Tests cover accepted/invalid members without repeated resolver calls, mixed
+opaque/typed membership, capacity exhaustion, cancellation with scratch live,
+retry, concurrent close/replay refusal, and complete release after close. The
+remaining terminal-decision work must invoke verification before persisting
+assessment bindings and entering the fresh owner/policy/document fence.
