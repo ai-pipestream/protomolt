@@ -3220,7 +3220,7 @@ attestations. JSON Schema exposes count bounds and retains cross-field CEL as
 and for every state-dependent obligation. No generator change is included.
 
 The contract does not itself provide persistence. Canonical manifest encoding
-and bounds are described below; the observed-runtime producer, conversion from completed assessments,
+and completed-assessment conversion are described below; the observed-runtime producer,
 retained candidate/schema ownership, receipt binding and the fenced durable
 rejection path remain required before advertising or emitting admission rejection.
 
@@ -3255,3 +3255,33 @@ permutations, exact nanos, conflicting duplicates, nested unknown fields,
 corrupt/truncated/unsupported wire input, aggregate artifact/wire limits,
 reservation refusal, cancellation and closure. The codec establishes identity,
 not observed runtime provenance, policy authority or durable retention.
+
+#### Binding completed assessments to manifests
+
+`DocumentPublicationAssessment.encodeManifest` now projects its completed member
+views into the manifest, verifies frozen schema replay and returns independently
+owned canonical bytes. Projection preserves the command digest, scoped operation,
+owner principal/generation, policy revision/digest, exact seconds/nanos, member
+modes, container/payload associations, root evidence hashes and complete first
+failure occurrence. A wrong owner account or operation is refused. Principal and
+generation are recorded identities; this method does not prove a live SQL fence.
+
+One busy guard spans projection, replay and encoding. Concurrent or reentrant
+close/replay/encoding cannot release the source buffers or replace the active
+work. Verification finishes before allocating the final encoded buffer so its
+lease does not overlap replay scratch. Both use the original shared byte budget.
+The returned buffer owns a separate lease and remains decodable after the parent
+assessment closes; that does not retain the referenced candidate/schema bytes.
+
+The runtime argument is currently an internal host-supplied declaration checked
+for contract shape. This method does not establish that its artifacts were
+observed. A trusted observed-runtime producer and matching against the actual
+loaded implementations remain prerequisites for the durable rejection path.
+Tests name their runtime identities as synthetic fixtures and do not claim
+attestation. Explicit opaque members retain their mode without a typed verdict.
+
+Tests bind real accepted/invalid member assessments to decoded manifests, preserve
+nanosecond time, match protected failure paths and root hashes, prove independent
+output lifetime and no repeated registry resolver calls, refuse wrong owner scope,
+and exercise invalid runtime shape, cancellation, capacity pressure and reentrant
+close/encode with retry. No terminal receipt or retention guarantee is introduced.

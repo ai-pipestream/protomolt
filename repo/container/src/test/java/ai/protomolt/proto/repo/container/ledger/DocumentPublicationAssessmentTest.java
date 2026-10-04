@@ -194,6 +194,131 @@ class DocumentPublicationAssessmentTest {
         assertThat(budget.reservedBytes()).isZero();
     }
 
+    @Test void manifestBindsVerifiedMembersFailureOwnerPolicyAndExactInstant() throws Exception {
+        var f = twoMembers(); var invalid = invalidSchema("invalid");
+        var budget = new PayloadBudget(32_000_000);
+        var policy = selection(policy("account", false, 20));
+        var instant = AT.plusNanos(123456789);
+        var calls = new java.util.concurrent.atomic.AtomicInteger();
+        var result = DocumentPublicationAssessment.prepare(f.command(), policy, TYPED, fragments(f),
+                Optional.of(f.assets().container().definition()), (member, occurrence) -> {
+                    calls.incrementAndGet(); return member.getMemberId().equals("member-a") ? invalid.definition() : f.assets().payload().definition();
+                }, budget, OPAQUE_LIMITS, instant, () -> {});
+        try (result; var encoded = result.encodeManifest(owner("account", f.command().operationId()), runtimeFixture(), () -> {})) {
+            var decoded = decodeManifest(encoded, budget);
+            assertThat(decoded.getCommandSha256()).isEqualTo(f.command().sha256());
+            assertThat(decoded.getOperationId()).isEqualTo(f.command().operationId().toString());
+            assertThat(decoded.getAccountId()).isEqualTo("account");
+            assertThat(decoded.getPrincipal()).isEqualTo("principal");
+            assertThat(decoded.getOwnerGeneration()).isEqualTo(4);
+            assertThat(decoded.getPolicyRevision()).isEqualTo(policy.revision());
+            assertThat(decoded.getPolicySha256()).isEqualTo(policy.policy().sha256());
+            assertThat(decoded.getEvaluatedAt().getEpochSeconds()).isEqualTo(instant.getEpochSecond());
+            assertThat(decoded.getEvaluatedAt().getNanos()).isEqualTo(instant.getNano());
+            assertThat(decoded.getMembersList()).extracting(DocumentMemberAssessment::getMemberId).containsExactly("member-a", "member-b");
+            assertThat(decoded.getFirstFailure().getMemberId()).isEqualTo("member-a");
+            assertThat(decoded.getFirstFailure().getRuleId()).isEqualTo("invalid");
+            var first = result.typed().get("member-a");
+            assertThat(decoded.getMembers(0).getTyped().getContainer()).isEqualTo(first.references().getFirst().toProto());
+            assertThat(decoded.getFirstFailure().getRoot().getSha256()).isEqualTo(first.roots().getFirst().encoded().sha256());
+            assertThat(decoded.getFirstFailure().getOccurrence().getStepsList()).isEqualTo(first.failure().orElseThrow().occurrence());
+            assertThat(calls.get()).isEqualTo(2);
+            // The encoded buffer owns a separate reservation. Closing its source does not retain payload/schema bytes.
+            result.close();
+            assertThat(budget.reservedBytes()).isEqualTo(encoded.bytes().size());
+            assertThat(decodeManifest(encoded, budget)).isEqualTo(decoded);
+        }
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    @Test void mixedAcceptedManifestPreservesOpaqueModeWithoutClaimingTypedValidation() throws Exception {
+        var f = twoMembers(); var budget = new PayloadBudget(32_000_000);
+        var modes = Map.of("member-a", DocumentPublicationCandidate.Mode.TYPED, "member-b", DocumentPublicationCandidate.Mode.OPAQUE);
+        try (var result = assess(f, modes, selection(policy("account", true, 20)),
+                (member, occurrence) -> f.assets().payload().definition(), budget);
+             var encoded = result.encodeManifest(owner("account", f.command().operationId()), runtimeFixture(), () -> {})) {
+            var decoded = decodeManifest(encoded, budget);
+            assertThat(decoded.hasFirstFailure()).isFalse();
+            assertThat(decoded.getMembers(0).hasTyped()).isTrue();
+            assertThat(decoded.getMembers(1).hasTyped()).isFalse();
+            assertThat(decoded.getMembers(1).getOpaque()).isTrue();
+        }
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    @Test void allOpaqueManifestHasNoTypedEvidenceOrResolverCalls() throws Exception {
+        var f = twoMembers(); var budget = new PayloadBudget(32_000_000);
+        var modes = Map.of("member-a", DocumentPublicationCandidate.Mode.OPAQUE, "member-b", DocumentPublicationCandidate.Mode.OPAQUE);
+        try (var result = DocumentPublicationAssessment.prepare(f.command(), selection(policy("account", true, 20)), modes,
+                fragments(f), Optional.empty(), (member, occurrence) -> { throw new AssertionError("Opaque operation must not resolve schemas"); },
+                budget, OPAQUE_LIMITS, AT, () -> {});
+             var encoded = result.encodeManifest(owner("account", f.command().operationId()), runtimeFixture(), () -> {})) {
+            var decoded = decodeManifest(encoded, budget);
+            assertThat(decoded.hasFirstFailure()).isFalse();
+            assertThat(decoded.getMembersList()).allSatisfy(member -> {
+                assertThat(member.hasTyped()).isFalse(); assertThat(member.getOpaque()).isTrue();
+            });
+            assertThat(result.artifacts()).isEmpty();
+        }
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    @Test void manifestFailureReleasesBusyStateAndReservationsForRetry() throws Exception {
+        var f = twoMembers(); var budget = new PayloadBudget(32_000_000);
+        try (var result = assess(f, TYPED, selection(policy("account", false, 20)),
+                (member, occurrence) -> f.assets().payload().definition(), budget)) {
+            long owned = budget.reservedBytes();
+            for (var owner : List.of(owner("other", f.command().operationId()), owner("account", java.util.UUID.randomUUID()))) {
+                assertThatThrownBy(() -> result.encodeManifest(owner, runtimeFixture(), () -> {})).hasMessageContaining("owner differs");
+                assertThat(budget.reservedBytes()).isEqualTo(owned);
+            }
+            var owner = owner("account", f.command().operationId());
+            assertThatThrownBy(() -> result.encodeManifest(owner, DocumentAssessmentRuntime.getDefaultInstance(), () -> {}))
+                    .isInstanceOf(ai.protomolt.proto.validate.ValidationResult.ValidationException.class);
+            assertThat(budget.reservedBytes()).isEqualTo(owned);
+            var cancelled = new java.util.concurrent.CancellationException("manifest preparation cancelled");
+            assertThatThrownBy(() -> result.encodeManifest(owner, runtimeFixture(), () -> {
+                if (budget.reservedBytes() > owned) throw cancelled;
+            })).isSameAs(cancelled);
+            assertThat(budget.reservedBytes()).isEqualTo(owned);
+            try (var pressure = budget.reserve(budget.capacity() - owned)) {
+                assertThatThrownBy(() -> result.encodeManifest(owner, runtimeFixture(), () -> {}))
+                        .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                                failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED));
+            }
+            var checked = new java.util.concurrent.atomic.AtomicBoolean();
+            try (var encoded = result.encodeManifest(owner, runtimeFixture(), () -> {
+                if (checked.compareAndSet(false, true)) {
+                    assertThatThrownBy(result::close).hasMessageContaining("verification is active");
+                    assertThatThrownBy(() -> result.encodeManifest(owner, runtimeFixture(), () -> {}))
+                            .hasMessageContaining("verification is active");
+                }
+            })) {
+                assertThat(budget.reservedBytes()).isEqualTo(owned + encoded.bytes().size());
+            }
+            assertThat(checked).isTrue();
+            assertThat(budget.reservedBytes()).isEqualTo(owned);
+        }
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    private static RepositoryOperationLedger.Owner owner(String account, java.util.UUID operation) {
+        return new RepositoryOperationLedger.Owner(new RepositoryOperationLedger.Key(account, "principal", operation),
+                4, java.util.UUID.randomUUID(), AT);
+    }
+    private static DocumentAssessmentRuntime runtimeFixture() {
+        return DocumentAssessmentRuntime.newBuilder().setValidationProfile(ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.PROFILE)
+                .setCatalogConfiguration("empty-taxonomy-and-postal/v1")
+                .addImplementationArtifacts(SchemaToolIdentity.newBuilder().setName("synthetic-runtime-fixture").setVersion("test").setArtifactSha256("f".repeat(64)))
+                .setJvm(SchemaToolIdentity.newBuilder().setName("synthetic-jvm-fixture").setVersion("test")).build();
+    }
+    private static DocumentPublicationAssessmentManifest decodeManifest(
+            ai.protomolt.proto.repo.admission.DocumentAssessmentManifestCodec.Encoded encoded, PayloadBudget budget) throws Exception {
+        return ai.protomolt.proto.repo.admission.DocumentAssessmentManifestCodec.decode(
+                ai.protomolt.proto.repo.admission.DocumentAssessmentManifestCodec.CODEC, 1, encoded.bytes(), encoded.sha256(),
+                bytes -> { var lease = budget.reserve(bytes); return lease::close; }, () -> {});
+    }
+
     @Test void invalidMembersStillConsumeTheOperationArtifactLimit() throws Exception {
         var members = new ArrayList<DocumentPublicationMember>();
         var modes = new HashMap<String, DocumentPublicationCandidate.Mode>();

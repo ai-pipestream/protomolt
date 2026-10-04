@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.container.ledger;
 
 import ai.protomolt.proto.repo.admission.DocumentAdmissionReservations;
+import ai.protomolt.proto.repo.admission.DocumentAssessmentManifestCodec;
 import ai.protomolt.proto.repo.admission.DocumentSchemaAdmission;
 import ai.protomolt.proto.repo.admission.DocumentSchemaAssessment;
 import ai.protomolt.proto.repo.admission.DocumentSchemaAssessmentReplay;
@@ -108,46 +109,68 @@ final class DocumentPublicationAssessment implements AutoCloseable {
      * Close and another verification are refused until this invocation drains.
      */
     void verifySchemas(Runnable control) throws InvalidProtocolBufferException {
-        synchronized (this) {
-            requireOpen();
-            if (verifying) throw new IllegalStateException("Publication assessment verification is active");
-            verifying = true;
-        }
+        beginVerification();
+        try { verifyOwned(control); }
+        finally { finishVerification(); }
+    }
+
+    /**
+     * Encode the exact completed assessment after independent replay. Runtime is
+     * host-supplied provenance, not an attestation established here. Owner identity
+     * is checked locally, not fenced in SQL. Returned bytes own a separate budget
+     * lease; they retain neither candidate bytes nor schema assets after parent close.
+     */
+    DocumentAssessmentManifestCodec.Encoded encodeManifest(RepositoryOperationLedger.Owner owner,
+            ai.protomolt.proto.repo.v1.DocumentAssessmentRuntime runtime, Runnable control)
+            throws InvalidProtocolBufferException {
+        beginVerification();
         try {
+            var manifest = DocumentAssessmentProjection.project(fragments.command(), policy, evaluatedAt, modes, typed,
+                    failure, owner, runtime, () -> active(control));
+            verifyOwned(control);
+            return DocumentAssessmentManifestCodec.encode(manifest, reservations(budget), () -> active(control));
+        } finally { finishVerification(); }
+    }
+
+    private synchronized void beginVerification() {
+        requireOpen();
+        if (verifying) throw new IllegalStateException("Publication assessment verification is active");
+        verifying = true;
+    }
+    private synchronized void finishVerification() { verifying = false; }
+
+    private void verifyOwned(Runnable control) throws InvalidProtocolBufferException {
+        active(control);
+        var command = fragments.command();
+        if (typed.size() + opaque.size() != command.intent().getMembersCount()
+                || modes.size() != command.intent().getMembersCount())
+            throw new IllegalArgumentException("Assessment membership differs from operation");
+        var digest = ByteString.copyFrom(HexFormat.of().parseHex(command.sha256()));
+        var union = new DocumentSchemaUnion();
+        MemberFailure first = null;
+        for (var member : command.intent().getMembersList()) {
             active(control);
-            var command = fragments.command();
-            if (typed.size() + opaque.size() != command.intent().getMembersCount()
-                    || modes.size() != command.intent().getMembersCount())
-                throw new IllegalArgumentException("Assessment membership differs from operation");
-            var digest = ByteString.copyFrom(HexFormat.of().parseHex(command.sha256()));
-            var union = new DocumentSchemaUnion();
-            MemberFailure first = null;
-            for (var member : command.intent().getMembersList()) {
-                active(control);
-                var id = member.getMemberId();
-                if (modes.get(id) == DocumentPublicationCandidate.Mode.OPAQUE) {
-                    if (!opaque.containsKey(id) || typed.containsKey(id))
-                        throw new IllegalArgumentException("Opaque member has inconsistent assessment mode");
-                    continue;
-                }
-                if (modes.get(id) != DocumentPublicationCandidate.Mode.TYPED || opaque.containsKey(id))
-                    throw new IllegalArgumentException("Typed member has inconsistent assessment mode");
-                var view = Objects.requireNonNull(typed.get(id), "Missing typed assessment");
-                var request = DocumentSchemaAssessmentReplay.Request.from(view);
-                if (!request.candidate().commandSha256().equals(digest) || !request.candidate().member().equals(member)
-                        || !request.evaluatedAt().equals(evaluatedAt))
-                    throw new IllegalArgumentException("Member assessment differs from operation identity");
-                DocumentSchemaAssessmentReplay.verify(request, policy.policy(), hash -> Optional.ofNullable(artifacts.get(hash)),
-                        reservations(budget), () -> active(control));
-                union.add(view.roots(), view.artifacts(), () -> active(control));
-                if (first == null && view.failure().isPresent()) first = new MemberFailure(id, view.failure().orElseThrow());
+            var id = member.getMemberId();
+            if (modes.get(id) == DocumentPublicationCandidate.Mode.OPAQUE) {
+                if (!opaque.containsKey(id) || typed.containsKey(id))
+                    throw new IllegalArgumentException("Opaque member has inconsistent assessment mode");
+                continue;
             }
-            if (!union.artifacts().equals(artifacts) || !Objects.equals(first, failure))
-                throw new IllegalArgumentException("Replayed assessment differs from operation result");
-            active(control);
-        } finally {
-            synchronized (this) { verifying = false; }
+            if (modes.get(id) != DocumentPublicationCandidate.Mode.TYPED || opaque.containsKey(id))
+                throw new IllegalArgumentException("Typed member has inconsistent assessment mode");
+            var view = Objects.requireNonNull(typed.get(id), "Missing typed assessment");
+            var request = DocumentSchemaAssessmentReplay.Request.from(view);
+            if (!request.candidate().commandSha256().equals(digest) || !request.candidate().member().equals(member)
+                    || !request.evaluatedAt().equals(evaluatedAt))
+                throw new IllegalArgumentException("Member assessment differs from operation identity");
+            DocumentSchemaAssessmentReplay.verify(request, policy.policy(), hash -> Optional.ofNullable(artifacts.get(hash)),
+                    reservations(budget), () -> active(control));
+            union.add(view.roots(), view.artifacts(), () -> active(control));
+            if (first == null && view.failure().isPresent()) first = new MemberFailure(id, view.failure().orElseThrow());
         }
+        if (!union.artifacts().equals(artifacts) || !Objects.equals(first, failure))
+            throw new IllegalArgumentException("Replayed assessment differs from operation result");
+        active(control);
     }
 
     private static DocumentAdmissionReservations reservations(PayloadBudget budget) {
