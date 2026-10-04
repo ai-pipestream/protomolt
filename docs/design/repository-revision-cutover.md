@@ -1,6 +1,7 @@
 # Independent revisions and retained part references
 
-Status: Sol-reviewed implementation plan, not available behavior. Source audit at `6f562450`.
+Status: Sol-reviewed implementation plan with the partial checkpoints below;
+the complete cutover is not available. Initial source audit at `6f562450`.
 This refines [repository composition](repository-composition.md#immutable-part-reuse-implementation-design)
 and preserves the [optional JCR boundary](repository-jcr-compatibility.md).
 
@@ -84,8 +85,10 @@ SQL. This does not establish a latency or throughput target. Provider scheduling
 must use an operation-wide concurrency window and byte budget rather than
 multiply limits for every backend or member.
 
-Provider execution is not connected to this lifecycle yet. A preflight selection
-check cannot prevent replacement during a remote PUT. Attempt-specific keys
+Internal `DocumentUploadCoordinator` now connects provider execution to selected
+renewal and verification, with bounded workers, observation batches and heartbeat.
+It is not a public typed publication path. A preflight selection check cannot
+prevent replacement during a remote PUT. Attempt-specific keys
 isolate late writes; the post-I/O verification fence must reject a displaced
 worker. Lost PUT acknowledgments require exact-key, qualified read-back or an
 explicit replacement followed by expired-attempt cleanup. Do not invent a receipt
@@ -94,19 +97,20 @@ FULL_REVISION writer and deletion-only recovery path remain unchanged.
 
 ## Current coupling that must change together
 
-- `DocumentPublicationLedger.Publication` carries one attempt, backend profile
-  and namespace for all parts. Its query loads the attempt's complete verified
-  object set. `DocumentPartReader` resolves that one backend for the entire read.
-- `DocumentSourceSnapshot` fences the current attempt UUID. An independent
-  revision, including one with no uploads, needs its own fence identity.
+- `DocumentPublicationLedger.Publication` now carries an independent revision ID
+  and per-part backend bindings. Its query reads ordered shadow revision parts
+  while still checking the legacy FULL_REVISION publication authority. The reader
+  resolves original bindings per part under one aggregate budget/window.
+- `DocumentSourceSnapshot` now fences the current revision UUID and mutation
+  revision, cross-checking the legacy publication bridge. New mixed or zero-upload
+  revision publication still needs the independent authoritative commit path.
 - V22 history is keyed by attempt UUID. Its guards require a live full attempt,
   exact ordered manifest and matching current document body. V36 deliberately
   prevents NEW_CONTENT attempts from entering that path.
-- V26 retention derives document ownership from the object's origin attempt.
-  The latest native-reference predicate is in V28; replacing only the earlier
-  definition would lose archive reader protection. V29 shares locks for archive
-  readers, but durable reference changes still exclusively lock origin owners
-  and physical retention rows.
+- V39 derives document retention from sealed revision references and current
+  revision pointers. Its native-reference predicate preserves archive reader
+  protection from V28. V29 shares locks for archive readers, but durable reference
+  changes still exclusively lock origin owners and physical retention rows.
 - V25 registers physical coordinates before verification. Registration is not
   evidence of verified content. V10 raw keys remain quarantined because their
   old backend strings are not proof of registered physical identity.
