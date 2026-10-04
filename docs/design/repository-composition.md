@@ -3180,3 +3180,46 @@ until its explicit replay boundary. Receipt replay remains available after that
 boundary; independent re-evaluation then reports unavailable instead of treating a
 digest as recoverable data. Expiry is an explicit host policy, not an implicit
 fallback to attempt lease expiry. No default replay duration is selected yet.
+
+#### Assessment manifest contract
+
+`document_assessment.proto` now defines a protected, operation-scoped
+`DocumentPublicationAssessmentManifest`. It binds the canonical command, deciding
+owner generation, selected policy revision/digest, exact evaluation instant,
+runtime provenance and complete explicit member modes. Typed members reference
+normalized container/payload schema associations and canonical root-evidence
+bytes. A recorded failure must point to a root of a typed member. Its complete
+occurrence path reuses `RepositorySchemaOccurrencePath`; root payload failures
+include their Any boundary, just like nested payload failures.
+
+Evaluation time uses seconds and nonnegative nanos with protobuf's calendar
+bounds. It must not be truncated to SQL microseconds. Runtime provenance requires
+content hashes for all declared implementation artifacts, fixes the current rule
+source order and empty taxonomy/postal catalog configuration, and records an
+observed JVM identity. The host producer must inventory the actual loaded code
+closure, including rule adapters, the CEL bridge/engine and protobuf runtime.
+Dependency declarations or caller-supplied version labels are not observations.
+Exploded classes or missing version metadata require an explicit observed build
+identity; they cannot silently become an unknown implementation. No runtime
+identity producer or historical executable loader is implemented by this contract.
+
+Shape annotations enforce required identities, exclusive modes, counts, bounds,
+artifact hash presence and failure/member/root correspondence. Handler obligations
+remain separate: unique canonical list order, all-and-only command membership,
+complete schema/occurrence inventory, exact failure reproduction, runtime closure
+completeness, authorization, storage retention and current policy/owner fencing.
+An absent failure can describe accepted values; an admission-rejection handler
+must require a reproduced failure. Opaque membership does not assert successful
+schema validation. Descriptor and source bytes remain normalized, not embedded.
+
+Generated and dynamic-message fixtures exercise these shape checks through the
+real validator, including nanosecond boundaries and mismatched failure roots.
+Fixture runtime identities are explicitly synthetic and are not runtime
+attestations. JSON Schema exposes count bounds and retains cross-field CEL as
+`x-protomolt-cel`; OpenAPI consumers still need server-side checks for those rules
+and for every state-dependent obligation. No generator change is included.
+
+This is an additive contract only. Canonical manifest encoding and allocation
+limits, the observed-runtime producer, conversion from completed assessments,
+retained candidate/schema ownership, receipt binding and the fenced durable
+rejection path remain required before advertising or emitting admission rejection.
