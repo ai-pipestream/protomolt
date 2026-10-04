@@ -56,6 +56,8 @@ final class DocumentPayloadCheck {
      * requested, including its prefix. The host still verifies provenance and access.
      * One URL identifies one binding per check; the host accounts for aggregate
      * descriptor and metadata memory returned by its resolver.
+     * Archival evidence refuses unknown fields and duplicate decoded map keys;
+     * these cannot receive an unambiguous fully validated occurrence identity.
      */
     static AssetResult checkAssets(DocumentSchemaAssetBinding root, Any candidate, String acceptedTypeUrl,
             ProtoValidator validator, Limits limits, Runnable control,
@@ -78,7 +80,7 @@ final class DocumentPayloadCheck {
             }
             assets.put(url, asset);
             return asset.schema();
-        });
+        }, true);
         return new AssetResult(payload, assets);
     }
 
@@ -107,6 +109,12 @@ final class DocumentPayloadCheck {
     static DocumentPayloadCheck check(DocumentSchemaBinding schema, Any candidate, String acceptedTypeUrl,
             ProtoValidator validator, Limits limits, Runnable control,
             Function<String, DocumentSchemaBinding> resolver) throws InvalidProtocolBufferException {
+        return check(schema,candidate,acceptedTypeUrl,validator,limits,control,resolver,false);
+    }
+
+    private static DocumentPayloadCheck check(DocumentSchemaBinding schema, Any candidate, String acceptedTypeUrl,
+            ProtoValidator validator, Limits limits, Runnable control,
+            Function<String, DocumentSchemaBinding> resolver, boolean archival) throws InvalidProtocolBufferException {
         Objects.requireNonNull(schema, "schema");
         Objects.requireNonNull(candidate, "candidate");
         Objects.requireNonNull(acceptedTypeUrl, "acceptedTypeUrl");
@@ -122,7 +130,7 @@ final class DocumentPayloadCheck {
         if (!candidate.getUnknownFields().asMap().isEmpty()) {
             throw new IllegalArgumentException("unsupported Any envelope fields");
         }
-        var session = new Session(validator, limits, control, resolver);
+        var session = new Session(validator, limits, control, resolver, archival);
         session.bindings.put(acceptedTypeUrl, schema);
         DynamicMessage decoded = session.decode(schema, candidate.getValue(), 0);
         return new DocumentPayloadCheck(schema, candidate, decoded, session.bindings);
@@ -140,6 +148,7 @@ final class DocumentPayloadCheck {
         private final Limits limits;
         private final Runnable control;
         private final Function<String, DocumentSchemaBinding> resolver;
+        private final boolean archival;
         private final MessageWireBudget wire;
         private final Map<String, DocumentSchemaBinding> bindings = new LinkedHashMap<>();
         private final java.util.Set<Descriptor> schemas = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -148,11 +157,12 @@ final class DocumentPayloadCheck {
         private long anyCount;
 
         Session(ProtoValidator validator, Limits limits, Runnable control,
-                Function<String, DocumentSchemaBinding> resolver) {
+                Function<String, DocumentSchemaBinding> resolver, boolean archival) {
             this.validator = validator;
             this.limits = limits;
             this.control = control;
             this.resolver = resolver;
+            this.archival = archival;
             this.wire = new MessageWireBudget(limits.maxWireValues(), limits.maxDepth(), () -> active(control));
         }
 
@@ -187,13 +197,19 @@ final class DocumentPayloadCheck {
         void walk(Message message, int depth) throws InvalidProtocolBufferException {
             active(control);
             depth(depth);
+            if (archival && !message.getUnknownFields().asMap().isEmpty())
+                throw new IllegalArgumentException("unknown candidate fields cannot receive typed archival evidence");
             Descriptor type = message.getDescriptorForType();
             if (type.getFullName().equals("google.protobuf.Any")) {
                 if (++anyCount > limits.maxWireValues()) throw new IllegalArgumentException("Any occurrence limit exceeded");
                 if (!message.getUnknownFields().asMap().isEmpty()) throw new IllegalArgumentException("unsupported Any envelope fields");
                 var urlField = type.findFieldByNumber(1);
                 var valueField = type.findFieldByNumber(2);
-                if (urlField == null || valueField == null || urlField.isRepeated() || valueField.isRepeated()
+                if (type.getFields().size() != 2 || urlField == null || valueField == null
+                        || !urlField.getName().equals("type_url") || !valueField.getName().equals("value")
+                        || urlField.isRepeated() || valueField.isRepeated() || urlField.isRequired() || valueField.isRequired()
+                        || urlField.getContainingOneof() != null || valueField.getContainingOneof() != null
+                        || urlField.hasDefaultValue() || valueField.hasDefaultValue()
                         || urlField.getType() != FieldDescriptor.Type.STRING || valueField.getType() != FieldDescriptor.Type.BYTES) {
                     throw new IllegalArgumentException("invalid Any envelope descriptor");
                 }
@@ -216,7 +232,17 @@ final class DocumentPayloadCheck {
                 var field = entry.getKey();
                 if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
                 if (field.isRepeated()) {
-                    for (Object item : (java.util.List<?>) entry.getValue()) walk((Message) item, depth + 1);
+                    java.util.Set<Object> keys=archival && field.isMapField() ? new java.util.HashSet<>() : null;
+                    for (Object item : (java.util.List<?>) entry.getValue()) {
+                        active(control);
+                        var value=(Message)item;
+                        if (keys!=null) {
+                            // getField supplies the declared protobuf default for omitted keys.
+                            Object key=value.getField(field.getMessageType().findFieldByNumber(1));
+                            if (!keys.add(key)) throw new IllegalArgumentException("duplicate map keys cannot receive typed archival evidence");
+                        }
+                        walk(value, depth + 1);
+                    }
                 } else walk((Message) entry.getValue(), depth + 1);
             }
         }

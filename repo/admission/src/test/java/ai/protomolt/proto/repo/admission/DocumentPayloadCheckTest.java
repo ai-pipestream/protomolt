@@ -32,6 +32,85 @@ class DocumentPayloadCheckTest {
     private static final DocumentPayloadCheck.Limits LIMITS = new DocumentPayloadCheck.Limits(1024, 100, 10, 100, 1000);
 
     @Test
+    void rejectsAlteredAnyEnvelopeSemanticsBeforeResolution() throws Exception {
+        var canonical = DescriptorProto.newBuilder().setName("Any")
+                .addField(FieldDescriptorProto.newBuilder().setName("type_url").setNumber(1)
+                        .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL).setType(FieldDescriptorProto.Type.TYPE_STRING))
+                .addField(FieldDescriptorProto.newBuilder().setName("value").setNumber(2)
+                        .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL).setType(FieldDescriptorProto.Type.TYPE_BYTES)).build();
+        var renamed = canonical.toBuilder();
+        renamed.getFieldBuilder(0).setName("other_url");
+        var oneof = canonical.toBuilder().addOneofDecl(OneofDescriptorProto.newBuilder().setName("choice"));
+        oneof.getFieldBuilder(0).setOneofIndex(0);
+        var defaulted = canonical.toBuilder();
+        defaulted.getFieldBuilder(0).setDefaultValue(URL);
+        var required = canonical.toBuilder();
+        required.getFieldBuilder(0).setLabel(FieldDescriptorProto.Label.LABEL_REQUIRED);
+        for (var definition : List.of(renamed.build(), oneof.build(), defaulted.build(), required.build())) {
+            var file = FileDescriptorProto.newBuilder().setName("altered-any.proto")
+                    .setPackage("google.protobuf").setSyntax("proto2").addMessageType(definition).build();
+            var schema = binding(FileDescriptor.buildFrom(file, new FileDescriptor[0]).findMessageTypeByName("Any"));
+            var data = DynamicMessage.newBuilder(schema.type()).setField(schema.type().findFieldByNumber(1), URL)
+                    .setField(schema.type().findFieldByNumber(2), ByteString.EMPTY).build();
+            var payload = Any.newBuilder().setTypeUrl("type.protomolt.test/google.protobuf.Any").setValue(data.toByteString()).build();
+            assertThatThrownBy(() -> DocumentPayloadCheck.check(schema, payload, payload.getTypeUrl(), validator(), LIMITS,
+                    () -> {}, url -> { throw new AssertionError("malformed envelope reached resolver"); }))
+                    .hasMessageContaining("invalid Any envelope descriptor");
+        }
+    }
+
+    @Test
+    void rejectsAnAnyDescriptorWithAnExtraKnownFieldBeforeResolution() throws Exception {
+        var definition=DescriptorProto.newBuilder().setName("Any")
+                .addField(FieldDescriptorProto.newBuilder().setName("type_url").setNumber(1).setType(FieldDescriptorProto.Type.TYPE_STRING))
+                .addField(FieldDescriptorProto.newBuilder().setName("value").setNumber(2).setType(FieldDescriptorProto.Type.TYPE_BYTES))
+                .addField(FieldDescriptorProto.newBuilder().setName("extra").setNumber(3).setType(FieldDescriptorProto.Type.TYPE_STRING));
+        var file=FileDescriptorProto.newBuilder().setName("custom-any.proto").setPackage("google.protobuf").setSyntax("proto3").addMessageType(definition).build();
+        var schema=binding(FileDescriptor.buildFrom(file,new FileDescriptor[0]).findMessageTypeByName("Any"));
+        var inner=binding(choice("true"));
+        var data=DynamicMessage.newBuilder(schema.type()).setField(schema.type().findFieldByNumber(1),URL)
+                .setField(schema.type().findFieldByNumber(2),candidate(inner,"valid","").getValue())
+                .setField(schema.type().findFieldByNumber(3),"must not be skipped").build();
+        var payload=Any.newBuilder().setTypeUrl("type.protomolt.test/google.protobuf.Any").setValue(data.toByteString()).build();
+        var resolutions=new java.util.concurrent.atomic.AtomicInteger();
+        assertThatThrownBy(()->DocumentPayloadCheck.check(schema,payload,payload.getTypeUrl(),validator(),LIMITS,()->{},
+                url->{resolutions.incrementAndGet(); return inner;})).hasMessageContaining("invalid Any envelope descriptor");
+        assertThat(resolutions.get()).isZero();
+    }
+
+    @Test
+    void archivalAssetsRejectUnknownCandidateFields() throws Exception {
+        var schema=binding(choice("true"));
+        var known=candidate(schema,"valid","");
+        var original=known.toBuilder().setValue(known.getValue().concat(ByteString.copyFrom(new byte[]{(byte)0xa0,6,1}))).build();
+        assertThat(check(schema,original,LIMITS).original()).isSameAs(original);
+        assertThatThrownBy(()->DocumentPayloadCheck.checkAssets(asset(schema,URL),original,URL,validator(),LIMITS,()->{},url->{throw new AssertionError(url);}))
+                .hasMessageContaining("unknown candidate fields");
+    }
+
+    @Test
+    void archivalAssetsRejectDuplicateMapKeysIncludingDefaults() throws Exception {
+        var schema=binding(com.google.protobuf.Struct.getDescriptor());
+        String url="type.protomolt.test/google.protobuf.Struct";
+        var field=schema.type().findFieldByNumber(1);
+        var entryType=field.getMessageType();
+        for (String key:List.of("same","")) {
+            var first=DynamicMessage.newBuilder(entryType).setField(entryType.findFieldByNumber(2),com.google.protobuf.Value.newBuilder().setStringValue("first").build());
+            if (!key.isEmpty()) first.setField(entryType.findFieldByNumber(1),key);
+            var second=DynamicMessage.newBuilder(entryType).setField(entryType.findFieldByNumber(1),key)
+                    .setField(entryType.findFieldByNumber(2),com.google.protobuf.Value.newBuilder().setStringValue("second").build());
+            var value=DynamicMessage.newBuilder(schema.type()).addRepeatedField(field,first.build()).addRepeatedField(field,second.build()).build();
+            var original=Any.newBuilder().setTypeUrl(url).setValue(value.toByteString()).build();
+            assertThatThrownBy(()->DocumentPayloadCheck.checkAssets(asset(schema,url),original,url,validator(),LIMITS,()->{},nested->{throw new AssertionError(nested);}))
+                    .hasMessageContaining("duplicate map keys");
+            var unique=value.toBuilder().setRepeatedField(field,1,second.setField(entryType.findFieldByNumber(1),"different").build()).build();
+            var accepted=original.toBuilder().setValue(unique.toByteString()).build();
+            assertThat(DocumentPayloadCheck.checkAssets(asset(schema,url),accepted,url,validator(),LIMITS,()->{},nested->{throw new AssertionError(nested);})
+                    .payload().original()).isSameAs(accepted);
+        }
+    }
+
+    @Test
     void archivalAssetUrlsMustMatchRootPolicyAndEveryNestedResolution() throws Exception {
         var wrapper = wrapper();
         var inner = binding(choice("(this.left != '') != (this.right != '')"));

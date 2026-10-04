@@ -1331,3 +1331,35 @@ The next acceptance work is:
 This sequence preserves opaque archival intake and the complete repository goal.
 It does not advertise a typed RPC, source retention, artifact garbage collection,
 JCR capability or transport conformance that has not been implemented.
+
+### Decoded occurrence identity policy
+
+Occurrence paths identify values in the decoded protobuf message, not byte spans
+in its original wire encoding. Preserve and hash the original root payload or
+fragments separately. An Any-boundary value digest identifies the effective
+parsed `Any.value` bytes. Duplicate singular tags may be merged or overwritten by
+protobuf decoding; no path claims to enumerate discarded raw wire occurrences.
+The retained original bytes remain the authoritative archival representation.
+
+A typed map key is the declared protobuf scalar key type and decoded value,
+including the declared default when the key is omitted. Map iteration order is
+not identity. Strict archival preparation rejects duplicate decoded keys within
+one map field, including omitted/explicit-default collisions. Characterization
+fixtures show why: DynamicMessage preserves duplicate map entries while generated
+Struct decoding collapses them to the last value. Repeated non-map fields retain
+zero-based positions, so equal repeated values remain separate occurrences.
+
+`DocumentPayloadCheck.checkAssets` now enforces the strict archival policy for
+unknown fields and duplicate map keys throughout the decoded message graph.
+Its lower-level `check` helper retains its previous semantics; neither path
+publishes content. Root and nested schemas still resolve once per exact URL for
+one check. Supporting different schema versions at different occurrences of the
+same URL requires a reviewed resolver change; the existing URL map must not be
+reinterpreted as path-specific resolution.
+
+Typed traversal also checks the structure of descriptors named
+`google.protobuf.Any` before resolving their payload. The envelope must contain
+only `type_url` (field 1, string) and `value` (field 2, bytes), without repeated or
+required fields, oneof membership or explicit defaults. Additional known fields
+must not escape validation through the special Any traversal. This check does not
+require ordinary opaque archival intake to resolve or decode an Any payload.
