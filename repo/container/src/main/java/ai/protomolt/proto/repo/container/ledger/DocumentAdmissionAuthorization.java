@@ -77,6 +77,19 @@ final class DocumentAdmissionAuthorization {
         }
     }
 
+    /** Current read access precedes any historical revision or schema lookup. */
+    static void authorizeHistory(EntityManager em, RepositoryCaller caller, NodeAddress address) {
+        Objects.requireNonNull(address);
+        if (caller == null) throw new RepositoryException(RepositoryException.Code.UNAUTHENTICATED,
+                "Authenticated repository caller is required");
+        if (!caller.processAuthority() && !caller.accountIds().contains(address.getAccountId())) throw unavailable();
+        var node = DocumentIds.nodeId(address);
+        var source = DocumentRevisionLocks.lockForAdmission(em, Set.of(), Set.of(node)).sources().get(node);
+        requireIdentity(source, address);
+        requireSourceAccess(caller, source);
+        if (!DocumentStatus.AVAILABLE.equals(source.status()) || source.pendingPurgeId() != null) throw unavailable();
+    }
+
     static Map<UUID, DocumentRecord> lockAndAuthorize(EntityManager em, RepositoryCaller caller,
             DocumentUploadPlan.Prepared plan, Prepared prepared) {
         // Lock every address first, but authorize before exposing revision mismatches.

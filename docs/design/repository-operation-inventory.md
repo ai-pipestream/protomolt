@@ -4838,3 +4838,44 @@ unchanged evidence bytes and manifests, and preserved terminal success. The
 focused SQL fixtures use synthetic physical observations; the native commit suite
 separately exercises versioned LocalStack storage. Sol reviewed production code,
 the fault tests and populated upgrade fixtures with no blocker.
+
+### Authorized historical schema replay against supplied bytes
+
+`DocumentHistoricalSchemas.check` is a new internal operation. Current READ
+authorization on the exact document precedes revision lookup. A bounded SQL
+snapshot requires a sealed native revision, matching terminal success, typed
+admission and the V62 container role. It copies only that revision's retained
+artifact, association and evidence sets, with count and byte checks before bulk
+copying. It also checks the stored manifest, account, transaction, body and metadata
+bindings. The complete historical command and policy stay internal.
+
+Outside database locks, the reader reconstructs the canonical command, selects
+the exact member and decodes the historical policy. It replays every supplied
+fragment and occurrence through the existing runtime validator using the retained
+definitions, then compares the exact artifact and root sets. No registry lookup
+or fallback occurs. Fragment identities already verified by admission are reused
+when checking root records, avoiding repeated hashing of a large fragment for
+each root. Current authorization is checked again before delivering either a
+proof or detailed failure. Cancellation propagates without a proof.
+
+Missing retained artifacts and invalid supplied fragments report DATA_LOSS.
+Opaque revisions and legacy typed revisions with an unknown container role report
+FAILED_PRECONDITION. Unauthorized callers receive the same NOT_FOUND response for
+existing and nonexistent revisions. The current account policy does not replace
+the retained historical policy during replay.
+
+This is replay against supplied exact bytes, not a historical provider-read API.
+The host still needs historical pins, protected provider reads, aggregate admission
+for concurrent read memory, restart qualification and public transport integration.
+The new tests use real PostgreSQL and runtime validation with explicitly synthetic
+physical observations; they do not claim provider availability.
+
+Qualification: 31 tests pass across historical replay (7), revocation during
+replay (2), existing publication replay (8) and admission binding (14). A fresh
+reader reconstructs the exact proof for a different, normally authorized principal
+after the current policy advances. The two revocation tests were also run with
+delivery reauthorization temporarily removed: one incorrectly returned a proof and
+the other exposed DATA_LOSS details. Both failed as expected; restoring the gate
+returned both to green. The final nine historical tests were rerun after the last
+control-flow adjustment. Sol reviewed the SQL reader, replay boundary and tests
+with no blocker.

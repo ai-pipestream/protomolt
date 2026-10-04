@@ -2492,5 +2492,11 @@ sealed revision's DOCUMENT_HISTORY references while preserving current-source
 checks for publication reuse and the shared reader drain/recovery lifecycle.
 Pins remain until provider work drains, including cancellation. Use the
 current runtime against retained definitions without consulting registry latest;
-do not claim to rerun a historical compiler or executable validator. These read
-and replay operations still require implementation and qualification.
+do not claim to rerun a historical compiler or executable validator.
+
+`DocumentHistoricalSchemas.check` now implements the internal authorization,
+bounded SQL snapshot and runtime replay boundary for supplied exact fragment
+bytes. It reads no registry and rechecks the stored command and historical policy.
+The provider pin/read path, process-restart qualification and public transport
+integration remain to be implemented and tested. A successful internal proof does
+not establish that a provider still serves the retained physical objects.
