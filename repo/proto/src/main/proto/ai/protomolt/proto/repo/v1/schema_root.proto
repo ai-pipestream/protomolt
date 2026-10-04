@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v1;
+
+import "ai/protomolt/proto/repo/v1/any_resolution.proto";
+import "ai/protomolt/proto/repo/v1/document_publication.proto";
+import "ai/protomolt/proto/repo/v1/schema_occurrence.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.v1";
+
+// Locates an Any envelope in an exact retained Document fragment. Relative schema
+// occurrence paths start at that envelope. This is not a validation verdict or
+// authorization capability. The enclosing transaction binds account, operation,
+// revision and physical revision-part identity; bytes alone do not grant access.
+// Readers bound raw bytes/wire occurrences before parsing and reject unknown fields.
+message DocumentSchemaRootLocator {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "schema-root-slot"
+    message: "root discovery supports CORE and PARSED Document fragments"
+    expression: "this.slot.part in [1, 4]"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "schema-root-container"
+    message: "the containing schema must select Document"
+    expression: "this.container_schema.schema.type_name == 'ai.protomolt.proto.repo.v1.Document'"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "schema-root-access"
+    message: "access must select CORE structured_data or an exact PARSED shape key"
+    expression: "this.slot.part == 1 ? (size(this.access) == 1 && this.access[0].field_number == 4u) : (size(this.access) == 4 && this.access[0].field_number == 5u && has(this.access[1].map_key) && this.access[1].map_key.type == 1 && this.access[2].field_number == 7u && this.access[3].field_number == 1u)"
+  };
+  // Only version 1 is currently defined.
+  uint32 encoding_version = 1 [(ai.protomolt.proto.validate.v1.field).uint32.const = 1];
+  // Match this slot to an authorized immutable revision-part row.
+  DocumentPublicationSlot slot = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Exact confinement/layout rules used for the fragment. Unsupported policies fail closed.
+  string layout_policy = 3 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^protomolt-document-parts/v1$"];
+  // Complete retained containing descriptor closure; not the Any payload schema.
+  RepositoryResolvedSchema container_schema = 4 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Hash of original provider bytes, not a reserialized assembled Document.
+  string fragment_sha256 = 5 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$"];
+  // Exact raw byte count, checked against the retained physical reference.
+  uint64 fragment_size_bytes = 6 [(ai.protomolt.proto.validate.v1.field).uint64.gt = 0];
+  // Field/typed-key selectors ending at the envelope. Check all transitions
+  // against the pinned layout, descriptors and actual bytes. Field 4 selects CORE
+  // structured_data; field 5/key/7/1 selects a PARSED shape. Do not infer the root
+  // from a generated map that may already have collapsed duplicate keys.
+  repeated RepositorySchemaOccurrenceStep access = 7 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 301}];
+}

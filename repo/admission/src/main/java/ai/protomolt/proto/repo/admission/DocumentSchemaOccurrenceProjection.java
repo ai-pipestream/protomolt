@@ -57,7 +57,7 @@ final class DocumentSchemaOccurrenceProjection {
         return List.copyOf(result);
     }
 
-    private static RepositoryOccurrenceMapKey mapKey(DocumentSchemaOccurrences.MapKey key) {
+    static RepositoryOccurrenceMapKey mapKey(DocumentSchemaOccurrences.MapKey key) {
         var result = RepositoryOccurrenceMapKey.newBuilder();
         switch (key.type()) {
             case STRING -> result.setType(RepositoryOccurrenceKeyType.REPOSITORY_OCCURRENCE_KEY_TYPE_STRING).setStringValue((String) key.value());

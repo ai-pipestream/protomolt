@@ -3850,3 +3850,27 @@ Sol reviewed this slice. The contract, codec, admission and engine suites pass
 duplicate/default parser keys, absent/empty roots, malformed opaque payloads,
 noncanonical original bytes, wrong slots/identity/schema and independent limits.
 No typed publication or durable root-locator contract is enabled by this change.
+
+### Root locator contract and projection
+
+New `DocumentSchemaRootLocator` now defines the version 1 representation of those
+locations. It reuses DocumentPublicationSlot and RepositoryResolvedSchema and
+binds exact fragment SHA/size, containing Document closure, layout policy and root
+access. Runtime CEL restricts version 1 to `protomolt-document-parts/v1`, CORE
+field 4 or PARSED field 5/string key/7/1. Indexes and Any crossings cannot stand in
+for those access patterns. Existing protobuf names, tags, import paths and URLs
+remain unchanged; no existing operation, receipt or idempotency rule is modified.
+
+`DocumentSchemaRootProjection` converts a member of an inventory's immutable root
+list to that contract, checks the runtime annotations, and preserves the measured
+fragment and containing-schema identities. This is representation conversion, not
+authentication of an inventory supplied by another component. A production
+boundary must match the selected root against exact fragment bytes and the relative
+occurrence path's first Any boundary, then bind the locator to the immutable
+revision-part row and physical object. Current-document lookup is insufficient
+for historical roots. The locator has no canonical wire codec or persisted row yet.
+
+Generated/dynamic validation and actual split-fragment projection fixtures pass.
+JSON Schema reports syntax and runtime CEL metadata, not execution of cross-field
+rules or OpenAPI parity. The four affected suites pass 231 tests; scoped Buf lint
+and complete-import FILE compatibility pass against `fab66378e81c713d0eb4a135d255203482ab41c3`.

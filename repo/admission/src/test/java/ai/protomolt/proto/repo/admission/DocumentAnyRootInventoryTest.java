@@ -31,6 +31,13 @@ class DocumentAnyRootInventoryTest {
             assertThat(result.roots()).hasSize(fragment.part() == DocumentPart.DOCUMENT_PART_CORE ? 1 : 2);
             for (var root : result.roots()) {
                 assertThat(root.envelope()).isEqualTo(OPAQUE);
+                var locator = DocumentSchemaRootProjection.project(result, root, () -> {});
+                assertThat(locator.getSlot()).isEqualTo(result.slot());
+                assertThat(locator.getFragmentSha256()).isEqualTo(result.fragmentSha256());
+                assertThat(locator.getFragmentSizeBytes()).isEqualTo(bytes.size());
+                assertThat(locator.getContainerSchema().getArtifactSha256()).isEqualTo(CONTAINER.artifactSha256());
+                assertThat(locator.getContainerSchema().getSchema()).isEqualTo(CONTAINER.condition());
+                assertThat(DocumentSchemaRootLocator.parseFrom(locator.toByteString())).isEqualTo(locator);
                 if (fragment.part() == DocumentPart.DOCUMENT_PART_CORE)
                     assertThat(root.access()).containsExactly(new DocumentSchemaOccurrences.Field(4));
                 else {

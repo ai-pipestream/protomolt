@@ -1423,3 +1423,29 @@ The operation inventory records their exact verification and limits. The
 containing-root locator, canonical evidence-set encoding and revision references
 remain acceptance work. Internal path evidence does not authenticate compiler
 provenance, authorize a read, retain an artifact or enable typed publication.
+
+### Reviewed revision-to-schema storage prerequisite
+
+The next migration may add immutable normalized references from a native revision
+to `(account_id, artifact_sha256)`, with no production insertion until complete
+root/path/candidate binding exists. Do not attach unlocated references to opaque
+commits as a shortcut to typed retention. A future distinct unvalidated-retention
+feature would need its own purpose, API and aggregate limits; it is not implied.
+
+Each insertion must match the native commit's account, principal, operation and
+current owner generation under the live write fence, and prove a current-generation
+claim for the exact artifact. Require the commit creation transaction and unsealed
+revision projection transaction to be the current transaction. Reference insertion
+must precede sealing and terminal success. A completed operation or sealed revision
+cannot gain references afterward, including after deferred constraints were made
+immediate. Acquire the complete artifact-key set in sorted order after existing
+publication locks. Test wrong account/operation/generation, missing claim, expired
+owner, sealed revision, terminal success and transaction rollback.
+
+Durable foreign keys must target the immutable revision and catalog, never a
+staging claim. Claim replacement and eventual terminal cleanup must not detach
+committed schemas. Catalog deletion must remain blocked while authorized retained
+history references it. On typed activation, deferred success verification must
+prove the exact complete artifact set implied by containing definitions, all root
+and nested path boundaries, and source bundles. Individually valid rows are not a
+complete admission proof; opaque structured_resolution is not a substitute.
