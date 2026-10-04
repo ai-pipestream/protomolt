@@ -2707,3 +2707,23 @@ and dependency-boundary checks passed in 2s. This establishes structural lookup
 improvement, not measured end-to-end latency. No protobuf contract changed.
 Sol reviewed the allocator, bounds and rejection behavior without a blocker. Run
 naming is part of the pinned v1 fragment policy. No hosted CI or publication ran.
+
+### Bounded structural revision assembly
+
+New pure `DocumentRevisionAssembly` retains immutable ByteString fragments and
+produces a parsed Document view after aggregate byte/count preflight, unique slots,
+exactly one CORE, fragment confinement and ordered chunk validation. It bounds
+parser recursion, checks complete consumption and checks cancellation between
+fragments. Original bytes remain separate from reserialized semantic content.
+Tests include complete split/assembly, CORE-only data, noncanonical encoding,
+malformed input, end-group/trailing fields, wrong identity, depth, exact/over-limit
+bytes/fragments/chunk elements and cancellation.
+
+Sol reviewed the design and resource boundaries. A suspected end-group parsing
+bypass was not reproduced by the generated Document parser: the malformed-input
+test passed without the explicit last-tag/consumption checks. Those checks remain
+as defensive boundary requirements, not a claimed red/green defect fix.
+The codec suite and dependency gate passed in 2s. No provider qualification,
+annotation/Any validation, descriptor retention, authority or publication follows
+from a structural result. Host memory reservations must cover decoded expansion;
+raw byte limits alone are not heap bounds. Repository preparation remains open.

@@ -159,8 +159,14 @@ parse/reserialize or overwrite original bytes with a normalized representation.
 below for the fixed `protomolt-document-parts/v1` policy. It accepts an already
 bounded, parsed Document; it neither resolves descriptors nor persists policy
 identity. `DocumentChunkSequence` now checks global ordered run names, partitions
-and a caller-specified aggregate element bound. Complete assembly and repository
-wiring remain unimplemented. Presence follows the codec: an explicitly present empty BlobBag
+and a caller-specified aggregate element bound. `DocumentRevisionAssembly` now
+combines these checks with immutable original PRESENT-fragment bytes, unique slots,
+exactly one CORE, aggregate byte/count bounds, bounded-depth parsing and cancellation
+between fragments. Repository resolution, full manifest preparation and publication
+wiring remain unimplemented. Byte bounds are not a heap limit; hosts must reserve
+resources for protobuf object expansion and apply concrete policy. A single parse
+is not interruptible through the between-fragment control callback.
+Presence follows the codec: an explicitly present empty BlobBag
 is a BLOBS fragment, while repeated PARSED/CHUNKS content requires entries.
 
 For the initial Document layout, require one CORE, matching nonblank document IDs
