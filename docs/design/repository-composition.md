@@ -253,6 +253,28 @@ that requirement by omitting schema fields, changing transport, or using raw
 upload. Opaque originals remain legal where policy permits them, but must never
 be represented as validated typed content.
 
+Opaque intake preserves an Any's exact type URL and value bytes without requiring
+its message definition or deserializing the packed value. The surrounding request
+and document envelope still require bounded parsing, ownership checks and byte
+integrity verification. A stored opaque value may be read as bytes by an authorized
+caller; it cannot satisfy an operation requiring validated typed input.
+
+Keep resolution and validation separate in future admission metadata. If lookup
+was skipped, record resolution as not attempted rather than claiming the
+definition is missing. If lookup established that no definition was available,
+record that outcome explicitly. A registry outage or denied access is a different
+outcome, not evidence of a nonexistent type. Resolution alone does not establish
+validation. Opaque intake must be explicitly allowed by policy; required typed
+intake cannot silently degrade after a lookup, decode or validation failure.
+
+Later typed processing resolves a pinned definition, retains the schema asset and
+validates the original bytes before producing validation evidence. Attach new
+evidence to the same immutable content identity through the version/provenance
+model; do not rewrite earlier records to imply validation happened at intake.
+Deserialization is demand-driven for operations that need fields, such as mapping,
+projection, annotation validation or embedding extraction. The explicit durable
+resolution/validation status contract and its revision wiring remain pending.
+
 For typed intake, the shared engine performs:
 
 1. Authenticate the remote caller and authorize the target account/document.

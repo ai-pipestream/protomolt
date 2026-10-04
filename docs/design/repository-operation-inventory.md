@@ -3427,3 +3427,14 @@ descriptor artifacts, unknown metadata fields, compiler options, bounds,
 cancellation, repeated nested resolution, URL mismatches and invalid nested values.
 These are internal preparation APIs; durable revision references, compiler trust
 verification and per-occurrence binding remain incomplete.
+
+### Opaque Any intake regression
+
+Existing DocumentCommandContent behavior permits opaque structured_data when
+host policy allows it and no explicit structured schema is requested. A regression
+uses an arbitrary type URL and a deliberately undecodable packed value to prove
+the content-only path preserves the Any without parsing its value. Required typed
+policy and an explicit schema still fail pending full admission wiring. All eight
+DocumentCommandContent tests pass. This proves content preparation, not durable
+publication, status persistence or authorization. Future status metadata must
+distinguish unattempted resolution, unavailable definitions and validation results.

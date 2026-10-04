@@ -19,6 +19,9 @@ class DocumentCommandContentTest {
     private static Fixture fixture(String decodedOwner) {
         var doc = Document.newBuilder().setDocId("doc").setOwnership(owner(decodedOwner))
                 .setSearchMetadata(SearchMetadata.newBuilder().addSemanticResults(SemanticProcessingResult.newBuilder().setResultId("run"))).build();
+        return fixture(doc);
+    }
+    private static Fixture fixture(Document doc) {
         var parts = DocumentPartCodec.split(doc, PartLayouts.document());
         var member = DocumentPublicationMember.newBuilder().setMemberId("member").setDriveId(UUID.randomUUID().toString())
                 .setDestination(DocumentRevisionCondition.newBuilder().setIfAbsent(true).setAddress(NodeAddress.newBuilder()
@@ -29,7 +32,28 @@ class DocumentCommandContentTest {
                 .setUpload(PublicationUpload.newBuilder().setSizeBytes(part.bytes().length).setSha256(part.sha256()).setContentType("application/protobuf")));
         var command = new DocumentPublicationCommand(DocumentPublicationIntent.newBuilder().setEncodingVersion(1)
                 .setOperationId(UUID.randomUUID().toString()).setAccountId("account").addMembers(member).build());
-        return new Fixture(command, Map.of(0, ByteString.copyFrom(parts.get(0).bytes()), 1, ByteString.copyFrom(parts.get(1).bytes())));
+        var bytes = new java.util.HashMap<Integer, ByteString>();
+        for (int i = 0; i < parts.size(); i++) bytes.put(i, ByteString.copyFrom(parts.get(i).bytes()));
+        return new Fixture(command, Map.copyOf(bytes));
+    }
+    @Test void opaqueAnyPreservesUnknownTypeAndUnparsedValueWithoutGrantingTypedAdmission() throws Exception {
+        // Invalid protobuf field tag proves this path does not parse the packed value.
+        var opaque = com.google.protobuf.Any.newBuilder().setTypeUrl("archive.example/unavailable.FutureRecord")
+                .setValue(ByteString.copyFrom(new byte[]{0, (byte) 255, 1})).build();
+        var doc = Document.newBuilder().setDocId("doc").setOwnership(owner("account")).setStructuredData(opaque).build();
+        var f = fixture(doc);
+        var result = DocumentCommandContent.check(f.command, "member", f.bytes, false, LIMITS, () -> {});
+        assertThat(result.assembly().document().getStructuredData()).isEqualTo(opaque);
+        for (var fragment : result.assembly().fragments()) {
+            assertThat(f.bytes.values()).contains(fragment.bytes());
+        }
+        assertThatThrownBy(() -> DocumentCommandContent.check(f.command, "member", f.bytes, true, LIMITS, () -> {}))
+                .isInstanceOf(UnsupportedOperationException.class);
+        var explicit = f.command.intent().getMembers(0).toBuilder().setStructuredSchema(PublicationSchemaCondition.newBuilder()
+                .setTypeName("unavailable.FutureRecord").setDescriptorFingerprint("a".repeat(64)));
+        var typed = new DocumentPublicationCommand(f.command.intent().toBuilder().setMembers(0, explicit).build());
+        assertThatThrownBy(() -> DocumentCommandContent.check(typed, "member", f.bytes, false, LIMITS, () -> {}))
+                .isInstanceOf(UnsupportedOperationException.class);
     }
     @Test void bindsCanonicalCommandAndDecodedOwnershipWithoutPublishing() throws Exception {
         var f = fixture("account");
