@@ -272,8 +272,20 @@ validates the original bytes before producing validation evidence. Attach new
 evidence to the same immutable content identity through the version/provenance
 model; do not rewrite earlier records to imply validation happened at intake.
 Deserialization is demand-driven for operations that need fields, such as mapping,
-projection, annotation validation or embedding extraction. The explicit durable
-resolution/validation status contract and its revision wiring remain pending.
+projection, annotation validation or embedding extraction.
+
+The additive RepositoryAnyResolution definition now records exact type URL,
+value-byte digest and size, with one outcome: not attempted, resolved schema
+reference, or a failed lookup classification. Definition unavailable means an
+authoritative absence; lookup failure and access denial remain distinct. Resolved
+references reuse PublicationSchemaCondition and the exact descriptor artifact
+digest without embedding descriptor bytes or compiler metadata. This is a
+resolution observation, not a validation record. Enclosing evidence must still
+bind the account, operation/attempt, revision and occurrence; handlers verify the
+bytes and actual outcome. No RPC or persistence path is mounted by the definition.
+For resolved observations, the handler must match the retained asset metadata's
+exact type URL and PublicationSchemaCondition as well as its artifact digest.
+Durable validation evidence and revision wiring remain pending.
 
 For typed intake, the shared engine performs:
 

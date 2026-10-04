@@ -3438,3 +3438,21 @@ policy and an explicit schema still fail pending full admission wiring. All eigh
 DocumentCommandContent tests pass. This proves content preparation, not durable
 publication, status persistence or authorization. Future status metadata must
 distinguish unattempted resolution, unavailable definitions and validation results.
+
+### Any resolution observation contract
+
+New RepositoryAnyResolution and RepositoryResolvedSchema messages add no RPC and
+change no existing protobuf identity. Resolution records bind an exact type URL,
+value-byte SHA-256 and size to one explicit outcome. Resolved references reuse
+PublicationSchemaCondition plus exact descriptor artifact SHA-256. Descriptor
+bytes and compiler metadata remain in shared assets. Unattempted lookup,
+authoritative definition absence, lookup failure and access denial stay distinct.
+No outcome claims that the value passed validation.
+
+All 37 repository protobuf tests pass using generated and dynamic messages in
+the new fixtures. Complete imports compile; new-file Buf lint and workspace
+compatibility against the preceding HEAD pass. JSON Schema exposes size/pattern
+rules and CEL metadata, while cross-field rules require the runtime validator.
+OpenAPI execution of those rules is not established. Account/revision/attempt/path
+binding, trusted observation capture, validation verdicts and persistence remain
+implementation work. No availability claim is added to public API documentation.
