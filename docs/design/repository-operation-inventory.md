@@ -5313,10 +5313,29 @@ are dropped after closing the plans in the SQL-failure test, so the ledger must
 retain their cleanup handles itself.
 
 This does not complete durable host recovery. An unknown SQL capture outcome
-still requires incarnation-scoped discovery after proven quiescence. A lost
-release acknowledgment followed by physical-object cleanup also needs explicit
-reconciliation of the exact captured pin identities: V45 currently requires
-registered objects even for an absent pin. Preserve its rejection of unregistered
-or mismatched claims rather than weakening that check to make retries appear
-successful. Add fault tests for both unknown outcomes before claiming the mounted
-host recovery path complete.
+requires incarnation-scoped discovery after proven quiescence. A lost release
+acknowledgment needs the explicit reconciliation below when V45's original
+physical identities no longer exist. The host must compose these operations with
+shutdown, deadlines and recovery scheduling before its lifecycle is complete.
+
+### Explicit reconciliation of uncertain reader outcomes
+
+New `DocumentReadLedger.reconcileDrained(limit)` confirms exact tracked handles
+after durable quiescence. It does not delete pins or silently reinterpret a failed
+release. `DocumentReadPins` checks native pin IDs and `DOCUMENT_READER` mirror
+owner IDs independently of physical-object existence. Mismatched reader/object
+bindings fail; a remaining matching representation keeps the handle and its
+capacity. Only complete absence retires the local handle. Confirmation shares
+the per-handle completion lock with release and recovery. Bounded passes rotate
+unconfirmed handles so one pending set cannot starve later completed sets.
+
+Real JDBC fault tests execute PostgreSQL commit before throwing a response error.
+An uncertain capture returns no handle but leaves durable pins discoverable by
+`DocumentReadRecovery`; an uncertain release leaves a tracked handle despite the
+committed deletion. Both converge after fencing, actual local quiescence and
+bounded recovery/reconciliation. Tests also cover partial recovery, another
+reader's independent pins, and false confirmations caused by orphaned mirrors or
+mismatched identities. A separately labeled catalog fault proves confirmation
+does not require the old physical location rows; it is not evidence that history
+pruning has been implemented. V45 and its rejection of unregistered release claims
+remain unchanged. No protobuf or transport contract changes.

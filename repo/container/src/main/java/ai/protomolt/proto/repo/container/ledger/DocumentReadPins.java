@@ -97,11 +97,46 @@ final class DocumentReadPins {
         finish(tx, captured, true);
     }
 
-    private static void finish(Tx tx, Captured<?> captured, boolean recovery) {
+    /**
+     * Read-only confirmation for an exact ledger-issued handle after durable
+     * quiescence. Physical locations may already be gone. Both native pins and
+     * their mirrors must be absent; neither elapsed time nor failed release is proof.
+     */
+    static boolean confirmReleased(Tx tx, Captured<?> captured) {
+        var encoded = claims(captured);
+        return tx.inTransaction(em -> {
+            em.createNativeQuery("SELECT require_repository_read_committed()").getSingleResult();
+            if (!Boolean.TRUE.equals(em.createNativeQuery("""
+                    SELECT EXISTS(SELECT 1 FROM repository_reader_incarnations
+                    WHERE incarnation=:reader AND state='QUIESCED')
+                    """).setParameter("reader", captured.reader()).getSingleResult()))
+                throw new DocumentPartAttemptLedger.FenceException("Read pin reconciliation requires proven quiescence");
+            var state = (Object[]) em.createNativeQuery("""
+                    SELECT EXISTS(
+                      SELECT 1 FROM jsonb_to_recordset(CAST(:claims AS jsonb)) q(pin uuid,object uuid)
+                      JOIN document_read_pins p ON p.pin_id=q.pin
+                      WHERE p.reader_incarnation<>:reader OR p.object_id<>q.object)
+                    OR EXISTS(
+                      SELECT 1 FROM jsonb_to_recordset(CAST(:claims AS jsonb)) q(pin uuid,object uuid)
+                      JOIN repository_object_references r ON r.owner_kind='DOCUMENT_READER' AND r.owner_id=q.pin
+                      WHERE r.object_id<>q.object),
+                    NOT EXISTS(
+                      SELECT 1 FROM jsonb_to_recordset(CAST(:claims AS jsonb)) q(pin uuid,object uuid)
+                      JOIN document_read_pins p ON p.pin_id=q.pin)
+                    AND NOT EXISTS(
+                      SELECT 1 FROM jsonb_to_recordset(CAST(:claims AS jsonb)) q(pin uuid,object uuid)
+                      JOIN repository_object_references r ON r.owner_kind='DOCUMENT_READER' AND r.owner_id=q.pin)
+                    """).setParameter("reader", captured.reader()).setParameter("claims", encoded).getSingleResult();
+            if (Boolean.TRUE.equals(state[0]))
+                throw new DocumentPartAttemptLedger.FenceException("Read pin reconciliation found mismatched identities");
+            return Boolean.TRUE.equals(state[1]);
+        });
+    }
+
+    private static String claims(Captured<?> captured) {
         java.util.Objects.requireNonNull(captured.reader(), "Pinned reader identity");
         if (captured.pins().size() > DocumentPublicationCommand.MAX_PARTS)
             throw new IllegalArgumentException("Read pin release exceeds command bounds");
-        if (captured.pins().isEmpty()) return;
         var rows = ListValue.newBuilder();
         for (var pin : captured.pins()) rows.addValues(Value.newBuilder().setStructValue(Struct.newBuilder()
                 .putFields("pin", text(pin.id())).putFields("object", text(pin.object()))));
@@ -110,6 +145,12 @@ final class DocumentReadPins {
         catch (com.google.protobuf.InvalidProtocolBufferException failure) {
             throw new IllegalArgumentException("Cannot encode read pin release", failure);
         }
+        return encoded;
+    }
+
+    private static void finish(Tx tx, Captured<?> captured, boolean recovery) {
+        var encoded = claims(captured);
+        if (captured.pins().isEmpty()) return;
         tx.inTransaction(em -> {
             String query = recovery ? "SELECT recover_quiesced_document_read_pins(:reader,CAST(:claims AS jsonb))"
                     : "SELECT release_document_read_pins(:reader,CAST(:claims AS jsonb))";

@@ -15,6 +15,7 @@ import java.util.concurrent.TimeUnit;
  * This ledger borrows its Tx and owns no executor or provider client.
  */
 public final class DocumentReadLedger {
+    private enum Completion { RELEASE, RECOVER, CONFIRM_RELEASED }
     private final Tx tx;
     private final UUID incarnation;
     private final Object lifetime = new Object();
@@ -109,6 +110,22 @@ public final class DocumentReadLedger {
      * The host supplies bounded SQL timeouts and schedules retries/shutdown itself.
      */
     public int releaseDrained(int limit) {
+        return finishDrained(limit, Completion.RELEASE);
+    }
+
+    /**
+     * Confirm exact local handles after durable recovery or an uncertain release
+     * acknowledgment. Requires local drain and durable QUIESCED state. Does not
+     * delete pins, close plans or recover an unknown capture; durable discovery
+     * owns those missing handles. Remaining pins keep their capacity reservation.
+     * The return value counts retired local handles only: zero is not proof of
+     * incarnation quiescence or an empty durable pin set.
+     */
+    public int reconcileDrained(int limit) {
+        return finishDrained(limit, Completion.CONFIRM_RELEASED);
+    }
+
+    private int finishDrained(int limit, Completion completion) {
         if (limit < 1) throw new IllegalArgumentException("Release batch limit must be positive");
         final java.util.List<PinnedRead<?>> ready;
         synchronized (lifetime) {
@@ -117,17 +134,24 @@ public final class DocumentReadLedger {
         int completed = 0;
         IllegalStateException failures = null;
         for (var read : ready) {
-            try { if (read.finish(false)) completed++; }
+            try {
+                if (read.finish(completion)) completed++;
+                else rotatePending(read);
+            }
             catch (RuntimeException failure) {
-                synchronized (lifetime) {
-                    if (retainedReads.remove(read)) retainedReads.add(read);
-                }
-                if (failures == null) failures = new IllegalStateException("Document read pin release failed; handles retained for retry", failure);
+                rotatePending(read);
+                if (failures == null) failures = new IllegalStateException("Document read pin completion failed; handles retained for retry", failure);
                 else failures.addSuppressed(failure);
             }
         }
         if (failures != null) throw failures;
         return completed;
+    }
+
+    private void rotatePending(PinnedRead<?> read) {
+        synchronized (lifetime) {
+            if (retainedReads.remove(read)) retainedReads.add(read);
+        }
     }
 
     /** Stops new capture and new Uses permanently; existing Uses still own their work. */
@@ -269,17 +293,22 @@ public final class DocumentReadLedger {
         }
 
         /** Does SQL only after actual local drain; failures propagate and remain retryable. */
-        public void release() { finish(false); }
+        public void release() { finish(Completion.RELEASE); }
 
         /** Requires local drain and V46's durable QUIESCED proof; does not attest that proof. */
-        public void recover() { finish(true); }
+        public void recover() { finish(Completion.RECOVER); }
 
-        private boolean finish(boolean recovery) {
+        private boolean finish(Completion completion) {
             if (!isDrained()) throw new IllegalStateException("Read plan must be closed and drained before release");
             synchronized (releaseLock) {
                 if (released) return false;
-                if (recovery) DocumentReadPins.recover(tx, captured);
-                else DocumentReadPins.release(tx, captured);
+                switch (completion) {
+                    case RELEASE -> DocumentReadPins.release(tx, captured);
+                    case RECOVER -> DocumentReadPins.recover(tx, captured);
+                    case CONFIRM_RELEASED -> {
+                        if (!DocumentReadPins.confirmReleased(tx, captured)) return false;
+                    }
+                }
                 released = true;
                 synchronized (lifetime) {
                     if (retainedReads.remove(this)) outstandingReads--;
