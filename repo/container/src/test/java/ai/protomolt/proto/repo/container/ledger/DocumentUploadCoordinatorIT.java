@@ -25,6 +25,8 @@ import static org.assertj.core.api.Assertions.*;
 class DocumentUploadCoordinatorIT {
     @Container static final PostgreSQLContainer POSTGRES=new PostgreSQLContainer("postgres:18-alpine");
     @Container static final LocalStackContainer S3=new LocalStackContainer(DockerImageName.parse("localstack/localstack:3.8")).withServices("s3");
+    @Container static final org.testcontainers.containers.GenericContainer<?> REDIS =
+            new org.testcontainers.containers.GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
     private static LedgerDatabase database;
     private static Tx tx;
     private static OpenedBlobStore opened;
@@ -302,6 +304,82 @@ class DocumentUploadCoordinatorIT {
             });
             assertThat(resolutions.get()).isEqualTo(1);
             assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @Test void oneOperationStagesAcrossS3AndRedisWithExactBackendBindings() throws Exception {
+        var base = fixture(2, LEASE);
+        String redisGeneration = "redis-" + UUID.randomUUID();
+        var options = Map.of("uri", "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379),
+                "ttl-seconds", "0", "max-object-bytes", "1048576", "key-prefix", redisGeneration);
+        var redisProvider = new ai.protomolt.proto.repo.blob.redis.RedisBlobStoreProvider();
+        var redisProfile = new ManagedBackendLedger.Profile(redisProvider.managedIdentity(options), "redis-test-realm");
+        new ManagedBackendLedger(tx).bind(redisGeneration, redisProfile);
+        var drive = new DriveRecord(); drive.driveId = UUID.randomUUID(); drive.accountId = "account";
+        drive.name = redisGeneration; drive.driveType = "CUSTOM"; drive.provider = "redis"; drive.bucket = NAMESPACE;
+        new DriveLedger(tx).insert(drive);
+        var redisMember = base.command.intent().getMembers(0).toBuilder().setMemberId("redis-member")
+                .setDriveId(drive.driveId.toString()).setDestination(base.command.intent().getMembers(0).getDestination()
+                        .toBuilder().setAddress(base.command.intent().getMembers(0).getDestination().getAddress()
+                                .toBuilder().setDocId(UUID.randomUUID().toString()))).build();
+        var command = new DocumentPublicationCommand(base.command.intent().toBuilder()
+                .setOperationId(UUID.randomUUID().toString()).addMembers(redisMember).build());
+        var owner = new RepositoryOperationLedger(tx).admit(new RepositoryOperationLedger.Key("account", "principal", command.operationId()),
+                command, UUID.randomUUID(), LEASE).owner().orElseThrow();
+        var placements = new java.util.HashMap<>(base.placements);
+        placements.put(drive.driveId, DocumentUploadPlan.Placement.sample(drive, redisGeneration, redisProfile));
+        var attempts = Map.of("member", UUID.randomUUID(), "redis-member", UUID.randomUUID());
+        var prepared = DocumentOperationUploadAdmission.prepare(command, placements, attempts, LEASE);
+        var bodies = new java.util.HashMap<>(base.bodies);
+        base.bodies.forEach((key, value) -> bodies.put(new DocumentUploadPayloads.Key("redis-member", key.revisionOrdinal()), value));
+        var budget = new PayloadBudget(1024 * 1024);
+        var resolutions = new java.util.HashMap<String, Integer>();
+        try (var redis = redisProvider.open(options)) {
+            // This qualifies transfer behavior only, not persistence across Redis restart or eviction.
+            try (var wrong = new DocumentUploadCoordinator(tx, new DriveLedger(tx), budget,
+                    (generation, retained) -> new DocumentUploadCoordinator.Backend(profile.identity(), opened),
+                    4, Duration.ofMillis(25), SQL_LIMITS)) {
+                assertThatThrownBy(() -> wrong.stage(ADMIN, owner, prepared, bodies, Map.of(), () -> {}))
+                        .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("identity");
+                assertThat(tx.<Long>readOnly(em -> ((Number) em.createNativeQuery(
+                        "SELECT count(*) FROM document_operation_selection_current WHERE operation_id=:id")
+                        .setParameter("id", command.operationId()).getSingleResult()).longValue())).isZero();
+                for (UUID attempt : attempts.values()) {
+                    assertThat(tx.<Long>readOnly(em -> ((Number) em.createNativeQuery(
+                            "SELECT count(*) FROM document_part_attempts WHERE attempt_id=:id")
+                            .setParameter("id", attempt).getSingleResult()).longValue())).isZero();
+                }
+                assertThat(budget.reservedBytes()).isZero();
+            }
+            try (var coordinator = new DocumentUploadCoordinator(tx, new DriveLedger(tx), budget, (generation, retained) -> {
+                resolutions.merge(generation, 1, Integer::sum);
+                if (generation.equals(GENERATION)) {
+                    assertThat(retained).isEqualTo(profile);
+                    return new DocumentUploadCoordinator.Backend(profile.identity(), opened);
+                }
+                assertThat(generation).isEqualTo(redisGeneration);
+                assertThat(retained).isEqualTo(redisProfile);
+                return new DocumentUploadCoordinator.Backend(redisProfile.identity(), redis);
+            }, 4, Duration.ofMillis(25), SQL_LIMITS)) {
+                var staged = coordinator.stage(ADMIN, owner, prepared, bodies, Map.of(), () -> {});
+                assertThat(staged.members()).hasSize(2).allSatisfy(member -> {
+                    assertThat(member.attempt().state()).isEqualTo("VERIFIED");
+                    assertThat(member.attempt().id()).isEqualTo(attempts.get(member.selection().member()));
+                });
+                assertThat(resolutions).containsExactlyInAnyOrderEntriesOf(Map.of(GENERATION, 1, redisGeneration, 1));
+                assertThat(budget.reservedBytes()).isZero();
+                for (var member : DocumentUploadPlan.prepare(command, placements, attempts).members()) {
+                    boolean onRedis = member.intent().getMemberId().equals("redis-member");
+                    var actual = onRedis ? redis.store() : opened.store();
+                    var other = onRedis ? opened.store() : redis.store();
+                    for (var upload : member.attempt().orElseThrow().uploads()) {
+                        String key = upload.object().objectKey();
+                        var expected = bodies.get(new DocumentUploadPayloads.Key(member.intent().getMemberId(), upload.revisionOrdinal()));
+                        assertThat(actual.get(NAMESPACE, key).data()).containsExactly(expected.bytes());
+                        assertThatThrownBy(() -> other.get(NAMESPACE, key)).isInstanceOf(BlobStore.BlobNotFoundException.class);
+                    }
+                }
+            }
         }
     }
 

@@ -2594,3 +2594,20 @@ it. No hosted CI, push, merge or deployment was performed.
 The final Redis/cache rerun passed in 7s after moving metadata/address validation
 ahead of body copying or stream consumption and adding an accepted exact-boundary
 metadata fixture. Sol reviewed the resource-bound change with no blocker.
+
+### Selected upload across different providers
+
+Existing coordinator behavior now has a real mixed-provider integration case:
+one operation stages two parts in versioned LocalStack S3 and two in Redis 7,
+with PostgreSQL retaining separate generations, physical profiles and attempts.
+The resolver is called once per generation. Successful staging preserves each
+member's selected attempt; every planned key reads back from its intended provider
+and is absent from the other provider. One shared payload budget returns to zero.
+
+A resolver substituting the S3 identity for the retained Redis identity is
+rejected before selection or attempt admission. No fallback to another provider
+is allowed. Sol reviewed the test without a blocker. The ten coordinator cases
+passed in 22s; the added no-attempt-row assertions were checked in a focused rerun.
+No production behavior or public API changed. This proves transfer/routing, not
+Redis restart durability, eviction safety, typed admission, retained CORE reuse
+or publication. Those obligations remain open. No remote publication occurred.
