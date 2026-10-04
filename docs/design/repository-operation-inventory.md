@@ -3325,3 +3325,16 @@ claims remain intact. All 14 staging tests pass; Sol found no blocker.
 The cutover design records reuse of MappingHelper, the mapper's Any-aware field
 access, MetadataExtractor's CEL selectors and MessageProjection. The remaining
 path work is persisted occurrence provenance, not another selector engine.
+
+### Reflection to Git restart proof
+
+GitBackedReflectedAnyActionTest now exercises the combined existing path: discover
+an in-process gRPC service through reflection, commit the descriptor bytes through
+GitSchemaRegistryStore, reopen the registry and filesystem profiles, build a fresh
+action catalog, and invoke an Any request/reply dynamically. It asserts the Git
+commit and retained bytes, and verifies invocation makes no further reflection
+calls. Only test dependencies changed; production code was reused.
+
+All 25 service-workspace tests pass without failures or skips. This proves client
+reconstruction from retained service definitions. Repository revision retention,
+archival authorization and publication remain separate unfinished work.
