@@ -2555,3 +2555,70 @@ or blocking read-control callbacks.
 
 Full deployment-restart qualification and public transport integration remain
 outstanding; these internal-reader tests do not qualify every host delivery path.
+
+### Host integration sequence after historical replay qualification
+
+Status: reviewed implementation sequence, not mounted functionality. Source
+inspection at `9d1f7c7f` confirms that `RepoServices` constructs
+`DocumentOperations` with a backend generation but without `managedParts` or
+`managedWriter`. `DocumentSchemaPolicies`, `DocumentSchemaBatch`,
+`DocumentUploadCoordinator` and `DocumentPublicationCommit` remain internal
+ledger components. A publication fixture is not a host entry point.
+
+1. Add the shared native publication coordinator over these existing components.
+   It must own policy selection, immutable candidate preparation, authorized
+   schema resolution, checked staging, operation ownership and the complete
+   proof-bound commit. Keep SQL locks out of provider and resolver I/O. Reuse
+   the canonical command and `DocumentPublicationResult`; a retry returns its
+   durable original revision identities after current authorization. Do not
+   mount policy activation before all configured-policy write paths are bound
+   or explicitly refused. Keep the V59 unbound-write rejection in place.
+2. Compose managed document resources in the host. Resolve each original backend
+   generation to a configured provider identity before I/O; missing generations
+   fail explicitly. Share bounded payload capacity, own worker shutdown and
+   quiescence-backed pin recovery, and close borrowed providers only after
+   readers drain. A crashed process alone is not proof that an old incarnation
+   is quiescent; recovery requires the host's ownership/fencing evidence.
+   Qualify startup and shutdown, not just constructor injection. Selecting a
+   non-S3 provider must not construct an S3 client. The legacy attempt writer
+   alone is not a substitute for the native policy/proof coordinator.
+3. Add a shared historical operation over `captureHistorical`, `readHistorical`
+   and `readValidated`. The coordinator owns capture, result lifetime, drain and
+   release. Use the exact address and revision UUID returned by publication;
+   never select a mutable latest revision as a fallback. Capture the immutable
+   historical manifest from the plan. Raw preservation returns original fragment
+   bytes without a schema-validity claim; validated delivery includes revision,
+   command and policy identity and reports missing retained definitions as data
+   loss. Current READ authorization governs both modes, including final delivery.
+4. Add reviewed historical wire contracts and a thin gRPC adapter to that shared
+   operation. Keep current `GetDocument`, `GetDocumentByReference` and their
+   partial-assembly response semantics unchanged. Historical mode, revision,
+   manifest and validation evidence need an explicit additive result. Reuse
+   `NodeAddress`, `DocumentManifest` and existing revision identity semantics.
+   Choose unary bounds or streaming framing before defining fields; account for
+   response copies, cancellation, backpressure and the actual serialization
+   lifetime. Returning a borrowed result after closing its budget is not a
+   transport-memory guarantee. No fields or RPC names are allocated by this plan.
+
+The host must supply authenticated account and ACL bindings. The default
+`DocumentGrpcService` binding carries principal/process authority only; it must
+not infer account membership from request fields or grant broad authority to
+make the historical path work.
+
+Acceptance follows one real flow: publish through the shared coordinator, receive
+its revision identity, read that revision locally and through an in-process gRPC
+server backed by PostgreSQL and a real provider adapter, then gracefully restart
+the host and repeat without a live registry. Qualify crash recovery separately
+with explicit quiescence proof before releasing old pins. Run the same cases for scoped access,
+cross-account denial, revocation, typed and opaque data, superseded revisions,
+missing definitions, cancellation, exhausted capacity and unsupported provider
+capabilities. Verify that no response escapes on failed typed admission and no
+pins or workers remain after shutdown. Existing raw-reader and replay tests are
+prerequisite evidence, not substitutes for this shared-path suite.
+
+This sequence preserves the optional JCR split in
+[the compatibility assessment](repository-jcr-compatibility.md). The native
+document batch is one domain operation over reusable commit/reference primitives;
+it must not become the universal transaction boundary. Historical document reads
+do not implement JCR workspace sessions, stable identity across moves or version
+restoration, and the base modules gain no JCR dependency.

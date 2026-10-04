@@ -5022,3 +5022,37 @@ The result is generic NOT_FOUND with no cause, no delivered document and zero
 remaining payload reservations or read pins. Full deployment restart and public
 transport integration remain to be qualified; no public historical transport is
 advertised.
+
+### Native host and historical transport integration inventory
+
+This records planned work after checkpoint `9d1f7c7f`; none of these entries
+advertises a mounted historical endpoint.
+
+- **Unchanged contracts:** `GetDocument`, `GetDocumentByReference` and
+  `GetDocumentResponse` retain current-state and partial-assembly semantics.
+  `DocumentPublishedRevision.revision_id` remains the immutable revision UUID;
+  it is not a provider version, mutation counter or JCR version.
+- **New shared coordinator over existing operations:** compose native command
+  admission, selected schema policy, authorized descriptor resolution, upload
+  staging and `DocumentPublicationCommit`. Reuse the canonical command and
+  `DocumentPublicationResult` instead of creating another retry/receipt format.
+  Qualify real publication and durable retry before mounting it.
+- **Extended host composition:** `RepoServices` must own managed document reader
+  resources, original-generation provider resolution, shared capacity and
+  shutdown with quiescence-backed pin recovery. A restart alone does not prove
+  that old readers have stopped. Its current constructor call supplies neither the managed
+  reader nor writer to `DocumentOperations`. Native policy-bound publication
+  requires its own coordinator; enabling the older writer does not satisfy it.
+- **New shared historical operation:** take trusted caller identity, exact
+  address/revision and an explicit raw-preservation or validated mode. Own the
+  pinned plan and result through delivery. Use the retained manifest, original
+  bytes and existing admission identity. Keep current authorization separate
+  from the historical policy snapshot.
+- **New additive transport contract, not yet defined:** expose the shared
+  operation through a thin adapter after choosing response bounds/framing and
+  resource lifetime. Reuse existing address, manifest and revision types.
+  Keep protobuf names, existing tags, imports and Any URLs intact. The host must
+  bind scoped account/ACL identity; request coordinates cannot establish access.
+
+The [host integration sequence](repository-composition.md#host-integration-sequence-after-historical-replay-qualification)
+defines the required local/gRPC conformance flow and the optional JCR boundary.
