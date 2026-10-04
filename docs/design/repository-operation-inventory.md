@@ -4985,3 +4985,27 @@ There are 42 distinct passing tests: provider publication/read (15), delivery
 lock-wait control (2), historical capture (5), and upload coordination (20). The
 provider suite passed again after adding superseded-read assertions. Sol reviewed
 the implementation and failure-boundary tests with no blocker.
+
+### Typed historical provider read composition
+
+New Java operation `DocumentHistoricalReader.readValidated` combines the protected
+provider batch with retained-schema replay. Its closeable result exposes the
+document, address, exact revision, validation profile, command hash and policy
+hash. Admission proof internals and sibling command members remain private.
+No live registry input is accepted and no protobuf contract changed.
+
+The shared payload budget reserves fragment copies before conversion and exact
+command/policy, artifact and evidence byte groups before SQL transfers. Partial
+reservations are released on failure; successful results retain them and the raw
+provider batch until close. This is serialized-byte accounting, not a JVM heap
+limit. The bound validation method rechecks control after error-authorization
+waits and performs controlled current authorization before successful delivery.
+
+Qualification: 28 distinct tests cover budget lifetime, partial-capacity failure,
+cancellation after reservation, retained-policy replay, existing schema revocation
+boundaries, and provider publication/read behavior. The real-provider typed case
+checks the decoded document and provenance, deadline expiry after provider I/O,
+missing retained assets as DATA_LOSS, opaque typed refusal, and explicit raw
+preservation afterwards. The engine runtime-dependency gate passes. Process
+restart and a direct composed-reader revocation-during-replay case remain to be
+qualified; no public historical transport is advertised.

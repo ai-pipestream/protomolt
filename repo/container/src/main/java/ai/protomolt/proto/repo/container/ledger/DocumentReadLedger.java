@@ -116,10 +116,47 @@ public final class DocumentReadLedger {
     public final class PinnedHistory extends PinnedRead<DocumentHistoricalReadPlan> {
         private final RepositoryCaller caller;
         private final ai.protomolt.proto.repo.v1.NodeAddress address;
+        private final UUID revision;
         private PinnedHistory(DocumentReadPins.Captured<DocumentHistoricalReadPlan> captured, RepositoryCaller caller) {
             super(captured);
             this.caller = Objects.requireNonNull(caller);
             this.address = captured.plan().address();
+            this.revision = captured.plan().revision();
+        }
+
+        /**
+         * Replays exact supplied fragments using retained definitions only. The
+         * caller owns and budgets fragment copies and must hold its provider batch
+         * open. This method reserves retained SQL byte copies before loading them.
+         */
+        public DocumentHistoricalValidation validateFragments(
+                java.util.Map<Integer, com.google.protobuf.ByteString> fragments,
+                ai.protomolt.proto.repo.blob.spi.PayloadBudget budget,
+                ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
+            Objects.requireNonNull(fragments); Objects.requireNonNull(budget); Objects.requireNonNull(control);
+            var leases = new java.util.ArrayList<ai.protomolt.proto.repo.blob.spi.PayloadBudget.Lease>();
+            boolean handedOff = false;
+            try {
+                var proof = new DocumentHistoricalSchemas(tx).check(caller, address, revision, fragments, control::check, bytes -> {
+                    try { leases.add(budget.reserve(bytes)); }
+                    catch (ai.protomolt.proto.repo.blob.spi.PayloadBudget.CapacityExceededException exhausted) {
+                        throw new ai.protomolt.proto.repo.spi.RepositoryException(
+                                ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED,
+                                "Historical schema capacity exhausted", exhausted);
+                    }
+                });
+                authorizeDelivery(control);
+                var validation = new DocumentHistoricalValidation(proof, leases);
+                handedOff = true;
+                return validation;
+            } catch (RuntimeException failure) {
+                // Error reauthorization may itself wait on SQL. Do not return
+                // detailed replay failures after cancellation or expiry during that wait.
+                control.check();
+                throw failure;
+            } finally {
+                if (!handedOff) leases.forEach(ai.protomolt.proto.repo.blob.spi.PayloadBudget.Lease::close);
+            }
         }
 
         /** Rechecks current policy for the exact caller bound at capture; grants no new read lifetime. */

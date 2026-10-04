@@ -579,6 +579,63 @@ class DocumentPublicationCommitIT {
                 assertThat(actual.versionId()).isEqualTo(part.part().providerVersion());
                 assertThat(DocumentPartCodec.sha256Hex(actual.data())).isEqualTo(part.part().sha256());
             }
+            var ledger=new DocumentReadLedger(new Tx(database.entityManagerFactory()),UUID.randomUUID());
+            var history=ledger.captureHistorical(ADMIN,revision.getAddress(),UUID.fromString(revision.getRevisionId()));
+            var capacity=new PayloadBudget(8_000_000);
+            try(var raw=new ai.protomolt.proto.repo.engine.DocumentPartReader((generation,p)->opened.store(),4,1_000_000,capacity)) {
+                // A fresh historical reader has no live registry or definition supplier.
+                var historical=new ai.protomolt.proto.repo.engine.DocumentHistoricalReader(raw,capacity);
+                if(revision.getMemberId().equals("member-0")) {
+                    var validated=historical.readValidated(history,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+                    assertThat(validated.revision()).isEqualTo(UUID.fromString(revision.getRevisionId()));
+                    assertThat(validated.address()).isEqualTo(revision.getAddress());
+                    assertThat(validated.document()).isEqualTo(proof.document());
+                    assertThat(validated.policySha256()).isEqualTo(proof.policySha256());
+                    assertThat(validated.commandSha256()).isEqualTo(proof.commandSha256());
+                    assertThat(capacity.reservedBytes()).isPositive();
+                    validated.close(); validated.close();
+                    assertThatThrownBy(validated::document).isInstanceOf(IllegalStateException.class);
+                    assertThat(capacity.reservedBytes()).isZero();
+                    long fragmentReservations=4*retained.parts().stream().mapToLong(DocumentPublicationLedger.Part::size).sum();
+                    // Expire after real provider I/O and fragment copies, when schema
+                    // admission takes its first reservation. No callback performs I/O.
+                    var expiredDuringReplay=new ai.protomolt.proto.repo.spi.RepositoryReadControl() {
+                        @Override public boolean isCancelled() { return false; }
+                        @Override public long remainingNanos() {
+                            return capacity.reservedBytes()>fragmentReservations ? 0 : Long.MAX_VALUE;
+                        }
+                    };
+                    assertThatThrownBy(()->historical.readValidated(history,expiredDuringReplay))
+                            .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                                    failure->assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.DEADLINE_EXCEEDED))
+                            .hasNoCause();
+                    assertThat(capacity.reservedBytes()).isZero();
+                    // Fault injection removes a real retained asset, not provider bytes.
+                    tx.inTransaction(em->{
+                        em.createNativeQuery("SET LOCAL session_replication_role='replica'").executeUpdate();
+                        em.createNativeQuery("DELETE FROM repository_schema_artifacts WHERE account_id=:account AND artifact_sha256=decode(:sha,'hex')")
+                                .setParameter("account",fixture.command.intent().getAccountId())
+                                .setParameter("sha",proof.artifacts().keySet().iterator().next()).executeUpdate();
+                    });
+                    assertThatThrownBy(()->historical.readValidated(history,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                            .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                                    failure->assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.DATA_LOSS));
+                } else {
+                    assertThatThrownBy(()->historical.readValidated(history,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                            .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                                    failure->assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION));
+                }
+                assertThat(capacity.reservedBytes()).isZero();
+                // Raw preservation remains available; it never claims schema validation.
+                try(var bytes=raw.readHistorical(history,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+                    assertThat(bytes.parts()).hasSize(retained.parts().size());
+                }
+                assertThat(capacity.reservedBytes()).isZero();
+            } finally {
+                history.close();
+                assertThat(history.awaitDrained(Duration.ofSeconds(5))).isTrue();
+                history.release(); ledger.fence(); ledger.attestLocalQuiescence();
+            }
         }
     }
 

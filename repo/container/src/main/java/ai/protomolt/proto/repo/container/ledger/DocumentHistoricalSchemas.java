@@ -35,6 +35,11 @@ final class DocumentHistoricalSchemas {
      */
     DocumentSchemaAdmission.Proof check(RepositoryCaller caller, NodeAddress address, UUID revision,
             Map<Integer, ByteString> fragments, Runnable control) {
+        return check(caller, address, revision, fragments, control, ignored -> {});
+    }
+
+    DocumentSchemaAdmission.Proof check(RepositoryCaller caller, NodeAddress address, UUID revision,
+            Map<Integer, ByteString> fragments, Runnable control, java.util.function.LongConsumer reserve) {
         Objects.requireNonNull(address); Objects.requireNonNull(revision); Objects.requireNonNull(fragments);
         Objects.requireNonNull(control);
         Runnable active = () -> {
@@ -46,7 +51,7 @@ final class DocumentHistoricalSchemas {
             active.run();
             var snapshot = tx.inTransaction(em -> {
                 DocumentAdmissionAuthorization.authorizeHistory(em, caller, address);
-                return DocumentHistoricalSchemaRows.capture(em, address, revision, active);
+                return DocumentHistoricalSchemaRows.capture(em, address, revision, active, reserve);
             });
             proof = replay(address, snapshot, fragments, active);
             active.run();
@@ -57,6 +62,9 @@ final class DocumentHistoricalSchemas {
             throw new RepositoryException(RepositoryException.Code.DATA_LOSS,
                     "Historical content or retained schema failed validation", failure);
         } catch (RuntimeException failure) {
+            if (failure instanceof RepositoryException repository
+                    && (repository.code() == RepositoryException.Code.CANCELLED
+                        || repository.code() == RepositoryException.Code.DEADLINE_EXCEEDED)) throw failure;
             // Revocation during replay suppresses detailed content/storage failures as well as results.
             authorize(caller, address);
             throw failure;

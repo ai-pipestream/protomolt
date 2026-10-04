@@ -2518,7 +2518,26 @@ do not claim to rerun a historical compiler or executable validator.
 `DocumentHistoricalSchemas.check` now implements the internal authorization,
 bounded SQL snapshot and runtime replay boundary for supplied exact fragment
 bytes. It reads no registry and rechecks the stored command and historical policy.
-Composing this replay with the protected raw provider batch, process-restart
-qualification and public transport integration remain to be implemented and
-tested. A successful internal schema proof alone does not establish that a
-provider still serves the retained physical objects.
+`DocumentHistoricalReader.readValidated` now composes this replay with the
+protected raw provider batch. It preserves full manifest ordinals when mapping
+fragments, uses the retained policy and schema closure, and returns the validated
+document with its address, revision and contract/policy hashes. It has no live
+registry input. Opaque revisions and missing retained assets fail explicitly in
+this mode; callers can separately choose raw preservation without a validation
+claim.
+
+The typed result owns the raw batch, fragment-copy reservations and retained
+schema-byte reservations until close. Before loading each BYTEA group, the ledger
+reserves twice its actual serialized size for JDBC and protobuf copies. Fragment
+copy/replay bytes are reserved before conversion. Reservations fail without
+waiting, and partial acquisition is released on any failure. As with the existing
+`PayloadBudget`, this accounts serialized payload copies, not JVM object graphs
+or SDK overhead. Hosts must size heap and descriptor limits separately.
+The low-level `PinnedHistory.validateFragments` method accepts caller-owned
+fragment copies; those copies and any provider batch remain the caller's lifetime
+responsibility. The composed reader manages both automatically.
+
+Process-restart qualification, a direct composed-read revocation test during
+replay, and public transport integration remain outstanding. The shared replay
+boundary already has revocation tests, but those alone do not qualify every host
+delivery path.

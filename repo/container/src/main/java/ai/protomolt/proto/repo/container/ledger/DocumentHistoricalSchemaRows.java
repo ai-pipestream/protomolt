@@ -29,6 +29,12 @@ final class DocumentHistoricalSchemaRows {
     private DocumentHistoricalSchemaRows() {}
 
     static Snapshot capture(EntityManager em, NodeAddress address, UUID revision, Runnable control) {
+        return capture(em, address, revision, control, ignored -> {});
+    }
+
+    /** reserve is an internal nonblocking byte-budget operation, never provider work. */
+    static Snapshot capture(EntityManager em, NodeAddress address, UUID revision, Runnable control,
+            java.util.function.LongConsumer reserve) {
         control.run();
         var rows = em.createNativeQuery("""
                 SELECT r.native_binding,r.projection_sealed,c.account_id,c.admission_mode,a.decision,
@@ -39,12 +45,15 @@ final class DocumentHistoricalSchemaRows {
                   AND a.creation_xid=c.creation_xid AND c.creation_xid=r.projection_xid
                   AND s.creation_xid=c.creation_xid AND a.metadata=c.metadata_snapshot AND a.body=r.body
                   AND s.command_codec='document-publication' AND s.command_version=1),
-                 a.container_type_url_sha256,a.container_descriptor_sha256
+                 a.container_type_url_sha256,a.container_descriptor_sha256,
+                 octet_length(o.command),octet_length(p.policy_bytes)
                 FROM document_revision_publications r
                 LEFT JOIN document_revision_commits c ON c.revision_id=r.revision_id
                 LEFT JOIN document_revision_schema_admissions a ON a.revision_id=r.revision_id
                 LEFT JOIN repository_operation_success s ON s.account_id=c.account_id AND s.principal=c.principal
                  AND s.operation_id=c.operation_id AND s.owner_generation=c.owner_generation
+                LEFT JOIN repository_operations o ON o.account_id=c.account_id AND o.principal=c.principal AND o.operation_id=c.operation_id
+                LEFT JOIN document_schema_policies p ON p.account_id=a.account_id AND p.policy_sha256=a.policy_sha256
                 WHERE r.revision_id=:revision AND r.node_id=:node
                 """).setParameter("revision", revision).setParameter("node", DocumentIds.nodeId(address)).getResultList();
         if (rows.isEmpty()) throw new RepositoryException(RepositoryException.Code.NOT_FOUND, "Document revision is unavailable");
@@ -58,6 +67,10 @@ final class DocumentHistoricalSchemaRows {
             throw invalid("Historical typed admission or terminal binding is invalid");
         if (state[6] == null && state[7] == null) throw unsupported("Historical container schema role is unknown");
         if (state[6] == null || state[7] == null) throw invalid("Historical container schema role is incomplete");
+        if (!(state[8] instanceof Number commandSize) || commandSize.longValue() < 1 || commandSize.longValue() > 1048576
+                || !(state[9] instanceof Number policySize) || policySize.longValue() < 1 || policySize.longValue() > 524288)
+            throw invalid("Historical command or policy size is invalid");
+        reserve.accept(2 * (commandSize.longValue() + policySize.longValue()));
         control.run();
         var headers = em.createNativeQuery("""
                 SELECT a.operation_id,a.member_id,encode(a.command_sha256,'hex'),encode(a.policy_sha256,'hex'),
@@ -79,16 +92,17 @@ final class DocumentHistoricalSchemaRows {
         var header = new Header((UUID) h[0], (String) h[1], (String) h[2], (String) h[3], hex(state[6]), hex(state[7]),
                 (String) h[4], ((Number) h[5]).intValue(), bytes(h[6]),
                 (String) h[7], ((Number) h[8]).intValue(), bytes(h[9]));
-        var artifacts = artifacts(em, address.getAccountId(), revision, control);
+        var artifacts = artifacts(em, address.getAccountId(), revision, control, reserve);
         var references = references(em, address.getAccountId(), revision, control);
-        var roots = roots(em, address.getAccountId(), revision, control);
+        var roots = roots(em, address.getAccountId(), revision, control, reserve);
         return new Snapshot(header, references, roots, artifacts);
     }
 
-    private static Map<String, ByteString> artifacts(EntityManager em, String account, UUID revision, Runnable control) {
+    private static Map<String, ByteString> artifacts(EntityManager em, String account, UUID revision, Runnable control,
+            java.util.function.LongConsumer reserve) {
         control.run();
         Object[] budget = (Object[]) em.createNativeQuery("""
-                SELECT count(*),count(a.artifact_sha256),COALESCE(sum(a.size_bytes),0)
+                SELECT count(*),count(a.artifact_sha256),COALESCE(sum(octet_length(a.artifact_bytes)),0)
                 FROM document_revision_schema_artifacts r LEFT JOIN repository_schema_artifacts a
                  ON a.account_id=r.account_id AND a.account_id=:account AND a.artifact_sha256=r.artifact_sha256
                 WHERE r.revision_id=:revision
@@ -97,6 +111,7 @@ final class DocumentHistoricalSchemaRows {
         if (count < 1 || count > 64 || ((Number) budget[1]).longValue() != count
                 || ((Number) budget[2]).longValue() > 64L * 1024 * 1024)
             throw invalid("Historical schema artifact set is missing or exceeds limits");
+        reserve.accept(2 * ((Number) budget[2]).longValue());
         var rows = em.createNativeQuery("""
                 SELECT encode(a.artifact_sha256,'hex'),a.artifact_bytes FROM document_revision_schema_artifacts r
                 JOIN repository_schema_artifacts a ON a.account_id=r.account_id AND a.artifact_sha256=r.artifact_sha256
@@ -127,15 +142,17 @@ final class DocumentHistoricalSchemaRows {
         return result;
     }
 
-    private static List<Root> roots(EntityManager em, String account, UUID revision, Runnable control) {
+    private static List<Root> roots(EntityManager em, String account, UUID revision, Runnable control,
+            java.util.function.LongConsumer reserve) {
         control.run();
         Object[] budget = (Object[]) em.createNativeQuery("""
-                SELECT count(*),COALESCE(sum(evidence_size),0),count(*) FILTER(WHERE account_id=:account)
+                SELECT count(*),COALESCE(sum(octet_length(evidence_bytes)),0),count(*) FILTER(WHERE account_id=:account)
                 FROM document_revision_schema_evidence WHERE revision_id=:revision
                 """).setParameter("revision", revision).setParameter("account", account).getSingleResult();
         long count = ((Number) budget[0]).longValue();
         if (count > 1024 || ((Number) budget[1]).longValue() > 16L * 1024 * 1024 || ((Number) budget[2]).longValue() != count)
             throw invalid("Historical schema evidence exceeds limits or account scope");
+        reserve.accept(2 * ((Number) budget[1]).longValue());
         var rows = em.createNativeQuery("""
                 SELECT revision_ordinal,encode(root_locator_sha256,'hex'),encode(fragment_sha256,'hex'),fragment_size,
                  evidence_codec,evidence_version,evidence_bytes,encode(evidence_sha256,'hex')
