@@ -36,22 +36,25 @@ public final class ClosedDescriptorSet {
         }
     }
 
+    /** A configured resource limit, distinct from corrupt descriptor content. */
+    public static final class LimitExceededException extends IllegalArgumentException {
+        public LimitExceededException(String message) { super(message); }
+    }
+
     /** Returns immutable dependency-first descriptors, using only the supplied bytes. */
     public static List<FileDescriptor> load(ByteString bytes, Limits limits) {
         Objects.requireNonNull(bytes, "bytes");
         Objects.requireNonNull(limits, "limits");
-        if (bytes.isEmpty() || bytes.size() > limits.maxBytes()) {
-            throw new IllegalArgumentException("descriptor artifact is empty or exceeds byte limit");
-        }
+        if (bytes.isEmpty()) throw new IllegalArgumentException("descriptor artifact is empty");
+        if (bytes.size() > limits.maxBytes()) throw new LimitExceededException("descriptor artifact exceeds byte limit");
         final FileDescriptorSet set;
         try {
             set = FileDescriptorSet.parseFrom(bytes);
         } catch (InvalidProtocolBufferException e) {
             throw new IllegalArgumentException("invalid descriptor artifact", e);
         }
-        if (set.getFileCount() == 0 || set.getFileCount() > limits.maxFiles()) {
-            throw new IllegalArgumentException("descriptor file count is empty or exceeds limit");
-        }
+        if (set.getFileCount() == 0) throw new IllegalArgumentException("descriptor file count is empty");
+        if (set.getFileCount() > limits.maxFiles()) throw new LimitExceededException("descriptor file count exceeds limit");
         Map<String, FileDescriptorProto> files = new LinkedHashMap<>();
         long edges = 0;
         for (FileDescriptorProto file : set.getFileList()) {
@@ -60,7 +63,7 @@ public final class ClosedDescriptorSet {
             }
             edges += file.getDependencyCount();
             if (edges > limits.maxDependencies()) {
-                throw new IllegalArgumentException("descriptor dependencies exceed limit");
+                throw new LimitExceededException("descriptor dependencies exceed limit");
             }
         }
         Map<String, List<String>> dependents = new HashMap<>();
@@ -94,7 +97,7 @@ public final class ClosedDescriptorSet {
                 depth = Math.max(depth, depths.get(dependency) + 1);
             }
             if (depth > limits.maxImportDepth()) {
-                throw new IllegalArgumentException("descriptor import depth exceeds limit: " + name);
+                throw new LimitExceededException("descriptor import depth exceeds limit: " + name);
             }
             try {
                 FileDescriptor descriptor = FileDescriptor.buildFrom(file, imports);

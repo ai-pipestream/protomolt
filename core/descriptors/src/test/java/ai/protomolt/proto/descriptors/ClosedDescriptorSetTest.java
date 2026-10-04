@@ -111,7 +111,7 @@ class ClosedDescriptorSetTest {
                 new ClosedDescriptorSet.Limits(bytes.size(), 2, 2, 3),
                 new ClosedDescriptorSet.Limits(bytes.size(), 3, 1, 3),
                 new ClosedDescriptorSet.Limits(bytes.size(), 3, 2, 2)}) {
-            assertThatThrownBy(() -> ClosedDescriptorSet.load(bytes, limits)).isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> ClosedDescriptorSet.load(bytes, limits)).isInstanceOf(ClosedDescriptorSet.LimitExceededException.class);
         }
         assertThatThrownBy(() -> new ClosedDescriptorSet.Limits(0, 1, 1, 1)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new ClosedDescriptorSet.Limits(1, 0, 1, 1)).isInstanceOf(IllegalArgumentException.class);

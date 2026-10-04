@@ -32,6 +32,48 @@ class DocumentPayloadCheckTest {
     private static final DocumentPayloadCheck.Limits LIMITS = new DocumentPayloadCheck.Limits(1024, 100, 10, 100, 1000);
 
     @Test
+    void rechecksMixedVersionsFromDiskRetainedAssetsWithFreshDescriptorGraphs(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path directory) throws Exception {
+        var root = wrapper();
+        var left = binding(choice("this.left != '' && this.right == ''"));
+        var right = binding(choice("this.right != '' && this.left == ''"));
+        var payload = wrapped(root, candidate(left, "left", ""), candidate(right, "", "right"));
+        var assets = List.of(asset(root, payload.getTypeUrl()), asset(left, URL), asset(right, URL));
+        var original = DocumentPayloadCheck.checkContextualAssets(assets.getFirst(), payload, payload.getTypeUrl(),
+                validator(), LIMITS, () -> {}, request -> assets.get(
+                        ((DocumentSchemaOccurrences.Index) request.prefix().getLast()).index() + 1),
+                DocumentSchemaOccurrences.Limits.DEFAULT);
+        var recordedPaths = DocumentSchemaOccurrenceProjection.project(original.payload(), () -> {});
+        for (var asset : assets) {
+            var hash = asset.schema().artifactSha256();
+            java.nio.file.Files.write(directory.resolve(hash + ".fds"), asset.schema().artifact().toByteArray());
+            java.nio.file.Files.write(directory.resolve(hash + ".metadata"), asset.metadata().toByteArray());
+        }
+        var reader = new DocumentRetainedSchemaAssets(hash -> {
+            try { return java.util.Optional.of(ByteString.copyFrom(java.nio.file.Files.readAllBytes(directory.resolve(hash + ".fds")))); }
+            catch (java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
+        }, new DocumentRetainedSchemaAssets.Limits(3, 12_000_000,
+                new ClosedDescriptorSet.Limits(4_000_000, 100, 1000, 100)));
+        var restored = new java.util.ArrayList<DocumentSchemaAssetBinding>();
+        for (var path : recordedPaths) {
+            var encoded = DocumentSchemaOccurrenceCodec.encode(path, () -> {});
+            var decodedPath = DocumentSchemaOccurrenceCodec.decode(DocumentSchemaOccurrenceCodec.CODEC,
+                    DocumentSchemaOccurrenceCodec.VERSION, encoded.bytes(), encoded.sha256(), () -> {});
+            String hash = decodedPath.getSteps(decodedPath.getStepsCount() - 1).getAnyBoundary().getResolved().getArtifactSha256();
+            var metadata = ai.protomolt.proto.repo.v1.RepositorySchemaAsset.parseFrom(
+                    java.nio.file.Files.readAllBytes(directory.resolve(hash + ".metadata")));
+            restored.add(reader.resolve(metadata, () -> {}));
+        }
+        assertThat(restored.get(1).schema().type()).isNotSameAs(left.type());
+        assertThat(restored.get(2).schema().type()).isNotSameAs(right.type());
+        var replayed = DocumentPayloadCheck.checkContextualAssets(restored.getFirst(), Any.parseFrom(payload.toByteString()),
+                payload.getTypeUrl(), validator(), LIMITS, () -> {}, request -> restored.get(
+                        ((DocumentSchemaOccurrences.Index) request.prefix().getLast()).index() + 1),
+                DocumentSchemaOccurrences.Limits.DEFAULT);
+        assertThat(DocumentSchemaOccurrenceProjection.project(replayed.payload(), () -> {})).isEqualTo(recordedPaths);
+    }
+
+    @Test
     void contextualResolutionDoesNotReuseRootPolicyAndRejectsConflictingAssetMetadata() throws Exception {
         var root = wrapper();
         var nested = wrapped(root);

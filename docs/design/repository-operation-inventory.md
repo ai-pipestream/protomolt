@@ -3931,3 +3931,32 @@ This is bounded in-memory checking, not host-authorized registry resolution,
 historical restoration or durable publication proof. The host still supplies
 authorization, immutable version selection and aggregate resolver-memory limits.
 No protobuf fields, public RPCs or production publication paths changed.
+
+### Retained schema asset reader
+
+`DocumentRetainedSchemaAssets` is an internal attempt-local source for exact
+retained descriptor assets. Its scoped reader accepts only an artifact digest;
+there is no registry/latest/compiler fallback. It verifies the exact bytes and
+reconstructs complete imported descriptor closures through the existing binding
+code. Missing or corrupt required assets report data loss. Reader access and
+I/O failures, cancellation and configured descriptor resource limits remain
+distinct and propagate rather than being cached as missing types.
+
+The cache is serial and attempt-local, bounded by binding count and serialized
+artifact bytes. Every result, including a cache hit, requires the caller's current
+access/control callback. It rejects conflicting metadata for one URL/artifact
+identity and caches only successful completed bindings. The scoped byte reader
+must bound allocation before returning content; linked descriptor graphs and
+metadata require separate host memory accounting.
+
+This helper does not select or authorize historical revisions. The next replay
+integration must match each recorded path prefix, exact URL and value digest/size
+to its recorded artifact, verify the root, and compare the entire rechecked path
+set against retained evidence. Neither this reader nor schema-reference rows
+establish that complete historical restore behavior on their own.
+
+Filesystem fixtures reconstruct complete imports and two same-URL definitions
+using fresh readers/descriptors, preserving compiler provenance and comparing
+rechecked occurrence evidence. They also exercise repair/retry, access rechecks,
+callback failure and resource bounds. The five affected suites pass 333 tests.
+These are fresh-object tests, not a process-restart or SQL historical-read proof.
