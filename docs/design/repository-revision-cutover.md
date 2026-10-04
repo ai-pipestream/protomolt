@@ -1259,3 +1259,75 @@ evidence; it is not persisted or a validated-content claim.
 The observation identifies the effective Any.value after outer-envelope parsing;
 the retained immutable fragments identify the original wire, including duplicate
 fields and encoding differences. These identities must not be conflated.
+
+### Typed admission integration after the native publisher
+
+The internal opaque publisher is available at checkpoint `b2cc1f5b`. It does not
+accept typed-required content. The next integration must reuse the existing
+`RepositorySchemaArtifacts` catalog, `DocumentSchemaAssetBinding`,
+`DocumentPayloadCheck` and `RepositorySchemaAsset`; opaque resolution observations
+in `structured_resolution` must never become validation verdicts.
+
+The implementation boundary is a small repository admission module below engine
+and container. Engine already depends on container, so adding a reverse production
+edge would create a cycle. The admission module will own schema binding and
+candidate validation without SQL, providers, registry clients or transport. Engine
+will resolve and freeze authorized definitions, call admission and stage the exact
+artifacts. Container will match immutable preparation evidence to the canonical
+command, candidate digests and SQL ownership/retention proof before publication.
+A caller-supplied success flag is not preparation evidence. Existing helper classes
+are package-private; moving them must preserve protobuf packages, tags, imports,
+type URLs and the existing annotation/closure fixtures.
+
+Persisted occurrence identity remains a separate contract review before adding
+fields. Existing `TreePath` represents taxonomy, projection paths and field masks
+select fields, and mapper selectors do not identify every repeated/map occurrence.
+Buf's diagnostic `FieldPathElement` has typed subscripts but does not identify an
+Any boundary or its selected artifact. Reuse their established traversal meanings;
+do not turn display strings, CEL expressions or field names into archive identity.
+The repository representation must distinguish field numbers, repeated positions,
+typed map keys and explicit Any boundaries, with a separate root part/rendition
+selector. Every boundary binds the exact type URL, original value digest and
+selected artifact digest. Repeated equal values are separate occurrences. Before
+freezing the contract, fixtures must settle duplicate map keys and noncanonical
+wire encodings without silently conflating occurrences or rewriting original bytes.
+Typed-required admission will reject unknown candidate fields until an explicit
+reviewed policy can describe what was and was not validated. Opaque archival
+intake continues to preserve those bytes without a typed-validation claim.
+
+Revision retention references the normalized catalog by `(account_id,
+artifact_sha256)`. Insertion must prove a claim from the same account, principal,
+operation and current owner generation under its live publication fence. The
+reference must not retain a foreign key to that staging claim: after commit,
+revision retention must survive claim release, lease expiry and registry loss.
+Artifact rows are acquired in sorted digest order after publication locks; the
+revision, candidate/path evidence, immutable asset metadata and success outcome
+must commit together. Compiler provenance remains observed, reported or explicitly
+unknown according to the existing asset contract, independently of validation.
+The trusted host must verify its actual runtime/compiler identity; structural
+metadata validation alone does not authenticate those claims. Imported compiler
+identities remain reported or unknown. Runtime compilation from source remains
+part of the intended typed feature: before enabling it, retain and verify the
+independent source bundle named by `source_artifact_sha256`, not only the compiled
+descriptor closure. Descriptor-byte retention cannot stand in for source proof.
+
+The next acceptance work is:
+
+- Review occurrence representation and implement bounded evidence from the actual
+  recursive validator, including repeated values, typed map keys and nested Any.
+- Move shared admission helpers below engine/container with runtime dependency
+  gates and existing validation tests intact.
+- Add immutable revision-to-artifact references and exact claim/owner checks;
+  reject missing claims, wrong accounts, candidate mismatches and expired owners.
+- Bind the trusted validation result and policy to the same candidate and reference
+  set before enabling typed publication. Storage-only references cannot enable it.
+- Retain source bundles for locally compiled assets, verify their exact hashes,
+  and capture actual local compiler/runtime identities before typed activation.
+- Release terminal staging claims only after proving durable revision protection;
+  keep artifact deletion unavailable until reference-aware cleanup is qualified.
+- Prove authorized historical decoding from retained definitions with the original
+  registry absent, including nested Any and revoked document access.
+
+This sequence preserves opaque archival intake and the complete repository goal.
+It does not advertise a typed RPC, source retention, artifact garbage collection,
+JCR capability or transport conformance that has not been implemented.

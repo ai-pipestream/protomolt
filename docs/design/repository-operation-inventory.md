@@ -3709,3 +3709,19 @@ network acknowledgement loss and operating-limit performance. Typed admission,
 retained-schema publication and the shared public library/transport boundary are
 still unfinished. Existing SQL-only native publication fixtures do not substitute
 for those integration cases.
+
+### Shared admission module extraction
+
+`repo/admission` now owns the existing package-private schema binding, schema asset
+binding and recursive payload checker, plus their unchanged validation fixtures.
+The former package was `ai.protomolt.proto.repo.engine`; the internal helpers now
+use `ai.protomolt.proto.repo.admission`. No public Java API or protobuf identity
+changed. Engine no longer carries their descriptor utility or source-compiler test
+dependencies directly.
+
+All 107 admission and engine tests passed with no failures or skips. Both runtime
+dependency gates passed. The admission module excludes repository SQL/engine/service,
+storage SDKs, Kafka, registry/compiler clients and transport implementations from
+its production graph. Compiler-backed fixture tests remain test-only. This is a
+module extraction, not an enabled typed publication API; the reviewed occurrence,
+source-provenance and retention prerequisites remain in the cutover design.

@@ -1,4 +1,4 @@
-package ai.protomolt.proto.repo.engine;
+package ai.protomolt.proto.repo.admission;
 
 import ai.protomolt.proto.descriptors.MessageWireBudget;
 import ai.protomolt.proto.validate.ProtoValidator;

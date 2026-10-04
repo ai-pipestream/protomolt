@@ -1,4 +1,4 @@
-package ai.protomolt.proto.repo.engine;
+package ai.protomolt.proto.repo.admission;
 
 import ai.protomolt.proto.descriptors.ClosedDescriptorSet;
 import ai.protomolt.proto.repo.v1.RepositorySchemaAsset;

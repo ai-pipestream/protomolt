@@ -574,3 +574,6 @@ project(':protomolt-repo-spi').projectDir = file('repo/spi')
 
 include 'protomolt-repo-engine'
 project(':protomolt-repo-engine').projectDir = file('repo/engine')
+
+include 'protomolt-repo-admission'
+project(':protomolt-repo-admission').projectDir = file('repo/admission')
