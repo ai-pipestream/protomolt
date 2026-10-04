@@ -9,6 +9,21 @@ import static org.assertj.core.api.Assertions.*;
 
 /** Structural codec fixtures; their placeholder hashes do not assert retained artifact existence. */
 class DocumentRootSchemaEvidenceCodecTest {
+    @Test void enforcesRemainingMemberBytesBeforeCanonicalPathProcessing() {
+        var evidence = fixture();
+        var encoded = DocumentRootSchemaEvidenceCodec.encode(evidence, () -> {});
+        assertThat(DocumentRootSchemaEvidenceCodec.encode(evidence, encoded.bytes().size(), () -> {})).isEqualTo(encoded);
+        assertThatThrownBy(() -> DocumentRootSchemaEvidenceCodec.encode(evidence, encoded.bytes().size() - 1, () -> {}))
+                .hasMessageContaining("member evidence byte limit");
+        // Duplicate selectors are detected during path processing. The member allowance
+        // must fail before reaching that phase and its canonical byte allocations.
+        var duplicate = evidence.toBuilder().addOccurrences(evidence.getOccurrences(1)).build();
+        assertThatThrownBy(() -> DocumentRootSchemaEvidenceCodec.encode(duplicate, 0, () -> {}))
+                .hasMessageContaining("member evidence byte limit");
+        assertThatThrownBy(() -> DocumentRootSchemaEvidenceCodec.encode(duplicate, () -> {}))
+                .hasMessageContaining("duplicate");
+    }
+
     @Test void canonicalOrderingIsIndependentOfInputOrder() throws Exception {
         var evidence = fixture();
         var reversed = evidence.toBuilder().clearOccurrences().addOccurrences(evidence.getOccurrences(1))

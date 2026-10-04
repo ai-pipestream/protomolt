@@ -75,9 +75,7 @@ final class DocumentSchemaPreparation {
                     throw new IllegalArgumentException("structured root differs from required schema");
                 var bundle = DocumentRootSchemaEvidence.newBuilder().setEncodingVersion(1).setRoot(locator)
                         .addAllOccurrences(DocumentSchemaOccurrenceProjection.project(checked.payload(), active)).build();
-                var encoded = DocumentRootSchemaEvidenceCodec.encode(bundle, active);
-                if (encoded.bytes().size() > limits.maxEvidenceBytes() - evidenceBytes)
-                    throw new IllegalArgumentException("member evidence byte limit exceeded");
+                var encoded = DocumentRootSchemaEvidenceCodec.encode(bundle, limits.maxEvidenceBytes() - evidenceBytes, active);
                 evidenceBytes += encoded.bytes().size();
                 bundles.add(new DocumentSchemaAdmission.EncodedEvidence(DocumentRootSchemaEvidenceCodec.CODEC,
                         DocumentRootSchemaEvidenceCodec.VERSION, encoded.bytes(), encoded.sha256()));

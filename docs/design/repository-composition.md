@@ -2622,3 +2622,36 @@ document batch is one domain operation over reusable commit/reference primitives
 it must not become the universal transaction boundary. Historical document reads
 do not implement JCR workspace sessions, stable identity across moves or version
 restoration, and the base modules gain no JCR dependency.
+
+### Admission resource ownership for the native coordinator
+
+The owned fragment snapshot covers copied serialized fragments only. Before the
+coordinator returns an immutable candidate, it must also own schema and evidence
+resources through staging and commit. Keep the reservation interface in
+`repo-admission`; the host adapts `PayloadBudget` without adding byte-provider,
+SQL or transport dependencies to the admission library.
+
+Use an additive budgeted preparation entry point with a closeable proof owner.
+Thread its reservation scope explicitly through preparation, independent replay
+and canonical codecs. Measure before allocation. Retained evidence and generated
+metadata bytes stay reserved until the proof owner closes. Path-sort buffers,
+root-locator encodings and canonical re-encodings used only for comparison are
+scratch allocations and release promptly after their last use. Independent
+replay can temporarily hold both original and re-encoded evidence; account for
+that overlap rather than releasing the original prematurely. Failure and
+cancellation must release all reservations without delivering a partial proof.
+
+The canonical encoder currently allocates an output array and a ByteString copy.
+Budget both while they overlap or transfer an exclusively owned array without a
+second copy. Include UTF-8 map-key buffers and every nested codec call; a callback
+only at the top-level evidence encoder is insufficient. Resolver-provided schema
+bytes need an explicit borrowed/owned handoff under a reservation before copying
+or retaining them. Never reinterpret a schema-artifact cap as a document cap or
+reserve all policy maxima up front instead of charging actual allocations.
+
+This measures serialized bytes and temporary buffers, not all JVM heap. Parsed
+descriptors, protobuf builders and object graphs retain their structural limits
+and host concurrency/heap requirements. The scope must distinguish scratch from
+retained leases, and tests must prove peak accounting, prompt scratch release,
+capacity failure before allocation, cancellation cleanup, and complete proof
+lifetime. These are integration requirements, not implemented accounting APIs.

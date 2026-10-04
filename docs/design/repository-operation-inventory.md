@@ -5079,3 +5079,13 @@ incomplete sets, wrong sizes, exhausted capacity, cancellation after a copy,
 immutable views and idempotent close. The real PostgreSQL/provider publication
 test keeps the snapshot open through schema staging and native commit, releases
 its budget, then verifies retained-schema replay from a fresh JVM.
+
+### Evidence allowance before canonical encoding
+
+Extended internal root-evidence encoding accepts the member's remaining byte
+allowance. It measures and shape-validates the bundle, then rejects an excessive
+size before allocating canonical occurrence-path buffers. Preparation supplies
+the remaining allowance directly; accepted canonical bytes and hashes are
+unchanged. Tests cover the exact boundary, one byte over and rejection before
+duplicate-selector processing. Evidence projection and shape validation still
+precede this guard; it is not complete admission-memory accounting.

@@ -20,8 +20,14 @@ final class DocumentRootSchemaEvidenceCodec {
     private record Path(RepositorySchemaOccurrencePath value, ByteString bytes) {}
 
     static Encoded encode(DocumentRootSchemaEvidence evidence, Runnable control) {
+        return encode(evidence, DocumentSchemaEvidenceCodec.MAX_BYTES, control);
+    }
+
+    /** Apply the remaining member allowance before allocating canonical path buffers. */
+    static Encoded encode(DocumentRootSchemaEvidence evidence, long remainingBytes, Runnable control) {
         // Reject oversized/unknown/invalid input before allocating per-path canonical buffers.
-        DocumentSchemaEvidenceCodec.measureAndValidate(evidence, control);
+        int size = DocumentSchemaEvidenceCodec.measureAndValidate(evidence, control);
+        if (size > remainingBytes) throw new IllegalArgumentException("member evidence byte limit exceeded");
         var root = evidence.getOccurrencesList().stream().filter(p -> p.getStepsCount() == 1)
                 .findFirst().orElseThrow().getSteps(0).getAnyBoundary();
         var paths = new ArrayList<Path>();
