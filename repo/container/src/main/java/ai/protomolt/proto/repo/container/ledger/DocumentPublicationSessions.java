@@ -31,7 +31,7 @@ final class DocumentPublicationSessions {
         final long commandBytes;
         DocumentPublicationSession session;
         int users = 1;
-        boolean committed;
+        boolean terminal;
         boolean recovering;
         Entry(DocumentPublicationCommand command) {
             this.command = command;
@@ -71,16 +71,20 @@ final class DocumentPublicationSessions {
             // Replay needs no current placement, including after terminal eviction.
             var observed = replay.observe(caller, command);
             control.check();
+            observed.requireNotTerminated();
             if (observed.result().isPresent()) return observed.result().orElseThrow();
             entry = create(key, caller, command, placements);
         }
-        boolean committed = false;
+        boolean terminal = false;
         try {
             var result = execution.execute(caller, entry.session, bodies, attributes, modes, container, resolver, control);
-            committed = true;
+            terminal = true;
             return result;
+        } catch (DocumentPublicationReplay.Terminated terminated) {
+            terminal = true; // Authorized terminal replay, independent of provider cleanup.
+            throw terminated;
         } finally {
-            release(key, entry, committed);
+            release(key, entry, terminal);
         }
     }
 
@@ -118,10 +122,10 @@ final class DocumentPublicationSessions {
         }
     }
 
-    private synchronized void release(RepositoryOperationLedger.Key key, Entry entry, boolean committed) {
-        entry.committed |= committed;
+    private synchronized void release(RepositoryOperationLedger.Key key, Entry entry, boolean terminal) {
+        entry.terminal |= terminal;
         entry.users--;
-        if (entry.committed && entry.users == 0) remove(key, entry);
+        if (entry.terminal && entry.users == 0) remove(key, entry);
     }
 
     private void remove(RepositoryOperationLedger.Key key, Entry entry) {
@@ -179,8 +183,12 @@ final class DocumentPublicationSessions {
         DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
         var observed = replay.observe(caller, command);
         control.check();
+        if (observed.rejection().isPresent()) {
+            completed(key, command);
+            observed.requireNotTerminated();
+        }
         if (observed.result().isPresent()) {
-            committed(key, command);
+            completed(key, command);
             return observed.result();
         }
         var entry = reserveRecovery(key, command);
@@ -203,6 +211,10 @@ final class DocumentPublicationSessions {
         } catch (RepositoryOperationLedger.TerminalOperationException completed) {
             var result = replay.observe(caller, command);
             control.check();
+            if (result.rejection().isPresent()) {
+                terminal = true;
+                result.requireNotTerminated();
+            }
             if (result.result().isEmpty()) throw new RepositoryException(RepositoryException.Code.CONFLICT,
                     "Terminal operation has no replayable success");
             terminal = true;
@@ -234,11 +246,11 @@ final class DocumentPublicationSessions {
         return entry;
     }
 
-    private synchronized void committed(RepositoryOperationLedger.Key key, DocumentPublicationCommand command) {
+    private synchronized void completed(RepositoryOperationLedger.Key key, DocumentPublicationCommand command) {
         var entry = entries.get(key);
         if (entry == null) return;
         requireCommand(entry, command);
-        entry.committed = true;
+        entry.terminal = true;
         if (entry.users == 0) remove(key, entry);
     }
 

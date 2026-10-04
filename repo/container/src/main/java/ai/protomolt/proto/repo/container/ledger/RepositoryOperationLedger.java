@@ -316,6 +316,8 @@ final class RepositoryOperationLedger {
         var state = (Object[]) bind(em.createNativeQuery("""
                 SELECT lease_until > clock_timestamp(), EXISTS(SELECT 1 FROM repository_operation_success s
                     WHERE s.account_id=o.account_id AND s.principal=o.principal AND s.operation_id=o.operation_id)
+                    OR EXISTS(SELECT 1 FROM repository_operation_rejection r
+                    WHERE r.account_id=o.account_id AND r.principal=o.principal AND r.operation_id=o.operation_id)
                 FROM repository_operation_owners o
                 WHERE o.account_id=:account AND o.principal=:principal AND o.operation_id=:id
                 """), key).getSingleResult();

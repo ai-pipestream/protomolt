@@ -45,6 +45,7 @@ final class DocumentPublicationExecution {
             var prepared = session.prepared();
             var observed = replay.observe(caller, prepared.plan().command());
             control.check();
+            observed.requireNotTerminated();
             if (observed.result().isPresent()) return observed.result().orElseThrow();
             var selectedModes = execution.bindModes(modes);
             final RepositoryOperationLedger.Owner owner;
@@ -63,6 +64,7 @@ final class DocumentPublicationExecution {
             DocumentOperationUploadAdmission.Prepared prepared, RepositoryReadControl control) {
         var completed = replay.observe(caller, prepared.plan().command());
         control.check();
+        completed.requireNotTerminated();
         return completed.result().orElseThrow(() -> new RepositoryException(
                 RepositoryException.Code.CONFLICT, "Publication session has neither executable ownership nor a committed result"));
     }
@@ -87,6 +89,7 @@ final class DocumentPublicationExecution {
             throw new IllegalArgumentException("Publication owner differs from command scope");
         var observed = replay.observe(caller, command);
         control.check();
+        observed.requireNotTerminated();
         if (observed.result().isPresent()) return observed.result().orElseThrow();
         return executeNew(caller, owner, prepared, bodies, attributes, modes, container, resolver, control);
     }

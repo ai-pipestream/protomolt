@@ -351,6 +351,29 @@ class DocumentPublicationRecoveryIT {
         }
     }
 
+    @Test void terminalCancellationEvictsOnlyAfterAuthorizedReplayAndNeverOpensProviders() {
+        try (var c = context(POSTGRES); var resources = resources(c.tx())) {
+            var input = input(c, LEASE);
+            var sessions = resources.sessions();
+            pending(sessions, input);
+            var snapshot = new RepositoryOperationLedger(c.tx()).find(input.key()).orElseThrow();
+            var owner = new RepositoryOperationLedger.Owner(input.key(), snapshot.generation(), token(c, input), snapshot.leaseUntil());
+            var receipt = new DocumentPublicationRejections(c.tx()).cancel(CALLER, owner, input.command(), RepositoryReadControl.NONE)
+                    .rejection().orElseThrow();
+            assertThat(sessions.retainedSessions()).isEqualTo(1);
+            for (int i = 0; i < 2; i++) {
+                assertThatThrownBy(() -> sessions.execute(CALLER, input.command(), Map.of(), Map.of(), Map.of(), Map.of(), Optional.empty(),
+                        (member, occurrence) -> { throw new AssertionError("Terminal replay must not resolve a schema"); }, RepositoryReadControl.NONE))
+                        .isInstanceOfSatisfying(DocumentPublicationReplay.Terminated.class, failure -> assertThat(failure.receipt()).isEqualTo(receipt));
+                assertThat(sessions.retainedSessions()).isZero();
+                assertThat(sessions.retainedCommandBytes()).isZero();
+            }
+            assertThatThrownBy(() -> sessions.recover(CALLER, input.command(), Map.of(), 1, Map.of(), RepositoryReadControl.NONE))
+                    .isInstanceOf(DocumentPublicationReplay.Terminated.class);
+            assertThat(token(c, input)).isEqualTo(owner.token());
+        }
+    }
+
     private record Input(DocumentPublicationCommand command, Map<UUID, DocumentUploadPlan.Placement> placements,
             Map<String, DocumentPublicationCandidate.Mode> modes) {
         RepositoryOperationLedger.Key key() { return new RepositoryOperationLedger.Key(command.intent().getAccountId(), "principal", command.operationId()); }
@@ -358,6 +381,10 @@ class DocumentPublicationRecoveryIT {
     }
 
     private static Input input(Context c) {
+        return input(c, Duration.ofSeconds(1));
+    }
+
+    private static Input input(Context c, Duration ownerLease) {
         var seed = prepare(c, 2, true);
         var command = new DocumentPublicationCommand(seed.command().intent().toBuilder().setOperationId(UUID.randomUUID().toString()).build());
         var id = UUID.fromString(command.intent().getMembers(0).getDriveId());
@@ -366,7 +393,7 @@ class DocumentPublicationRecoveryIT {
         var modes = new java.util.HashMap<String, DocumentPublicationCandidate.Mode>();
         command.intent().getMembersList().forEach(member -> modes.put(member.getMemberId(), DocumentPublicationCandidate.Mode.TYPED));
         new RepositoryOperationLedger(c.tx()).admit(new RepositoryOperationLedger.Key(command.intent().getAccountId(), "principal", command.operationId()),
-                command, UUID.randomUUID(), Duration.ofSeconds(1));
+                command, UUID.randomUUID(), ownerLease);
         return new Input(command, Map.of(id, DocumentUploadPlan.Placement.sample(drive, "native-test", profile)), Map.copyOf(modes));
     }
 

@@ -31,10 +31,19 @@ final class DocumentRevisionLocks {
         return lock(em,destinations,sources,true);
     }
 
+    /** The bounded union of 64 destinations and 10,000 source checks; all locks are shared. */
+    static Map<UUID,SourceView> lockForObservation(EntityManager em,Set<UUID> nodes) {
+        return lock(em,Set.of(),nodes,true,10064).sources();
+    }
+
     private static Locked lock(EntityManager em,Set<UUID> destinations,Set<UUID> sources,boolean leanSources) {
+        return lock(em,destinations,sources,leanSources,10000);
+    }
+
+    private static Locked lock(EntityManager em,Set<UUID> destinations,Set<UUID> sources,boolean leanSources,int readLimit) {
         if (!em.getTransaction().isActive()) throw new IllegalStateException("Revision locks require an active transaction");
-        if (destinations.size()>64 || sources.size()>10000)
-            throw new IllegalArgumentException("Revision locks exceed 64 destinations or 10000 sources");
+        if (destinations.size()>64 || sources.size()>readLimit)
+            throw new IllegalArgumentException("Revision locks exceed 64 destinations or " + readLimit + " read nodes");
         var identities=new TreeSet<>(sources); identities.addAll(destinations);
         if (identities.isEmpty()) return new Locked(Map.of(),Map.of());
         if (destinations.containsAll(sources)) {

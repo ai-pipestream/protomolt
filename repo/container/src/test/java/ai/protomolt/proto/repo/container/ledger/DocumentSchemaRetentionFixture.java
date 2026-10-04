@@ -63,7 +63,9 @@ final class DocumentSchemaRetentionFixture {
                 .setDescriptorFingerprint(DescriptorFingerprints.fingerprint(DescriptorFingerprints.closure(StringValue.getDescriptor()))));
         var command = new DocumentPublicationCommand(DocumentPublicationIntent.newBuilder().setEncodingVersion(1)
                 .setAccountId("account").setOperationId(UUID.randomUUID().toString()).addMembers(member).build());
-        var owner = new RepositoryOperationLedger(c.tx()).admit(new RepositoryOperationLedger.Key("account", "principal", command.operationId()),
+        var owner = c.beforeRejection() ? DocumentNativePublicationFixture.seedLegacyAdmission(c, command,
+                new RepositoryOperationLedger.Key("account", "principal", command.operationId()), Duration.ofMinutes(5))
+                : new RepositoryOperationLedger(c.tx()).admit(new RepositoryOperationLedger.Key("account", "principal", command.operationId()),
                 command, UUID.randomUUID(), Duration.ofMinutes(5)).owner().orElseThrow();
         var policy = DocumentAdmissionPolicy.of(DocumentSchemaPolicy.newBuilder().setEncodingVersion(1).setAccountId("account")
                 .setMode(typed ? DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_TYPED_REQUIRED : DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_OPAQUE_ALLOWED).setAnyResolvedSchema(true)

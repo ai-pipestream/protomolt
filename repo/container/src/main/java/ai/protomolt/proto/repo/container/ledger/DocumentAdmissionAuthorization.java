@@ -64,16 +64,42 @@ final class DocumentAdmissionAuthorization {
 
     /** Replay checks current read policy, without reapplying old write/revision preconditions. */
     static void authorizeReplay(EntityManager em, RepositoryCaller caller, DocumentPublicationCommand command) {
+        authorizeReplay(em, caller, command, false);
+    }
+
+    /** Rejected creation can have no target; only the explicit process creation authority covers it. */
+    static void authorizeRejection(EntityManager em, RepositoryCaller caller, DocumentPublicationCommand command) {
+        authorizeReplay(em, caller, command, true);
+    }
+
+    private static void authorizeReplay(EntityManager em, RepositoryCaller caller, DocumentPublicationCommand command,
+            boolean allowUncreatedTarget) {
         var nodes = command.intent().getMembersList().stream()
                 .map(member -> DocumentIds.nodeId(member.getDestination().getAddress()))
                 .collect(java.util.stream.Collectors.toSet());
-        var locked = DocumentRevisionLocks.lock(em, Set.of(), nodes);
+        var sources = new HashMap<UUID, DocumentRevisionCondition>();
+        if (allowUncreatedTarget) {
+            for (var member : command.intent().getMembersList()) {
+                member.getSourcesList().forEach(source -> addSource(sources, source));
+                member.getPartsList().stream().filter(part -> part.hasReuse())
+                        .forEach(part -> addSource(sources, part.getReuse().getSource()));
+            }
+            nodes.addAll(sources.keySet());
+        }
+        var locked = DocumentRevisionLocks.lockForObservation(em, nodes);
         for (var member : command.intent().getMembersList()) {
             var address = member.getDestination().getAddress();
             var row = locked.get(DocumentIds.nodeId(address));
+            if (row == null && allowUncreatedTarget && member.getDestination().getIfAbsent() && caller.processAuthority()) continue;
             requireIdentity(row, address);
-            if (!DocumentStatus.AVAILABLE.equals(row.status) || row.pendingPurgeId != null) throw unavailable();
-            requireAccess(caller, row, Access.ACCESS_READ);
+            if (!DocumentStatus.AVAILABLE.equals(row.status()) || row.pendingPurgeId() != null) throw unavailable();
+            requireSourceAccess(caller, row);
+        }
+        for (var source : sources.entrySet()) {
+            var row = locked.get(source.getKey());
+            requireIdentity(row, source.getValue().getAddress());
+            if (!DocumentStatus.AVAILABLE.equals(row.status()) || row.pendingPurgeId() != null) throw unavailable();
+            requireSourceAccess(caller, row);
         }
     }
 

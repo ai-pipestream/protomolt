@@ -1404,8 +1404,10 @@ publishes the revisions, native/common references, transactional outbox and one
 immutable logical outcome together. The internal batch now has a transaction-scoped
 entry for this coordinator; nesting calls to `save(Tx, ...)` would open a second
 transaction and is prohibited. Internal native successful publication now binds
-the complete result to the committed revisions in that transaction. Durable
-rejection and abort decisions remain unimplemented. Operation tracking is not a shadow
+the complete result to the committed revisions in that transaction. Internal
+explicit cancellation also has a fenced durable decision; automatic admission
+or precondition rejection and public outcome endpoints remain unimplemented.
+Operation tracking is not a shadow
 document store: existing domain rows and retention tables remain authoritative.
 
 The unsigned logical outcome records the scoped operation identity, command
@@ -2752,9 +2754,9 @@ This does not admit a new execution or select recovery on the caller's behalf.
 
 Aborted/rejected retirement requires the durable terminal decision described in
 the commit design. It cannot be inferred from NOT_OBSERVED, PENDING, a timeout or
-an expired lease. Full restart reconstruction and terminal rejection receipts
-are still required. The internal registry transition
-does not claim that those paths are mounted or complete.
+an expired lease. Authorized replay of an explicit cancellation can now retire
+its local session after invocation references leave. Full restart reconstruction,
+deterministic admission/precondition rejection and host mounting remain required.
 
 ### Rejection receipt and terminal decision implementation
 
@@ -2775,7 +2777,8 @@ and NUL strings. `DocumentPublicationRejectionCodec` limits stored receipts to
 requires exact canonical bytes on decode. Encoding a caller-constructed receipt
 is not proof that any decision was recorded. No rejection RPC is mounted.
 
-The implementation still needs these shared behaviors:
+The complete terminal-decision implementation requires these shared behaviors;
+the implemented explicit-cancellation subset is recorded below:
 
 - Add an immutable rejection table beside `repository_operation_success`, keyed
   by the same account/principal/operation. Under the operation owner fence, prohibit
@@ -2807,3 +2810,41 @@ current-policy replay and revocation races, immutable receipt/digest checks,
 migration over existing success rows, and cleanup after either terminal outcome.
 Existing successful publication and provider tests must remain green. The receipt
 contract fixtures do not establish any of those SQL or host behaviors.
+
+#### Implemented internal explicit cancellation
+
+V64 adds immutable `repository_operation_rejection` storage and extends the
+existing owner/write guards to prohibit both terminal outcomes for one operation.
+The shared write fence rejects later domain writes even within the same decision
+transaction. Java admission, renewal and takeover recognize rejection as terminal.
+The cleanup recovery fence remains available and grants no publication authority.
+
+`DocumentPublicationRejections.cancel` is an explicit internal host operation.
+It opens a fresh transaction, locks the owner, verifies the canonical command and
+returns an existing authorized terminal outcome if one already won. Otherwise it
+requires the exact live owner, obtains a write fence, rechecks current access and
+records EXPLICIT_CANCELLATION/ABORTED. It reads the database clock in that
+transaction and uses that value for both receipt and SQL header; the trigger's
+transaction-time interval check is a sanity bound, not a protobuf decoder.
+There is no post-commit control check. Failed acknowledgments require exact replay;
+a cancelled transport control before the decision leaves no terminal receipt.
+
+Rejection replay verifies encoding, digest, canonical command, generation and
+stored time/disposition/reason headers. Conflicting terminal rows are corruption.
+Current read access covers every destination, explicit source and retained-part
+source. A missing destination is allowed only for an if-absent creation intent
+with process authority; deleted expected-existing targets remain unavailable.
+Authorization reads lean metadata under ordered shared locks, supporting the
+bounded union of 10,000 sources and 64 destinations without loading manifests or
+widening write-admission limits. Success-only internal execution reports an
+authorized rejection with a typed terminal signal before provider work. The
+registry releases the terminal entry after active invocation references leave.
+
+Real PostgreSQL fixtures exercise both publication/cancellation lock orders,
+stale owners, exact retry, response loss, cancellation after commit, same-transaction
+write refusal, cleanup-fence access, source revocation while replay waits, header
+corruption, old-schema success migration and provider-free terminal replay.
+Pre-V64 migration fixtures seed genuine legacy admission rows under old SQL guards;
+production code does not probe for missing tables or fall back to an older schema.
+This does not implement automatic rejection classification, admission/precondition
+evidence rechecks, full cleanup completion or a public cancellation/outcome RPC.

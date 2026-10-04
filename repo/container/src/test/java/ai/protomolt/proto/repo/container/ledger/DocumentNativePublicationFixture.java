@@ -73,7 +73,8 @@ final class DocumentNativePublicationFixture {
         }
         var command=new DocumentPublicationCommand(intent.build());
         var key=new RepositoryOperationLedger.Key("account","principal",command.operationId());
-        var owner=new RepositoryOperationLedger(c.tx).admit(key, command, UUID.randomUUID(), ownerLease).owner().orElseThrow();
+        var owner=c.beforeRejection() ? seedLegacyAdmission(c,command,key,ownerLease)
+                : new RepositoryOperationLedger(c.tx).admit(key, command, UUID.randomUUID(), ownerLease).owner().orElseThrow();
         var placements=Map.of(drive.driveId,DocumentUploadPlan.Placement.sample(drive,"native-test",profile));
         Map<String,UUID> attempts=mixed ? Map.of("member-0",UUID.randomUUID()) : Map.of();
         var admitted=new DocumentOperationUploadAdmission(c.tx,new DriveLedger(c.tx)).admit(
@@ -186,7 +187,29 @@ final class DocumentNativePublicationFixture {
     }
 
     static long count(Context c,String table) { return c.tx.readOnly(em -> ((Number)em.createNativeQuery("SELECT count(*) FROM "+table).getSingleResult()).longValue()); }
-    record Context(HikariDataSource pool, EntityManagerFactory emf, Tx tx, boolean beforePolicyFence) implements AutoCloseable {
+    /** Seed real pre-V64 rows without asking the current Java terminal reader to run against an old schema. */
+    static RepositoryOperationLedger.Owner seedLegacyAdmission(Context c, DocumentPublicationCommand command,
+            RepositoryOperationLedger.Key key, Duration lease) {
+        var nonce=UUID.randomUUID();
+        return c.tx.inTransaction(em -> {
+            em.createNativeQuery("""
+                    INSERT INTO repository_operations(account_id,principal,operation_id,command_codec,command_version,command,command_sha256)
+                    VALUES(:account,:principal,:operation,:codec,:version,:bytes,:sha)
+                    """).setParameter("account",key.account()).setParameter("principal",key.principal()).setParameter("operation",key.operationId())
+                    .setParameter("codec",DocumentPublicationCommand.CODEC).setParameter("version",DocumentPublicationCommand.ENCODING_VERSION)
+                    .setParameter("bytes",command.canonical().toByteArray()).setParameter("sha",java.util.HexFormat.of().parseHex(command.sha256())).executeUpdate();
+            var expiration=(java.math.BigDecimal)em.createNativeQuery("""
+                    INSERT INTO repository_operation_owners(account_id,principal,operation_id,owner_token,owner_generation,lease_until)
+                    VALUES(:account,:principal,:operation,:nonce,1,clock_timestamp()+(:millis * interval '1 millisecond'))
+                    RETURNING extract(epoch FROM lease_until)
+                    """).setParameter("account",key.account()).setParameter("principal",key.principal()).setParameter("operation",key.operationId())
+                    .setParameter("nonce",nonce).setParameter("millis",lease.toMillis()).getSingleResult();
+            return new RepositoryOperationLedger.Owner(key,1,nonce,Instant.ofEpochSecond(expiration.longValue(),
+                    expiration.remainder(java.math.BigDecimal.ONE).movePointRight(9).longValueExact()));
+        });
+    }
+
+    record Context(HikariDataSource pool, EntityManagerFactory emf, Tx tx, boolean beforePolicyFence, boolean beforeRejection) implements AutoCloseable {
         public void close() { try { emf.close(); } finally { pool.close(); } }
     }
     static Context context(PostgreSQLContainer postgres) {
@@ -202,7 +225,8 @@ final class DocumentNativePublicationFixture {
         var pool=new HikariDataSource(config);
         try {
             var emf=Persistence.createEntityManagerFactory("document-ledger",Map.of("hibernate.connection.datasource",pool,"hibernate.hbm2ddl.auto","validate"));
-            return new Context(pool,emf,new Tx(emf), !target.equals("latest") && Integer.parseInt(target) < 59);
+            return new Context(pool,emf,new Tx(emf), !target.equals("latest") && Integer.parseInt(target) < 59,
+                    !target.equals("latest") && Integer.parseInt(target) < 64);
         } catch(RuntimeException|Error failure) { pool.close(); throw failure; }
     }
 }

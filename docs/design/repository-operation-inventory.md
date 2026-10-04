@@ -5624,3 +5624,30 @@ The fenced storage, decision,
 replay authorization and race-test backlog is recorded in the design's rejection
 receipt section. A valid receipt shape alone must never be advertised as a durable
 terminal outcome.
+
+### Durable explicit cancellation and terminal replay
+
+New: internal `DocumentPublicationRejections.cancel` and immutable V64 rejection
+storage. Extended: operation write/owner guards, admission/renewal/takeover terminal
+checks, current-policy replay and local session retirement. Unchanged: protobuf
+contracts and successful publication encoding. No public cancellation RPC is added.
+
+Cancellation opens a fresh owner-fenced transaction and returns any already
+committed result instead of overwriting it. A stale owner cannot decide for its
+replacement. SQL clock time supplies the immutable receipt; transient failures
+and transport cancellation are not classified as rejection. The registry and
+success-only executor propagate a typed authorized terminal receipt before byte or
+schema-provider work, without treating it as a successful document publication.
+
+Real PostgreSQL tests cover concurrent success/cancellation in both lock orders,
+response loss, late cancellation, idempotency, same-transaction write refusal,
+stale generation, immutable rows, retained staging records, authorized terminal
+eviction, source revocation while waiting, corrupt receipt headers and migration
+over successful native publication. Replay uses bounded lean metadata observations
+for the full 10,064-node union; existing 10,000-source admission limits remain.
+Rejected creation without a target requires process authority. Missing or revoked
+existing targets do not become readable through rejection replay.
+
+Deterministic admission/precondition rejection, public mounting, complete cleanup
+and restart recovery remain open work. No general exception-to-receipt conversion
+or unverified abort result is introduced.

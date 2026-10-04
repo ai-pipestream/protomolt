@@ -3,9 +3,11 @@ package ai.protomolt.proto.repo.container.ledger;
 import ai.protomolt.proto.repo.container.blob.DocumentIds;
 import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
 import ai.protomolt.proto.repo.spi.DocumentPublicationResultCodec;
+import ai.protomolt.proto.repo.spi.DocumentPublicationRejectionCodec;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryException;
 import ai.protomolt.proto.repo.v1.DocumentPublicationResult;
+import ai.protomolt.proto.repo.v1.DocumentPublicationRejection;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import jakarta.persistence.EntityManager;
@@ -16,13 +18,22 @@ import java.util.UUID;
 
 /** Internal authorized observation of an immutable outcome; never creates or resumes work. */
 final class DocumentPublicationReplay {
-    enum State { NOT_OBSERVED, PENDING, COMMITTED }
-    record Observation(State state, Optional<DocumentPublicationResult> result) {
+    enum State { NOT_OBSERVED, PENDING, COMMITTED, TERMINATED }
+    record Observation(State state, Optional<DocumentPublicationResult> result, Optional<DocumentPublicationRejection> rejection) {
+        Observation(State state, Optional<DocumentPublicationResult> result) { this(state, result, Optional.empty()); }
         Observation {
-            Objects.requireNonNull(state); Objects.requireNonNull(result);
-            if ((state == State.COMMITTED) != result.isPresent())
-                throw new IllegalArgumentException("Only committed observations carry a result");
+            Objects.requireNonNull(state); Objects.requireNonNull(result); Objects.requireNonNull(rejection);
+            if ((state == State.COMMITTED) != result.isPresent() || (state == State.TERMINATED) != rejection.isPresent())
+                throw new IllegalArgumentException("Terminal observations must carry exactly their stored outcome");
         }
+        void requireNotTerminated() { rejection.ifPresent(receipt -> { throw new Terminated(receipt); }); }
+    }
+
+    /** Internal success-only execution surfaces preserve the authorized terminal receipt in this signal. */
+    static final class Terminated extends RuntimeException {
+        private final DocumentPublicationRejection receipt;
+        Terminated(DocumentPublicationRejection receipt) { super("Publication has a durable terminal rejection"); this.receipt = receipt; }
+        DocumentPublicationRejection receipt() { return receipt; }
     }
 
     private final Tx tx;
@@ -33,7 +44,8 @@ final class DocumentPublicationReplay {
      * to start a new operation. Only admission/recovery can grant executable ownership.
      * Admission state and command conflicts are private to the authenticated operation
      * principal and account; they contain no document result. Pending creation may have
-     * no destination to authorize yet. Committed results require current document access.
+     * no destination to authorize yet. Terminal outcomes require current target access;
+     * rejection replay additionally checks every explicit or retained source dependency.
      * No lease renewal, provider I/O, registry lookup or outbox mutation occurs here.
      */
     Observation observe(RepositoryCaller caller, DocumentPublicationCommand command) {
@@ -42,7 +54,11 @@ final class DocumentPublicationReplay {
                 "Authenticated repository caller is required");
         var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
         DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
-        return tx.inTransaction(em -> {
+        return tx.inTransaction(em -> { return observe(em, caller, command, key); });
+    }
+
+    static Observation observe(EntityManager em, RepositoryCaller caller, DocumentPublicationCommand command,
+            RepositoryOperationLedger.Key key) {
             // Wait for a committing owner before inspecting success in a fresh READ COMMITTED
             // statement. Lease expiry is irrelevant to replay; this grants no write fence.
             var owner = bind(em.createNativeQuery("""
@@ -56,6 +72,31 @@ final class DocumentPublicationReplay {
                     FROM repository_operation_success
                     WHERE account_id=:account AND principal=:principal AND operation_id=:operation
                     """), key).getResultList();
+            var rejections = bind(em.createNativeQuery("""
+                    SELECT owner_generation,result_codec,result_version,result_bytes,encode(result_sha256,'hex'),
+                        recorded_at_epoch_micros,disposition,reason,command_codec,command_version,encode(command_sha256,'hex')
+                    FROM repository_operation_rejection
+                    WHERE account_id=:account AND principal=:principal AND operation_id=:operation
+                    """), key).getResultList();
+            if (!outcomes.isEmpty() && !rejections.isEmpty()) throw new RepositoryException(RepositoryException.Code.DATA_LOSS,
+                    "Operation has conflicting terminal outcomes");
+            if (!rejections.isEmpty()) {
+                DocumentAdmissionAuthorization.authorizeRejection(em, caller, command);
+                var row = (Object[]) rejections.getFirst();
+                try {
+                    long generation = ((Number) row[0]).longValue();
+                    var receipt = DocumentPublicationRejectionCodec.decode(command, key.principal(), generation,
+                            (String) row[1], ((Number) row[2]).intValue(), ByteString.copyFrom((byte[]) row[3]), (String) row[4]);
+                    long currentGeneration = ((Number) ((Object[]) owner.getFirst())[0]).longValue();
+                    if (generation != currentGeneration || receipt.getRecordedAtEpochMicros() != ((Number) row[5]).longValue()
+                            || receipt.getDispositionValue() != ((Number) row[6]).intValue() || receipt.getReasonValue() != ((Number) row[7]).intValue()
+                            || !receipt.getCommandCodec().equals(row[8]) || receipt.getCommandEncodingVersion() != ((Number) row[9]).intValue()
+                            || !receipt.getCommandSha256().equals(row[10])) throw new IllegalArgumentException("Rejection header differs from receipt");
+                    return new Observation(State.TERMINATED, Optional.empty(), Optional.of(receipt));
+                } catch (IllegalArgumentException | InvalidProtocolBufferException failure) {
+                    throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Stored publication rejection is invalid", failure);
+                }
+            }
             if (outcomes.isEmpty()) return new Observation(State.PENDING, Optional.empty());
             DocumentAdmissionAuthorization.authorizeReplay(em, caller, command);
             var row = (Object[]) outcomes.getFirst();
@@ -69,7 +110,6 @@ final class DocumentPublicationReplay {
             }
             requireRevisions(em, key, result, generation);
             return new Observation(State.COMMITTED, Optional.of(result));
-        });
     }
 
     private static void requireRevisions(EntityManager em, RepositoryOperationLedger.Key key,
