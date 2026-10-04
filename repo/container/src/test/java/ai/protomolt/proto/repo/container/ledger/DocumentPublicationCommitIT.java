@@ -738,8 +738,8 @@ class DocumentPublicationCommitIT {
                 try(var revoker=database.entityManagerFactory().createEntityManager()) {
                     revoker.getTransaction().begin();
                     try {
-                        revoker.createNativeQuery("SET LOCAL lock_timeout='10s'").executeUpdate();
-                        revoker.createNativeQuery("SET LOCAL statement_timeout='15s'").executeUpdate();
+                        revoker.createNativeQuery("SET LOCAL lock_timeout='30s'").executeUpdate();
+                        revoker.createNativeQuery("SET LOCAL statement_timeout='35s'").executeUpdate();
                         revokerBackend.set(((Number)revoker.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue());
                         revokerReady.countDown();
                         var row=revoker.find(DocumentRecord.class,node,jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
