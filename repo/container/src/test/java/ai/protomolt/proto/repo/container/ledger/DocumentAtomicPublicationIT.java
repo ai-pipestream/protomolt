@@ -99,8 +99,8 @@ class DocumentAtomicPublicationIT {
                     .setParameter("id", f.drive.driveId).executeUpdate();
         });
         assertThat(reader.findForRead(saved)).contains(original);
-        assertThat(original.namespace()).isEqualTo("container");
-        assertThat(original.attemptId()).isEqualTo(f.attempt.id());
+        assertThat(original.boundParts().getFirst().binding().namespace()).isEqualTo("container");
+        assertThat(original.revisionId()).isEqualTo(f.attempt.id());
         assertThat(original.parts()).hasSize(1);
         assertThat(original.parts().getFirst().providerVersion()).isEqualTo("v1");
     }

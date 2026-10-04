@@ -30,6 +30,11 @@ class DocumentRevisionProjectionIT {
             long references = count(context, "repository_object_references");
             context.migrate();
             assertThat(count(context, "document_revision_publications")).isEqualTo(2);
+            var read=new DocumentPublicationLedger(context.tx).findForRead(retained.row()).orElseThrow();
+            assertThat(read.revisionId()).isEqualTo(retained.attempt());
+            assertThat(read.parts()).extracting(DocumentPublicationLedger.Part::subKey)
+                    .containsExactlyElementsOf(retained.slots().stream().map(DocumentPublicationSlot::getSubKey).toList());
+            assertThat(read.boundParts()).allSatisfy(part -> assertThat(part.binding().namespace()).isEqualTo("namespace"));
             assertThat(count(context, "document_revision_parts")).isEqualTo(4);
             assertThat(count(context, "document_revision_current")).isEqualTo(1);
             assertThat(count(context, "repository_object_references")).isEqualTo(references);
@@ -72,6 +77,23 @@ class DocumentRevisionProjectionIT {
                     INSERT INTO document_revision_publications(revision_id,node_id,publication_revision,body,published_at)
                      VALUES(gen_random_uuid(),'%s',1,'{}',now())
                     """.formatted(source.row().nodeId))).hasStackTraceContaining("exact legacy history");
+        }
+    }
+
+    @Test void missingManagedProjectionCannotFallBackToLegacyReadsOrSourceCapture() {
+        try (var context=context()) {
+            var source=publish(context,true,"v1"); context.migrate();
+            context.tx.inTransaction(em -> {
+                em.createNativeQuery("ALTER TABLE document_revision_current DISABLE TRIGGER document_revision_current_guard").executeUpdate();
+                em.createNativeQuery("DELETE FROM document_revision_current").executeUpdate();
+                em.createNativeQuery("ALTER TABLE document_revision_current ENABLE TRIGGER document_revision_current_guard").executeUpdate();
+            });
+            assertThatThrownBy(() -> new DocumentPublicationLedger(context.tx).findForRead(source.row()))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("projection disagrees");
+            var drives=new DriveLedger(context.tx);
+            var drive=drives.findByName(source.row().accountId,source.row().driveName).orElseThrow();
+            assertThatThrownBy(() -> DocumentSourceSnapshot.legacy(context.tx,drives,source.row(),drive))
+                    .isInstanceOf(DocumentPartAttemptLedger.FenceException.class).hasMessageContaining("projection differs");
         }
     }
 

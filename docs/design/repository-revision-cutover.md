@@ -7,9 +7,11 @@ and preserves the [optional JCR boundary](repository-jcr-compatibility.md).
 Implementation checkpoint: V38 adds the three shadow tables and the legacy
 publication bridge described below. It preserves full manifest positions, exact
 managed object identities and immutable history, including deleted documents.
-V22/V36 publication and V26/V29 retention remain authoritative. Independent-ID
-allocation for new mixed revisions, per-part backend reads and retention cutover
-are still unimplemented; the shadow projection does not enable them.
+V22/V36 publication and V26/V29 retention remain authoritative. Managed reads now
+use the shadow's ordered parts and revision ID, validating them against that legacy
+authority, and the read model carries per-part backend bindings. Independent-ID
+allocation for new mixed revisions and retention cutover remain unimplemented;
+the shadow projection does not enable mixed publication.
 
 ## Current coupling that must change together
 

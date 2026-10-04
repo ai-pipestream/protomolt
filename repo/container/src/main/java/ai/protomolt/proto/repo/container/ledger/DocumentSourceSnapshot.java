@@ -14,7 +14,7 @@ import java.util.UUID;
 public final class DocumentSourceSnapshot {
     private final UUID nodeId;
     private final long revision;
-    private final UUID publicationAttempt;
+    private final UUID publicationRevision;
     private final DocumentPublicationLedger.Publication retainedPublication;
     private final DocumentDriveSnapshot legacyDrive;
     private final DriveLedger drives;
@@ -27,7 +27,7 @@ public final class DocumentSourceSnapshot {
         this.nodeId = row.nodeId;
         this.revision = row.mutationRevision;
         this.retainedPublication = publication;
-        this.publicationAttempt = publication == null ? null : publication.attemptId();
+        this.publicationRevision = publication == null ? null : publication.revisionId();
         this.legacyDrive = legacyDrive;
         this.drives = drives;
         var builder = DocumentManifest.newBuilder();
@@ -99,7 +99,7 @@ public final class DocumentSourceSnapshot {
     /** Caller must use the same sorted source row lock order as DocumentLedger. */
     void requireCurrent(EntityManager em) {
         current(em, nodeId, revision);
-        if (!Objects.equals(publicationAttempt, publication(em, nodeId)))
+        if (!Objects.equals(publicationRevision, publication(em, nodeId)))
             throw new DocumentPartAttemptLedger.FenceException("Source publication changed");
     }
 
@@ -129,8 +129,19 @@ public final class DocumentSourceSnapshot {
     }
 
     private static UUID publication(EntityManager em, UUID node) {
-        var rows = em.createNativeQuery("SELECT attempt_id FROM document_part_publications WHERE node_id=:node")
+        var rows = em.createNativeQuery("""
+                SELECT c.revision_id,p.attempt_id,r.legacy_attempt_id FROM documents d
+                LEFT JOIN document_part_publications p ON p.node_id=d.node_id
+                LEFT JOIN document_revision_current c ON c.node_id=d.node_id
+                LEFT JOIN document_revision_publications r ON r.revision_id=c.revision_id
+                WHERE d.node_id=:node
+                """)
                 .setParameter("node", node).getResultList();
-        return rows.isEmpty() ? null : (UUID) rows.getFirst();
+        if (rows.isEmpty()) return null;
+        var row=(Object[])rows.getFirst();
+        if (row[0]==null && row[1]==null) return null;
+        if (row[0]==null || row[1]==null || !Objects.equals(row[1],row[2]))
+            throw new DocumentPartAttemptLedger.FenceException("Source revision projection differs from its publication");
+        return (UUID)row[0];
     }
 }

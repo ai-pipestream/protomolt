@@ -161,7 +161,7 @@ class DocumentAttemptWriterIT {
             assertThatThrownBy(() -> DocumentSourceSnapshot.legacy(tx, new DriveLedger(tx), saved, source.drive))
                     .isInstanceOf(DocumentPartAttemptLedger.FenceException.class).hasMessageContaining("managed publication");
             var snapshot = DocumentSourceSnapshot.bound(tx, saved);
-            assertThat(snapshot.publication().orElseThrow().attemptId()).isEqualTo(source.plan.attemptId());
+            assertThat(snapshot.publication().orElseThrow().revisionId()).isEqualTo(source.plan.attemptId());
             tx.inTransaction(em -> {
                 em.createNativeQuery("UPDATE drives SET bucket='changed' WHERE drive_id=:id")
                         .setParameter("id", source.drive.driveId).executeUpdate();
@@ -181,7 +181,7 @@ class DocumentAttemptWriterIT {
                     parts -> candidate(f, parts), () -> {},
                     (em, row) -> new JdbcEventOutbox(tx).enqueue(em, DocumentEventFactory.saved(row, Instant.now())));
             var publication = new DocumentPublicationLedger(tx).findForRead(saved).orElseThrow();
-            assertThat(publication.attemptId()).isEqualTo(f.plan.attemptId());
+            assertThat(publication.revisionId()).isEqualTo(f.plan.attemptId());
             assertThat(events(f)).isEqualTo(1);
             for (int i = 0; i < publication.parts().size(); i++) {
                 var p = publication.parts().get(i);

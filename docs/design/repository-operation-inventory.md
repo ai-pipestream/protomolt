@@ -2013,3 +2013,44 @@ and complete SQL fixture publication at 444 ms on the local run; these include t
 setup work and are not controlled latency/throughput qualification. Sol reviewed
 the migration and seal fix with no remaining blocking finding. No push, hosted CI,
 merge or deployment is claimed.
+
+### Per-part managed read bindings
+
+Managed reads now resolve V38 ordered revision references while checking their
+sealed header and current pin against the still-authoritative legacy publication.
+Missing projection state for a managed row fails; it does not become an unbound
+legacy read. Full manifest positions are checked separately from dense PRESENT
+ordering. Captured source fences use revision IDs and indexed joins from the
+already locked document. Distinct backend profiles are loaded in batches of 256;
+a real SQL fixture proves 257 profiles take two client statements and an empty
+selection takes none. Missing profiles fail without replacement coordinates.
+
+Each read part carries its original generation, profile and namespace. Resolver
+lookups are deduplicated by generation/profile only for the selected parts. The
+reader reserves one aggregate payload budget before any resolver work and uses
+one bounded scheduling window across the selection, preserving part order and
+existing cancellation/drain rules. No SQL lock survives into provider reads.
+Partial saves select source slots by part/sub-key rather than object key, so
+overlapping keys in different namespaces do not collapse. Publication construction
+rejects duplicate slots; missing selections fail explicitly.
+
+Java API change: `DocumentPublicationLedger.Publication.revisionId()` replaces
+`attemptId()`. `boundParts()` exposes each `BoundPart` with its `Binding`; the old
+publication-wide generation/profile/namespace accessors are removed. `parts()`
+remains a content-only view. The uniform-binding constructor remains for existing
+FULL_REVISION producers. There are no protobuf name/tag/import/Any URL changes.
+
+Real S3 tests use two versioned namespaces with overlapping keys, deliberately
+overwrite latest values, and read the recorded versions in original order. They
+also check selected/unselected unavailable bindings, one resolver call per distinct
+backend identity and aggregate budget refusal before any resolver call. These are
+constructed read snapshots backed by real provider bytes, not successful mixed SQL
+publications or qualification of different provider implementations. Pure slot
+tests cover overlap, ordering, missing and duplicate slots. Coordinated retention,
+mixed/zero-upload publication, schema/raw history and latency qualification remain
+unfinished.
+
+Local validation for the per-part read change on 2026-10-04: the full engine,
+container and service suites passed in 2m21s, 120 suites and 997 cases (994 passed,
+three skipped, no failures/errors). The engine runtime dependency gate passed.
+This is local verification, not hosted CI, merge or deployment evidence.

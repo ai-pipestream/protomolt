@@ -22,6 +22,30 @@ class ManagedBackendLedgerIT {
     }
     @AfterAll static void close() { if (database != null) database.close(); }
 
+    @Test void retainedProfileLookupBatchesDistinctGenerationsAndRejectsMissingBindings() {
+        var expected=new java.util.HashMap<String,ManagedBackendLedger.Profile>();
+        for(int i=0;i<257;i++) {
+            String id=UUID.randomUUID().toString(); var profile=profile("https://store-"+i+".example");
+            ledger.bind(id,profile); expected.put(id,profile);
+        }
+        var statistics=database.entityManagerFactory().unwrap(org.hibernate.SessionFactory.class).getStatistics();
+        statistics.setStatisticsEnabled(true);
+        try {
+            tx.readOnly(em -> {
+                long before=statistics.getPrepareStatementCount();
+                assertThat(ManagedBackendLedger.requireAll(em,expected.keySet())).containsExactlyInAnyOrderEntriesOf(expected);
+                assertThat(statistics.getPrepareStatementCount()-before).isEqualTo(2);
+                before=statistics.getPrepareStatementCount();
+                assertThat(ManagedBackendLedger.requireAll(em,java.util.Set.of())).isEmpty();
+                assertThat(statistics.getPrepareStatementCount()-before).isZero();
+                return null;
+            });
+        } finally { statistics.setStatisticsEnabled(false); }
+        expected.put(UUID.randomUUID().toString(),profile("https://missing.example"));
+        assertThatThrownBy(() -> tx.readOnly(em -> ManagedBackendLedger.requireAll(em,expected.keySet())))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("profile is missing");
+    }
+
     @Test void restartingWithSamePhysicalProfileIsIdempotentButRedirectIsRejected() {
         String id = UUID.randomUUID().toString();
         var original = profile("https://STORE.example:443/");

@@ -76,6 +76,24 @@ public final class ManagedBackendLedger {
         return rows.isEmpty() ? Optional.empty() : Optional.of(decode((Object[]) rows.getFirst()));
     }
 
+    /** Distinct retained profiles, bounded to 256 parameters per query. */
+    static Map<String, Profile> requireAll(jakarta.persistence.EntityManager em, java.util.Set<String> generations) {
+        var ordered = generations.stream().sorted().toList();
+        var profiles = new HashMap<String, Profile>();
+        for (int start=0; start<ordered.size(); start+=256) {
+            var batch=ordered.subList(start,Math.min(start+256,ordered.size()));
+            for (Object value : em.createNativeQuery("""
+                    SELECT generation,provider,endpoint,region,path_style,storage_realm,identity_schema,CAST(identity_json AS text)
+                    FROM managed_backend_profiles WHERE generation IN (:ids)
+                    """).setParameter("ids",batch).getResultList()) {
+                var row=(Object[])value;
+                profiles.put((String)row[0],decode(java.util.Arrays.copyOfRange(row,1,row.length)));
+            }
+        }
+        if (profiles.size()!=generations.size()) throw new IllegalStateException("Published document backend profile is missing");
+        return Map.copyOf(profiles);
+    }
+
     private static Profile decode(Object[] row) {
         if (row[5] == null)
             return new Profile(Profile.legacyIdentity((String) row[0], (String) row[1], (String) row[2], (Boolean) row[3]), (String) row[4]);

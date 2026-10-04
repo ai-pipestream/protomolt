@@ -465,8 +465,9 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
                 @Override public boolean isCancelled() { return control.isCancelled(); }
                 @Override public long remainingNanos() { return control.remainingNanos(); }
             };
-            var keys = carried.stream().map(PartManifestEntry::getObjectKey).collect(java.util.stream.Collectors.toSet());
-            try (var batch = managedParts.readSourceKeys(sourceSnapshot, this.blobStore, keys, readControl)) {
+            var slots = carried.stream().map(part -> new DocumentPartReader.PartSlot(part.getPart(),part.getSubKey()))
+                    .collect(java.util.stream.Collectors.toSet());
+            try (var batch = managedParts.readSourceSlots(sourceSnapshot, this.blobStore, slots, readControl)) {
                 var managedBindings = partsWritten.contains(DocumentPart.DOCUMENT_PART_BLOBS)
                         ? rawBindings.writing(r.doc().getBlobBag(), r.address().getAccountId(), destExisting)
                         : rawBindings.copying(batch, srcRow, r.address().getAccountId());

@@ -83,6 +83,75 @@ class DocumentPartReaderIT {
         });
     }
 
+    private record Mixed(DocumentPublicationLedger.Publication publication, List<byte[]> bytes) {}
+    /** Real versioned provider objects; this constructs a read snapshot, not a mixed SQL publication. */
+    private static Mixed mixed() {
+        String namespace="mixed-"+UUID.randomUUID();
+        opened.ensureNamespace(namespace);
+        admin.putBucketVersioning(b -> b.bucket(namespace).versioningConfiguration(v -> v.status(BucketVersioningStatus.ENABLED)));
+        String shared="mixed/"+UUID.randomUUID();
+        var bytes=List.of(new byte[]{1,2},new byte[]{3,4,5},new byte[]{6});
+        var bound=new java.util.ArrayList<DocumentPublicationLedger.BoundPart>();
+        for (int i=0;i<3;i++) {
+            String ns=i==1?NAMESPACE:namespace;
+            String generation=i==1?GENERATION:"second-generation";
+            String key=i==2?shared+"-other":shared;
+            byte[] content=bytes.get(i);
+            var put=store.put(new BlobStore.PutSpec(ns,key,"application/protobuf",Map.of(),DocumentPartCodec.sha256Hex(content)),content);
+            var verified=store.get(ns,key,put.versionId());
+            assertThat(verified.data()).isEqualTo(content);
+            var part=new DocumentPublicationLedger.Part(i==1?DocumentPart.DOCUMENT_PART_CORE:DocumentPart.DOCUMENT_PART_CHUNKS,
+                    i==1?"":"chunk-"+i,key,content.length,DocumentPartCodec.sha256Hex(content),verified.versionId(),verified.eTag());
+            bound.add(new DocumentPublicationLedger.BoundPart(part,new DocumentPublicationLedger.Binding(generation,profile,ns)));
+            // A latest-key read would now return different bytes.
+            store.put(new BlobStore.PutSpec(ns,key,"application/protobuf",Map.of(),null),new byte[]{9});
+        }
+        return new Mixed(new DocumentPublicationLedger.Publication(UUID.randomUUID(),DocumentManifest.getDefaultInstance(),bound),bytes);
+    }
+
+    @Test void mixedBindingsPreserveOrderVersionsAndOneAggregateBudget() {
+        var fixture=mixed();
+        var calls=new java.util.HashMap<String,Integer>();
+        var budget=new PayloadBudget(12);
+        try (var reader=new DocumentPartReader((generation,original) -> {
+            assertThat(original).isEqualTo(profile); calls.merge(generation,1,Integer::sum); return store;
+        },2,1024,budget)) {
+            try (var batch=reader.readFragments(fixture.publication,Set.of(),Set.of(),ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+                assertThat(batch.parts()).hasSize(3);
+                for (int i=0;i<3;i++) assertThat(batch.parts().get(i).bytes()).isEqualTo(fixture.bytes.get(i));
+                assertThat(budget.reservedBytes()).isEqualTo(12);
+            }
+            assertThat(budget.reservedBytes()).isZero();
+            assertThat(calls).containsExactlyInAnyOrderEntriesOf(Map.of(GENERATION,1,"second-generation",1));
+        }
+    }
+
+    @Test void missingSelectedBackendFailsWithoutAffectingUnselectedBindings() {
+        var fixture=mixed();
+        var calls=new java.util.ArrayList<String>();
+        try (var reader=new DocumentPartReader((generation,original) -> {
+            calls.add(generation); return generation.equals(GENERATION)?store:null;
+        })) {
+            try (var batch=reader.readFragments(fixture.publication,Set.of(DocumentPart.DOCUMENT_PART_CORE),Set.of(),ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+                assertThat(batch.parts().getFirst().bytes()).isEqualTo(fixture.bytes.get(1));
+            }
+            assertThat(calls).containsExactly(GENERATION);
+            assertThatThrownBy(() -> reader.readFragments(fixture.publication,Set.of(),Set.of(),ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                    .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+        }
+    }
+
+    @Test void mixedBindingsCannotReserveSeparatePayloadBudgets() {
+        var fixture=mixed(); var budget=new PayloadBudget(11);
+        var resolutions=new java.util.concurrent.atomic.AtomicInteger();
+        try (var reader=new DocumentPartReader((g,p) -> { resolutions.incrementAndGet(); return store; },2,1024,budget)) {
+            assertThatThrownBy(() -> reader.readFragments(fixture.publication,Set.of(),Set.of(),ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                    .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.RESOURCE_EXHAUSTED));
+            assertThat(budget.reservedBytes()).isZero();
+            assertThat(resolutions.get()).isZero();
+        }
+    }
+
     private record Bound(Document expected, DocumentRecord row, DriveRecord drive) {}
 
     /** Fixture uses guarded SQL publication, not a claim that the public managed writer is enabled. */
@@ -219,7 +288,7 @@ class DocumentPartReaderIT {
             assertThat(deduped.getDeduplicated()).isTrue();
             var after = documents.findByNodeId(saved.nodeId).orElseThrow();
             assertThat(after.reprocessCount).isEqualTo(saved.reprocessCount + 1);
-            assertThat(new DocumentPublicationLedger(tx).findForRead(after).orElseThrow().attemptId()).isEqualTo(publication.attemptId());
+            assertThat(new DocumentPublicationLedger(tx).findForRead(after).orElseThrow().revisionId()).isEqualTo(publication.revisionId());
             long afterAttempts = tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM document_part_attempts WHERE node_id=:node")
                     .setParameter("node", saved.nodeId).getSingleResult()).longValue());
             long savedEvents = tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM document_events_outbox WHERE kafka_key=:id")
@@ -453,7 +522,7 @@ class DocumentPartReaderIT {
         var publication = new DocumentPublicationLedger(tx).findForRead(seeded.row()).orElseThrow();
         var part = publication.parts().getFirst();
         if (defect.equals("missing-version"))
-            admin.deleteObject(b -> b.bucket(publication.namespace()).key(part.key()).versionId(part.providerVersion()));
+            admin.deleteObject(b -> b.bucket(publication.boundParts().getFirst().binding().namespace()).key(part.key()).versionId(part.providerVersion()));
         BlobStore injected = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
                 new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
                     try {
@@ -621,7 +690,7 @@ class DocumentPartReaderIT {
     @Test void checksumMismatchCannotBecomeSuccessfulDocument() {
         var publication = publish(Document.newBuilder().setDocId("corrupt").build().toByteArray());
         var p = publication.parts().getFirst();
-        var bad = new DocumentPublicationLedger.Publication(publication.attemptId(), GENERATION, profile, NAMESPACE,
+        var bad = new DocumentPublicationLedger.Publication(publication.revisionId(), GENERATION, profile, NAMESPACE,
                 publication.manifest(), List.of(new DocumentPublicationLedger.Part(p.part(), p.subKey(), p.key(), p.size(),
                         "00".repeat(32), p.providerVersion(), p.etag())));
         assertThatThrownBy(() -> reader().read(bad, Set.of(), Set.of(), Document.getDefaultInstance()))

@@ -145,12 +145,34 @@ public final class DocumentPartReader implements AutoCloseable {
             DocumentPublicationLedger.Publication publication, Set<DocumentPart> mask,
             Set<String> chunkSets, RepositoryReadControl control) {
         checkActive(control);
-        var store=backends.resolve(publication.generation(),publication.profile());
-        checkActive(control);
-        if (store==null) throw RepositoryErrors.failedPrecondition("Original document backend is unavailable");
-        var wanted=publication.parts().stream().filter(p -> mask.isEmpty() || mask.contains(p.part()))
-                .filter(p -> p.part()!=DocumentPart.DOCUMENT_PART_CHUNKS || chunkSets.isEmpty() || chunkSets.contains(p.subKey())).toList();
-        return readFragments(store, publication.namespace(), wanted, control, false);
+        var wanted=publication.boundParts().stream().filter(p -> mask.isEmpty() || mask.contains(p.part().part()))
+                .filter(p -> p.part().part()!=DocumentPart.DOCUMENT_PART_CHUNKS || chunkSets.isEmpty() || chunkSets.contains(p.part().subKey())).toList();
+        return readBoundParts(wanted, control);
+    }
+
+    private record ResolvedPart(DocumentPublicationLedger.Part part, BlobStore store, String namespace) {}
+    private DocumentReadBatch readBoundParts(List<DocumentPublicationLedger.BoundPart> wanted, RepositoryReadControl control) {
+        return readFragments(wanted.stream().map(DocumentPublicationLedger.BoundPart::part).toList(),
+                () -> resolveBoundParts(wanted,control),control,false);
+    }
+    private List<ResolvedPart> resolveBoundParts(List<DocumentPublicationLedger.BoundPart> wanted, RepositoryReadControl control) {
+        record Backend(String generation, ManagedBackendLedger.Profile profile) {}
+        var stores = new java.util.HashMap<Backend, BlobStore>();
+        var resolved = new ArrayList<ResolvedPart>(wanted.size());
+        for (var selected : wanted) {
+            checkActive(control);
+            var binding = selected.binding();
+            var backend = new Backend(binding.generation(), binding.profile());
+            var store = stores.get(backend);
+            if (store == null) {
+                store = backends.resolve(backend.generation(), backend.profile());
+                checkActive(control);
+                if (store == null) throw RepositoryErrors.failedPrecondition("Original document backend is unavailable");
+                stores.put(backend, store);
+            }
+            resolved.add(new ResolvedPart(selected.part(), store, binding.namespace()));
+        }
+        return resolved;
     }
 
     /**
@@ -179,22 +201,27 @@ public final class DocumentPartReader implements AutoCloseable {
     }
 
     /** Internal partial-save selection, including no reused objects, from the captured source. */
-    DocumentReadBatch readSourceKeys(ai.protomolt.proto.repo.container.ledger.DocumentSourceSnapshot source,
-            BlobStore qualifiedLegacyStore, Set<String> keys, RepositoryReadControl control) {
+    record PartSlot(DocumentPart part, String subKey) {}
+    static List<DocumentPublicationLedger.BoundPart> selectSlots(DocumentPublicationLedger.Publication publication, Set<PartSlot> slots) {
+        var wanted=publication.boundParts().stream()
+                .filter(p -> slots.contains(new PartSlot(p.part().part(),p.part().subKey()))).toList();
+        // Publication's immutable constructor rejects duplicate slots, so this
+        // subset has exact membership only when its cardinality matches.
+        if (wanted.size()!=slots.size()) throw RepositoryErrors.failedPrecondition("Source slots differ from retained publication");
+        return wanted;
+    }
+    DocumentReadBatch readSourceSlots(ai.protomolt.proto.repo.container.ledger.DocumentSourceSnapshot source,
+            BlobStore qualifiedLegacyStore, Set<PartSlot> slots, RepositoryReadControl control) {
         enterOperation();
         try {
             checkActive(control);
             var selected = source.manifest().getPartsList().stream()
-                    .filter(p -> p.getState() == PartState.PART_STATE_PRESENT && keys.contains(p.getObjectKey())).toList();
-            if (selected.size() != keys.size()) throw RepositoryErrors.failedPrecondition("Source selection differs from captured manifest");
+                    .filter(p -> p.getState() == PartState.PART_STATE_PRESENT && slots.contains(new PartSlot(p.getPart(),p.getSubKey()))).toList();
+            if (selected.size() != slots.size()) throw RepositoryErrors.failedPrecondition("Source selection differs from captured manifest");
             if (source.legacy()) return readLegacySelection(qualifiedLegacyStore, source.legacyNamespace(), selected,
                     source.coreVersion(), source.coreEtag(), control);
             var publication = source.publication().orElseThrow();
-            var store = backends.resolve(publication.generation(), publication.profile());
-            checkActive(control);
-            if (store == null) throw RepositoryErrors.failedPrecondition("Original document backend is unavailable");
-            return readFragments(store, publication.namespace(), publication.parts().stream()
-                    .filter(p -> keys.contains(p.key())).toList(), control, false);
+            return readBoundParts(selectSlots(publication,slots), control);
         } finally { exitOperation(); }
     }
 
@@ -241,8 +268,14 @@ public final class DocumentPartReader implements AutoCloseable {
 
     private DocumentReadBatch readFragments(BlobStore store, String namespace,
             List<DocumentPublicationLedger.Part> wanted, RepositoryReadControl control, boolean legacy) {
+        return readFragments(wanted, () -> wanted.stream().map(part -> new ResolvedPart(part, store, namespace)).toList(), control, legacy);
+    }
+
+    private DocumentReadBatch readFragments(List<DocumentPublicationLedger.Part> parts,
+            java.util.function.Supplier<List<ResolvedPart>> resolve, RepositoryReadControl control, boolean legacy) {
+        checkActive(control);
         long total = 0;
-        for (var part : wanted) {
+        for (var part : parts) {
             if (part.size() < 0) throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Negative document part size");
             if (part.size() > Integer.MAX_VALUE || part.size() > Long.MAX_VALUE / 2 - total)
                 throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED, "Document selection exceeds read capacity");
@@ -255,6 +288,8 @@ public final class DocumentPartReader implements AutoCloseable {
         }
         boolean complete = false;
         try {
+        // Reserve before any resolver work; failures close the same batch below.
+        var wanted=resolve.get();
         var fragments=new ArrayList<byte[]>(java.util.Collections.nCopies(wanted.size(),null));
         if (!wanted.isEmpty()) {
             int parallelism = Math.min(Math.min(32, maxConcurrentReads), wanted.size());
@@ -268,7 +303,10 @@ public final class DocumentPartReader implements AutoCloseable {
                     while (submitted<parallelism) {
                         checkActive(control);
                         final int index=submitted++;
-                        pending.add(completions.submit(() -> new Fragment(index,readOwned(batch,store,namespace,wanted.get(index),control,legacy))));
+                        pending.add(completions.submit(() -> {
+                            var selected = wanted.get(index);
+                            return new Fragment(index,readOwned(batch,selected.store(),selected.namespace(),selected.part(),control,legacy));
+                        }));
                     }
                     int completed=0;
                     while (completed<wanted.size()) {
@@ -283,7 +321,10 @@ public final class DocumentPartReader implements AutoCloseable {
                         completed++;
                         if (submitted<wanted.size()) {
                             final int index=submitted++;
-                            pending.add(completions.submit(() -> new Fragment(index,readOwned(batch,store,namespace,wanted.get(index),control,legacy))));
+                            pending.add(completions.submit(() -> {
+                                var selected = wanted.get(index);
+                                return new Fragment(index,readOwned(batch,selected.store(),selected.namespace(),selected.part(),control,legacy));
+                            }));
                         }
                     }
                 } catch (InterruptedException interrupted) {
@@ -304,7 +345,7 @@ public final class DocumentPartReader implements AutoCloseable {
         checkActive(control);
         var result = new ArrayList<PartObject>(wanted.size());
         for (int i = 0; i < wanted.size(); i++) {
-            var part = wanted.get(i);
+            var part = wanted.get(i).part();
             result.add(new PartObject(part.part(), part.subKey(), fragments.get(i), part.sha256()));
         }
         checkActive(control);
