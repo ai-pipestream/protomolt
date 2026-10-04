@@ -4421,3 +4421,50 @@ nested disallowed fingerprint under an allowed URL, both during selection and
 when independently checking a proof. Runtime dependency gates pass. Sol reviewed
 the contracts, implementation and tests with no remaining blocker. These checks
 do not qualify the planned SQL policy race or native publication activation.
+
+### Persist policy snapshots and fence activation revisions
+
+V58 adds immutable, account-scoped `document_schema_policies` and one
+`document_schema_policy_current` pointer per account. Stored bytes must match the
+SHA-256 key, fixed codec/version and 512 KiB limit. Pointer insertion starts at
+revision 1; updates preserve the account and increment the revision exactly.
+Pointers cannot be deleted and recreated to reset that identity. Returning to a
+previous policy body creates another revision, so an old prepared selection
+cannot pass through an A-to-B-to-A change.
+
+The internal `DocumentSchemaPolicies` adapter provides new activate, read and
+lock-current operations. Activation inserts a canonical snapshot and performs
+compare-and-set on the expected pointer revision in one transaction. A stale
+revision or cancellation rolls back both steps. An ambiguous activation result
+requires reading the current pointer; the adapter does not retry against a newer
+revision automatically. Trusted administration must authorize the caller before
+this package-private adapter is invoked. The SQL guards protect consistency,
+not the identity or authority of a policy administrator.
+
+Preparation reads a decoded snapshot. The commit guard requires READ COMMITTED,
+locks the pointer with FOR SHARE, checks revision and digest after any lock wait,
+then decodes the immutable body while holding the pointer lock. It compares the
+canonical bytes and account as well. Separating the pointer lock from body lookup
+avoids relying on a joined row captured before a concurrent update. The native
+publisher must call this guard after the operation/command fence and before
+locking documents, drives and parts, retaining the shared lock through commit.
+Activation acquires no document locks. Concurrent writers can share the pointer;
+policy updates wait, and another account has an independent pointer.
+
+The container has an implementation dependency on repo-admission for canonical
+policy decoding. Byte providers and their SPI remain unchanged. This migration
+adds no policy to existing accounts or revisions and does not activate any typed
+writer. All-entry-point enforcement, administrator authorization, operation-wide
+proof budgets and the transaction evidence insertion hook remain integration work.
+
+Qualification passes 44 PostgreSQL tests across the policy catalog, concurrency,
+schema association and native publication suites. Tests cover stale activation
+rollback, account/content mismatch, A-to-B-to-A revision checks, mutation guards,
+unsupported isolation, cancellation after snapshot insertion and pointer update,
+and migration from populated V57 that creates no policies. Concurrency tests
+observe real backend blockers: writers acquire shared locks concurrently, the
+updater waits for both, another account progresses, and an earlier committed
+update rejects a waiting stale writer. The blocker assertion accepts either
+initial MultiXact holder, then verifies the remaining holder after one releases.
+Sol reviewed code and tests with no blocker. Admission and engine runtime
+dependency gates pass. Publication-path integration remains required.

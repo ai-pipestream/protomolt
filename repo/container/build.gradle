@@ -1,6 +1,7 @@
 description = 'Claim-check part storage and Postgres ledger over the provider-neutral byte SPI'
 
 dependencies {
+    implementation project(':protomolt-repo-admission')
     api project(':protomolt-repo-codec')
     api project(':protomolt-repo-blob-spi')
     testImplementation project(':protomolt-repo-blob-s3')
