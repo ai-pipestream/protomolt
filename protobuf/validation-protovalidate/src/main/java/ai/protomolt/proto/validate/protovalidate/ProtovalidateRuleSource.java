@@ -63,9 +63,11 @@ public final class ProtovalidateRuleSource implements ValidationRuleSource {
         if (rules == null) {
             return Optional.empty();
         }
+        var predefined = PredefinedRules.indexFor(field.getFile());
+        RulePayloads.requireSupported(rules, predefined);
         checkRuleType(field, rules);
         return Optional.of(FieldRuleTranslation.toFieldConstraints(
-                rules, PredefinedRules.indexFor(field.getFile())));
+                rules, predefined));
     }
 
     /**
@@ -156,6 +158,7 @@ public final class ProtovalidateRuleSource implements ValidationRuleSource {
                     ? Optional.empty()
                     : Optional.of(new MessageConstraints(List.of(), List.of(), requiredOneofs));
         }
+        RulePayloads.requireSupported(rules, PredefinedIndex.EMPTY);
         List<CelConstraint> cel = new ArrayList<>(rules.getCelList().size());
         for (Rule rule : rules.getCelList()) {
             cel.add(FieldRuleTranslation.toCel(rule));
@@ -183,6 +186,9 @@ public final class ProtovalidateRuleSource implements ValidationRuleSource {
         for (com.google.protobuf.Descriptors.OneofDescriptor oneof : message.getRealOneofs()) {
             var opts = OptionReparse.recover(oneof.getOptions(), ValidateProto.oneof.getNumber(),
                     DescriptorProtos.OneofOptions::parseFrom, "(buf.validate.oneof)");
+            if (opts.hasExtension(ValidateProto.oneof)) {
+                RulePayloads.requireSupported(opts.getExtension(ValidateProto.oneof), PredefinedIndex.EMPTY);
+            }
             if (opts.hasExtension(ValidateProto.oneof)
                     && opts.getExtension(ValidateProto.oneof).getRequired()) {
                 names.add(oneof.getName());

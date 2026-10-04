@@ -123,7 +123,9 @@ final class PredefinedRules {
         if (!options.hasExtension(ValidateProto.predefined)) {
             return List.of();
         }
-        return options.getExtension(ValidateProto.predefined).getCelList();
+        var rules = options.getExtension(ValidateProto.predefined);
+        RulePayloads.requireSupported(rules, PredefinedIndex.EMPTY);
+        return rules.getCelList();
     }
 
     /**
@@ -210,6 +212,10 @@ final class PredefinedRules {
             }
             DynamicMessage parsed = DynamicMessage.parseFrom(
                     ext.getContainingType(), subRules.toByteString(), registry);
+            if (parsed.getUnknownFields().hasField(ext.getNumber())
+                    || (!ext.isRepeated() && !parsed.hasField(ext))) {
+                throw new RuleCompilationException("invalid wire encoding for predefined rule " + ext.getFullName());
+            }
             return celValue(ext, parsed.getField(ext));
         } catch (RuntimeException | InvalidProtocolBufferException e) {
             throw new RuleCompilationException(

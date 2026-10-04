@@ -3160,3 +3160,25 @@ unknown enum numeric values, and unrecognized or incorrectly encoded predefined
 extensions. Preserve supported custom predefined rules while rejecting rules that
 cannot be interpreted. Also bind schema/type identity, retain exact artifacts,
 assemble admission evidence and prove historical decoding without the registry.
+
+### Unsupported validation rules
+
+Red tests confirmed that unknown Ignore/KnownRegex numbers passed validation.
+The vendored schema uses proto2: generated parsers keep unknown enum numbers in
+unknown fields. Tests encode those numbers in retained descriptors.
+
+RulePayloads now checks validation instructions before translation. It rejects
+unknown rule numbers and invalid encodings of known fields, including enum values,
+collection rules and CEL definitions. Checks also run for unset data fields,
+empty collections and IGNORE_ALWAYS. Unrelated custom options remain intact.
+
+Custom rule numbers require an entry in the descriptor index for that rule type.
+Their values must decode fully; singular values must be present. Empty packed
+repeated values remain legal. This check does not inspect custom message-valued
+CEL parameters. Schema-wide coverage and resource limits still need qualification.
+
+Sol found no blocker. All 35 dialect tests and 13 conformance-harness unit tests
+passed without failures or skips in 3s. Existing valid custom rules pass. The
+external upstream test suite was not rerun. Typed archival publication remains
+disabled until schema/type binding, retention and admission integration pass.
+No protobuf definitions changed.

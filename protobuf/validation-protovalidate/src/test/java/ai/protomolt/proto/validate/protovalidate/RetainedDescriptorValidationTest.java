@@ -105,13 +105,121 @@ class RetainedDescriptorValidationTest {
                 .isInstanceOf(RuleCompilationException.class);
     }
 
+    @Test
+    void rejectsUnknownIgnoreEnumBeforeValidatingAbsentField() {
+        for (int value : new int[]{2, -1, 999}) {
+            assertInvalidRules("name", unknownIgnore(value),
+                    "ignore");
+        }
+    }
+
+    @Test
+    void rejectsUnknownRegexEnumBeforeValidatingAbsentField() {
+        for (int value : new int[]{-1, 999}) {
+            assertInvalidRules("name", build.buf.validate.FieldRules.newBuilder().setString(
+                    unknownRegex(value)).build(),
+                    "well_known_regex");
+        }
+    }
+
+    @Test
+    void rejectsUnknownEnumsInsideEmptyCollections() {
+        var invalidIgnore = unknownIgnore(2);
+        assertInvalidRules("tags", build.buf.validate.FieldRules.newBuilder().setRepeated(
+                build.buf.validate.RepeatedRules.newBuilder().setItems(invalidIgnore)).build(), "ignore");
+        assertInvalidRules("limits", build.buf.validate.FieldRules.newBuilder().setMap(
+                build.buf.validate.MapRules.newBuilder().setKeys(invalidIgnore)).build(), "ignore");
+        assertInvalidRules("limits", build.buf.validate.FieldRules.newBuilder().setMap(
+                build.buf.validate.MapRules.newBuilder().setValues(invalidIgnore)).build(), "ignore");
+        var invalidRegex = build.buf.validate.FieldRules.newBuilder().setString(
+                unknownRegex(999));
+        assertInvalidRules("tags", build.buf.validate.FieldRules.newBuilder().setRepeated(
+                build.buf.validate.RepeatedRules.newBuilder().setItems(invalidRegex)).build(), "well_known_regex");
+    }
+
+    @Test
+    void rejectsUnknownTopLevelAndNestedRuleNumbers() {
+        assertInvalidRules("name", build.buf.validate.FieldRules.newBuilder()
+                .setUnknownFields(wrongWire(999)).build(), "999");
+        assertInvalidRules("name", build.buf.validate.FieldRules.newBuilder().setString(
+                build.buf.validate.StringRules.newBuilder().setUnknownFields(wrongWire(999))).build(), "999");
+        assertInvalidRules("name", build.buf.validate.FieldRules.newBuilder()
+                .setIgnore(build.buf.validate.Ignore.IGNORE_ALWAYS).setString(
+                        build.buf.validate.StringRules.newBuilder().setUnknownFields(wrongWire(999))).build(), "999");
+    }
+
+    @Test
+    void rejectsWrongWireKnownNestedRule() {
+        var unknown = UnknownFieldSet.newBuilder().addField(build.buf.validate.StringRules.MIN_LEN_FIELD_NUMBER,
+                UnknownFieldSet.Field.newBuilder().addLengthDelimited(com.google.protobuf.ByteString.EMPTY).build()).build();
+        assertInvalidRules("name", build.buf.validate.FieldRules.newBuilder().setString(
+                build.buf.validate.StringRules.newBuilder().setUnknownFields(unknown)).build(), "min_len");
+    }
+
+    @Test
+    void rejectsUnknownMessageAndCelRuleFields() {
+        for (var rules : List.of(
+                build.buf.validate.MessageRules.newBuilder().setUnknownFields(wrongWire(999)).build(),
+                build.buf.validate.MessageRules.newBuilder().addCel(build.buf.validate.Rule.newBuilder()
+                        .setId("unknown").setExpression("true").setUnknownFields(wrongWire(999))).build())) {
+            Descriptor type = retained(message -> message.setOptions(MessageOptions.newBuilder()
+                    .setExtension(ValidateProto.message, rules)));
+            assertThatThrownBy(() -> ProtoValidator.forMessageType(type, List.of(new ProtovalidateRuleSource()))
+                    .validate(DynamicMessage.getDefaultInstance(type)))
+                    .isInstanceOf(RuleCompilationException.class).hasMessageContaining("999");
+        }
+    }
+
+    @Test
+    void rejectsIncorrectlyEncodedDeclaredPredefinedValue() {
+        var original = ai.protomolt.proto.validate.protovalidate.testdata.PredefinedUser.getDescriptor();
+        var unknown = UnknownFieldSet.newBuilder().addField(1101, UnknownFieldSet.Field.newBuilder()
+                .addLengthDelimited(com.google.protobuf.ByteString.copyFromUtf8("wrong bool wire type")).build()).build();
+        var rules = build.buf.validate.FieldRules.newBuilder().setString(
+                build.buf.validate.StringRules.newBuilder().setUnknownFields(unknown)).build();
+        var type = retained(original, message -> {
+            message.getFieldBuilder(0).setOptions(FieldOptions.newBuilder().setExtension(ValidateProto.field, rules));
+            return message;
+        });
+        assertThatThrownBy(() -> ProtoValidator.forMessageType(type, List.of(new ProtovalidateRuleSource()))
+                .validate(DynamicMessage.getDefaultInstance(type)))
+                .isInstanceOf(RuleCompilationException.class).hasMessageContaining("predefined rule");
+    }
+
+    private static build.buf.validate.FieldRules unknownIgnore(int value) {
+        return build.buf.validate.FieldRules.newBuilder().setUnknownFields(UnknownFieldSet.newBuilder()
+                .addField(build.buf.validate.FieldRules.IGNORE_FIELD_NUMBER,
+                        UnknownFieldSet.Field.newBuilder().addVarint(value).build()).build()).build();
+    }
+
+    private static build.buf.validate.StringRules unknownRegex(int value) {
+        return build.buf.validate.StringRules.newBuilder().setUnknownFields(UnknownFieldSet.newBuilder()
+                .addField(build.buf.validate.StringRules.WELL_KNOWN_REGEX_FIELD_NUMBER,
+                        UnknownFieldSet.Field.newBuilder().addVarint(value).build()).build()).build();
+    }
+
+    private static void assertInvalidRules(String fieldName, build.buf.validate.FieldRules rules, String error) {
+        Descriptor type = retained(message -> {
+            var field = message.getFieldBuilderList().stream().filter(f -> f.getName().equals(fieldName))
+                    .findFirst().orElseThrow();
+            field.setOptions(FieldOptions.newBuilder().setExtension(ValidateProto.field, rules));
+            return message;
+        });
+        assertThatThrownBy(() -> ProtoValidator.forMessageType(type, List.of(new ProtovalidateRuleSource()))
+                .validate(DynamicMessage.getDefaultInstance(type)))
+                .isInstanceOf(RuleCompilationException.class).hasMessageContaining(error);
+    }
+
     private static UnknownFieldSet wrongWire(int number) {
         return UnknownFieldSet.newBuilder().addField(number,
                 UnknownFieldSet.Field.newBuilder().addVarint(1).build()).build();
     }
 
     private static Descriptor retained(UnaryOperator<DescriptorProto.Builder> change) {
-        var original = AnnotatedUser.getDescriptor();
+        return retained(AnnotatedUser.getDescriptor(), change);
+    }
+
+    private static Descriptor retained(Descriptor original, UnaryOperator<DescriptorProto.Builder> change) {
         var set = DescriptorFingerprints.closure(original).toBuilder();
         for (int i = 0; i < set.getFileCount(); i++) {
             if (!set.getFile(i).getName().equals(original.getFile().getName())) continue;
