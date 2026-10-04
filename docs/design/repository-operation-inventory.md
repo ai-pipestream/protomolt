@@ -3358,3 +3358,25 @@ policy remain disabled and unfinished.
 The design also requires compiler and runtime provenance with archived Any schema
 assets. Remote compiler versions remain explicitly unknown when not supplied;
 local toolchain versions must come from actual build metadata.
+
+### Replaced schema claim release
+
+V50 permits deletion of an obsolete generation's staging claim only when the same
+operation's current generation has a claim for the exact artifact. The recovery
+transaction locks the owner, selects a batch, locks selected artifacts in hash
+order, then locks and deletes those claims. The trigger enforces recovery proof
+and exact replacement even for direct DELETE statements.
+
+Discovery starts with the current generation's maximum 64 claims and uses bounded
+indexed probes for older matching claims. The batch limit is 1 to 256. An artifact
+lock count check guards the complete selected set. This avoids scanning unrelated
+unreplaced history before applying the batch limit.
+
+All 42 PostgreSQL tests pass without failures or skips: 19 staging/release cases,
+7 recovery cases and 16 write-authority cases. Coverage includes bounded repeat
+calls, missing or wrong-operation replacement, direct DELETE, rollback, expired
+current protection and a three-generation chain. Sol found no blocker.
+
+This releases redundant claims while preserving retry assets. Current claims and
+catalog artifacts remain protected. Terminal retention policy, artifact collection
+and durable revision references are still unfinished.

@@ -194,7 +194,8 @@ class RepositorySchemaArtifactsIT {
                     RepositoryOperationLedger.fenceLiveOwner(em, owner);
                     em.createNativeQuery(statement + " WHERE account_id=:account")
                             .setParameter("account", owner.key().account()).executeUpdate();
-                })).hasStackTraceContaining("future retention cleanup protocol");
+                })).hasStackTraceContaining(table.endsWith("claims") && statement.startsWith("DELETE")
+                        ? "recovery fence" : "future retention cleanup protocol");
             }
         }
         assertThat(count(owner, "repository_schema_artifacts")).isEqualTo(1);
@@ -208,6 +209,123 @@ class RepositorySchemaArtifactsIT {
         assertThatThrownBy(() -> artifacts.stage(owner, java.util.Collections.nCopies(65, descriptor("a.proto")), () -> {}))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThat(count(owner, "repository_schema_artifacts")).isZero();
+    }
+
+    @Test void releasesOnlyClaimsReplacedByCurrentGenerationInBoundedBatches() {
+        var first = shortOwner();
+        var input = IntStream.range(0, 33).mapToObj(i -> descriptor("replace" + i + ".proto")).toList();
+        artifacts.stage(first, input, () -> {});
+        var next = takeover(first);
+        assertThat(release(next, 10)).isZero();
+        artifacts.stage(next, input, () -> {});
+        assertThat(release(next, 10)).isEqualTo(10);
+        assertThat(count(next, "repository_schema_artifact_claims")).isEqualTo(56);
+        assertThat(release(next, 256)).isEqualTo(23);
+        assertThat(release(next, 256)).isZero();
+        assertThat(count(next, "repository_schema_artifact_claims")).isEqualTo(33);
+        assertThat(count(next, "repository_schema_artifacts")).isEqualTo(33);
+    }
+
+    @Test void directDeleteRequiresExactCurrentOperationReplacementAndRecoveryProof() {
+        var first = shortOwner();
+        var bytes = descriptor("unreplaced.proto");
+        artifacts.stage(first, List.of(bytes), () -> {});
+        var next = takeover(first);
+        var other = owner(first.key().account());
+        artifacts.stage(other, List.of(bytes), () -> {});
+        assertThatThrownBy(() -> tx.inTransaction(em -> { deleteGeneration(em, first); }))
+                .hasStackTraceContaining("recovery fence");
+        assertThatThrownBy(() -> tx.inTransaction(em -> { recovery(em, next); deleteGeneration(em, first); }))
+                .hasStackTraceContaining("current-generation replacement claim");
+        artifacts.stage(next, List.of(bytes), () -> {});
+        assertThatThrownBy(() -> tx.inTransaction(em -> { recovery(em, next); deleteGeneration(em, next); }))
+                .hasStackTraceContaining("current-generation replacement claim");
+        assertThat(release(next, 256)).isEqualTo(1);
+        assertThat(count(next, "repository_schema_artifact_claims")).isEqualTo(2);
+    }
+
+    @Test void releaseRollsBackAndRejectsInvalidBounds() {
+        var first = shortOwner();
+        var bytes = descriptor("rollback.proto");
+        artifacts.stage(first, List.of(bytes), () -> {});
+        var next = takeover(first);
+        artifacts.stage(next, List.of(bytes), () -> {});
+        var failure = new IllegalStateException("abort after release");
+        assertThatThrownBy(() -> tx.inTransaction((java.util.function.Consumer<EntityManager>) em -> {
+            assertThat(release(em, next, 256)).isEqualTo(1);
+            throw failure;
+        })).isSameAs(failure);
+        assertThat(count(next, "repository_schema_artifact_claims")).isEqualTo(2);
+        for (int limit : new int[]{0, -1, 257}) {
+            assertThatThrownBy(() -> release(next, limit)).hasStackTraceContaining("batch limit");
+        }
+        assertThat(release(next, 256)).isEqualTo(1);
+    }
+
+    @Test void expiredCurrentClaimStillProtectsArtifactWhenObsoleteClaimIsReleased() {
+        var first = shortOwner();
+        var bytes = descriptor("expired-replacement.proto");
+        artifacts.stage(first, List.of(bytes), () -> {});
+        awaitExpiry(first);
+        var next = ledger.takeOver(first.key(), 1, UUID.randomUUID(), Duration.ofSeconds(1));
+        artifacts.stage(next, List.of(bytes), () -> {});
+        awaitExpiry(next);
+        assertThat(release(next, 256)).isEqualTo(1);
+        assertThat(release(next, 256)).isZero();
+        assertThat(count(next, "repository_schema_artifact_claims")).isEqualTo(1);
+        assertThat(count(next, "repository_schema_artifacts")).isEqualTo(1);
+    }
+
+    @Test void intermediateGenerationCannotSubstituteForCurrentReplacement() {
+        var first = shortOwner();
+        var bytes = descriptor("three-generations.proto");
+        artifacts.stage(first, List.of(bytes), () -> {});
+        awaitExpiry(first);
+        var second = ledger.takeOver(first.key(), 1, UUID.randomUUID(), Duration.ofSeconds(1));
+        artifacts.stage(second, List.of(bytes), () -> {});
+        var third = takeover(second);
+        assertThat(release(third, 256)).isZero();
+        assertThatThrownBy(() -> tx.inTransaction(em -> { recovery(em, third); deleteGeneration(em, first); }))
+                .hasStackTraceContaining("current-generation replacement claim");
+        artifacts.stage(third, List.of(bytes), () -> {});
+        assertThat(release(third, 1)).isEqualTo(1);
+        assertThat(release(third, 256)).isEqualTo(1);
+        assertThat(release(third, 256)).isZero();
+        assertThat(count(third, "repository_schema_artifact_claims")).isEqualTo(1);
+        assertThat(count(third, "repository_schema_artifacts")).isEqualTo(1);
+    }
+
+    private static int release(RepositoryOperationLedger.Owner owner, int limit) {
+        return tx.inTransaction(em -> { return release(em, owner, limit); });
+    }
+    private static int release(EntityManager em, RepositoryOperationLedger.Owner owner, int limit) {
+        return ((Number) em.createNativeQuery("SELECT release_repository_replaced_schema_claims(:account,:principal,:id,:limit)")
+                .setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())
+                .setParameter("id", owner.key().operationId()).setParameter("limit", limit).getSingleResult()).intValue();
+    }
+    private static void recovery(EntityManager em, RepositoryOperationLedger.Owner owner) {
+        em.createNativeQuery("SELECT fence_repository_operation_recovery(:account,:principal,:id)")
+                .setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())
+                .setParameter("id", owner.key().operationId()).getSingleResult();
+    }
+    private static void deleteGeneration(EntityManager em, RepositoryOperationLedger.Owner owner) {
+        em.createNativeQuery("DELETE FROM repository_schema_artifact_claims WHERE operation_id=:id AND owner_generation=:generation")
+                .setParameter("id", owner.key().operationId()).setParameter("generation", owner.generation()).executeUpdate();
+    }
+    private static RepositoryOperationLedger.Owner shortOwner() {
+        return ledger.admit(new RepositoryOperationLedger.Key(UUID.randomUUID().toString(), "principal", UUID.randomUUID()),
+                new RepositoryOperationLedger.EncodedCommand("test.fixture", 1, ByteString.copyFromUtf8("command")),
+                UUID.randomUUID(), Duration.ofSeconds(2)).owner().orElseThrow();
+    }
+    private static RepositoryOperationLedger.Owner takeover(RepositoryOperationLedger.Owner owner) {
+        awaitExpiry(owner);
+        return ledger.takeOver(owner.key(), owner.generation(), UUID.randomUUID(), Duration.ofMinutes(1));
+    }
+    private static void awaitExpiry(RepositoryOperationLedger.Owner owner) {
+        tx.readOnly(em -> em.createNativeQuery("""
+                SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM lease_until-clock_timestamp()))+0.02)
+                FROM repository_operation_owners WHERE operation_id=:id
+                """).setParameter("id", owner.key().operationId()).getSingleResult());
     }
 
     private static void insertCatalog(EntityManager em, RepositoryOperationLedger.Owner owner) {
