@@ -503,6 +503,36 @@ class DocumentUploadCoordinatorIT {
             assertThat(DocumentPartCodec.sha256Hex(actual.data())).isEqualTo(object.getSha256());
         });
         assertThat(new DocumentPartAttemptLedger(tx).find(next)).isEmpty();
+        var readBudget = new PayloadBudget(core.size() * 2);
+        var resolves = new java.util.concurrent.atomic.AtomicInteger();
+        try (var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, retainedProfile) -> {
+            resolves.incrementAndGet();
+            assertThat(generation).isEqualTo(GENERATION);
+            assertThat(retainedProfile).isEqualTo(profile);
+            return opened.store();
+        }, 2, 1024 * 1024, readBudget)) {
+            assertThatThrownBy(() -> reader.readRetained(readPlan, "unknown",
+                    ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isInstanceOf(IllegalArgumentException.class);
+            assertThat(resolves.get()).isZero();
+            assertThatThrownBy(() -> reader.readRetained(readPlan, "member", new ai.protomolt.proto.repo.spi.RepositoryReadControl() {
+                public boolean isCancelled() { return true; }
+                public long remainingNanos() { return Long.MAX_VALUE; }
+            })).isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                    e -> assertThat(e.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.CANCELLED));
+            assertThat(resolves.get()).isZero();
+            try (var batch = reader.readRetained(readPlan, "member", ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+                assertThat(batch.parts()).singleElement().satisfies(part -> {
+                    assertThat(part.part()).isEqualTo(DocumentPart.DOCUMENT_PART_CORE);
+                    assertThat(part.bytes()).containsExactly(base.bodies.get(new DocumentUploadPayloads.Key("member", 0)).bytes());
+                });
+                assertThat(readBudget.reservedBytes()).isEqualTo(core.size() * 2);
+                assertThatThrownBy(() -> reader.readRetained(readPlan, "member", ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                        .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                                e -> assertThat(e.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED));
+                assertThat(resolves.get()).isEqualTo(1);
+            }
+            assertThat(readBudget.reservedBytes()).isZero();
+        }
         var bodies = Map.of(new DocumentUploadPayloads.Key("member", 1), base.bodies.get(new DocumentUploadPayloads.Key("member", 1)));
         var puts = new java.util.concurrent.atomic.AtomicInteger();
         var store = intercept((method, args, call) -> {
@@ -545,6 +575,28 @@ class DocumentUploadCoordinatorIT {
         var current = new DocumentLedger(tx).findByNodeId(published.nodeId).orElseThrow();
         assertThat(current.mutationRevision).isEqualTo(published.mutationRevision);
         assertThat(current.readManifest()).isEqualTo(manifest);
+        // A captured read never substitutes today's drive or latest provider version.
+        tx.inTransaction(em -> { em.createNativeQuery("UPDATE drives SET bucket='changed-after-capture' WHERE drive_id=:id")
+                .setParameter("id", drive.driveId).executeUpdate(); });
+        opened.store().put(new BlobStore.PutSpec(NAMESPACE, core.objectKey(), "text/plain", Map.of(), null), new byte[] {9});
+        assertThat(opened.store().get(NAMESPACE, core.objectKey()).versionId()).isNotEqualTo(measured.providerVersion());
+        try (var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, retainedProfile) -> opened.store());
+                var batch = reader.readRetained(readPlan, "member", ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+            assertThat(batch.parts().getFirst().bytes()).containsExactly(retained.data());
+        }
+        var wrongType = intercept((method, args, call) -> {
+            var result = call.call();
+            if (!method.equals("getBounded")) return result;
+            var actual = (BlobStore.GetResult) result;
+            return new BlobStore.GetResult(actual.data(), "text/plain", actual.eTag(), actual.versionId());
+        });
+        try (var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, retainedProfile) -> wrongType,
+                2, 1024 * 1024, readBudget)) {
+            assertThatThrownBy(() -> reader.readRetained(readPlan, "member", ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            e -> assertThat(e.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.DATA_LOSS));
+            assertThat(readBudget.reservedBytes()).isZero();
+        }
     }
 
     private static DocumentUploadCoordinator coordinator(BlobStore store, PayloadBudget budget, Duration age) {

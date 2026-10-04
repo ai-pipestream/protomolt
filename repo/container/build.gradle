@@ -6,6 +6,9 @@ dependencies {
     testImplementation project(':protomolt-repo-blob-s3')
     testImplementation project(':protomolt-repo-blob-redis')
     testImplementation project(':protomolt-repo-blob-cache')
+    // Real SQL/provider integration of ledger-issued read plans with the shared reader.
+    // This test-only edge does not add engine code to the container's published runtime.
+    testImplementation project(':protomolt-repo-engine')
     api project(':protomolt-repo-proto')
     api project(':protomolt-repo-spi')
     api libs.protobuf.java

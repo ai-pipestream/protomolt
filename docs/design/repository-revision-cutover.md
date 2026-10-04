@@ -234,8 +234,12 @@ provider version; verify size, digest and content type against the plan.
 `DocumentPublicationLedger.Part` now carries the retained content type from managed
 SQL reads, and the reader checks the exact provider value. Legacy snapshots without
 a retained type remain explicitly unknown; they do not satisfy an exact typed read
-plan. Engine consumption of the ledger-issued plan is still unimplemented. No lookup of
-today's drive or fallback backend is allowed.
+plan. `DocumentPartReader.readRetained` now consumes the ledger-issued plan for one
+named member using its existing resolver, aggregate budget and scheduling window.
+Its returned parts correspond positionally to that member's filtered plan entries;
+the plan retains full ordinals across upload/EMPTY gaps. This low-level read is not
+yet wired into assembly or a public repository operation. No lookup of today's
+drive or fallback backend is allowed.
 
 Fresh bytes remain under `DocumentUploadPayloads.Use`; do not fetch them again
 solely for assembly. The current coordinator closes this use before returning

@@ -2825,3 +2825,28 @@ finding was fixed by exposing principal text rather than an inaccessible ledger
 key type. Account and operation UUID remain available from the canonical command.
 The final 82 selected admission/coordinator cases passed in 27s. No hosted CI,
 push, merge or deployment ran.
+
+### Engine consumption of retained read plans
+
+Extended `DocumentPartReader` with `readRetained(plan, memberId, control)`. It
+validates member membership, selects the ledger-issued entries in command order,
+and uses the existing bound-part reader with the exact key, size, digest, version,
+content type and original backend binding. It neither invents a Publication nor
+adds a second I/O scheduler. Returned parts align positionally with the filtered
+plan entries; full ordinals remain in the plan. Keep the batch open through use.
+
+The real PostgreSQL/S3 coordinator fixture now exercises this reader, including
+unknown-member refusal, cancellation before backend resolution, a shared budget
+held through batch lifetime, and release after an injected content-type mismatch
+on a real bounded GET. A later drive namespace change and a real overwrite of the
+latest object do not change the captured version's bytes. A test-only container
+dependency on the engine supports this cross-module fixture; production dependency
+direction is unchanged.
+
+This remains a low-level unpinned read boundary. Assembly, scoped fresh-byte handoff,
+reader-versus-prune protection and post-I/O SQL fencing remain outstanding. The
+test does not claim concurrent-cleanup safety or a public mixed-revision API.
+All 67 coordinator and managed/legacy reader cases passed in 32s, with the engine
+runtime dependency gate. Sol found no blocker; multiple retained inputs with
+intervening upload/EMPTY ordinals still need an end-to-end positional mapping case
+when integrating assembly. No hosted CI, push, merge or deployment ran.

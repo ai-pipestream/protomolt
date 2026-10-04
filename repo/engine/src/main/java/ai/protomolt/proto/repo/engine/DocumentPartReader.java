@@ -151,6 +151,40 @@ public final class DocumentPartReader implements AutoCloseable {
     }
 
     private record ResolvedPart(DocumentPublicationLedger.Part part, BlobStore store, String namespace) {}
+
+    /**
+     * Read one member's retained inputs from ledger-issued command evidence.
+     * Results correspond positionally to that member's filtered plan entries in full revision order;
+     * omitted upload/EMPTY ordinals are not renumbered in the plan. This does not
+     * decode content or publish a revision. The host must protect source objects
+     * through actual I/O completion and re-fence policy/revisions afterwards;
+     * the plan alone is not a reader lease. Keep the returned batch open while
+     * using its bytes, including during assembly.
+     */
+    public DocumentReadBatch readRetained(
+            ai.protomolt.proto.repo.container.ledger.DocumentRetainedReadPlan plan,
+            String memberId, RepositoryReadControl control) {
+        Objects.requireNonNull(plan); Objects.requireNonNull(memberId);
+        enterOperation();
+        try {
+            checkActive(control);
+            if (plan.command().intent().getMembersList().stream().noneMatch(m -> m.getMemberId().equals(memberId)))
+                throw new IllegalArgumentException("Member is absent from retained read command");
+            var wanted = new ArrayList<DocumentPublicationLedger.BoundPart>();
+            for (var entry : plan.entries()) {
+                checkActive(control);
+                if (!entry.memberId().equals(memberId)) continue;
+                var object = entry.source().getObject();
+                var slot = entry.destinationSlot();
+                wanted.add(new DocumentPublicationLedger.BoundPart(new DocumentPublicationLedger.Part(
+                        slot.getPart(), slot.getSubKey(), object.getObjectKey(), object.getSizeBytes(), object.getSha256(),
+                        object.hasProviderVersion() ? object.getProviderVersion() : null, null, object.getContentType()),
+                        entry.binding()));
+            }
+            return readBoundParts(wanted, control);
+        } finally { exitOperation(); }
+    }
+
     private DocumentReadBatch readBoundParts(List<DocumentPublicationLedger.BoundPart> wanted, RepositoryReadControl control) {
         return readFragments(wanted.stream().map(DocumentPublicationLedger.BoundPart::part).toList(),
                 () -> resolveBoundParts(wanted,control),control,false);
