@@ -155,6 +155,12 @@ Keep exact original fragment bytes and digests as physical evidence. Parse a
 bounded semantic view for checks; never require byte equality after protobuf
 parse/reserialize or overwrite original bytes with a normalized representation.
 `DocumentPartCodec.assemble` is a merge utility, not an admission gate.
+`DocumentFragmentConfinement` now implements the single-fragment field checks
+below for the fixed `protomolt-document-parts/v1` policy. It accepts an already
+bounded, parsed Document; it neither resolves descriptors nor persists policy
+identity. Global chunk ordering, complete assembly and repository wiring remain
+unimplemented. Presence follows the codec: an explicitly present empty BlobBag
+is a BLOBS fragment, while repeated PARSED/CHUNKS content requires entries.
 
 For the initial Document layout, require one CORE, matching nonblank document IDs
 in all PRESENT fragments, and field confinement before merging:

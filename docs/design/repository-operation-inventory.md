@@ -2670,3 +2670,23 @@ bounded original-byte materialization, slot/field confinement, global chunk-run
 checks, pinned layout identity and shared publication rechecks. Re-serialization
 must not replace original evidence or be used as a byte-equality admission rule.
 This preparer remains unimplemented. No hosted CI or remote publication occurred.
+
+### Document fragment field confinement
+
+New pure codec helper `DocumentFragmentConfinement` checks generated Document
+fragments against the fixed `protomolt-document-parts/v1` policy before assembly.
+It rejects mismatched document IDs, misplaced known fields, non-CORE unknown root
+fields and CHUNKS parent fields outside semantic results. CORE and owned payload
+subtrees may retain unknown fields. Presence matches the existing splitter,
+including explicitly present empty BlobBag messages. No physical bytes are
+rewritten, and the check does not require reserialized bytes to equal input bytes.
+
+Tests cover actual split output, ownership/title injection, missing content,
+unknown fields in allowed and forbidden positions, and a valid overlong varint
+whose bytes change on reserialization. Sol reviewed the helper without a blocker.
+The caller still must bound parsing, verify the generated descriptor against its
+pinned identity and preserve original bytes. Whole-revision assembly, global chunk
+subkeys/order, schema validation, authority and publication are not established by
+this helper. It is not yet wired into repository admission or an advertised RPC.
+The final codec suite and its runtime dependency boundary check passed in 2s.
+No hosted CI, push, merge or deployment was performed.
