@@ -16,6 +16,12 @@ preserving existing reference keys and V29 reclamation guards. It refuses missin
 or extra references during migration rather than repairing them. This bridge does
 not enable mixed publication or qualify shared-origin throughput.
 
+V40 records immutable initial operation member selections, including placement for
+zero-upload members. It retains an allowlisted drive snapshot and a versioned
+configuration digest, with no copy of free-form metadata/options or credential
+references. Existing attempts are not automatically selected. Replacement CAS,
+terminal-result binding and recovery remain prerequisites for activation.
+
 ## Current coupling that must change together
 
 - `DocumentPublicationLedger.Publication` carries one attempt, backend profile
@@ -160,6 +166,15 @@ it. Evaluate shared immutable-origin validation and shared reference acquisition
 against exclusive retirement/reclamation, with stable global ordering and no lock
 upgrades. Cleanup and publication must use the same discipline. Merely changing a
 single trigger's lock mode is insufficient to establish safety.
+
+The current typed staging path also passes the complete source/destination union
+to `DocumentLedger.lockRevisions`, taking exclusive advisory and document-row locks
+even for read-only sources. Shared origin locks alone will not make independent
+operations using one source proceed concurrently. The new boundary must classify
+read-only sources versus destinations, choose each identity's strongest required
+mode before acquiring any lock (including advisory-key collisions), and retain
+policy/revision protection without lock upgrades. Tests must cover source policy
+revocation, deletion, absent destinations and a source that is also a destination.
 
 Performance acceptance includes independent destinations sharing one origin,
 independent origins, deliberate same-destination conflicts, multi-destination

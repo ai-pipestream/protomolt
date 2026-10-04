@@ -37,11 +37,13 @@ final class DocumentOperationUploadAdmission {
         private final List<DocumentUploadPlan.Placement> placements;
         private final DocumentAdmissionAuthorization.Prepared authorization;
         private final DocumentReuseAdmission.Prepared reuse;
+        private final String selections;
 
         private Prepared(DocumentUploadPlan.Prepared plan, Duration lease) {
             this.plan = plan;
             this.authorization = DocumentAdmissionAuthorization.prepare(plan);
             this.reuse = DocumentReuseAdmission.prepare(plan);
+            this.selections = DocumentOperationSelection.encode(plan);
             this.lease = lease;
             this.uploads = plan.members().stream().filter(member -> member.attempt().isPresent())
                     .map(member -> new EncodedMember(member, UUID.randomUUID(), DocumentAttemptPlanEncoding.prepare(member))).toList();
@@ -115,6 +117,7 @@ final class DocumentOperationUploadAdmission {
                         .setParameter("attempts", admitted.stream().map(DocumentPartAttemptLedger.Attempt::id).toList()).getSingleResult();
                 if (!live) throw new DocumentPartAttemptLedger.FenceException("New-content attempt expired before admission completed");
             }
+            DocumentOperationSelection.insert(em, owner, prepared.selections, prepared.plan.members().size());
             // Includes reuse-only commands and lease expiry during drive lock waits.
             em.createNativeQuery("SELECT require_repository_operation_write_fence(:account,:principal,:operation,:generation)")
                     .setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())

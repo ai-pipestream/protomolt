@@ -2132,3 +2132,47 @@ projection checks. Full container/service run passed in 2m30s: 108 suites, 925
 cases, 922 passed, 3 skipped, no failures/errors. Sol reviewed the final SQL
 and tests with no blocker. These results establish regression coverage; controlled
 throughput and tail-latency measurements remain pending. Work remains local.
+
+### Initial operation member selection (V40)
+
+New internal persistence; no public operation, retry or replay endpoint. Typed
+upload admission now records every member's initial selection in the same SQL
+transaction as staging. The key includes account, principal, operation, owner
+generation and member. Each row binds destination and sampled mutation revision,
+selected drive/backend/realm/namespace, upload count and exact optional attempt.
+Zero-upload members retain placement with no dummy attempt or physical object.
+The SQL trigger requires the current owner write fence and exact live NEW_CONTENT
+attempt binding when present. Java's private prepared command, canonical-command
+comparison, policy checks and drive locks establish command membership; SQL alone
+does not decode opaque protobuf command bytes or authorize arbitrary members.
+
+The placement snapshot has an explicit field allowlist, a 16 KiB encoded-size
+limit, and a separate 32-byte version-1 digest of the sampled drive configuration.
+Free-form metadata, provider options and credential references are hashed rather
+than copied. The fixed digest recipe lists fields explicitly so future drive
+columns cannot silently change historical comparisons. The original immutable
+backend generation remains the authority for provider identity. Storage namespace
+is limited to 4096 UTF-8 bytes, consistent with the existing 1024-character Java
+location bound. These internal records are not public response payloads.
+
+Encoding happens before SQL locks. Persistence adds one client statement for up
+to 64 members, independent of uploaded part count. Server work still includes a
+drive digest per member and trigger verification; free-form source configuration
+has no size limit yet. Large shared-drive configurations need measurement or an
+admission bound before latency qualification. This does not improve origin-lock
+contention or activate mixed publication.
+
+Initial rows are immutable. A duplicate admission rolls back its fresh attempts
+and reservations instead of replacing a selection. A populated V39 migration with
+two staged same-member attempts leaves both unselected. Retry CAS/history,
+selection lookup under ownership, adoption rules, terminal-result binding and
+replay remain required. Future publication must prove exact canonical member and
+upload cardinality; the presence of selection rows alone is insufficient.
+
+Local validation on 2026-10-04: full container/service run passed in 2m36s, with
+108 suites, 936 cases, 933 passed, 3 skipped and no failures/errors. Coverage
+includes exact upload and zero-upload selection, owner/binding/digest rejection,
+duplicate-admission rollback, immutable placement, configuration minimization and
+populated migration without attempt adoption. Sol reviewed the final versioned
+digest and migration fixture with no blocker. No provider I/O or performance
+qualification is established by these SQL tests. Work remains local.

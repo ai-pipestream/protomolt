@@ -359,7 +359,7 @@ class DocumentOperationUploadAdmissionIT {
             result = admission.admit(ADMIN, f.owner, prepared);
             assertThat(statistics.getTransactionCount()).isEqualTo(1);
             // owner+command+revision locks+source/claim proof+drive+profile+final checks; then attempt rows and batches.
-            assertThat(statistics.getPrepareStatementCount()).isEqualTo(10 + 4 + (chunks + 255) / 256 + 1);
+            assertThat(statistics.getPrepareStatementCount()).isEqualTo(10 + 4 + (chunks + 255) / 256 + 2);
         } finally { statistics.setStatisticsEnabled(false); }
         assertThat(result).hasSize(1);
         assertThat(result.getFirst().planKind()).isEqualTo("NEW_CONTENT");
@@ -384,15 +384,105 @@ class DocumentOperationUploadAdmissionIT {
                 "SELECT count(*) FROM document_part_attempt_objects WHERE attempt_id=:id AND NOT verified")
                 .setParameter("id", f.attempt).getSingleResult()).longValue());
         assertThat(unverified).isEqualTo(chunks);
+        assertThat(selection(f)).containsExactly(f.attempt, f.drive.driveId, f.placement.generation(),
+                "namespace", f.drive.prefix, chunks, f.destination.mutationRevision);
     }
 
     @Test void zeroUploadsStillChecksPlacementAndCreatesNoAttempt() {
         var f = fixture(0);
         assertThat(admission.admit(ADMIN, f.owner, f.prepare())).isEmpty();
         assertThat(new DocumentPartAttemptLedger(tx).find(f.attempt)).isEmpty();
+        assertThat(selection(f)).containsExactly(null, f.drive.driveId, f.placement.generation(),
+                "namespace", f.drive.prefix, 0, f.destination.mutationRevision);
         tx.inTransaction(em -> { em.createNativeQuery("UPDATE drives SET prefix='changed' WHERE drive_id=:id")
                 .setParameter("id", f.drive.driveId).executeUpdate(); });
         assertThatThrownBy(() -> admission.admit(ADMIN, f.owner, f.prepare())).hasMessageContaining("drive changed");
+        assertThat(selection(f)[4]).isEqualTo("original");
+    }
+
+    private static Object[] selection(Fixture f) {
+        return tx.readOnly(em -> (Object[])em.createNativeQuery("""
+                SELECT attempt_id,drive_id,backend_generation,storage_namespace,drive_snapshot->>'prefix',
+                    upload_count,sampled_revision FROM document_operation_selections
+                WHERE account_id=:account AND principal=:principal AND operation_id=:operation
+                    AND owner_generation=:generation AND member_id='member'
+                """).setParameter("account",f.owner.key().account()).setParameter("principal",f.owner.key().principal())
+                .setParameter("operation",f.owner.key().operationId()).setParameter("generation",f.owner.generation())
+                .getSingleResult());
+    }
+
+    @Test void selectedPlacementDoesNotCopyFreeFormConfigurationOrCredentialReferences() {
+        var f=fixture(0);
+        f.drive.metadata="{\"test\":\"synthetic-sensitive-marker\",\"bulk\":\""+"x".repeat(100_000)+"\"}";
+        f.drive.credentialsRef="synthetic-credential-reference";
+        tx.inTransaction(em -> { em.createNativeQuery("""
+                UPDATE drives SET metadata=CAST(:metadata AS jsonb),credentials_ref=:ref WHERE drive_id=:id
+                """).setParameter("metadata",f.drive.metadata).setParameter("ref",f.drive.credentialsRef)
+                .setParameter("id",f.drive.driveId).executeUpdate(); });
+        var storedDrive=drives.findByName(f.drive.accountId,f.drive.name).orElseThrow();
+        var sampled=DocumentUploadPlan.Placement.sample(storedDrive,f.placement.generation(),f.placement.profile());
+        admission.admit(ADMIN,f.owner,DocumentOperationUploadAdmission.prepare(f.command,
+                Map.of(f.drive.driveId,sampled),Map.of(),LEASE));
+        var retained=tx.readOnly(em -> (Object[])em.createNativeQuery("""
+                SELECT s.drive_snapshot::text,octet_length(s.drive_sha256),
+                    s.drive_sha256=sha256(convert_to((to_jsonb(d)-'created_at')::text,'UTF8'))
+                FROM document_operation_selections s JOIN drives d USING(drive_id) WHERE s.operation_id=:id
+                """).setParameter("id",f.owner.key().operationId()).getSingleResult());
+        assertThat((String)retained[0]).hasSizeLessThan(2048)
+                .doesNotContain("synthetic-sensitive-marker","synthetic-credential-reference","bulk","credentials_ref","provider_config","metadata");
+        assertThat(retained[1]).isEqualTo(32); assertThat(retained[2]).isEqualTo(true);
+        tx.inTransaction(em -> { em.createNativeQuery("UPDATE drives SET metadata='{}' WHERE drive_id=:id")
+                .setParameter("id",f.drive.driveId).executeUpdate(); });
+        boolean stillMatches=tx.readOnly(em -> (Boolean)em.createNativeQuery("""
+                SELECT s.drive_sha256=sha256(convert_to((to_jsonb(d)-'created_at')::text,'UTF8'))
+                FROM document_operation_selections s JOIN drives d USING(drive_id) WHERE s.operation_id=:id
+                """).setParameter("id",f.owner.key().operationId()).getSingleResult());
+        assertThat(stillMatches).isFalse();
+    }
+
+    @Test void initialSelectionCannotBeReplacedByAnotherAdmissionOrMutated() {
+        var f=fixture(1);
+        admission.admit(ADMIN,f.owner,f.prepare());
+        var replacement=UUID.randomUUID();
+        var next=DocumentOperationUploadAdmission.prepare(f.command,f.placements(),Map.of("member",replacement),LEASE);
+        assertThatThrownBy(() -> admission.admit(ADMIN,f.owner,next)).hasStackTraceContaining("duplicate key");
+        assertNoAttempt(replacement);
+        assertThat(selection(f)[0]).isEqualTo(f.attempt);
+        for (String sql : java.util.List.of("UPDATE document_operation_selections SET attempt_id=NULL WHERE operation_id=:id",
+                "DELETE FROM document_operation_selections WHERE operation_id=:id")) {
+            assertThatThrownBy(() -> tx.inTransaction(em -> {
+                RepositoryOperationLedger.fenceLiveOwner(em,f.owner);
+                em.createNativeQuery(sql).setParameter("id",f.owner.key().operationId()).executeUpdate();
+            })).hasStackTraceContaining("selection is immutable");
+        }
+    }
+
+    @ParameterizedTest @ValueSource(strings={"owner", "member", "node", "revision", "count", "snapshot", "digest", "namespace"})
+    void directSelectionForgeryFails(String field) {
+        var f=fixture(1); admission.admit(ADMIN,f.owner,f.prepare());
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            if (!field.equals("owner")) RepositoryOperationLedger.fenceLiveOwner(em,f.owner);
+            String member=field.equals("member") ? "'wrong'" : "member_id";
+            String node=field.equals("node") ? "gen_random_uuid()" : "node_id";
+            String revision=field.equals("revision") ? "sampled_revision+1" : "sampled_revision";
+            String count=field.equals("count") ? "upload_count+1" : "upload_count";
+            String snapshot=field.equals("snapshot") ? "'{}'::jsonb" : "drive_snapshot";
+            String namespace=field.equals("namespace") ? "'other'" : "storage_namespace";
+            String digest=field.equals("digest") ? "decode(repeat('00',32),'hex')" : "drive_sha256";
+            em.createNativeQuery("""
+                    INSERT INTO document_operation_selections(account_id,principal,operation_id,owner_generation,
+                        member_id,node_id,sampled_revision,drive_id,drive_snapshot,drive_sha256,backend_generation,
+                        storage_realm,storage_namespace,upload_count,attempt_id)
+                    SELECT account_id,principal,operation_id,owner_generation,%s,%s,%s,drive_id,%s,%s,backend_generation,
+                        storage_realm,%s,%s,attempt_id FROM document_operation_selections WHERE operation_id=:id
+                    """.formatted(member,node,revision,snapshot,digest,namespace,count))
+                    .setParameter("id",f.owner.key().operationId()).executeUpdate();
+        })).hasStackTraceContaining(switch(field) {
+            case "owner" -> "live owner write fence";
+            case "snapshot", "digest", "namespace" -> "differs from sampled placement";
+            default -> "exact live new-content attempt";
+        });
+        assertThat(selection(f)[0]).isEqualTo(f.attempt);
     }
 
     @Test void changedCanonicalCommandCannotUseAnExistingOwner() {

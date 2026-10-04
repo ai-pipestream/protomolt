@@ -22,6 +22,48 @@ import static org.assertj.core.api.Assertions.*;
 class DocumentRevisionProjectionIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
+    @Test void selectionMigrationDoesNotChooseBetweenExistingOperationAttempts() {
+        try (var context=context("39")) {
+            var source=publish(context,false,"retained");
+            var operations=new RepositoryOperationLedger(context.tx);
+            var key=new RepositoryOperationLedger.Key("account","principal",UUID.randomUUID());
+            var owner=operations.admit(key,new RepositoryOperationLedger.EncodedCommand("migration-test",1,
+                    com.google.protobuf.ByteString.copyFromUtf8("synthetic migration command")),UUID.randomUUID(),
+                    java.time.Duration.ofMinutes(5)).owner().orElseThrow();
+            context.tx.inTransaction(em -> {
+                RepositoryOperationLedger.fenceLiveOwner(em,owner);
+                // Two V36 attempts for one member, sealed with synthetic declarations.
+                // Neither establishes a selection or verified provider content.
+                em.createNativeQuery("""
+                        INSERT INTO document_part_attempts(attempt_id,node_id,account_id,sampled_revision,backend_generation,
+                            storage_realm,storage_namespace,planned_count,source_count,lease_token,lease_until,state,
+                            plan_kind,operation_principal,operation_id,operation_generation,member_id,drive_id)
+                        SELECT gen_random_uuid(),a.node_id,a.account_id,a.sampled_revision,a.backend_generation,
+                            a.storage_realm,a.storage_namespace,1,0,gen_random_uuid(),clock_timestamp()+interval '5 minutes',
+                            'PLANNING','NEW_CONTENT',:principal,:operation,:generation,'member',d.drive_id
+                        FROM document_part_attempts a JOIN documents n ON n.node_id=a.node_id
+                        JOIN drives d ON d.account_id=n.account_id AND d.name=n.drive_name
+                        CROSS JOIN generate_series(1,2) WHERE a.attempt_id=:source
+                        """).setParameter("principal",key.principal()).setParameter("operation",key.operationId())
+                        .setParameter("generation",owner.generation()).setParameter("source",source.attempt()).executeUpdate();
+                em.createNativeQuery("""
+                        INSERT INTO document_part_attempt_objects(attempt_id,ordinal,revision_ordinal,part,sub_key,
+                            storage_realm,storage_namespace,object_key,expected_size,expected_sha256,content_type)
+                        SELECT attempt_id,0,0,3,'chunk',storage_realm,storage_namespace,
+                            'documents/account/'||node_id||'/attempts/'||attempt_id||'/chunk',1,repeat('a',64),'application/octet-stream'
+                        FROM document_part_attempts WHERE operation_id=:operation
+                        """).setParameter("operation",key.operationId()).executeUpdate();
+                em.createNativeQuery("UPDATE document_part_attempts SET state='STAGING' WHERE operation_id=:operation")
+                        .setParameter("operation",key.operationId()).executeUpdate();
+            });
+            assertThat(count(context,"document_part_attempts")).isEqualTo(3);
+            context.migrate();
+            assertThat(count(context,"document_operation_selections")).isZero();
+            assertThat(count(context,"document_part_attempts")).isEqualTo(3);
+            assertThat(count(context,"document_revision_publications")).isEqualTo(1);
+        }
+    }
+
     @ParameterizedTest @ValueSource(booleans={false,true})
     void revisionRetentionCutoverPreservesPinsAndSameRevisionUpserts(boolean revisionCascadeFirst) {
         try (var context=context("38")) {
