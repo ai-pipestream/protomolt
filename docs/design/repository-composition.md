@@ -1889,6 +1889,10 @@ the partial-update diagnostic and the existing JCR compatibility assessment.
 Provider versioning supplies physical identity; repository revisions group parts
 and retain references. Neither identity substitutes for the other.
 
+The [revision cutover plan](repository-revision-cutover.md) records the reviewed
+Java/SQL dependencies, populated-history migration, coordinated read/retention
+activation and concurrency/performance gates for implementing this design.
+
 ### Physical identity and provider qualification
 
 A retained object binding records backend generation/profile, namespace, key,
