@@ -66,11 +66,55 @@ class DocumentPayloadCheckTest {
         }
         assertThat(restored.get(1).schema().type()).isNotSameAs(left.type());
         assertThat(restored.get(2).schema().type()).isNotSameAs(right.type());
-        var replayed = DocumentPayloadCheck.checkContextualAssets(restored.getFirst(), Any.parseFrom(payload.toByteString()),
-                payload.getTypeUrl(), validator(), LIMITS, () -> {}, request -> restored.get(
-                        ((DocumentSchemaOccurrences.Index) request.prefix().getLast()).index() + 1),
-                DocumentSchemaOccurrences.Limits.DEFAULT);
+        var metadata = new java.util.HashMap<DocumentPayloadCheck.SchemaKey, ai.protomolt.proto.repo.v1.RepositorySchemaAsset>();
+        for (var asset : restored) metadata.put(new DocumentPayloadCheck.SchemaKey(asset.metadata().getTypeUrl(),
+                asset.metadata().getArtifactSha256()), asset.metadata());
+        var replayed = replay(Any.parseFrom(payload.toByteString()), recordedPaths, metadata, reader);
         assertThat(DocumentSchemaOccurrenceProjection.project(replayed.payload(), () -> {})).isEqualTo(recordedPaths);
+        var reversed = new java.util.ArrayList<>(recordedPaths);
+        java.util.Collections.reverse(reversed);
+        assertThat(replay(payload, reversed, metadata, reader).payload().original()).isEqualTo(payload);
+        assertThatThrownBy(() -> replay(payload, recordedPaths.subList(0, 2), metadata, reader))
+                .hasMessageContaining("no exact retained schema selection");
+        assertThatThrownBy(() -> replay(payload, List.of(recordedPaths.getFirst(), recordedPaths.getFirst()), metadata, reader))
+                .hasMessageContaining("duplicate schema replay path");
+        assertThatThrownBy(() -> replay(wrapped(root, candidate(left, "changed", ""), candidate(right, "", "right")),
+                recordedPaths, metadata, reader)).hasMessageContaining("no exact retained schema selection");
+        var extra = recordedPaths.get(1).toBuilder().setSteps(2,
+                recordedPaths.get(1).getSteps(2).toBuilder().setRepeatedIndex(2)).build();
+        var withExtra = new java.util.ArrayList<>(recordedPaths);
+        withExtra.add(extra);
+        assertThatThrownBy(() -> replay(payload, withExtra, metadata, reader))
+                .hasMessageContaining("differ from retained evidence");
+        var conflicting = recordedPaths.get(1).toBuilder().setSteps(3,
+                recordedPaths.get(1).getSteps(3).toBuilder().setAnyBoundary(recordedPaths.get(1).getSteps(3).getAnyBoundary()
+                        .toBuilder().setResolved(recordedPaths.get(2).getSteps(3).getAnyBoundary().getResolved()))).build();
+        var withConflict = new java.util.ArrayList<>(recordedPaths);
+        withConflict.add(conflicting);
+        assertThatThrownBy(() -> replay(payload, withConflict, metadata, reader))
+                .hasMessageContaining("conflicting schema replay selection");
+        var wrongMetadata = new java.util.HashMap<>(metadata);
+        wrongMetadata.put(new DocumentPayloadCheck.SchemaKey(URL, left.artifactSha256()), assets.get(2).metadata());
+        assertThatThrownBy(() -> replay(payload, recordedPaths, wrongMetadata, reader))
+                .isInstanceOf(DocumentRetainedSchemaAssets.DataLoss.class).hasMessageContaining("metadata differs");
+        for (var replayLimits : List.of(new DocumentSchemaReplay.Limits(2, 4_000_000, 1000),
+                new DocumentSchemaReplay.Limits(100, 1, 1000), new DocumentSchemaReplay.Limits(100, 4_000_000, 1))) {
+            assertThatThrownBy(() -> DocumentSchemaReplay.check(payload, recordedPaths, metadata, reader, validator(),
+                    LIMITS, DocumentSchemaOccurrences.Limits.DEFAULT, replayLimits, () -> {}))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("limit");
+        }
+        var cancelled = new CancellationException("replay cancelled");
+        assertThatThrownBy(() -> DocumentSchemaReplay.check(payload, recordedPaths, metadata, reader, validator(),
+                LIMITS, DocumentSchemaOccurrences.Limits.DEFAULT, new DocumentSchemaReplay.Limits(100, 4_000_000, 1000),
+                () -> { throw cancelled; })).isSameAs(cancelled);
+    }
+
+    private static DocumentPayloadCheck.AssetResult replay(Any candidate,
+            List<ai.protomolt.proto.repo.v1.RepositorySchemaOccurrencePath> paths,
+            java.util.Map<DocumentPayloadCheck.SchemaKey, ai.protomolt.proto.repo.v1.RepositorySchemaAsset> metadata,
+            DocumentRetainedSchemaAssets reader) throws InvalidProtocolBufferException {
+        return DocumentSchemaReplay.check(candidate, paths, metadata, reader, validator(), LIMITS,
+                DocumentSchemaOccurrences.Limits.DEFAULT, new DocumentSchemaReplay.Limits(100, 4_000_000, 1000), () -> {});
     }
 
     @Test
@@ -197,8 +241,21 @@ class DocumentPayloadCheckTest {
             String url = "type.protomolt.test/payload.MapWrapper";
             var candidate = Any.newBuilder().setTypeUrl(url).setValue(DynamicMessage.newBuilder(root.type())
                     .addRepeatedField(field, entry).build().toByteString()).build();
-            var checked = DocumentPayloadCheck.checkAssets(asset(root, url), candidate, url, validator(), LIMITS,
-                    () -> {}, nested -> asset(inner, nested)).payload();
+            var result = DocumentPayloadCheck.checkAssets(asset(root, url), candidate, url, validator(), LIMITS,
+                    () -> {}, nested -> asset(inner, nested));
+            var checked = result.payload();
+            var metadata = new java.util.HashMap<DocumentPayloadCheck.SchemaKey, ai.protomolt.proto.repo.v1.RepositorySchemaAsset>();
+            var artifacts = new java.util.HashMap<String, ByteString>();
+            result.assets().forEach((identity, value) -> {
+                metadata.put(identity, value.metadata());
+                artifacts.put(identity.artifactSha256(), value.schema().artifact());
+            });
+            var retained = new DocumentRetainedSchemaAssets(hash -> java.util.Optional.ofNullable(artifacts.get(hash)),
+                    new DocumentRetainedSchemaAssets.Limits(2, 8_000_000,
+                            new ClosedDescriptorSet.Limits(4_000_000, 100, 1000, 100)));
+            var paths = DocumentSchemaOccurrenceProjection.project(checked, () -> {});
+            assertThat(DocumentSchemaOccurrenceProjection.project(replay(candidate, paths, metadata, retained).payload(), () -> {}))
+                    .isEqualTo(paths);
             var projected = DocumentSchemaOccurrenceProjection.project(checked, () -> {}).get(1).getSteps(2).getMapKey();
             assertThat(projected.getType().name()).isEqualTo("REPOSITORY_OCCURRENCE_KEY_" + type.name());
             switch (type) {

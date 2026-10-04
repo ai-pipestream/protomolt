@@ -3949,14 +3949,36 @@ identity and caches only successful completed bindings. The scoped byte reader
 must bound allocation before returning content; linked descriptor graphs and
 metadata require separate host memory accounting.
 
-This helper does not select or authorize historical revisions. The next replay
-integration must match each recorded path prefix, exact URL and value digest/size
-to its recorded artifact, verify the root, and compare the entire rechecked path
-set against retained evidence. Neither this reader nor schema-reference rows
-establish that complete historical restore behavior on their own.
+This helper does not select or authorize historical revisions. The internal replay
+checkpoint below matches recorded paths and compares rechecked evidence. Neither
+this reader nor schema-reference rows establish complete historical restore
+behavior on their own.
 
 Filesystem fixtures reconstruct complete imports and two same-URL definitions
 using fresh readers/descriptors, preserving compiler provenance and comparing
 rechecked occurrence evidence. They also exercise repair/retry, access rechecks,
 callback failure and resource bounds. The five affected suites pass 333 tests.
 These are fresh-object tests, not a process-restart or SQL historical-read proof.
+
+### Exact recorded-path replay
+
+`DocumentSchemaReplay` checks one root against a bounded set of recorded occurrence
+paths. Each path prefix, exact URL, effective value digest and size selects its
+recorded descriptor artifact. The root must match too. Duplicate paths,
+conflicting selections and metadata associations are rejected before resolution;
+broken required metadata associations are data loss. The completed strict check
+must reproduce the full path set, independent of input ordering. Extra evidence
+cannot pass merely because every encountered occurrence had a resolution.
+
+Persisted path bytes must first pass the occurrence codec's digest and canonical
+decode checks. This helper accepts parsed objects and cannot attest to their
+original wire encoding. Aggregate path count, encoded bytes and steps are bounded;
+payload, descriptor and occurrence budgets still apply. It reruns the explicitly
+supplied validator, without claiming to reproduce a historical runtime or judge.
+
+The disk-backed mixed-version fixture now invokes this helper instead of choosing
+schemas by test position during replay. Adversarial cases include changed payload,
+missing/extra/duplicate paths, conflicting selections, wrong metadata, limits and
+cancellation. All twelve protobuf map-key types replay with exact unsigned bits.
+Revision selection/authorization, durable path-set storage, document-root binding,
+SQL integration and process-restart restoration remain unfinished.
