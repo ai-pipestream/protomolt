@@ -2489,14 +2489,21 @@ bytes. `DocumentReadPins.acquire` still captures current revisions. V63 extends
 the SQL pin protocol with explicit CURRENT and HISTORICAL scopes; existing pins
 and Java inserts default to CURRENT. HISTORICAL retains the sealed revision and
 DOCUMENT_HISTORY checks while omitting the current-pointer/current-reference
-requirement. Authorized Java capture and provider lifetime integration are still
-required. Preserve current-source checks for publication reuse and share the
-reader drain/recovery lifecycle with historical reads.
+requirement. `DocumentReadLedger.captureHistorical` now authorizes the current
+document and captures a native revision's exact archived manifest and physical
+bindings, with all HISTORICAL pins acquired in the same transaction. It supports
+typed and opaque native revisions; legacy revisions are explicitly refused by
+this Java entry point. The capture reads no schema artifacts or provider bytes.
+It acquires the active-reader lock before document locks, then locks all origin
+attempts before retention rows. A failed acquisition rolls back the entire pin set.
+Manifests exceeding 64 MiB are refused before JDBC copies their JSON; part counts
+remain bounded at 10,000. Preserve current-source checks for publication reuse.
 The Java lifecycle now lives in `DocumentReadLedger.PinnedRead<P>`; current
 publication reuse retains its `PinnedPlan` handle and `PinnedPlan.Use` source
 syntax. Provider batches accept the shared use type, so historical plans can
 retain the same transfer, drain and retryable release semantics. This extraction
-does not itself issue historical plans or authorize historical provider reads.
+does not itself authorize delivery of historical provider bytes. `PinnedHistory`
+uses this lifecycle, while host integration must reauthorize after provider I/O.
 Pins remain until provider work drains, including cancellation. Use the
 current runtime against retained definitions without consulting registry latest;
 do not claim to rerun a historical compiler or executable validator.

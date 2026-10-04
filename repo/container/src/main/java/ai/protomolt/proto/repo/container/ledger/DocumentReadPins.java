@@ -49,6 +49,44 @@ final class DocumentReadPins {
     }
     private static Value text(UUID value) { return Value.newBuilder().setStringValue(value.toString()).build(); }
 
+    /** Current authorization and reader locks are held; protects every historical object atomically. */
+    static Captured<DocumentHistoricalReadPlan> acquireHistorical(EntityManager em,
+            DocumentHistoricalReadPlan plan, UUID reader) {
+        var unique = new LinkedHashMap<UUID, Pin>();
+        for (var entry : plan.entries()) unique.computeIfAbsent(entry.objectId(), id -> new Pin(UUID.randomUUID(), id));
+        if (unique.size() > DocumentPublicationCommand.MAX_PARTS)
+            throw new IllegalArgumentException("Historical read pin set exceeds release bounds");
+        var values = ListValue.newBuilder();
+        unique.forEach((object, pin) -> values.addValues(Value.newBuilder().setStructValue(Struct.newBuilder()
+                .putFields("pin", text(pin.id())).putFields("object", text(object)))));
+        final String rows;
+        try { rows = JsonFormat.printer().omittingInsignificantWhitespace().print(values); }
+        catch (com.google.protobuf.InvalidProtocolBufferException failure) {
+            throw new IllegalArgumentException("Cannot encode historical pins", failure);
+        }
+        em.createNativeQuery("""
+                SELECT a.attempt_id FROM document_part_attempts a WHERE a.attempt_id IN (
+                 SELECT l.source_id FROM jsonb_to_recordset(CAST(:rows AS jsonb)) q(object uuid)
+                 JOIN repository_physical_locations l ON l.object_id=q.object AND l.source_kind='DOCUMENT_PART')
+                ORDER BY a.attempt_id FOR SHARE OF a
+                """).setParameter("rows", rows).getResultList();
+        var retained = em.createNativeQuery("""
+                SELECT r.object_id FROM repository_object_retention r WHERE r.object_id IN (
+                 SELECT q.object FROM jsonb_to_recordset(CAST(:rows AS jsonb)) q(object uuid))
+                ORDER BY r.object_id FOR SHARE OF r
+                """).setParameter("rows", rows).getResultList();
+        if (retained.size() != unique.size()) throw new DocumentPartAttemptLedger.FenceException("Historical retention is incomplete");
+        int inserted = em.createNativeQuery("""
+                INSERT INTO document_read_pins(pin_id,reader_incarnation,object_id,source_node,source_revision,publication_revision,read_scope)
+                SELECT q.pin,:reader,q.object,:node,:revision,:publication,'HISTORICAL'
+                FROM jsonb_to_recordset(CAST(:rows AS jsonb)) q(pin uuid,object uuid) ORDER BY q.object
+                """).setParameter("rows", rows).setParameter("reader", reader)
+                .setParameter("node", DocumentIds.nodeId(plan.address())).setParameter("revision", plan.revision())
+                .setParameter("publication", plan.publicationRevision()).executeUpdate();
+        if (inserted != unique.size()) throw new DocumentPartAttemptLedger.FenceException("Historical pin set is incomplete");
+        return new Captured<>(plan, reader, List.copyOf(unique.values()));
+    }
+
     /** Caller must drain all provider work and batch owners first; failures retain the complete set. */
     static void release(Tx tx, Captured<?> captured) {
         finish(tx, captured, false);

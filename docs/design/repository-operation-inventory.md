@@ -4923,3 +4923,33 @@ the extraction. The final provider helper change was followed by rerunning all
 90 upload admission and 20 coordinator tests. These include capture blocked in
 SQL during fencing, transfer after fencing, failed release recovery and ownership
 through provider completion. Sol reviewed the lifecycle diff with no blocker.
+
+### Authorized native historical capture
+
+New Java operation `DocumentReadLedger.captureHistorical` checks current document
+READ access before looking up a revision and atomically captures its complete
+HISTORICAL pin set. It returns a ledger-issued `DocumentHistoricalReadPlan` with
+the archived manifest, full part ordinals, physical object IDs and original
+provider bindings. It accepts native typed and opaque revisions. Legacy history
+is explicitly refused by this entry point, without guessing a native binding.
+No protobuf operation or field changed.
+
+Capture holds the active-reader lock before document locks, locks complete origin
+and retention sets in database UUID order, and rolls back all pins on failure.
+Manifest JSON is limited to 64 MiB before JDBC transfer and parsed once; part sets
+retain the 10,000-entry bound. No registry or provider call occurs under these
+locks. Normal READ access is sufficient without ownership of the old operation.
+Pins confer physical protection only; delivery authorization, real historical
+provider reads and process-restart qualification remain unfinished.
+
+Qualification covers typed and opaque capture, denied and cross-account callers,
+legacy refusal after migration, native-to-native replacement, transfer/drain,
+and all-or-nothing refusal when the later sorted object is retiring. Physical
+observations in these PostgreSQL fixtures are synthetic; these tests do not prove
+provider availability. Existing publication/admission/coordinator cases also run
+against the shared manifest validator.
+There are 148 distinct passing tests: historical capture (5), historical migration
+and turnover (2), upload admission (90), upload coordination (20), part publication
+(26) and typed publication (5). The initial typed capture fixture omitted policy
+activation and was corrected; all seven historical cases passed again after that
+fix and the normal-reader authorization assertion.

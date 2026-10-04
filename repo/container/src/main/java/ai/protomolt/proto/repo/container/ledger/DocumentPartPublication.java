@@ -34,7 +34,14 @@ final class DocumentPartPublication {
         } catch (com.google.protobuf.InvalidProtocolBufferException malformed) {
             throw new DocumentPartAttemptLedger.FenceException("Document publication manifest is invalid", malformed);
         }
-        var manifest = parsed.build();
+        validate(candidate, parts, parsed.build());
+    }
+
+    /** Reuses a strictly parsed stored manifest without another JSON allocation under locks. */
+    static void validate(DocumentRecord candidate, List<VerifiedPart> parts, DocumentManifest manifest) {
+        if (!DocumentStatus.AVAILABLE.equals(candidate.status) || candidate.pendingPurgeId != null)
+            refuse("New document body must be available without a pending purge");
+        Objects.requireNonNull(manifest, "manifest");
         if (!manifest.hasAddress() || manifest.getDocVersion() <= 0)
             refuse("Document publication requires an addressed, versioned manifest");
         var address = manifest.getAddress();

@@ -40,6 +40,20 @@ class DocumentHistoricalPinCompatibilityIT {
                     new ai.protomolt.proto.repo.spi.RepositoryCaller("principal", true), owner, plan);
             var nextSource = new ManagedDocumentFixture(current, revision, source.slots(), source.identities());
             publish(c, new Prepared(command, owner, java.util.List.of(nextSource), java.util.Map.of()), Fault.NONE, em -> {});
+            var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var captured = ledger.captureHistorical(new ai.protomolt.proto.repo.spi.RepositoryCaller("principal", true),
+                    member.getDestination().getAddress(), revision);
+            try (var use = captured.use()) {
+                assertThat(use.plan().revision()).isEqualTo(revision);
+                assertThat(use.plan().manifest()).isEqualTo(current.readManifest());
+                assertThat(use.plan().entries()).extracting(DocumentHistoricalReadPlan.Entry::objectId)
+                        .containsExactlyElementsOf(source.identities().stream()
+                                .map(identity -> UUID.fromString(identity.getObjectId())).toList());
+                var latest = new DocumentLedger(c.tx()).findByNodeId(current.nodeId).orElseThrow();
+                assertThat(latest.readManifest().getDocVersion()).isGreaterThan(use.plan().manifest().getDocVersion());
+            } finally {
+                captured.close(); captured.release(); ledger.fence(); ledger.attestLocalQuiescence();
+            }
             UUID reader = UUID.randomUUID(), pin = UUID.randomUUID();
             UUID object = UUID.fromString(source.identities().getFirst().getObjectId());
             c.tx().inTransaction(em -> {

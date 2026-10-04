@@ -49,6 +49,34 @@ public final class DocumentReadLedger {
         }
     }
 
+    /**
+     * Captures native typed or opaque history under current READ policy. The host
+     * must reauthorize delivery after provider I/O; pins protect retention only.
+     */
+    public PinnedHistory captureHistorical(RepositoryCaller caller,
+            ai.protomolt.proto.repo.v1.NodeAddress address, UUID revision) {
+        Objects.requireNonNull(address); Objects.requireNonNull(revision);
+        synchronized (lifetime) {
+            if (admissionClosed) throw new IllegalStateException("Reader admission is closed");
+            activeLifetimes++;
+        }
+        boolean handedOff = false;
+        try {
+            var captured = tx.inTransaction(em -> {
+                em.createNativeQuery("SELECT require_active_repository_reader(:reader)")
+                        .setParameter("reader", incarnation).getSingleResult();
+                DocumentAdmissionAuthorization.authorizeHistory(em, caller, address);
+                var plan = DocumentHistoricalReadRows.capture(em, address, revision);
+                return DocumentReadPins.acquireHistorical(em, plan, incarnation);
+            });
+            var result = new PinnedHistory(captured);
+            handedOff = true;
+            return result;
+        } finally {
+            if (!handedOff) synchronized (lifetime) { activeLifetimes--; }
+        }
+    }
+
     /** Stops new capture and new Uses permanently; existing Uses still own their work. */
     public synchronized void fence() {
         if (fenced) return;
@@ -83,6 +111,10 @@ public final class DocumentReadLedger {
      */
     public final class PinnedPlan extends PinnedRead<DocumentRetainedReadPlan> {
         private PinnedPlan(DocumentReadPins.Captured<DocumentRetainedReadPlan> captured) { super(captured); }
+    }
+
+    public final class PinnedHistory extends PinnedRead<DocumentHistoricalReadPlan> {
+        private PinnedHistory(DocumentReadPins.Captured<DocumentHistoricalReadPlan> captured) { super(captured); }
     }
 
     /** Shared ownership of a ledger-issued plan; only this ledger can create handles. */
