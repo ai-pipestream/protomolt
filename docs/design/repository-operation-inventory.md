@@ -5392,3 +5392,31 @@ coordinator and reader, reject mismatched owner accounts and denied callers,
 check cancellation after replay lookup, and verify event delivery state. No
 public transport is mounted by this change. Production admission/configuration,
 error mapping, scheduling and full host restart qualification remain required.
+
+### Retained operation-admission session
+
+New internal `DocumentPublicationSession` authenticates account/principal scope,
+then mints its owner nonce and upload-member attempt identities before operation
+admission SQL. It retains the same `DocumentOperationUploadAdmission.Prepared`
+object, including that object's private selection tokens and immutable placement
+snapshot. Retry uses the same identities and rechecks caller bindings and request
+control. Empty admission means no executable ownership was granted; it never
+renews a lease or takes over an operation. Terminal outcomes require authorized
+replay. The real-provider publication fixture now enters operation admission
+through this component.
+
+PostgreSQL tests lose the response after the actual admission commit, then verify
+that retry returns the stored nonce and generation with the identical prepared
+plan. They also cover cancellation after commit, rejected caller bindings without
+an operation row, a competing session that receives no owner, and no implicit
+lease extension. The host must retain this session across uncertain outcomes;
+this component is not a persistent session registry or a restart/takeover manager,
+and does not serialize concurrent publication execution for the host.
+
+Typed/opaque selections currently remain internal host policy choices, outside
+`DocumentPublicationIntent`. Before mounting a caller-facing publication API,
+keep those choices stable for each retained session or derive them deterministically
+from its command and selected policy. Any new caller-selectable preference that
+changes admission meaning must become part of canonical request identity; do not
+accept an unbound request flag. Existing structured-schema requirements and
+commit-time policy fences remain in force. No protobuf fields change here.

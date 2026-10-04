@@ -989,7 +989,6 @@ class DocumentPublicationCommitIT {
         var placements=Map.of(drive.driveId,DocumentUploadPlan.Placement.sample(drive,GENERATION,profile));
         var intent=DocumentPublicationIntent.newBuilder().setEncodingVersion(1).setAccountId(account).setOperationId(UUID.randomUUID().toString());
         var bodies=new HashMap<DocumentUploadPayloads.Key,PartObject>();
-        var attempts=new HashMap<String,UUID>();
         for (int index=0;index<count;index++) {
             String id="member-"+index, docId=UUID.randomUUID().toString();
             var ownership=OwnershipContext.newBuilder().setAccountId(account).setDatasourceId("source").setSecurity(policy).build();
@@ -1010,10 +1009,11 @@ class DocumentPublicationCommitIT {
                         .setUpload(PublicationUpload.newBuilder().setSizeBytes(part.bytes().length).setSha256(part.sha256()).setContentType("application/protobuf")
                                 .setWrittenBy(WriteProvenance.newBuilder().setModuleId("producer"))));
             }
-            intent.addMembers(member); attempts.put(id,UUID.randomUUID());
+            intent.addMembers(member);
         }
         var command=new DocumentPublicationCommand(intent.build());
-        var owner=new RepositoryOperationLedger(tx).admit(new RepositoryOperationLedger.Key(account,"principal",command.operationId()),command,UUID.randomUUID(),LEASE).owner().orElseThrow();
-        return new Fixture(command,owner,DocumentOperationUploadAdmission.prepare(command,placements,attempts,LEASE),Map.copyOf(bodies));
+        var session=new DocumentPublicationSession(tx,ADMIN,command,placements,LEASE);
+        var owner=session.admit(ADMIN,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE).orElseThrow();
+        return new Fixture(command,owner,session.prepared(),Map.copyOf(bodies));
     }
 }
