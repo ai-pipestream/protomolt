@@ -34,6 +34,11 @@ final class DocumentSchemaAssetBinding {
     /** The trusted host must separately verify tool identities and retained source assets. */
     static DocumentSchemaAssetBinding bind(RepositorySchemaAsset metadata, ByteString artifact,
             ClosedDescriptorSet.Limits limits, Runnable control) {
+        return bind(metadata, artifact, limits, null, control);
+    }
+
+    static DocumentSchemaAssetBinding bind(RepositorySchemaAsset metadata, ByteString artifact,
+            ClosedDescriptorSet.Limits limits, DocumentAdmissionReservations reservations, Runnable control) {
         Objects.requireNonNull(metadata, "metadata");
         Objects.requireNonNull(artifact, "artifact");
         Objects.requireNonNull(limits, "limits");
@@ -47,7 +52,7 @@ final class DocumentSchemaAssetBinding {
             throw new IllegalArgumentException("invalid schema asset metadata");
         }
         control.run();
-        var schema = DocumentSchemaBinding.bind(metadata.getSchema(), artifact, limits, control);
+        var schema = DocumentSchemaBinding.bind(metadata.getSchema(), artifact, limits, reservations, control);
         if (!schema.artifactSha256().equals(metadata.getArtifactSha256())) {
             throw new IllegalArgumentException("schema asset exact artifact digest mismatch");
         }

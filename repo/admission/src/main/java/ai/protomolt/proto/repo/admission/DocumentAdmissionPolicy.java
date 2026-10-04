@@ -106,8 +106,43 @@ public final class DocumentAdmissionPolicy {
         return proof;
     }
 
+    /** Policy-bound preparation with the serialized-byte lifetime defined by PreparedProof. */
+    public DocumentSchemaAdmission.PreparedProof prepareAndCheck(ByteString commandSha256, DocumentPublicationMember member,
+            Map<Integer, ByteString> fragments, DocumentSchemaAdmission.Definition container,
+            DocumentSchemaAdmission.Resolver resolver, DocumentAdmissionReservations reservations, Runnable control)
+            throws InvalidProtocolBufferException {
+        Objects.requireNonNull(resolver); Objects.requireNonNull(reservations); Objects.requireNonNull(control).run();
+        requireAccount(member);
+        var prepared = DocumentSchemaAdmission.prepareAndCheck(new DocumentSchemaAdmission.Preparation(commandSha256,
+                sha256, policy.getRequireStructuredRoot(), member, fragments, container), occurrence -> {
+            var selected = resolver.select(occurrence);
+            control.run();
+            if (selected != null) requireEligible(selected.metadata().getTypeUrl(), selected.metadata().getSchema());
+            return selected;
+        }, limits, reservations, control);
+        boolean accepted = false;
+        try {
+            verifyProof(prepared.proof(), reservations, control);
+            accepted = true;
+            return prepared;
+        } finally {
+            if (!accepted) prepared.close();
+        }
+    }
+
     /** Pure correspondence check; commit must additionally fence the authoritative policy pointer. */
     public void verifyProof(DocumentSchemaAdmission.Proof proof, Runnable control) throws InvalidProtocolBufferException {
+        verifyProofInternal(proof, null, control);
+    }
+
+    /** Reserves only verification scratch; the caller owns the proof and this policy's bytes. */
+    public void verifyProof(DocumentSchemaAdmission.Proof proof, DocumentAdmissionReservations reservations,
+            Runnable control) throws InvalidProtocolBufferException {
+        verifyProofInternal(proof, Objects.requireNonNull(reservations), control);
+    }
+
+    private void verifyProofInternal(DocumentSchemaAdmission.Proof proof, DocumentAdmissionReservations reservations,
+            Runnable control) throws InvalidProtocolBufferException {
         Objects.requireNonNull(proof); Objects.requireNonNull(control).run();
         requireAccount(proof.member());
         if (!sha256.equals(proof.policySha256()) || !policy.getValidationProfile().equals(proof.validationProfile())
@@ -117,7 +152,9 @@ public final class DocumentAdmissionPolicy {
         for (var root : proof.roots()) {
             control.run();
             var encoded = root.encoded();
-            var bundle = DocumentRootSchemaEvidenceCodec.decode(encoded.codec(), encoded.version(), encoded.bytes(), encoded.sha256(), control);
+            var bundle = reservations == null
+                    ? DocumentRootSchemaEvidenceCodec.decode(encoded.codec(), encoded.version(), encoded.bytes(), encoded.sha256(), control)
+                    : DocumentRootSchemaEvidenceCodec.decode(encoded.codec(), encoded.version(), encoded.bytes(), encoded.sha256(), reservations, control);
             for (var occurrence : bundle.getOccurrencesList()) {
                 control.run();
                 var boundary = occurrence.getSteps(occurrence.getStepsCount() - 1).getAnyBoundary();

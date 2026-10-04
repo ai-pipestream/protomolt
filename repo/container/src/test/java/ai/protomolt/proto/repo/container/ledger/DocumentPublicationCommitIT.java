@@ -668,9 +668,11 @@ class DocumentPublicationCommitIT {
         DocumentPublishedRevision published;
         String expected;
         String customDescriptor;
-        try(var snapshot=DocumentPublicationFragments.capture(fixture.command,Map.of(member.getMemberId(),fragments),snapshotBudget,()->{})) {
-            var proof=policy.prepareAndCheck(ByteString.copyFrom(java.util.HexFormat.of().parseHex(fixture.command.sha256())),
-                    member,snapshot.fragments().get(member.getMemberId()),DocumentSchemaRetentionFixture.definition(Document.getDescriptor()),ignored->definition,()->{});
+        try(var snapshot=DocumentPublicationFragments.capture(fixture.command,Map.of(member.getMemberId(),fragments),snapshotBudget,()->{});
+            var ownedProof=policy.prepareAndCheck(ByteString.copyFrom(java.util.HexFormat.of().parseHex(fixture.command.sha256())),
+                    member,snapshot.fragments().get(member.getMemberId()),DocumentSchemaRetentionFixture.definition(Document.getDescriptor()),
+                    ignored->definition, bytes->{var lease=snapshotBudget.reserve(bytes);return lease::close;},()->{})) {
+            var proof=ownedProof.proof();
             var selected=new DocumentSchemaPolicies(tx).activate(policy,0,()->{});
             var admission=DocumentSchemaBatch.prepare(fixture.command,selected,Map.of(member.getMemberId(),proof),()->{});
             admission.stage(new RepositorySchemaArtifacts(tx),fixture.owner,()->{});

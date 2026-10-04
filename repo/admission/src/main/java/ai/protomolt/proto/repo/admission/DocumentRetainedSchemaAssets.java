@@ -60,13 +60,20 @@ final class DocumentRetainedSchemaAssets {
 
     private final Reader reader;
     private final Limits limits;
+    private final DocumentAdmissionReservations reservations;
     private final Map<DocumentPayloadCheck.SchemaKey, DocumentSchemaAssetBinding> bindings = new HashMap<>();
     private final Map<String, ByteString> artifacts = new HashMap<>();
     private long retainedBytes;
 
     DocumentRetainedSchemaAssets(Reader reader, Limits limits) {
+        this(reader, limits, null);
+    }
+
+    /** Optional canonical scratch accounting; the reader still owns supplied artifact bytes. */
+    DocumentRetainedSchemaAssets(Reader reader, Limits limits, DocumentAdmissionReservations reservations) {
         this.reader = Objects.requireNonNull(reader, "reader");
         this.limits = Objects.requireNonNull(limits, "limits");
+        this.reservations = reservations;
     }
 
     /**
@@ -88,8 +95,11 @@ final class DocumentRetainedSchemaAssets {
         var metadataBytes = load(reference.metadataSha256(), DocumentSchemaAssetCodec.MAX_BYTES, false, batch, control);
         final RepositorySchemaAsset metadata;
         try {
-            metadata = DocumentSchemaAssetCodec.decode(reference.metadataCodec(), reference.metadataVersion(),
-                    metadataBytes, reference.metadataSha256(), guarded(control));
+            metadata = reservations == null
+                    ? DocumentSchemaAssetCodec.decode(reference.metadataCodec(), reference.metadataVersion(),
+                            metadataBytes, reference.metadataSha256(), guarded(control))
+                    : DocumentSchemaAssetCodec.decode(reference.metadataCodec(), reference.metadataVersion(),
+                            metadataBytes, reference.metadataSha256(), reservations, guarded(control));
         } catch (ControlFailure failure) {
             throw failure.original;
         } catch (InvalidProtocolBufferException | IllegalArgumentException | ValidationResult.ValidationException failure) {
@@ -140,7 +150,7 @@ final class DocumentRetainedSchemaAssets {
         requireHash(metadata.getArtifactSha256());
         var bytes = load(key.artifactSha256(), limits.descriptorLimits().maxBytes(), true, batch, control);
         try {
-            return DocumentSchemaAssetBinding.bind(metadata, bytes, limits.descriptorLimits(), guarded(control));
+            return DocumentSchemaAssetBinding.bind(metadata, bytes, limits.descriptorLimits(), reservations, guarded(control));
         } catch (ControlFailure failure) {
             throw failure.original;
         } catch (ClosedDescriptorSet.LimitExceededException failure) {

@@ -21,6 +21,138 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 
 class DocumentSchemaPreparationTest {
+    @Test void ownedProofRetainsOnlyIndependentAssetsAndFinalEvidenceUntilClosed() throws Exception {
+        var f = fixture(true);
+        DocumentSchemaAdmission.Resolver resolver = selection -> selection.typeUrl().endsWith("StringValue")
+                ? f.string.definition() : f.timestamp.definition();
+        var expected = prepare(f, resolver, limits(1_000_000), () -> {});
+        var borrowedArrays = new ArrayList<byte[]>();
+        var borrowed = new Fixture(f.document, f.member, f.fragments, borrowed(f.container, borrowedArrays),
+                borrowed(f.string, borrowedArrays), borrowed(f.timestamp, borrowedArrays));
+        var budget = new Reservations();
+        var selections = new ArrayList<DocumentSchemaAdmission.Selection>();
+        var owner = prepareOwned(borrowed, selection -> {
+            selections.add(selection);
+            return selection.typeUrl().endsWith("StringValue") ? borrowed.string.definition() : borrowed.timestamp.definition();
+        }, budget, () -> {});
+        try {
+            var proof = owner.proof();
+            long retained = proof.artifacts().values().stream().mapToLong(ByteString::size).sum()
+                    + proof.roots().stream().mapToLong(root -> root.encoded().bytes().size()).sum();
+            assertThat(budget.live).as("only final evidence and normalized assets survive preparation").isEqualTo(retained);
+            assertThat(budget.peak).isGreaterThan(retained);
+            assertThat(selections).hasSize(2); // Independent replay never calls the resolver.
+            assertThat(proof.fragments()).isEqualTo(f.fragments);
+            f.fragments.forEach((ordinal, bytes) -> assertThat(proof.fragments().get(ordinal)).isSameAs(bytes));
+            assertThat(proof.artifacts().get(f.container.reference.descriptorSha256())).isNotSameAs(borrowed.container.descriptors);
+            assertThat(proof.artifacts().get(f.string.reference.sourceSha256().orElseThrow())).isNotSameAs(borrowed.string.source);
+            // Model a provider reclaiming its borrowed buffers after preparation returns.
+            borrowedArrays.forEach(bytes -> java.util.Arrays.fill(bytes, (byte) 0));
+            assertThat(proof.artifacts()).isEqualTo(expected.artifacts());
+            assertThat(proof.roots()).isEqualTo(expected.roots());
+            assertThat(proof.document()).isEqualTo(expected.document());
+        } finally {
+            owner.close();
+        }
+        assertThat(budget.live).isZero();
+        owner.close();
+        assertThat(budget.live).isZero();
+        assertThatThrownBy(owner::proof).hasMessageContaining("closed");
+    }
+
+    @Test void everyReservationRefusalAndCancellationReleasesAllPreparationAndReplayLeases() throws Exception {
+        var f = fixture(true);
+        DocumentSchemaAdmission.Resolver resolver = selection -> selection.typeUrl().endsWith("StringValue")
+                ? f.string.definition() : f.timestamp.definition();
+        var baseline = new Reservations();
+        try (var ignored = prepareOwned(f, resolver, baseline, () -> {})) { }
+        assertThat(baseline.calls).isGreaterThan(10);
+        for (int point = 1; point <= baseline.calls; point++) {
+            var refused = new IllegalArgumentException("host reservation refused at " + point);
+            var budget = new Reservations();
+            budget.refuseAt = point;
+            budget.refusal = refused;
+            assertThatThrownBy(() -> {
+                try (var unexpected = prepareOwned(f, resolver, budget, () -> {})) {
+                    fail("reservation refusal returned a proof");
+                }
+            }).as("reservation %s", point).isSameAs(refused);
+            assertThat(budget.live).as("refusal %s", point).isZero();
+            assertThat(budget.calls).isEqualTo(point);
+
+            var cancelled = new Reservations();
+            int cancelAt = point;
+            var stopped = new CancellationException("cancel after reservation " + point);
+            assertThatThrownBy(() -> {
+                try (var unexpected = prepareOwned(f, resolver, cancelled, () -> {
+                    if (cancelled.calls == cancelAt) throw stopped;
+                })) {
+                    fail("cancelled preparation returned a proof");
+                }
+            }).as("cancellation %s", point).isSameAs(stopped);
+            assertThat(cancelled.live).as("cancellation %s", point).isZero();
+        }
+    }
+
+    @Test void aliasesShareOneOwnedDescriptorAndSourceArtifact() throws Exception {
+        var base = fixture(true);
+        var alias = asset(StringValue.getDescriptor(), true, "alias.test/google.protobuf.StringValue");
+        var changed = base.document.toBuilder().putParserResults("parsed", ParserResult.newBuilder()
+                .setDocument(ParserDocument.newBuilder().setShape(Any.pack(StringValue.of("two"), "alias.test"))).build()).build();
+        var f = fixture(true, changed);
+        var budget = new Reservations();
+        try (var owned = prepareOwned(f, selection -> selection.typeUrl().startsWith("alias.test/")
+                ? alias.definition() : f.string.definition(), budget, () -> {})) {
+            var proof = owned.proof();
+            assertThat(proof.references()).hasSize(3);
+            assertThat(proof.references().stream().filter(ref -> ref.descriptorSha256().equals(alias.reference.descriptorSha256())))
+                    .hasSize(2);
+            assertThat(proof.artifacts()).hasSize(6); // Two descriptors, three metadata records, one shared source.
+            assertThat(budget.live).isEqualTo(proof.artifacts().values().stream().mapToLong(ByteString::size).sum()
+                    + proof.roots().stream().mapToLong(root -> root.encoded().bytes().size()).sum());
+        }
+        assertThat(budget.live).isZero();
+    }
+
+    @Test void failedSchemaIntegrityAndResolverFailureReleaseOwnedBytes() throws Exception {
+        var f = fixture(true);
+        var budget = new Reservations();
+        var corrupted = new DocumentSchemaAdmission.Definition(f.string.metadata, f.string.descriptors,
+                Optional.of(ByteString.copyFromUtf8("wrong retained source")));
+        assertThatThrownBy(() -> prepareOwned(f, selection -> corrupted, budget, () -> {}))
+                .isInstanceOf(DocumentRetainedSchemaAssets.DataLoss.class).hasMessageContaining("digest");
+        assertThat(budget.live).isZero();
+        var outage = new IllegalStateException("registry unavailable");
+        assertThatThrownBy(() -> prepareOwned(f, selection -> { throw outage; }, budget, () -> {})).isSameAs(outage);
+        assertThat(budget.live).isZero();
+    }
+
+    @Test void policyVerificationKeepsOwnershipAndClosesItOnEveryResourceFailure() throws Exception {
+        var f = fixture(true);
+        var policy = DocumentAdmissionPolicy.of(DocumentAdmissionPolicyTest.policy(), () -> {});
+        DocumentSchemaAdmission.Resolver resolver = selection -> selection.typeUrl().endsWith("StringValue")
+                ? f.string.definition() : f.timestamp.definition();
+        var budget = new Reservations();
+        try (var owned = policy.prepareAndCheck(ByteString.copyFrom(new byte[32]), f.member, f.fragments,
+                f.container.definition(), resolver, budget, () -> {})) {
+            long retained = budget.live;
+            policy.verifyProof(owned.proof(), budget, () -> {});
+            assertThat(budget.live).isEqualTo(retained);
+        }
+        assertThat(budget.live).isZero();
+        // Refuse the last scratch allocation of policy verification after preparation succeeded.
+        var baseline = new Reservations();
+        try (var ignored = policy.prepareAndCheck(ByteString.copyFrom(new byte[32]), f.member, f.fragments,
+                f.container.definition(), resolver, baseline, () -> {})) { }
+        var refused = new IllegalArgumentException("policy scratch capacity");
+        var failing = new Reservations();
+        failing.refuseAt = baseline.calls;
+        failing.refusal = refused;
+        assertThatThrownBy(() -> policy.prepareAndCheck(ByteString.copyFrom(new byte[32]), f.member, f.fragments,
+                f.container.definition(), resolver, failing, () -> {})).isSameAs(refused);
+        assertThat(failing.live).isZero();
+    }
+
     @Test void authoritativePolicyChecksAllPayloadsAndRejectsClaimedIdentityWithDifferentLimits() throws Exception {
         var f = fixture(false);
         var base = DocumentAdmissionPolicyTest.policy();
@@ -273,6 +405,40 @@ class DocumentSchemaPreparationTest {
 
     private static DocumentSchemaAdmission.Limits limits(int decoded) {
         return new DocumentSchemaAdmission.Limits(32, 4_000_000, 100, 4_000_000, 20, 16_000_000, decoded);
+    }
+
+    private static DocumentSchemaAdmission.PreparedProof prepareOwned(Fixture f, DocumentSchemaAdmission.Resolver resolver,
+            DocumentAdmissionReservations reservations, Runnable control) throws Exception {
+        return DocumentSchemaAdmission.prepareAndCheck(new DocumentSchemaAdmission.Preparation(ByteString.copyFrom(new byte[32]),
+                "a".repeat(64), true, f.member, f.fragments, f.container.definition()), resolver, limits(1_000_000),
+                reservations, control);
+    }
+
+    private static Asset borrowed(Asset asset, List<byte[]> buffers) {
+        byte[] descriptors = asset.descriptors.toByteArray();
+        buffers.add(descriptors);
+        ByteString source = null;
+        if (asset.source != null) {
+            byte[] bytes = asset.source.toByteArray();
+            buffers.add(bytes);
+            source = com.google.protobuf.UnsafeByteOperations.unsafeWrap(bytes);
+        }
+        return new Asset(asset.metadata, com.google.protobuf.UnsafeByteOperations.unsafeWrap(descriptors), source, asset.reference);
+    }
+
+    private static final class Reservations implements DocumentAdmissionReservations {
+        long live;
+        long peak;
+        int calls;
+        int refuseAt = -1;
+        RuntimeException refusal;
+        @Override public Lease reserve(long bytes) {
+            if (++calls == refuseAt) throw refusal;
+            live += bytes;
+            peak = Math.max(peak, live);
+            var closed = new java.util.concurrent.atomic.AtomicBoolean();
+            return () -> { if (closed.compareAndSet(false, true)) live -= bytes; };
+        }
     }
 
     private static Fixture fixture(boolean withSource) throws Exception {

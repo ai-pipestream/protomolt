@@ -5146,3 +5146,36 @@ assert zero scratch bytes at descriptor lookup. Refused capacity and cancellatio
 after reservation leave zero leases and never reach schema loading. Input bytes,
 retained schema assets and parsed results remain caller-owned; preparation and
 the returned proof still need complete reservation propagation.
+
+### Owned preparation and policy verification
+
+New additive Java overloads on `DocumentSchemaAdmission.prepareAndCheck` and
+`DocumentAdmissionPolicy.prepareAndCheck` accept `DocumentAdmissionReservations`
+and return a closeable `PreparedProof`. The original caller-accounted overloads
+remain available. No protobuf fields, import paths, hashes or RPCs change.
+
+Preparation reserves before copying descriptors and optional sources, deduplicates
+them by artifact digest, and owns generated canonical metadata. Initial evidence
+stays reserved through independent replay. Replay reserves canonical comparison,
+sorting, descriptor fingerprint and root-locator scratch, releases temporary
+allocations, and retains final evidence with the asset copies. Only the independent
+checker can construct the ordinary immutable proof. `PreparedProof.proof()` borrows
+that proof until close; callers must finish all consumers first. Fragment inputs,
+resolver allocations, policy bytes and parsed JVM object graphs have separate host
+ownership and bounds. There is no claim that these leases measure total heap or
+the complete SQL/provider/transport publication path.
+
+Reservation failure is kept distinct from retained-data corruption, including
+when the host throws `IllegalArgumentException`. The public preparation boundary
+restores the original exception identity. Cancellation, invalid retained bytes,
+resolver errors and policy verification failures close acquired owners; none
+selects an unbudgeted retry or an opaque result.
+
+Tests verify exact retained-byte totals, independent descriptor/source copies
+after borrowed buffers are reclaimed, shared artifact deduplication across aliases,
+failure and cancellation at every reservation point, post-preparation policy
+verification failure, and idempotent close. The real PostgreSQL/versioned-provider
+publication test holds both fragment and proof owners through staging and commit,
+releases them, and validates the retained custom type in a fresh JVM. This extends
+the existing historical replay qualification; a mounted native coordinator and
+its complete end-to-end resource accounting are still pending.

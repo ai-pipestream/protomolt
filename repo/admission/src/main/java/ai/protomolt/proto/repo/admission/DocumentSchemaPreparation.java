@@ -22,6 +22,13 @@ final class DocumentSchemaPreparation {
     static DocumentSchemaAdmission.Proof check(DocumentSchemaAdmission.Preparation request,
             DocumentSchemaAdmission.Resolver resolver, DocumentSchemaAdmission.Limits limits, Runnable control)
             throws InvalidProtocolBufferException {
+        return check(request, resolver, limits, null, null, control);
+    }
+
+    static DocumentSchemaAdmission.Proof check(DocumentSchemaAdmission.Preparation request,
+            DocumentSchemaAdmission.Resolver resolver, DocumentSchemaAdmission.Limits limits,
+            DocumentAdmissionResources resources, DocumentAdmissionResources temporary, Runnable control)
+            throws InvalidProtocolBufferException {
         Objects.requireNonNull(request); Objects.requireNonNull(resolver); Objects.requireNonNull(limits);
         Objects.requireNonNull(control);
         Runnable active = () -> {
@@ -35,7 +42,7 @@ final class DocumentSchemaPreparation {
             throw new IllegalArgumentException("member admission count exceeds limit");
         var fragments = Map.copyOf(request.fragments());
         DocumentSchemaAdmission.checkMember(request.member(), fragments, request.requireStructuredRoot(), limits, active);
-        var definitions = new Definitions(limits, active);
+        var definitions = new Definitions(limits, resources, active);
         var container = definitions.add(request.container());
         var containerKey = key(request.container());
         var evidence = new LinkedHashMap<Integer, List<DocumentSchemaAdmission.EncodedEvidence>>();
@@ -75,10 +82,18 @@ final class DocumentSchemaPreparation {
                     throw new IllegalArgumentException("structured root differs from required schema");
                 var bundle = DocumentRootSchemaEvidence.newBuilder().setEncodingVersion(1).setRoot(locator)
                         .addAllOccurrences(DocumentSchemaOccurrenceProjection.project(checked.payload(), active)).build();
-                var encoded = DocumentRootSchemaEvidenceCodec.encode(bundle, limits.maxEvidenceBytes() - evidenceBytes, active);
-                evidenceBytes += encoded.bytes().size();
-                bundles.add(new DocumentSchemaAdmission.EncodedEvidence(DocumentRootSchemaEvidenceCodec.CODEC,
-                        DocumentRootSchemaEvidenceCodec.VERSION, encoded.bytes(), encoded.sha256()));
+                if (temporary == null) {
+                    var encoded = DocumentRootSchemaEvidenceCodec.encode(bundle, limits.maxEvidenceBytes() - evidenceBytes, active);
+                    evidenceBytes += encoded.bytes().size();
+                    bundles.add(new DocumentSchemaAdmission.EncodedEvidence(DocumentRootSchemaEvidenceCodec.CODEC,
+                            DocumentRootSchemaEvidenceCodec.VERSION, encoded.bytes(), encoded.sha256()));
+                } else {
+                    var encoded = temporary.retain(DocumentRootSchemaEvidenceCodec.encodeOwned(bundle,
+                            limits.maxEvidenceBytes() - evidenceBytes, temporary, active));
+                    evidenceBytes += encoded.bytes().size();
+                    bundles.add(new DocumentSchemaAdmission.EncodedEvidence(DocumentRootSchemaEvidenceCodec.CODEC,
+                            DocumentRootSchemaEvidenceCodec.VERSION, encoded.bytes(), encoded.sha256()));
+                }
             }
             if (!bundles.isEmpty()) evidence.put(ordinal, List.copyOf(bundles));
         }
@@ -89,7 +104,7 @@ final class DocumentSchemaPreparation {
         var assets = Map.copyOf(definitions.artifacts);
         return DocumentSchemaAdmission.check(new DocumentSchemaAdmission.Request(request.commandSha256(), request.policySha256(),
                 request.requireStructuredRoot(), request.member(), fragments, evidence, definitions.references.get(containerKey), references),
-                hash -> Optional.ofNullable(assets.get(hash)), limits, active);
+                hash -> Optional.ofNullable(assets.get(hash)), limits, resources, active);
     }
 
     private static DocumentPayloadCheck.SchemaKey key(DocumentSchemaAdmission.Definition definition) {
@@ -100,6 +115,7 @@ final class DocumentSchemaPreparation {
     private static final class Definitions {
         private final DocumentSchemaAdmission.Limits limits;
         private final Runnable control;
+        private final DocumentAdmissionResources resources;
         private final Map<String, ByteString> artifacts = new HashMap<>();
         private final Map<DocumentPayloadCheck.SchemaKey, DocumentSchemaAdmission.Definition> selected = new HashMap<>();
         private final Map<DocumentPayloadCheck.SchemaKey, DocumentSchemaAssetBinding> bindings = new HashMap<>();
@@ -108,11 +124,11 @@ final class DocumentSchemaPreparation {
         private final DocumentRetainedSchemaAssets retained;
         private long bytes;
 
-        Definitions(DocumentSchemaAdmission.Limits limits, Runnable control) {
-            this.limits = limits; this.control = control;
+        Definitions(DocumentSchemaAdmission.Limits limits, DocumentAdmissionResources resources, Runnable control) {
+            this.limits = limits; this.resources = resources; this.control = control;
             retained = new DocumentRetainedSchemaAssets(hash -> Optional.ofNullable(artifacts.get(hash)),
                     new DocumentRetainedSchemaAssets.Limits(limits.maxBindings(), limits.maxRetainedBytes(),
-                            new ClosedDescriptorSet.Limits(16 * MIB, 256, 4096, 64)));
+                            new ClosedDescriptorSet.Limits(16 * MIB, 256, 4096, 64)), resources);
         }
 
         DocumentSchemaAssetBinding select(DocumentSchemaAdmission.Resolver resolver, DocumentSchemaAdmission.Selection request) {
@@ -137,32 +153,55 @@ final class DocumentSchemaPreparation {
             if (definition.descriptors().isEmpty() || definition.descriptors().size() > 16 * MIB
                     || definition.source().filter(value -> value.isEmpty() || value.size() > 16 * MIB).isPresent())
                 throw new IllegalArgumentException("definition artifact exceeds byte limit");
-            var encoded = DocumentSchemaAssetCodec.encode(definition.metadata(), control);
             var compilation = definition.metadata().getCompilation();
             if (compilation.hasSourceArtifactSha256() != definition.source().isPresent())
                 throw new IllegalArgumentException("source bytes differ from metadata presence");
             var sourceHash = compilation.hasSourceArtifactSha256() ? Optional.of(compilation.getSourceArtifactSha256()) : Optional.<String>empty();
+            var encoded = encodeMetadata(definition);
             var reference = new DocumentSchemaAdmission.Reference(key.typeUrl(), key.artifactSha256(),
                     DocumentSchemaAssetCodec.CODEC, DocumentSchemaAssetCodec.VERSION, encoded.sha256(), sourceHash);
-            put(key.artifactSha256(), definition.descriptors());
-            put(encoded.sha256(), encoded.bytes());
-            sourceHash.ifPresent(hash -> put(hash, definition.source().orElseThrow()));
+            var descriptors = put(key.artifactSha256(), definition.descriptors(), true);
+            var source = sourceHash.map(hash -> put(hash, definition.source().orElseThrow(), true));
             var bound = retained.resolve(new DocumentRetainedSchemaAssets.Reference(reference.typeUrl(), reference.descriptorSha256(),
                     reference.metadataCodec(), reference.metadataVersion(), reference.metadataSha256(), reference.sourceSha256()), control);
-            selected.put(key, definition); bindings.put(key, bound); schemas.put(key, bound.schema()); references.put(key, reference);
+            selected.put(key, new DocumentSchemaAdmission.Definition(definition.metadata(), descriptors, source));
+            bindings.put(key, bound); schemas.put(key, bound.schema()); references.put(key, reference);
             return bound;
         }
 
-        private void put(String digest, ByteString value) {
+        private DocumentSchemaAssetCodec.Encoded encodeMetadata(DocumentSchemaAdmission.Definition definition) {
+            if (resources == null) {
+                var encoded = DocumentSchemaAssetCodec.encode(definition.metadata(), control);
+                put(encoded.sha256(), encoded.bytes(), false);
+                return encoded;
+            }
+            var owner = DocumentSchemaAssetCodec.encodeOwned(definition.metadata(), resources, control);
+            boolean transferred = false;
+            try {
+                var encoded = owner.value();
+                var bytes = put(encoded.sha256(), encoded.bytes(), false);
+                if (bytes == encoded.bytes()) {
+                    resources.retain(owner);
+                    transferred = true;
+                }
+                return new DocumentSchemaAssetCodec.Encoded(bytes, encoded.sha256());
+            } finally {
+                if (!transferred) owner.close();
+            }
+        }
+
+        private ByteString put(String digest, ByteString value, boolean copy) {
             control.run();
             var prior = artifacts.get(digest);
             if (prior != null) {
                 if (!prior.equals(value)) throw new IllegalArgumentException("conflicting bytes for artifact digest");
-                return;
+                return prior;
             }
             if (artifacts.size() >= 64 || value.size() > limits.maxRetainedBytes() - bytes)
                 throw new IllegalArgumentException("retained artifact union exceeds limit");
-            artifacts.put(digest, value); bytes += value.size();
+            var retainedValue = resources != null && copy ? resources.copy(value, control) : value;
+            artifacts.put(digest, retainedValue); bytes += value.size();
+            return retainedValue;
         }
     }
 }

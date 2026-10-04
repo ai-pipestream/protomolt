@@ -2631,8 +2631,8 @@ resources through staging and commit. Keep the reservation interface in
 `repo-admission`; the host adapts `PayloadBudget` without adding byte-provider,
 SQL or transport dependencies to the admission library.
 
-Use an additive budgeted preparation entry point with a closeable proof owner.
-Thread its reservation scope explicitly through preparation, independent replay
+The additive budgeted preparation entry point returns a closeable `PreparedProof`.
+Its reservation scope passes explicitly through preparation, independent replay
 and canonical codecs. Measure before allocation. Retained evidence and generated
 metadata bytes stay reserved until the proof owner closes. Path-sort buffers,
 root-locator encodings and canonical re-encodings used only for comparison are
@@ -2645,8 +2645,9 @@ The canonical encoder transfers an exclusively owned output array to ByteString
 without a second copy. String-map sorting avoids encoded UTF-8 key buffers.
 Every nested codec call still needs explicit accounting; a callback only at the
 top-level evidence encoder is insufficient. Resolver-provided schema
-bytes need an explicit borrowed/owned handoff under a reservation before copying
-or retaining them. Never reinterpret a schema-artifact cap as a document cap or
+bytes are borrowed during preparation and copied under reservation before retention.
+Descriptor fingerprint serialization also holds a temporary lease. Never
+reinterpret a schema-artifact cap as a document cap or
 reserve all policy maxima up front instead of charging actual allocations.
 
 This measures serialized bytes and temporary buffers, not all JVM heap. Parsed
@@ -2654,6 +2655,9 @@ descriptors, protobuf builders and object graphs retain their structural limits
 and host concurrency/heap requirements. The scope must distinguish scratch from
 retained leases, and tests must prove peak accounting, prompt scratch release,
 capacity failure before allocation, cancellation cleanup, and complete proof
-lifetime. The reservation interface and owned canonical codec are implemented as
-described in the operation inventory. Full proof-level propagation and a host
-coordinator remain integration requirements.
+lifetime. Proof preparation and policy verification implement these reservations
+as described in the operation inventory. Fragment inputs remain caller-owned
+through proof use; the returned proof reference is borrowed until its owner closes.
+The host coordinator must compose fragment and proof owners through staging and
+commit, account for provider/SQL/transport copies, and drain consumers before
+closing them. That full host integration remains required.

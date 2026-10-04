@@ -20,6 +20,20 @@ final class DocumentSchemaAssetCodec {
         return new Encoded(encoded.bytes(), encoded.sha256());
     }
 
+    static DocumentSchemaEvidenceCodec.OwnedEncoded encodeOwned(RepositorySchemaAsset asset,
+            DocumentAdmissionReservations reservations, Runnable control) {
+        requireSize(DocumentSchemaEvidenceCodec.measureAndValidate(asset, control));
+        return DocumentSchemaEvidenceCodec.encodeOwned(asset, reservations, control);
+    }
+
+    static RepositorySchemaAsset decode(String codec, int version, ByteString bytes, String sha256,
+            DocumentAdmissionReservations reservations, Runnable control) throws InvalidProtocolBufferException {
+        Objects.requireNonNull(control, "control").run();
+        requireSize(Objects.requireNonNull(bytes, "bytes").size());
+        return DocumentSchemaEvidenceCodec.decode(CODEC, codec, version, bytes, sha256,
+                RepositorySchemaAsset.getDescriptor(), RepositorySchemaAsset.parser(), reservations, control);
+    }
+
     static RepositorySchemaAsset decode(String codec, int version, ByteString bytes, String sha256,
             Runnable control) throws InvalidProtocolBufferException {
         Objects.requireNonNull(control, "control").run();

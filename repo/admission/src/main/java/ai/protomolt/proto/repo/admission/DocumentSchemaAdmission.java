@@ -114,6 +114,49 @@ public final class DocumentSchemaAdmission {
         return DocumentSchemaPreparation.check(request, resolver, limits, control);
     }
 
+    /**
+     * Own generated evidence and private copies of the selected descriptor/source assets.
+     * Reserve actual serialized bytes before allocation, including temporary canonical
+     * comparisons. The host must separately own fragment inputs through the returned
+     * proof's lifetime, bound resolver input allocations, and budget parsed JVM objects.
+     * Resolver bytes must remain stable while preparation copies them. Failure releases
+     * every acquired lease and propagates without an unbudgeted retry.
+     */
+    public static PreparedProof prepareAndCheck(Preparation request, Resolver resolver, Limits limits,
+            DocumentAdmissionReservations reservations, Runnable control) throws InvalidProtocolBufferException {
+        var resources = new DocumentAdmissionResources(reservations);
+        boolean transferred = false;
+        try (var temporary = new DocumentAdmissionResources(reservations)) {
+            var proof = DocumentSchemaPreparation.check(request, resolver, limits, resources, temporary, control);
+            var result = new PreparedProof(proof, resources);
+            transferred = true;
+            return result;
+        } catch (DocumentAdmissionResources.ReservationFailure failure) {
+            throw failure.original;
+        } finally {
+            if (!transferred) resources.close();
+        }
+    }
+
+    /** Owns serialized schema/evidence bytes; borrowed proof references must not outlive this owner. */
+    public static final class PreparedProof implements AutoCloseable {
+        private Proof proof;
+        private final DocumentAdmissionResources resources;
+        private PreparedProof(Proof proof, DocumentAdmissionResources resources) {
+            this.proof = proof; this.resources = resources;
+        }
+        /** Borrow while open. Callers coordinate consumers before closing this owner. */
+        public synchronized Proof proof() {
+            if (proof == null) throw new IllegalStateException("Prepared proof is closed");
+            return proof;
+        }
+        @Override public synchronized void close() {
+            if (proof == null) return;
+            proof = null;
+            resources.close();
+        }
+    }
+
     /** Constructed only after complete checking. Immutable content proof, not an authorization receipt. */
     public static final class Proof {
         private final ByteString commandSha256;
@@ -155,6 +198,12 @@ public final class DocumentSchemaAdmission {
 
     public static Proof check(Request request, Reader reader, Limits limits, Runnable control)
             throws InvalidProtocolBufferException {
+        return check(request, reader, limits, null, control);
+    }
+
+    /** Resources already own reader assets; this check additionally retains final encoded evidence. */
+    static Proof check(Request request, Reader reader, Limits limits, DocumentAdmissionResources resources,
+            Runnable control) throws InvalidProtocolBufferException {
         Objects.requireNonNull(request); Objects.requireNonNull(reader); Objects.requireNonNull(limits);
         Objects.requireNonNull(control); active(control);
         if (request.commandSha256().size() != 32 || !request.policySha256().matches("[0-9a-f]{64}"))
@@ -165,7 +214,7 @@ public final class DocumentSchemaAdmission {
             throw new IllegalArgumentException("member admission count exceeds limit");
         var fragments = Map.copyOf(request.fragments());
         var assembly = checkMember(member, fragments, request.requireStructuredRoot(), limits, control);
-        var bundles = decodeEvidence(request.evidence(), limits, control);
+        var bundles = decodeEvidence(request.evidence(), limits, resources, control);
         if (bundles.keySet().stream().anyMatch(ordinal -> ordinal >= member.getPartsCount()))
             throw new IllegalArgumentException("evidence ordinal is outside the member");
         var artifacts = new HashMap<String, ByteString>();
@@ -174,7 +223,7 @@ public final class DocumentSchemaAdmission {
             result.ifPresent(bytes -> artifacts.put(hash, bytes));
             return result;
         }, new DocumentRetainedSchemaAssets.Limits(limits.maxBindings(), limits.maxRetainedBytes(),
-                new ClosedDescriptorSet.Limits(16 * MIB, 256, 4096, 64)));
+                new ClosedDescriptorSet.Limits(16 * MIB, 256, 4096, 64)), resources);
         var references = new ArrayList<Reference>();
         references.add(request.container()); references.addAll(List.copyOf(request.references()));
         var byKey = new HashMap<DocumentPayloadCheck.SchemaKey, Reference>();
@@ -217,9 +266,13 @@ public final class DocumentSchemaAdmission {
                     new DocumentPayloadCheck.Limits((int) Math.max(1, decodedRemaining), 1_000_000, 64, 4096, 65536),
                     DocumentSchemaOccurrences.Limits.DEFAULT, new DocumentSchemaReplay.Limits(4096, 4L * MIB, 65536),
                     limits.maxEvidenceBytes());
-            var checked = DocumentFragmentSchemaReplay.check(container, part.getSlot(), fragments.get(ordinal),
-                    member.getDestination().getAddress().getDocId(), evidence, metadata, retained, VALIDATOR, replayLimits,
-                    () -> active(control));
+            var checked = resources == null
+                    ? DocumentFragmentSchemaReplay.check(container, part.getSlot(), fragments.get(ordinal),
+                            member.getDestination().getAddress().getDocId(), evidence, metadata, retained, VALIDATOR,
+                            replayLimits, () -> active(control))
+                    : DocumentFragmentSchemaReplay.check(container, part.getSlot(), fragments.get(ordinal),
+                            member.getDestination().getAddress().getDocId(), evidence, metadata, retained, VALIDATOR,
+                            replayLimits, resources, () -> active(control));
             for (int i = 0; i < checked.size(); i++) {
                 var root = checked.get(i);
                 decodedRemaining -= root.checked().payload().decodedBytes();
@@ -228,9 +281,19 @@ public final class DocumentSchemaAdmission {
                         && !root.checked().payload().schema().condition().equals(member.getStructuredSchema()))
                     throw new IllegalArgumentException("structured root differs from required schema");
                 var bundle = evidence.stream().filter(value -> value.getRoot().equals(root.root())).findFirst().orElseThrow();
-                var encoded = DocumentRootSchemaEvidenceCodec.encode(bundle, () -> active(control));
-                roots.add(new RootEvidence(ordinal, root.root(), DocumentSchemaRootCodec.encode(root.root(), () -> active(control)).sha256(),
-                        new EncodedEvidence(DocumentRootSchemaEvidenceCodec.CODEC, 1, encoded.bytes(), encoded.sha256())));
+                if (resources == null) {
+                    var encoded = DocumentRootSchemaEvidenceCodec.encode(bundle, () -> active(control));
+                    roots.add(new RootEvidence(ordinal, root.root(),
+                            DocumentSchemaRootCodec.encode(root.root(), () -> active(control)).sha256(),
+                            new EncodedEvidence(DocumentRootSchemaEvidenceCodec.CODEC, 1, encoded.bytes(), encoded.sha256())));
+                } else {
+                    var encoded = resources.retain(DocumentRootSchemaEvidenceCodec.encodeOwned(bundle,
+                            limits.maxEvidenceBytes(), resources, () -> active(control)));
+                    try (var locator = DocumentSchemaEvidenceCodec.encodeOwned(root.root(), resources, () -> active(control))) {
+                        roots.add(new RootEvidence(ordinal, root.root(), locator.value().sha256(),
+                                new EncodedEvidence(DocumentRootSchemaEvidenceCodec.CODEC, 1, encoded.bytes(), encoded.sha256())));
+                    }
+                }
             }
         }
         if (!used.equals(byKey.keySet())) throw new IllegalArgumentException("schema associations differ from complete used set");
@@ -241,7 +304,8 @@ public final class DocumentSchemaAdmission {
     }
 
     private static Map<Integer, List<DocumentRootSchemaEvidence>> decodeEvidence(
-            Map<Integer, List<EncodedEvidence>> input, Limits limits, Runnable control) throws InvalidProtocolBufferException {
+            Map<Integer, List<EncodedEvidence>> input, Limits limits, DocumentAdmissionReservations reservations,
+            Runnable control) throws InvalidProtocolBufferException {
         var result = new HashMap<Integer, List<DocumentRootSchemaEvidence>>();
         long bytes = 0; int roots = 0;
         for (var entry : input.entrySet()) {
@@ -257,8 +321,11 @@ public final class DocumentSchemaAdmission {
                 if (encoded.bytes().size() > limits.maxEvidenceBytes() - bytes)
                     throw new IllegalArgumentException("member evidence byte limit exceeded");
                 bytes += encoded.bytes().size(); roots++;
-                decoded.add(DocumentRootSchemaEvidenceCodec.decode(encoded.codec(), encoded.version(), encoded.bytes(),
-                        encoded.sha256(), () -> active(control)));
+                decoded.add(reservations == null
+                        ? DocumentRootSchemaEvidenceCodec.decode(encoded.codec(), encoded.version(), encoded.bytes(),
+                                encoded.sha256(), () -> active(control))
+                        : DocumentRootSchemaEvidenceCodec.decode(encoded.codec(), encoded.version(), encoded.bytes(),
+                                encoded.sha256(), reservations, () -> active(control)));
             }
             result.put(entry.getKey(), List.copyOf(decoded));
         }

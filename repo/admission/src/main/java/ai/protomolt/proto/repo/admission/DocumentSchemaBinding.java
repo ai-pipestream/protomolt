@@ -48,6 +48,11 @@ final class DocumentSchemaBinding {
      */
     static DocumentSchemaBinding bind(PublicationSchemaCondition condition, ByteString artifact,
             ClosedDescriptorSet.Limits limits, Runnable control) {
+        return bind(condition, artifact, limits, null, control);
+    }
+
+    static DocumentSchemaBinding bind(PublicationSchemaCondition condition, ByteString artifact,
+            ClosedDescriptorSet.Limits limits, DocumentAdmissionReservations reservations, Runnable control) {
         Objects.requireNonNull(condition, "condition");
         Objects.requireNonNull(artifact, "artifact");
         Objects.requireNonNull(limits, "limits");
@@ -66,7 +71,19 @@ final class DocumentSchemaBinding {
             throw new IllegalArgumentException("schema artifact contains files outside the selected type's import closure");
         }
         control.run();
-        String fingerprint = DescriptorFingerprints.fingerprint(closure);
+        final String fingerprint;
+        if (reservations == null) {
+            fingerprint = DescriptorFingerprints.fingerprint(closure);
+        } else {
+            // Fingerprints sort the closure's files and serialize one exact-sized array.
+            // File ordering does not change its encoded size. Linked descriptor heap
+            // is separate; this lease covers only that transient serialization.
+            try (var scratch = Objects.requireNonNull(reservations.reserve(closure.getSerializedSize()))) {
+                control.run();
+                fingerprint = DescriptorFingerprints.fingerprint(closure);
+                control.run();
+            }
+        }
         if (!fingerprint.equals(condition.getDescriptorFingerprint())) {
             throw new IllegalArgumentException("schema descriptor fingerprint mismatch");
         }
