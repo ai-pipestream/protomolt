@@ -620,7 +620,9 @@ class DocumentUploadCoordinatorIT {
         }
     }
 
-    @Test void retainedReadsFollowSparseCommandOrderAcrossFreshAndEmptyParts() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void protectedRetainedReadsKeepPinsUntilBatchesAndActualWorkersEnd(boolean cancel) throws Exception {
         var base = fixture(3, LEASE);
         var source = retain(base, List.of(0, 2));
         var original = base.command.intent().getMembers(0);
@@ -653,26 +655,96 @@ class DocumentUploadCoordinatorIT {
                 command, UUID.randomUUID(), LEASE).owner().orElseThrow();
         UUID attempt = UUID.randomUUID();
         var prepared = DocumentOperationUploadAdmission.prepare(command, base.placements, Map.of("member", attempt), LEASE);
-        var plan = new DocumentOperationUploadAdmission(tx, new DriveLedger(tx)).captureRetainedReads(ADMIN, owner, prepared);
+        UUID incarnation = UUID.randomUUID();
+        var ledger = new DocumentReadLedger(tx, incarnation);
+        var protectedPlan = ledger.capture(admission, ADMIN, owner, prepared);
+        DocumentRetainedReadPlan plan;
+        try (var inspection = protectedPlan.use()) { plan = inspection.plan(); }
         assertThat(plan.entries()).extracting(DocumentRetainedReadPlan.Entry::revisionOrdinal).containsExactly(1, 3);
         long size = plan.entries().stream().mapToLong(e -> e.source().getObject().getSizeBytes()).sum();
         var budget = new PayloadBudget(size * 2);
         var gets = new java.util.concurrent.atomic.AtomicInteger();
+        var entered = new CountDownLatch(2); var unblock = new CountDownLatch(1);
+        var cancelled = new java.util.concurrent.atomic.AtomicBoolean();
         var counted = intercept((method, args, call) -> {
-            if (method.equals("getBounded")) gets.incrementAndGet();
-            return call.call();
+            Object result = call.call();
+            if (method.equals("getBounded")) {
+                gets.incrementAndGet(); entered.countDown();
+                if (cancel) {
+                    // Actual S3 GET completed; the provider wrapper deliberately ignores cancellation.
+                    long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+                    boolean interrupted = false;
+                    try {
+                        while (true) {
+                            long remaining = end - System.nanoTime();
+                            if (remaining <= 0) throw new IllegalStateException("Provider gate timed out");
+                            try {
+                                if (!unblock.await(remaining, TimeUnit.NANOSECONDS))
+                                    throw new IllegalStateException("Provider gate timed out");
+                                break;
+                            } catch (InterruptedException ignoredForFaultInjection) { interrupted = true; }
+                        }
+                    } finally { if (interrupted) Thread.currentThread().interrupt(); }
+                }
+            }
+            return result;
         });
         try (var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, retainedProfile) -> counted,
-                2, 1024 * 1024, budget);
-                var batch = reader.readRetained(plan, "member", ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
-            assertThat(batch.parts()).hasSize(2);
-            assertThat(batch.parts().get(0).bytes()).containsExactly(base.bodies.get(new DocumentUploadPayloads.Key("member", 2)).bytes());
-            assertThat(batch.parts().get(1).bytes()).containsExactly(base.bodies.get(new DocumentUploadPayloads.Key("member", 0)).bytes());
-            assertThat(budget.reservedBytes()).isEqualTo(size * 2);
+                2, 1024 * 1024, budget)) {
+            if (cancel) {
+                try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+                    var result = executor.submit(() -> reader.readRetained(protectedPlan, "member",
+                            new ai.protomolt.proto.repo.spi.RepositoryReadControl() {
+                                @Override public long remainingNanos() { return Long.MAX_VALUE; }
+                                @Override public boolean isCancelled() { return cancelled.get(); }
+                            }));
+                    try {
+                        assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+                        cancelled.set(true);
+                        assertThatThrownBy(() -> result.get(5, TimeUnit.SECONDS)).hasStackTraceContaining("Document read cancelled");
+                        protectedPlan.close(); ledger.fence();
+                        assertThat(protectedPlan.awaitDrained(Duration.ZERO)).isFalse();
+                        assertThatThrownBy(protectedPlan::release).isInstanceOf(IllegalStateException.class);
+                        assertThatThrownBy(ledger::attestLocalQuiescence).isInstanceOf(IllegalStateException.class);
+                        assertThat(documentPins(incarnation)).isEqualTo(2);
+                        assertThat(budget.reservedBytes()).isEqualTo(size * 2);
+                    } finally { unblock.countDown(); }
+                }
+                reader.close();
+                assertThat(reader.awaitIdle(Duration.ofSeconds(5))).isTrue();
+            } else {
+                assertThatThrownBy(() -> reader.readRetained(protectedPlan, "unknown",
+                        ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isInstanceOf(IllegalArgumentException.class);
+                try (var batch = reader.readRetained(protectedPlan, "member", ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+                    assertThat(batch.parts()).hasSize(2);
+                    assertThat(batch.parts().get(0).bytes()).containsExactly(base.bodies.get(new DocumentUploadPayloads.Key("member", 2)).bytes());
+                    assertThat(batch.parts().get(1).bytes()).containsExactly(base.bodies.get(new DocumentUploadPayloads.Key("member", 0)).bytes());
+                    assertThatThrownBy(() -> reader.readRetained(protectedPlan, "member",
+                            ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                            .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                                    error -> assertThat(error.code()).isEqualTo(
+                                            ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED));
+                    protectedPlan.close(); ledger.fence();
+                    assertThat(protectedPlan.isDrained()).isFalse();
+                    assertThatThrownBy(protectedPlan::release).isInstanceOf(IllegalStateException.class);
+                    assertThatThrownBy(ledger::attestLocalQuiescence).isInstanceOf(IllegalStateException.class);
+                    assertThat(documentPins(incarnation)).isEqualTo(2);
+                    assertThat(budget.reservedBytes()).isEqualTo(size * 2);
+                }
+            }
+            assertThat(protectedPlan.awaitDrained(Duration.ofSeconds(5))).isTrue();
+            ledger.attestLocalQuiescence(); protectedPlan.release();
+            assertThat(documentPins(incarnation)).isZero();
         }
         assertThat(gets.get()).isEqualTo(2);
         assertThat(budget.reservedBytes()).isZero();
         assertThat(new DocumentPartAttemptLedger(tx).find(attempt)).isEmpty();
+    }
+
+    private static long documentPins(UUID incarnation) {
+        return tx.readOnly(em -> ((Number) em.createNativeQuery(
+                "SELECT count(*) FROM document_read_pins WHERE reader_incarnation=:id")
+                .setParameter("id", incarnation).getSingleResult()).longValue());
     }
 
     private static DocumentUploadCoordinator coordinator(BlobStore store, PayloadBudget budget, Duration age) {

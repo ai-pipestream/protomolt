@@ -2960,3 +2960,37 @@ merge or deployment ran.
 Sol found no blocking recovery-gate or identity issue. The cutover plan records the
 reviewed batch-admission barrier and separate setup lifetime for the next integration;
 the current provider path does not yet use this protection.
+
+### Protected document read lifetimes
+
+`DocumentReadLedger` registers a fresh reader incarnation and counts admission
+before capture enters SQL. Each captured plan admits Uses until plan close or
+host fencing. A Use can transfer its already admitted lifetime to a batch after
+fencing without increasing the count or opening a gap. Closing plans and Uses
+does only local accounting; a latch reports drain without executing callbacks on
+provider threads. The coordinator explicitly releases after drain, with visible
+SQL failures and serialized retry/recovery. Local quiescence requires fenced
+admission and every captured plan to have drained, even if pin release failed.
+
+The protected `DocumentPartReader.readRetained` overload holds the Use through
+setup, resolver work, provider calls and returned batch ownership. The existing
+batch admission barrier prevents closed batches from starting provider calls and
+retains protection for workers already entered. Cancellation remains prompt.
+The raw-plan overload is unchanged and still requires caller-supplied protection;
+production host mounting and crash-recovery pin discovery are not implemented.
+
+Real PostgreSQL cases cover fresh-identity refusal, failed capture, transfer after
+fencing, multiple Uses, duplicate closes, release lock timeout with durable pins,
+and recovery after local drain. A blocked SQL capture races host fencing: local
+quiescence refuses until capture exits, then durable ACTIVE-state checking refuses
+that capture. Real versioned S3 reads cover sparse fragment order, open-batch pin
+retention, unknown-member and exhausted-budget cleanup, and cancelled reads whose
+provider wrapper deliberately ignores interruption after actual GETs. Pins and byte
+reservations remain held until those workers return; no synthetic provider success
+is used. Fixtures prove storage lifetimes, not typed content validation.
+
+Sol found no blocking race. Final qualification passed 240 cases in 16 suites
+(container admission/coordinator, engine and service reader/legacy-reader suites),
+with no failures or skips; the engine runtime boundary gate passed. Initial test
+compilation exposed missing cancellation-control methods, which were corrected.
+The final invocation completed in 33s. No hosted CI, push, merge or deployment ran.

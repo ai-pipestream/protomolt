@@ -5,6 +5,7 @@ import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
 import ai.protomolt.proto.repo.codec.DocumentPartCodec;
 import ai.protomolt.proto.repo.codec.PartObject;
 import ai.protomolt.proto.repo.container.ledger.DocumentPublicationLedger;
+import ai.protomolt.proto.repo.container.ledger.DocumentReadLedger;
 import ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger;
 import ai.protomolt.proto.repo.spi.RepositoryException;
 import ai.protomolt.proto.repo.spi.RepositoryReadControl;
@@ -164,6 +165,24 @@ public final class DocumentPartReader implements AutoCloseable {
     public DocumentReadBatch readRetained(
             ai.protomolt.proto.repo.container.ledger.DocumentRetainedReadPlan plan,
             String memberId, RepositoryReadControl control) {
+        return readRetained(plan, memberId, control, null);
+    }
+
+    /**
+     * Keeps the ledger-issued protection through setup, actual provider completion
+     * and returned batch ownership. The coordinator closes the plan, awaits drain
+     * and releases its SQL pins separately. Cancellation does not imply drain.
+     */
+    public DocumentReadBatch readRetained(DocumentReadLedger.PinnedPlan plan,
+            String memberId, RepositoryReadControl control) {
+        try (var setup = Objects.requireNonNull(plan).use()) {
+            return readRetained(setup.plan(), memberId, control, setup);
+        }
+    }
+
+    private DocumentReadBatch readRetained(
+            ai.protomolt.proto.repo.container.ledger.DocumentRetainedReadPlan plan,
+            String memberId, RepositoryReadControl control, DocumentReadLedger.PinnedPlan.Use protection) {
         Objects.requireNonNull(plan); Objects.requireNonNull(memberId);
         enterOperation();
         try {
@@ -181,7 +200,8 @@ public final class DocumentPartReader implements AutoCloseable {
                         object.hasProviderVersion() ? object.getProviderVersion() : null, null, object.getContentType()),
                         entry.binding()));
             }
-            return readBoundParts(wanted, control);
+            return readFragments(wanted.stream().map(DocumentPublicationLedger.BoundPart::part).toList(),
+                    () -> resolveBoundParts(wanted, control), control, false, protection);
         } finally { exitOperation(); }
     }
 
@@ -307,6 +327,12 @@ public final class DocumentPartReader implements AutoCloseable {
 
     private DocumentReadBatch readFragments(List<DocumentPublicationLedger.Part> parts,
             java.util.function.Supplier<List<ResolvedPart>> resolve, RepositoryReadControl control, boolean legacy) {
+        return readFragments(parts, resolve, control, legacy, null);
+    }
+
+    private DocumentReadBatch readFragments(List<DocumentPublicationLedger.Part> parts,
+            java.util.function.Supplier<List<ResolvedPart>> resolve, RepositoryReadControl control, boolean legacy,
+            DocumentReadLedger.PinnedPlan.Use protection) {
         checkActive(control);
         long total = 0;
         for (var part : parts) {
@@ -316,7 +342,7 @@ public final class DocumentPartReader implements AutoCloseable {
             total += part.size();
         }
         DocumentReadBatch batch;
-        try { batch = new DocumentReadBatch(payloadBudget.reserve(total * 2)); }
+        try { batch = new DocumentReadBatch(payloadBudget.reserve(total * 2), protection); }
         catch (PayloadBudget.CapacityExceededException exhausted) {
             throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED, "Document payload capacity exhausted", exhausted);
         }

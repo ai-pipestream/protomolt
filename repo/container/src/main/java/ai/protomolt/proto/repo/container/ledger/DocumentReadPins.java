@@ -12,7 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.UUID;
 
-/** Internal whole-plan acquisition. Host lifetime ownership/recovery must precede activation. */
+/** Internal whole-plan acquisition and release; DocumentReadLedger owns local read lifetimes. */
 final class DocumentReadPins {
     private DocumentReadPins() {}
     record Pin(UUID id, UUID object) {}

@@ -518,6 +518,95 @@ class DocumentOperationUploadAdmissionIT {
         return reader;
     }
 
+    @Test void documentReadOwnerWaitsForTransferredUsesBeforeQuiescence() throws Exception {
+        var f = fixture(0); UUID id = UUID.randomUUID();
+        var ledger = new DocumentReadLedger(tx, id);
+        assertThatThrownBy(() -> new DocumentReadLedger(tx, id)).isInstanceOf(RuntimeException.class);
+        var plan = ledger.capture(admission, SCOPED, f.owner, f.prepare());
+        var setup = plan.use(); var other = plan.use();
+        assertThat(setup.plan().command()).isEqualTo(f.command);
+        assertThatThrownBy(plan::release).isInstanceOf(IllegalStateException.class);
+        ledger.fence(); ledger.fence(); plan.close(); plan.close();
+        assertThatThrownBy(plan::use).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> ledger.capture(admission, SCOPED, f.owner, f.prepare()))
+                .isInstanceOf(IllegalStateException.class);
+        // Already admitted setup can hand ownership to its batch after fencing.
+        var batch = setup.transfer(); setup.close(); other.close(); other.close();
+        assertThatThrownBy(setup::plan).isInstanceOf(IllegalStateException.class);
+        assertThat(plan.awaitDrained(Duration.ZERO)).isFalse();
+        assertThatThrownBy(ledger::attestLocalQuiescence).isInstanceOf(IllegalStateException.class);
+        assertThat(readPins(id)).isEqualTo(1);
+        batch.close(); batch.close();
+        assertThat(plan.awaitDrained(Duration.ofSeconds(1))).isTrue();
+        ledger.attestLocalQuiescence(); ledger.attestLocalQuiescence();
+        plan.recover(); plan.release();
+        assertThat(readPins(id)).isZero();
+    }
+
+    @Test void failedCaptureDoesNotLeaveAFalseLocalLifetime() {
+        var f = fixture(0); UUID id = UUID.randomUUID();
+        var ledger = new DocumentReadLedger(tx, id);
+        assertThatThrownBy(() -> ledger.capture(admission, null, f.owner, f.prepare()))
+                .isInstanceOf(RepositoryException.class);
+        ledger.fence(); ledger.attestLocalQuiescence();
+        assertThat(readPins(id)).isZero();
+    }
+
+    @Test void fenceCannotAttestWhileCaptureWaitsForItsOperationLock() throws Exception {
+        var f = fixture(0); UUID id = UUID.randomUUID();
+        var ledger = new DocumentReadLedger(tx, id);
+        var prepared = f.prepare();
+        try (var blocker = database.entityManagerFactory().createEntityManager();
+                var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            blocker.getTransaction().begin();
+            try {
+                RepositoryOperationLedger.fenceLiveOwner(blocker, f.owner);
+                int pid = ((Number) blocker.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue();
+                var capture = executor.submit(() -> ledger.capture(admission, SCOPED, f.owner, prepared));
+                long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+                boolean waiting = false;
+                do {
+                    waiting = tx.readOnly(em -> !em.createNativeQuery(
+                            "SELECT pid FROM pg_stat_activity WHERE :blocker=ANY(pg_blocking_pids(pid))")
+                            .setParameter("blocker", pid).getResultList().isEmpty());
+                    if (waiting || capture.isDone()) break;
+                    Thread.sleep(10);
+                } while (System.nanoTime() < deadline);
+                assertThat(waiting).as("capture is inside SQL admission").isTrue();
+                ledger.fence();
+                assertThatThrownBy(ledger::attestLocalQuiescence).isInstanceOf(IllegalStateException.class);
+                blocker.getTransaction().rollback();
+                assertThatThrownBy(() -> capture.get(5, java.util.concurrent.TimeUnit.SECONDS))
+                        .hasStackTraceContaining("ACTIVE");
+                ledger.attestLocalQuiescence();
+                assertThat(readPins(id)).isZero();
+            } finally {
+                if (blocker.getTransaction().isActive()) blocker.getTransaction().rollback();
+            }
+        }
+    }
+
+    @Test void failedReleaseRemainsRecoverableAfterLocalDrain() {
+        var f = fixture(0); UUID id = UUID.randomUUID();
+        var ledger = new DocumentReadLedger(tx.withTimeouts(
+                new SqlTimeouts(Duration.ofMillis(100), Duration.ofSeconds(2))), id);
+        var plan = ledger.capture(admission, SCOPED, f.owner, f.prepare());
+        UUID object = UUID.fromString(f.command.intent().getMembers(0).getParts(0).getReuse().getObject().getObjectId());
+        plan.close();
+        try (var blocker = database.entityManagerFactory().createEntityManager()) {
+            blocker.getTransaction().begin();
+            try {
+                blocker.createNativeQuery("SELECT object_id FROM repository_object_retention WHERE object_id=:id FOR UPDATE")
+                        .setParameter("id", object).getSingleResult();
+                assertThatThrownBy(plan::release).hasStackTraceContaining("lock timeout");
+                assertThat(readPins(id)).isEqualTo(1);
+                ledger.fence(); ledger.attestLocalQuiescence();
+            } finally { blocker.getTransaction().rollback(); }
+        }
+        plan.recover(); plan.recover();
+        assertThat(readPins(id)).isZero();
+    }
+
     private static long readPins(UUID reader) {
         return tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM document_read_pins WHERE reader_incarnation=:reader")
                 .setParameter("reader", reader).getSingleResult()).longValue());

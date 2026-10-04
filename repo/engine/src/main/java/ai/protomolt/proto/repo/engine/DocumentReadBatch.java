@@ -2,6 +2,7 @@ package ai.protomolt.proto.repo.engine;
 
 import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
 import ai.protomolt.proto.repo.codec.PartObject;
+import ai.protomolt.proto.repo.container.ledger.DocumentReadLedger;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 
@@ -12,11 +13,18 @@ import java.util.concurrent.CancellationException;
  */
 public final class DocumentReadBatch implements AutoCloseable {
     private final PayloadBudget.Lease reservation;
+    private final DocumentReadLedger.PinnedPlan.Use protection;
     private List<PartObject> parts;
     private int workers;
     private boolean closed;
 
-    DocumentReadBatch(PayloadBudget.Lease reservation) { this.reservation = reservation; }
+    DocumentReadBatch(PayloadBudget.Lease reservation) { this(reservation, null); }
+
+    DocumentReadBatch(PayloadBudget.Lease reservation, DocumentReadLedger.PinnedPlan.Use setup) {
+        this.reservation = reservation;
+        try { this.protection = setup == null ? null : setup.transfer(); }
+        catch (RuntimeException | Error failure) { reservation.close(); throw failure; }
+    }
 
     synchronized void enterWorker() {
         if (closed) throw new CancellationException("Document read batch is closed");
@@ -26,7 +34,7 @@ public final class DocumentReadBatch implements AutoCloseable {
     synchronized void exitWorker() {
         if (workers <= 0) throw new IllegalStateException("Unbalanced document read worker");
         workers--;
-        if (closed && workers == 0) reservation.close();
+        if (closed && workers == 0) releaseLocalOwnership();
     }
 
     synchronized void complete(List<PartObject> parts) {
@@ -45,6 +53,12 @@ public final class DocumentReadBatch implements AutoCloseable {
         if (closed) return;
         closed = true;
         parts = null;
-        if (workers == 0) reservation.close();
+        if (workers == 0) releaseLocalOwnership();
+    }
+
+    // Only local accounting: SQL release belongs to the coordinator after plan drain.
+    private void releaseLocalOwnership() {
+        reservation.close();
+        if (protection != null) protection.close();
     }
 }

@@ -280,9 +280,13 @@ origin, retention and native-pin lock sets and identity checks before/after lock
 Internal whole-plan acquisition now validates all
 claims, locks complete sorted origin/retention sets and inserts deduplicated pins
 atomically. V46 adds recovery of exact pin batches only after durable QUIESCED
-evidence; it does not establish that evidence. Host lifetime ownership remains
-unimplemented, and provider reads do not yet acquire these pins. The remaining
-integration must reuse the existing
+evidence; it does not establish that evidence. `DocumentReadLedger` now owns a
+fresh incarnation, counts capture and protected-plan lifetimes, fences admission
+and refuses local quiescence until all plans close and their Uses end. The engine's
+protected `readRetained` overload transfers a setup Use to the returned batch;
+provider calls that ignore cancellation retain it until actual return. This is an
+opt-in internal composition, not the production host default. The raw-plan overload
+still requires protection supplied by its caller. The owner uses the existing
 `repository_reader_incarnations` lifecycle from V31/V32: fresh ACTIVE incarnations,
 permanent fencing, and trusted LOCAL_DRAIN attestation before QUIESCED recovery.
 Pins do not expire. A deadline, cancelled Future or expired operation lease cannot
@@ -323,17 +327,22 @@ alone is insufficient: it does not count returned `DocumentReadBatch` lifetimes.
 A stale remote host or UNKNOWN incarnation needs external proof of shutdown;
 elapsed time alone cannot authorize recovery.
 
-For the engine integration, reuse the batch's existing synchronized admission
+The engine integration reuses the batch's existing synchronized admission
 barrier: `enterWorker` rejects a closed batch before provider I/O, and release is
 eligible only when the batch is closed and its entered-worker count is zero.
 Queued tasks therefore need no separate lifetime counter as long as every provider
 call remains behind this barrier. A separate setup lifetime must cover capture,
 resolver work and ownership handoff, including failures before a batch exists.
-Closing a batch or cancelling a Future must remain prompt even when a provider
-ignores interruption. Signal release once outside the batch monitor; retain an
-observable release outcome and retry ownership if SQL fails. An exception from a
-cancelled worker's Future is not an adequate reporting channel. This is the reviewed
-integration design, not an activated provider path.
+Closing a batch or cancelling a Future remains prompt even when a provider ignores
+interruption. A latch signals plan drain without running user callbacks on the
+last worker. The coordinator retains the plan handle, awaits drain with a bounded
+timeout and explicitly invokes `release` outside batch/lifecycle monitors. Release
+and recovery serialize per handle; SQL failure propagates and permits retry.
+The host must bound its waiting tasks, preserve failed-release handles and keep
+its SQL pool alive through release or recovery. An exception from a cancelled
+worker's Future is not an adequate reporting channel. Durable recovery discovery
+after losing an in-memory handle, cleanup races and production host mounting remain
+unfinished; these APIs do not establish remote-crash quiescence.
 
 Acceptance requires atomic multi-object rollback, acquisition versus cleanup in
 both lock orders, logical source deletion while a pin still blocks reclaim,
