@@ -445,33 +445,54 @@ class DocumentUploadCoordinatorIT {
         }
     }
 
-    @Test void retainedCoreIsReusedWhileOnlyChangedChunksAreUploaded() throws Exception {
-        var base = fixture(2, LEASE);
+    private record RetainedSource(DocumentRecord published, DocumentManifest manifest, DriveRecord drive,
+            DocumentPartAttemptLedger.PlannedObject core, DocumentPartStager.Staged stored) {}
+
+    /** Real staged bytes and guarded SQL publication; not semantic/typed admission evidence. */
+    private static RetainedSource retain(Fixture base, List<Integer> ordinals) throws Exception {
         var original = base.command.intent().getMembers(0);
         var address = original.getDestination().getAddress();
         var drive = new DriveLedger(tx).findById(UUID.fromString(original.getDriveId())).orElseThrow();
         var planned = DocumentUploadPlan.prepare(base.command, base.placements, Map.of("member", base.attempt))
                 .members().getFirst().attempt().orElseThrow();
         var core = planned.uploads().getFirst().object();
-        var fullPlan = new DocumentPartAttemptLedger.Plan(base.attempt, planned.location(), 0, Map.of(), List.of(core));
+        var objects = ordinals.stream().map(i -> planned.uploads().get(i).object()).toList();
+        var fullPlan = new DocumentPartAttemptLedger.Plan(base.attempt, planned.location(), 0, Map.of(), objects);
         DocumentPartStager.Staged stored;
         try (var stager = new DocumentPartStager(tx, GENERATION, profile.identity(), opened)) {
-            stored = stager.stage(fullPlan, List.of(base.bodies.get(new DocumentUploadPayloads.Key("member", 0))), LEASE, Map.of());
+            stored = stager.stage(fullPlan, ordinals.stream()
+                    .map(i -> base.bodies.get(new DocumentUploadPayloads.Key("member", i))).toList(), LEASE, Map.of());
         }
         var measured = stored.parts().getFirst();
         assertThat(measured.providerVersion()).isNotBlank().isNotEqualTo("null");
-        var manifest = DocumentManifest.newBuilder().setAddress(address).setDocVersion(1)
-                .addParts(PartManifestEntry.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE)
-                        .setState(PartState.PART_STATE_PRESENT).setObjectKey(core.objectKey()).setSizeBytes(core.size()).setSha256(core.sha256())).build();
+        var manifestBuilder = DocumentManifest.newBuilder().setAddress(address).setDocVersion(1);
+        for (var object : objects) manifestBuilder.addParts(PartManifestEntry.newBuilder()
+                .setPart(object.part()).setSubKey(object.subKey()).setState(PartState.PART_STATE_PRESENT)
+                .setObjectKey(object.objectKey()).setSizeBytes(object.size()).setSha256(object.sha256()));
+        var manifest = manifestBuilder.build();
         var row = new DocumentRecord(); row.nodeId = planned.location().nodeId(); row.accountId = "account";
         row.docId = address.getDocId(); row.graphId = address.getGraphId(); row.graphAddressId = address.getGraphAddressId();
         row.rowKind = DocumentRowKind.PIPELINE; row.datasourceId = "source"; row.driveName = drive.name;
         row.objectKey = core.objectKey(); row.versionId = measured.providerVersion(); row.etag = measured.etag();
-        row.sizeBytes = core.size(); row.createdAt = java.time.Instant.now(); row.updatedAt = row.createdAt;
+        row.sizeBytes = objects.stream().mapToLong(DocumentPartAttemptLedger.PlannedObject::size).sum();
+        row.createdAt = java.time.Instant.now(); row.updatedAt = row.createdAt;
         row.writeSecurity(DocumentSecurity.getDefaultInstance()); row.writeManifest(manifest);
         row.checksum = DocumentPartCodec.rootChecksumFromManifest(manifest);
         var published = new DocumentLedger(tx).saveVerifiedAttempt(row, null, Map.of(), base.attempt, stored.attempt().token(),
                 new DocumentPublicationTarget(new DriveLedger(tx), drive, GENERATION, profile.identity()), (em, saved) -> {});
+        return new RetainedSource(published, manifest, drive, core, stored);
+    }
+
+    @Test void retainedCoreIsReusedWhileOnlyChangedChunksAreUploaded() throws Exception {
+        var base = fixture(2, LEASE);
+        var source = retain(base, List.of(0));
+        var original = base.command.intent().getMembers(0);
+        var address = original.getDestination().getAddress();
+        var drive = source.drive();
+        var core = source.core();
+        var measured = source.stored().parts().getFirst();
+        var published = source.published();
+        var manifest = source.manifest();
         String physical = tx.readOnly(em -> em.createNativeQuery(
                 "SELECT physical_object_id FROM document_part_attempt_objects WHERE attempt_id=:id")
                 .setParameter("id", base.attempt).getSingleResult().toString());
@@ -597,6 +618,61 @@ class DocumentUploadCoordinatorIT {
                             e -> assertThat(e.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.DATA_LOSS));
             assertThat(readBudget.reservedBytes()).isZero();
         }
+    }
+
+    @Test void retainedReadsFollowSparseCommandOrderAcrossFreshAndEmptyParts() throws Exception {
+        var base = fixture(3, LEASE);
+        var source = retain(base, List.of(0, 2));
+        var original = base.command.intent().getMembers(0);
+        var condition = DocumentRevisionCondition.newBuilder().setAddress(original.getDestination().getAddress())
+                .setExpectedMutationRevision(source.published().mutationRevision).build();
+        var reused = new java.util.ArrayList<DocumentPublicationPart>();
+        for (int index : List.of(2, 0)) {
+            var slot = original.getParts(index).getSlot();
+            var measured = source.stored().parts().stream()
+                    .filter(p -> p.part() == slot.getPart() && p.subKey().equals(slot.getSubKey())).findFirst().orElseThrow();
+            String physical = tx.readOnly(em -> em.createNativeQuery(
+                    "SELECT physical_object_id FROM document_part_attempt_objects WHERE attempt_id=:id AND object_key=:key")
+                    .setParameter("id", base.attempt).setParameter("key", measured.key()).getSingleResult().toString());
+            var body = base.bodies.get(new DocumentUploadPayloads.Key("member", index));
+            var identity = PublicationObjectIdentity.newBuilder().setObjectId(physical).setBackendGeneration(GENERATION)
+                    .setStorageRealm(profile.storageRealm()).setNamespace(NAMESPACE).setObjectKey(measured.key())
+                    .setProviderVersion(measured.providerVersion()).setSizeBytes(body.bytes().length)
+                    .setSha256(body.sha256()).setContentType(original.getParts(index).getUpload().getContentType());
+            reused.add(DocumentPublicationPart.newBuilder().setSlot(slot).setReuse(PublicationReuse.newBuilder()
+                    .setSource(condition).setSourceSlot(slot).setObject(identity)).build());
+        }
+        var member = original.toBuilder().setDestination(condition).clearParts()
+                .addParts(original.getParts(1)).addParts(reused.get(0))
+                .addParts(DocumentPublicationPart.newBuilder().setSlot(DocumentPublicationSlot.newBuilder()
+                        .setPart(DocumentPart.DOCUMENT_PART_BLOBS)).setEmpty(true))
+                .addParts(reused.get(1)).build();
+        var command = new DocumentPublicationCommand(base.command.intent().toBuilder()
+                .setOperationId(UUID.randomUUID().toString()).clearMembers().addMembers(member).build());
+        var owner = new RepositoryOperationLedger(tx).admit(new RepositoryOperationLedger.Key("account", "principal", command.operationId()),
+                command, UUID.randomUUID(), LEASE).owner().orElseThrow();
+        UUID attempt = UUID.randomUUID();
+        var prepared = DocumentOperationUploadAdmission.prepare(command, base.placements, Map.of("member", attempt), LEASE);
+        var plan = new DocumentOperationUploadAdmission(tx, new DriveLedger(tx)).captureRetainedReads(ADMIN, owner, prepared);
+        assertThat(plan.entries()).extracting(DocumentRetainedReadPlan.Entry::revisionOrdinal).containsExactly(1, 3);
+        long size = plan.entries().stream().mapToLong(e -> e.source().getObject().getSizeBytes()).sum();
+        var budget = new PayloadBudget(size * 2);
+        var gets = new java.util.concurrent.atomic.AtomicInteger();
+        var counted = intercept((method, args, call) -> {
+            if (method.equals("getBounded")) gets.incrementAndGet();
+            return call.call();
+        });
+        try (var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, retainedProfile) -> counted,
+                2, 1024 * 1024, budget);
+                var batch = reader.readRetained(plan, "member", ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+            assertThat(batch.parts()).hasSize(2);
+            assertThat(batch.parts().get(0).bytes()).containsExactly(base.bodies.get(new DocumentUploadPayloads.Key("member", 2)).bytes());
+            assertThat(batch.parts().get(1).bytes()).containsExactly(base.bodies.get(new DocumentUploadPayloads.Key("member", 0)).bytes());
+            assertThat(budget.reservedBytes()).isEqualTo(size * 2);
+        }
+        assertThat(gets.get()).isEqualTo(2);
+        assertThat(budget.reservedBytes()).isZero();
+        assertThat(new DocumentPartAttemptLedger(tx).find(attempt)).isEmpty();
     }
 
     private static DocumentUploadCoordinator coordinator(BlobStore store, PayloadBudget budget, Duration age) {

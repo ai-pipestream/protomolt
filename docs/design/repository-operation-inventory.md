@@ -2850,3 +2850,27 @@ All 67 coordinator and managed/legacy reader cases passed in 32s, with the engin
 runtime dependency gate. Sol found no blocker; multiple retained inputs with
 intervening upload/EMPTY ordinals still need an end-to-end positional mapping case
 when integrating assembly. No hosted CI, push, merge or deployment ran.
+
+### Sparse retained reads and protection design
+
+The missing positional-mapping case now uses real staged S3 objects and guarded
+SQL publication. A command orders fresh CHUNKS, retained CHUNKS, EMPTY BLOBS and
+retained CORE. Its captured ordinals are 1 and 3; the bounded reader returns the
+two exact original bodies in that order, reversing their source publication order.
+Exactly two bounded GETs occur, the aggregate reservation survives through batch
+use, and no upload attempt is created. The source fixture was extracted for reuse
+by the earlier CORE carry-forward case. These bytes prove storage/order behavior,
+not semantic assembly or typed validation.
+
+The cutover design now specifies document pins using the existing reader
+incarnation/quiescence foundation, atomic whole-plan acquisition, sorted shared
+origin/retention locks, independent retention through logical source deletion,
+and release only after actual provider calls and protected batch owners drain.
+This is a proposed implementation with explicit race/recovery/performance tests,
+not a claim that document reader protection has landed.
+
+All 13 coordinator cases passed in 29s after correcting a test compilation error
+in a Part accessor. No production code, hosted CI, push, merge or deployment changed.
+Sol reviewed the fixture and design; its distinction between deduplicated physical
+pins and all canonical source claims is incorporated, along with the host/SQL
+authentication boundary.

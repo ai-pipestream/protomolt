@@ -268,7 +268,61 @@ and retain it through actual I/O completion. Re-fence source authorization/revis
 owner, selected attempts and physical retention after I/O. Final publication still
 performs its own atomic fence; neither a read plan nor a checked draft grants it.
 
-Implementation order and acceptance:
+### Document reader protection before activation
+
+This protection is designed, not implemented. Reuse the existing
+`repository_reader_incarnations` lifecycle from V31/V32: fresh ACTIVE incarnations,
+permanent fencing, and trusted LOCAL_DRAIN attestation before QUIESCED recovery.
+Pins do not expire. A deadline, cancelled Future or expired operation lease cannot
+prove that a provider has stopped using an object.
+
+Add document-specific native read pins and a DOCUMENT_READER generic reference
+kind. Archive pins have archive-entry/version foreign keys and cannot represent
+document identities. Each document pin binds its reader incarnation and exact
+physical object independently of current and historical document rows. Validate
+every source claim in the canonical plan before deduplicating protection by object;
+one physical pin may record one witnessed source, while the canonical command
+retains all source claims for later reauthorization. A pin does not attest that
+every source remains authorized. Deleting a source revision must not cascade-delete
+its active read protection. Add the corresponding native-reference predicate and
+mirror guards without weakening the existing archive/current/history cases.
+
+Acquire protection for the whole canonical retained plan in one short transaction:
+fence the operation owner, require an active reader, lock/authorize the source and
+destination revision set, validate every claim, then prelock all distinct document
+origin attempts in PostgreSQL UUID order FOR SHARE followed by all distinct
+retention objects in UUID order FOR SHARE. Reject retiring or reclaiming objects.
+Insert one native pin/reference per distinct physical object, then recheck owner
+expiry before commit. Claim validation, sorted locks and inserts must share this
+transaction; a previously captured plan is insufficient. No provider call occurs
+under these locks. An invalid final object rolls back the whole acquisition.
+
+The generic reference guard needs a shared-lock branch for DOCUMENT_READER;
+otherwise its default exclusive branch would upgrade these locks. Preserve the
+existing durable document reference modes until their separate concurrency audit.
+Trigger-acquired locks must obey the same complete origin-then-retention ordering.
+Release uses that order and exact pin/incarnation/object identity. Failed releases
+stay durably pinned for retry or proven-quiescent recovery; never log and forget them.
+
+The owning host must account for active provider calls and every open protected
+batch. Fence new pin admission before shutdown, stop new reads, drain actual
+workers and batch owners, then attest local quiescence. `DocumentPartReader.awaitIdle`
+alone is insufficient: it does not count returned `DocumentReadBatch` lifetimes.
+A stale remote host or UNKNOWN incarnation needs external proof of shutdown;
+elapsed time alone cannot authorize recovery.
+
+Acceptance requires atomic multi-object rollback, acquisition versus cleanup in
+both lock orders, logical source deletion while a pin still blocks reclaim,
+cancelled real provider calls that continue holding their pins until actual return,
+failed release/retry, wrong-incarnation and unquiesced recovery refusal, and
+idempotent recovery after verified local drain. Exercise overlapping 257-object
+plans submitted in opposite orders to expose hidden per-row lock upgrades. Direct
+SQL must reject structurally forged pin identities and detached generic references;
+caller authentication still belongs to the host under the trusted database-writer
+boundary. Record lock waits and
+client statement counts as well as correctness; avoid an origin lock per object.
+
+### Implementation order and acceptance
 
 1. Expose the controlled exact read plan and extend the reader. Real SQL/provider
    cases must reject a matching slot with a different object/version/type, retain
