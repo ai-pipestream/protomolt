@@ -30,7 +30,9 @@ final class DocumentSchemaRetentionFixture {
             DocumentSchemaRetention retention, DocumentOperationUploadAdmission.Prepared prepared,
             DocumentSelectedAttemptLedger.Selected selected, DocumentCommandContent content) {}
 
-    static Fixture prepare(Context c) throws Exception {
+    static Fixture prepare(Context c) throws Exception { return prepare(c, true); }
+
+    static Fixture prepare(Context c, boolean typed) throws Exception {
         var ownership = OwnershipContext.newBuilder().setAccountId("account").setDatasourceId("source")
                 .setSecurity(DocumentSecurity.getDefaultInstance()).build();
         var document = Document.newBuilder().setDocId("typed-fixture").setOwnership(ownership)
@@ -59,14 +61,14 @@ final class DocumentSchemaRetentionFixture {
         var owner = new RepositoryOperationLedger(c.tx()).admit(new RepositoryOperationLedger.Key("account", "principal", command.operationId()),
                 command, UUID.randomUUID(), Duration.ofMinutes(5)).owner().orElseThrow();
         var policy = DocumentAdmissionPolicy.of(DocumentSchemaPolicy.newBuilder().setEncodingVersion(1).setAccountId("account")
-                .setMode(DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_TYPED_REQUIRED).setAnyResolvedSchema(true)
+                .setMode(typed ? DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_TYPED_REQUIRED : DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_OPAQUE_ALLOWED).setAnyResolvedSchema(true)
                 .setValidationProfile("protomolt-retained-schema-admission/v1").setLimits(DocumentSchemaPolicyLimits.newBuilder()
                         .setMaxFragments(32).setMaxFragmentBytes(4_000_000).setMaxRoots(100).setMaxEvidenceBytes(4_000_000)
                         .setMaxBindings(20).setMaxRetainedBytes(16_000_000).setMaxDecodedBytes(1_000_000)).build(), () -> {});
         var payload = definition(StringValue.getDescriptor(), true);
         var proof = policy.prepareAndCheck(ByteString.copyFrom(HexFormat.of().parseHex(command.sha256())),
                 command.intent().getMembers(0), fragments, definition(Document.getDescriptor()), ignored -> payload, () -> {});
-        var batch = DocumentSchemaBatch.prepare(command, new DocumentSchemaPolicies.Selection("account", 1, policy), Map.of("member", proof), () -> {});
+        var batch = DocumentSchemaBatch.prepare(command, new DocumentSchemaPolicies.Selection("account", 1, policy), typed ? Map.of("member", proof) : Map.of(), () -> {});
         batch.stage(new RepositorySchemaArtifacts(c.tx()), owner, () -> {});
         var placements = Map.of(drive.driveId, DocumentUploadPlan.Placement.sample(drive, "schema-retention", profile));
         var prepared = DocumentOperationUploadAdmission.prepare(command, placements, Map.of("member", UUID.randomUUID()), Duration.ofMinutes(5));
@@ -81,7 +83,7 @@ final class DocumentSchemaRetentionFixture {
         }).toList());
         var content = DocumentCommandContent.check(command, "member", fragments, false,
                 new DocumentRevisionAssembly.Limits(4_000_000, 100, 100, 100, 1_000_000), () -> {});
-        return new Fixture(command, owner, batch, DocumentSchemaRetention.prepare(batch, "member"), prepared, selected, content);
+        return new Fixture(command, owner, batch, typed ? DocumentSchemaRetention.prepare(batch, "member") : null, prepared, selected, content);
     }
 
     static UUID publish(Context c, Fixture f, BiConsumer<EntityManager, UUID> beforeSeal) {
@@ -110,12 +112,23 @@ final class DocumentSchemaRetentionFixture {
         return publish(c, f, omitCore, beforeSeal, (em, candidate) -> {});
     }
 
+    static UUID publishBound(Context c, Fixture f, BiConsumer<EntityManager, DocumentCommitWriter.Candidate> afterBinding,
+            ManifestCheck beforeSeal) {
+        return publish(c, f, false, beforeSeal, afterBinding, true);
+    }
+
     private static UUID publish(Context c, Fixture f, boolean omitCore, ManifestCheck beforeSeal,
             BiConsumer<EntityManager, DocumentCommitWriter.Candidate> beforeWrite) {
+        return publish(c, f, omitCore, beforeSeal, beforeWrite, false);
+    }
+
+    private static UUID publish(Context c, Fixture f, boolean omitCore, ManifestCheck beforeSeal,
+            BiConsumer<EntityManager, DocumentCommitWriter.Candidate> beforeWrite, boolean bound) {
         return c.tx().inTransaction(em -> {
             RepositoryOperationLedger.fenceLiveOwner(em, f.owner());
             RepositoryOperationLedger.requireCommand(em, f.owner().key(), f.command());
-            DocumentSchemaPolicies.lockUnboundWriter(em, "account");
+            if (bound) f.batch().lockPolicy(em, f.owner(), () -> {});
+            else DocumentSchemaPolicies.lockUnboundWriter(em, "account");
             var plan = f.prepared().plan();
             var locked = DocumentAdmissionAuthorization.lockAndAuthorize(em, CALLER, plan, DocumentAdmissionAuthorization.prepare(plan));
             plan.members().getFirst().placement().drive().lock(em, new DriveLedger(c.tx()));
@@ -123,6 +136,7 @@ final class DocumentSchemaRetentionFixture {
             var manifest = DocumentSchemaManifest.prepare(f.batch(), "member", parts, () -> {});
             f.batch().lockArtifacts(em, f.owner(), () -> {});
             var candidate = DocumentCommitWriter.prepare(plan.members().getFirst(), f.content(), parts, locked, Map.of(), Instant.now(), () -> {});
+            String decision = bound ? DocumentSchemaAdmissionBinding.insert(em, f.owner(), f.batch(), candidate, parts, () -> {}) : "OPAQUE";
             beforeWrite.accept(em, candidate);
             var row = em.merge(candidate.row()); em.flush(); em.refresh(row);
             var event = DocumentEventFactory.savedWithoutDelivery(row, row.updatedAt);
@@ -131,10 +145,10 @@ final class DocumentSchemaRetentionFixture {
             em.createNativeQuery("""
                     INSERT INTO document_revision_commits(revision_id,node_id,publication_revision,account_id,principal,operation_id,
                      owner_generation,member_id,member_ordinal,selection_revision,event_id,metadata_version,admission_mode)
-                    VALUES(:revision,:node,:mutation,'account','principal',:operation,:generation,'member',0,1,:event,1,'OPAQUE')
+                    VALUES(:revision,:node,:mutation,'account','principal',:operation,:generation,'member',0,1,:event,1,:decision)
                     """).setParameter("revision", revision).setParameter("node", row.nodeId).setParameter("mutation", row.mutationRevision)
                     .setParameter("operation", f.command().operationId()).setParameter("generation", f.owner().generation())
-                    .setParameter("event", event.eventId).executeUpdate();
+                    .setParameter("event", event.eventId).setParameter("decision", decision).executeUpdate();
             em.createNativeQuery("""
                     INSERT INTO document_revision_publications(revision_id,node_id,publication_revision,body,published_at,native_binding)
                     SELECT :revision,node_id,mutation_revision,document_publication_body(documents),clock_timestamp(),:revision

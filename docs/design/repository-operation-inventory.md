@@ -4703,3 +4703,62 @@ tests with no blocker. Admission-row enforcement and production integration are
 still required.
 Qualification: 15 tests pass across six snapshot cases, six retention cases and
 three manifest comparison cases. Both size-rejection branches are exercised.
+
+### Binding admission to the exact publication transaction
+
+V61 adds immutable `document_revision_schema_admissions` and extends the document,
+native commit, projection and seal guards. `DocumentSchemaAdmissionBinding.insert`
+is the new internal Java operation. It consumes the checked batch, finalized
+candidate and selected physical parts, freezes the body/metadata and manifest,
+and inserts without auto-flushing documents. A failure marks the transaction
+rollback-only. The production native publisher and public policy administration
+are not wired to this operation yet; this is not an advertised public typed API.
+
+An admission records the allocated revision, account, principal, operation, owner
+generation, member, node, selected attempt revision, previous document mutation
+revision, canonical command digest, exact policy revision/digest and explicit
+TYPED or OPAQUE decision. Policy references target immutable snapshots rather than
+the mutable current pointer. The insertion guard requires the live owner fence,
+shared account policy lock and current-pointer `FOR SHARE` lock. It checks the
+command and selection, locks an existing destination row and requires its sampled
+pre-change revision. Admission must precede the document mutation.
+
+For configured policies, a body write now requires the same-transaction admission
+with exact body, metadata and pre-change revision. One binding cannot authorize a
+second mutation in its transaction. The previous unchanged-body exception remains
+for ordinary metadata/bookkeeping changes when no admission exists for the node
+in that transaction. Commit and projection guards bind the exact revision, owner,
+member, selection, decision and snapshots; sealing compares all retained manifest
+sets while preserving V52's independent physical and selected-attempt checks.
+The policy pointer is rechecked at commit/seal/completion, including changes made
+by the publishing transaction itself.
+
+Deferred admission completion requires the sealed native revision and terminal
+operation success in the same transaction. Unused headers cannot commit. Typed
+decisions require nonempty schema evidence; explicit opaque decisions require
+empty schema sets. SQL enforces the storage identities and transaction, while the
+Java proof and checked policy determine protobuf validity and whether opaque
+admission is permitted. A failed typed check never falls back to opaque.
+
+Snapshots are bounded per member (16 MiB body, 1 MiB metadata, 16 MiB manifest),
+and per operation (64 members, 64 MiB combined snapshot text). Stored generated
+byte counts keep aggregate checks from repeatedly rendering earlier JSON values.
+These internal admission limits do not change the byte SPI conditional payload
+bound. Large-batch latency still requires measurement before production exposure.
+
+The SQL fixture exercises real runtime schema proofs and active policies for
+successful typed and explicit opaque decisions, preserving exact historical
+policy and metadata after later changes. Rejection cases cover changed candidate
+body/metadata, missing retained evidence, unused admissions, policy revision
+changes (including same-transaction changes), repeated mutation and immutable
+headers. Physical observations remain explicitly synthetic, and these cases do
+not replace real-provider or transport conformance testing.
+
+Qualification: 128 tests pass across the 10 new binding cases, policy publication
+and concurrency suites (6/4), native publication (13), retention (6), snapshots
+(6), manifests (3), atomic publication (64) and legacy revision projection (16).
+Sol reviewed the final migration, Java helper, lock order and tests with no
+blocker. The final migration includes the indexed node/transaction lookup and
+stored snapshot sizes. Public caller integration, a populated bound-revision
+upgrade/restore rehearsal, binding-specific cancellation and near-limit batch
+measurements remain to be completed before this capability is exposed.

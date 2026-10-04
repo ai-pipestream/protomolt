@@ -2365,8 +2365,11 @@ admission requires the complete verified proof and at least one supported payloa
 root. Explicit opaque admission is allowed only when the decoded selected policy
 and member contract permit omission; it retains no typed verdict. A failed typed
 attempt never chooses the opaque branch automatically. Existing unbound writers
-continue to reject configured policy. This admission-row integration is planned;
-neither the catalog nor the evidence-storage helper alone enables it.
+continue to reject configured policy. V61 and the internal Java binding helper now
+implement the admission-row and seal/terminal guards, including an exact pre-change
+mutation baseline and policy rechecks. Production publisher and authorized policy
+administration integration remain pending; the catalog and storage helpers alone
+do not expose typed publication.
 
 Expose two materialization modes, independently of admission policy:
 
