@@ -74,15 +74,9 @@ public final class ProtovalidateRuleSource implements ValidationRuleSource {
      * field; reparse the options against a knowing registry rather than silently dropping rules.
      */
     private static FieldRules fieldRules(DescriptorProtos.FieldOptions options) {
-        if (options.hasExtension(ValidateProto.field)) {
-            return options.getExtension(ValidateProto.field);
-        }
-        if (!options.getUnknownFields().hasField(ValidateProto.field.getNumber())) {
-            return null;
-        }
-        return OptionReparse
-                .reparse(options, DescriptorProtos.FieldOptions::parseFrom, "(buf.validate.field)")
-                .getExtension(ValidateProto.field);
+        options = OptionReparse.recover(options, ValidateProto.field.getNumber(),
+                DescriptorProtos.FieldOptions::parseFrom, "(buf.validate.field)");
+        return options.hasExtension(ValidateProto.field) ? options.getExtension(ValidateProto.field) : null;
     }
 
     /**
@@ -178,25 +172,17 @@ public final class ProtovalidateRuleSource implements ValidationRuleSource {
 
     /** As {@link #fieldRules} for the {@code (buf.validate.message)} extension. */
     private static MessageRules messageRules(DescriptorProtos.MessageOptions options) {
-        if (options.hasExtension(ValidateProto.message)) {
-            return options.getExtension(ValidateProto.message);
-        }
-        if (!options.getUnknownFields().hasField(ValidateProto.message.getNumber())) {
-            return null;
-        }
-        return OptionReparse.reparse(options, DescriptorProtos.MessageOptions::parseFrom, "(buf.validate.message)")
-                .getExtension(ValidateProto.message);
+        options = OptionReparse.recover(options, ValidateProto.message.getNumber(),
+                DescriptorProtos.MessageOptions::parseFrom, "(buf.validate.message)");
+        return options.hasExtension(ValidateProto.message) ? options.getExtension(ValidateProto.message) : null;
     }
 
     /** Names of the message's real protobuf oneofs annotated {@code (buf.validate.oneof).required}. */
     private static List<String> requiredOneofs(Descriptor message) {
         List<String> names = new ArrayList<>();
         for (com.google.protobuf.Descriptors.OneofDescriptor oneof : message.getRealOneofs()) {
-            var opts = oneof.getOptions();
-            if (!opts.hasExtension(ValidateProto.oneof)
-                    && opts.getUnknownFields().hasField(ValidateProto.oneof.getNumber())) {
-                opts = OptionReparse.reparse(opts, DescriptorProtos.OneofOptions::parseFrom, "(buf.validate.oneof)");
-            }
+            var opts = OptionReparse.recover(oneof.getOptions(), ValidateProto.oneof.getNumber(),
+                    DescriptorProtos.OneofOptions::parseFrom, "(buf.validate.oneof)");
             if (opts.hasExtension(ValidateProto.oneof)
                     && opts.getExtension(ValidateProto.oneof).getRequired()) {
                 names.add(oneof.getName());

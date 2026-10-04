@@ -117,17 +117,11 @@ final class PredefinedRules {
 
     /** Reads the {@code (buf.validate.predefined).cel} rules off an extension's options. */
     private static List<Rule> predefinedRules(FieldDescriptor ext) {
-        DescriptorProtos.FieldOptions options = ext.getOptions();
+        DescriptorProtos.FieldOptions options = OptionReparse.recover(ext.getOptions(),
+                ValidateProto.predefined.getNumber(), DescriptorProtos.FieldOptions::parseFrom,
+                "(buf.validate.predefined)");
         if (!options.hasExtension(ValidateProto.predefined)) {
-            if (!options.getUnknownFields().hasField(ValidateProto.predefined.getNumber())) {
-                return List.of();
-            }
-            // Custom options on a dynamically linked descriptor may survive only as unknown fields.
-            options = OptionReparse.reparse(options, DescriptorProtos.FieldOptions::parseFrom,
-                    "(buf.validate.predefined)");
-            if (!options.hasExtension(ValidateProto.predefined)) {
-                return List.of();
-            }
+            return List.of();
         }
         return options.getExtension(ValidateProto.predefined).getCelList();
     }

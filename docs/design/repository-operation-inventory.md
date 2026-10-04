@@ -3130,3 +3130,33 @@ implementation and regression cases address it. All 94 descriptor-module cases i
 12 suites passed with no failures or skips in 2s. No hosted CI, push, merge or
 deployment ran. The next integration gate is explicit schema/type identity and
 validation-option handling, followed by durable retention and offline restoration.
+
+### Validation options recovered from retained descriptors
+
+Retained-descriptor tests now pass the strict closure loader's output to the real
+ProtoValidator and ProtovalidateRuleSource. Valid data passes; numeric bounds and
+cross-field CEL rules still reject invalid data after option extensions have been
+serialized as unknown fields. This is local descriptor/validator integration, not
+durable archival admission or a registry-outage restore proof.
+
+Red tests exposed malformed outer validation options being treated as absent:
+a known option number with the wrong protobuf wire type survives reparsing as an
+unknown field, after which the previous code used default rules. OptionReparse now
+recovers targeted option bytes and rejects any residual occurrence of that option
+number. Field, message, real-oneof and predefined-rule declaration readers all use
+the check, including when valid and invalid occurrences coexist. Unrelated options
+are preserved. No protobuf declarations or wire identities changed.
+
+Sol reviewed the fix; regression tests cover the malformed options and mixed
+occurrences. The initial oneof fixture violated protobuf synthetic-oneof ordering
+and was corrected. Validator construction alone does not compile these rules;
+the integrated assertions invoke validate to exercise compilation. All 28 dialect
+and 13 conformance-harness unit tests passed without failures or skips; this was
+not a rerun of the external upstream conformance corpus.
+
+Typed admission remains disabled. Before enabling it, close the separately
+identified unsupported-rule paths: unknown fields inside recognized rule payloads,
+unknown enum numeric values, and unrecognized or incorrectly encoded predefined
+extensions. Preserve supported custom predefined rules while rejecting rules that
+cannot be interpreted. Also bind schema/type identity, retain exact artifacts,
+assemble admission evidence and prove historical decoding without the registry.
