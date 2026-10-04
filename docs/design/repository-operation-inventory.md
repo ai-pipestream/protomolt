@@ -5013,6 +5013,12 @@ and reads it through `DocumentHistoricalReadWorker`, using real PostgreSQL and
 versioned object storage without writer descriptors or fragment inputs. A second
 fresh JVM fails with DATA_LOSS after removal of that exact retained descriptor.
 Both children release their read pins. This establishes process-local cache
-independence; the writer process remains alive. Full deployment restart and a
-direct composed-reader revocation-during-replay case remain to be qualified;
-no public historical transport is advertised.
+independence; the writer process remains alive.
+
+The composed-reader revocation case uses real PostgreSQL locks to stop retained
+schema capture after provider I/O and queue a current ACL update. It observes
+final authorization waiting behind that update before committing revocation.
+The result is generic NOT_FOUND with no cause, no delivered document and zero
+remaining payload reservations or read pins. Full deployment restart and public
+transport integration remain to be qualified; no public historical transport is
+advertised.

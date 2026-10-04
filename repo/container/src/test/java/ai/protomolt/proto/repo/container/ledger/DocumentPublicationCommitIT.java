@@ -686,6 +686,127 @@ class DocumentPublicationCommitIT {
         assertThat(failure).contains("REPLAY_FAILURE|DATA_LOSS").doesNotContain("REPLAY_OK|");
     }
 
+    @Test void composedHistoricalReplaySuppressesResultWhenReadIsRevokedDuringSchemaLoad() throws Exception {
+        var fixture=fixture(1,1,publicReadGrant(),"revocation-"+UUID.randomUUID(),true,
+                Any.pack(com.google.protobuf.StringValue.of("revocation replay payload"),"type.test"));
+        var checked=stage(fixture);
+        var policy=ai.protomolt.proto.repo.admission.DocumentAdmissionPolicy.of(DocumentSchemaPolicy.newBuilder()
+                .setEncodingVersion(1).setAccountId(fixture.command.intent().getAccountId())
+                .setMode(DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_TYPED_REQUIRED).setAnyResolvedSchema(true)
+                .setValidationProfile("protomolt-retained-schema-admission/v1")
+                .setLimits(DocumentSchemaPolicyLimits.newBuilder().setMaxFragments(32).setMaxFragmentBytes(4_000_000)
+                        .setMaxRoots(100).setMaxEvidenceBytes(4_000_000).setMaxBindings(20)
+                        .setMaxRetainedBytes(16_000_000).setMaxDecodedBytes(1_000_000)).build(),()->{});
+        var member=fixture.command.intent().getMembers(0);
+        var fragments=new HashMap<Integer,ByteString>();
+        for(int i=0;i<member.getPartsCount();i++) fragments.put(i,ByteString.copyFrom(
+                fixture.bodies.get(new DocumentUploadPayloads.Key(member.getMemberId(),i)).bytes()));
+        var proof=policy.prepareAndCheck(ByteString.copyFrom(java.util.HexFormat.of().parseHex(fixture.command.sha256())),
+                member,fragments,DocumentSchemaRetentionFixture.definition(Document.getDescriptor()),
+                ignored->DocumentSchemaRetentionFixture.definition(com.google.protobuf.StringValue.getDescriptor()),()->{});
+        var selected=new DocumentSchemaPolicies(tx).activate(policy,0,()->{});
+        var admission=DocumentSchemaBatch.prepare(fixture.command,selected,Map.of(member.getMemberId(),proof),()->{});
+        admission.stage(new RepositorySchemaArtifacts(tx),fixture.owner,()->{});
+        var revision=publisher().commit(ADMIN,fixture.owner,fixture.prepared,Map.of(),checked.selected,admission,()->{})
+                .getMembers(0);
+
+        var caller=new RepositoryCaller("reader",false,java.util.Set.of(fixture.command.intent().getAccountId()),java.util.Set.of());
+        var incarnation=UUID.randomUUID();
+        var ledger=new DocumentReadLedger(new Tx(database.entityManagerFactory()),incarnation);
+        var history=ledger.captureHistorical(caller,revision.getAddress(),UUID.fromString(revision.getRevisionId()));
+        var budget=new PayloadBudget(8_000_000);
+        var node=ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(revision.getAddress());
+        var artifactBlocker=database.entityManagerFactory().createEntityManager();
+        var revokerReady=new java.util.concurrent.CountDownLatch(1);
+        var revokerAcquired=new java.util.concurrent.CountDownLatch(1);
+        var releaseRevoker=new java.util.concurrent.CountDownLatch(1);
+        var revokerBackend=new java.util.concurrent.atomic.AtomicInteger();
+        var executor=java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+        var parts=new ai.protomolt.proto.repo.engine.DocumentPartReader((generation,p)->opened.store(),4,1_000_000,budget);
+        try {
+            artifactBlocker.getTransaction().begin();
+            artifactBlocker.createNativeQuery("SET LOCAL lock_timeout='10s'").executeUpdate();
+            artifactBlocker.createNativeQuery("LOCK TABLE repository_schema_artifacts IN ACCESS EXCLUSIVE MODE").executeUpdate();
+            int artifactPid=((Number)artifactBlocker.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue();
+            var replay=new ai.protomolt.proto.repo.engine.DocumentHistoricalReader(parts,budget);
+            var reading=executor.submit(()->{
+                try(var result=replay.readValidated(history,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) { return true; }
+            });
+            int readerPid=awaitBlockedBy(artifactPid,"Historical schema artifact read reaches the table lock");
+
+            var revoke=executor.submit(()->{
+                try(var revoker=database.entityManagerFactory().createEntityManager()) {
+                    revoker.getTransaction().begin();
+                    try {
+                        revoker.createNativeQuery("SET LOCAL lock_timeout='10s'").executeUpdate();
+                        revoker.createNativeQuery("SET LOCAL statement_timeout='15s'").executeUpdate();
+                        revokerBackend.set(((Number)revoker.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue());
+                        revokerReady.countDown();
+                        var row=revoker.find(DocumentRecord.class,node,jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
+                        row.writeSecurity(DocumentSecurity.newBuilder().addPermissions(AccessRule.newBuilder()
+                                .setIdentityType("public").setIdentity("public").setAccess(Access.ACCESS_DENY)).build());
+                        revoker.flush();
+                        revokerAcquired.countDown();
+                        if(!releaseRevoker.await(15,java.util.concurrent.TimeUnit.SECONDS))
+                            throw new AssertionError("Revocation transaction was not released");
+                        revoker.getTransaction().commit();
+                    } finally {
+                        if(revoker.getTransaction().isActive()) revoker.getTransaction().rollback();
+                    }
+                }
+                return true;
+            });
+            assertThat(revokerReady.await(5,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            int revokerPid=revokerBackend.get();
+            assertThat(awaitBlockedBy(readerPid,"Revoker waits behind schema replay authorization")).isEqualTo(revokerPid);
+
+            artifactBlocker.getTransaction().commit();
+            assertThat(revokerAcquired.await(5,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            int finalReaderBlocker=awaitBlockedBy(revokerPid,"Final replay authorization waits behind open revocation");
+            assertThat(finalReaderBlocker).isNotEqualTo(revokerPid);
+            releaseRevoker.countDown();
+            assertThat(revoke.get(5,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThatThrownBy(()->reading.get(5,java.util.concurrent.TimeUnit.SECONDS))
+                    .isInstanceOfSatisfying(java.util.concurrent.ExecutionException.class,failure->
+                            assertThat(failure.getCause()).isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                                    denied->{
+                                        assertThat(denied.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.NOT_FOUND);
+                                        assertThat(denied).hasMessage("Document is unavailable").hasNoCause();
+                                    }));
+            assertThat(budget.reservedBytes()).isZero();
+        } finally {
+            if(artifactBlocker.getTransaction().isActive()) artifactBlocker.getTransaction().rollback();
+            artifactBlocker.close();
+            releaseRevoker.countDown();
+            parts.close();
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(20,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(parts.awaitIdle(Duration.ofSeconds(5))).isTrue();
+            history.close();
+            assertThat(history.awaitDrained(Duration.ofSeconds(5))).isTrue();
+            history.release(); ledger.fence(); ledger.attestLocalQuiescence();
+        }
+        assertThat(documentReadPins(incarnation)).isZero();
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    private static int awaitBlockedBy(int blockerPid,String description) throws Exception {
+        long deadline=System.nanoTime()+Duration.ofSeconds(10).toNanos();
+        while(System.nanoTime()<deadline) {
+            Number blocked=tx.readOnly(em->{
+                java.util.List<?> rows=em.createNativeQuery("""
+                    SELECT pid FROM pg_stat_activity
+                    WHERE :blocker=ANY(pg_blocking_pids(pid)) AND pid<>pg_backend_pid()
+                    ORDER BY query_start NULLS LAST LIMIT 1
+                    """).setParameter("blocker",blockerPid).getResultList();
+                return rows.isEmpty() ? null : (Number)rows.getFirst();
+            });
+            if(blocked!=null) return blocked.intValue();
+            Thread.sleep(10);
+        }
+        throw new AssertionError(description+" (blocker pid "+blockerPid+")");
+    }
+
     private static String runHistoricalWorker(DocumentPublishedRevision revision,java.nio.file.Path output,int expectedExit) throws Exception {
         var address=revision.getAddress();
         UUID reader=UUID.randomUUID();

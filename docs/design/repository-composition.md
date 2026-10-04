@@ -2545,7 +2545,13 @@ JVM reports DATA_LOSS after the test removes the exact custom descriptor asset;
 both runs release their read pins. This proves independence from writer-process
 descriptor caches, not a complete deployment restart.
 
-Full deployment-restart qualification, a direct composed-read revocation test
-during replay, and public transport integration remain outstanding. The shared
-replay boundary already has revocation tests, but those alone do not qualify
-every host delivery path.
+A composed-read revocation test now blocks retained-schema loading with a real
+PostgreSQL table lock after provider reads finish. It queues an ACL update behind
+the snapshot's document lock, then proves final authorization waits for that
+update to commit. Revoked access returns generic NOT_FOUND without a result or
+underlying cause, and releases payload reservations and physical read pins.
+The test uses real storage and SQL coordination, without production test hooks
+or blocking read-control callbacks.
+
+Full deployment-restart qualification and public transport integration remain
+outstanding; these internal-reader tests do not qualify every host delivery path.
