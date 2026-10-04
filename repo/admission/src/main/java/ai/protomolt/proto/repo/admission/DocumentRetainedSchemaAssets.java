@@ -2,7 +2,9 @@ package ai.protomolt.proto.repo.admission;
 
 import ai.protomolt.proto.descriptors.ClosedDescriptorSet;
 import ai.protomolt.proto.repo.v1.RepositorySchemaAsset;
+import ai.protomolt.proto.validate.ValidationResult;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.InvalidProtocolBufferException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -10,18 +12,27 @@ import java.util.Optional;
 import java.util.concurrent.CancellationException;
 
 /**
- * Attempt-local retained descriptor reader. Not thread-safe and not a revision reader.
- * The host selects authenticated metadata, scopes the reader and enforces access on
- * every call. No live registry, latest-version lookup or compiler fallback exists.
+ * Attempt-local retained schema reader. Not thread-safe and not a revision reader.
+ * The host selects authenticated metadata/references, scopes the reader and enforces
+ * access on every call. No registry, latest-version lookup or compiler fallback exists.
  */
 final class DocumentRetainedSchemaAssets {
+    private static final int MAX_SOURCE_BYTES = 16 * 1024 * 1024;
+
     @FunctionalInterface
     interface Reader {
-        /**
-         * Empty means an authoritative absence; access and I/O failures must propagate.
-         * The scoped implementation must bound its read allocation before returning bytes.
-         */
+        /** Empty is authoritative absence. Bound allocations before returning; propagate access and I/O failures. */
         Optional<ByteString> read(String artifactSha256);
+    }
+
+    /** Storage identities supplied by an authenticated revision reader, not an authorization grant. */
+    record Reference(String typeUrl, String descriptorSha256, String metadataCodec, int metadataVersion,
+                     String metadataSha256, Optional<String> sourceSha256) {
+        Reference {
+            Objects.requireNonNull(typeUrl); Objects.requireNonNull(descriptorSha256);
+            Objects.requireNonNull(metadataCodec); Objects.requireNonNull(metadataSha256);
+            Objects.requireNonNull(sourceSha256);
+        }
     }
 
     record Limits(int maxBindings, long maxRetainedBytes, ClosedDescriptorSet.Limits descriptorLimits) {
@@ -42,6 +53,11 @@ final class DocumentRetainedSchemaAssets {
         ControlFailure(RuntimeException original) { this.original = original; }
     }
 
+    private static final class ReadBatch {
+        final Map<String, ByteString> artifacts = new HashMap<>();
+        long bytes;
+    }
+
     private final Reader reader;
     private final Limits limits;
     private final Map<DocumentPayloadCheck.SchemaKey, DocumentSchemaAssetBinding> bindings = new HashMap<>();
@@ -54,48 +70,77 @@ final class DocumentRetainedSchemaAssets {
     }
 
     /**
-     * Control must enforce current access as well as cancellation; it runs before
-     * lookup and before delivery, including cache hits. Callback failures propagate.
-     * The byte bound covers retained serialized artifacts, not linked descriptor memory.
+     * Verify a recorded association against canonical metadata, exact descriptors and
+     * optional source bytes. Source integrity is not proof of source format, compiler
+     * execution or policy. Access control is required even when every byte is cached.
+     */
+    DocumentSchemaAssetBinding resolve(Reference reference, Runnable control) {
+        Objects.requireNonNull(reference, "reference");
+        Objects.requireNonNull(control, "control");
+        active(control);
+        requireHash(reference.descriptorSha256());
+        requireHash(reference.metadataSha256());
+        reference.sourceSha256().ifPresent(DocumentRetainedSchemaAssets::requireHash);
+        if (!DocumentSchemaAssetCodec.CODEC.equals(reference.metadataCodec())
+                || reference.metadataVersion() != DocumentSchemaAssetCodec.VERSION)
+            throw new DataLoss("unsupported retained schema metadata encoding");
+        var batch = new ReadBatch();
+        var metadataBytes = load(reference.metadataSha256(), DocumentSchemaAssetCodec.MAX_BYTES, false, batch, control);
+        final RepositorySchemaAsset metadata;
+        try {
+            metadata = DocumentSchemaAssetCodec.decode(reference.metadataCodec(), reference.metadataVersion(),
+                    metadataBytes, reference.metadataSha256(), guarded(control));
+        } catch (ControlFailure failure) {
+            throw failure.original;
+        } catch (InvalidProtocolBufferException | IllegalArgumentException | ValidationResult.ValidationException failure) {
+            throw new DataLoss("invalid retained schema metadata encoding", failure);
+        }
+        var source = metadata.getCompilation().hasSourceArtifactSha256()
+                ? Optional.of(metadata.getCompilation().getSourceArtifactSha256()) : Optional.<String>empty();
+        if (!metadata.getTypeUrl().equals(reference.typeUrl())
+                || !metadata.getArtifactSha256().equals(reference.descriptorSha256())
+                || !source.equals(reference.sourceSha256()))
+            throw new DataLoss("retained schema association differs from metadata");
+        var bound = resolve(metadata, batch, control);
+        source.ifPresent(hash -> load(hash, MAX_SOURCE_BYTES, false, batch, control));
+        active(control);
+        commit(bound, batch);
+        return bound;
+    }
+
+    /**
+     * For already authenticated metadata. Does not establish source retention; use the
+     * reference overload for persisted associations. Control enforces current access
+     * and cancellation before lookup and delivery. Bounds cover serialized artifacts,
+     * not linked descriptors or decoded metadata memory, which the host must budget.
      */
     DocumentSchemaAssetBinding resolve(RepositorySchemaAsset metadata, Runnable control) {
         Objects.requireNonNull(metadata, "metadata");
         Objects.requireNonNull(control, "control");
         active(control);
+        var batch = new ReadBatch();
+        var bound = resolve(metadata, batch, control);
+        active(control);
+        commit(bound, batch);
+        return bound;
+    }
+
+    private DocumentSchemaAssetBinding resolve(RepositorySchemaAsset metadata, ReadBatch batch, Runnable control) {
         var key = new DocumentPayloadCheck.SchemaKey(metadata.getTypeUrl(), metadata.getArtifactSha256());
         var cached = bindings.get(key);
         if (cached != null) {
-            if (!cached.metadata().equals(metadata))
-                throw new DataLoss("conflicting retained schema metadata");
+            if (!cached.metadata().equals(metadata)) throw new DataLoss("conflicting retained schema metadata");
             active(control);
             return cached;
         }
         if (bindings.size() >= limits.maxBindings())
             throw new IllegalArgumentException("retained schema binding count exceeds limit");
-        // Validate metadata before letting it choose a storage key. Binding later also
-        // verifies the full rule contract and exact descriptor closure.
-        if (metadata.getSerializedSize() > 512 * 1024
-                || !metadata.getArtifactSha256().matches("[0-9a-f]{64}"))
+        if (metadata.getSerializedSize() > DocumentSchemaAssetCodec.MAX_BYTES)
             throw new DataLoss("invalid retained schema metadata");
-        var bytes = artifacts.get(key.artifactSha256());
-        boolean newlyRead = bytes == null;
-        if (newlyRead) {
-            bytes = Objects.requireNonNull(reader.read(key.artifactSha256()), "reader result")
-                    .orElseThrow(() -> new DataLoss("required retained schema artifact is missing: " + key.artifactSha256()));
-            active(control);
-            if (bytes.size() > limits.maxRetainedBytes() - retainedBytes)
-                throw new IllegalArgumentException("retained schema byte count exceeds limit");
-            if (bytes.size() > limits.descriptorLimits().maxBytes())
-                throw new ClosedDescriptorSet.LimitExceededException("descriptor artifact exceeds byte limit");
-            if (!DocumentSchemaOccurrences.sha256(bytes, () -> active(control)).equals(key.artifactSha256()))
-                throw new DataLoss("retained schema artifact digest mismatch: " + key.artifactSha256());
-        }
-        final DocumentSchemaAssetBinding bound;
+        requireHash(metadata.getArtifactSha256());
+        var bytes = load(key.artifactSha256(), limits.descriptorLimits().maxBytes(), true, batch, control);
         try {
-            bound = DocumentSchemaAssetBinding.bind(metadata, bytes, limits.descriptorLimits(), () -> {
-                try { active(control); }
-                catch (RuntimeException failure) { throw new ControlFailure(failure); }
-            });
+            return DocumentSchemaAssetBinding.bind(metadata, bytes, limits.descriptorLimits(), guarded(control));
         } catch (ControlFailure failure) {
             throw failure.original;
         } catch (ClosedDescriptorSet.LimitExceededException failure) {
@@ -103,13 +148,52 @@ final class DocumentRetainedSchemaAssets {
         } catch (IllegalArgumentException failure) {
             throw new DataLoss("invalid retained schema artifact or metadata: " + key.artifactSha256(), failure);
         }
+    }
+
+    private ByteString load(String hash, int maxBytes, boolean descriptor, ReadBatch batch, Runnable control) {
         active(control);
+        var bytes = artifacts.get(hash);
+        if (bytes == null) bytes = batch.artifacts.get(hash);
+        boolean newlyRead = bytes == null;
         if (newlyRead) {
-            artifacts.put(key.artifactSha256(), bytes);
-            retainedBytes += bytes.size();
+            if (limits.maxRetainedBytes() - retainedBytes - batch.bytes < 1)
+                throw new IllegalArgumentException("retained schema byte count exceeds limit");
+            bytes = Objects.requireNonNull(reader.read(hash), "reader result")
+                    .orElseThrow(() -> new DataLoss("required retained schema artifact is missing: " + hash));
+            active(control);
         }
-        bindings.put(key, bound);
-        return bound;
+        if (bytes.isEmpty()) throw new DataLoss("retained schema artifact is empty");
+        if (bytes.size() > maxBytes) {
+            if (descriptor) throw new ClosedDescriptorSet.LimitExceededException("descriptor artifact exceeds byte limit");
+            throw new DataLoss("retained schema asset exceeds format byte limit");
+        }
+        if (newlyRead) {
+            if (bytes.size() > limits.maxRetainedBytes() - retainedBytes - batch.bytes)
+                throw new IllegalArgumentException("retained schema byte count exceeds limit");
+            if (!DocumentSchemaOccurrences.sha256(bytes, () -> active(control)).equals(hash))
+                throw new DataLoss("retained schema artifact digest mismatch: " + hash);
+            batch.artifacts.put(hash, bytes);
+            batch.bytes += bytes.size();
+        }
+        active(control);
+        return bytes;
+    }
+
+    private void commit(DocumentSchemaAssetBinding bound, ReadBatch batch) {
+        artifacts.putAll(batch.artifacts);
+        retainedBytes += batch.bytes;
+        bindings.put(new DocumentPayloadCheck.SchemaKey(bound.metadata().getTypeUrl(), bound.metadata().getArtifactSha256()), bound);
+    }
+
+    private static void requireHash(String hash) {
+        if (!hash.matches("[0-9a-f]{64}")) throw new DataLoss("invalid retained schema artifact identity");
+    }
+
+    private static Runnable guarded(Runnable control) {
+        return () -> {
+            try { active(control); }
+            catch (RuntimeException failure) { throw new ControlFailure(failure); }
+        };
     }
 
     private static void active(Runnable control) {

@@ -4181,3 +4181,52 @@ Unicode URLs, multiple definitions under one URL and the exact 64-binding limit.
 Explicit foreign-key names make the role-specific failures unambiguous. Sol
 reviewed the migration and fixtures with no remaining blocker. These SQL tests
 use synthetic bytes and do not establish trusted compiler or admission evidence.
+
+### Verify retained associations against their actual assets
+
+`DocumentRetainedSchemaAssets.resolve(Reference, control)` accepts an association
+selected by the host's authenticated revision reader. It decodes canonical
+metadata and compares the exact type URL, descriptor digest and optional source
+digest, including source presence. The existing descriptor binder then verifies
+the selected type and complete import closure. A claimed source must be present,
+nonempty and match its digest. Source bytes remain inert: matching a digest does
+not establish source format or prove that a compiler produced the descriptors.
+
+Descriptor, metadata and source reads share one digest cache and serialized-byte
+budget. Newly read assets remain provisional until all checks and final access
+control succeed; a failed reference does not retain a partially completed cache
+entry. The same digest used by several roles is counted once, with each role's
+own format limit still checked. An exhausted budget prevents the next storage
+read. The reader implementation must bound each allocation before returning
+bytes; decoded metadata, linked descriptors and transient I/O copies still need
+host memory accounting.
+
+Missing required assets, digest corruption, invalid canonical metadata and a
+reference/metadata mismatch are data loss. Configured resource limits remain
+limit errors, while I/O, denial and cancellation propagate unchanged. Cached
+reads recheck current access. The existing metadata-only overload retains its
+descriptor-resolution behavior and does not claim source retention. This helper
+does not select SQL revisions, authorize documents, attest compiler execution,
+verify the complete revision evidence set or activate typed publication.
+
+The next production integration is a single admission facade over these internal
+helpers. It must accept bounded, authorized member fragments and a pinned policy
+context, and return a complete immutable proof for the exact command member and
+slot ordinals. `DocumentCommandContent.check` currently refuses required typed
+admission. `DocumentCommitWriter.write` has the transaction hook immediately after
+`document_revision_parts` insertion and before projection sealing, where the
+complete V55/V56/V57 records belong. Stage the full asset union first; prelock its
+digests in order after publication locks and recheck ownership, selected/reused
+physical identities, command and policy under the commit fence. Typed activation
+must change the existing OPAQUE-only SQL mode together with those proofs. An
+authorized historical revision query is also needed; operation-owner retry
+reads are not a substitute. This is remaining integration work, not availability.
+
+Five affected suites pass 367 tests, including ten reference-reader tests backed
+by real temporary files and complete descriptor imports. They cover decoding
+with a fresh reader, absent and claimed sources, metadata/source corruption and
+absence, exact association mismatches, failed-attempt retry, canonical metadata,
+cross-role deduplication, aggregate byte bounds and access failure during checking
+or before delivery. Sol reviewed the reader and tests; its missing successful
+no-source case was added and passed. This is not a SQL/process-restart historical
+restore qualification or proof of trusted compiler execution.
