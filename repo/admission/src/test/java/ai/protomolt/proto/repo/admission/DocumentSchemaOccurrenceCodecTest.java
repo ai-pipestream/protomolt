@@ -40,8 +40,8 @@ class DocumentSchemaOccurrenceCodecTest {
         var nested = path().toBuilder().setSteps(0, path().getSteps(0).toBuilder().setAnyBoundary(
                 path().getSteps(0).getAnyBoundary().toBuilder().setUnknownFields(unknown))).build();
         for (var invalid : List.of(root, nested)) {
-            assertThatThrownBy(() -> DocumentSchemaOccurrenceCodec.encode(invalid, () -> {})).hasMessageContaining("unknown occurrence fields");
-            assertThatThrownBy(() -> read(invalid.toByteString())).hasMessageContaining("unknown occurrence fields");
+            assertThatThrownBy(() -> DocumentSchemaOccurrenceCodec.encode(invalid, () -> {})).hasMessageContaining("unknown schema evidence fields");
+            assertThatThrownBy(() -> read(invalid.toByteString())).hasMessageContaining("unknown schema evidence fields");
         }
     }
 
@@ -85,7 +85,7 @@ class DocumentSchemaOccurrenceCodecTest {
         for (String invalid : List.of("\ud800", "\udc00", "x\ud800y")) {
             var key = RepositoryOccurrenceMapKey.newBuilder().setType(RepositoryOccurrenceKeyType.REPOSITORY_OCCURRENCE_KEY_TYPE_STRING).setStringValue(invalid);
             var candidate = path().toBuilder().addSteps(RepositorySchemaOccurrenceStep.newBuilder().setMapKey(key)).addSteps(path().getSteps(0)).build();
-            assertThatThrownBy(() -> DocumentSchemaOccurrenceCodec.encode(candidate, () -> {})).hasMessageContaining("invalid occurrence UTF-16");
+            assertThatThrownBy(() -> DocumentSchemaOccurrenceCodec.encode(candidate, () -> {})).hasMessageContaining("invalid schema evidence UTF-16");
         }
     }
 

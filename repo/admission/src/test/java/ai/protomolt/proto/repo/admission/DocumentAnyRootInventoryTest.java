@@ -38,6 +38,9 @@ class DocumentAnyRootInventoryTest {
                 assertThat(locator.getContainerSchema().getArtifactSha256()).isEqualTo(CONTAINER.artifactSha256());
                 assertThat(locator.getContainerSchema().getSchema()).isEqualTo(CONTAINER.condition());
                 assertThat(DocumentSchemaRootLocator.parseFrom(locator.toByteString())).isEqualTo(locator);
+                var encoded = DocumentSchemaRootCodec.encode(locator, () -> {});
+                assertThat(DocumentSchemaRootCodec.decode(DocumentSchemaRootCodec.CODEC, DocumentSchemaRootCodec.VERSION,
+                        encoded.bytes(), encoded.sha256(), () -> {})).isEqualTo(locator);
                 if (fragment.part() == DocumentPart.DOCUMENT_PART_CORE)
                     assertThat(root.access()).containsExactly(new DocumentSchemaOccurrences.Field(4));
                 else {

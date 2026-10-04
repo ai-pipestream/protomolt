@@ -3868,7 +3868,7 @@ authentication of an inventory supplied by another component. A production
 boundary must match the selected root against exact fragment bytes and the relative
 occurrence path's first Any boundary, then bind the locator to the immutable
 revision-part row and physical object. Current-document lookup is insufficient
-for historical roots. The locator has no canonical wire codec or persisted row yet.
+for historical roots. A canonical codec is added below; persisted root rows remain unfinished.
 
 Generated/dynamic validation and actual split-fragment projection fixtures pass.
 JSON Schema reports syntax and runtime CEL metadata, not execution of cross-field
@@ -3982,3 +3982,23 @@ missing/extra/duplicate paths, conflicting selections, wrong metadata, limits an
 cancellation. All twelve protobuf map-key types replay with exact unsigned bits.
 Revision selection/authorization, durable path-set storage, document-root binding,
 SQL integration and process-restart restoration remain unfinished.
+
+### Canonical document-root locator encoding
+
+`DocumentSchemaRootCodec` uses the distinct `document-schema-root` format identity
+at version 1. The occurrence and root codecs share a bounded numeric-tag-order
+writer, with shortest varints, explicit oneof presence and recursive unknown-field
+rejection. Existing occurrence wire bytes and format identity are preserved.
+Both readers bound bytes, recursion and wire values before parsing, check the
+supplied digest, validate the actual message annotations, and require exact
+canonical re-encoding. A parsed protobuf round trip alone is insufficient.
+
+The locator still binds fragment hash/size, containing schema, layout and root
+access. Its encoding does not authenticate a revision or activate typed
+publication. Complete evidence-set encoding and its atomic revision storage
+remain separate work.
+
+The five affected suites pass 338 tests, including the unchanged occurrence golden
+bytes, actual split-fragment locator round trips, noncanonical wire alternatives,
+unknown nested fields, parser/descriptor mismatch and cancellation. This is codec
+qualification, not proof of persisted revision evidence or a historical read API.
