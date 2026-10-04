@@ -2886,3 +2886,74 @@ observation, not a promise that a later publication will remain valid. Execution
 tests prove stale conditions are rejected before provider work, while direct
 conflict signals with matching conditions, cancelled decisions and wrapped SQL
 failures leave no fabricated receipt.
+
+#### Schema-admission rejection evidence
+
+The next terminal decision requires an explicit assessment result. Neither a
+`ValidationException` nor an `IllegalArgumentException` escaping preparation is
+sufficient. Current preparation verifies and resolves members incrementally;
+validation can fail before another fragment's digest or nested Any definition has
+been checked. Failed preparation returns no `PreparedProof`.
+
+The canonical publication command already binds ordered members, slots, upload
+or reused-object sizes and content hashes. It does not bind the chosen admission
+modes, active policy revision, contextual schema selections or evaluation time.
+`DocumentPublicationFragments.capture` owns copies and checks sizes; the later
+admission check verifies their hashes. A durable rejection must not confuse those
+two guarantees.
+
+The assessment pipeline will establish these facts in order:
+
+1. Verify the complete candidate's member/ordinal inventory and every fragment's
+   size and hash against the exact canonical command. Preserve protected retained
+   inputs and owned reservations until assessment consumers have drained.
+2. Freeze the explicit modes, authorized policy selection and complete required
+   schema closure, including each contextual nested Any occurrence. Verify assets,
+   imports, rule support and eligibility before producing a value verdict. Missing
+   definitions, unsupported rules and resolver failures are incomplete checks.
+3. Evaluate supported constraints using one host-selected instant. Return an
+   explicit verified-invalid outcome only for completed value-rule violations.
+   Keep malformed wire, unknown fields/locations, capacity exhaustion, cancellation
+   and provider/SQL failures outside this first terminal classification. Subsequent
+   supported rejection categories need their own verified evidence and tests.
+4. Retain bounded immutable evidence before a fresh SQL decision transaction.
+   Acquire the operation owner fence, then the current policy fence, then the
+   complete authorized document/source lock set in the existing order. Recheck
+   the exact owner, command, policy revision/digest and candidate associations.
+   Changed policy or lost authority prevents a stale terminal decision. Existing
+   success or terminal receipt wins replay. No schema resolution, payload download
+   or validation runs while those SQL locks are held.
+
+The evidence must identify the command and member/ordinal payload identities,
+explicit modes, policy revision and digest, container and contextual occurrence
+schema identities (descriptor, metadata and optional source), validation profile,
+rule implementation/catalog configuration, evaluation instant and a bounded,
+sanitized failure code. Raw validator messages can contain payload values and
+must not be copied into public receipts. The current admission configuration uses
+ProtoMolt and Protovalidate rule sources with empty taxonomy/postal catalogs; it
+must not imply that an external catalog was checked. Configurable catalogs will
+need immutable identities of their own.
+
+An additive receipt binding and durable evidence storage are still required.
+A digest identifies evidence but cannot reproduce a verdict after its evidence
+or candidate bytes have disappeared. Retention, authorization, cleanup and replay
+must distinguish the durable decision from the period during which independent
+re-evaluation is supported. Reuse normalized schema assets rather than copying
+complete descriptors into every receipt. Do not emit ADMISSION_REJECTED until
+these bindings and their required lifetimes are implemented and tested.
+
+The validator now offers `validate(Message, Instant)` as the first prerequisite.
+CEL `now`, relative timestamp rules, nested messages and collection elements all
+use that exact instant; the existing overload samples once per call. Descriptor
+and compiled-rule caches remain shared, but evaluation time is invocation-local.
+This does not yet pin one instant across separate repository admission calls or
+record it in a receipt. Historical structural decoding remains distinct from
+re-evaluating time-sensitive admission rules.
+
+Acceptance for the remaining implementation includes a stale policy activation
+race, changed owner generation, altered candidate hash, mixed nested schema
+versions, unsupported rules versus genuine violations, a missing later schema
+after an earlier invalid value, lost SQL acknowledgement, retained-evidence
+corruption, fresh-process replay without the registry, and cleanup only after the
+declared retention boundary. Evaluation-time tests must use fixed instants and
+cover relative timestamp bounds and CEL without sleeping.

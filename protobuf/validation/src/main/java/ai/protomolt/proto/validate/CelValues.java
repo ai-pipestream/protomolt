@@ -47,7 +47,7 @@ final class CelValues {
             Object thisValue,
             String path,
             String rulePath,
-            List<ValidationResult.Violation> violations) {
+            List<ValidationResult.Violation> violations, Instant evaluatedAt) {
         if (rule.expression().isBlank()) {
             return;
         }
@@ -56,8 +56,8 @@ final class CelValues {
         try {
             Map<String, Object> bindings = new HashMap<>();
             bindings.put("this", thisValue);
-            // protovalidate exposes the current time as `now`; a single value keeps now == now true.
-            bindings.put("now", Instant.now());
+            // Every rule in the validation uses the same evaluation instant.
+            bindings.put("now", evaluatedAt);
             if (rule.ruleValue() != null) {
                 // Predefined rules see their configured value as `rule`.
                 bindings.put("rule", rule.ruleValue());

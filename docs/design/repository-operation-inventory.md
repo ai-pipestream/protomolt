@@ -5675,3 +5675,19 @@ remain failures rather than being classified from their nested causes.
 The receipt binds the canonical conditions and deciding generation, but carries
 no observed revision or per-member rejection detail. Schema-admission rejection,
 public host mounting, full cleanup and restart recovery remain separate work.
+
+### Explicit validation time and admission-rejection plan
+
+Extended: `ProtoValidator.validate(Message, Instant)` supplies one evaluation
+instant for field/message CEL, timestamp rules, nested values and collections.
+Unchanged: the existing overload remains available and samples once per call;
+rule caches and rule-source composition remain shared. New tests cover historical
+instants, strict timestamp boundaries and concurrent use of one validator.
+
+Still planned: an explicit verified-invalid candidate assessment, retained
+candidate/policy/schema/evaluation evidence and an additive rejection-receipt
+binding. Current preparation exceptions do not prove complete schema resolution
+or command-byte verification. The design section "Schema-admission rejection
+evidence" specifies the required ordering, failure categories and acceptance
+cases. No admission-rejection RPC or automatic terminal classification is exposed
+by the validator overload.
