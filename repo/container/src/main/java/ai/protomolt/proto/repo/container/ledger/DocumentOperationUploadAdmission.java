@@ -76,7 +76,7 @@ final class DocumentOperationUploadAdmission {
     }
 
     /** Durable whole-plan protection; no host/provider read lifetime is activated by this handle. */
-    DocumentReadPins.Captured capturePinnedReads(RepositoryCaller caller,
+    DocumentReadPins.Captured<DocumentRetainedReadPlan> capturePinnedReads(RepositoryCaller caller,
             RepositoryOperationLedger.Owner owner, Prepared prepared, UUID reader) {
         Objects.requireNonNull(reader);
         Objects.requireNonNull(prepared);
@@ -84,7 +84,7 @@ final class DocumentOperationUploadAdmission {
         return captureReads(caller, owner, prepared, reader, pins);
     }
 
-    private DocumentReadPins.Captured captureReads(RepositoryCaller caller,
+    private DocumentReadPins.Captured<DocumentRetainedReadPlan> captureReads(RepositoryCaller caller,
             RepositoryOperationLedger.Owner owner, Prepared prepared, UUID reader, DocumentReadPins.Prepared pins) {
         Objects.requireNonNull(owner); Objects.requireNonNull(prepared);
         var command = prepared.plan.command();
@@ -98,7 +98,7 @@ final class DocumentOperationUploadAdmission {
             RepositoryOperationLedger.requireCommand(em, owner.key(), command);
             DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, prepared.plan, prepared.authorization);
             var captured = DocumentReuseAdmission.capture(em, prepared.reuse, prepared.plan, owner);
-            var protectedReads = pins == null ? new DocumentReadPins.Captured(captured, null, List.of())
+            var protectedReads = pins == null ? new DocumentReadPins.Captured<>(captured, null, List.of())
                     : DocumentReadPins.acquire(em, pins, captured, reader, prepared.reuse);
             // Source/profile waits must not allow an expired owner to receive a new plan.
             em.createNativeQuery("SELECT require_repository_operation_write_fence(:account,:principal,:operation,:generation)")

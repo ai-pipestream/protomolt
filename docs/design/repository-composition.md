@@ -2492,6 +2492,11 @@ DOCUMENT_HISTORY checks while omitting the current-pointer/current-reference
 requirement. Authorized Java capture and provider lifetime integration are still
 required. Preserve current-source checks for publication reuse and share the
 reader drain/recovery lifecycle with historical reads.
+The Java lifecycle now lives in `DocumentReadLedger.PinnedRead<P>`; current
+publication reuse retains its `PinnedPlan` handle and `PinnedPlan.Use` source
+syntax. Provider batches accept the shared use type, so historical plans can
+retain the same transfer, drain and retryable release semantics. This extraction
+does not itself issue historical plans or authorize historical provider reads.
 Pins remain until provider work drains, including cancellation. Use the
 current runtime against retained definitions without consulting registry latest;
 do not claim to rerun a historical compiler or executable validator.

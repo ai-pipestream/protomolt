@@ -16,7 +16,7 @@ import java.util.UUID;
 final class DocumentReadPins {
     private DocumentReadPins() {}
     record Pin(UUID id, UUID object) {}
-    record Captured(DocumentRetainedReadPlan plan, UUID reader, List<Pin> pins) {
+    record Captured<P>(P plan, UUID reader, List<Pin> pins) {
         Captured { pins = List.copyOf(pins); }
     }
     static final class Prepared {
@@ -50,16 +50,16 @@ final class DocumentReadPins {
     private static Value text(UUID value) { return Value.newBuilder().setStringValue(value.toString()).build(); }
 
     /** Caller must drain all provider work and batch owners first; failures retain the complete set. */
-    static void release(Tx tx, Captured captured) {
+    static void release(Tx tx, Captured<?> captured) {
         finish(tx, captured, false);
     }
 
     /** Recovery consumes durable QUIESCED evidence; it cannot establish local or remote drain. */
-    static void recover(Tx tx, Captured captured) {
+    static void recover(Tx tx, Captured<?> captured) {
         finish(tx, captured, true);
     }
 
-    private static void finish(Tx tx, Captured captured, boolean recovery) {
+    private static void finish(Tx tx, Captured<?> captured, boolean recovery) {
         java.util.Objects.requireNonNull(captured.reader(), "Pinned reader identity");
         if (captured.pins().size() > DocumentPublicationCommand.MAX_PARTS)
             throw new IllegalArgumentException("Read pin release exceeds command bounds");
@@ -82,10 +82,10 @@ final class DocumentReadPins {
     }
 
     /** Caller holds owner, active reader and authorized source/destination revision locks. */
-    static Captured acquire(EntityManager em, Prepared prepared, DocumentRetainedReadPlan plan, UUID reader,
+    static Captured<DocumentRetainedReadPlan> acquire(EntityManager em, Prepared prepared, DocumentRetainedReadPlan plan, UUID reader,
             DocumentReuseAdmission.Prepared reuse) {
         if (prepared.command != plan.command()) throw new IllegalArgumentException("Read pin plan differs from captured command");
-        if (prepared.pins.isEmpty()) return new Captured(plan, reader, List.of());
+        if (prepared.pins.isEmpty()) return new Captured<>(plan, reader, List.of());
         // Lock complete distinct origin set before touching ANY retention row. PostgreSQL
         // UUID ordering is authoritative, including UUIDs whose high bit is set.
         em.createNativeQuery("""
@@ -113,6 +113,6 @@ final class DocumentReadPins {
                 ORDER BY q.object
                 """).setParameter("rows", prepared.rows).setParameter("reader", reader).executeUpdate();
         if (inserted != prepared.pins.size()) throw new DocumentPartAttemptLedger.FenceException("Read pin source is incomplete");
-        return new Captured(plan, reader, prepared.pins);
+        return new Captured<>(plan, reader, prepared.pins);
     }
 }

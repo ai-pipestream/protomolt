@@ -332,7 +332,7 @@ public final class DocumentPartReader implements AutoCloseable {
 
     private DocumentReadBatch readFragments(List<DocumentPublicationLedger.Part> parts,
             java.util.function.Supplier<List<ResolvedPart>> resolve, RepositoryReadControl control, boolean legacy,
-            DocumentReadLedger.PinnedPlan.Use protection) {
+            DocumentReadLedger.PinnedRead<?>.Use protection) {
         checkActive(control);
         long total = 0;
         for (var part : parts) {

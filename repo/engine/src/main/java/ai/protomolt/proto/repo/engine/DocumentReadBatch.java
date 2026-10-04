@@ -13,14 +13,14 @@ import java.util.concurrent.CancellationException;
  */
 public final class DocumentReadBatch implements AutoCloseable {
     private final PayloadBudget.Lease reservation;
-    private final DocumentReadLedger.PinnedPlan.Use protection;
+    private final DocumentReadLedger.PinnedRead<?>.Use protection;
     private List<PartObject> parts;
     private int workers;
     private boolean closed;
 
     DocumentReadBatch(PayloadBudget.Lease reservation) { this(reservation, null); }
 
-    DocumentReadBatch(PayloadBudget.Lease reservation, DocumentReadLedger.PinnedPlan.Use setup) {
+    DocumentReadBatch(PayloadBudget.Lease reservation, DocumentReadLedger.PinnedRead<?>.Use setup) {
         this.reservation = reservation;
         try { this.protection = setup == null ? null : setup.transfer(); }
         catch (RuntimeException | Error failure) { reservation.close(); throw failure; }

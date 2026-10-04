@@ -4907,3 +4907,19 @@ release rollback/idempotence and quiescent recovery. A live V62 pin migrates to
 CURRENT with its identity intact and can release after upgrade. These are real
 PostgreSQL cases with synthetic physical observations, not provider-read evidence.
 Sol reviewed the migration and final tests with no blocker.
+
+### Shared Java reader lifetime
+
+`DocumentReadLedger.PinnedRead<P>` now owns the common use, transfer, drain,
+release and recovery lifecycle. The current `PinnedPlan` specializes it with
+`DocumentRetainedReadPlan`; existing `PinnedPlan.Use` consumers still compile.
+`DocumentReadBatch` and the internal provider read helper accept the shared use
+type. SQL pin acquisition, authorization and protobuf contracts are unchanged.
+Historical plan capture still needs implementation; the shared handle alone is
+not historical read authority.
+
+Qualification: the same 134 distinct pin/admission/coordinator tests pass after
+the extraction. The final provider helper change was followed by rerunning all
+90 upload admission and 20 coordinator tests. These include capture blocked in
+SQL during fencing, transfer after fencing, failed release recovery and ownership
+through provider completion. Sol reviewed the lifecycle diff with no blocker.

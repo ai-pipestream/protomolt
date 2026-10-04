@@ -81,15 +81,20 @@ public final class DocumentReadLedger {
      * must await drain and explicitly release (or recover) this handle. Retain it
      * after a failed release for retry. No callback runs on the last provider worker.
      */
-    public final class PinnedPlan implements AutoCloseable {
-        private final DocumentReadPins.Captured captured;
+    public final class PinnedPlan extends PinnedRead<DocumentRetainedReadPlan> {
+        private PinnedPlan(DocumentReadPins.Captured<DocumentRetainedReadPlan> captured) { super(captured); }
+    }
+
+    /** Shared ownership of a ledger-issued plan; only this ledger can create handles. */
+    public abstract class PinnedRead<P> implements AutoCloseable {
+        private final DocumentReadPins.Captured<P> captured;
         private final CountDownLatch drained = new CountDownLatch(1);
         private final Object releaseLock = new Object();
         private int uses;
         private boolean closed;
         private boolean released;
 
-        private PinnedPlan(DocumentReadPins.Captured captured) { this.captured = captured; }
+        private PinnedRead(DocumentReadPins.Captured<P> captured) { this.captured = captured; }
 
         public Use use() {
             synchronized (lifetime) {
@@ -146,7 +151,7 @@ public final class DocumentReadLedger {
             private boolean ended;
             private Use() {}
 
-            public DocumentRetainedReadPlan plan() {
+            public P plan() {
                 synchronized (lifetime) {
                     if (ended) throw new IllegalStateException("Read plan use has ended");
                     return captured.plan();
