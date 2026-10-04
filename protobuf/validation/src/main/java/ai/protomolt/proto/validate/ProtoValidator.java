@@ -226,6 +226,53 @@ public final class ProtoValidator {
         return create(sources);
     }
 
+    /**
+     * Compiles rules for every message type reachable through ordinary message fields,
+     * including map entries, regardless of candidate presence or ignore settings.
+     * Bounds the graph before rule compilation. Control checks are cooperative between
+     * graph/compilation steps; this is not a deadline for a single CEL compilation.
+     * Any payload types and protobuf extensions require separate preparation by the host.
+     * Unreferenced declarations are excluded; compiled rules are not pinned in cache.
+     * Success is not an admission receipt and does not validate a candidate's values.
+     */
+    public void prepareSchema(Descriptor root, int maxMessageTypes, int maxFields, Runnable control) {
+        Objects.requireNonNull(root, "root");
+        Objects.requireNonNull(control, "control");
+        if (maxMessageTypes < 1 || maxFields < 1) {
+            throw new IllegalArgumentException("schema limits must be positive");
+        }
+        var seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Descriptor, Boolean>());
+        var types = new ArrayList<Descriptor>();
+        seen.add(root);
+        types.add(root);
+        long fields = 0;
+        for (int i = 0; i < types.size(); i++) {
+            control.run();
+            Descriptor type = types.get(i);
+            fields += type.getFields().size();
+            if (fields > maxFields) {
+                throw new IllegalArgumentException("schema field count exceeds limit");
+            }
+            for (FieldDescriptor field : type.getFields()) {
+                control.run();
+                if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
+                Descriptor child = field.getMessageType();
+                if (!seen.contains(child)) {
+                    if (types.size() == maxMessageTypes) {
+                        throw new IllegalArgumentException("schema message count exceeds limit");
+                    }
+                    seen.add(child);
+                    types.add(child);
+                }
+            }
+        }
+        for (Descriptor type : types) {
+            control.run();
+            rulesFor(type);
+        }
+        control.run();
+    }
+
     public ValidationResult validate(Message message) {
         Objects.requireNonNull(message, "message");
         List<ValidationResult.Violation> violations = new ArrayList<>();

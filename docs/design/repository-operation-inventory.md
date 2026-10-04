@@ -3182,3 +3182,25 @@ passed without failures or skips in 3s. Existing valid custom rules pass. The
 external upstream test suite was not rerun. Typed archival publication remains
 disabled until schema/type binding, retention and admission integration pass.
 No protobuf definitions changed.
+
+### Schema preparation independent of candidate values
+
+ProtoValidator.prepareSchema is a new Java API. It checks all message types
+reachable through ordinary message fields, including repeated values and map
+entries. An identity set prevents cycles. Type and field limits apply to discovery
+before any rules compile. Control checks run during discovery, between compilation
+steps and before success. They do not impose a deadline on one CEL compilation.
+
+Tests show that an empty parent can pass normal value validation without checking
+invalid rules on an unset child. Explicit schema preparation rejects those rules
+for singular, repeated and map fields. Recursive graphs, exact limits, exceeded
+limits and cancellation/retry are covered. Existing validate behavior is unchanged.
+
+Hosts must prepare Any payload types and extensions separately. Unreferenced
+nested definitions are excluded. Compiled rules may leave the bounded cache;
+preparation is not a receipt or a value check. Typed archival admission still needs
+to bind this step to retained schema identity and candidate validation.
+
+Sol found no blocker. All 226 validation-core, 40 dialect and 13 harness unit tests
+passed with no failures or skips in 7s. No protobuf definitions changed. The
+external upstream test suite was not run.
