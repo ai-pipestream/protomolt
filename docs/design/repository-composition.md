@@ -231,6 +231,16 @@ and digest version before committing a wire field; test it with golden fixtures.
 Retain the exact descriptor artifact as long as retained content needs it.
 Resolve mutable aliases once at admission, never on historical reads.
 
+The reusable `ClosedDescriptorSet` loader now checks a serialized artifact against
+explicit byte, file-count, dependency-edge and import-depth bounds. It requires
+all imports in the artifact, including well-known types, rejects duplicate files
+and ambiguous full message names, and links in dependency order without classpath
+or registry fallback. This is an available closure primitive, not typed admission:
+custom-option interpretation, unsupported-rule rejection, schema/type identity
+binding, durable descriptor retention and historical restore integration remain
+required. Existing registry artifact hash validation and permissive classpath
+loading retain their separate purposes.
+
 ## Admission and validation boundary
 
 Expose two explicit policies: opaque archival intake and validated typed intake.

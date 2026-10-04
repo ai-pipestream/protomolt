@@ -3102,3 +3102,31 @@ failures or skips, including the codec runtime dependency gate. The final invoca
 completed in 2s. This is a structural allocation-input bound, not a heap, merge-cost,
 Any-decoding or schema-validation guarantee; production scan latency remains
 unqualified. No hosted CI, push, merge or deployment ran.
+
+### Self-contained descriptor closure primitive
+
+Added `ClosedDescriptorSet.load(ByteString, Limits)` in `protomolt-descriptors`.
+This is a new Java utility; no protobuf names, tags, imports or Any URLs changed.
+The existing classpath loader remains unchanged. Serialized bytes are bounded
+before protobuf parsing, which retains its recursion guard. File and dependency
+counts are bounded before graph assembly. An iterative dependency-first traversal
+rejects cycles and limits import depth; declared import order is preserved for
+public-import indexes. Every import, including well-known protobuf files, must be
+present. Duplicate/unnamed files, duplicate imports and ambiguous full message
+names across disconnected files or nested/package boundaries are rejected.
+
+The loader does not resolve registry aliases, authenticate fingerprints, interpret
+custom validation options, certify unsupported-rule handling, retain artifacts,
+or provide a heap/latency guarantee. Artifact-wide uniqueness of other protobuf
+symbol kinds is not certified. Runtime typed admission remains fail-closed until
+its schema, validator and persistence integration is complete. Existing canonical
+schema fingerprints and exact artifact-byte digests are still distinct identities.
+
+Real protobuf tests cover retained-descriptor dynamic decoding, missing ordinary
+and well-known imports, duplicates, unresolved field types, cycles, each resource
+boundary, reverse-ordered deep chains, public-import ordering, malformed bytes and
+excessive serialized nesting. Sol's review identified message-name ambiguity; the
+implementation and regression cases address it. All 94 descriptor-module cases in
+12 suites passed with no failures or skips in 2s. No hosted CI, push, merge or
+deployment ran. The next integration gate is explicit schema/type identity and
+validation-option handling, followed by durable retention and offline restoration.
