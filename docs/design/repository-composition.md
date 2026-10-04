@@ -3321,3 +3321,41 @@ runtime dependency gates only reject unwanted modules and do not supply such a
 content inventory. Runtime provenance is not yet sufficient to enable terminal
 admission rejection; durable candidate/evidence retention and decision fencing
 remain required as well.
+
+#### Production admission artifact inventory
+
+Run `./gradlew :protomolt-repo-admission:admissionRuntimeInventory` to produce
+`repo/admission/build/admission-runtime/inventory.tsv` and its `artifacts/`
+directory. The task includes the admission JAR and every resolved production
+runtime artifact, excluding test dependencies. The admission runtime dependency
+gate runs first. This is build evidence; it does not establish which classes a
+running host loaded or prove that its validation implementation matches this set.
+
+The UTF-8 TSV starts with `protomolt-admission-runtime-inventory/v1`. Each following
+line has four tab-separated fields: resolved component identity plus artifact
+filename, lowercase SHA-256, decimal byte length, and `artifacts/<sha256>.jar`.
+Lines are sorted by Java string order of logical identity and end with LF.
+Ambiguous identities and names longer than 200 characters or containing tabs or
+line breaks are refused. Artifact filenames distinguish ordinary classifier
+artifacts; unresolved identity collisions fail rather than collapse entries.
+
+The task permits at most 64 regular JAR files and 1 GiB aggregate bytes. It uses
+one 8 KiB copy buffer, checks source identity/size/mtime around each copy, hashes
+the copied bytes, rehashes the temporary output and opens it as a ZIP before
+publication. Existing content-addressed blobs must match their expected hash
+and size; corruption fails rather than being overwritten. These checks assume
+an immutable build input during observation, not an adversarial filesystem.
+
+The manifest is replaced atomically only after every referenced blob is ready.
+A failed run leaves the prior manifest in place; consumers must require a
+successful inventory task for the current build, not infer success from file
+existence. Unreferenced blobs from older or interrupted builds are not selected
+by the manifest and are not automatically deleted. Gradle up-to-date skipping is
+disabled so every invocation observes the actual files again.
+
+Qualification checked all 38 resolved artifact hashes and lengths, identical
+manifests across repeated runs, refusal of a deliberately corrupted output blob,
+preservation of the prior manifest on failure, and successful rerun after exact
+restoration. Runtime manifest parsing and comparison against actual attributed
+class origins remain to be implemented before this inventory can establish a
+runtime identity for admission decisions.

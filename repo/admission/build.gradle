@@ -17,3 +17,5 @@ ext.forbiddenRuntimeModules = [
         'flyway-core', 'kafka-clients', 'grpc-netty-shaded', 'grpc-inprocess'
 ]
 apply from: rootProject.file('gradle/runtime-boundaries.gradle')
+
+apply from: rootProject.file('gradle/admission-runtime-inventory.gradle')
