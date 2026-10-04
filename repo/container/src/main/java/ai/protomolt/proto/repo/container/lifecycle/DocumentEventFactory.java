@@ -58,6 +58,17 @@ public final class DocumentEventFactory {
     }
 
     /**
+     * A saved event retained in the caller's transaction without broker delivery.
+     * This prepares a record only; the caller must persist it atomically with the
+     * actual publication. It is never automatically queued when Kafka is enabled.
+     */
+    public static DocumentEventRecord savedWithoutDelivery(DocumentRecord row, Instant when) {
+        var record = saved(row, when);
+        record.status = DocumentEventRecord.STATUS_RECORDED;
+        return record;
+    }
+
+    /**
      * The hard-delete commit point's event (purge_storage=true: the row is
      * removed in this transaction).
      *

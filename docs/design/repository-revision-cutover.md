@@ -206,6 +206,160 @@ Failure to validate a response after commit does not roll back the database; ret
 must recover the same durable result. Outcome persistence and this replay path are
 still unimplemented. Errors/cancellation are not encoded as successful member results.
 
+### Atomic outcome and independent revision implementation plan
+
+The next cutover is one transaction path, with SQL guards, readers and the Java
+publisher reviewed together. Installing a result table alone must not enable a
+successful operation. The following storage names describe planned relations;
+they are not installed migrations or available APIs.
+
+The repository foundation owns an immutable operation outcome keyed by the existing
+`(account_id, principal, operation_id)`. Store the original committing generation,
+persisted command codec/version/digest, result codec/version/exact bytes/digest,
+bounded member count and creation transaction ID. The insertion guard requires
+the live V35 owner fence and compares the command identity with
+`repository_operations`. Do not store owner tokens in the result. A result digest
+is an integrity check, not authorization or proof of a commit.
+
+The document extension owns immutable operation-member bindings: member ID,
+canonical ordinal, node ID, independent revision ID and document mutation revision.
+Use unique constraints for member ID, ordinal, node ID and revision ID within
+the operation, and prevent a revision from belonging to multiple operations.
+The revision's operation binding must name exactly the same account, principal,
+operation, generation and member. Existing legacy projections retain no such
+binding; do not infer one from their attempt IDs.
+
+Use deferred foreign keys in both directions between independent revisions and
+their result-member bindings, with a deferred member-to-outcome link. A final
+outcome constraint checks the complete bounded member set, contiguous ordinals,
+sealed revisions, exact node/mutation identities and the creating transaction.
+This prevents an outcome without all revisions, and prevents an independent
+revision without its outcome. SQL cannot decode protobuf member semantics:
+the Java publisher must also match the complete canonical command and result
+through DocumentPublicationCommand.requireResult before insertion. It must derive
+the result's revision IDs and mutation counters from the actual flushed SQL rows.
+
+Insert the outcome last, after revisions, parts, evidence, references, current
+pointers and event rows. All required rows remain provisional until commit. Check
+owner liveness immediately before terminal insertion and again in its deferred
+completion check; a failure rolls back the whole transaction. Once the outcome is
+inserted, ordinary V35 write-fence checks must refuse additional operation writes,
+including writes later in that same transaction. A separate finalization check
+may recognize the exact outcome created in the current transaction; do not weaken
+the general write fence with an exception for the creating transaction.
+
+After success, owner renewal and takeover must fail. V49 recovery-only stamping
+remains valid without changing the original generation, token or lease. Recovery
+must not reopen staging. Java must observe terminal state under the owner lock in
+RepositoryOperationLedger.admit and the idempotent takeOver fast path: neither
+may return an executable Owner merely because the nonce and lease still match.
+Return explicit terminal state so the coordinator enters authorized replay.
+lockLiveOwner, fenceLiveOwner and renew must also reject terminal operations.
+An exact command retry may recover success; a different command still conflicts.
+V50 only releases a replaced generation's schema claim;
+terminal claim cleanup needs a separate bounded recovery path proving all admitted
+schema dependencies have immutable revision references. Distinguish transferred
+claims from unused staged artifacts: unused claims must also be reclaimable once
+the operation is terminal and no admitted revision depends on them. Otherwise
+discarded candidates would leak claims indefinitely. This proof belongs to the
+complete admission/reference binding, not the existence of a success row alone.
+Artifact deletion still requires the absence of every claim and retained reference.
+
+The current document event outbox is optional when Kafka is not configured, and
+has no operation/revision binding. Native publication must always retain its
+publication event identity and payload in SQL, independent of transport settings.
+Reuse the existing DocumentEvent contract and outbox storage with an immutable
+operation/member/revision link. Keep relay status, attempts and delivery timestamps
+mutable, while protecting linked event identity/type/key/payload from replacement
+or deletion. Broker delivery remains optional and at least once; replay of a
+committed operation creates neither another event nor another revision. This
+requires no Kafka client dependency in the repository SPI or byte providers.
+Stamp new event rows with their actual insertion transaction, keeping legacy rows
+explicitly unknown, and require native links to events created in the publication
+transaction. Do not adopt an earlier event merely because its UUID is supplied.
+The final outcome check requires exactly one unique saved-event link per result
+member, with no missing or additional links. Java validates the event envelope,
+address and event ID against the bound result before insertion.
+
+Without a configured delivery destination, new native events use an explicit
+recorded-without-delivery state, excluded from relay claims. Do not leave these
+events as PENDING retries or mark them PUBLISHED without delivery. Retain their
+immutable payload and binding under the same history policy as publication
+evidence. Enabling Kafka later must not silently enqueue old recorded-only events;
+an explicit historical-delivery policy would be separate work. Existing legacy
+publication paths keep their current behavior. Qualify this new SQL state with
+relay tests before enabling native publication.
+
+Preserve V22's content-body comparison separately from historical metadata.
+It intentionally excludes live security and lifecycle fields. Each independent
+revision also needs a versioned, explicit metadata snapshot, including ownership
+as admitted. Do not broaden document_publication_body to freeze live ACLs, and do
+not authorize historical reads from that old ACL. Current policy still governs
+access. Legacy snapshots remain explicitly unknown where evidence was not retained.
+
+The transaction sequence is:
+
+1. Bound and validate the full prepared command and content outside the transaction,
+   and bound inputs needed to construct the result. Final result identities are
+   assigned after SQL flush, not trusted from this preparation. Provider I/O and
+   descriptor resolution finish before entry.
+2. Fence the operation; lock and authorize all destinations and sources; lock
+   selected drives; stabilize selections and all old/new physical origins and
+   retention rows in the documented order. Recheck every sampled identity.
+3. Write destination rows, then independent revisions, complete ordered parts,
+   metadata and admission evidence. Acquire retained schema references before any
+   associated operation claim can be released. Seal only complete revisions.
+4. Switch native current pointers. A legacy-to-native transition removes the old
+   legacy pin without its mirror deleting or replacing the new native pointer.
+   Final V22/V38 checks verify the resulting body and pointer together.
+5. Write linked event rows and exact result-member bindings; encode the result
+   from committed-candidate identities; insert the terminal outcome last. Commit
+   before returning success. Lost acknowledgments recover the stored bytes after
+   current authorization, without taking a new ownership generation.
+
+This document-specific projection must not make a document CORE, graph address or
+one destination the foundation's atomicity boundary. The optional content-repository
+extension still needs multi-object commit composition, stable identity and separate
+session/workspace/version semantics described in repository-jcr-compatibility.md.
+The transaction above supplies neither JCR compliance nor a distributed transaction
+across providers; private provider writes precede one atomic SQL visibility change.
+
+Required acceptance cases for the cutover:
+
+- Zero-upload, mixed-source and multiple destinations use the same publisher;
+  missing, extra, reordered or incorrectly bound members cannot commit.
+- Failure after the last revision, event or outcome insertion rolls back every
+  destination, current reference, event and outcome. Exact retries return the
+  original result and create no additional writes.
+- Expired/replaced owners, changed selections, stale sources and changed policies
+  fail; post-outcome staging, renewal and takeover fail while scoped recovery works.
+- Populated legacy rows migrate unchanged. Legacy-to-native switching preserves
+  the new pin and all history references; both publication and source readers
+  reject incomplete native bindings rather than consulting current configuration.
+- Policy-only changes remain possible without rewriting historical metadata;
+  revoked access prevents replay and historical reads. Missing old metadata is
+  reported as unknown, never reconstructed from current values.
+- Events are durable without Kafka configured; relay updates preserve immutable
+  payload/binding, recorded-only events are not claimed, and publication replay
+  does not duplicate event rows. Missing, extra and reused prior events fail.
+- Final schema claims remain until native references protect their exact artifacts;
+  unused staged claims can be reclaimed without inventing a revision reference.
+  Retirement and concurrent publication cannot leave an unprotected object.
+
+These cases extend the existing real-PostgreSQL atomic-publication, projection,
+operation-fence and schema-artifact suites. Their legacy successes do not prove
+the new cutover; Java/SQL integration and these new fixtures remain required.
+
+The event-storage prerequisite is now implemented by V51. New outbox inserts
+receive an actual insertion_xid; existing events retain NULL provenance. The
+opt-in DocumentEventFactory.savedWithoutDelivery produces RECORDED events that
+cannot enter delivery, acquire delivery-attempt state or be deleted. Event identity,
+payload, key, timestamp and insertion transaction are immutable on updates; normal
+PENDING relay transitions remain available. Current publication callers are not
+switched. Operation/member/revision links, linked PENDING-event deletion protection
+and the final event-set proof remain part of the coupled cutover above. This
+prerequisite alone does not bind an event to a committed native revision.
+
 ## Identity and ownership
 
 A revision receives an immutable UUID independently of upload attempts, document

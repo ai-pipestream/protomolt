@@ -54,6 +54,111 @@ class DocumentEventOutboxIT {
     }
 
     @Test
+    void recordedEventsAreRetainedWithoutEnteringDelivery() {
+        var record = DocumentEventFactory.savedWithoutDelivery(row("recorded-only"), Instant.now());
+        tx.inTransaction(em -> { outbox.enqueue(em, record); });
+        assertThat(outbox.findById(record.eventId).orElseThrow().status).isEqualTo("RECORDED");
+        assertThat(outbox.claimBatch(100)).extracting(r -> r.eventId).doesNotContain(record.eventId);
+        assertThat(outbox.markPublished(record.eventId, Instant.now())).isFalse();
+        assertThat(outbox.markFailed(record, "No delivery requested")).isEmpty();
+        for (String state : List.of("PENDING", "PUBLISHED", "FAILED")) {
+            assertThatThrownBy(() -> tx.inTransaction(em -> {
+                em.createNativeQuery("UPDATE document_events_outbox SET status=:state WHERE event_id=:id")
+                        .setParameter("state", state).setParameter("id", record.eventId).executeUpdate();
+            })).hasStackTraceContaining("Recorded event has no delivery request");
+        }
+        var stored = outbox.findById(record.eventId).orElseThrow();
+        assertThat(stored.payload).isEqualTo(record.payload);
+        assertThat(stored.attempts).isZero();
+        assertThat(stored.publishedAt).isNull();
+        for (String assignment : List.of("attempts=1", "last_error='unsent'", "published_at=clock_timestamp()")) {
+            assertThatThrownBy(() -> tx.inTransaction(em -> {
+                em.createNativeQuery("UPDATE document_events_outbox SET " + assignment + " WHERE event_id=:id")
+                        .setParameter("id", record.eventId).executeUpdate();
+            })).hasStackTraceContaining("chk_document_event_recorded_delivery");
+        }
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            em.createNativeQuery("DELETE FROM document_events_outbox WHERE event_id=:id")
+                    .setParameter("id", record.eventId).executeUpdate();
+        })).hasStackTraceContaining("Recorded event is retained without delivery");
+        var pending = saved("pending-not-recorded", Instant.now());
+        tx.inTransaction(em -> { outbox.enqueue(em, pending); });
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            em.createNativeQuery("UPDATE document_events_outbox SET status='RECORDED' WHERE event_id=:id")
+                    .setParameter("id", pending.eventId).executeUpdate();
+        })).hasStackTraceContaining("Recorded event has no delivery request");
+    }
+
+    @Test
+    void insertionTransactionIsStampedAndRecordedInsertRollsBack() {
+        var record = DocumentEventFactory.savedWithoutDelivery(row("stamped-record"), Instant.now());
+        tx.inTransaction(em -> {
+            em.createNativeQuery("""
+                    INSERT INTO document_events_outbox(event_id,event_type,payload,kafka_key,status,created_at,insertion_xid)
+                    VALUES(:id,:type,:payload,:key,'RECORDED',clock_timestamp(),'0'::xid8)
+                    """).setParameter("id", record.eventId).setParameter("type", record.eventType)
+                    .setParameter("payload", record.payload).setParameter("key", record.kafkaKey).executeUpdate();
+            assertThat(em.createNativeQuery("SELECT insertion_xid=pg_current_xact_id() FROM document_events_outbox WHERE event_id=:id")
+                    .setParameter("id", record.eventId).getSingleResult()).isEqualTo(true);
+        });
+        var rolledBack = DocumentEventFactory.savedWithoutDelivery(row("rolled-back-record"), Instant.now());
+        assertThatThrownBy(() -> tx.inTransaction((java.util.function.Consumer<jakarta.persistence.EntityManager>) em -> {
+            outbox.enqueue(em, rolledBack);
+            em.flush();
+            throw new IllegalStateException("Failure after event insertion");
+        })).hasMessage("Failure after event insertion");
+        assertThat(outbox.findById(rolledBack.eventId)).isEmpty();
+    }
+
+    @Test
+    void migrationPreservesLegacyEventsWithoutInventingInsertionEvidence() throws Exception {
+        String schema = "events_" + UUID.randomUUID().toString().replace("-", "");
+        var migration = org.flywaydb.core.Flyway.configure()
+                .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                .schemas(schema).defaultSchema(schema).locations("classpath:db/migration/repo");
+        migration.target("50").load().migrate();
+        var legacy = saved("legacy-event", Instant.now());
+        try (var connection = java.sql.DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+            connection.setSchema(schema);
+            try (var insert = connection.prepareStatement("""
+                    INSERT INTO document_events_outbox(event_id,event_type,payload,kafka_key,status,created_at)
+                    VALUES(?,'DocumentSaved',?,?,'PENDING',clock_timestamp())
+                    """)) {
+                insert.setObject(1, legacy.eventId); insert.setBytes(2, legacy.payload); insert.setString(3, legacy.kafkaKey);
+                insert.executeUpdate();
+            }
+            migration.target(org.flywaydb.core.api.MigrationVersion.LATEST).load().migrate();
+            try (var select = connection.prepareStatement("SELECT payload,status,insertion_xid FROM document_events_outbox WHERE event_id=?")) {
+                select.setObject(1, legacy.eventId);
+                try (var rows = select.executeQuery()) {
+                    assertThat(rows.next()).isTrue();
+                    assertThat(rows.getBytes(1)).isEqualTo(legacy.payload);
+                    assertThat(rows.getString(2)).isEqualTo("PENDING");
+                    assertThat(rows.getObject(3)).isNull();
+                    assertThat(rows.next()).isFalse();
+                }
+            }
+        }
+    }
+
+    @Test
+    void eventIdentityCannotBeRewrittenDuringRelayUpdates() {
+        var record = saved("immutable-event", Instant.now());
+        tx.inTransaction(em -> { outbox.enqueue(em, record); });
+        for (String assignment : List.of("payload=decode('00','hex')", "event_type='DocumentDeleted'",
+                "kafka_key='another-document'", "created_at=created_at+interval '1 second'",
+                "insertion_xid='0'::xid8", "event_id=gen_random_uuid()")) {
+            assertThatThrownBy(() -> tx.inTransaction(em -> {
+                em.createNativeQuery("UPDATE document_events_outbox SET " + assignment + " WHERE event_id=:id")
+                        .setParameter("id", record.eventId).executeUpdate();
+            })).hasStackTraceContaining("Document event identity is immutable");
+        }
+        assertThat(outbox.markFailed(record, "retry")).isPresent();
+        assertThat(outbox.markPublished(record.eventId, Instant.now())).isTrue();
+        assertThat(outbox.findById(record.eventId).orElseThrow().payload).isEqualTo(record.payload);
+    }
+
+    @Test
     void enqueueRidesTheCallersTransaction() {
         DocumentRecord row = row("doc-outbox-commit");
         DocumentEventRecord record = DocumentEventFactory.saved(row, Instant.now());

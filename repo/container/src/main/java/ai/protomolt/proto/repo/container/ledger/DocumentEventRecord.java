@@ -31,18 +31,23 @@ import java.util.UUID;
  * relay crash between the two republishes on restart. Consumers dedupe on the
  * event id, which the {@code DocumentEvent.event_id} field carries.
  * <p>
- * The whole table is written only when Kafka is configured
+ * Legacy commit paths write this table only when Kafka is configured
  * ({@code DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS}); unset, the commit
- * points skip the outbox entirely.
+ * points skip the outbox entirely. Explicit recorded-only events retain their
+ * payload without scheduling broker delivery. Their RECORDED status never enters
+ * the relay's PENDING queue, even if Kafka is configured later.
  */
 @Entity
 @Table(name = "document_events_outbox", check = {
         @jakarta.persistence.CheckConstraint(name = "chk_document_events_outbox_status",
-                constraint = "status IN ('PENDING', 'PUBLISHED', 'FAILED')"),
+                constraint = "status IN ('RECORDED', 'PENDING', 'PUBLISHED', 'FAILED')"),
         @jakarta.persistence.CheckConstraint(name = "chk_document_events_outbox_type",
                 constraint = "event_type IN ('DocumentSaved', 'DocumentDeleted',"
                         + " 'PurgeRequested', 'DocumentPurged')")})
 public class DocumentEventRecord {
+
+    /** Retained event evidence with no requested delivery; not a relay retry. */
+    public static final String STATUS_RECORDED = "RECORDED";
 
     /** Queued, awaiting (or between) relay attempts. */
     public static final String STATUS_PENDING = "PENDING";

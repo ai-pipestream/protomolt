@@ -3536,3 +3536,25 @@ counters. Sol reviewed the final codec with no remaining blocker. The added
 descriptor dependency introduces no SQL, Kafka or storage SDK runtime dependency.
 This is a storage codec only. Atomic outcome insertion, revision/outbox binding,
 terminal-operation fencing and authorized replay remain pending.
+
+### Publication event storage independent of delivery
+
+Added an opt-in recorded-only saved-event factory and V51 outbox safeguards.
+RECORDED events remain in SQL without entering the relay queue or being falsely
+marked delivered. Their delivery state cannot be changed and they cannot be
+deleted. Event identity and payload cannot be rewritten during relay updates.
+New events receive the actual insertion transaction ID; migrated events retain
+unknown insertion provenance. Existing publication callers keep their current
+event policy; the native revision publisher is not activated by this change.
+
+Two initial PostgreSQL regressions failed for the intended reasons: recorded-only
+status was unavailable and existing event payloads could be overwritten. After
+the change, all 21 event factory, PostgreSQL outbox and Kafka relay tests pass,
+with no skips. Fixtures cover actual insertion stamping despite a supplied false
+transaction ID, rollback, forbidden state/content changes and a populated V50-to-V51
+migration. Sol found no blocker in this scope. The cutover design now specifies
+bidirectional revision/outcome constraints, terminal-aware admission/replay,
+recovery of unused schema claims and complete event-set binding. Those atomic
+publication and replay behaviors still require implementation and qualification.
+All 80 existing atomic-publication and revision-projection PostgreSQL tests also
+pass against the new migration, with no skips.
