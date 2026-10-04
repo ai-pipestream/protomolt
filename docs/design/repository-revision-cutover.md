@@ -19,8 +19,43 @@ not enable mixed publication or qualify shared-origin throughput.
 V40 records immutable initial operation member selections, including placement for
 zero-upload members. It retains an allowlisted drive snapshot and a versioned
 configuration digest, with no copy of free-form metadata/options or credential
-references. Existing attempts are not automatically selected. Replacement CAS,
-terminal-result binding and recovery remain prerequisites for activation.
+references. Existing attempts are not automatically selected. V42 retains those
+rows as placement anchors and adds immutable selection history plus a current
+pointer for each operation generation and member. Internal retry staging appends
+the next selection and advances that pointer with an exact expected revision and
+attempt. Terminal-result binding and provider recovery remain prerequisites for
+activation.
+
+### Retry selection boundary
+
+- V42 copies each existing V40 anchor to selection revision 1, preserving its
+  attempt, including explicit null attempts for zero-upload members. It does not
+  select other attempts or copy selections between owner generations.
+- A retry names a nonempty subset of uploading command members. It compares the
+  persisted canonical codec, version, bytes and digest, rechecks authorization and
+  source evidence for the full command, and stages only the named members.
+  The original placement remains fixed; configuration drift requires a separate
+  operation instead of silently changing where a retry writes.
+- The owner write fence precedes document and drive locks. SQL locks the
+  replacement attempt before checking its live state and absence of cleanup,
+  then locks the selection pointer. The expected selection revision and attempt
+  must both match. History and pointer changes commit with all new attempts or
+  roll back together. History cannot commit without its pointer advancement.
+- SQL proves owner and placement bindings, but does not decode the protobuf
+  command. Canonical command/member semantics remain the responsibility of the
+  internal Java entry point and trusted database writer boundary.
+- Replacing a selection does not revoke the displaced attempt's lease or token.
+  Before provider work or independent publication can be activated, those paths
+  must fence the exact generation, member, selection revision and attempt.
+  Durable outcomes must retain that same binding. Lost-acknowledgment recovery
+  must read durable state rather than blindly issuing another replacement.
+- Retry preparation encodes upload rows only for selected members, before SQL
+  locks. The full command still undergoes authorization and source checks. Pointer
+  replacement adds two client statements per retried member, bounded by the
+  command's 64-member limit. Operations with different owners have no shared
+  selection lock; one operation's retries serialize through its owner fence.
+  Provider I/O remains outside this transaction. These are structural bounds,
+  not evidence of qualified end-to-end throughput or tail latency.
 
 ## Current coupling that must change together
 

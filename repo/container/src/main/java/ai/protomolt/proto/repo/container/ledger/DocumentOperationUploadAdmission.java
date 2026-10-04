@@ -17,7 +17,7 @@ import java.util.UUID;
  * Internal SQL staging only. The qualified composition supplies sampled physical
  * placement and authenticated caller. Current policy and revisions are checked
  * here, along with retained current source bindings. Provider qualification for
- * physical reuse, schema validation, retry reconciliation and provider I/O remain
+ * physical reuse, schema validation, provider retry reconciliation and provider I/O remain
  * separate, unimplemented boundaries.
  */
 final class DocumentOperationUploadAdmission {
@@ -33,7 +33,7 @@ final class DocumentOperationUploadAdmission {
     static final class Prepared {
         private final DocumentUploadPlan.Prepared plan;
         private final Duration lease;
-        private final List<EncodedMember> uploads;
+        private final List<UploadMember> uploads;
         private final List<DocumentUploadPlan.Placement> placements;
         private final DocumentAdmissionAuthorization.Prepared authorization;
         private final DocumentReuseAdmission.Prepared reuse;
@@ -46,13 +46,14 @@ final class DocumentOperationUploadAdmission {
             this.selections = DocumentOperationSelection.encode(plan);
             this.lease = lease;
             this.uploads = plan.members().stream().filter(member -> member.attempt().isPresent())
-                    .map(member -> new EncodedMember(member, UUID.randomUUID(), DocumentAttemptPlanEncoding.prepare(member))).toList();
+                    .map(member -> new UploadMember(member, UUID.randomUUID())).toList();
             this.placements = plan.members().stream().map(DocumentUploadPlan.Member::placement).distinct()
                     .sorted(Comparator.comparing(placement -> placement.drive().id())).toList();
         }
     }
 
     private record EncodedMember(DocumentUploadPlan.Member member, UUID token, DocumentAttemptPlanEncoding encoded) {}
+    private record UploadMember(DocumentUploadPlan.Member member, UUID token) {}
 
     static Prepared prepare(DocumentPublicationCommand command, Map<UUID, DocumentUploadPlan.Placement> placements,
             Map<String, UUID> attempts, Duration lease) {
@@ -64,11 +65,35 @@ final class DocumentOperationUploadAdmission {
 
     /** All rows commit together; duplicate attempt identity fails without adopting existing bytes. */
     List<DocumentPartAttemptLedger.Attempt> admit(RepositoryCaller caller, RepositoryOperationLedger.Owner owner, Prepared prepared) {
+        return stage(caller, owner, prepared, Map.of());
+    }
+
+    /** Replaces only named uploading members; all command authorization is checked again. */
+    List<DocumentPartAttemptLedger.Attempt> retry(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            Prepared prepared, Map<String, DocumentOperationSelection.Expected> expected) {
+        var selections = Map.copyOf(expected);
+        if (selections.isEmpty()) throw new IllegalArgumentException("Retry requires at least one uploading member");
+        var uploads = prepared.uploads.stream().filter(upload -> selections.containsKey(upload.member.intent().getMemberId())).toList();
+        if (uploads.size() != selections.size()) throw new IllegalArgumentException("Retry member is not an uploading command member");
+        for (var upload : uploads) {
+            if (upload.member.attempt().orElseThrow().id().equals(selections.get(upload.member.intent().getMemberId()).attempt()))
+                throw new IllegalArgumentException("Retry requires a new attempt identity");
+        }
+        return stage(caller, owner, prepared, selections);
+    }
+
+    private List<DocumentPartAttemptLedger.Attempt> stage(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            Prepared prepared, Map<String, DocumentOperationSelection.Expected> replacements) {
         Objects.requireNonNull(owner); Objects.requireNonNull(prepared);
         var command = prepared.plan.command();
         DocumentAdmissionAuthorization.requireCaller(caller, owner, command.intent().getAccountId());
         if (!owner.key().account().equals(command.intent().getAccountId()) || !owner.key().operationId().equals(command.operationId()))
             throw new IllegalArgumentException("Upload command differs from operation scope");
+        // Encode only the selected subset, before acquiring any SQL locks.
+        var uploads = prepared.uploads.stream().filter(upload -> replacements.isEmpty()
+                        || replacements.containsKey(upload.member.intent().getMemberId()))
+                .map(upload -> new EncodedMember(upload.member, upload.token, DocumentAttemptPlanEncoding.prepare(upload.member)))
+                .toList();
         return tx.inTransaction(em -> {
             RepositoryOperationLedger.fenceLiveOwner(em, owner);
             requireCommand(em, owner.key(), command);
@@ -81,8 +106,8 @@ final class DocumentOperationUploadAdmission {
                 if (!actual.equals(placement.profile()))
                     throw new IllegalArgumentException("Selected backend profile differs from its immutable registration");
             }
-            var admitted = new ArrayList<DocumentPartAttemptLedger.Attempt>(prepared.uploads.size());
-            for (var upload : prepared.uploads) {
+            var admitted = new ArrayList<DocumentPartAttemptLedger.Attempt>(uploads.size());
+            for (var upload : uploads) {
                 var member = upload.member;
                 var attempt = member.attempt().orElseThrow();
                 var location = attempt.location();
@@ -117,7 +142,13 @@ final class DocumentOperationUploadAdmission {
                         .setParameter("attempts", admitted.stream().map(DocumentPartAttemptLedger.Attempt::id).toList()).getSingleResult();
                 if (!live) throw new DocumentPartAttemptLedger.FenceException("New-content attempt expired before admission completed");
             }
-            DocumentOperationSelection.insert(em, owner, prepared.selections, prepared.plan.members().size());
+            if (replacements.isEmpty()) {
+                DocumentOperationSelection.insert(em, owner, prepared.selections, prepared.plan.members().size());
+            } else {
+                for (var upload : uploads) DocumentOperationSelection.replace(em, owner,
+                        upload.member.intent().getMemberId(), replacements.get(upload.member.intent().getMemberId()),
+                        upload.member.attempt().orElseThrow().id());
+            }
             // Includes reuse-only commands and lease expiry during drive lock waits.
             em.createNativeQuery("SELECT require_repository_operation_write_fence(:account,:principal,:operation,:generation)")
                     .setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())

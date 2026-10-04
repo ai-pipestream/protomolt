@@ -2251,3 +2251,46 @@ calling the mixed-mode SQL function. All-write sets now explicitly use the V37
 exclusive batch function; source-only reads require V41. The populated migration
 cases passed after this change. There is no database capability probe. Sol reviewed
 the final dispatch and documentation with no blocker. Work remains local.
+
+### Retry attempt selection (V42)
+
+Extended internal upload admission; new SQL history/current-pointer persistence.
+No protobuf or public RPC changed. V40 rows remain immutable placement anchors;
+V42 backfills each exact initial choice, including null for zero-upload members.
+Migration excludes concurrent anchor inserts until the backfill and initializer
+are installed. It does not require historical selected attempts to remain live.
+
+Internal retry names the expected selection revision and attempt for a subset of
+uploading command members. It checks the persisted canonical command, current
+policy, source bindings and placement, then stages only the selected uploads.
+New attempts, history and pointer changes commit atomically. A conflict in a later
+member rolls back earlier replacements. The SQL guard locks drive, attempt and
+pointer in that order; the fresh initial-selection guard also locks drive and
+attempt before foreign-key enforcement. Expired or cleanup-owned attempts cannot
+be newly selected after a lock wait. History is immutable and cannot commit
+without advancing its pointer.
+
+Upload encoding is limited to retried members and runs before SQL locks. Stable
+lease tokens stay in the prepared command. Replacement adds two client statements
+per retried member, at most 64 members. Full-command authorization and retained
+source checks still run. No provider I/O occurs inside the selection transaction.
+Configuration hashing and end-to-end tail latency still require qualification.
+
+PostgreSQL coverage includes exact CAS, stale expectations, two competing retries,
+multi-member rollback, canonical-command mismatch, takeover generation isolation,
+zero uploads, populated migration, consecutive replacements and missing-pointer
+commit rejection. The cleanup race test holds an attempt lock before selection,
+lets its lease expire, inserts a guarded cleanup row and then releases the lock.
+Without the explicit shared attempt lock, replacement incorrectly committed; with
+the lock it rechecks and rejects the attempt after waiting.
+
+Provider writes, verification and renewal must still bind the exact current
+selection before activation. Replacing a pointer does not revoke old tokens.
+Terminal outcomes, ambiguous-acknowledgment recovery, independent mixed revisions
+and typed schema admission remain unfinished; this checkpoint exposes none of
+them as available behavior.
+
+Final local validation: container and service suites passed in 2m41s, covering
+108 suites and 964 cases: 961 passed, 3 skipped, no failures/errors. Sol reviewed
+the final initial/retry lock ordering, subset behavior, migration and documentation
+with no remaining blocker. No hosted CI, push, merge or deployment was performed.

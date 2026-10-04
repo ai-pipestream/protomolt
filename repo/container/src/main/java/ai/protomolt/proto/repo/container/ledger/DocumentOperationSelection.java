@@ -5,10 +5,39 @@ import com.google.protobuf.Struct;
 import com.google.protobuf.Value;
 import com.google.protobuf.util.JsonFormat;
 import jakarta.persistence.EntityManager;
+import java.util.UUID;
 
-/** Initial selection persistence only; no retry adoption or terminal replay API. */
+/** Explicit initial and retry selection persistence; no provider adoption or terminal replay API. */
 final class DocumentOperationSelection {
     private DocumentOperationSelection() {}
+
+    record Expected(long revision, UUID attempt) {
+        Expected {
+            if (revision < 1 || revision == Long.MAX_VALUE || attempt == null)
+                throw new IllegalArgumentException("Retry requires a replaceable revision and an exact attempt");
+        }
+    }
+
+    static void replace(EntityManager em, RepositoryOperationLedger.Owner owner, String member,
+            Expected expected, UUID next) {
+        em.createNativeQuery("""
+                INSERT INTO document_operation_selection_attempts(account_id,principal,operation_id,owner_generation,
+                    member_id,selection_revision,attempt_id,previous_attempt_id)
+                VALUES (:account,:principal,:operation,:generation,:member,:revision,:next,:previous)
+                """).setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())
+                .setParameter("operation", owner.key().operationId()).setParameter("generation", owner.generation())
+                .setParameter("member", member).setParameter("revision", expected.revision()+1)
+                .setParameter("next", next).setParameter("previous", expected.attempt()).executeUpdate();
+        int changed = em.createNativeQuery("""
+                UPDATE document_operation_selection_current SET selection_revision=:next
+                WHERE account_id=:account AND principal=:principal AND operation_id=:operation
+                    AND owner_generation=:generation AND member_id=:member AND selection_revision=:previous
+                """).setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())
+                .setParameter("operation", owner.key().operationId()).setParameter("generation", owner.generation())
+                .setParameter("member", member).setParameter("next", expected.revision()+1)
+                .setParameter("previous", expected.revision()).executeUpdate();
+        if (changed != 1) throw new DocumentPartAttemptLedger.FenceException("Document selection compare-and-set conflict");
+    }
 
     static String encode(DocumentUploadPlan.Prepared plan) {
         var members=ListValue.newBuilder();

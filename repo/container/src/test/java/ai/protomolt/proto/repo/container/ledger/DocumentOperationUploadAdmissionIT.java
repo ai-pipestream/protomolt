@@ -103,6 +103,339 @@ class DocumentOperationUploadAdmissionIT {
         assertThat(admission.admit(SCOPED, f.owner, f.prepare())).hasSize(1);
     }
 
+    @Test void retryRetainsInitialChoiceAndAtomicallySelectsNewAttempt() {
+        var f = fixture(1);
+        admission.admit(SCOPED, f.owner, f.prepare());
+        UUID next = UUID.randomUUID();
+        var prepared = DocumentOperationUploadAdmission.prepare(f.command, f.placements(), Map.of("member", next), LEASE);
+        assertThat(admission.retry(SCOPED, f.owner, prepared,
+                Map.of("member", new DocumentOperationSelection.Expected(1, f.attempt))))
+                .extracting(DocumentPartAttemptLedger.Attempt::id).containsExactly(next);
+        assertThat(selection(f)[0]).isEqualTo(f.attempt);
+        assertThat(currentSelection(f)).containsExactly(2L, next);
+        assertThat(selectionHistoryCount(f)).isEqualTo(2);
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"revision", "attempt", "missing", "drive"})
+    void rejectedRetryRollsBackNewAttemptAndSelection(String kind) {
+        var f = fixture(1);
+        if (!kind.equals("missing")) admission.admit(SCOPED, f.owner, f.prepare());
+        var placements = f.placements();
+        if (kind.equals("drive")) {
+            tx.inTransaction(em -> { em.createNativeQuery("UPDATE drives SET name='changed' WHERE drive_id=:id")
+                    .setParameter("id", f.drive.driveId).executeUpdate(); });
+        }
+        UUID next = UUID.randomUUID();
+        var prepared = DocumentOperationUploadAdmission.prepare(f.command, placements, Map.of("member", next), LEASE);
+        var expected = new DocumentOperationSelection.Expected(kind.equals("revision") ? 2 : 1,
+                kind.equals("attempt") ? UUID.randomUUID() : f.attempt);
+        assertThatThrownBy(() -> admission.retry(SCOPED, f.owner, prepared, Map.of("member", expected)))
+                .isInstanceOf(RuntimeException.class);
+        assertNoAttempt(next);
+        assertThat(selectionHistoryCount(f)).isEqualTo(kind.equals("missing") ? 0 : 1);
+        if (!kind.equals("missing")) assertThat(currentSelection(f)).containsExactly(1L, f.attempt);
+    }
+
+    @Test void staleRetryCannotReplaceTheWinner() {
+        var f = fixture(1);
+        admission.admit(SCOPED, f.owner, f.prepare());
+        UUID winner = UUID.randomUUID(), loser = UUID.randomUUID();
+        var expected = Map.of("member", new DocumentOperationSelection.Expected(1, f.attempt));
+        admission.retry(SCOPED, f.owner, DocumentOperationUploadAdmission.prepare(f.command, f.placements(),
+                Map.of("member", winner), LEASE), expected);
+        assertThatThrownBy(() -> admission.retry(SCOPED, f.owner,
+                DocumentOperationUploadAdmission.prepare(f.command, f.placements(), Map.of("member", loser), LEASE), expected))
+                .hasStackTraceContaining("compare-and-set conflict");
+        assertNoAttempt(loser);
+        assertThat(currentSelection(f)).containsExactly(2L, winner);
+        assertThat(selectionHistoryCount(f)).isEqualTo(2);
+    }
+
+    @Test void competingRetriesChooseExactlyOneAttempt() throws Exception {
+        var f = fixture(1);
+        admission.admit(SCOPED, f.owner, f.prepare());
+        var start = new java.util.concurrent.CountDownLatch(1);
+        UUID left = UUID.randomUUID(), right = UUID.randomUUID();
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var futures = new java.util.ArrayList<java.util.concurrent.Future<UUID>>();
+            for (UUID next : java.util.List.of(left, right)) futures.add(executor.submit(() -> {
+                start.await();
+                admission.retry(SCOPED, f.owner, DocumentOperationUploadAdmission.prepare(f.command, f.placements(),
+                        Map.of("member", next), LEASE), Map.of("member", new DocumentOperationSelection.Expected(1, f.attempt)));
+                return next;
+            }));
+            start.countDown();
+            var winners = new java.util.ArrayList<UUID>();
+            int conflicts = 0;
+            for (var future : futures) {
+                try { winners.add(future.get(10, java.util.concurrent.TimeUnit.SECONDS)); }
+                catch (java.util.concurrent.ExecutionException failure) {
+                    assertThat(failure).hasStackTraceContaining("compare-and-set conflict");
+                    conflicts++;
+                }
+            }
+            assertThat(winners).hasSize(1);
+            assertThat(conflicts).isEqualTo(1);
+            assertThat(currentSelection(f)).containsExactly(2L, winners.getFirst());
+            assertNoAttempt(winners.getFirst().equals(left) ? right : left);
+            assertThat(selectionHistoryCount(f)).isEqualTo(2);
+        }
+    }
+
+    @Test void laterMemberConflictRollsBackEarlierReplacement() {
+        var f = fixture(1);
+        var member = f.command.intent().getMembers(0);
+        var command = new DocumentPublicationCommand(f.command.intent().toBuilder().setOperationId(UUID.randomUUID().toString())
+                .addMembers(member.toBuilder().setMemberId("second").setDestination(member.getDestination().toBuilder()
+                        .setAddress(address("second-" + UUID.randomUUID())).setIfAbsent(true))).build());
+        var owner = operations.admit(new RepositoryOperationLedger.Key("account", "principal", command.operationId()),
+                command, UUID.randomUUID(), LEASE).owner().orElseThrow();
+        UUID second = UUID.randomUUID(), nextFirst = UUID.randomUUID(), nextSecond = UUID.randomUUID();
+        admission.admit(ADMIN, owner, DocumentOperationUploadAdmission.prepare(command, f.placements(),
+                Map.of("member", f.attempt, "second", second), LEASE));
+        assertThatThrownBy(() -> admission.retry(ADMIN, owner, DocumentOperationUploadAdmission.prepare(command, f.placements(),
+                Map.of("member", nextFirst, "second", nextSecond), LEASE), Map.of(
+                        "member", new DocumentOperationSelection.Expected(1, f.attempt),
+                        "second", new DocumentOperationSelection.Expected(2, second))))
+                .hasStackTraceContaining("compare-and-set conflict");
+        assertNoAttempt(nextFirst); assertNoAttempt(nextSecond);
+        java.util.List<?> revisions = tx.readOnly(em -> em.createNativeQuery(
+                "SELECT selection_revision FROM document_operation_selection_current WHERE operation_id=:operation")
+                .setParameter("operation", command.operationId()).getResultList());
+        assertThat(revisions).hasSize(2).allMatch(revision -> revision.equals(1L));
+        assertThat(admission.retry(ADMIN, owner, DocumentOperationUploadAdmission.prepare(command, f.placements(),
+                Map.of("member", nextFirst, "second", nextSecond), LEASE),
+                Map.of("member", new DocumentOperationSelection.Expected(1, f.attempt))))
+                .extracting(DocumentPartAttemptLedger.Attempt::id).containsExactly(nextFirst);
+        assertNoAttempt(nextSecond);
+        Object[] untouched = tx.readOnly(em -> (Object[]) em.createNativeQuery("""
+                SELECT c.selection_revision,h.attempt_id FROM document_operation_selection_current c
+                JOIN document_operation_selection_attempts h
+                USING(account_id,principal,operation_id,owner_generation,member_id,selection_revision)
+                WHERE c.operation_id=:operation AND c.member_id='second'
+                """).setParameter("operation", command.operationId()).getSingleResult());
+        assertThat(untouched).containsExactly(1L, second);
+    }
+
+    @Test void zeroUploadSelectionHasAnExplicitNullPointerAndCannotRetry() {
+        var f = fixture(0);
+        admission.admit(SCOPED, f.owner, f.prepare());
+        assertThat(currentSelection(f)).containsExactly(1L, null);
+        assertThatThrownBy(() -> admission.retry(SCOPED, f.owner, f.prepare(),
+                Map.of("member", new DocumentOperationSelection.Expected(1, UUID.randomUUID()))))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("not an uploading");
+        assertThat(selectionHistoryCount(f)).isEqualTo(1);
+    }
+
+    @Test void takeoverCannotAdoptThePriorGenerationsSelection() {
+        var f = fixture(1, Duration.ofSeconds(2));
+        admission.admit(SCOPED, f.owner, f.prepare());
+        tx.readOnly(em -> em.createNativeQuery("""
+                SELECT CAST(pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM lease_until-clock_timestamp()))+0.02) AS text)
+                FROM repository_operation_owners WHERE operation_id=:operation
+                """).setParameter("operation", f.owner.key().operationId()).getSingleResult());
+        var owner = operations.takeOver(f.owner.key(), 1, UUID.randomUUID(), LEASE);
+        UUID next = UUID.randomUUID();
+        var prepared = DocumentOperationUploadAdmission.prepare(f.command, f.placements(), Map.of("member", next), LEASE);
+        var expected = Map.of("member", new DocumentOperationSelection.Expected(1, f.attempt));
+        assertThatThrownBy(() -> admission.retry(SCOPED, f.owner, prepared, expected))
+                .isInstanceOf(RepositoryOperationLedger.OwnerFencedException.class);
+        assertThatThrownBy(() -> admission.retry(SCOPED, owner, prepared, expected))
+                .hasStackTraceContaining("query returned no rows");
+        assertNoAttempt(next);
+        assertThat(currentSelection(f)).containsExactly(1L, f.attempt);
+        assertThat(selectionHistoryCount(f)).isEqualTo(1);
+    }
+
+    @Test void retryChecksCanonicalCommandBeforeStaging() {
+        var f = fixture(1);
+        admission.admit(SCOPED, f.owner, f.prepare());
+        var changed = new DocumentPublicationCommand(f.command.intent().toBuilder().setMembers(0,
+                f.command.intent().getMembers(0).toBuilder().putMetadata("purpose", "different")).build());
+        UUID next = UUID.randomUUID();
+        var prepared = DocumentOperationUploadAdmission.prepare(changed, f.placements(), Map.of("member", next), LEASE);
+        assertThatThrownBy(() -> admission.retry(SCOPED, f.owner, prepared,
+                Map.of("member", new DocumentOperationSelection.Expected(1, f.attempt))))
+                .isInstanceOf(RepositoryOperationLedger.CommandConflictException.class);
+        assertNoAttempt(next);
+        assertThat(currentSelection(f)).containsExactly(1L, f.attempt);
+    }
+
+    private static Object[] currentSelection(Fixture f) {
+        return tx.inTransaction(em -> (Object[]) em.createNativeQuery("""
+                SELECT c.selection_revision,h.attempt_id FROM document_operation_selection_current c
+                JOIN document_operation_selection_attempts h
+                USING(account_id,principal,operation_id,owner_generation,member_id,selection_revision)
+                WHERE c.operation_id=:operation
+                """).setParameter("operation", f.owner.key().operationId()).getSingleResult());
+    }
+
+    @Test void sqlHistoryCannotCommitWithoutItsPointer() {
+        var f = fixture(1);
+        admission.admit(SCOPED, f.owner, f.prepare());
+        UUID next = stageUnselected(f);
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            RepositoryOperationLedger.fenceLiveOwner(em, f.owner);
+            appendSelection(em, f, 2, f.attempt, next);
+        })).hasStackTraceContaining("must advance its current pointer");
+        assertThat(currentSelection(f)).containsExactly(1L, f.attempt);
+        assertThat(selectionHistoryCount(f)).isEqualTo(1);
+    }
+
+    @Test void consecutiveSqlReplacementsInOneTransactionRetainBothChoices() {
+        var f = fixture(1);
+        admission.admit(SCOPED, f.owner, f.prepare());
+        UUID second = stageUnselected(f), third = stageUnselected(f);
+        tx.inTransaction(em -> {
+            RepositoryOperationLedger.fenceLiveOwner(em, f.owner);
+            DocumentOperationSelection.replace(em, f.owner, "member", new DocumentOperationSelection.Expected(1, f.attempt), second);
+            DocumentOperationSelection.replace(em, f.owner, "member", new DocumentOperationSelection.Expected(2, second), third);
+        });
+        assertThat(currentSelection(f)).containsExactly(3L, third);
+        assertThat(selectionHistoryCount(f)).isEqualTo(3);
+    }
+
+    @Test void cleanupWaitsForSelectionTransactionAndExpiredAttemptCannotBeSelectedAgain() throws Exception {
+        var f = fixture(1);
+        admission.admit(SCOPED, f.owner, f.prepare());
+        UUID next = stageUnselected(f, Duration.ofSeconds(3));
+        try (var em = database.entityManagerFactory().createEntityManager();
+             var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            em.getTransaction().begin();
+            try {
+                RepositoryOperationLedger.fenceLiveOwner(em, f.owner);
+                int blocker = ((Number) em.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue();
+                DocumentOperationSelection.replace(em, f.owner, "member", new DocumentOperationSelection.Expected(1, f.attempt), next);
+                long deadline = System.nanoTime() + Duration.ofSeconds(6).toNanos();
+                boolean expired;
+                do {
+                    expired = tx.readOnly(read -> (Boolean) read.createNativeQuery(
+                            "SELECT lease_until<=clock_timestamp() FROM document_part_attempts WHERE attempt_id=:id")
+                            .setParameter("id", next).getSingleResult());
+                    if (!expired) Thread.sleep(10);
+                } while (!expired && System.nanoTime() < deadline);
+                assertThat(expired).isTrue();
+                var cleanup = executor.submit(() -> new DocumentAttemptCleanupLedger(tx).claim(next, LEASE));
+                boolean waiting = false;
+                deadline = System.nanoTime() + Duration.ofSeconds(3).toNanos();
+                do {
+                    waiting = tx.readOnly(read -> !read.createNativeQuery(
+                            "SELECT pid FROM pg_stat_activity WHERE :blocker=ANY(pg_blocking_pids(pid))")
+                            .setParameter("blocker", blocker).getResultList().isEmpty());
+                    if (waiting || cleanup.isDone()) break;
+                    Thread.sleep(10);
+                } while (System.nanoTime() < deadline);
+                assertThat(waiting).as("cleanup waits for selection's attempt lock").isTrue();
+                em.getTransaction().rollback();
+                assertThat(cleanup.get(5, java.util.concurrent.TimeUnit.SECONDS)).isPresent();
+            } finally {
+                if (em.getTransaction().isActive()) em.getTransaction().rollback();
+            }
+        }
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            RepositoryOperationLedger.fenceLiveOwner(em, f.owner);
+            DocumentOperationSelection.replace(em, f.owner, "member", new DocumentOperationSelection.Expected(1, f.attempt), next);
+        })).hasStackTraceContaining("exact live new-content attempt");
+        assertThat(currentSelection(f)).containsExactly(1L, f.attempt);
+        assertThat(selectionHistoryCount(f)).isEqualTo(1);
+    }
+
+    @ParameterizedTest @ValueSource(booleans={false,true})
+    void selectionRechecksAttemptAfterWaitingBehindCleanup(boolean initial) throws Exception {
+        var f = fixture(1);
+        if (!initial) admission.admit(SCOPED, f.owner, f.prepare());
+        UUID next = stageUnselected(f, Duration.ofSeconds(3));
+        try (var blocker = database.entityManagerFactory().createEntityManager();
+             var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            blocker.getTransaction().begin();
+            try {
+                int pid = ((Number) blocker.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue();
+                blocker.createNativeQuery("SELECT attempt_id FROM document_part_attempts WHERE attempt_id=:id FOR UPDATE")
+                        .setParameter("id", next).getSingleResult();
+                var pending = executor.submit(() -> tx.inTransaction(em -> {
+                    RepositoryOperationLedger.fenceLiveOwner(em, f.owner);
+                    if (initial) {
+                        var plan = DocumentUploadPlan.prepare(f.command, f.placements(), Map.of("member", next));
+                        DocumentOperationSelection.insert(em, f.owner, DocumentOperationSelection.encode(plan), 1);
+                    } else {
+                        DocumentOperationSelection.replace(em, f.owner, "member", new DocumentOperationSelection.Expected(1, f.attempt), next);
+                    }
+                }));
+                long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+                boolean waiting = false;
+                do {
+                    waiting = tx.readOnly(em -> !em.createNativeQuery(
+                            "SELECT pid FROM pg_stat_activity WHERE :blocker=ANY(pg_blocking_pids(pid))")
+                            .setParameter("blocker", pid).getResultList().isEmpty());
+                    if (waiting) break;
+                    Thread.sleep(10);
+                } while (System.nanoTime() < deadline);
+                assertThat(waiting).isTrue();
+                // Same row lock and guarded claim insert used by cleanup. No provider success is simulated.
+                blocker.createNativeQuery("SELECT CAST(pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM lease_until-clock_timestamp()))+0.02) AS text) FROM document_part_attempts WHERE attempt_id=:id")
+                        .setParameter("id", next).getSingleResult();
+                blocker.createNativeQuery("""
+                        INSERT INTO document_part_attempt_cleanup(attempt_id,cleanup_token,claim_until,state)
+                        VALUES(:id,gen_random_uuid(),clock_timestamp()+interval '5 minutes','DELETING')
+                        """).setParameter("id", next).executeUpdate();
+                blocker.getTransaction().commit();
+                assertThatThrownBy(() -> pending.get(5, java.util.concurrent.TimeUnit.SECONDS))
+                        .hasStackTraceContaining("exact live new-content attempt");
+            } finally {
+                if (blocker.getTransaction().isActive()) blocker.getTransaction().rollback();
+            }
+        }
+        if (!initial) assertThat(currentSelection(f)).containsExactly(1L, f.attempt);
+        assertThat(selectionHistoryCount(f)).isEqualTo(initial ? 0 : 1);
+    }
+
+    private static void appendSelection(jakarta.persistence.EntityManager em, Fixture f, long revision, UUID previous, UUID next) {
+        em.createNativeQuery("""
+                INSERT INTO document_operation_selection_attempts(account_id,principal,operation_id,owner_generation,
+                    member_id,selection_revision,previous_attempt_id,attempt_id)
+                VALUES('account','principal',:operation,:generation,'member',:revision,:previous,:next)
+                """).setParameter("operation", f.owner.key().operationId()).setParameter("generation", f.owner.generation())
+                .setParameter("revision", revision).setParameter("previous", previous).setParameter("next", next).executeUpdate();
+    }
+
+    /** Real SQL staging, with synthetic declarations and no provider verification. */
+    private static UUID stageUnselected(Fixture f) {
+        return stageUnselected(f, Duration.ofMinutes(5));
+    }
+
+    private static UUID stageUnselected(Fixture f, Duration lease) {
+        UUID next = UUID.randomUUID();
+        var member = DocumentUploadPlan.prepare(f.command, f.placements(), Map.of("member", next)).members().getFirst();
+        var encoded = DocumentAttemptPlanEncoding.prepare(member);
+        tx.inTransaction(em -> {
+            RepositoryOperationLedger.fenceLiveOwner(em, f.owner);
+            em.createNativeQuery("""
+                    INSERT INTO document_part_attempts(attempt_id,node_id,account_id,sampled_revision,backend_generation,
+                        storage_realm,storage_namespace,planned_count,source_count,lease_token,lease_until,state,
+                        plan_kind,operation_principal,operation_id,operation_generation,member_id,drive_id)
+                    VALUES(:next,:node,'account',:revision,:backend,:realm,:namespace,
+                        :count,:sources,gen_random_uuid(),clock_timestamp()+(:millis * interval '1 millisecond'),'PLANNING',
+                        'NEW_CONTENT','principal',:operation,:generation,'member',:drive)
+                    """).setParameter("next", next).setParameter("node", member.nodeId())
+                    .setParameter("revision", member.intent().getDestination().getExpectedMutationRevision())
+                    .setParameter("backend", f.placement.generation()).setParameter("realm", f.placement.profile().storageRealm())
+                    .setParameter("namespace", f.drive.bucket).setParameter("count", member.attempt().orElseThrow().uploads().size())
+                    .setParameter("sources", member.sources().size()).setParameter("operation", f.owner.key().operationId())
+                    .setParameter("generation", f.owner.generation()).setParameter("drive", f.drive.driveId)
+                    .setParameter("millis", lease.toMillis()).executeUpdate();
+            DocumentPartAttemptLedger.insertEncodedRows(em, encoded, next, f.placement.profile().storageRealm(), f.drive.bucket);
+            em.createNativeQuery("UPDATE document_part_attempts SET state='STAGING' WHERE attempt_id=:next")
+                    .setParameter("next", next).executeUpdate();
+        });
+        return next;
+    }
+
+    private static long selectionHistoryCount(Fixture f) {
+        return tx.inTransaction(em -> { return ((Number) em.createNativeQuery(
+                "SELECT count(*) FROM document_operation_selection_attempts WHERE operation_id=:operation")
+                .setParameter("operation", f.owner.key().operationId()).getSingleResult()).longValue(); });
+    }
+
     @ParameterizedTest @ValueSource(strings = {"uuid", "generation", "realm", "namespace", "key", "version", "missing-version", "size", "sha", "type", "slot"})
     void forgedReuseClaimCannotStage(String field) {
         var f = fixture(1);
@@ -631,6 +964,10 @@ class DocumentOperationUploadAdmissionIT {
     }
 
     private static Fixture fixture(int chunks) {
+        return fixture(chunks, LEASE);
+    }
+
+    private static Fixture fixture(int chunks, Duration ownerLease) {
         var drive = new DriveRecord(); drive.driveId = UUID.randomUUID(); drive.accountId = "account"; drive.name = "drive-" + drive.driveId;
         drive.driveType = "CUSTOM"; drive.provider = "test-location"; drive.bucket = "namespace"; drive.prefix = "original";
         drives.insert(drive);
@@ -656,7 +993,7 @@ class DocumentOperationUploadAdmissionIT {
         var command = new DocumentPublicationCommand(DocumentPublicationIntent.newBuilder().setEncodingVersion(1).setAccountId("account")
                 .setOperationId(UUID.randomUUID().toString()).addMembers(member).build());
         var key = new RepositoryOperationLedger.Key("account", "principal", command.operationId());
-        var owner = operations.admit(key, command, UUID.randomUUID(), LEASE).owner().orElseThrow();
+        var owner = operations.admit(key, command, UUID.randomUUID(), ownerLease).owner().orElseThrow();
         return new Fixture(command, owner, drive, DocumentUploadPlan.Placement.sample(drive, generation, profile), UUID.randomUUID(), destination, source);
     }
 

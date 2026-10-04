@@ -22,8 +22,9 @@ import static org.assertj.core.api.Assertions.*;
 class DocumentRevisionProjectionIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
-    @Test void selectionMigrationDoesNotChooseBetweenExistingOperationAttempts() {
-        try (var context=context("39")) {
+    @ParameterizedTest @ValueSource(booleans={false,true})
+    void selectionMigrationDoesNotChooseBetweenExistingOperationAttempts(boolean selected) {
+        try (var context=context(selected ? "41" : "39")) {
             var source=publish(context,false,"retained");
             var operations=new RepositoryOperationLedger(context.tx);
             var key=new RepositoryOperationLedger.Key("account","principal",UUID.randomUUID());
@@ -57,8 +58,38 @@ class DocumentRevisionProjectionIT {
                         .setParameter("operation",key.operationId()).executeUpdate();
             });
             assertThat(count(context,"document_part_attempts")).isEqualTo(3);
+            if (selected) context.tx.inTransaction(em -> {
+                RepositoryOperationLedger.fenceLiveOwner(em,owner);
+                em.createNativeQuery("""
+                        INSERT INTO document_operation_selections(account_id,principal,operation_id,owner_generation,
+                         member_id,node_id,sampled_revision,drive_id,drive_snapshot,drive_sha256,backend_generation,
+                         storage_realm,storage_namespace,upload_count,attempt_id)
+                        SELECT a.account_id,a.operation_principal,a.operation_id,a.operation_generation,a.member_id,
+                         a.node_id,a.sampled_revision,a.drive_id,document_operation_drive_snapshot(d),
+                         document_operation_drive_digest_v1(d),a.backend_generation,a.storage_realm,a.storage_namespace,1,a.attempt_id
+                        FROM document_part_attempts a JOIN drives d ON d.drive_id=a.drive_id
+                        WHERE a.operation_id=:operation ORDER BY a.attempt_id LIMIT 1
+                        """).setParameter("operation",key.operationId()).executeUpdate();
+                em.createNativeQuery("""
+                        INSERT INTO document_operation_selections(account_id,principal,operation_id,owner_generation,
+                         member_id,node_id,sampled_revision,drive_id,drive_snapshot,drive_sha256,backend_generation,
+                         storage_realm,storage_namespace,upload_count,attempt_id)
+                        SELECT account_id,principal,operation_id,owner_generation,'zero',node_id,sampled_revision,
+                         drive_id,drive_snapshot,drive_sha256,backend_generation,storage_realm,storage_namespace,0,NULL
+                        FROM document_operation_selections WHERE operation_id=:operation
+                        """).setParameter("operation",key.operationId()).executeUpdate();
+            });
             context.migrate();
-            assertThat(count(context,"document_operation_selections")).isZero();
+            assertThat(count(context,"document_operation_selections")).isEqualTo(selected ? 2 : 0);
+            assertThat(count(context,"document_operation_selection_current")).isEqualTo(selected ? 2 : 0);
+            assertThat(count(context,"document_operation_selection_attempts")).isEqualTo(selected ? 2 : 0);
+            java.util.List<?> mismatches = context.tx.readOnly(em -> em.createNativeQuery("""
+                    SELECT s.member_id FROM document_operation_selections s
+                    JOIN document_operation_selection_attempts h
+                    USING(account_id,principal,operation_id,owner_generation,member_id)
+                    WHERE h.selection_revision<>1 OR h.attempt_id IS DISTINCT FROM s.attempt_id
+                    """).getResultList());
+            assertThat(mismatches).isEmpty();
             assertThat(count(context,"document_part_attempts")).isEqualTo(3);
             assertThat(count(context,"document_revision_publications")).isEqualTo(1);
         }
