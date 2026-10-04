@@ -639,6 +639,78 @@ class DocumentPublicationCommitIT {
         }
     }
 
+    @Test void freshJvmValidatesDynamicArchivedTypeWithoutWriterCaches(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path temp) throws Exception {
+        var file=com.google.protobuf.DescriptorProtos.FileDescriptorProto.newBuilder()
+                .setName("archived_case.proto").setPackage("archive.runtime").setSyntax("proto3")
+                .addMessageType(com.google.protobuf.DescriptorProtos.DescriptorProto.newBuilder().setName("ArchivedCase")
+                        .addField(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.newBuilder().setName("docket")
+                                .setNumber(1).setType(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.Type.TYPE_STRING))).build();
+        var descriptor=com.google.protobuf.Descriptors.FileDescriptor.buildFrom(file,
+                new com.google.protobuf.Descriptors.FileDescriptor[0]).findMessageTypeByName("ArchivedCase");
+        var payload=com.google.protobuf.DynamicMessage.newBuilder(descriptor)
+                .setField(descriptor.findFieldByName("docket"),"2026-ARCHIVE-42").build();
+        var fixture=fixture(1,1,publicReadGrant(),"restart-"+UUID.randomUUID(),true,Any.pack(payload,"type.test"));
+        var checked=stage(fixture);
+        var policy=ai.protomolt.proto.repo.admission.DocumentAdmissionPolicy.of(DocumentSchemaPolicy.newBuilder()
+                .setEncodingVersion(1).setAccountId(fixture.command.intent().getAccountId())
+                .setMode(DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_TYPED_REQUIRED).setAnyResolvedSchema(true)
+                .setValidationProfile("protomolt-retained-schema-admission/v1")
+                .setLimits(DocumentSchemaPolicyLimits.newBuilder().setMaxFragments(32).setMaxFragmentBytes(4_000_000)
+                        .setMaxRoots(100).setMaxEvidenceBytes(4_000_000).setMaxBindings(20)
+                        .setMaxRetainedBytes(16_000_000).setMaxDecodedBytes(1_000_000)).build(),()->{});
+        var member=fixture.command.intent().getMembers(0);
+        var fragments=new HashMap<Integer,ByteString>();
+        for(int i=0;i<member.getPartsCount();i++) fragments.put(i,ByteString.copyFrom(
+                fixture.bodies.get(new DocumentUploadPayloads.Key(member.getMemberId(),i)).bytes()));
+        var definition=DocumentSchemaRetentionFixture.definition(descriptor);
+        var proof=policy.prepareAndCheck(ByteString.copyFrom(java.util.HexFormat.of().parseHex(fixture.command.sha256())),
+                member,fragments,DocumentSchemaRetentionFixture.definition(Document.getDescriptor()),ignored->definition,()->{});
+        var selected=new DocumentSchemaPolicies(tx).activate(policy,0,()->{});
+        var admission=DocumentSchemaBatch.prepare(fixture.command,selected,Map.of(member.getMemberId(),proof),()->{});
+        admission.stage(new RepositorySchemaArtifacts(tx),fixture.owner,()->{});
+        var published=publisher().commit(ADMIN,fixture.owner,fixture.prepared,Map.of(),checked.selected,admission,()->{}).getMembers(0);
+        String expected="REPLAY_OK|"+published.getRevisionId()+"|"+DocumentPartCodec.sha256Hex(proof.document().toByteArray())+"|"+proof.policySha256();
+        String success=runHistoricalWorker(published,temp.resolve("fresh-success.log"),0);
+        assertThat(success).contains(expected).doesNotContain("REPLAY_FAILURE|");
+        String customDescriptor=proof.references().stream().filter(r->r.typeUrl().equals("type.test/archive.runtime.ArchivedCase"))
+                .findFirst().orElseThrow().descriptorSha256();
+        // A second fresh JVM cannot use an earlier JVM's resolved descriptors.
+        tx.inTransaction(em->{
+            em.createNativeQuery("SET LOCAL session_replication_role='replica'").executeUpdate();
+            int removed=em.createNativeQuery("DELETE FROM repository_schema_artifacts WHERE account_id=:account AND artifact_sha256=decode(:sha,'hex')")
+                    .setParameter("account",fixture.command.intent().getAccountId()).setParameter("sha",customDescriptor).executeUpdate();
+            assertThat(removed).isEqualTo(1);
+        });
+        String failure=runHistoricalWorker(published,temp.resolve("fresh-missing-schema.log"),1);
+        assertThat(failure).contains("REPLAY_FAILURE|DATA_LOSS").doesNotContain("REPLAY_OK|");
+    }
+
+    private static String runHistoricalWorker(DocumentPublishedRevision revision,java.nio.file.Path output,int expectedExit) throws Exception {
+        var address=revision.getAddress();
+        UUID reader=UUID.randomUUID();
+        var builder=new ProcessBuilder(java.nio.file.Path.of(System.getProperty("java.home"),"bin","java").toString(),
+                "-cp",java.util.Objects.requireNonNull(System.getProperty("protomolt.test.runtimeClasspath")),
+                DocumentHistoricalReadWorker.class.getName(),revision.getRevisionId(),reader.toString(),address.getAccountId(),
+                address.getDocId(),address.getGraphId(),address.getGraphAddressId())
+                .redirectErrorStream(true).redirectOutput(output.toFile());
+        builder.environment().putAll(Map.of("TEST_DB_URL",POSTGRES.getJdbcUrl(),"TEST_DB_USER",POSTGRES.getUsername(),
+                "TEST_DB_PASSWORD",POSTGRES.getPassword(),"TEST_ENDPOINT",S3.getEndpoint().toString(),"TEST_REGION",S3.getRegion(),
+                "TEST_ACCESS",S3.getAccessKey(),"TEST_SECRET",S3.getSecretKey(),"TEST_GENERATION",GENERATION));
+        var process=builder.start();
+        try {
+            assertThat(process.waitFor(45,java.util.concurrent.TimeUnit.SECONDS)).as("fresh reader exits; log: %s",output).isTrue();
+            assertThat(process.exitValue()).as("fresh reader status; log: %s",output).isEqualTo(expectedExit);
+        } finally {
+            if(process.isAlive()) {
+                process.destroyForcibly();
+                assertThat(process.waitFor(5,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            }
+        }
+        assertThat(documentReadPins(reader)).isZero();
+        return java.nio.file.Files.readString(output);
+    }
+
     private static Checked stage(Fixture fixture) {
         return stage(fixture,Map.of());
     }
@@ -679,6 +751,11 @@ class DocumentPublicationCommitIT {
     }
 
     private static Fixture fixture(int count,int chunks,DocumentSecurity policy,String account,boolean typedFirst) {
+        return fixture(count,chunks,policy,account,typedFirst,
+                Any.pack(com.google.protobuf.StringValue.of("typed provider payload"), "type.test"));
+    }
+
+    private static Fixture fixture(int count,int chunks,DocumentSecurity policy,String account,boolean typedFirst,Any typedPayload) {
         var drive=new DriveRecord(); drive.driveId=UUID.randomUUID(); drive.accountId=account; drive.name="native-"+drive.driveId;
         drive.driveType="CUSTOM"; drive.provider="s3"; drive.bucket=NAMESPACE; new DriveLedger(tx).insert(drive);
         var placements=Map.of(drive.driveId,DocumentUploadPlan.Placement.sample(drive,GENERATION,profile));
@@ -692,7 +769,7 @@ class DocumentPublicationCommitIT {
             for (int chunk=0;chunk<chunks;chunk++) metadata.addSemanticResults(SemanticProcessingResult.newBuilder().setResultId("original-"+chunk));
             var document=Document.newBuilder().setDocId(docId).setOwnership(ownership)
                     .setSearchMetadata(metadata)
-                    .setStructuredData(typedFirst && index==0 ? Any.pack(com.google.protobuf.StringValue.of("typed provider payload"), "type.test") : Any.newBuilder()
+                    .setStructuredData(typedFirst && index==0 ? typedPayload : Any.newBuilder()
                     .setTypeUrl("archive.example/unavailable.Record").setValue(ByteString.copyFrom(new byte[]{0,(byte)255,1})).build()).build();
             var member=DocumentPublicationMember.newBuilder().setMemberId(id).setDriveId(drive.driveId.toString()).setOwnership(ownership)
                     .setRowKind(DocumentPublicationRowKind.DOCUMENT_PUBLICATION_ROW_KIND_PIPELINE)

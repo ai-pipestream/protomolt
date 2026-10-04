@@ -5006,6 +5006,13 @@ cancellation after reservation, retained-policy replay, existing schema revocati
 boundaries, and provider publication/read behavior. The real-provider typed case
 checks the decoded document and provenance, deadline expiry after provider I/O,
 missing retained assets as DATA_LOSS, opaque typed refusal, and explicit raw
-preservation afterwards. The engine runtime-dependency gate passes. Process
-restart and a direct composed-reader revocation-during-replay case remain to be
-qualified; no public historical transport is advertised.
+preservation afterwards. The engine runtime-dependency gate passes.
+
+An additional fresh-JVM test publishes a runtime-defined custom protobuf type
+and reads it through `DocumentHistoricalReadWorker`, using real PostgreSQL and
+versioned object storage without writer descriptors or fragment inputs. A second
+fresh JVM fails with DATA_LOSS after removal of that exact retained descriptor.
+Both children release their read pins. This establishes process-local cache
+independence; the writer process remains alive. Full deployment restart and a
+direct composed-reader revocation-during-replay case remain to be qualified;
+no public historical transport is advertised.

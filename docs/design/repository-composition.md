@@ -2537,7 +2537,15 @@ The low-level `PinnedHistory.validateFragments` method accepts caller-owned
 fragment copies; those copies and any provider batch remain the caller's lifetime
 responsibility. The composed reader manages both automatically.
 
-Process-restart qualification, a direct composed-read revocation test during
-replay, and public transport integration remain outstanding. The shared replay
-boundary already has revocation tests, but those alone do not qualify every host
-delivery path.
+A fresh-JVM qualification reads a runtime-defined protobuf type from real
+PostgreSQL and versioned object storage. The child receives only connection
+configuration and revision identity, with no writer proof or descriptor input.
+It validates the archived document using retained definitions. A second fresh
+JVM reports DATA_LOSS after the test removes the exact custom descriptor asset;
+both runs release their read pins. This proves independence from writer-process
+descriptor caches, not a complete deployment restart.
+
+Full deployment-restart qualification, a direct composed-read revocation test
+during replay, and public transport integration remain outstanding. The shared
+replay boundary already has revocation tests, but those alone do not qualify
+every host delivery path.
