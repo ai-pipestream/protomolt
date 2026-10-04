@@ -8,12 +8,9 @@ import com.google.protobuf.Descriptors.FileDescriptor;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HexFormat;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
+import ai.protomolt.proto.descriptors.DescriptorFingerprints;
 
 /**
  * Canonical protobuf hashing for the mesh contract.
@@ -32,6 +29,8 @@ import java.util.Map;
  * the fingerprint is stable across a wire round trip, and two descriptor sets that differ only in
  * an unknown field fingerprint differently. The same rule covers custom options an older consumer
  * has no extension for.
+ * Unknown fields on the FileDescriptorSet envelope itself are excluded by this
+ * longstanding algorithm; only its ordered file contents contribute to identity.
  *
  * <p><b>Payload digests.</b> A payload digest is the SHA-256 of the exact stored wire bytes: the
  * {@code Any.value} bytes for an inline body, the artifact bytes for a claim check. No
@@ -59,12 +58,7 @@ public final class MeshDigest {
      * @return the lowercase SHA-256 hex fingerprint
      */
     public static String fingerprint(FileDescriptorSet set) {
-        FileDescriptorSet canonical = FileDescriptorSet.newBuilder()
-                .addAllFile(set.getFileList().stream()
-                        .sorted(Comparator.comparing(FileDescriptorProto::getName))
-                        .toList())
-                .build();
-        return sha256(canonical.toByteArray());
+        return DescriptorFingerprints.fingerprint(set);
     }
 
     /**
@@ -74,9 +68,7 @@ public final class MeshDigest {
      * @return the lowercase SHA-256 hex fingerprint
      */
     public static String fingerprint(List<FileDescriptor> files) {
-        return fingerprint(FileDescriptorSet.newBuilder()
-                .addAllFile(files.stream().map(FileDescriptor::toProto).toList())
-                .build());
+        return DescriptorFingerprints.fingerprint(files);
     }
 
     /**
@@ -89,11 +81,7 @@ public final class MeshDigest {
      * @return the closure as a descriptor set
      */
     public static FileDescriptorSet closure(Descriptor type) {
-        Map<String, FileDescriptorProto> byName = new LinkedHashMap<>();
-        collect(type.getFile(), byName);
-        return FileDescriptorSet.newBuilder()
-                .addAllFile(new ArrayList<>(byName.values()))
-                .build();
+        return DescriptorFingerprints.closure(type);
     }
 
     /**
@@ -104,7 +92,7 @@ public final class MeshDigest {
      * @return the lowercase SHA-256 hex fingerprint
      */
     public static String fingerprintOf(Descriptor type) {
-        return fingerprint(closure(type));
+        return DescriptorFingerprints.fingerprintOf(type);
     }
 
     /**
@@ -118,18 +106,4 @@ public final class MeshDigest {
         return sha256(payload.getValue().toByteArray());
     }
 
-    private static void collect(FileDescriptor file, Map<String, FileDescriptorProto> byName) {
-        if (byName.containsKey(file.getName())) {
-            return;
-        }
-        // Dependencies first, so the assembled set is in a loadable order even before the
-        // canonical sort the fingerprint applies.
-        for (FileDescriptor dependency : file.getDependencies()) {
-            collect(dependency, byName);
-        }
-        for (FileDescriptor dependency : file.getPublicDependencies()) {
-            collect(dependency, byName);
-        }
-        byName.put(file.getName(), file.toProto());
-    }
 }

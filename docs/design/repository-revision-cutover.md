@@ -142,6 +142,57 @@ binding must be supported by actual verification evidence. Its presence alone do
 not qualify a provider for immutable reuse. Absent versions and provider sentinel
 versions remain distinct; neither means that another backend may be substituted.
 
+## Complete revision preparation before publication
+
+The next internal boundary is a non-publishing revision preparer. It resolves
+verified upload observations and retained source identities into one immutable,
+command-ordered draft. Repository orchestration belongs in `repo/container`;
+deterministic fragment checks belong in `repo/codec`. No provider I/O occurs in the
+publication transaction. Publication must recheck owner/selection fences, source
+revisions, authorization and physical retention before committing this draft.
+
+Keep exact original fragment bytes and digests as physical evidence. Parse a
+bounded semantic view for checks; never require byte equality after protobuf
+parse/reserialize or overwrite original bytes with a normalized representation.
+`DocumentPartCodec.assemble` is a merge utility, not an admission gate.
+
+For the initial Document layout, require one CORE, matching nonblank document IDs
+in all PRESENT fragments, and field confinement before merging:
+
+- CORE excludes `blob_bag`, `parser_results` and
+  `search_metadata.semantic_results`. Other root and search-parent content belongs
+  to CORE, including unknown fields under the pinned descriptor/layout policy.
+- BLOBS and PARSED contain only the identity and their nonempty owned field.
+- CHUNKS contains the identity and nonempty semantic results. Its search parent
+  cannot introduce other fields. Root/search-parent unknown fields in non-CORE
+  fragments are rejected as unowned content. Unknown fields within an owned
+  subtree retain their original bytes; that does not establish semantic validity.
+- Validate CHUNKS in global manifest order against the existing run rules:
+  consecutive equal IDs stay together, blank IDs use global element positions,
+  and repeated/generated names use the first unused suffix. Reject a run split
+  across adjacent fragments and incorrect subkeys. Preserve command ordinals;
+  compact upload ordinals are not complete revision positions.
+
+Pin descriptor and layout identities with admission evidence; future code must not
+reinterpret a historical unknown CORE field using today's layout. Derive document
+metadata/manifest from the checked assembly and compare ownership/address against
+the canonical command. Preserve explicit EMPTY entries without physical objects.
+Zero-upload revisions still undergo complete preparation without invented attempts.
+Apply aggregate byte, nesting, descriptor and execution bounds, cancellation and
+shared payload reservations through materialization and validation.
+
+Until descriptor resolution, validation and durable retention are implemented,
+requests requiring structured-schema validation must fail closed. A structurally
+confined fragment is not typed-valid. Nested Any paths follow explicit policy.
+Keep this preparer internal until mixed publication, reads and retention activate
+together; a draft cannot itself produce a successful operation outcome.
+
+Required cases include noncanonical protobuf wire ordering, unknown CORE/owned
+payload bytes, forged fields in CHUNKS, mismatched IDs/ownership, wrong global
+chunk subkeys, exact retained versions across providers, zero-upload drafts and
+cancellation/budget failures with no visible revision. Existing staging tests do
+not substitute for this assembly evidence.
+
 ## Migration and activation sequence
 
 The first migration uses a document-specific shadow projection:

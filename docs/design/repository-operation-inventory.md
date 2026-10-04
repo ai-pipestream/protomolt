@@ -2651,3 +2651,22 @@ the pinned-version read. Twelve coordinator cases passed in 28s before that fina
 assertion; the strengthened retained-CORE case then passed in 14s. This is staging
 evidence, not completion of mixed-revision publication,
 schema admission, changed-part reads or retention cutover. No public API changed.
+
+### Reusable descriptor fingerprint identity
+
+Extracted the existing mesh descriptor fingerprint/closure algorithm into
+`protomolt-descriptors` as `DescriptorFingerprints`. Existing `MeshDigest` methods
+delegate unchanged, allowing repository typed admission to reuse canonical identity
+without depending on mesh contracts. No protobuf identity, tag or URL changed.
+A fixed-byte golden locks file ordering and digest; additional tests retain file
+unknown fields, preserve the existing exclusion of set-envelope unknown fields,
+and rebuild a multi-file descriptor closure for offline dynamic decoding.
+The descriptor and mesh suites passed in 4s after the final fixture refinement.
+Sol found no identity-change blocker. This helper is identity computation, not
+validation of untrusted closure, a complexity bound or durable schema retention.
+
+The cutover design now specifies the next non-publishing revision preparer:
+bounded original-byte materialization, slot/field confinement, global chunk-run
+checks, pinned layout identity and shared publication rechecks. Re-serialization
+must not replace original evidence or be used as a byte-equality admission rule.
+This preparer remains unimplemented. No hosted CI or remote publication occurred.
