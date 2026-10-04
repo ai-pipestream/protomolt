@@ -88,8 +88,20 @@ final class DocumentSchemaRetentionFixture {
         return publish(c, f, false, beforeSeal);
     }
 
+    @FunctionalInterface interface ManifestCheck {
+        void accept(EntityManager em, UUID revision, DocumentSchemaManifest manifest);
+    }
+
+    static UUID publishWithManifest(Context c, Fixture f, ManifestCheck beforeSeal) {
+        return publish(c, f, false, beforeSeal);
+    }
+
     /** Omission injects an incomplete SQL candidate, not a successful provider response. */
     static UUID publish(Context c, Fixture f, boolean omitCore, BiConsumer<EntityManager, UUID> beforeSeal) {
+        return publish(c, f, omitCore, (em, revision, manifest) -> beforeSeal.accept(em, revision));
+    }
+
+    private static UUID publish(Context c, Fixture f, boolean omitCore, ManifestCheck beforeSeal) {
         return c.tx().inTransaction(em -> {
             RepositoryOperationLedger.fenceLiveOwner(em, f.owner());
             RepositoryOperationLedger.requireCommand(em, f.owner().key(), f.command());
@@ -98,6 +110,7 @@ final class DocumentSchemaRetentionFixture {
             var locked = DocumentAdmissionAuthorization.lockAndAuthorize(em, CALLER, plan, DocumentAdmissionAuthorization.prepare(plan));
             plan.members().getFirst().placement().drive().lock(em, new DriveLedger(c.tx()));
             var parts = DocumentCommitParts.bind(em, f.owner(), plan, Map.of("member", f.selected()), DocumentReuseAdmission.prepare(plan), () -> {});
+            var manifest = DocumentSchemaManifest.prepare(f.batch(), "member", parts, () -> {});
             f.batch().lockArtifacts(em, f.owner(), () -> {});
             var candidate = DocumentCommitWriter.prepare(plan.members().getFirst(), f.content(), parts, locked, Map.of(), Instant.now(), () -> {});
             var row = em.merge(candidate.row()); em.flush(); em.refresh(row);
@@ -123,7 +136,7 @@ final class DocumentSchemaRetentionFixture {
                     WHERE NOT :omit OR q.part<>1
                     """).setParameter("revision", revision).setParameter("parts", candidate.references())
                     .setParameter("omit", omitCore).executeUpdate();
-            beforeSeal.accept(em, revision);
+            beforeSeal.accept(em, revision, manifest);
             em.createNativeQuery("UPDATE document_revision_publications SET projection_sealed=true WHERE revision_id=:id")
                     .setParameter("id", revision).executeUpdate();
             em.createNativeQuery("INSERT INTO document_revision_current(node_id,revision_id) VALUES(:node,:revision)")

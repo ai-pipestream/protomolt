@@ -4630,3 +4630,40 @@ only after the test observes inserted artifact references in the same transactio
 Sol reviewed the helper, fixture and tests with no remaining blocker. This small
 positive fixture has one payload root; multi-root ordering, full JDBC batch
 boundaries, near-limit latency and policy-bound sealing remain integration work.
+
+### Comparing the complete expected schema retention set
+
+`DocumentSchemaManifest.prepare` and V60's
+`document_schema_retention_manifest_v1` are new internal comparison operations.
+The Java side freezes one checked member's nonempty physical slots and complete
+artifact, association and root evidence identities. The SQL side reads the
+corresponding native revision rows. Both sort arrays by the same identities,
+include nullable source identities, and encode integer values as decimal strings
+so JSON conversion cannot round a BIGINT. The manifest contains references, not
+copies of descriptor or source bytes.
+
+Preparation rejects missing or extra physical ordinals, mismatched part/sub-key,
+size or digest, and a reused object with the wrong UUID. An explicitly permitted
+opaque member has complete physical slots and empty schema sets. The SQL reader
+rejects an unknown revision rather than returning an empty valid-looking object.
+Both sides bound allocation before encoding and check the encoded byte limit.
+SQL left joins preserve unqualified physical rows so they cannot disappear from
+the comparison.
+
+This is exact-set comparison, not an admission verdict. V52's physical binding,
+selected-attempt and seal checks remain required; manifest equality does not
+replace them. The future admission row must also bind body, metadata, policy,
+command, member and owner attempt. V59's configured-policy rejection is unchanged,
+and no public typed publisher is enabled.
+
+Qualification: 26 tests pass (four manifest unit cases, three PostgreSQL manifest
+cases, six retention cases and 13 native publication cases). SQL tests compare the
+Java proof manifest before seal and after commit, reject missing evidence, reject
+same-count substitutions in all four sets, and reject an unknown revision. Unit
+cases cover typed and explicitly opaque preparation, wrong reuse identity,
+missing/extra slots, wrong digest and cancellation. The real provider, multi-root,
+near-limit allocation/latency and policy-bound admission checks remain separate
+qualification work; this checkpoint does not claim those are complete.
+Sol reviewed the Java/SQL parity and tests with no blocker. Its suggested
+substitution coverage now includes every part, association and root field;
+native physical sealing remains an independent required guard.
