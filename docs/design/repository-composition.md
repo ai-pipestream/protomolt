@@ -2752,6 +2752,24 @@ and orderly resource closure before mounting a public endpoint.
 or a terminal rejection. The numbered sequence below remains the integration
 acceptance plan; its first step has internal implementation but is not host-ready.
 
+Publication session shutdown now has its own call boundary. Closing
+`DocumentPublicationSessions` refuses new execution, recovery and retirement calls
+with UNAVAILABLE, including receipt-only replay. Accepted calls may finish; the
+host waits for them with a bounded `awaitIdle` before releasing shared resources.
+The count includes SQL observation before a session entry exists. Neither close
+nor a drain timeout discards uncertain owner/attempt identities. A drained call
+registry is not evidence that a timed-out provider worker has stopped: the host
+must subsequently drain upload/read workers and reconcile their pins before
+closing providers and SQL. Stop session admission first, stop transport admission,
+wait for session calls, then close and drain the upload/read components. Closing
+the upload coordinator first would interrupt accepted publication work. Timeout
+or interruption retains the same resource scope so shutdown can be retried.
+No shutdown action grants takeover or publication
+authority. Real PostgreSQL tests hold observation and committed recovery responses
+open, verify drain timeout and refusal of new calls, then inject acknowledgment
+loss and verify retained ownership after the call exits. Host wiring and restart
+qualification remain outstanding.
+
 1. Add the shared native publication coordinator over these existing components.
    It must own policy selection, immutable candidate preparation, authorized
    schema resolution, checked staging, operation ownership and the complete

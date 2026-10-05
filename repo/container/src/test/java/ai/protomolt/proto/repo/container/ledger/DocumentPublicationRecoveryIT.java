@@ -30,6 +30,75 @@ class DocumentPublicationRecoveryIT {
 
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void shutdownWaitsForSqlCallsAndPreservesUncertainRecovery(boolean recovery) throws Exception {
+        try (var c = context(POSTGRES)) {
+            var input = input(c);
+            var ledger = new RepositoryOperationLedger(c.tx());
+            var entered = new CountDownLatch(1);
+            var release = new CountDownLatch(1);
+            var armed = new AtomicBoolean();
+            var source = DocumentJdbcFaults.afterCommit(c.pool(), () -> {
+                if (armed.get() && (!recovery || ledger.find(input.key()).orElseThrow().generation() == 2)
+                        && armed.compareAndSet(true, false)) {
+                    entered.countDown();
+                    try {
+                        if (!release.await(10, TimeUnit.SECONDS)) throw new java.sql.SQLException("Shutdown test gate timed out");
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new java.sql.SQLException("Shutdown test gate interrupted", interrupted);
+                    }
+                    throw new java.sql.SQLException("Shutdown test commit acknowledgment lost", "08006");
+                }
+            });
+            try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                    Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"));
+                    var resources = resources(new Tx(emf));
+                    var executor = Executors.newSingleThreadExecutor()) {
+                var sessions = resources.sessions();
+                assertThatThrownBy(() -> sessions.awaitIdle(Duration.ZERO)).isInstanceOf(IllegalStateException.class);
+                if (recovery) { pending(sessions, input); expire(c, input); }
+                armed.set(true);
+                var running = executor.submit(() -> {
+                    if (recovery) return sessions.recover(CALLER, input.command(), input.placements(), 1,
+                            input.modes(), RepositoryReadControl.NONE);
+                    return Optional.of(sessions.execute(CALLER, input.command(), input.placements(), Map.of(), Map.of(),
+                            input.modes(), Optional.empty(), (member, occurrence) -> {
+                                throw new AssertionError("SQL gate must precede schema resolution");
+                            }, RepositoryReadControl.NONE));
+                });
+                try {
+                    assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+                    sessions.close();
+                    sessions.close();
+                    assertThat(sessions.awaitIdle(Duration.ZERO)).isFalse();
+                    assertThat(sessions.awaitIdle(Duration.ofMillis(10))).isFalse();
+                    assertThatThrownBy(() -> sessions.awaitIdle(Duration.ofNanos(-1))).isInstanceOf(IllegalArgumentException.class);
+                    assertClosed(() -> sessions.execute(CALLER, input.command(), Map.of(), Map.of(), Map.of(),
+                            input.modes(), Optional.empty(), (member, occurrence) -> {
+                                throw new AssertionError("Closed registry must not resolve schemas");
+                            }, RepositoryReadControl.NONE));
+                    assertClosed(() -> sessions.recover(CALLER, input.command(), Map.of(), 1, input.modes(), RepositoryReadControl.NONE));
+                    assertClosed(() -> sessions.retireSuperseded(CALLER, input.command(), RepositoryReadControl.NONE));
+                    // Observation before session creation also keeps SQL resources alive.
+                    assertThat(sessions.retainedSessions()).isEqualTo(recovery ? 1 : 0);
+                } finally { release.countDown(); }
+                assertThatThrownBy(() -> running.get(10, TimeUnit.SECONDS))
+                        .hasStackTraceContaining("Shutdown test commit acknowledgment lost");
+                assertThat(sessions.awaitIdle(Duration.ofSeconds(1))).isTrue();
+                assertThat(sessions.retainedSessions()).isEqualTo(recovery ? 1 : 0);
+                assertThat(sessions.retainedCommandBytes()).isEqualTo(recovery ? input.bytes() : 0);
+                assertThat(ledger.find(input.key()).orElseThrow().generation()).isEqualTo(recovery ? 2 : 1);
+            }
+        }
+    }
+
+    private static void assertClosed(org.assertj.core.api.ThrowableAssert.ThrowingCallable call) {
+        assertThatThrownBy(call).isInstanceOfSatisfying(RepositoryException.class,
+                failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.UNAVAILABLE));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
     void uncertainTakeoverKeepsExclusiveTransitionAndExactRetryIdentity(boolean cancel) throws Exception {
         try (var c = context(POSTGRES)) {
             var input = input(c);

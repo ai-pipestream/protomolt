@@ -16,7 +16,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 /** Bounded host-owned retry identities. No expiry, implicit takeover, or uncertain-outcome eviction. */
-final class DocumentPublicationSessions {
+final class DocumentPublicationSessions implements AutoCloseable {
     private final Tx tx;
     private final DocumentPublicationExecution execution;
     private final DocumentPublicationReplay replay;
@@ -24,6 +24,8 @@ final class DocumentPublicationSessions {
     private final int capacity;
     private final long maxCommandBytes;
     private long commandBytes;
+    private boolean closed;
+    private int activeCalls;
     private final Map<RepositoryOperationLedger.Key, Entry> entries = new HashMap<>();
 
     private static final class Entry {
@@ -56,6 +58,17 @@ final class DocumentPublicationSessions {
      * limits; they are not a measurement or reservation of all parsed Java heap.
      */
     DocumentPublicationResult execute(RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<UUID, DocumentUploadPlan.Placement> placements,
+            Map<DocumentUploadPayloads.Key, PartObject> bodies, Map<String, String> attributes,
+            Map<String, DocumentPublicationCandidate.Mode> modes,
+            Optional<DocumentSchemaAdmission.Definition> container, DocumentPublicationCandidate.Resolver resolver,
+            RepositoryReadControl control) throws InvalidProtocolBufferException {
+        try (var call = beginCall()) {
+            return executeOpen(caller, command, placements, bodies, attributes, modes, container, resolver, control);
+        }
+    }
+
+    private DocumentPublicationResult executeOpen(RepositoryCaller caller, DocumentPublicationCommand command,
             Map<UUID, DocumentUploadPlan.Placement> placements,
             Map<DocumentUploadPayloads.Key, PartObject> bodies, Map<String, String> attributes,
             Map<String, DocumentPublicationCandidate.Mode> modes,
@@ -137,6 +150,12 @@ final class DocumentPublicationSessions {
 
     /** Releases only local capacity after durable ownership has permanently fenced this nonce. */
     boolean retireSuperseded(RepositoryCaller caller, DocumentPublicationCommand command, RepositoryReadControl control) {
+        try (var call = beginCall()) {
+            return retireSupersededOpen(caller, command, control);
+        }
+    }
+
+    private boolean retireSupersededOpen(RepositoryCaller caller, DocumentPublicationCommand command, RepositoryReadControl control) {
         Objects.requireNonNull(command); Objects.requireNonNull(control).check();
         if (caller == null) throw new RepositoryException(RepositoryException.Code.UNAUTHENTICATED,
                 "Authenticated repository caller is required");
@@ -172,6 +191,14 @@ final class DocumentPublicationSessions {
      * Never infer that decision from an exception or timeout.
      */
     Optional<DocumentPublicationResult> recover(RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<UUID, DocumentUploadPlan.Placement> placements, long predecessorGeneration,
+            Map<String, DocumentPublicationCandidate.Mode> modes, RepositoryReadControl control) {
+        try (var call = beginCall()) {
+            return recoverOpen(caller, command, placements, predecessorGeneration, modes, control);
+        }
+    }
+
+    private Optional<DocumentPublicationResult> recoverOpen(RepositoryCaller caller, DocumentPublicationCommand command,
             Map<UUID, DocumentUploadPlan.Placement> placements, long predecessorGeneration,
             Map<String, DocumentPublicationCandidate.Mode> modes, RepositoryReadControl control) {
         Objects.requireNonNull(command); Objects.requireNonNull(control).check();
@@ -257,5 +284,46 @@ final class DocumentPublicationSessions {
     private static void requireCommand(Entry entry, DocumentPublicationCommand command) {
         if (!entry.command.canonical().equals(command.canonical()))
             throw new RepositoryException(RepositoryException.Code.CONFLICT, "Publication operation command changed");
+    }
+
+    private synchronized Call beginCall() {
+        if (closed) throw new RepositoryException(RepositoryException.Code.UNAVAILABLE,
+                "Publication sessions are closed");
+        activeCalls = Math.incrementExact(activeCalls);
+        return new Call();
+    }
+
+    private final class Call implements AutoCloseable {
+        private boolean released;
+        @Override public void close() {
+            synchronized (DocumentPublicationSessions.this) {
+                if (released) return;
+                released = true;
+                activeCalls--;
+                DocumentPublicationSessions.this.notifyAll();
+            }
+        }
+    }
+
+    /** Refuse new calls without cancelling accepted work or discarding uncertain identities. */
+    @Override public synchronized void close() { closed = true; }
+
+    /**
+     * Includes SQL admission, receipt replay and recovery, even before a session exists.
+     * Idle calls do not prove provider-worker quiescence. The host must separately drain
+     * upload/read workers and release their pins before closing providers or SQL.
+     */
+    synchronized boolean awaitIdle(Duration timeout) throws InterruptedException {
+        Objects.requireNonNull(timeout);
+        if (!closed) throw new IllegalStateException("Close publication sessions before awaiting idle");
+        if (timeout.isNegative()) throw new IllegalArgumentException("Idle timeout must not be negative");
+        long remaining = timeout.toNanos();
+        long started = System.nanoTime();
+        while (activeCalls != 0) {
+            if (remaining <= 0) return false;
+            java.util.concurrent.TimeUnit.NANOSECONDS.timedWait(this, remaining);
+            remaining = timeout.toNanos() - (System.nanoTime() - started);
+        }
+        return true;
     }
 }
