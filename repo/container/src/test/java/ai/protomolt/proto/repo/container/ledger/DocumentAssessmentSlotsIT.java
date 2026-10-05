@@ -119,6 +119,25 @@ class DocumentAssessmentSlotsIT {
             }
             em.createNativeQuery("UPDATE document_assessment_owners SET sealed=true WHERE assessment_id=:id")
                     .setParameter("id", assessment).executeUpdate();
+            Object[] header = (Object[]) em.createNativeQuery("""
+                    SELECT encode(manifest_sha256,'hex'),CAST(EXTRACT(EPOCH FROM retain_until)*1000000 AS bigint)
+                    FROM document_assessment_owners WHERE assessment_id=:id
+                    """).setParameter("id", assessment).getSingleResult();
+            long micros = ((Number) header[1]).longValue();
+            var identity = new DocumentAssessmentSlotSnapshot.Identity(assessment, f.owner().key(), f.owner().generation(),
+                    f.command().sha256(), (String) header[0], java.time.Instant.ofEpochSecond(micros / 1000000, micros % 1000000 * 1000));
+            var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(20_000_000);
+            try (var snapshot = DocumentAssessmentSlotSnapshot.encode(identity, slots, budget, () -> {})) {
+                em.createNativeQuery("""
+                        INSERT INTO document_assessment_slot_snapshots VALUES(:id,:codec,:version,:bytes,decode(:sha,'hex'))
+                        """).setParameter("id", assessment).setParameter("codec", DocumentAssessmentSlotSnapshot.CODEC)
+                        .setParameter("version", DocumentAssessmentSlotSnapshot.VERSION).setParameter("bytes", snapshot.bytes().toByteArray())
+                        .setParameter("sha", snapshot.sha256()).executeUpdate();
+            }
+            // Synthetic manifest, genuine frozen selection/physical history: this
+            // verifies retained association identity, not observed admission.
+            DocumentAssessmentRetainedSlots.verify(em, identity, plan, selected, budget, () -> {});
+            assertThat(budget.reservedBytes()).isZero();
             return slots;
         });
     }

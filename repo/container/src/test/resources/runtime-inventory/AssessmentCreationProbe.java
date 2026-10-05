@@ -80,9 +80,20 @@ public final class AssessmentCreationProbe {
                     }
                     require(count(tx, "document_assessment_owners", id) == 0, "owner rollback");
                     require(count(tx, "document_assessment_objects", id) == 0, "physical rollback");
+                    var reconciliation = new DocumentAssessmentReconciliation(tx);
+                    require(reconciliation.observe(caller, owner, prepared, selected, evidence, id, deadline, budget, () -> {}).isEmpty(),
+                            "absent stage is not observed");
                     new RepositorySchemaArtifacts(tx).stage(owner, command, List.copyOf(evidence.artifacts(() -> {}).values()), () -> {});
                     cancelledRootInsert(tx, writer, caller, owner, prepared, selected, evidence, deadline, budget);
                     var result = writer.create(caller, owner, prepared, selected, evidence, id, deadline, budget, () -> {});
+                    require(reconciliation.observe(caller, owner, prepared, selected, evidence, id, deadline, budget, () -> {}).orElseThrow().equals(result),
+                            "original committed stage acknowledged");
+                    try { reconciliation.observe(new RepositoryCaller("other-principal", true), owner, prepared, selected,
+                            evidence, id, deadline, budget, () -> {}); throw new AssertionError("other principal acknowledged stage"); }
+                    catch (RepositoryException expected) { require(expected.getMessage().contains("principal differs"), "current caller refusal"); }
+                    try { reconciliation.observe(caller, owner, prepared, selected, evidence, UUID.randomUUID(), deadline, budget, () -> {});
+                        throw new AssertionError("different assessment identity adopted"); }
+                    catch (IllegalStateException expected) { require(expected.getMessage().contains("requested original stage"), "assessment identity refusal"); }
                     require(result.assessment().equals(id) && result.retainUntil().equals(deadline), "exact create result");
                     require(count(tx, "document_assessment_roots", id) == evidence.roots(() -> {}).size(), "complete roots");
                     require(count(tx, "document_assessment_artifacts", id) == evidence.artifacts(() -> {}).size(), "complete schema assets");
@@ -109,6 +120,21 @@ public final class AssessmentCreationProbe {
                                 && ByteString.copyFrom((byte[]) retained[2]).equals(snapshot.bytes())
                                 && retained[3].equals(snapshot.sha256()), "exact retained slot snapshot");
                     }
+                    var slotIdentity = new DocumentAssessmentSlotSnapshot.Identity(id, owner.key(), owner.generation(),
+                            command.sha256(), evidence.manifestSha256(() -> {}), deadline);
+                    verifyRetainedSlots(tx, caller, owner, command, prepared, selected, slotIdentity, budget);
+                    var changedSelection = new HashMap<>(selected);
+                    var originalSelection = selected.get("a");
+                    changedSelection.put("a", new DocumentSelectedAttemptLedger.Selected("a", originalSelection.revision() + 1,
+                            originalSelection.attempt(), originalSelection.token()));
+                    try { verifyRetainedSlots(tx, caller, owner, command, prepared, changedSelection, slotIdentity, budget);
+                        throw new AssertionError("changed selection reconciled"); }
+                    catch (IllegalStateException expected) { require(expected.getMessage().contains("original staging identity"), "changed selection refusal"); }
+                    try { verifyRetainedSlots(tx, caller, owner, command, prepared, selected,
+                            new DocumentAssessmentSlotSnapshot.Identity(id, owner.key(), owner.generation(), command.sha256(),
+                                    evidence.manifestSha256(() -> {}), deadline.plusSeconds(1)), budget);
+                        throw new AssertionError("extended deadline reconciled"); }
+                    catch (IllegalStateException expected) { require(expected.getMessage().contains("original staging identity"), "changed deadline refusal"); }
                     // An uncertain acknowledgement must use reconciliation, not a second create.
                     UUID duplicate = UUID.randomUUID();
                     try { writer.create(caller, owner, prepared, selected, evidence, duplicate, deadline, budget, () -> {}); throw new AssertionError("duplicate generation adopted"); }
@@ -118,6 +144,14 @@ public final class AssessmentCreationProbe {
                     byte[] afterRetry = tx.readOnly(em -> (byte[]) em.createNativeQuery("SELECT manifest_bytes FROM document_assessment_owners WHERE assessment_id=:id")
                             .setParameter("id", id).getSingleResult());
                     require(Arrays.equals(stored, afterRetry), "duplicate create preserves original evidence");
+                    if (invalid) {
+                        var revised = DocumentAdmissionPolicy.of(policy.definition().toBuilder()
+                                .setLimits(policy.definition().getLimits().toBuilder().setMaxRoots(101)).build(), () -> {});
+                        var changedPolicy = new DocumentSchemaPolicies(tx).activate(revised, active.revision(), () -> {});
+                        require(changedPolicy.revision() > active.revision(), "policy actually advanced");
+                        require(reconciliation.observe(caller, owner, prepared, selected, evidence, id, deadline, budget, () -> {})
+                                .orElseThrow().equals(result), "policy advance does not erase original staging acknowledgement");
+                    }
                     return result;
                 });
                 require(budget.reservedBytes() == before, "writer and manifest reservations released");
@@ -130,6 +164,17 @@ public final class AssessmentCreationProbe {
             require(budget.reservedBytes() == 0, "assessment reservations released");
         }
         System.out.println("OBSERVED_ASSESSMENT_CREATION_OK");
+    }
+    private static void verifyRetainedSlots(Tx tx, RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentPublicationCommand command, DocumentOperationUploadAdmission.Prepared prepared,
+            Map<String,DocumentSelectedAttemptLedger.Selected> selected, DocumentAssessmentSlotSnapshot.Identity identity, PayloadBudget budget) {
+        tx.inTransaction(em -> {
+            RepositoryOperationLedger.fenceLiveOwner(em, owner);
+            DocumentAdmissionAuthorization.authorizeRejection(em, caller, command);
+            em.createNativeQuery("SELECT assessment_id FROM document_assessment_owners WHERE assessment_id=:id FOR UPDATE")
+                    .setParameter("id", identity.assessment()).getSingleResult();
+            DocumentAssessmentRetainedSlots.verify(em, identity, prepared.plan(), selected, budget, () -> {});
+        });
     }
     /** Cancel real SQL after owner/physical/schema insertion; no successful backend is simulated. */
     private static void cancelledRootInsert(Tx tx, DocumentAssessmentCreation writer, RepositoryCaller caller,

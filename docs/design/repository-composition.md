@@ -3895,8 +3895,8 @@ before returning an existing stage. Divergent evidence conflicts. It must not
 delete and recreate an existing owner or reacquire its sources: they may have
 retired while the assessment still legitimately retains them. Current caller
 authorization and terminal-operation state must be checked before any replayed
-result is disclosed. This reconciliation path remains to be implemented alongside
-the writer; the binding helper alone does not make staging retry-safe.
+result is disclosed. The internal reconciliation participant is described below;
+public integration and full retry qualification remain unfinished.
 
 The shared binder also requires exactly the uploading members in its selected
 attempt map before physical lookup or locking. An extra entry could otherwise
@@ -3994,8 +3994,8 @@ already belong to the exact operation generation.
 The caller supplies a fixed assessment UUID and retention deadline. Finer-than-
 microsecond deadlines are rejected. A second create for the same operation and
 generation conflicts even if it supplies a different UUID; it does not adopt or
-replace the retained assessment. Reconciliation of an uncertain commit remains a
-separate, unfinished operation. No public staging API, terminal admission rejection
+replace the retained assessment. Reconciliation of an uncertain commit is a
+separate internal operation still undergoing qualification. No public staging API, terminal admission rejection
 or semantic-review handoff is enabled by this participant.
 
 The writer reserves scratch capacity before entering SQL for two copies of the
@@ -4019,7 +4019,7 @@ released when the scoped assessment closes. Physical provider observations in th
 probe are explicitly synthetic; provider I/O, whole-writer reuse/race cases and
 lost-acknowledgement reconciliation still need their own qualification.
 
-#### Reconciliation binding requirement (not yet implemented)
+#### Reconciliation binding requirement (public integration pending)
 
 The observed validation manifest does not identify selected physical upload
 objects, selection revisions, or a reused source's revision UUID and full part
@@ -4056,7 +4056,8 @@ selection, expired stages, revoked access, terminal outcomes and legacy refusal
 before reconciliation is exposed.
 
 `DocumentAssessmentSlotSnapshot` supplies the internal encoding primitive.
-Creation now persists it; reconciliation remains unfinished. Version 1 uses the `PMAS`
+Creation now persists it; the internal reconciliation participant is implemented
+below, with qualification and public integration still unfinished. Version 1 uses the `PMAS`
 magic and big-endian fixed-width numbers, length-prefixed UTF-8 identity strings,
 raw UUIDs/digests, epoch-second/nanosecond deadline and a counted slot sequence.
 Slots are sorted by ASCII member ID and candidate full ordinal. Upload tuples
@@ -4088,3 +4089,24 @@ slot rows and original identity. SQL lifecycle tests cover migration, late/pre-s
 insertion refusal, checksum failure, immutability, explicit expiry recovery and
 rollback of snapshot deletion when a later recovery step fails. Synthetic bytes
 in these SQL-only fixtures prove lifecycle guards, not canonical handler provenance.
+
+`DocumentAssessmentReconciliation` now compares an original stage under the live
+operation fence, complete current read authorization and retained owner lock.
+It checks exact command, caller UUID, generation, manifest, fixed deadline,
+sealed/unreleased state and declared counts. `DocumentAssessmentRetainedSlots`
+checks every nonempty command slot against frozen selection history, original
+physical placement/content identity, native/mirrored references and the canonical
+slot snapshot. It does not follow current selection or source pointers. Schema
+and root checks compare complete bounded metadata sets and freshly computed SQL
+digests without transferring those payloads to Java. The handler rechecks live
+ownership, database-time expiry and observed-evidence scope before acknowledgement.
+
+An absent owner is only a not-observed result, not rollback evidence or permission
+to create a replacement. A different UUID for an existing generation conflicts.
+This internal participant neither publishes bytes nor grants semantic-review or
+payload-read authority. The current call requires the original scoped observed
+evidence; restart reconstruction and a public entry point are not enabled.
+The production-runtime probe covers successful acknowledgement of valid/invalid
+stages, absence, principal/UUID mismatch, changed selection and deadline, and a
+subsequent policy revision. Moved-source reuse, terminal/revoked access, expiry,
+legacy-snapshot refusal and restart qualification remain required before exposure.
