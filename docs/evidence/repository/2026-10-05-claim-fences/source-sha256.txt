@@ -1,0 +1,5 @@
+8a2a72ccac532f58f449eb71f360f5b92c6dcff2e8fe57af12c5215575bf502d  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/RepositoryExecutionClaimLedger.java
+9b4d18701cd96ec113c4216e9b85d46c74362b29a0f69c3ecc3e13fd3f79c31c  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/RepositoryOperationLedger.java
+6875f26f80bf3661d2cbbf6df53a7884f90550e0611e74a0728f57cd75af1537  repo/container/src/main/resources/db/migration/repo/V79__repository_claim_mutation_fences.sql
+5b5ad56be933584fde5f058f73ab53d8947331eeebb4a39bc9a9a107f9c91705  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/RepositoryClaimMutationFenceIT.java
+4aa5d85be5fcd4c21f93e6c9d8441c5eced4d4f99b320289656111ca09e25d2f  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentNativePublicationFixture.java

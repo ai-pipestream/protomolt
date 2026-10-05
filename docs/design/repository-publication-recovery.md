@@ -83,10 +83,10 @@ recovery. Historical reads must retain schema assets independently of a live
 registry. Optional JCR semantics require their separate capability assessment;
 this private recovery journal is not a JCR transaction or workspace design.
 
-## Implemented claim primitive (2026-10-05)
+## Initial claim primitive (V78 checkpoint)
 
-V78 and `RepositoryExecutionClaimLedger` now provide a private, per-operation SQL
-claim. They do not yet register publication sessions or fence publication writes.
+V78 introduced a private, per-operation SQL claim without publication mutation
+enforcement. The V79 section below describes the subsequent enforcement work.
 The claim binds the key and command digest; acquisition uses epoch one and exact
 retry never renews the lease. Renewal requires the live token/epoch. Transfer
 requires an expired predecessor and advances exactly one epoch with a new token;
@@ -101,9 +101,47 @@ This does not authenticate takeover: the future private session host must author
 it before using the primitive. Claims left by failed pre-admission preparation are
 retained; they are not silently replaced.
 
-Remaining integration: persist complete session preparation; propagate claim
-identity with operation authority; add transaction-visible claim write stamps and
-SQL guards for registered-session mutations; exercise claim transfer across every
-owner/attempt/stage/decision/publication path. A lock-only call is not yet the
-SQL-visible proof those guards require. No provider transfer policy or hard-crash
-recovery capability is enabled by this primitive.
+V79 adds claim propagation with operation authority, transaction-visible write
+stamps and SQL mutation guards. Complete durable session preparation, automatic
+session registration and full recovery-path qualification remain unfinished.
+No provider transfer policy or hard-crash recovery capability is enabled yet.
+
+## Explicitly claimed operation fences (V79)
+
+The SQL enforcement boundary now exists for operations admitted with an execution
+claim. An immutable per-operation scope chooses claimed or unclaimed admission.
+Both first inserts compete on the same unique key; an unclaimed winner permanently
+refuses later claim registration. This closes the absent-row race without a global
+lock. Migration backfills separate V78 claims and operations, but refuses overlap
+that would silently adopt a previously unprotected operation.
+
+Every claim INSERT or UPDATE must present an explicit epoch/token pair. A trigger
+validates and consumes that pair, clears it before storage, and stamps the actual
+transaction ID. Supplying an old stamp, a current transaction ID, an old token or
+a no-op renewal cannot create this proof. This protects stale or incorrect SQL
+call paths inside the trusted service role; it does not protect against a database
+administrator who can read bearer tokens or disable triggers.
+
+Claimed operation admission, renewal and takeover carry a private claim alongside
+the operation owner. Fencing locks and stamps the claim before the owner. Owner
+writes and the shared dependent mutation guard require a live claim stamp in the
+same transaction. Attempt mutation still independently requires the owner stamp.
+The deferred success-completion guard rechecks claim liveness at finalization,
+preserving its existing owner, member, projection and outbox checks. Explicitly
+forcing deferred checks early does not promise wall-clock liveness at the later
+COMMIT; the held claim lock prevents a concurrent takeover until transaction end.
+Cleanup's preexisting recovery-only proof remains available and grants no write
+or publication authority.
+
+Tests use real PostgreSQL locking, migrations, upload admission and SQL publication
+fixtures. The publication fixture's observations are synthetic; the separate
+production-JAR storage gate covers the existing real-provider path. The original
+no-op-stamp and missing-finalization-check failures have red test evidence.
+
+This does not activate claims in `DocumentPublicationSession`, persist complete
+session state, or enable failover. Before that activation, every recovery path must
+carry the claim, provider effects across transfer must be qualified, and forced
+crash tests must pass. The current claim fence uses multiple JDBC statements to
+check isolation, lock, check time and stamp; consolidate that boundary without
+weakening after-wait checks, then measure added latency and multi-JVM capacity on
+RustFS. No performance result is inferred from correctness tests.

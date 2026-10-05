@@ -115,6 +115,12 @@ final class DocumentNativePublicationFixture {
 
     static DocumentPublicationResult publish(Context c, Prepared p, Fault fault, boolean deliver,
             java.util.function.BiConsumer<EntityManager,UUID> beforeSeal, Consumer<EntityManager> beforeCommit) {
+        return publish(c, p, fault, deliver, beforeSeal, beforeCommit, em -> {});
+    }
+
+    static DocumentPublicationResult publish(Context c, Prepared p, Fault fault, boolean deliver,
+            java.util.function.BiConsumer<EntityManager,UUID> beforeSeal, Consumer<EntityManager> beforeCommit,
+            Consumer<EntityManager> beforeFinalization) {
         return c.tx.inTransaction(em -> {
             RepositoryOperationLedger.fenceLiveOwner(em,p.owner);
             var destinations=p.sources.stream().map(s -> s.row().nodeId).collect(java.util.stream.Collectors.toSet());
@@ -184,6 +190,7 @@ final class DocumentNativePublicationFixture {
                     """).setParameter("generation",p.owner.generation()).setParameter("result",storedBytes)
                     .setParameter("count",success.getMembersCount()+(fault==Fault.WRONG_COUNT ? 1 : 0))
                     .setParameter("operation",p.owner.key().operationId()).executeUpdate();
+            beforeFinalization.accept(em);
             em.createNativeQuery("SET CONSTRAINTS ALL IMMEDIATE").executeUpdate();
             beforeCommit.accept(em);
             return success;

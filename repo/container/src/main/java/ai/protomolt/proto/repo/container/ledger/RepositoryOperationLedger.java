@@ -49,10 +49,20 @@ final class RepositoryOperationLedger {
     /** An observation of admission, never proof of a committed/aborted mutation. */
     record Snapshot(Key key, EncodedCommand command, long generation, Instant leaseUntil, Instant createdAt) {}
 
-    record Owner(Key key, long generation, UUID token, Instant leaseUntil) {
+    record Owner(Key key, long generation, UUID token, Instant leaseUntil,
+            Optional<RepositoryExecutionClaimLedger.Claim> executionClaim) {
+        Owner(Key key, long generation, UUID token, Instant leaseUntil) {
+            this(key, generation, token, leaseUntil, Optional.empty());
+        }
         Owner {
             Objects.requireNonNull(key); Objects.requireNonNull(token); Objects.requireNonNull(leaseUntil);
+            Objects.requireNonNull(executionClaim);
+            if (executionClaim.isPresent() && !executionClaim.orElseThrow().key().equals(key))
+                throw new IllegalArgumentException("Execution claim differs from operation owner scope");
             if (generation < 1) throw new IllegalArgumentException("Invalid owner generation");
+        }
+        Owner withClaim(RepositoryExecutionClaimLedger.Claim claim) {
+            return new Owner(key, generation, token, leaseUntil, Optional.of(claim));
         }
         @Override public String toString() { return "Owner[generation=" + generation + ", leaseUntil=" + leaseUntil + "]"; }
     }
@@ -89,11 +99,16 @@ final class RepositoryOperationLedger {
 
     /** Typed document admission; scope binding is checked before opening a transaction. */
     Admission admit(Key key, DocumentPublicationCommand command, UUID ownerNonce, Duration lease) {
+        return admit(key, command, ownerNonce, lease, null);
+    }
+
+    Admission admit(Key key, DocumentPublicationCommand command, UUID ownerNonce, Duration lease,
+            RepositoryExecutionClaimLedger.Claim claim) {
         Objects.requireNonNull(key); Objects.requireNonNull(command);
         if (!key.account.equals(command.intent().getAccountId()) || !key.operationId.equals(command.operationId()))
             throw new IllegalArgumentException("Publication command differs from operation scope");
         return admit(key, new EncodedCommand(DocumentPublicationCommand.CODEC,
-                DocumentPublicationCommand.ENCODING_VERSION, command.canonical()), ownerNonce, lease);
+                DocumentPublicationCommand.ENCODING_VERSION, command.canonical()), ownerNonce, lease, claim);
     }
 
     /**
@@ -101,11 +116,21 @@ final class RepositoryOperationLedger {
      * across a lost acknowledgement. Exact retries never renew or take ownership.
      */
     Admission admit(Key key, EncodedCommand command, UUID ownerNonce, Duration lease) {
+        return admit(key, command, ownerNonce, lease, null);
+    }
+
+    private Admission admit(Key key, EncodedCommand command, UUID ownerNonce, Duration lease,
+            RepositoryExecutionClaimLedger.Claim claim) {
         Objects.requireNonNull(key); Objects.requireNonNull(command); Objects.requireNonNull(ownerNonce);
         long millis = leaseMillis(lease);
         byte[] bytes = command.bytes.toByteArray();
         byte[] digest = digest(bytes);
         return tx.inTransaction(em -> {
+            if (claim != null) {
+                if (!key.equals(claim.key()) || !java.util.HexFormat.of().formatHex(digest).equals(claim.commandSha256()))
+                    throw new IllegalArgumentException("Execution claim differs from command");
+                RepositoryExecutionClaimLedger.lockLive(em, claim);
+            }
             int inserted = bind(em.createNativeQuery("""
                     INSERT INTO repository_operations(account_id,principal,operation_id,command_codec,command_version,
                         command,command_sha256)
@@ -124,7 +149,7 @@ final class RepositoryOperationLedger {
                 throw new CommandConflictException();
             boolean live = live(em, key);
             var owner = row.token.equals(ownerNonce) && live
-                    ? Optional.of(row.owner()) : Optional.<Owner>empty();
+                    ? Optional.of(claim == null ? row.owner() : row.owner().withClaim(claim)) : Optional.<Owner>empty();
             return new Admission(row.snapshot, owner);
         });
     }
@@ -145,11 +170,13 @@ final class RepositoryOperationLedger {
         if (!em.getTransaction().isActive() || em.getTransaction().getRollbackOnly())
             throw new IllegalStateException("Operation fence requires an active writable transaction");
         try {
+            if (expected.executionClaim.isPresent())
+                RepositoryExecutionClaimLedger.lockLive(em, expected.executionClaim.orElseThrow());
             var current = readOwner(em, expected.key, true).orElseThrow(OwnerFencedException::new);
             boolean live = live(em, expected.key);
             if (current.generation != expected.generation || !current.token.equals(expected.token) || !live)
                 throw new OwnerFencedException();
-            return current;
+            return new Owner(current.key, current.generation, current.token, current.leaseUntil, expected.executionClaim);
         } catch (RuntimeException | Error failure) {
             // A caller catching a fence failure cannot commit later domain work.
             try { em.getTransaction().setRollbackOnly(); }
@@ -168,6 +195,8 @@ final class RepositoryOperationLedger {
         if (!em.getTransaction().isActive() || em.getTransaction().getRollbackOnly())
             throw new IllegalStateException("Operation fence requires an active writable transaction");
         try {
+            if (expected.executionClaim.isPresent())
+                RepositoryExecutionClaimLedger.lockLive(em, expected.executionClaim.orElseThrow());
             var rows = bind(em.createNativeQuery("""
                     UPDATE repository_operation_owners SET write_fence_xid=pg_current_xact_id()
                     WHERE account_id=:account AND principal=:principal AND operation_id=:id
@@ -177,7 +206,7 @@ final class RepositoryOperationLedger {
                     .setParameter("token", expected.token).getResultList();
             if (rows.isEmpty()) throw new OwnerFencedException();
             Object[] row = (Object[]) rows.getFirst();
-            return new Owner(expected.key, ((Number) row[1]).longValue(), (UUID) row[0], instant(row[2]));
+            return new Owner(expected.key, ((Number) row[1]).longValue(), (UUID) row[0], instant(row[2]), expected.executionClaim);
         } catch (RuntimeException | Error failure) {
             try { em.getTransaction().setRollbackOnly(); }
             catch (RuntimeException markingFailure) {
@@ -199,7 +228,8 @@ final class RepositoryOperationLedger {
                       AND lease_until > clock_timestamp()
                     """), owner.key).setParameter("millis", millis).executeUpdate();
             if (changed != 1) throw new OwnerFencedException();
-            return readOwner(em, owner.key, false).orElseThrow();
+            var renewed = readOwner(em, owner.key, false).orElseThrow();
+            return new Owner(renewed.key, renewed.generation, renewed.token, renewed.leaseUntil, owner.executionClaim);
         });
     }
 
@@ -245,24 +275,37 @@ final class RepositoryOperationLedger {
      * Trusted caller authorization remains the host's responsibility.
      */
     Owner takeOver(Key key, DocumentPublicationCommand command, long expectedGeneration, UUID nextNonce, Duration lease) {
+        return takeOver(key, command, expectedGeneration, nextNonce, lease, null);
+    }
+
+    Owner takeOver(Key key, DocumentPublicationCommand command, long expectedGeneration, UUID nextNonce, Duration lease,
+            RepositoryExecutionClaimLedger.Claim claim) {
         Objects.requireNonNull(key); Objects.requireNonNull(command);
         if (!key.account.equals(command.intent().getAccountId()) || !key.operationId.equals(command.operationId()))
             throw new IllegalArgumentException("Publication command differs from operation scope");
-        return takeOver(key, expectedGeneration, nextNonce, lease, command);
+        if (claim != null && (!key.equals(claim.key()) || !command.sha256().equals(claim.commandSha256())))
+            throw new IllegalArgumentException("Execution claim differs from takeover command");
+        return takeOver(key, expectedGeneration, nextNonce, lease, command, claim);
     }
 
     private Owner takeOver(Key key, long expectedGeneration, UUID nextNonce, Duration lease,
             DocumentPublicationCommand command) {
+        return takeOver(key, expectedGeneration, nextNonce, lease, command, null);
+    }
+
+    private Owner takeOver(Key key, long expectedGeneration, UUID nextNonce, Duration lease,
+            DocumentPublicationCommand command, RepositoryExecutionClaimLedger.Claim claim) {
         Objects.requireNonNull(key); Objects.requireNonNull(nextNonce);
         if (expectedGeneration < 1 || expectedGeneration == Long.MAX_VALUE)
             throw new IllegalArgumentException("Invalid takeover generation");
         long millis = leaseMillis(lease);
         return tx.inTransaction(em -> {
+            if (claim != null) RepositoryExecutionClaimLedger.lockLive(em, claim);
             var row = readOwner(em, key, true).orElseThrow(OwnerFencedException::new);
             if (command != null) requireCommand(em, key, command);
             boolean live = live(em, key);
             if (row.generation == expectedGeneration + 1 && row.token.equals(nextNonce) && live)
-                return row;
+                return claim == null ? row : row.withClaim(claim);
             if (row.generation != expectedGeneration || row.token.equals(nextNonce) || live)
                 throw new OwnerFencedException();
             bind(em.createNativeQuery("""
@@ -270,7 +313,8 @@ final class RepositoryOperationLedger {
                         lease_until=clock_timestamp()+(:millis * interval '1 millisecond')
                     WHERE account_id=:account AND principal=:principal AND operation_id=:id
                     """), key).setParameter("owner", nextNonce).setParameter("millis", millis).executeUpdate();
-            return readOwner(em, key, false).orElseThrow();
+            var taken = readOwner(em, key, false).orElseThrow();
+            return claim == null ? taken : taken.withClaim(claim);
         });
     }
 

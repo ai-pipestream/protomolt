@@ -10,8 +10,9 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * Private per-operation coordinator claim primitive. Not yet wired to publication
- * mutation fences; holding a claim alone does not authorize recovery or provider I/O.
+ * Private per-operation coordinator authority for explicitly claimed operation
+ * fences. Publication sessions do not yet register claims automatically; holding
+ * a claim alone does not authorize recovery or provider I/O.
  * Lock order for integration is claim, operation owner, then dependent domain rows.
  */
 final class RepositoryExecutionClaimLedger {
@@ -36,8 +37,8 @@ final class RepositoryExecutionClaimLedger {
         return tx.inTransaction(em -> {
             bind(em.createNativeQuery("""
                     INSERT INTO repository_execution_claims(account_id,principal,operation_id,command_sha256,
-                        claim_epoch,claim_token,lease_until)
-                    VALUES (:account,:principal,:id,:digest,1,:token,clock_timestamp()+(:millis * interval '1 millisecond'))
+                        claim_epoch,claim_token,lease_until,fence_epoch,fence_token)
+                    VALUES (:account,:principal,:id,:digest,1,:token,clock_timestamp()+(:millis * interval '1 millisecond'),1,:token)
                     ON CONFLICT(account_id,principal,operation_id) DO NOTHING
                     """), key).setParameter("digest", HexFormat.of().parseHex(command.sha256()))
                     .setParameter("token", token).setParameter("millis", millis).executeUpdate();
@@ -61,9 +62,10 @@ final class RepositoryExecutionClaimLedger {
             if (current.epoch != predecessorEpoch || current.token.equals(nextToken) || live) throw new Fenced();
             bind(em.createNativeQuery("""
                     UPDATE repository_execution_claims SET claim_epoch=claim_epoch+1,claim_token=:token,
-                        lease_until=clock_timestamp()+(:millis * interval '1 millisecond')
+                        lease_until=clock_timestamp()+(:millis * interval '1 millisecond'),fence_epoch=:epoch,fence_token=:token
                     WHERE account_id=:account AND principal=:principal AND operation_id=:id
-                    """), key).setParameter("token", nextToken).setParameter("millis", millis).executeUpdate();
+                    """), key).setParameter("token", nextToken).setParameter("epoch", predecessorEpoch + 1)
+                    .setParameter("millis", millis).executeUpdate();
             return readLocked(em, key);
         });
     }
@@ -74,9 +76,10 @@ final class RepositoryExecutionClaimLedger {
             lockLive(em, expected);
             bind(em.createNativeQuery("""
                     UPDATE repository_execution_claims SET lease_until=GREATEST(lease_until,
-                        clock_timestamp()+(:millis * interval '1 millisecond'))
+                        clock_timestamp()+(:millis * interval '1 millisecond')),fence_epoch=:epoch,fence_token=:token
                     WHERE account_id=:account AND principal=:principal AND operation_id=:id
-                    """), expected.key).setParameter("millis", millis).executeUpdate();
+                    """), expected.key).setParameter("millis", millis).setParameter("epoch", expected.epoch)
+                    .setParameter("token", expected.token).executeUpdate();
             return readLocked(em, expected.key);
         });
     }
@@ -90,6 +93,12 @@ final class RepositoryExecutionClaimLedger {
             var current = readLocked(em, expected.key);
             if (current.epoch != expected.epoch || !current.token.equals(expected.token)
                     || !current.commandSha256.equals(expected.commandSha256) || !live(em, expected.key)) throw new Fenced();
+            // The trigger writes the actual transaction ID, never a caller-supplied stamp.
+            // Dependent guards recheck the lease at each mutation, including after waits.
+            bind(em.createNativeQuery("""
+                    UPDATE repository_execution_claims SET fence_epoch=:epoch,fence_token=:token
+                    WHERE account_id=:account AND principal=:principal AND operation_id=:id
+                    """), expected.key).setParameter("epoch", expected.epoch).setParameter("token", expected.token).executeUpdate();
             return current;
         } catch (RuntimeException | Error failure) {
             try { em.getTransaction().setRollbackOnly(); }
