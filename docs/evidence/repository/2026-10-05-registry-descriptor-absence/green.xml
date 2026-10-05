@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" tests="47" skipped="0" failures="0" errors="0" timestamp="2026-10-05T23:07:20.983Z" hostname="krick" time="3.184">
+  <properties/>
+  <testcase name="referencedSchemaResolvesDuringCompileVerification()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="1.228"/>
+  <testcase name="writeGateViolationsBecomeIncompatibleRegistrationException()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.062"/>
+  <testcase name="freshStoreIsEmptyWithBackwardGlobalMode()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.007"/>
+  <testcase name="versionsArePerSubjectOneBasedAndAscending()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.124"/>
+  <testcase name="invalidCompatibilityModesAreRejected()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.005"/>
+  <testcase name="registeringWithUnknownReferenceThrowsAndStoresNothing()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.006"/>
+  <testcase name="writeGateIsNotInvokedForIdenticalContent()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.043"/>
+  <testcase name="schemaImportingAnUndeclaredFileIsRejected()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.01"/>
+  <testcase name="sameTextWithDifferentReferencesIsANewVersion()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.13"/>
+  <testcase name="writeGateSeesEffectiveModeAndFullAscendingHistory()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.119"/>
+  <testcase name="findByContentMatchesTextAndReferencesExactly()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.07"/>
+  <testcase name="globalIdsAreUniqueAndMonotonicAcrossSubjects()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.088"/>
+  <testcase name="descriptorSetsAreContentAddressedAndIdempotent()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.023"/>
+  <testcase name="contentHashIsStableSha256OverTextAndReferences()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.038"/>
+  <testcase name="unparseableSchemaTextIsRejected()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.006"/>
+  <testcase name="writeGateIsSkippedWhenEffectiveModeIsNone()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.055"/>
+  <testcase name="referenceMustExistWithTheExactVersion()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.029"/>
+  <testcase name="subjectModeFallsBackToGlobalUntilSet()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.032"/>
+  <testcase name="identicalContentRegistersIdempotently()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.033"/>
+  <testcase name="descriptorSetIdentityIsValidatedBeforeStorage()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.003"/>
+  <testcase name="descriptorParentFileIsCorruptionNotAbsence()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.002"/>
+  <testcase name="putWorkflowRejectsANullDocument()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.003"/>
+  <testcase name="[1] &quot;{}&quot;" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.007"/>
+  <testcase name="[2] &quot;null&quot;" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.003"/>
+  <testcase name="[3] &quot;[]&quot;" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.003"/>
+  <testcase name="[4] &quot;{\&quot;compatibility\&quot;:\&quot;FULL\&quot;,\&quot;nextGlobalId\&quot;:\&quot;1\&quot;}&quot;" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.004"/>
+  <testcase name="[5] &quot;{\&quot;compatibility\&quot;:\&quot;FULL\&quot;,\&quot;nextGlobalId\&quot;:0}&quot;" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.003"/>
+  <testcase name="[6] &quot;{\&quot;compatibility\&quot;:\&quot;TYPO\&quot;,\&quot;nextGlobalId\&quot;:1}&quot;" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.002"/>
+  <testcase name="twoStoresOnOneRepositoryRegisterConcurrentlyWithoutCorruption()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.225"/>
+  <testcase name="descriptorSymlinkAndMissingGitMetadataAreNotAuthoritativeAbsence()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.006"/>
+  <testcase name="workflowsAreListedSortedRegardlessOfWriteOrder()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.07"/>
+  <testcase name="descriptorLookupDistinguishesAbsentArtifactFromUnavailableRepository()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.003"/>
+  <testcase name="workflowNamesOutsideTheAllowedCharacterSetAreRejected()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.003"/>
+  <testcase name="refreshSeesVersionsCommittedExternally()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.048"/>
+  <testcase name="descriptorSetsSurviveRegistryRestart()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.024"/>
+  <testcase name="anUnknownWorkflowNameReadsAsEmpty()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.023"/>
+  <testcase name="everyWriteIsExactlyOneCommitWithADescriptiveMessage()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.084"/>
+  <testcase name="aStaleCounterAfterAnExternalCommitDoesNotReissueAGlobalId()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.07"/>
+  <testcase name="[1] &quot;{}&quot;" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.029"/>
+  <testcase name="[2] &quot;null&quot;" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.029"/>
+  <testcase name="[3] &quot;{\&quot;compatibility\&quot;:\&quot;TYPO\&quot;}&quot;" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.032"/>
+  <testcase name="puttingAnExistingNameReplacesTheDocumentAndKeepsTheOldOneInHistory()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.032"/>
+  <testcase name="layoutUsesUrlEncodedSubjectDirectories()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.047"/>
+  <testcase name="aWorkflowRoundTripsAndEachPutIsOneCommit()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.02"/>
+  <testcase name="commitsCarryTheConfiguredAuthor()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.028"/>
+  <testcase name="descriptorDirectoryIsCorruptionNotAbsence()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.002"/>
+  <testcase name="stateSurvivesReopeningTheRepository()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.106"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+]]></system-err>
+</testsuite>

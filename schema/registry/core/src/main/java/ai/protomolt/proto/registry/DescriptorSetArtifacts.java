@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.LinkOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -54,7 +55,7 @@ public final class DescriptorSetArtifacts {
 
     public static ByteString read(Path path, String fingerprint) throws IOException {
         byte[] bytes;
-        try (InputStream input = Files.newInputStream(path)) {
+        try (InputStream input = Files.newInputStream(path, LinkOption.NOFOLLOW_LINKS)) {
             bytes = input.readNBytes(MAX_BYTES + 1);
         }
         if (bytes.length > MAX_BYTES) {

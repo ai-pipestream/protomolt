@@ -70,6 +70,10 @@ An authoritative missing definition, unsupported artifact storage, denied access
 registry outage, corrupt bytes and cancellation are distinct outcomes. Do not
 negative-cache errors or turn them into an opaque admission success.
 Only the selected healthy store's authoritative answer establishes absence.
+Git descriptor lookup now distinguishes missing artifacts from unavailable
+repository roots and invalid path shapes. Descriptor corruption still propagates
+the store's validation error; an adapter must not catch that as absence. See
+[filesystem regression evidence](../evidence/repository/2026-10-05-registry-descriptor-absence/README.md).
 
 Opaque preservation can retain an unresolved Any envelope when the selected
 repository policy permits it. It does not require decoding its value bytes.

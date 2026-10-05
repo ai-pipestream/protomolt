@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" tests="3" skipped="0" failures="3" errors="0" timestamp="2026-10-05T23:06:09.076Z" hostname="krick" time="0.253">
+  <properties/>
+  <testcase name="descriptorParentFileIsCorruptionNotAbsence()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.183">
+    <failure message="java.lang.AssertionError: &#10;Expecting code to raise a throwable." type="java.lang.AssertionError">java.lang.AssertionError: 
+Expecting code to raise a throwable.
+	at ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest.descriptorParentFileIsCorruptionNotAbsence(GitSchemaRegistryStoreTest.java:131)
+</failure>
+  </testcase>
+  <testcase name="descriptorLookupDistinguishesAbsentArtifactFromUnavailableRepository()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.007">
+    <failure message="java.lang.AssertionError: &#10;Expecting code to raise a throwable." type="java.lang.AssertionError">java.lang.AssertionError: 
+Expecting code to raise a throwable.
+	at ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest.descriptorLookupDistinguishesAbsentArtifactFromUnavailableRepository(GitSchemaRegistryStoreTest.java:109)
+</failure>
+  </testcase>
+  <testcase name="descriptorDirectoryIsCorruptionNotAbsence()" classname="ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest" time="0.006">
+    <failure message="java.lang.AssertionError: &#10;Expecting code to raise a throwable." type="java.lang.AssertionError">java.lang.AssertionError: 
+Expecting code to raise a throwable.
+	at ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStoreTest.descriptorDirectoryIsCorruptionNotAbsence(GitSchemaRegistryStoreTest.java:120)
+</failure>
+  </testcase>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+]]></system-err>
+</testsuite>

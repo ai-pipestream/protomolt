@@ -100,6 +100,58 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
     // ---------------------------------------------------------------- git behavior
 
     @Test
+    void descriptorLookupDistinguishesAbsentArtifactFromUnavailableRepository() throws Exception {
+        Path dir = tempDir.resolve("descriptor-unavailable");
+        String fingerprint = "a".repeat(64);
+        try (GitSchemaRegistryStore store = storeAt(dir)) {
+            assertThat(store.descriptorSet(fingerprint)).isEmpty();
+            Files.move(dir, tempDir.resolve("descriptor-moved"));
+            assertThatThrownBy(() -> store.descriptorSet(fingerprint))
+                    .isInstanceOf(ai.protomolt.proto.registry.RegistryStoreException.class);
+        }
+    }
+
+    @Test
+    void descriptorDirectoryIsCorruptionNotAbsence() throws Exception {
+        Path dir = tempDir.resolve("descriptor-directory");
+        String fingerprint = "a".repeat(64);
+        try (GitSchemaRegistryStore store = storeAt(dir)) {
+            Files.createDirectories(dir.resolve("descriptors/sha256/" + fingerprint + ".pb"));
+            assertThatThrownBy(() -> store.descriptorSet(fingerprint))
+                    .isInstanceOf(ai.protomolt.proto.registry.RegistryStoreException.class);
+        }
+    }
+
+    @Test
+    void descriptorParentFileIsCorruptionNotAbsence() throws Exception {
+        Path dir = tempDir.resolve("descriptor-parent-file");
+        String fingerprint = "a".repeat(64);
+        try (GitSchemaRegistryStore store = storeAt(dir)) {
+            Files.writeString(dir.resolve("descriptors"), "not a directory");
+            assertThatThrownBy(() -> store.descriptorSet(fingerprint))
+                    .isInstanceOf(ai.protomolt.proto.registry.RegistryStoreException.class);
+        }
+    }
+
+    @Test
+    void descriptorSymlinkAndMissingGitMetadataAreNotAuthoritativeAbsence() throws Exception {
+        Path dir = tempDir.resolve("descriptor-link");
+        String fingerprint = "a".repeat(64);
+        try (GitSchemaRegistryStore store = storeAt(dir)) {
+            Path parent = Files.createDirectories(dir.resolve("descriptors/sha256"));
+            Path link = parent.resolve(fingerprint + ".pb");
+            Files.createSymbolicLink(link, tempDir.resolve("missing-target"));
+            assertThatThrownBy(() -> store.descriptorSet(fingerprint))
+                    .isInstanceOf(ai.protomolt.proto.registry.RegistryStoreException.class);
+            Files.delete(link);
+            assertThat(store.descriptorSet(fingerprint)).isEmpty();
+            Files.move(dir.resolve(".git"), dir.resolve(".git-unavailable"));
+            assertThatThrownBy(() -> store.descriptorSet(fingerprint))
+                    .isInstanceOf(ai.protomolt.proto.registry.RegistryStoreException.class);
+        }
+    }
+
+    @Test
     void descriptorSetsSurviveRegistryRestart() throws Exception {
         Path dir = tempDir.resolve("descriptors");
         var bytes = descriptorSet();
