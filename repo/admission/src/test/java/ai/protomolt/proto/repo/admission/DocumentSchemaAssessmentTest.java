@@ -169,6 +169,51 @@ class DocumentSchemaAssessmentTest {
         }
     }
 
+    @Test void acceptedProofOwnsSchemaCopiesAfterAssessmentClosesButBorrowsHostFragments() throws Exception {
+        var f = fixture(true);
+        var sourceBudget = new Reservations();
+        var proofBudget = new Reservations();
+        var assessment = assess(f, selection -> selection.ordinal() == 0
+                ? f.string().definition() : f.timestamp().definition(), sourceBudget);
+        try (var prepared = DocumentSchemaAdmission.checkAccepted(assessment.view(), limits(1_000_000), proofBudget, () -> {})) {
+            var proof = prepared.proof();
+            assessment.artifacts().forEach((hash, bytes) ->
+                    assertThat(proof.artifacts().get(hash)).isEqualTo(bytes).isNotSameAs(bytes));
+            assertThat(proof.fragments().get(0)).isSameAs(f.fragments().get(0));
+            assessment.close();
+            assertThat(sourceBudget.live).isZero();
+            assertThat(proofBudget.live).isPositive();
+            assertThat(proof.roots()).hasSize(2);
+        } finally { assessment.close(); }
+        assertThat(proofBudget.live).isZero();
+    }
+
+    @Test void everyPromotionReservationFailureReleasesCopiesAndPreservesAssessment() throws Exception {
+        var f = fixture(true);
+        var sourceBudget = new Reservations();
+        try (var assessment = assess(f, selection -> selection.ordinal() == 0
+                ? f.string().definition() : f.timestamp().definition(), sourceBudget)) {
+            long owned = sourceBudget.live;
+            var baseline = new Reservations();
+            try (var proof = DocumentSchemaAdmission.checkAccepted(assessment.view(), limits(1_000_000), baseline, () -> {})) {
+                assertThat(proof.proof().roots()).hasSize(2);
+            }
+            assertThat(baseline.calls).isPositive();
+            assertThat(baseline.live).isZero();
+            for (int at = 1; at <= baseline.calls; at++) {
+                var budget = new Reservations();
+                budget.refuseAt = at;
+                budget.refusal = new IllegalStateException("reservation refusal " + at);
+                assertThatThrownBy(() -> DocumentSchemaAdmission.checkAccepted(assessment.view(), limits(1_000_000), budget, () -> {}))
+                        .isSameAs(budget.refusal);
+                assertThat(budget.live).isZero();
+                assertThat(sourceBudget.live).isEqualTo(owned);
+                assertThat(assessment.failure()).isEmpty();
+            }
+        }
+        assertThat(sourceBudget.live).isZero();
+    }
+
     @Test void noPayloadRootCannotBecomeATypedAssessment() throws Exception {
         var f = fixture(false, fixture(false).document().toBuilder().clearStructuredData().clearParserResults().build());
         var request = new DocumentSchemaAdmission.Preparation(ByteString.copyFrom(new byte[32]), "a".repeat(64), false,

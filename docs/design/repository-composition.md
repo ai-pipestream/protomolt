@@ -5369,8 +5369,8 @@ source-authorization rejection cases above. The runtime fixture and five focused
 publication-precondition tests pass. These are correctness tests, not storage
 latency measurements; performance qualification uses RustFS.
 
-An all-valid assessment is still not an admission Proof. Promotion must independently
-check its owned roots, schema references and artifact bytes through a budgeted
+An all-valid assessment is not itself an admission Proof. Promotion independently
+checks its owned roots, schema references and artifact bytes through a budgeted
 admission bridge before building the existing schema batch. The public unbudgeted
 `DocumentSchemaAdmission.check` overload is not an acceptable production shortcut.
 The internal strict checker now accepts an explicit evaluation time and carries
@@ -5378,22 +5378,37 @@ it through member assembly, every fragment root and nested Any validation. The
 existing convenience entry points select the current time once per check. Tests
 replay a captured time-dependent assessment at its recorded instant, reject it
 one second later, and exercise both budgeted checking and nested Any traversal.
-All 167 admission tests pass. This supplies the time semantics for promotion;
-it does not yet supply the owned promotion bridge.
-The reviewed bridge should perform one independent strict check, not reassessment
-followed by another strict check. Strict checking already verifies canonical
+
+`DocumentSchemaAdmission.checkAccepted` performs one independent strict check
+using frozen artifacts at the assessment's recorded time. It checks canonical
 evidence, complete root/occurrence coverage, retained asset identity and the exact
-used schema union. Require no recorded member or operation failure, and exact
-typed/opaque membership. An admission-module API must return an owned
-`PreparedProof`, copying retained assets and evidence under the shared budget;
-`DocumentSchemaBatch.prepare` then checks policy binding and eligibility. Keep
-the original `Assessed` open as the fragment owner and every prepared proof open
-through staging and commit. Failure closes proofs before the assessment. A result
-that outlives `Assessed` needs explicit fragment ownership transfer; a copied map
-does not transfer byte reservations. Budget exhaustion must fail without an
-unbudgeted retry. The bridge and lifecycle tests are still implementation work.
-This promotion, an explicit accepted-or-assessed execution outcome, and the native
-decision integration remain unfinished; no application path selects `assess` yet.
+used schema union, and returns a `PreparedProof` that owns budgeted schema/evidence
+copies. Fragment bytes remain host-owned. No registry lookup or second assessment
+pass occurs. `DocumentSchemaBatch.prepare` checks policy binding and eligibility.
+
+`Assessed.promoteAccepted` refuses recorded member or operation failures and
+checks exact typed/opaque membership. After every proof and the batch succeed,
+the resulting candidate takes ownership of the original assessment, including
+its fragment leases. Closing the consumed scope cannot release candidate bytes;
+its accessors and repeated promotion are refused. Candidate close releases proof
+copies before the assessment. Failed checking releases new proof copies and keeps
+the original assessment open for retry or rejection. Fragment buffers are not
+copied during promotion. Budget exhaustion fails without an unbudgeted retry.
+
+The internal promotion has Sol review. All 169 admission tests, 30 focused
+assessment/batch tests and the production-JAR storage fixture pass. Coverage
+includes every promotion reservation failing in turn, cancellation with copies
+live, retry without another resolver pass, mixed typed/opaque membership, fixed
+evaluation time, unchanged fragment object identity and exact selected attempts.
+The real storage fixture promotes and stages accepted schemas after borrowed
+inputs close; invalid promotion leaves the assessment available for retained
+rejection. This is correctness evidence, not a RustFS performance measurement.
+
+Production routing still needs a promoted
+candidate committed through the native runtime, terminal replay, and stale policy,
+owner and source refusal tests. An explicit accepted-or-assessed execution outcome
+and native rejection integration remain unfinished; no application path selects
+`assess` yet.
 
 The host must explicitly configure evidence retention, the minimum remaining
 decision window and the observed validation runtime. Invalid evidence must be

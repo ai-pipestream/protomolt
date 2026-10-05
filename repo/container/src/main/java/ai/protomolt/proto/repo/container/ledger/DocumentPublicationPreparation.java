@@ -58,6 +58,14 @@ final class DocumentPublicationPreparation {
         }
         synchronized DocumentPublicationAssessment assessment() { requireOpen(); return assessment; }
         synchronized Map<String, DocumentSelectedAttemptLedger.Selected> selections() { requireOpen(); return selections; }
+        /** Consume only after promotion succeeds; failures in checking leave the assessment available. */
+        synchronized Prepared promoteAccepted(Runnable control) throws InvalidProtocolBufferException {
+            requireOpen();
+            var candidate = assessment.promoteAccepted(control);
+            try { return new Prepared(candidate, selections); }
+            catch (RuntimeException | Error failure) { candidate.close(); throw failure; }
+            finally { assessment = null; selections = Map.of(); }
+        }
         private void requireOpen() {
             if (assessment == null) throw new IllegalStateException("Publication assessment preparation is closed");
         }

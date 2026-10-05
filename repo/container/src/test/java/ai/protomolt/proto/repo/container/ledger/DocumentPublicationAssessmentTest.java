@@ -68,6 +68,72 @@ class DocumentPublicationAssessmentTest {
         assertThatThrownBy(() -> result.verifySchemas(() -> {})).hasMessageContaining("closed");
     }
 
+    @Test void promotionTransfersFragmentsWithoutResolvingAgainAndKeepsOpaqueModeExplicit() throws Exception {
+        var f = twoMembers();
+        var schema = schema("pinned-time", "now == timestamp('2000-01-01T00:00:00Z')");
+        for (boolean mixed : List.of(false, true)) {
+            var modes = mixed ? Map.of("member-a", DocumentPublicationCandidate.Mode.TYPED,
+                    "member-b", DocumentPublicationCandidate.Mode.OPAQUE) : TYPED;
+            var budget = new PayloadBudget(32_000_000);
+            var calls = new ArrayList<String>();
+            var result = assess(f, modes, selection(policy("account", mixed, 20)), (member, occurrence) -> {
+                calls.add(member.getMemberId()); return schema.definition();
+            }, budget);
+            var originalFragment = result.typed().get("member-a").request().fragments().get(0);
+            try (var candidate = result.promoteAccepted(() -> {})) {
+                result.close(); // Ownership moved; this must not release candidate bytes.
+                assertThat(budget.reservedBytes()).isPositive();
+                assertThat(candidate.schemas().proofs().get("member-a").fragments().get(0)).isSameAs(originalFragment);
+                assertThat(candidate.schemas().proofs()).hasSize(mixed ? 1 : 2);
+                assertThat(candidate.opaque()).hasSize(mixed ? 1 : 0);
+                assertThat(calls).hasSize(mixed ? 1 : 2);
+                assertThatThrownBy(result::typed).hasMessageContaining("transferred");
+                assertThatThrownBy(() -> result.promoteAccepted(() -> {})).hasMessageContaining("transferred");
+            } finally { result.close(); }
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @Test void promotionCapacityAndCancellationFailuresKeepAssessmentRetryable() throws Exception {
+        var f = twoMembers();
+        var budget = new PayloadBudget(32_000_000);
+        try (var result = assess(f, TYPED, selection(policy("account", false, 20)),
+                (member, occurrence) -> f.assets().payload().definition(), budget)) {
+            long owned = budget.reservedBytes();
+            try (var pressure = budget.reserve(budget.capacity() - owned)) {
+                assertThatThrownBy(() -> result.promoteAccepted(() -> {}))
+                        .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                                failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED));
+                assertThat(budget.reservedBytes()).isEqualTo(budget.capacity());
+            }
+            var cancelled = new java.util.concurrent.CancellationException("promotion cancelled with owned copies");
+            assertThatThrownBy(() -> result.promoteAccepted(() -> {
+                if (budget.reservedBytes() > owned) throw cancelled;
+            })).isSameAs(cancelled);
+            assertThat(budget.reservedBytes()).isEqualTo(owned);
+            assertThat(result.failure()).isEmpty();
+            try (var candidate = result.promoteAccepted(() -> {})) {
+                assertThat(candidate.schemas().proofs()).hasSize(2);
+            }
+        }
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    @Test void invalidAssessmentCannotBePromotedAndRemainsAvailableForRejection() throws Exception {
+        var f = twoMembers();
+        var invalid = invalidSchema("invalid");
+        var budget = new PayloadBudget(32_000_000);
+        try (var result = assess(f, TYPED, selection(policy("account", false, 20)),
+                (member, occurrence) -> invalid.definition(), budget)) {
+            long owned = budget.reservedBytes();
+            assertThatThrownBy(() -> result.promoteAccepted(() -> {})).hasMessageContaining("Invalid operation assessment");
+            assertThat(budget.reservedBytes()).isEqualTo(owned);
+            result.verifySchemas(() -> {});
+            assertThat(result.failure()).isPresent();
+        }
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
     @Test void laterMissingSchemaCannotBeHiddenByAnEarlierInvalidMember() throws Exception {
         var f = twoMembers();
         var invalid = invalidSchema("invalid");
@@ -377,10 +443,13 @@ class DocumentPublicationAssessmentTest {
         return command("account", List.of(member("member-a", "doc-a"), member("member-b", "doc-b")));
     }
     private static Asset invalidSchema(String ruleId) throws Exception {
+        return schema(ruleId, "false");
+    }
+    private static Asset schema(String ruleId, String expression) throws Exception {
         var proto = StringValue.getDescriptor().getFile().toProto().toBuilder().addDependency(ValidateProto.getDescriptor().getName());
         for (var type : proto.getMessageTypeBuilderList()) if (type.getName().equals("StringValue")) {
             type.setOptions(type.getOptions().toBuilder().setExtension(ValidateProto.message,
-                    MessageRules.newBuilder().addCel(CelRule.newBuilder().setId(ruleId).setExpression("false")).build()));
+                    MessageRules.newBuilder().addCel(CelRule.newBuilder().setId(ruleId).setExpression(expression)).build()));
         }
         var file = FileDescriptor.buildFrom(proto.build(), new FileDescriptor[]{ValidateProto.getDescriptor()});
         return asset(file.findMessageTypeByName("StringValue"));

@@ -34,6 +34,7 @@ final class DocumentPublicationAssessment implements AutoCloseable {
     private final List<DocumentSchemaAssessment> owners;
     private MemberFailure failure;
     private boolean verifying;
+    private boolean promoted;
 
     private DocumentPublicationAssessment(DocumentPublicationFragments fragments, DocumentSchemaPolicies.Selection policy,
             Instant evaluatedAt, Map<String, DocumentPublicationCandidate.Mode> modes,
@@ -99,6 +100,59 @@ final class DocumentPublicationAssessment implements AutoCloseable {
                 for (int i = owners.size() - 1; i >= 0; i--) owners.get(i).close();
                 snapshot.close();
             }
+        }
+    }
+
+    /**
+     * Transfer this owner's fragments into a candidate after one independent strict
+     * check per typed member. Failure leaves this assessment open for retry. Success
+     * consumes this scope: close becomes a no-op and the candidate releases its bytes.
+     */
+    DocumentPublicationCandidate promoteAccepted(Runnable control) throws InvalidProtocolBufferException {
+        beginVerification();
+        var proofs = new LinkedHashMap<String, DocumentSchemaAdmission.Proof>();
+        var prepared = new ArrayList<DocumentSchemaAdmission.PreparedProof>();
+        boolean transferred = false;
+        try {
+            active(control);
+            if (failure != null) throw new IllegalArgumentException("Invalid operation assessment cannot be promoted");
+            var command = fragments.command();
+            if (typed.size() + opaque.size() != command.intent().getMembersCount()
+                    || modes.size() != command.intent().getMembersCount())
+                throw new IllegalArgumentException("Assessment membership differs from operation");
+            var digest = ByteString.copyFrom(HexFormat.of().parseHex(command.sha256()));
+            var reservations = reservations(budget);
+            for (var member : command.intent().getMembersList()) {
+                active(control);
+                var id = member.getMemberId();
+                if (modes.get(id) == DocumentPublicationCandidate.Mode.OPAQUE) {
+                    if (!opaque.containsKey(id) || typed.containsKey(id) || policy.policy().requiresTyped(member))
+                        throw new IllegalArgumentException("Opaque member has inconsistent assessment mode");
+                    continue;
+                }
+                if (modes.get(id) != DocumentPublicationCandidate.Mode.TYPED || opaque.containsKey(id))
+                    throw new IllegalArgumentException("Typed member has inconsistent assessment mode");
+                var view = Objects.requireNonNull(typed.get(id), "Missing typed assessment");
+                if (!view.request().commandSha256().equals(digest) || !view.request().member().equals(member)
+                        || !view.evaluatedAt().equals(evaluatedAt))
+                    throw new IllegalArgumentException("Member assessment differs from operation identity");
+                var owner = DocumentSchemaAdmission.checkAccepted(view, policy.policy().limits(), reservations,
+                        () -> active(control));
+                try { prepared.add(owner); }
+                catch (RuntimeException | Error failed) { owner.close(); throw failed; }
+                proofs.put(id, owner.proof());
+            }
+            var schemas = DocumentSchemaBatch.prepare(command, policy, proofs, reservations, () -> active(control));
+            if (!schemas.artifacts().equals(artifacts))
+                throw new IllegalArgumentException("Promoted artifacts differ from assessment union");
+            active(control);
+            var candidate = DocumentPublicationCandidate.fromAssessment(this::closePromoted, prepared, schemas, opaque);
+            synchronized (this) { promoted = true; }
+            transferred = true;
+            return candidate;
+        } finally {
+            if (!transferred) for (int i = prepared.size() - 1; i >= 0; i--) prepared.get(i).close();
+            finishVerification();
         }
     }
 
@@ -268,10 +322,21 @@ final class DocumentPublicationAssessment implements AutoCloseable {
     synchronized Map<String, DocumentCommandContent> opaque() { requireOpen(); return opaque; }
     synchronized Map<String, ByteString> artifacts() { requireOpen(); return artifacts; }
     synchronized Optional<MemberFailure> failure() { requireOpen(); return Optional.ofNullable(failure); }
-    private void requireOpen() { if (typed == null) throw new IllegalStateException("Publication assessment is closed"); }
+    private void requireOpen() {
+        if (typed == null || promoted) throw new IllegalStateException("Publication assessment is closed or transferred");
+    }
     @Override public synchronized void close() {
+        if (promoted) return;
         if (typed == null) return;
         if (verifying) throw new IllegalStateException("Publication assessment verification is active");
+        releaseOwned();
+    }
+    private synchronized void closePromoted() {
+        if (!promoted) throw new IllegalStateException("Assessment ownership was not transferred");
+        promoted = false;
+        releaseOwned();
+    }
+    private void releaseOwned() {
         typed = null; opaque = Map.of(); modes = Map.of(); artifacts = Map.of(); failure = null;
         for (int i = owners.size() - 1; i >= 0; i--) owners.get(i).close();
         owners.clear(); fragments.close();

@@ -79,7 +79,24 @@ public final class NativeAssessmentPreparationProbe {
                         var selected = assessed.selections();
                         require(selected.size() == 1 && selected.get("a").attempt().equals(
                                 plan.plan().members().getFirst().attempt().orElseThrow().id()), "exact upload selection survives return");
-                        if (scenario == 1) {
+                        if (scenario == 0) {
+                            try (var prepared = assessed.promoteAccepted(() -> {})) {
+                                assessed.close();
+                                require(prepared.selections().equals(selected), "promotion preserves exact selected attempts");
+                                require(prepared.candidate().schemas().proofs().size() == 1,
+                                        "accepted assessment becomes independently checked candidate");
+                                require(calls.get() == 1 && budget.reservedBytes() > 0,
+                                        "promotion owns bytes without another registry lookup");
+                                prepared.candidate().schemas().stage(new RepositorySchemaArtifacts(tx), owner, () -> {});
+                            }
+                            require(budget.reservedBytes() == 0, "promoted candidate releases transferred assessment");
+                        } else if (scenario == 1) {
+                            boolean refused = false;
+                            try (var unexpected = assessed.promoteAccepted(() -> {})) {
+                                throw new AssertionError("Invalid assessment was promoted");
+                            } catch (IllegalArgumentException expected) { refused = true; }
+                            require(refused && assessed.assessment() == assessment,
+                                    "invalid promotion keeps original assessment for retained rejection");
                             var retained = assessment.withRetentionEvidence(owner, observation, () -> {}, evidence -> {
                                 new RepositorySchemaArtifacts(tx).stage(owner, command, List.copyOf(evidence.artifacts(() -> {}).values()), () -> {});
                                 return new DocumentAssessmentCreation(tx, new DriveLedger(tx)).create(caller, owner, plan, selected,

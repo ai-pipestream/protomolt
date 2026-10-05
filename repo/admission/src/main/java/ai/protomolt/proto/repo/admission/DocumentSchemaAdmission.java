@@ -178,6 +178,43 @@ public final class DocumentSchemaAdmission {
         }
     }
 
+    /**
+     * Independently check an accepted assessment using only its frozen artifacts and
+     * recorded evaluation time. The result owns private schema/evidence copies; the
+     * host still owns fragment bytes through the returned proof's lifetime. Keep the
+     * view open and inputs stable during this call. This does not authorize a policy
+     * or publication. Capacity and integrity failures propagate without fallback.
+     */
+    public static PreparedProof checkAccepted(DocumentSchemaAssessment.View assessment, Limits limits,
+            DocumentAdmissionReservations reservations, Runnable control) throws InvalidProtocolBufferException {
+        Objects.requireNonNull(assessment); Objects.requireNonNull(limits); active(control);
+        var request = DocumentSchemaAssessmentReplay.Request.from(assessment);
+        if (request.expectedFailure().isPresent())
+            throw new IllegalArgumentException("Invalid assessment cannot produce an admission proof");
+        var artifacts = assessment.artifacts();
+        var resources = new DocumentAdmissionResources(reservations);
+        boolean transferred = false;
+        try {
+            var copied = new HashMap<String, ByteString>();
+            var proof = check(request.candidate(), hash -> {
+                active(control);
+                var bytes = artifacts.get(hash);
+                if (bytes == null) return Optional.empty();
+                return Optional.of(copied.computeIfAbsent(hash, ignored -> resources.copy(bytes, () -> active(control))));
+            }, limits, resources, request.evaluatedAt(), control);
+            if (!proof.artifacts().keySet().equals(artifacts.keySet()))
+                throw new IllegalArgumentException("Assessment artifacts differ from complete proof union");
+            active(control);
+            var result = new PreparedProof(proof, resources);
+            transferred = true;
+            return result;
+        } catch (DocumentAdmissionResources.ReservationFailure failure) {
+            throw failure.original;
+        } finally {
+            if (!transferred) resources.close();
+        }
+    }
+
     /** Owns serialized schema/evidence bytes; borrowed proof references must not outlive this owner. */
     public static final class PreparedProof implements AutoCloseable {
         private Proof proof;

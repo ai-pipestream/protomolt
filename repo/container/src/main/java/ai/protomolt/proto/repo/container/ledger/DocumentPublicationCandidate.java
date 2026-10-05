@@ -27,15 +27,15 @@ final class DocumentPublicationCandidate implements AutoCloseable {
         DocumentSchemaAdmission.Definition select(DocumentPublicationMember member, DocumentSchemaAdmission.Selection occurrence);
     }
 
-    private final DocumentPublicationFragments fragments;
+    private final Runnable releaseContent;
     private final List<DocumentSchemaAdmission.PreparedProof> owners;
     private DocumentSchemaBatch schemas;
     private Map<String, DocumentCommandContent> opaque;
 
-    private DocumentPublicationCandidate(DocumentPublicationFragments fragments,
+    private DocumentPublicationCandidate(Runnable releaseContent,
             List<DocumentSchemaAdmission.PreparedProof> owners, DocumentSchemaBatch schemas,
             Map<String, DocumentCommandContent> opaque) {
-        this.fragments = fragments; this.owners = new ArrayList<>(owners);
+        this.releaseContent = releaseContent; this.owners = new ArrayList<>(owners);
         this.schemas = schemas; this.opaque = Map.copyOf(opaque);
     }
 
@@ -86,7 +86,7 @@ final class DocumentPublicationCandidate implements AutoCloseable {
             }
             var schemas = DocumentSchemaBatch.prepare(command, policy, proofs, reservations, control);
             active(control);
-            var result = new DocumentPublicationCandidate(snapshot, owners, schemas, opaque);
+            var result = new DocumentPublicationCandidate(snapshot::close, owners, schemas, opaque);
             transferred = true;
             return result;
         } finally {
@@ -95,6 +95,14 @@ final class DocumentPublicationCandidate implements AutoCloseable {
                 snapshot.close();
             }
         }
+    }
+
+    /** Called only after independent proof checking; caller transfers ownership after construction succeeds. */
+    static DocumentPublicationCandidate fromAssessment(Runnable releaseContent,
+            List<DocumentSchemaAdmission.PreparedProof> owners, DocumentSchemaBatch schemas,
+            Map<String, DocumentCommandContent> opaque) {
+        return new DocumentPublicationCandidate(Objects.requireNonNull(releaseContent), owners,
+                Objects.requireNonNull(schemas), opaque);
     }
 
     static Map<String, Mode> requireModes(DocumentPublicationCommand command, DocumentSchemaPolicies.Selection policy,
@@ -127,7 +135,7 @@ final class DocumentPublicationCandidate implements AutoCloseable {
         if (schemas == null) return;
         schemas = null; opaque = Map.of();
         for (int i = owners.size() - 1; i >= 0; i--) owners.get(i).close();
-        owners.clear(); fragments.close();
+        owners.clear(); releaseContent.run();
     }
     private static void active(Runnable control) {
         Objects.requireNonNull(control);
