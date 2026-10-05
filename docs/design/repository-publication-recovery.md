@@ -212,3 +212,54 @@ Automatic session restoration is still disabled. Fixed modes, sticky stage-start
 state, retained assessment coordinates, provider effects across claim transfer,
 and the forced-process-crash test remain required before activation. Preparation
 records cannot yet be pruned because the retention protocol is unfinished.
+
+## Next implementation boundary: durable session transitions
+
+The current `DocumentPublicationSession.Execution.bindModes` fixes member modes
+only in memory. `beginAssessmentStage` likewise sets an in-memory sticky flag;
+`DocumentPublicationAssessmentExecution.stage` generates the assessment UUID and
+retention deadline immediately before CREATE. These are the next persistence
+boundaries, not evidence that automatic recovery already works.
+
+Add a private transition journal linked to the exact preparation key and owner
+nonce. Keep the immutable V81 preparation intact. Fix the complete member-to-mode
+map once, with exact command-member coverage and a bounded canonical encoding.
+An exact retry returns the saved choice; a changed choice fails even after an
+uncertain acknowledgment. Persist this before operation admission or any
+mode-dependent provider work.
+
+Before assessment CREATE, durably record the proposed assessment UUID and exact
+retention deadline with a sticky stage-started transition. Retrying the transition
+must return those original coordinates and must never generate replacements.
+Persisted intent to stage is not proof of a committed assessment. After an
+uncertain CREATE, discover and verify the committed assessment against those
+coordinates and the command/owner bindings. An absent or mismatching assessment
+requires explicit reconciliation; it cannot authorize another CREATE. Retained
+manifest identity comes from the committed assessment, not a caller assertion.
+
+Each mutation must fence the live execution claim in its SQL transaction, then
+lock the preparation/transition row; any operation-owner lock follows the claim
+lock. Recheck liveness after lock waits. Reads that expose private recovery
+coordinates require the same trusted-process authority as preparation loading
+and a final live-claim check after decoding. No SQL connection or row lock crosses
+provider I/O. Each operation has independent rows and bounded state.
+
+Acceptance tests must cover exact retries after withheld acknowledgments, changed
+modes, extra/missing members, wrong preparation/owner, stale claims, transfer while
+waiting for a lock, cancellation and an irreversible stage-started marker. Add a
+real assessment-COMMIT acknowledgment-loss case before integrating restoration.
+Then kill the writer process and recover from shared SQL in a second JVM, without
+a handoff file, upload or registry resolution. These steps remain gated by the
+separate late-provider-effect and cleanup policy; this journal alone must not
+enable automatic takeover.
+
+SQL enforcement is an activation requirement, not only a Java call-order rule.
+Admission and mode-dependent mutations must require the committed fixed-mode
+record. Assessment CREATE must match the committed transition's exact owner
+generation/nonce, command digest, assessment UUID and retention deadline. Its SQL
+guards must follow claim, transition, then owner lock order; the current owner-first
+creation path needs explicit adjustment. Sample the deadline using database time
+in the transition transaction, at exact microsecond precision, and never refresh
+it on retry. Discovery is owner-generation scoped: a new generation must not
+silently adopt a predecessor's assessment. Resolve it under valid original-owner
+authority or classify it as unresolved pending an explicit recovery protocol.
