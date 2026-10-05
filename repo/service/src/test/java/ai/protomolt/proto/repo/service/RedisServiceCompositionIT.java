@@ -27,6 +27,9 @@ class RedisServiceCompositionIT {
             public ai.protomolt.proto.repo.blob.spi.OpenedBlobStore open(java.util.Map<String, String> options) {
                 throw new AssertionError("Redis composition opened S3");
             }
+            public ai.protomolt.proto.repo.blob.spi.BackendIdentity managedIdentity(java.util.Map<String, String> options) {
+                throw new AssertionError("Redis composition requested S3 identity");
+            }
         };
         var providers = ai.protomolt.proto.repo.blob.spi.BlobStores.of(java.util.List.of(
                 unopenedS3, new ai.protomolt.proto.repo.blob.redis.RedisBlobStoreProvider()));

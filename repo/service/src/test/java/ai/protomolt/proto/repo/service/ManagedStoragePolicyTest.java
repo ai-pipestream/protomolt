@@ -5,6 +5,18 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 
 class ManagedStoragePolicyTest {
+    @Test void unqualifiedRedisIsRefusedBeforeDatabaseOrProviderAcquisition() {
+        var config = new RepoServiceConfig(0,
+                new ai.protomolt.proto.repo.container.ledger.LedgerConfig("jdbc:postgresql://127.0.0.1:1/unavailable", "unused", "unused"),
+                "http://127.0.0.1:1", "us-east-1", "unused", "unused", "policy-test", 0,
+                "redis", null, null, "redis://127.0.0.1:1", 0, 1024)
+                .withManagedStorage(new ManagedStoragePolicy("redis-test", "test-realm", true));
+        var providers = ai.protomolt.proto.repo.blob.spi.BlobStores.of(java.util.List.of());
+        assertThatThrownBy(() -> new RepoServices(config, ai.protomolt.proto.asset.bridge.BridgeEngine.standard(), providers))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Managed storage requires an S3 backing store and enabled lifecycle recovery");
+    }
+
     @Test void absentQualificationIsDisabled() {
         assertThat(ManagedStoragePolicy.fromEnvironment(Map.of())).isEqualTo(ManagedStoragePolicy.disabled());
     }

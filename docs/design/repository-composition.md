@@ -122,8 +122,8 @@ contract and behavior requirements below still apply.
   owns composition. The original baseline constructed an S3 client even when
   another provider was selected; current composition opens only the selected
   provider (plus Redis for the explicitly selected S3 cache). Qualified managed
-  storage still requires S3 and enabled recovery. The managed identity lookup
-  remains hardcoded to S3 and needs to follow the selected authoritative provider.
+  storage still requires S3 and enabled recovery. Managed identity now comes from
+  the selected authoritative provider, using the same options as its opened handle.
 - [Document](../../repo/proto/src/main/proto/ai/protomolt/proto/repo/v1/document.proto)
   has `Any structured_data`, parser results with `Any shape`, and ownership.
   [DocumentPartCodec](../../repo/codec/src/main/java/ai/protomolt/proto/repo/codec/DocumentPartCodec.java)
@@ -5295,3 +5295,20 @@ Receipt replay after evidence expiry remains distinct from evidence re-evaluatio
 The broader provider-neutral composition, non-S3 managed lifecycle qualification,
 metadata/restore, optional JCR boundaries and bounded hydration requirements remain
 part of this goal; this read-path checkpoint does not complete them.
+
+#### Selected authoritative backend composition
+
+`SelectedBlobBacking` keeps the opened provider handle, optional managed identity
+and effective reclaimer together. The selected factory computes identity from the
+same copied options used to open the handle. Unmanaged startup does not request a
+managed identity. An explicit cache decorates reclamation while retaining the
+authoritative backing's identity and handle. Startup resources remain owned by
+the host and close in reverse acquisition order on failure.
+
+The focused host gate passes 14 tests: real Redis startup without S3 acquisition
+or identity lookup, failed cache startup cleanup, managed archive/document host
+lifecycle, cache reclamation, and configuration refusal before acquisition. The
+S3-only managed qualification guard remains. A non-S3 provider still needs proven
+streaming writes, non-expiring content, physical reclamation, retention and crash
+recovery before that restriction can be lifted. Identity support alone is not
+durability qualification. Remote-client startup isolation remains a separate gate.

@@ -178,33 +178,32 @@ public final class RepoServices implements AutoCloseable {
                 this.purgeQueue = new JdbcPurgeQueue(tx);
             }
             ai.protomolt.proto.repo.blob.spi.NamespaceProvisioner namespaces;
-            java.util.Set<ai.protomolt.proto.repo.blob.spi.BlobCapability> managedCapabilities = java.util.Set.of();
-            ai.protomolt.proto.repo.blob.spi.ObjectReclaimer managedReclaimer = null;
-            ai.protomolt.proto.repo.blob.spi.OpenedBlobStore managedBacking = null;
+            SelectedBlobBacking selectedBacking = null;
             switch (config.blobStore()) {
                 case RepoServiceConfig.BLOB_STORE_S3 -> {
-                    var selected = owned.add(providers.open("s3", s3Options(config)));
+                    selectedBacking = SelectedBlobBacking.open(providers, "s3", s3Options(config),
+                            config.managedStorage().retentionQualified(), owned);
+                    var selected = selectedBacking.handle();
                     this.blobStore = selected.store();
-                    managedCapabilities = selected.capabilities();
-                    managedReclaimer = selected.reclaimer();
-                    managedBacking = selected;
                     namespaces = selected::ensureNamespace;
                     this.remoteChannel = null;
                 }
                 case RepoServiceConfig.BLOB_STORE_REDIS -> {
-                    var selected = owned.add(providers.open("redis", redisOptions(config)));
+                    selectedBacking = SelectedBlobBacking.open(providers, "redis", redisOptions(config),
+                            config.managedStorage().retentionQualified(), owned);
+                    var selected = selectedBacking.handle();
                     this.blobStore = selected.store();
                     namespaces = selected::ensureNamespace;
                     this.remoteChannel = null;
                 }
                 case RepoServiceConfig.BLOB_STORE_S3_REDIS_CACHE -> {
-                    var backing = owned.add(providers.open("s3", s3Options(config)));
+                    selectedBacking = SelectedBlobBacking.open(providers, "s3", s3Options(config),
+                            config.managedStorage().retentionQualified(), owned);
+                    var backing = selectedBacking.handle();
                     var cache = owned.add(providers.open("redis", redisOptions(config)));
                     this.blobStore = new CachingBlobStore(backing.store(), cache.store(),
                             config.redisTtlSeconds(), config.redisMaxObjectBytes());
-                    managedCapabilities = backing.capabilities();
-                    managedReclaimer = ((CachingBlobStore) blobStore).reclaimer(backing.reclaimer());
-                    managedBacking = backing;
+                    selectedBacking = selectedBacking.withReclaimer(((CachingBlobStore) blobStore).reclaimer(backing.reclaimer()));
                     namespaces = backing::ensureNamespace;
                     this.remoteChannel = null;
                 }
@@ -238,6 +237,8 @@ public final class RepoServices implements AutoCloseable {
                     new ai.protomolt.proto.repo.engine.BlobOperations(blobStore, driveLedger));
             var archiveLedger = new ai.protomolt.proto.repo.container.archive.ArchiveLedger(tx);
             if (generation != null) {
+                var backing = java.util.Objects.requireNonNull(selectedBacking, "Managed storage requires a selected backing");
+                var managedCapabilities = backing.handle().capabilities();
                 if (!managedCapabilities.containsAll(java.util.Set.of(
                         ai.protomolt.proto.repo.blob.spi.BlobCapability.STREAMING_WRITE,
                         ai.protomolt.proto.repo.blob.spi.BlobCapability.NON_EXPIRING_WRITES,
@@ -245,11 +246,11 @@ public final class RepoServices implements AutoCloseable {
                     throw new IllegalArgumentException("Selected backing provider cannot support managed ingestion and reclamation");
                 var profiles = new ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger(tx);
                 var profile = new ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger.Profile(
-                        providers.managedIdentity("s3", s3Options(config)), config.managedStorage().storageRealm());
+                        backing.requireManagedIdentity(), config.managedStorage().storageRealm());
                 profiles.bind(generation, profile);
-                var reclaimer = java.util.Objects.requireNonNull(managedReclaimer);
+                var reclaimer = backing.reclaimer();
                 this.documentRecovery = new ai.protomolt.proto.repo.container.ledger.DocumentAttemptRecoveryService(
-                        tx, generation, profile, java.util.Objects.requireNonNull(managedBacking), reclaimer);
+                        tx, generation, profile, backing.handle(), reclaimer);
                 this.rawRecovery = new ai.protomolt.proto.repo.engine.RawObjectRecovery(documentLedger.rawObjects(), profiles,
                         (originalGeneration, originalProfile) -> {
                             if (!generation.equals(originalGeneration) || !profile.equals(originalProfile))
@@ -291,7 +292,7 @@ public final class RepoServices implements AutoCloseable {
             // after this component acquires its durable lifecycle identity.
             this.managedDocuments = generation == null ? null : new ManagedDocumentServices(tx, driveLedger,
                     generation, new ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger(tx).find(generation).orElseThrow(),
-                    managedBacking, config.kafkaEnabled(), historicalAccess);
+                    java.util.Objects.requireNonNull(selectedBacking).handle(), config.kafkaEnabled(), historicalAccess);
         } catch (RuntimeException | Error failure) {
             if (startingArchive != null) {
                 // Construction has not exposed services or started workers. Preserve
