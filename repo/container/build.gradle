@@ -164,3 +164,26 @@ tasks.register('nativeReplicaTest', Test) {
     }
     useJUnitPlatform()
 }
+
+// Explicit measurements must execute; never replay cached benchmark results.
+tasks.register('nativeReplicaBenchmark', Test) {
+    group = 'verification'
+    description = 'Measure bounded native mixed traffic on shared PostgreSQL and RustFS'
+    dependsOn tasks.named('admissionRuntimeInventory'), tasks.named('jar'), configurations.assessmentHostRuntime
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    filter { includeTestsMatching 'ai.protomolt.proto.repo.container.ledger.NativeReplicaRuntimeTest' }
+    inputs.dir(hostAdmissionInventory)
+    inputs.files(configurations.assessmentHostRuntime)
+    inputs.file(tasks.named('jar').flatMap { it.archiveFile })
+    outputs.upToDateWhen { false }
+    outputs.cacheIf { false }
+    systemProperty 'protomolt.test.nativeBenchmark', 'true'
+    systemProperty 'protomolt.test.nativeBenchmarkOutput', layout.buildDirectory.dir('native-replica-benchmark').get().asFile.absolutePath
+    doFirst {
+        systemProperty 'protomolt.test.admissionRuntimeBundle', hostAdmissionInventory.get().asFile.absolutePath
+        systemProperty 'protomolt.test.storageHostClasspath', files(tasks.named('jar').get().archiveFile,
+                configurations.assessmentHostRuntime).asPath
+    }
+    useJUnitPlatform()
+}

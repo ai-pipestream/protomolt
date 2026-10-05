@@ -25,13 +25,15 @@ public final class NativeReplicaProbe {
                 "path-style", "true", "conditional-writes", "true", "access-key", env("PROTOMOLT_TEST_S3_ACCESS"),
                 "secret-key", env("PROTOMOLT_TEST_S3_SECRET"));
         var profile = new ManagedBackendLedger.Profile(S3BackendIdentity.of(options.get("endpoint"), "us-east-1", true), "native-replica");
-        try (var database = new LedgerDatabase(new LedgerConfig(env("PROTOMOLT_TEST_JDBC"), env("PROTOMOLT_TEST_USER"), env("PROTOMOLT_TEST_PASSWORD")));
+        try (var database = new LedgerDatabase(new LedgerConfig(env("PROTOMOLT_TEST_JDBC"), env("PROTOMOLT_TEST_USER"), env("PROTOMOLT_TEST_PASSWORD"),
+                Integer.parseInt(System.getenv().getOrDefault("PROTOMOLT_NATIVE_POOL", "10")), LedgerConfig.DEFAULT_MIGRATION_LOCATION));
                 var opened = new S3BlobStoreProvider().open(options)) {
             var tx = new Tx(database.entityManagerFactory());
             switch (args[0]) {
                 case "seed" -> seed(tx, root, options, profile);
                 case "write" -> write(tx, root, args[2], opened, profile);
                 case "read" -> read(tx, root, opened, profile);
+                case "traffic" -> NativeMixedTrafficProbe.run(tx, database.dataSource(), root, args[2], opened, profile);
                 default -> throw new IllegalArgumentException("Unknown native workload mode");
             }
         }

@@ -36,7 +36,7 @@ class NativeReplicaRuntimeTest {
         String classpath = String.join(java.io.File.pathSeparator, jars.values().stream().map(Path::toString).toList());
         var classes = Files.createDirectory(directory.resolve("classes"));
         var sources = new ArrayList<String>();
-        for (String name : List.of("ObservedAssessmentProbe", "NativeReplicaProbe")) {
+        for (String name : List.of("ObservedAssessmentProbe", "NativeReplicaProbe", "NativeMixedTrafficProbe", "NativeTrafficTelemetry", "NativeTrafficMaintenance")) {
             var source = directory.resolve(name + ".java");
             try (var input = getClass().getResourceAsStream("/runtime-inventory/" + name + ".java")) {
                 assertThat(input).isNotNull(); Files.copy(input, source);
@@ -55,6 +55,8 @@ class NativeReplicaRuntimeTest {
         }
         try (var postgres = new PostgreSQLContainer("postgres:18-alpine");
                 var storage = new AssessmentStorageBackend("rustfs")) {
+            if (Boolean.getBoolean("protomolt.test.nativeBenchmark")) postgres.withCommand("postgres", "-c",
+                    "shared_preload_libraries=pg_stat_statements", "-c", "pg_stat_statements.track=top");
             postgres.start(); storage.start();
             var builder = new ProcessBuilder();
             builder.environment().put("PROTOMOLT_TEST_JDBC", postgres.getJdbcUrl());
@@ -109,7 +111,94 @@ class NativeReplicaRuntimeTest {
             try (var files = Files.list(directory)) {
                 assertThat(files.filter(p -> p.toString().endsWith(".rejection")).count()).isEqualTo(8);
             }
+            if (Boolean.getBoolean("protomolt.test.nativeBenchmark")) benchmark(builder, childClasspath, postgres);
         }
+    }
+
+    private void benchmark(ProcessBuilder builder, String classpath, PostgreSQLContainer postgres) throws Exception {
+        Path output = Path.of(System.getProperty("protomolt.test.nativeBenchmarkOutput")).resolve(java.util.UUID.randomUUID().toString());
+        Files.createDirectories(output);
+        Files.writeString(output.resolve("environment.txt"), "java=" + System.getProperty("java.version")
+                + "\nos=" + System.getProperty("os.name") + " " + System.getProperty("os.arch")
+                + "\nloadavg=" + Files.readString(Path.of("/proc/loadavg")).trim()
+                + "\nclients=4\nworker_heap_limit=512MiB\npayload=small typed StringValue\nNo host isolation or container CPU/memory limits; trusted internal Java path.\n");
+        try (var sampler = new NativeTrafficSampler(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), output)) {
+            var windows = new StringBuilder("window,replicas,pool_per_replica,clients_per_replica,operations,inclusive_nanos\n");
+            int window = 0;
+            for (String config : new String[] {"f1", "a4", "f2", "a1", "f4", "a2", "a2", "f4", "a1", "f2", "a4", "f1"}) {
+                String name = String.format(java.util.Locale.ROOT, "t%02d", window++);
+                int replicas = Integer.parseInt(config.substring(1)), clients = 4 / replicas;
+                int pool = config.startsWith("f") ? 8 / replicas : 8;
+                builder.environment().put("PROTOMOLT_NATIVE_POOL", Integer.toString(pool));
+                builder.environment().put("PROTOMOLT_NATIVE_CLIENTS", Integer.toString(clients));
+                var children = new ArrayList<Process>();
+                Throwable primary = null;
+                try {
+                    long readyDeadline = System.nanoTime() + java.time.Duration.ofSeconds(90).toNanos();
+                    for (int index = 0; index < replicas; index++) {
+                        String worker = name + "-" + index;
+                        command(builder, classpath, "traffic", worker);
+                        children.add(builder.redirectErrorStream(true).redirectOutput(output.resolve(worker + ".log").toFile()).start());
+                    }
+                    for (int index = 0; index < replicas; index++) {
+                        while (!Files.exists(directory.resolve(name + "-" + index + ".ready"))) {
+                            if (!children.get(index).isAlive()) throw new AssertionError(Files.readString(output.resolve(name + "-" + index + ".log")));
+                            assertThat(System.nanoTime() < readyDeadline).as("traffic warmup readiness").isTrue();
+                            Thread.sleep(10);
+                        }
+                    }
+                    sampler.begin(name);
+                    long start = System.nanoTime();
+                    Files.writeString(directory.resolve(name + ".go"), "go", java.nio.file.StandardOpenOption.CREATE_NEW);
+                    long finishDeadline = start + java.time.Duration.ofSeconds(90).toNanos();
+                    boolean done;
+                    do {
+                        done = true;
+                        for (int index = 0; index < replicas; index++) {
+                            done &= Files.exists(directory.resolve(name + "-" + index + ".done"));
+                            if (!children.get(index).isAlive() && children.get(index).exitValue() != 0)
+                                throw new AssertionError(Files.readString(output.resolve(name + "-" + index + ".log")));
+                        }
+                        sampler.sample(name, children);
+                        assertThat(System.nanoTime() < finishDeadline).as("traffic window deadline").isTrue();
+                        if (!done) Thread.sleep(25);
+                    } while (!done);
+                    long elapsed = System.nanoTime() - start;
+                    sampler.finish(name);
+                    Files.writeString(directory.resolve(name + ".release"), "release", java.nio.file.StandardOpenOption.CREATE_NEW);
+                    for (int index = 0; index < replicas; index++) {
+                        var process = children.get(index);
+                        assertThat(process.waitFor(30, TimeUnit.SECONDS)).isTrue();
+                        var log = output.resolve(name + "-" + index + ".log");
+                        assertThat(process.exitValue()).as(Files.readString(log)).isZero();
+                        assertThat(Files.readString(log)).contains("NATIVE_REPLICA_TRAFFIC_OK");
+                        String worker = name + "-" + index;
+                        for (String suffix : List.of("-operations.csv", "-warmup-metrics.csv", "-measure-metrics.csv", "-config.txt"))
+                            Files.copy(directory.resolve(worker + suffix), output.resolve(worker + suffix));
+                        var metrics = Files.readAllLines(output.resolve(worker + "-measure-metrics.csv"));
+                        for (String metric : List.of("provider_put", "provider_getBounded", "sql_acquire", "sql_usage")) {
+                            var fields = metrics.stream().filter(line -> line.startsWith(metric + ",")).findFirst().orElseThrow().split(",");
+                            assertThat(Long.parseLong(fields[1])).as(metric).isPositive();
+                            assertThat(Long.parseLong(fields[2])).as(metric + " duration").isNotNegative();
+                            assertThat(Long.parseLong(fields[3])).as(metric + " failures").isZero();
+                        }
+                        assertThat(metrics.stream().filter(line -> line.startsWith("sql_timeout,")).map(line -> Long.parseLong(line.split(",")[1])))
+                                .allMatch(count -> count == 0);
+                        var rows = Files.readAllLines(output.resolve(worker + "-operations.csv"));
+                        assertThat(rows.stream().filter(line -> line.startsWith("measure,")).count()).isEqualTo(32L * clients);
+                        for (String kind : List.of("read", "publish", "reject")) {
+                            long expected = (kind.equals("read") ? 16 : kind.equals("publish") ? 12 : 4) * clients;
+                            assertThat(rows.stream().filter(line -> line.startsWith("measure,") && line.split(",")[3].equals(kind)).count()).isEqualTo(expected);
+                        }
+                    }
+                    windows.append(name).append(',').append(replicas).append(',').append(pool).append(',').append(clients)
+                            .append(",128,").append(elapsed).append('\n');
+                    Files.writeString(output.resolve("windows.csv"), windows);
+                } catch (Exception | Error failure) { primary = failure; throw failure; }
+                finally { stopChildren(children, primary); }
+            }
+        }
+        System.out.println("NATIVE_BENCHMARK_OUTPUT=" + output);
     }
 
     private static void stopChildren(List<Process> children, Throwable primary) {

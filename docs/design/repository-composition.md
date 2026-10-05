@@ -5785,3 +5785,24 @@ This adds a real shared-document concurrency invariant. It does not measure
 sustained hot-document throughput, independently prove every backend's CAS
 semantics or replace mixed read/write and fixed/added SQL-budget measurements.
 No repository or transport contract changes are involved.
+
+#### Native mixed read/write diagnostic
+
+`nativeReplicaBenchmark` now runs interleaved one/two/four-process windows against
+real shared PostgreSQL/RustFS, with separate fixed-total and added SQL capacity.
+The actual worker pool sizes are asserted. Four clients perform historical reads,
+typed publications and retained typed rejections with exact terminal replay.
+Every measured window must add exactly 48 documents, 48 revision commits and 16
+rejections. Required provider/SQL metrics must have real positive observations and
+zero failures. A separate sampler records SQL, blockers and process RSS; workers
+park after completing maintenance until that capture finishes, before shutdown.
+
+The local run passed. It is a low-load diagnostic, not saturation qualification:
+one process reached 32.33 inclusive operations/second; four reached 26.50 with
+fixed total SQL capacity and 24.14 with added capacity. Extra replicas did not
+improve this workload. Short windows, four total clients, tiny payloads, growing
+history and a shared host limit the conclusion. Read, accepted-write and rejected-
+write distributions are reported separately. No production behavior changed.
+See `docs/evidence/repository/2026-10-05-native-mixed/README.md` for definitions,
+raw samples, source hashes and environment. Higher-load and larger-payload
+qualification remain open, as do the other repository goal stages.

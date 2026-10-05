@@ -5824,3 +5824,13 @@ precondition rejection and creates no revision. Same-runtime retries and fresh-J
 terminal observations must match, and current-head/history checks retain exactly
 the original revision plus the winner. This extends the native process fixture;
 it is not a throughput or transport qualification.
+
+### Native mixed traffic diagnostic
+
+Unchanged repository contracts. `nativeReplicaBenchmark` exercises real historical
+reads, typed publications and retained rejections concurrently across one/two/four
+JVMs, with exact retry and per-window durable-result counts. It captures separate
+operation latency and SQL/provider/lock/RSS diagnostics with explicit pool sizes.
+The local low-load run passed but showed no speedup from replicas; it does not
+qualify saturation, public transport or large payload performance. Evidence is in
+`docs/evidence/repository/2026-10-05-native-mixed/README.md`.
