@@ -23,6 +23,8 @@ public interface HistoricalDocumentRepository {
         UUID revision();
         long publicationRevision();
         DocumentManifest manifest();
+        /** Recheck the bound caller's current READ access immediately before delivery. Requires an open result. */
+        void authorizeDelivery(RepositoryReadControl control);
         /** Local ownership release; hosts separately reconcile drained SQL pins. */
         @Override void close();
     }

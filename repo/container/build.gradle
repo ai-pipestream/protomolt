@@ -26,6 +26,12 @@ dependencies {
     // Real SQL/provider integration of ledger-issued read plans with the shared reader.
     // This test-only edge does not add engine code to the container's published runtime.
     testImplementation project(':protomolt-repo-engine')
+    // Historical conformance runs the real adapter over the same native revisions.
+    // This test-only edge does not alter the container's published runtime.
+    testImplementation project(':protomolt-repo-service')
+    testImplementation project(':protomolt-authz-grpc')
+    testImplementation libs.grpc.inprocess
+    testImplementation libs.grpc.netty.shaded
     api project(':protomolt-repo-proto')
     api project(':protomolt-repo-spi')
     api libs.protobuf.java

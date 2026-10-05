@@ -2970,6 +2970,39 @@ No generator changes are part of this slice. Remaining adapter acceptance must
 run the same historical cases locally and over real in-process gRPC, plus a
 serialized transport test for response ownership, cancellation and size limits.
 
+`DocumentHistoryGrpcService` now implements this contract as an opt-in adapter;
+`RepoServices` still does not mount it. Construction requires a trusted caller
+binding, an application response budget and a concurrent-call limit. The adapter
+refuses absent authentication rather than inheriting operator authority. It uses
+the shared historical SPI, validates request/response shapes, checks raw fragment
+ordinals, sizes and hashes, and rechecks the bound caller after response copying.
+`RevisionRead.authorizeDelivery` keeps its retained use open during that SQL check;
+closing that one result cannot race its authorization call. It holds no global
+reader-lifecycle monitor across SQL.
+
+The response builder computes protobuf framing size before raw byte copies and
+reserves twice the encoded envelope size for application payload accounting.
+Raw content is copied; validated documents and manifests are immutable protobuf
+values transferred under the new reservation. Call termination and producer
+completion must both occur before the response lease and concurrent-call slot
+are released. Already-cancelled calls are checked after callback installation.
+Failures during response preparation are reauthorized before returning detail;
+a failure of the final authorization check is not retried.
+
+The native publication fixture now exercises the same real PostgreSQL/versioned
+provider revisions through the library, in-process gRPC and loopback Netty. It
+checks raw byte/manifest parity, typed delivery, opaque validated-mode refusal,
+missing authentication, invalid host bindings, cross-account invisibility, ACL
+revocation after opening a result and exhausted application response capacity.
+A test interceptor pauses four real calls at `sendMessage`; cancelling them must
+retain their response reservations while producers are paused and refuse a fifth
+call. Releasing the producers must drain the reservations and permit another
+read. The fixture fills response slots sequentially so it does not conflate the
+provider's independent worker limit with the transport's concurrent-call limit.
+The container module's service/transport dependencies are test-only; its published
+runtime does not acquire that reverse dependency. Production caller resolution,
+host mounting and broader transport fault/size-boundary qualification remain open.
+
 Acceptance follows one real flow: publish through the shared coordinator, receive
 its revision identity, read that revision locally and through an in-process gRPC
 server backed by PostgreSQL and a real provider adapter, then gracefully restart

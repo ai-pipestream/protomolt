@@ -14,12 +14,15 @@ public final class DocumentHistoricalRead implements ai.protomolt.proto.repo.spi
     private final ai.protomolt.proto.repo.v1.NodeAddress address;
     private final ai.protomolt.proto.repo.v1.DocumentManifest manifest;
     private final long publicationRevision;
+    private final ai.protomolt.proto.repo.container.ledger.DocumentReadLedger.PinnedHistory history;
     DocumentHistoricalRead(DocumentReadBatch bytes, DocumentHistoricalValidation validation, PayloadBudget.Lease copies,
             java.util.UUID revision, ai.protomolt.proto.repo.v1.NodeAddress address,
-            ai.protomolt.proto.repo.v1.DocumentManifest manifest, long publicationRevision) {
+            ai.protomolt.proto.repo.v1.DocumentManifest manifest, long publicationRevision,
+            ai.protomolt.proto.repo.container.ledger.DocumentReadLedger.PinnedHistory history) {
         this.bytes = bytes; this.validation = validation; this.copies = copies;
         this.revision = revision; this.address = address;
         this.manifest = manifest; this.publicationRevision = publicationRevision;
+        this.history = java.util.Objects.requireNonNull(history);
     }
     private void requireOpen() {
         if (bytes == null) throw new IllegalStateException("Historical read is closed");
@@ -33,6 +36,9 @@ public final class DocumentHistoricalRead implements ai.protomolt.proto.repo.spi
     public synchronized String validationProfile() { requireOpen(); return validation.validationProfile(); }
     public synchronized String policySha256() { requireOpen(); return validation.policySha256(); }
     public synchronized ByteString commandSha256() { requireOpen(); return validation.commandSha256(); }
+    @Override public synchronized void authorizeDelivery(ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
+        requireOpen(); history.authorizeDelivery(control);
+    }
     @Override public synchronized void close() {
         if (bytes == null) return;
         validation.close(); copies.close(); bytes.close(); bytes = null;

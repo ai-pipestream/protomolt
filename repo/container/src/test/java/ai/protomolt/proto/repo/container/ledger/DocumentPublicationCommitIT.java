@@ -60,7 +60,7 @@ class DocumentPublicationCommitIT {
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
     void hostRuntimePublishesAndReplaysThenDrainsRealProviderResources(boolean typed) throws Exception {
-        var fixture = fixture(1, 1, DocumentSecurity.getDefaultInstance(), "runtime-" + UUID.randomUUID(), typed);
+        var fixture = fixture(1, 1, publicReadGrant(), "runtime-" + UUID.randomUUID(), typed);
         var command = new DocumentPublicationCommand(fixture.command.intent().toBuilder()
                 .setOperationId(UUID.randomUUID().toString()).build());
         var policy = ai.protomolt.proto.repo.admission.DocumentAdmissionPolicy.of(DocumentSchemaPolicy.newBuilder()
@@ -153,6 +153,12 @@ class DocumentPublicationCommitIT {
                                     failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION));
                 }
                 assertThat(budget.reservedBytes()).isZero();
+                DocumentHistoricalTransportProbe.verify(history, published, typed, runtime::tick, readable -> tx.inTransaction(em -> {
+                    var node = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(published.getAddress());
+                    var row = em.find(DocumentRecord.class, node, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
+                    row.writeSecurity(readable ? publicReadGrant() : DocumentSecurity.newBuilder().addPermissions(
+                            AccessRule.newBuilder().setIdentityType("public").setIdentity("public").setAccess(Access.ACCESS_DENY)).build());
+                }));
                 assertThat(runtime.execute(ADMIN, command, Map.of(), Map.of(), Map.of(), Map.of(), java.util.Optional.empty(),
                         (caller, member, occurrence) -> { throw new AssertionError("Terminal replay must not resolve schemas"); },
                         ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isEqualTo(result);

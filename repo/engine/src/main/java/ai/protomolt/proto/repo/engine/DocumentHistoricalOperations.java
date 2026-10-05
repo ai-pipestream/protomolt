@@ -46,7 +46,7 @@ public final class DocumentHistoricalOperations implements HistoricalDocumentRep
                     fragments.add(new Fragment(plan.entries().get(index).revisionOrdinal(), ByteBuffer.wrap(content.get(index).bytes())));
                 }
                 control.check();
-                var result = new Raw(plan, batch, fragments);
+                var result = new Raw(plan, history, batch, fragments);
                 history.authorizeDelivery(control);
                 delivered = true;
                 return result;
@@ -103,10 +103,12 @@ public final class DocumentHistoricalOperations implements HistoricalDocumentRep
 
     private static final class Raw implements RawRead {
         private final DocumentHistoricalReadPlan plan;
+        private final DocumentReadLedger.PinnedHistory history;
         private DocumentReadBatch bytes;
         private List<Fragment> fragments;
-        private Raw(DocumentHistoricalReadPlan plan, DocumentReadBatch bytes, List<Fragment> fragments) {
-            this.plan = plan; this.bytes = bytes; this.fragments = List.copyOf(fragments);
+        private Raw(DocumentHistoricalReadPlan plan, DocumentReadLedger.PinnedHistory history,
+                DocumentReadBatch bytes, List<Fragment> fragments) {
+            this.plan = plan; this.history = history; this.bytes = bytes; this.fragments = List.copyOf(fragments);
         }
         private void requireOpen() { if (bytes == null) throw new IllegalStateException("Historical read is closed"); }
         @Override public synchronized NodeAddress address() { requireOpen(); return plan.address(); }
@@ -114,6 +116,9 @@ public final class DocumentHistoricalOperations implements HistoricalDocumentRep
         @Override public synchronized long publicationRevision() { requireOpen(); return plan.publicationRevision(); }
         @Override public synchronized DocumentManifest manifest() { requireOpen(); return plan.manifest(); }
         @Override public synchronized List<Fragment> fragments() { requireOpen(); return fragments; }
+        @Override public synchronized void authorizeDelivery(RepositoryReadControl control) {
+            requireOpen(); history.authorizeDelivery(control);
+        }
         @Override public synchronized void close() {
             if (bytes == null) return;
             bytes.close(); bytes = null; fragments = null;

@@ -49,7 +49,7 @@ public final class DocumentHistoricalReader {
             }
             validation = history.validateFragments(encoded, budget, control);
             var result = new DocumentHistoricalRead(raw, validation, copies, plan.revision(), plan.address(),
-                    plan.manifest(), plan.publicationRevision());
+                    plan.manifest(), plan.publicationRevision(), history);
             handedOff = true;
             return result;
         } catch (java.util.concurrent.CancellationException cancelled) {
