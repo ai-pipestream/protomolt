@@ -5762,3 +5762,15 @@ same reader, accepted publication, retained rejection, lost stage/decision commi
 acknowledgements, stage rollback, terminal session retirement, unresolved session
 capacity and shutdown during admission. The fixture uses one session and one read
 slot, then checks drained memory/read ownership. Sol reviewed this checkpoint.
+
+### Schema-only and routing-metadata native revision coverage
+
+**Unchanged contracts and implementation:** existing all-reuse publication can
+replace a schema binding under an unchanged Any type URL and create a separate
+routing-metadata revision without new payload writes. The added production-JAR
+fixture checks A/B/B payload descriptor references, retained container references,
+account-level artifact normalization, exact original physical IDs/part provenance,
+zero upload attempts and immutable historical `cluster_id` snapshots. Historical
+validated reads retain command/revision bindings and use stored schema assets.
+A failing replacement contract produces rejection without advancing the current
+revision. This adds acceptance evidence, not a restore API or hydration operation.

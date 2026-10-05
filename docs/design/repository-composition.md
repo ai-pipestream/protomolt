@@ -5590,3 +5590,33 @@ remain required before the complete goal can close.
 
 The unchanged constructor's typed and opaque real-provider publication/history
 cases also pass after this constructor refactoring, alongside the window tests.
+
+#### Schema-only and routing-metadata revisions
+
+`NativeSchemaRevisionProbe` exercises the configured native runtime with real
+retained provider objects. It publishes a typed revision using descriptor A,
+replaces that contract with descriptor B under the same exact Any type URL, and
+then changes only `cluster_id` while retaining B. Descriptor B adds a real CEL
+nonempty-string rule. Each operation rebuilds source and destination revision
+preconditions; no stale source condition is silently adopted.
+
+All three revisions preserve the original physical object IDs and complete part
+manifest entries, including provider versions and per-part provenance. Their
+upload-backend callback fails if invoked, and SQL confirms that none creates an
+upload attempt. Payload reads and validation still occur; this is not a zero-GET
+or validation-evidence reuse claim. Each revision pins its exact payload descriptor
+(A/B/B) and container schema. Descriptor bytes are normalized once per account,
+with separate immutable revision references.
+
+SQL metadata snapshots retain null/null/new cluster values after all revisions
+commit. Historical validated reads use retained assets without a registry callback,
+reconstruct identical document content and bind each original command and revision.
+A fourth contract with a failing validation rule produces a retained rejection
+without advancing the current document. This fixture covers routing metadata and
+schema replacement; it does not qualify arbitrary application-metadata restore,
+legacy migration, pruning or the pending hydration protocol.
+
+The full production-JAR PostgreSQL/LocalStack gate passes with the original-source
+manifest comparison and post-publication historical metadata checks. Sol reviewed
+the phase sequencing, schema normalization, immutable references and assertions.
+These results qualify behavior, not latency or throughput.
