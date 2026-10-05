@@ -141,7 +141,27 @@ no-op-stamp and missing-finalization-check failures have red test evidence.
 This does not activate claims in `DocumentPublicationSession`, persist complete
 session state, or enable failover. Before that activation, every recovery path must
 carry the claim, provider effects across transfer must be qualified, and forced
-crash tests must pass. The current claim fence uses multiple JDBC statements to
-check isolation, lock, check time and stamp; consolidate that boundary without
-weakening after-wait checks, then measure added latency and multi-JVM capacity on
-RustFS. No performance result is inferred from correctness tests.
+crash tests must pass. V80 consolidates the claim fence into one client SQL call:
+the database function checks isolation, locks, checks time after waiting, and
+stamps the consumed proof. The original triggers remain active. A real Hibernate
+statistics test establishes one prepared statement and an unchanged lease; this
+is not a measurement of latency or a claim that the server executes one statement.
+Added latency and multi-JVM capacity still require RustFS measurements.
+
+## Durable preparation record requirements
+
+The private codec must retain the full normalized publication intent as well as
+its canonical digest. Canonical command bytes omit the operation ID; reconstructing
+from a digest or assuming those bytes are the full intent would lose information.
+Preserve the account/principal/operation key, owner nonce, per-upload attempt and
+lease-token identities, lease duration and predecessor generation. Preserve every
+sampled drive field, including nullable strings and the credential reference, plus
+the backend generation and full nonsecret location identity/storage realm. Decode
+must not look up current provider configuration to replace a historical snapshot.
+
+Use a bounded, versioned deterministic encoding and check exact member/drive
+coverage, duplicate entries and command/key binding before reconstruction. Decoding
+grants no authority. Fixed modes, proposed claim-transfer identity and the sticky
+stage-started marker require their own committed transitions; they must not be
+lost through replacement of an immutable preparation blob. The complete journal
+and its process-crash qualification remain the next implementation work.

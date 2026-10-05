@@ -90,16 +90,13 @@ final class RepositoryExecutionClaimLedger {
         if (!em.getTransaction().isActive() || em.getTransaction().getRollbackOnly())
             throw new IllegalStateException("Execution claim requires a writable transaction");
         try {
-            var current = readLocked(em, expected.key);
-            if (current.epoch != expected.epoch || !current.token.equals(expected.token)
-                    || !current.commandSha256.equals(expected.commandSha256) || !live(em, expected.key)) throw new Fenced();
-            // The trigger writes the actual transaction ID, never a caller-supplied stamp.
-            // Dependent guards recheck the lease at each mutation, including after waits.
-            bind(em.createNativeQuery("""
-                    UPDATE repository_execution_claims SET fence_epoch=:epoch,fence_token=:token
-                    WHERE account_id=:account AND principal=:principal AND operation_id=:id
-                    """), expected.key).setParameter("epoch", expected.epoch).setParameter("token", expected.token).executeUpdate();
-            return current;
+            // One JDBC call; the database checks time after obtaining the row lock.
+            var rows = bind(em.createNativeQuery("""
+                    SELECT lease_until FROM fence_repository_execution_claim(:account,:principal,:id,:digest,:epoch,:token)
+                    """), expected.key).setParameter("digest", HexFormat.of().parseHex(expected.commandSha256))
+                    .setParameter("epoch", expected.epoch).setParameter("token", expected.token).getResultList();
+            if (rows.isEmpty()) throw new Fenced();
+            return new Claim(expected.key, expected.commandSha256, expected.epoch, expected.token, instant(rows.getFirst()));
         } catch (RuntimeException | Error failure) {
             try { em.getTransaction().setRollbackOnly(); }
             catch (RuntimeException markingFailure) { if (markingFailure != failure) failure.addSuppressed(markingFailure); }

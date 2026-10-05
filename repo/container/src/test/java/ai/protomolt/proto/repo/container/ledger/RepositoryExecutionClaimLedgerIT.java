@@ -70,6 +70,31 @@ class RepositoryExecutionClaimLedgerIT {
         }
     }
 
+    @Test void liveFenceUsesOnePreparedStatementWithoutRenewingTheLease() {
+        try (var c = context(POSTGRES)) {
+            var command = command(c);
+            var claim = new RepositoryExecutionClaimLedger(c.tx()).acquire(key(command), command, UUID.randomUUID(), LEASE);
+            var statistics = c.emf().unwrap(org.hibernate.SessionFactory.class).getStatistics();
+            statistics.setStatisticsEnabled(true);
+            statistics.clear();
+            var observed = c.tx().inTransaction(em -> { return RepositoryExecutionClaimLedger.lockLive(em, claim); });
+            assertThat(observed).isEqualTo(claim);
+            assertThat(statistics.getPrepareStatementCount()).isEqualTo(1);
+        }
+    }
+
+    @Test void matchingTokenAndEpochCannotFenceADifferentCommand() {
+        try (var c = context(POSTGRES)) {
+            var command = command(c);
+            var claim = new RepositoryExecutionClaimLedger(c.tx()).acquire(key(command), command, UUID.randomUUID(), LEASE);
+            var wrongDigest = new RepositoryExecutionClaimLedger.Claim(claim.key(), "0".repeat(64),
+                    claim.epoch(), claim.token(), claim.leaseUntil());
+            assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+                return RepositoryExecutionClaimLedger.lockLive(em, wrongDigest);
+            })).isInstanceOf(RepositoryExecutionClaimLedger.Fenced.class);
+        }
+    }
+
     @Test void lockWaitMustNotUseLivenessObservedBeforeWaiting() throws Exception {
         try (var c = context(POSTGRES); var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
             var command = command(c); var claims = new RepositoryExecutionClaimLedger(c.tx());
