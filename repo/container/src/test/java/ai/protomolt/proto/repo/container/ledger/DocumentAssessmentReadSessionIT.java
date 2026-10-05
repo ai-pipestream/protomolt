@@ -250,6 +250,70 @@ class DocumentAssessmentReadSessionIT {
     }
 
     private static final class DeliberateRollback extends RuntimeException {}
+
+    @Test void committedCapturePreventsWaitingExpiredAssessmentRelease() throws Exception {
+        var c = staged(2, true); UUID reader = reader(), session = UUID.randomUUID();
+        try (var holder = database.entityManagerFactory().createEntityManager();
+                var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            holder.getTransaction().begin();
+            try {
+                int pid = ((Number) holder.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue();
+                holder.createNativeQuery("SELECT require_active_repository_reader(:id)").setParameter("id", reader).getSingleResult();
+                RepositoryOperationLedger.fenceLiveOwner(holder, c.owner());
+                holder.createNativeQuery("INSERT INTO document_assessment_read_sessions(session_id,reader_incarnation,assessment_id) VALUES(:id,:reader,:assessment)")
+                        .setParameter("id", session).setParameter("reader", reader).setParameter("assessment", c.assessment()).executeUpdate();
+                fixture.expire("document_assessment_owners", "assessment_id", c.assessment(), "retain_until");
+                var releasing = executor.submit(() -> fixture.release(c));
+                awaitBlockedBy(pid);
+                holder.getTransaction().commit();
+                assertThatThrownBy(() -> releasing.get(10, java.util.concurrent.TimeUnit.SECONDS))
+                        .hasStackTraceContaining("all reader sessions to drain");
+            } finally { if (holder.getTransaction().isActive()) holder.getTransaction().rollback(); }
+        }
+        assertThat(references(c.assessment())).isEqualTo(2);
+        assertThat(release(session, reader, c.assessment())).isTrue();
+        assertThat(fixture.release(c)).isTrue();
+        assertThat(references(c.assessment())).isZero();
+    }
+
+    @Test void committedAssessmentReleasePreventsWaitingCapture() throws Exception {
+        var c = staged(2, true); UUID reader = reader(), session = UUID.randomUUID();
+        fixture.expire("document_assessment_owners", "assessment_id", c.assessment(), "retain_until");
+        try (var holder = database.entityManagerFactory().createEntityManager();
+                var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            holder.getTransaction().begin();
+            try {
+                int pid = ((Number) holder.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue();
+                assertThat(holder.createNativeQuery("SELECT release_expired_document_assessment('account','principal',:op,:id)")
+                        .setParameter("op", c.owner().key().operationId()).setParameter("id", c.assessment()).getSingleResult()).isEqualTo(true);
+                var capturing = executor.submit(() -> capture(c, session, reader));
+                awaitBlockedBy(pid);
+                holder.getTransaction().commit();
+                assertThatThrownBy(() -> capturing.get(10, java.util.concurrent.TimeUnit.SECONDS))
+                        .hasStackTraceContaining("query returned no rows");
+            } finally { if (holder.getTransaction().isActive()) holder.getTransaction().rollback(); }
+        }
+        assertThat(references(c.assessment())).isZero();
+        assertThat(tx.<Long>readOnly(em -> ((Number) em.createNativeQuery(
+                "SELECT count(*) FROM document_assessment_read_identities WHERE session_id=:id")
+                .setParameter("id", session).getSingleResult()).longValue())).isZero();
+        assertThat(tx.<Long>readOnly(em -> ((Number) em.createNativeQuery(
+                "SELECT count(*) FROM document_assessment_read_sessions WHERE session_id=:id")
+                .setParameter("id", session).getSingleResult()).longValue())).isZero();
+    }
+
+    private static void awaitBlockedBy(int holder) throws InterruptedException {
+        long deadline = System.nanoTime() + java.time.Duration.ofSeconds(5).toNanos();
+        do {
+            boolean waiting = tx.readOnly(em -> !em.createNativeQuery("""
+                    SELECT pid FROM pg_stat_activity WHERE :holder=ANY(pg_blocking_pids(pid))
+                        AND wait_event_type='Lock'
+                    """).setParameter("holder", holder).getResultList().isEmpty());
+            if (waiting) return;
+            Thread.sleep(10);
+        } while (System.nanoTime() < deadline);
+        throw new AssertionError("Competing assessment transaction did not wait on the held transaction");
+    }
     private static boolean release(UUID session, UUID reader, UUID assessment) {
         return tx.inTransaction(em -> (Boolean) em.createNativeQuery("SELECT release_document_assessment_read_session(:id,:reader,:assessment)")
                 .setParameter("id", session).setParameter("reader", reader).setParameter("assessment", assessment).getSingleResult());

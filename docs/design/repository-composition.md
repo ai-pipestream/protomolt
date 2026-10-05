@@ -4578,5 +4578,13 @@ It checks durable sessions, local capacity, verification-memory release and exac
 drained/quiesced recovery counts. An uncertain committed capture retains capacity
 and refuses a second capture until recovery; cancellation before commit rolls back,
 while cancellation after acknowledged commit permits ordinary drained release.
-Concurrent release/revocation, provider read-plan assembly and delivery-time
-authorization remain required before enabling the full assessment reader.
+The SQL session tests exercise both capture/release commit orders, observing a
+PostgreSQL lock wait before allowing the holder to commit. Capture committed first
+preserves the expired assessment until session drain; release committed first
+refuses the waiting capture without leaving a session or permanent identity. These
+remain synthetic evidence fixtures, not provider reads. The production-JAR restart
+probe separately exercises canonical capture waiting on an uncommitted destination
+permission revocation. After revocation commits, capture refuses with NOT_FOUND
+and retains no session, read capacity or verification-memory reservation.
+Provider read-plan assembly, reused-source revocation during provider I/O and
+delivery-time authorization remain required before enabling the full assessment reader.

@@ -172,7 +172,7 @@ public final class AssessmentRestartProbe {
 
     private static void verifyRevokedAccess(Tx tx, RepositoryOperationLedger.Owner owner, DocumentPublicationCommand command,
             Map<String, DocumentAssessmentRetainedSlots.UploadSelection> selections, DocumentAssessmentCreation.Created retained,
-            PayloadBudget budget) {
+            PayloadBudget budget) throws Exception {
         String readPolicy = "{\"permissions\":[{\"identityType\":\"public\",\"identity\":\"public\",\"access\":\"ACCESS_READ\"}]}";
         var caller = new RepositoryCaller("principal", false, java.util.Set.of("account"), java.util.Set.of());
         var handler = new DocumentAssessmentReconciliation(tx);
@@ -204,7 +204,60 @@ public final class AssessmentRestartProbe {
                 retained.retainUntil(), budget, () -> {}).orElseThrow().equals(retained))
             throw new AssertionError("Revocation damaged retained evidence");
         if (budget.reservedBytes() != 0) throw new AssertionError("Authorization path leaked reservations");
+        verifyCaptureRevocationRace(tx, caller, owner, command, selections, retained, budget, denied, readPolicy);
         System.out.println("RESTARTED_ASSESSMENT_REVOCATION_OK");
+    }
+
+    private static void verifyCaptureRevocationRace(Tx tx, RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentPublicationCommand command, Map<String, DocumentAssessmentRetainedSlots.UploadSelection> selections,
+            DocumentAssessmentCreation.Created retained, PayloadBudget budget, UUID denied, String readPolicy) throws Exception {
+        UUID reader = UUID.randomUUID();
+        var ledger = new DocumentReadLedger(tx, reader, 1);
+        var pending = new java.util.concurrent.atomic.AtomicReference<java.util.concurrent.Future<DocumentReadLedger.PinnedAssessment>>();
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            // Keep the policy update uncommitted until capture demonstrably waits on it.
+            tx.inTransaction(em -> {
+                int holder = ((Number) em.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue();
+                int changed = em.createNativeQuery("UPDATE documents SET security=CAST(:policy AS jsonb) WHERE node_id=:node")
+                        .setParameter("policy", "{\"permissions\":[{\"identityType\":\"public\",\"identity\":\"public\",\"access\":\"ACCESS_DENY\"}]}")
+                        .setParameter("node", denied).executeUpdate();
+                if (changed != 1) throw new AssertionError("Capture revocation missed destination");
+                pending.set(executor.submit(() -> ledger.captureAssessment(caller, owner, command, selections,
+                        retained.assessment(), retained.manifestSha256(), retained.retainUntil(), budget, () -> {})));
+                long deadline = System.nanoTime() + java.time.Duration.ofSeconds(5).toNanos();
+                while (!tx.readOnly(observer -> !observer.createNativeQuery("""
+                        SELECT pid FROM pg_stat_activity WHERE :holder=ANY(pg_blocking_pids(pid))
+                            AND wait_event_type='Lock'
+                        """).setParameter("holder", holder).getResultList().isEmpty())) {
+                    if (System.nanoTime() >= deadline) throw new AssertionError("Capture did not wait on policy update");
+                    try { Thread.sleep(10); }
+                    catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt(); throw new IllegalStateException(interrupted);
+                    }
+                }
+            });
+            try {
+                pending.get().get(10, java.util.concurrent.TimeUnit.SECONDS).close();
+                throw new AssertionError("Capture accepted a concurrently revoked destination");
+            } catch (java.util.concurrent.ExecutionException failure) {
+                if (!(failure.getCause() instanceof ai.protomolt.proto.repo.spi.RepositoryException rejected)
+                        || rejected.code() != ai.protomolt.proto.repo.spi.RepositoryException.Code.NOT_FOUND)
+                    throw new AssertionError("Capture revocation must refuse without disclosing evidence", failure);
+            }
+            if (ledger.outstandingReads() != 0 || budget.reservedBytes() != 0)
+                throw new AssertionError("Revoked capture leaked capacity or verification memory");
+            long sessions = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM document_assessment_read_sessions WHERE reader_incarnation=:reader")
+                    .setParameter("reader", reader).getSingleResult()).longValue());
+            if (sessions != 0) throw new AssertionError("Revoked capture retained a session");
+        } finally {
+            tx.inTransaction(em -> {
+                int changed = em.createNativeQuery("UPDATE documents SET security=CAST(:policy AS jsonb) WHERE node_id=:node")
+                        .setParameter("policy", readPolicy).setParameter("node", denied).executeUpdate();
+                if (changed != 1) throw new AssertionError("Capture race restoration missed destination");
+            });
+        }
+        System.out.println("RESTARTED_ASSESSMENT_CAPTURE_REVOCATION_OK");
     }
 
     private static String required(Properties fields, String name) {

@@ -93,6 +93,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 String result = Files.readString(restartLog);
                 assertThat(restarted.exitValue()).as(result).isZero();
                 assertThat(result).contains("RESTARTED_ASSESSMENT_ACK_OK", "RESTARTED_ASSESSMENT_REVOCATION_OK",
+                        "RESTARTED_ASSESSMENT_CAPTURE_REVOCATION_OK",
                         "RESTARTED_ASSESSMENT_OWNER_FENCE_OK");
             } finally {
                 if (restarted.isAlive()) {
