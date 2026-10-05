@@ -19,7 +19,7 @@ public final class PromotedAssessmentCommitProbe {
             AssessmentMixedReuseProbe.Source source, DocumentSchemaPolicies.Selection policy) throws Exception {
         var current = policy;
         long committedRevision = 0;
-        for (int scenario : new int[]{0, 2, 3, 1}) {
+        for (int scenario : new int[]{0, 4, 5, 2, 3, 1}) {
             var original = source.candidate();
             var destination = original.getDestination().toBuilder()
                     .clearExpectedMutationRevision().setIfAbsent(true)
@@ -28,10 +28,24 @@ public final class PromotedAssessmentCommitProbe {
             if (scenario == 1) destination.clearIfAbsent().setExpectedMutationRevision(committedRevision);
             var member = original.toBuilder().setDestination(destination).build();
             var command = AssessmentMixedReuseProbe.command(member);
-            var owner = new RepositoryOperationLedger(tx).admit(new RepositoryOperationLedger.Key("account", "principal", command.operationId()),
-                    command, UUID.randomUUID(), scenario == 2 ? Duration.ofSeconds(15) : Duration.ofMinutes(5)).owner().orElseThrow();
-            var uploaded = AssessmentMixedReuseProbe.upload(tx, provider, command, owner, source.placement(), source.fragments());
             var budget = new PayloadBudget(128_000_000);
+            var key = new RepositoryOperationLedger.Key("account", "principal", command.operationId());
+            final RepositoryOperationLedger.Owner owner;
+            final AssessmentMixedReuseProbe.Uploads uploaded;
+            if (scenario >= 4) {
+                var saved = new DocumentPublicationPreparationRecord(key, command, DocumentPublicationSeeds.mint(key, command),
+                        Map.of(source.placement().drive().id(), source.placement()), Duration.ofMinutes(5), 0);
+                var claim = new RepositoryExecutionClaimLedger(tx).acquire(key, command, UUID.randomUUID(), Duration.ofMinutes(5));
+                new DocumentPublicationPreparationJournal(tx, budget).save(CALLER, claim, saved, RepositoryReadControl.NONE);
+                new DocumentPublicationModesJournal(tx, budget).bind(CALLER, claim, 0,
+                        Map.of("a", scenario == 4 ? DocumentPublicationCandidate.Mode.OPAQUE : DocumentPublicationCandidate.Mode.TYPED), RepositoryReadControl.NONE);
+                owner = new RepositoryOperationLedger(tx).admit(key, command, saved.seeds().ownerNonce(), Duration.ofMinutes(5), claim).owner().orElseThrow();
+                uploaded = AssessmentMixedReuseProbe.upload(tx, provider, owner, saved.prepare(), source.fragments());
+            } else {
+                owner = new RepositoryOperationLedger(tx).admit(key, command, UUID.randomUUID(),
+                        scenario == 2 ? Duration.ofSeconds(15) : Duration.ofMinutes(5)).owner().orElseThrow();
+                uploaded = AssessmentMixedReuseProbe.upload(tx, provider, command, owner, source.placement(), source.fragments());
+            }
             var calls = new AtomicInteger();
             var definition = ObservedAssessmentProbe.asset(StringValue.getDescriptor());
             var commit = new DocumentPublicationCommit(tx, new DriveLedger(tx), true, false);
@@ -44,7 +58,14 @@ public final class PromotedAssessmentCommitProbe {
                 candidate.schemas().stage(new RepositorySchemaArtifacts(tx), owner, () -> {});
                 Runnable publish = () -> commit.commit(CALLER, owner, uploaded.prepared(), candidate.opaque(),
                         uploaded.selected(), candidate.schemas(), () -> {});
-                if (scenario == 1) {
+                if (scenario == 4) {
+                    try { publish.run(); throw new AssertionError("Direct commit bypassed fixed publication modes"); }
+                    catch (RepositoryException expected) {
+                        require(expected.code() == RepositoryException.Code.FAILED_PRECONDITION
+                                && expected.getMessage().equals("Committed publication modes differ from fixed modes"), "direct mode mismatch refusal");
+                    }
+                    System.out.println("JOURNALED_DIRECT_COMMIT_MISMATCH_OK");
+                } else if (scenario == 1) {
                     var scoped = new RepositoryCaller("principal", false, Set.of("account"), Set.of());
                     tx.inTransaction(em -> {
                         DocumentAdmissionAuthorization.lockAndAuthorize(em, scoped,
@@ -77,7 +98,7 @@ public final class PromotedAssessmentCommitProbe {
                     try { publish.run(); throw new AssertionError("Stale policy published"); }
                     catch (DocumentSchemaPolicies.StalePolicy expected) { /* Even the same policy bytes need a current revision. */ }
                 }
-                if (scenario == 0) {
+                if (scenario == 0 || scenario == 5) {
                     var result = commit.commit(CALLER, owner, uploaded.prepared(), candidate.opaque(), uploaded.selected(),
                             candidate.schemas(), () -> {});
                     require(result.getMembersCount() == 1, "promoted candidate committed");
@@ -86,7 +107,8 @@ public final class PromotedAssessmentCommitProbe {
                     require(outcomes(tx, command) == 1, "exactly one success outcome");
                     var node = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(member.getDestination().getAddress());
                     var row = new DocumentLedger(tx).findByNodeId(node).orElseThrow();
-                    committedRevision = row.mutationRevision;
+                    if (scenario == 0) committedRevision = row.mutationRevision;
+                    else System.out.println("JOURNALED_DIRECT_COMMIT_MATCH_OK");
                     var publication = new DocumentPublicationLedger(tx).findForRead(row).orElseThrow();
                     long reused = tx.readOnly(em -> ((Number) em.createNativeQuery("""
                             SELECT count(*) FROM document_revision_parts WHERE revision_id=:revision AND object_id=:object

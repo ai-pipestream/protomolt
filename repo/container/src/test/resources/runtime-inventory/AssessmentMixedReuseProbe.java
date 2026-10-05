@@ -190,6 +190,10 @@ public final class AssessmentMixedReuseProbe {
             RepositoryOperationLedger.Owner owner, DocumentUploadPlan.Placement placement, Map<Integer,ByteString> fragments) {
         var prepared = DocumentOperationUploadAdmission.prepare(command, Map.of(placement.drive().id(), placement),
                 Map.of("a", UUID.randomUUID()), Duration.ofMinutes(5));
+        return upload(tx, provider, owner, prepared, fragments);
+    }
+    static Uploads upload(Tx tx, AssessmentProviderProbe provider, RepositoryOperationLedger.Owner owner,
+            DocumentOperationUploadAdmission.Prepared prepared, Map<Integer,ByteString> fragments) {
         var admitted = new DocumentOperationUploadAdmission(tx, new DriveLedger(tx)).admit(ADMIN, owner, prepared);
         var attempt = admitted.getFirst();
         var selected = new DocumentSelectedAttemptLedger.Selected("a", 1, attempt.id(), attempt.token());

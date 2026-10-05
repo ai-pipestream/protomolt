@@ -386,3 +386,24 @@ mode binding for direct callers; these guards do not establish complete enforcem
 of every internal write path. Automatic restored-session activation, process-crash
 recovery and the late-provider-effect policy remain unfinished. No throughput claim
 is made for the additional claimed-operation checks.
+
+## Direct successful commit mode binding
+
+The low-level publication commit now derives each member's mode from its validated
+schema-proof set and complementary opaque-content set. After full authorization,
+inside the already owner-fenced transaction, it compares that map with the exact
+preparation and fixed-mode rows, including command digest and both owner nonces.
+The query returns only a boolean. It opens no nested transaction, transfers no
+private JSON or schema artifact, and introduces no provider I/O under a lock.
+At most 64 validated member names are encoded, with an explicit 128 KiB wire bound.
+Unclaimed operations incur no comparison query; claimed operations without a
+preparation remain the documented claim-only primitive.
+
+A real-provider regression first demonstrated a successful typed publication
+under an opaque saved choice. The fixture now requires refusal, no terminal outcome
+and no destination row, and separately proves a matching typed journal still
+publishes with an exact replayable receipt. Upload attempts come from saved seeds.
+This guards publication; operation-scoped schema artifacts may already have been
+staged in an earlier transaction. Raw privileged SQL is not a substitute for the
+validated commit API. Automatic session restoration, claim-transfer/late-provider
+qualification and forced-process-crash recovery remain separate unfinished work.

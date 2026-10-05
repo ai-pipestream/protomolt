@@ -88,6 +88,7 @@ final class DocumentPublicationCommit {
             if (schemas == null) DocumentSchemaPolicies.lockUnboundWriter(em, command.intent().getAccountId());
             else schemas.lockPolicy(em, owner, control);
             var locked=DocumentAdmissionAuthorization.lockAndAuthorize(em,caller,plan,authorization);
+            DocumentPublicationModeBinding.require(em, owner, command, schemas == null ? Set.of() : schemas.proofs().keySet(), control);
             for (var placement:placements) {
                 placement.drive().lock(em,drives);
                 if (!ManagedBackendLedger.find(em,placement.generation()).orElseThrow(

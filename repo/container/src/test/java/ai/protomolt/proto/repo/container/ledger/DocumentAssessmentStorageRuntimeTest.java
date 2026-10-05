@@ -88,6 +88,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 assertThat(result).contains("ASSESSMENT_OPERATION_REPLAY_OK");
                 assertThat(result).contains("JOURNALED_ASSESSMENT_COMMIT_RECOVERY_OK", "JOURNALED_ASSESSMENT_DECISION_OK");
                 assertThat(result).contains("JOURNALED_OBSERVED_MODE_MISMATCH_OK");
+                assertThat(result).contains("JOURNALED_DIRECT_COMMIT_MISMATCH_OK", "JOURNALED_DIRECT_COMMIT_MATCH_OK");
                 assertThat(result).contains("ASSESSMENT_POLICY_ADVANCEMENT_REPLAY_OK");
                 assertThat(result).contains("ASSESSMENT_MIXED_REPLAY_OK");
                 assertThat(result).contains("ASSESSMENT_REPLAY_CANCELLED_DELIVERY_OK");
