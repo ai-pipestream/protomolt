@@ -5912,3 +5912,16 @@ Unknown selections return NOT_FOUND; corruption and resource exhaustion retain
 separate codes. Seven new PostgreSQL cases, 20 focused historical tests and all
 224 admission tests pass. Real provider orchestration and public transport remain
 pending; SQL still captures the complete bounded artifact set.
+
+### Provider-backed selected historical decoding
+
+**Extended provider reader and new concrete engine operation; unchanged wire/SPI
+contracts:** `DocumentPartReader.readHistorical(history, ordinal, control)` selects
+one captured part before resolving the original backend. The existing full-history
+reader uses the same implementation with no ordinal filter.
+`DocumentHistoricalOperations.readMaterialized` captures authenticated history,
+reads that exact provider version and invokes owned SQL-bound decoding. The result
+acquires an independent pin before the raw batch closes. Real PostgreSQL/LocalStack
+production-JAR qualification covers exact old-version selection, one GET, unknown
+ordinal without I/O, post-GET revocation/cancellation/corruption, and resource drain.
+Public SPI/protobuf exposure and performance qualification remain pending.

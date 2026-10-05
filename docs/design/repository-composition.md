@@ -6107,3 +6107,38 @@ existing batch ownership and qualify the complete path with a real object store.
 No public optional-read RPC is enabled yet. Durable private-owner crash recovery,
 restore/pruning, registry/cache integration, non-S3 durability, horizontal capacity,
 bounded hydration and optional JCR requirements remain open.
+
+#### Provider-backed selected occurrence reads
+
+The shared part reader now accepts a complete-revision ordinal, filters the
+captured plan before backend resolution, and uses its existing bounded/versioned
+GET, identity/digest checks and current delivery authorization. Full raw and
+validated history reads continue through the same implementation without a filter.
+Unknown ordinals return NOT_FOUND without a provider call.
+
+`DocumentHistoricalReader.readMaterialized` keeps the selected raw batch open
+while passing a borrowed ByteString view to the SQL-bound decoder. The decoder
+reserves and makes its own private copy, and acquires an independent pin use before
+the raw batch closes. No extra unbudgeted fragment copy is introduced in the engine.
+`DocumentHistoricalOperations.readMaterialized` owns capture and history closure,
+reauthorizes success/failure and closes partial results. The returned result still
+requires a current-authorized content view and stays open through its last consumer.
+This is a concrete Java composition operation, not a new HistoricalDocumentRepository
+SPI or public protobuf/gRPC contract.
+
+The production-JAR PostgreSQL/LocalStack gate passed with five new provider
+scenarios. They establish one selected GET from a multiparts revision, exact old
+version despite a newer provider version, exact retained schema, unknown ordinal
+without GET, revocation of successful/error delivery after real GET, cancellation,
+injected corruption of real returned bytes, and drained reservations/pins. Existing
+schema/metadata history checks also pass with the changed latest provider version.
+Sol reviewed this path. Evidence is in
+`docs/evidence/repository/2026-10-05-provider-materialization/`.
+
+This is correctness evidence, not a latency or horizontal-capacity result. SQL
+still loads the full bounded schema snapshot. Public read contracts, schema
+resolution/cache, forced-crash durable owner recovery, restore/pruning, non-S3
+durability, higher-load RustFS qualification and bounded hydration remain open.
+The next recovery design must preserve private identities before uncertain SQL
+admission and distinguish a recoverable owner from a second live coordinator;
+a local handoff file alone does not qualify multi-replica recovery.

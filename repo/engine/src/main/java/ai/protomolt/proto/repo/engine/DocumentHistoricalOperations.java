@@ -80,6 +80,30 @@ public final class DocumentHistoricalOperations implements HistoricalDocumentRep
         }
     }
 
+    /** Selected typed view; does not confer a fresh validation verdict or change the raw/validated SPI. */
+    public ai.protomolt.proto.repo.container.ledger.DocumentHistoricalMaterialization readMaterialized(
+            RepositoryCaller caller, NodeAddress address, UUID revision, int ordinal,
+            ai.protomolt.proto.repo.admission.DocumentSchemaMaterialization.Selection selection,
+            ai.protomolt.proto.repo.admission.DocumentSchemaMaterialization.Limits limits,
+            RepositoryReadControl control) {
+        Objects.requireNonNull(control).check(); Objects.requireNonNull(selection); Objects.requireNonNull(limits);
+        ai.protomolt.proto.repo.container.ledger.DocumentHistoricalMaterialization result = null;
+        boolean delivered = false;
+        try (var history = capture(caller, address, revision, control)) {
+            try {
+                result = validated.readMaterialized(history, ordinal, selection, limits, control);
+                history.authorizeDelivery(control);
+                delivered = true;
+                return result;
+            } catch (RuntimeException failure) {
+                reauthorizeFailure(history, control, failure);
+                throw failure;
+            }
+        } finally {
+            if (!delivered && result != null) result.close();
+        }
+    }
+
     private DocumentReadLedger.PinnedHistory capture(RepositoryCaller caller, NodeAddress address,
             UUID revision, RepositoryReadControl control) {
         Objects.requireNonNull(caller); Objects.requireNonNull(address); Objects.requireNonNull(revision);

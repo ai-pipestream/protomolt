@@ -251,6 +251,16 @@ public final class DocumentPartReader implements AutoCloseable,
      * closes, drains and releases the plan separately, including after cancellation.
      */
     public DocumentReadBatch readHistorical(DocumentReadLedger.PinnedHistory history, RepositoryReadControl control) {
+        return readHistorical(history, java.util.OptionalInt.empty(), control);
+    }
+
+    /** Read only one complete-revision ordinal, using the same provider identity and delivery checks. */
+    public DocumentReadBatch readHistorical(DocumentReadLedger.PinnedHistory history, int ordinal, RepositoryReadControl control) {
+        return readHistorical(history, java.util.OptionalInt.of(ordinal), control);
+    }
+
+    private DocumentReadBatch readHistorical(DocumentReadLedger.PinnedHistory history, java.util.OptionalInt ordinal,
+            RepositoryReadControl control) {
         Objects.requireNonNull(history); Objects.requireNonNull(control);
         enterOperation();
         DocumentReadBatch batch = null;
@@ -258,7 +268,13 @@ public final class DocumentPartReader implements AutoCloseable,
         try (var setup = history.use()) {
             try {
                 checkActive(control);
-                var wanted = setup.plan().entries().stream().map(entry -> entry.part()).toList();
+                var entries = setup.plan().entries().stream()
+                        .filter(entry -> ordinal.isEmpty() || entry.revisionOrdinal() == ordinal.getAsInt()).toList();
+                if (ordinal.isPresent() && entries.isEmpty())
+                    throw new RepositoryException(RepositoryException.Code.NOT_FOUND, "Historical fragment is unavailable");
+                if (ordinal.isPresent() && entries.size() != 1)
+                    throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Historical fragment ordinal is ambiguous");
+                var wanted = entries.stream().map(entry -> entry.part()).toList();
                 batch = readFragments(wanted.stream().map(DocumentPublicationLedger.BoundPart::part).toList(),
                         () -> resolveBoundParts(wanted, control), control, false, setup);
                 checkActive(control);

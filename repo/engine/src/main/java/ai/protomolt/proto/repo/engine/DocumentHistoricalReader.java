@@ -19,6 +19,29 @@ public final class DocumentHistoricalReader {
     }
 
     /**
+     * Decode one retained occurrence from a real selected provider version. The raw batch stays
+     * owned until materialization has made its private copies and acquired its independent pin.
+     * Caller retains the returned result through delivery and closes/drains/releases history.
+     */
+    public ai.protomolt.proto.repo.container.ledger.DocumentHistoricalMaterialization readMaterialized(
+            DocumentReadLedger.PinnedHistory history, int ordinal,
+            ai.protomolt.proto.repo.admission.DocumentSchemaMaterialization.Selection selection,
+            ai.protomolt.proto.repo.admission.DocumentSchemaMaterialization.Limits limits,
+            RepositoryReadControl control) {
+        Objects.requireNonNull(history); Objects.requireNonNull(selection); Objects.requireNonNull(limits);
+        Objects.requireNonNull(control);
+        try (var raw = parts.readHistorical(history, ordinal, control)) {
+            if (raw.parts().size() != 1)
+                throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Selected historical fragment count differs");
+            // Borrow only while the batch owns this stable array. Materialization reserves before copying.
+            var bytes = com.google.protobuf.UnsafeByteOperations.unsafeWrap(raw.parts().getFirst().bytes());
+            return history.materializeFragment(ordinal, bytes, selection, limits, budget, control);
+        } catch (java.util.concurrent.CancellationException cancelled) {
+            throw new RepositoryException(RepositoryException.Code.CANCELLED, "Historical materialization cancelled");
+        }
+    }
+
+    /**
      * Validates using the archived contract and definitions with the current runtime.
      * Opaque revisions or missing retained definitions are explicit failures, never
      * a downgrade to unvalidated content. Use the raw reader for opaque preservation.

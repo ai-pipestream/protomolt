@@ -1,0 +1,6 @@
+b58aa05cfeffc14e63dcc47be48138e56141aadba138c4289c880e82c3c06e34  repo/engine/src/main/java/ai/protomolt/proto/repo/engine/DocumentPartReader.java
+ed02285bcb5f452a9adaeab64c60de7536be93aec30fdb5a52a33e391fe82dc0  repo/engine/src/main/java/ai/protomolt/proto/repo/engine/DocumentHistoricalReader.java
+7bb0e5929e635d13dd62439e17409a735fd0fbaa50a4a0888cdd476de4386209  repo/engine/src/main/java/ai/protomolt/proto/repo/engine/DocumentHistoricalOperations.java
+5164d0005249c462bc2f4b7898cabd66a2785d71e3947ab42b0db4db1d2b6ac0  repo/container/src/test/resources/runtime-inventory/NativeHistoricalMaterializationProbe.java
+a281a4e9dbf0ea0217d8f5afa8ca9d58520d5c478dbb85cac4cdff260032cf6e  repo/container/src/test/resources/runtime-inventory/NativeSchemaRevisionProbe.java
+c71d79901b2e31d196a26c393df6118b1f1f023c6f45e99d8f346466b60ba3b6  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentAssessmentStorageRuntimeTest.java

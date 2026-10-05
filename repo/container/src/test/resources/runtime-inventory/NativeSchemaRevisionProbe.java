@@ -73,6 +73,7 @@ public final class NativeSchemaRevisionProbe {
                             .setParameter("op", command.operationId()).getSingleResult()).longValue());
                     require(attempts == 0, "no empty upload attempt for unchanged bytes");
                 }
+                NativeHistoricalMaterializationProbe.run(tx, provider, published.getFirst());
                 require(registryCalls.get() == 3, "one explicit contract selection for each revision");
                 for (var definition : List.of(a, b)) {
                     long catalogRows = tx.readOnly(em -> ((Number) em.createNativeQuery("""
