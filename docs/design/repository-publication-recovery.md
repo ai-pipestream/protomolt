@@ -77,6 +77,9 @@ and test prerequisite, not a solved capability.
 
 ## Other goal work remains active
 
+The [remaining work map](repository-remaining-work.md) records independent slices
+and the publication prerequisites for restore, pruning and hydration.
+
 Public materialization contracts, tenant-scoped schema resolution/cache,
 restore/pruning, non-S3 durability and bounded hydration remain required alongside
 recovery. Historical reads must retain schema assets independently of a live

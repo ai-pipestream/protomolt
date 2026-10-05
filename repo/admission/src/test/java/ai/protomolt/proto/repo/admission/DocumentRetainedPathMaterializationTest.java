@@ -25,6 +25,78 @@ class DocumentRetainedPathMaterializationTest {
             100_000, 10, 10, new DocumentAnyMaterialization.Limits(100_000, 1000, 20));
     @TempDir Path store;
 
+    @Test void selectedWireEvidenceRejectsChangedRequestContentAndArtifacts() throws Exception {
+        var response = wireResponse();
+        var request = wireRequest(response);
+        var reservations = new WireReservations();
+        DocumentHistoricalResponseVerifier.verify(request, response, reservations, () -> {});
+        assertThat(reservations.held).isZero();
+        for (var changed : List.of(
+                response.toBuilder().setRevisionId(UUID.randomUUID().toString()).build(),
+                response.toBuilder().setAddress(response.getAddress().toBuilder().setAccountId("another-account")).build(),
+                response.toBuilder().setSelection(response.getSelection().toBuilder().setRevisionOrdinal(1)).build(),
+                response.toBuilder().setOriginal(response.getOriginal().toBuilder().setValue(ByteString.copyFromUtf8("changed"))).build(),
+                response.toBuilder().setDefinition(response.getDefinition().toBuilder()
+                        .setDescriptorArtifact(ByteString.copyFromUtf8("not descriptors"))).build(),
+                response.toBuilder().setDefinition(response.getDefinition().toBuilder()
+                        .setMetadataArtifact(ByteString.copyFromUtf8("not metadata"))).build(),
+                response.toBuilder().setPath(response.getPath().toBuilder().setSteps(2, index(1))).build())) {
+            assertThatThrownBy(() -> DocumentHistoricalResponseVerifier.verify(request, changed, reservations, () -> {}))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThat(reservations.held).isZero();
+        }
+    }
+
+    @Test void selectedWireVerificationReleasesReservationsAtEveryCancellationPoint() throws Exception {
+        var response = wireResponse();
+        var request = wireRequest(response);
+        var reservations = new WireReservations();
+        var total = new java.util.concurrent.atomic.AtomicInteger();
+        DocumentHistoricalResponseVerifier.verify(request, response, reservations, total::incrementAndGet);
+        for (int point = 1; point <= total.get(); point++) {
+            int stopAt = point;
+            var calls = new java.util.concurrent.atomic.AtomicInteger();
+            var cancelled = new CancellationException("wire verification cancelled");
+            assertThatThrownBy(() -> DocumentHistoricalResponseVerifier.verify(request, response, reservations,
+                    () -> { if (calls.incrementAndGet() == stopAt) throw cancelled; })).isSameAs(cancelled);
+            assertThat(reservations.held).isZero();
+        }
+    }
+
+    private ReadHistoricalOccurrenceResponse wireResponse() throws Exception {
+        var f = fixture(false);
+        var path = path(f, 0);
+        var selection = HistoricalOccurrenceSelection.newBuilder()
+                .setRootSha256(DocumentSchemaEvidenceCodec.encode(f.locator, () -> {}).sha256())
+                .setPathSha256(DocumentSchemaEvidenceCodec.encode(path, () -> {}).sha256());
+        return ReadHistoricalOccurrenceResponse.newBuilder()
+                .setAddress(NodeAddress.newBuilder().setAccountId("account").setDocId("doc")
+                        .setGraphId("graph").setGraphAddressId("node"))
+                .setRevisionId(UUID.randomUUID().toString()).setSelection(selection)
+                .setOriginal(f.first.value).setRoot(f.locator).setPath(path)
+                .setDefinition(HistoricalRetainedDefinition.newBuilder().setReference(f.first.reference.toProto())
+                        .setDescriptorArtifact(ByteString.copyFrom(Files.readAllBytes(store.resolve(f.first.reference.descriptorSha256()))))
+                        .setMetadataArtifact(ByteString.copyFrom(Files.readAllBytes(store.resolve(f.first.reference.metadataSha256())))))
+                .build();
+    }
+
+    private static ReadHistoricalOccurrenceRequest wireRequest(ReadHistoricalOccurrenceResponse response) {
+        return ReadHistoricalOccurrenceRequest.newBuilder().setAddress(response.getAddress())
+                .setRevisionId(response.getRevisionId()).setSelection(response.getSelection())
+                .setLimits(HistoricalMaterializationLimits.newBuilder().setMaxFragmentBytes(100_000)
+                        .setMaxEvidenceBytes(100_000).setMaxRetainedBytes(100_000).setMaxReferences(10)
+                        .setMaxDecodedBytes(100_000).setMaxBoundaries(10)).build();
+    }
+
+    private static final class WireReservations implements DocumentAdmissionReservations {
+        private long held;
+        @Override public Lease reserve(long bytes) {
+            held += bytes;
+            var closed = new java.util.concurrent.atomic.AtomicBoolean();
+            return () -> { if (closed.compareAndSet(false, true)) held -= bytes; };
+        }
+    }
+
     @Test void repeatedChildrenWithTheSameUrlDecodeThroughIndependentPinnedDefinitions() throws Exception {
         var f = fixture(false);
         for (int index = 0; index < 2; index++) {
