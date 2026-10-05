@@ -89,6 +89,13 @@ public final class AssessmentRestartProbe {
     private static void verifyExpiredOwner(Tx tx, RepositoryOperationLedger.Owner owner, DocumentPublicationCommand command,
             Map<String, DocumentAssessmentRetainedSlots.UploadSelection> selections, DocumentAssessmentCreation.Created retained,
             PayloadBudget budget) throws Exception {
+        var deliveryCaller = new RepositoryCaller("principal", false, java.util.Set.of("account"), java.util.Set.of());
+        var reads = new DocumentReadLedger(tx, UUID.randomUUID(), 1);
+        var captured = reads.captureAssessment(deliveryCaller, owner, command, selections, retained.assessment(),
+                retained.manifestSha256(), retained.retainUntil(), budget, () -> {});
+        var use = captured.use();
+        captured.authorizeDelivery(use, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+        verifySharedDelivery(tx, owner, captured, use);
         // Observe real database time. Never rewrite a lease or disable fencing triggers.
         long stop = System.nanoTime() + java.time.Duration.ofSeconds(65).toNanos();
         while (!tx.readOnly(em -> (Boolean) em.createNativeQuery("""
@@ -102,10 +109,12 @@ public final class AssessmentRestartProbe {
         var caller = new RepositoryCaller("principal", false, java.util.Set.of("account"), java.util.Set.of());
         var handler = new DocumentAssessmentReconciliation(tx);
         expectFenced(handler, caller, owner, command, selections, retained, budget);
+        expectDeliveryFenced(captured, use);
         var replacement = new RepositoryOperationLedger(tx).takeOver(owner.key(), command, owner.generation(),
                 UUID.randomUUID(), java.time.Duration.ofMinutes(1));
         if (replacement.generation() != owner.generation() + 1) throw new AssertionError("Takeover did not advance generation");
         expectFenced(handler, caller, owner, command, selections, retained, budget);
+        expectDeliveryFenced(captured, use);
         if (handler.observeRetained(caller, replacement, command, selections, retained.assessment(), retained.manifestSha256(),
                 retained.retainUntil(), budget, () -> {}).isPresent())
             throw new AssertionError("New generation adopted old assessment");
@@ -129,7 +138,39 @@ public final class AssessmentRestartProbe {
         if (((Number) outcomes[0]).longValue() != 0 || ((Number) outcomes[1]).longValue() != 0)
             throw new AssertionError("Expiry or takeover created a publication or terminal rejection");
         if (budget.reservedBytes() != 0) throw new AssertionError("Owner fencing leaked reservations");
+        captured.close();
+        if (reads.releaseDrained(1) != 0) throw new AssertionError("Owner expiry released an active use");
+        use.close();
+        if (reads.releaseDrained(1) != 1 || reads.outstandingReads() != 0)
+            throw new AssertionError("Expired owner prevented drained session cleanup");
         System.out.println("RESTARTED_ASSESSMENT_OWNER_FENCE_OK");
+    }
+
+    private static void expectDeliveryFenced(DocumentReadLedger.PinnedAssessment captured, DocumentReadLedger.PinnedRead<?>.Use use) {
+        try {
+            captured.authorizeDelivery(use, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+            throw new AssertionError("Expired or replaced owner delivered assessment");
+        } catch (RepositoryOperationLedger.OwnerFencedException expected) { /* exact owner fence */ }
+    }
+
+    private static void verifySharedDelivery(Tx tx, RepositoryOperationLedger.Owner owner,
+            DocumentReadLedger.PinnedAssessment captured, DocumentReadLedger.PinnedRead<?>.Use use) {
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            tx.inTransaction(em -> {
+                em.createNativeQuery("""
+                        SELECT owner_token FROM repository_operation_owners
+                        WHERE account_id=:account AND principal=:principal AND operation_id=:operation FOR SHARE
+                        """).setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())
+                        .setParameter("operation", owner.key().operationId()).getSingleResult();
+                var delivery = executor.submit(() -> captured.authorizeDelivery(use, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE));
+                try { delivery.get(5, java.util.concurrent.TimeUnit.SECONDS); }
+                catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt(); throw new IllegalStateException(interrupted);
+                } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException failure) {
+                    throw new AssertionError("Delivery cannot proceed beside a shared owner reader", failure);
+                }
+            });
+        }
     }
 
     private static void expectFenced(DocumentAssessmentReconciliation handler, RepositoryCaller caller,
@@ -178,6 +219,11 @@ public final class AssessmentRestartProbe {
         var handler = new DocumentAssessmentReconciliation(tx);
         if (!handler.observeRetained(caller, owner, command, selections, retained.assessment(), retained.manifestSha256(),
                 retained.retainUntil(), budget, () -> {}).orElseThrow().equals(retained)) throw new AssertionError("Granted read failed");
+        var reads = new DocumentReadLedger(tx, UUID.randomUUID(), 1);
+        var captured = reads.captureAssessment(caller, owner, command, selections, retained.assessment(),
+                retained.manifestSha256(), retained.retainUntil(), budget, () -> {});
+        var use = captured.use();
+        captured.authorizeDelivery(use, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
         var denied = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(command.intent().getMembers(1).getDestination().getAddress());
         tx.inTransaction(em -> {
             int changed = em.createNativeQuery("UPDATE documents SET security=CAST(:policy AS jsonb) WHERE node_id=:node")
@@ -195,6 +241,15 @@ public final class AssessmentRestartProbe {
                     throw new AssertionError("Revocation disclosed assessment identity", expected);
             }
         }
+        try {
+            captured.authorizeDelivery(use, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+            throw new AssertionError("Revoked caller delivered a previously captured assessment");
+        } catch (ai.protomolt.proto.repo.spi.RepositoryException expected) {
+            if (expected.code() != ai.protomolt.proto.repo.spi.RepositoryException.Code.NOT_FOUND)
+                throw new AssertionError("Delivery revocation disclosed evidence", expected);
+        }
+        if (reads.outstandingReads() != 1 || captured.isDrained())
+            throw new AssertionError("Revocation dropped retention before use drained");
         tx.inTransaction(em -> {
             int changed = em.createNativeQuery("UPDATE documents SET security=CAST(:policy AS jsonb) WHERE node_id=:node")
                     .setParameter("policy", readPolicy).setParameter("node", denied).executeUpdate();
@@ -204,6 +259,16 @@ public final class AssessmentRestartProbe {
                 retained.retainUntil(), budget, () -> {}).orElseThrow().equals(retained))
             throw new AssertionError("Revocation damaged retained evidence");
         if (budget.reservedBytes() != 0) throw new AssertionError("Authorization path leaked reservations");
+        captured.authorizeDelivery(use, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+        captured.close(); use.close();
+        if (reads.releaseDrained(1) != 1 || reads.outstandingReads() != 0)
+            throw new AssertionError("Revocation recovery leaked session capacity");
+        try {
+            captured.authorizeDelivery(use, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+            throw new AssertionError("Released session delivered assessment");
+        } catch (IllegalStateException expected) {
+            if (!expected.getMessage().contains("use has ended")) throw expected;
+        }
         verifyCaptureRevocationRace(tx, caller, owner, command, selections, retained, budget, denied, readPolicy);
         System.out.println("RESTARTED_ASSESSMENT_REVOCATION_OK");
     }

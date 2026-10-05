@@ -116,7 +116,8 @@ public final class DocumentReadLedger {
             var plan = new DocumentAssessmentReconciliation(tx).captureRetained(caller, owner, command, selections,
                     assessment, manifestSha, deadline, budget, control, incarnation, protection.session(),
                     () -> commitReady.set(true));
-            var result = new PinnedAssessment(new DocumentAssessmentReadProtection<>(plan, assessment, incarnation, protection.session()));
+            var result = new PinnedAssessment(new DocumentAssessmentReadProtection<>(plan, assessment, incarnation, protection.session()),
+                    caller, owner, command);
             register(result);
             handedOff = true;
             try {
@@ -272,7 +273,24 @@ public final class DocumentReadLedger {
     }
 
     final class PinnedAssessment extends PinnedRead<DocumentAssessmentReadPlan> {
-        private PinnedAssessment(DocumentAssessmentReadProtection<DocumentAssessmentReadPlan> captured) { super(captured); }
+        private final DocumentAssessmentReadProtection<DocumentAssessmentReadPlan> assessment;
+        private final RepositoryCaller caller;
+        private final RepositoryOperationLedger.Owner owner;
+        private final ai.protomolt.proto.repo.spi.DocumentPublicationCommand command;
+        private PinnedAssessment(DocumentAssessmentReadProtection<DocumentAssessmentReadPlan> captured,
+                RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+                ai.protomolt.proto.repo.spi.DocumentPublicationCommand command) {
+            super(captured);
+            this.assessment = captured; this.caller = caller; this.owner = owner; this.command = command;
+        }
+
+        /** The provider/batch owner supplies its existing Use; this check creates no new lifetime. */
+        void authorizeDelivery(PinnedRead<?>.Use use, ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
+            if (Objects.requireNonNull(use).plan() != assessment.plan())
+                throw new IllegalArgumentException("Delivery use belongs to another assessment capture");
+            DocumentAssessmentDeliveryAuthorization.check(tx, caller, owner, command, assessment, control);
+            use.plan(); // Refuse delivery if the caller ended its lifetime while SQL waited.
+        }
     }
 
     public final class PinnedHistory extends PinnedRead<DocumentHistoricalReadPlan> {

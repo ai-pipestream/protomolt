@@ -4601,5 +4601,27 @@ after the owned objects become retiring. These physical measurements remain
 synthetic; no provider read is claimed by this probe. The current typed candidate
 path accepts DOCUMENT_PART origins; ARCHIVE origins fail the complete-set check
 until a corresponding supported candidate path exists. Provider execution,
-reused-source revocation during provider I/O and delivery-time authorization remain
-required before enabling the full assessment reader.
+reused-source revocation during provider I/O and integration of the delivery gate
+remain required before enabling the full assessment reader.
+
+PinnedAssessment now binds its delivery check to the capture caller, exact operation
+owner/command, stage and session. Delivery uses a shared operation-owner lock,
+without writing a transaction fence stamp; no guarded DML occurs on this path.
+Fresh statements after lock waits and before return check owner liveness and
+terminal outcomes. Capture still requires its existing write fence. A fresh
+transaction checks the active reader,
+live operation nonce/generation, complete current read permissions, retained stage
+identity and exact live session. Owner and session locks are acquired separately
+in that order. The final operation fence and a fresh database-time assessment
+deadline check run after lock waits; host cancellation/deadline checks surround
+the transaction. Delivery requires an existing Use from this exact capture and
+checks that it remains open after SQL completes. The check grants no new Use or
+publication authority. Provider
+code must invoke it before returning bytes or detailed provider errors while
+retaining its existing batch Use through completion.
+The production-JAR restart probe checks delivery beside an independently held
+shared operation-owner lock, and delivery after permission revocation and
+restoration, ended Uses, natural owner expiry and takeover. Refusal retains
+capacity until the held Use drains, and cleanup remains possible after owner
+expiry. These are real authorization/session checks with synthetic physical
+evidence; provider-I/O race qualification is still pending.
