@@ -41,6 +41,9 @@ dependencies {
     testImplementation libs.jedis
 
     implementation libs.protobuf.java.util
+    // Parse the persisted JSONB snapshot with exact numeric lexemes. This is the
+    // same Gson component/version already selected by protobuf-java-util.
+    implementation libs.gson
     testImplementation libs.awssdk.url.connection.client
     implementation libs.flyway.core
     implementation libs.flyway.database.postgresql

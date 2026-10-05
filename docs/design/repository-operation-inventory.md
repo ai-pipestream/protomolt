@@ -5774,3 +5774,25 @@ zero upload attempts and immutable historical `cluster_id` snapshots. Historical
 validated reads retain command/revision bindings and use stored schema assets.
 A failing replacement contract produces rejection without advancing the current
 revision. This adds acceptance evidence, not a restore API or hydration operation.
+
+### Historical metadata projection and RustFS version prerequisite
+
+**Extended:** `HistoricalDocumentRepository.RevisionRead` now requires explicit
+historical metadata, shared by raw and validated reads. The ledger captures the
+immutable commit snapshot with the manifest under current READ authorization.
+`DocumentHistoryService.ReadRevision` adds response field 7 without changing
+existing fields, names, imports or Any URLs. Older-peer absence is distinct from
+legacy-unrecorded and never authorizes a current-metadata fallback.
+
+**New internal codec:** `DocumentHistoricalMetadata` projects the existing v1 SQL
+snapshot into `DocumentRevisionMetadata`. It preserves nullable text and integral
+microseconds, rejects corrupt fields/account mismatch as data loss, and reports
+unsupported encoding versions explicitly. No new restore, JCR, migration or
+legacy-read operation is enabled. Encoded metadata has a 1 MiB per-read-slot bound;
+the wire representation participates in the existing complete-response budget.
+
+**Unchanged operation, added provider qualification:** the pinned RustFS adapter
+now has a real versioning case covering exact old-version bounded GET following
+same-key replacement and explicit new-version deletion. Native typed publication
+and retained-assessment replica performance remain pending; the next workload and
+measurement requirements are recorded in the composition design.

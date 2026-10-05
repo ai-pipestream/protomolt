@@ -27,7 +27,9 @@ final class HistoricalDocumentResponses {
         if (!request.getAddress().equals(read.address()) || !request.getRevisionId().equals(read.revision().toString()))
             throw invalid("Historical result identity differs from request");
         var response = ReadRevisionResponse.newBuilder().setAddress(read.address()).setRevisionId(read.revision().toString())
-                .setMutationRevision(read.publicationRevision()).setManifest(read.manifest());
+                .setMutationRevision(read.publicationRevision()).setManifest(read.manifest()).setMetadata(read.metadata());
+        if (read.metadata().hasKnown() && !read.metadata().getKnown().getAccountId().equals(read.address().getAccountId()))
+            throw invalid("Historical metadata ownership differs from captured address");
         long headerSize = response.build().getSerializedSize();
         checkSize(headerSize);
         long size;

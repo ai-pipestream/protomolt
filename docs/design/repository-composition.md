@@ -5620,3 +5620,78 @@ The full production-JAR PostgreSQL/LocalStack gate passes with the original-sour
 manifest comparison and post-publication historical metadata checks. Sol reviewed
 the phase sequencing, schema normalization, immutable references and assertions.
 These results qualify behavior, not latency or throughput.
+
+#### Next native RustFS and replica qualification
+
+The existing RustFS archive transport measurements do not qualify native typed
+publication, assessment recovery or immutable-part reuse. Those paths must get a
+separate workload using the configured `DocumentPublicationRuntime`, shared
+PostgreSQL and the pinned RustFS container. LocalStack remains the correctness
+fixture; no timing from its recovery suite is a performance result.
+
+First qualify bucket versioning and a bounded GET of an exact old provider version
+following a newer PUT to the same key. Check the old bytes, version ID and ETag,
+the current bytes and overflow refusal, and preservation of the old version after
+explicitly deleting the new version. `RustFsConditionalBlobStoreIT` now includes
+this prerequisite against the actual deployment-pinned container.
+
+Then run one, two and four independent JVMs against the shared services. Reuse
+`ReplicaMetrics`, `ReplicaSqlMetrics` and `ReplicaLockSamples`; compare fixed total
+SQL capacity separately from added capacity. Exercise independent document
+publications, a same-revision conflict with exactly one winner, typed acceptance,
+invalid retained assessment and exact replay, and historical reads on another
+replica. Verify manifests, retained schema/evidence identities, unchanged object
+reuse, current authorization and fully drained pins/budgets after each window.
+No successful sample may bypass validation or substitute an in-memory provider.
+
+Record operation latency and status, throughput windows, SQL pool acquisition and
+usage, sampled blockers, provider PUT/bounded-GET timing, process RSS and the actual
+container/image/storage environment. Warmups and correctness assertions stay
+separate from timed operation samples. Interleave configurations and retain raw
+results; do not infer scaling from a single process's concurrency or discard
+failures to improve the result. This initially qualifies the internal Java runtime
+across processes. Public transport scaling remains a separate gate until a typed
+publication endpoint is implemented.
+
+The other additions remain in scope: normalized archival schemas and complete
+Any-root inventory have regression coverage; contextual Any materialization,
+restore, pruning and bounded progressive hydration still need implementation and
+acceptance. Optional JCR remains a separate content-repository extension assessed
+against `repository-jcr-compatibility.md`; document revisions, account workspaces
+and read pins do not establish JCR version, workspace or session semantics.
+
+#### Historical metadata exposure
+
+`HistoricalDocumentMetadata` distinguishes a recorded v1 snapshot from an explicit
+legacy-unrecorded state. The native history reader supplies the recorded snapshot
+from the same immutable commit and current-authorized capture as the manifest.
+It preserves nullable text and exact signed epoch microseconds, binds the account,
+and rejects corrupt fields instead of replacing them with current row values.
+Unknown codec versions fail as unsupported; they never become legacy-unrecorded.
+Current native history still refuses nonnative legacy revisions, so the unknown
+state is a contract provision rather than a newly available legacy reader.
+
+The SQL projection bounds encoded metadata to the existing 1 MiB snapshot limit
+before materialization. Metadata is held under the configured historical read-slot
+limit, like the captured manifest; it is not charged to the provider payload
+budget. Thus this is a per-slot encoded bound, not an exact JVM heap bound. The
+transport includes metadata in its complete 8 MiB response bound and response-copy
+reservation. Final delivery still rechecks current READ authority; recorded
+security is archival data, not authorization to read or restore it.
+
+The Java history SPI now requires an explicit metadata result. Wire field 7 is
+additive; absence from an older peer means it did not supply metadata and must not
+trigger a current-row fallback. The recorded fields are the existing v1 projection,
+not full application metadata or a JCR frozen node. Restore remains a separate
+operation requiring current destination policy and atomic repository-foundation
+semantics. No JCR dependency is added to the base modules.
+
+Validation for this slice passed: eight generated/dynamic protobuf contract
+fixtures, three snapshot-codec tests, five real PostgreSQL historical-capture
+cases, the complete production-JAR PostgreSQL/LocalStack storage gate, and four
+real-provider host/transport cases covering raw/validated in-process and Netty
+responses plus whole-envelope limits. The RustFS adapter's three cases, including
+same-key historical version reads, passed without skips. Applicable Buf lint and
+complete-import FILE compatibility against `f81dd580` pass. Sol reviewed the
+codec, capture/transport wiring, limits and RustFS prerequisite. These are local
+results, not hosted CI, deployment or native-replica performance evidence.

@@ -4,6 +4,7 @@ package ai.protomolt.proto.repo.v1;
 
 import "ai/protomolt/proto/repo/v1/address.proto";
 import "ai/protomolt/proto/repo/v1/document.proto";
+import "ai/protomolt/proto/repo/v1/document_revision_metadata.proto";
 import "ai/protomolt/proto/repo/v1/manifest.proto";
 import "ai/protomolt/proto/validate/v1/validate.proto";
 
@@ -78,6 +79,11 @@ message ValidatedHistoricalDocument {
 // Shape validity alone proves neither authorization nor retained content validity.
 message ReadRevisionResponse {
   option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "history-response-metadata-account"
+    message: "recorded metadata must belong to the captured account"
+    expression: "!has(this.metadata) || !has(this.metadata.known) || this.metadata.known.account_id == this.address.account_id"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "history-response-mode"
     message: "exactly one explicit historical representation is required"
     expression: "has(this.raw) || has(this.validated)"
@@ -102,4 +108,7 @@ message ReadRevisionResponse {
     // Reconstructed content that passed retained-contract validation.
     ValidatedHistoricalDocument validated = 6;
   }
+  // Exact immutable revision metadata. Absent means the peer did not provide it;
+  // it never permits substitution of current metadata. Native readers emit known.
+  HistoricalDocumentMetadata metadata = 7;
 }

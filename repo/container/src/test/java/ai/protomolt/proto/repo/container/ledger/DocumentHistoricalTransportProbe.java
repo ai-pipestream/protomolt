@@ -50,6 +50,8 @@ final class DocumentHistoricalTransportProbe {
                     assertThat(response.getRevisionId()).isEqualTo(published.getRevisionId());
                     assertThat(response.getMutationRevision()).isEqualTo(published.getMutationRevision());
                     assertThat(response.hasValidated()).isEqualTo(typed);
+                    assertThat(response.getMetadata().hasKnown()).isTrue();
+                    assertThat(response.getMetadata().getKnown().getAccountId()).isEqualTo(published.getAddress().getAccountId());
                     if (first == null) first = response;
                     else assertThat(response).isEqualTo(first);
                 } finally {
@@ -75,7 +77,7 @@ final class DocumentHistoricalTransportProbe {
                         .setContent(com.google.protobuf.ByteString.copyFrom(fragment.bytes())));
             }
             expected = ReadRevisionResponse.newBuilder().setAddress(raw.address()).setRevisionId(raw.revision().toString())
-                    .setMutationRevision(raw.publicationRevision()).setManifest(raw.manifest()).setRaw(fragments).build();
+                    .setMutationRevision(raw.publicationRevision()).setManifest(raw.manifest()).setMetadata(raw.metadata()).setRaw(fragments).build();
         }
         assertThat(expected.getSerializedSize() > 8 * 1024 * 1024).isEqualTo(oversized);
         var responses = new PayloadBudget(32L * 1024 * 1024);
@@ -163,10 +165,13 @@ final class DocumentHistoricalTransportProbe {
                     assertThat(raw.getRevisionId()).isEqualTo(published.getRevisionId());
                     assertThat(raw.getMutationRevision()).isEqualTo(published.getMutationRevision());
                     assertThat(raw.hasRaw()).isTrue();
+                    assertThat(raw.getMetadata().hasKnown()).isTrue();
+                    assertThat(raw.getMetadata().getKnown().getAccountId()).isEqualTo(published.getAddress().getAccountId());
                     try (var local = history.readRaw(new RepositoryCaller("owner", false,
                             Set.of(published.getAddress().getAccountId()), Set.of()), published.getAddress(),
                             UUID.fromString(published.getRevisionId()), ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
                         assertThat(raw.getManifest()).isEqualTo(local.manifest());
+                        assertThat(raw.getMetadata()).isEqualTo(local.metadata());
                         assertThat(raw.getRaw().getFragmentsCount()).isEqualTo(local.fragments().size());
                         for (int index = 0; index < local.fragments().size(); index++) {
                             var fragment = local.fragments().get(index);
@@ -179,6 +184,7 @@ final class DocumentHistoricalTransportProbe {
                         var validated = owner.readRevision(validatedRequest);
                         assertThat(validated.hasValidated()).isTrue();
                         assertThat(validated.getManifest()).isEqualTo(raw.getManifest());
+                        assertThat(validated.getMetadata()).isEqualTo(raw.getMetadata());
                         assertThat(validated.getValidated().getDocument().getDocId()).isEqualTo(published.getAddress().getDocId());
                     } else assertStatus(() -> owner.readRevision(validatedRequest), Status.Code.FAILED_PRECONDITION);
                     var localCaller = new RepositoryCaller("owner", false, Set.of(published.getAddress().getAccountId()), Set.of());

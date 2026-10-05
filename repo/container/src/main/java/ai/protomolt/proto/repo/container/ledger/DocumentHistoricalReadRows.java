@@ -29,13 +29,16 @@ final class DocumentHistoricalReadRows {
                  r.body->>'version_id',r.body->>'etag',r.body->>'size_bytes',r.body->>'checksum',
                  (r.body->>'node_id'=CAST(r.node_id AS text) AND r.body->>'account_id'=:account
                   AND r.body->>'doc_id'=:doc AND r.body->>'graph_id'=:graph AND r.body->>'graph_address_id'=:graphAddress),
-                 (SELECT count(*) FROM document_revision_parts p WHERE p.revision_id=r.revision_id)
+                 (SELECT count(*) FROM document_revision_parts p WHERE p.revision_id=r.revision_id),
+                 c.metadata_version,octet_length(c.metadata_snapshot::text),
+                 CASE WHEN octet_length(c.metadata_snapshot::text)<=:metadataLimit THEN c.metadata_snapshot::text END
                 FROM document_revision_publications r
                 LEFT JOIN document_revision_commits c ON c.revision_id=r.revision_id
                 LEFT JOIN repository_operation_success s USING(account_id,principal,operation_id,owner_generation)
                 WHERE r.revision_id=:revision AND r.node_id=:node
                 """).setParameter("account", address.getAccountId()).setParameter("revision", revision)
                 .setParameter("node", DocumentIds.nodeId(address)).setParameter("limit", MAX_MANIFEST_BYTES)
+                .setParameter("metadataLimit", DocumentHistoricalMetadata.MAX_BYTES)
                 .setParameter("doc", address.getDocId()).setParameter("graph", address.getGraphId())
                 .setParameter("graphAddress", address.getGraphAddressId()).getResultList();
         if (headers.isEmpty()) throw new RepositoryException(RepositoryException.Code.NOT_FOUND, "Document revision is unavailable");
@@ -47,6 +50,11 @@ final class DocumentHistoricalReadRows {
         if (h[4] instanceof Number bytes && bytes.longValue() > MAX_MANIFEST_BYTES)
             throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED, "Historical manifest exceeds read capacity");
         if (!(h[5] instanceof String encoded)) throw invalid("Historical manifest is missing");
+        if (h[13] instanceof Number bytes && bytes.longValue() > DocumentHistoricalMetadata.MAX_BYTES)
+            throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED, "Historical metadata exceeds read capacity");
+        if (!(h[12] instanceof Integer version) || !(h[14] instanceof String metadataJson))
+            throw invalid("Historical metadata is missing");
+        var metadata = DocumentHistoricalMetadata.decode(version, metadataJson, address.getAccountId());
         var builder = DocumentManifest.newBuilder();
         try { JsonFormat.parser().merge(encoded, builder); }
         catch (com.google.protobuf.InvalidProtocolBufferException failure) {
@@ -105,7 +113,7 @@ final class DocumentHistoricalReadRows {
         } catch (NumberFormatException | DocumentPartAttemptLedger.FenceException failure) {
             throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Historical body differs from physical bindings", failure);
         }
-        return new DocumentHistoricalReadPlan(address, revision, ((Number) h[0]).longValue(), manifest, entries);
+        return new DocumentHistoricalReadPlan(address, revision, ((Number) h[0]).longValue(), manifest, metadata, entries);
     }
     private static RepositoryException invalid(String message) {
         return new RepositoryException(RepositoryException.Code.DATA_LOSS, message);

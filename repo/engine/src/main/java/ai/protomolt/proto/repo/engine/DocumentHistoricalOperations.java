@@ -115,6 +115,7 @@ public final class DocumentHistoricalOperations implements HistoricalDocumentRep
         @Override public synchronized UUID revision() { requireOpen(); return plan.revision(); }
         @Override public synchronized long publicationRevision() { requireOpen(); return plan.publicationRevision(); }
         @Override public synchronized DocumentManifest manifest() { requireOpen(); return plan.manifest(); }
+        @Override public synchronized ai.protomolt.proto.repo.v1.HistoricalDocumentMetadata metadata() { requireOpen(); return plan.metadata(); }
         @Override public synchronized List<Fragment> fragments() { requireOpen(); return fragments; }
         @Override public synchronized void authorizeDelivery(RepositoryReadControl control) {
             requireOpen(); history.authorizeDelivery(control);

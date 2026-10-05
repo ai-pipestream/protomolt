@@ -23,6 +23,8 @@ public interface HistoricalDocumentRepository {
         UUID revision();
         long publicationRevision();
         DocumentManifest manifest();
+        /** Immutable recorded snapshot, never the current row or a permission grant. */
+        ai.protomolt.proto.repo.v1.HistoricalDocumentMetadata metadata();
         /** Recheck the bound caller's current READ access immediately before delivery. Requires an open result. */
         void authorizeDelivery(RepositoryReadControl control);
         /** Local ownership release; hosts separately reconcile drained SQL pins. */

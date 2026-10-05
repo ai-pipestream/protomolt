@@ -59,6 +59,18 @@ class DocumentHistoryContractTest {
         check(typed.toBuilder().setCommandSha256(ByteString.copyFrom(new byte[31])).build(), false);
     }
 
+    @Test void recordedMetadataBindsToTheResponseAccount() throws Exception {
+        var metadata = DocumentRevisionMetadata.newBuilder().setEncodingVersion(1)
+                .setRowKind(DocumentPublicationRowKind.DOCUMENT_PUBLICATION_ROW_KIND_PIPELINE)
+                .setAccountId(ADDRESS.getAccountId()).setDatasourceId("source")
+                .setSecurity(DocumentSecurity.getDefaultInstance());
+        var raw = RawHistoricalDocument.newBuilder().addFragments(fragment());
+        check(response().setRaw(raw).setMetadata(HistoricalDocumentMetadata.newBuilder().setKnown(metadata)).build(), true);
+        metadata.setAccountId("other-account");
+        check(response().setRaw(raw).setMetadata(HistoricalDocumentMetadata.newBuilder().setKnown(metadata)).build(), false);
+        check(response().setRaw(raw).setMetadata(HistoricalDocumentMetadata.getDefaultInstance()).build(), false);
+    }
+
     @Test void boundsTheRawFragmentCollection() throws Exception {
         var raw = RawHistoricalDocument.newBuilder();
         for (int ordinal = 0; ordinal < 10000; ordinal++) raw.addFragments(fragment().setRevisionOrdinal(ordinal));

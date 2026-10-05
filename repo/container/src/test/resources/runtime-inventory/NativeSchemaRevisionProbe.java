@@ -104,6 +104,11 @@ public final class NativeSchemaRevisionProbe {
                         require(archived.commandSha256().equals(com.google.protobuf.ByteString.copyFrom(
                                 HexFormat.of().parseHex(commands.get(index).sha256()))), "historical proof binds its original command");
                         require(archived.publicationRevision() == revision.getMutationRevision(), "exact historical revision identity");
+                        require(archived.metadata().hasKnown(), "native history exposes its recorded metadata");
+                        var metadata = archived.metadata().getKnown();
+                        require(metadata.getAccountId().equals(revision.getAddress().getAccountId()), "historical metadata ownership");
+                        require(metadata.hasClusterId() == (index == 2), "historical null routing stays absent");
+                        if (index == 2) require(metadata.getClusterId().equals("archive-routing-v2"), "historical routing snapshot");
                     }
                     require(descriptor(tx, id, a.metadata().getTypeUrl()).equals(definitions.get(index).metadata().getArtifactSha256()),
                             "new schema and metadata do not rewrite earlier schema bindings");

@@ -13,14 +13,17 @@ public final class DocumentHistoricalRead implements ai.protomolt.proto.repo.spi
     private final java.util.UUID revision;
     private final ai.protomolt.proto.repo.v1.NodeAddress address;
     private final ai.protomolt.proto.repo.v1.DocumentManifest manifest;
+    private final ai.protomolt.proto.repo.v1.HistoricalDocumentMetadata metadata;
     private final long publicationRevision;
     private final ai.protomolt.proto.repo.container.ledger.DocumentReadLedger.PinnedHistory history;
     DocumentHistoricalRead(DocumentReadBatch bytes, DocumentHistoricalValidation validation, PayloadBudget.Lease copies,
             java.util.UUID revision, ai.protomolt.proto.repo.v1.NodeAddress address,
             ai.protomolt.proto.repo.v1.DocumentManifest manifest, long publicationRevision,
+            ai.protomolt.proto.repo.v1.HistoricalDocumentMetadata metadata,
             ai.protomolt.proto.repo.container.ledger.DocumentReadLedger.PinnedHistory history) {
         this.bytes = bytes; this.validation = validation; this.copies = copies;
         this.revision = revision; this.address = address;
+        this.metadata = java.util.Objects.requireNonNull(metadata);
         this.manifest = manifest; this.publicationRevision = publicationRevision;
         this.history = java.util.Objects.requireNonNull(history);
     }
@@ -32,6 +35,7 @@ public final class DocumentHistoricalRead implements ai.protomolt.proto.repo.spi
     public synchronized java.util.UUID revision() { requireOpen(); return revision; }
     public synchronized ai.protomolt.proto.repo.v1.NodeAddress address() { requireOpen(); return address; }
     public synchronized ai.protomolt.proto.repo.v1.DocumentManifest manifest() { requireOpen(); return manifest; }
+    public synchronized ai.protomolt.proto.repo.v1.HistoricalDocumentMetadata metadata() { requireOpen(); return metadata; }
     public synchronized long publicationRevision() { requireOpen(); return publicationRevision; }
     public synchronized String validationProfile() { requireOpen(); return validation.validationProfile(); }
     public synchronized String policySha256() { requireOpen(); return validation.policySha256(); }
