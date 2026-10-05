@@ -27,6 +27,9 @@ final class DocumentAttemptCleanupLedger {
             boolean ineligible = (Boolean) em.createNativeQuery("""
                     SELECT lease_until > clock_timestamp() OR state='PLANNING'
                         OR EXISTS (SELECT 1 FROM document_part_publication_history WHERE attempt_id=:id)
+                        OR EXISTS (SELECT 1 FROM document_part_attempt_objects o
+                            JOIN repository_object_references r ON r.object_id=o.physical_object_id
+                            WHERE o.attempt_id=:id AND r.owner_kind='ASSESSMENT')
                     FROM document_part_attempts WHERE attempt_id=:id
                     """).setParameter("id", id).getSingleResult();
             if (ineligible) return Optional.empty();
@@ -99,6 +102,9 @@ final class DocumentAttemptCleanupLedger {
                     WHERE a.lease_until <= clock_timestamp() AND a.state<>'PLANNING'
                         AND (CAST(:generation AS text) IS NULL OR a.backend_generation=CAST(:generation AS text))
                         AND NOT EXISTS (SELECT 1 FROM document_part_publication_history h WHERE h.attempt_id=a.attempt_id)
+                        AND NOT EXISTS (SELECT 1 FROM document_part_attempt_objects o
+                            JOIN repository_object_references r ON r.object_id=o.physical_object_id
+                            WHERE o.attempt_id=a.attempt_id AND r.owner_kind='ASSESSMENT')
                         AND (c.attempt_id IS NULL OR (c.claim_until <= clock_timestamp()
                             AND c.last_checked_at <= clock_timestamp()-(:delay * interval '1 millisecond')))
                     ORDER BY COALESCE(c.last_checked_at,a.lease_until),a.attempt_id LIMIT :limit

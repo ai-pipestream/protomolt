@@ -3533,8 +3533,8 @@ owner's internal reference generation must be distinguished from a document
 revision, provider version or JCR version. No successful revision/history row is
 created for a rejected candidate.
 
-This is still a design requirement, not an implemented retention table or public
-API. The first migration must preserve existing owners/references and extend the
+V66 implements the internal staging owner and physical bindings described below;
+terminal ownership and a public API remain unfinished. The migration preserves existing owners/references and extends the
 native-owner guard and reference-kind constraint together. Direct reference
 insertion without an exact native assessment association must fail.
 
@@ -3675,6 +3675,72 @@ revision, account/principal/operation/generation/member, and full command
 Reused bindings must freeze the validated source revision, source slot and exact
 object identity so later replay does not depend on a current pointer.
 
-The helper is implemented; native assessment ownership, cleanup admission,
-terminal promotion and replay remain the next work. No rejected-candidate
-retention API or ADMISSION_REJECTED emitter is enabled by this migration.
+The helper is implemented. V66 adds the staging ownership described next;
+terminal promotion and replay remain unfinished. No rejected-candidate retention
+API or ADMISSION_REJECTED emitter is enabled by V65.
+
+#### Assessment staging ownership and recovery
+
+V66 introduces internal `document_assessment_owners`,
+`document_assessment_slots` and `document_assessment_objects` tables. The owner
+binds the admitted document-command codec/version/digest, scoped operation and
+generation, manifest bytes/digest and explicit staging deadline. One staging
+owner is allowed per operation generation. Its manifest is bounded at 4 MiB,
+its declared PRESENT slot count at 10,000 and its initial retention deadline at
+one day from insertion. There is no default deadline. These are staging limits,
+not a terminal evidence retention policy.
+
+The caller creates the owner and slots, then seals in the same transaction.
+Sealing locks the complete distinct physical set with V65, rechecks the live
+operation fence and deadline, and verifies exact selected NEW_CONTENT full-slot
+ordinals or retained current document-source revision/ordinal/object bindings.
+It also checks the reverse direction: every selected member and every selected
+uploaded object must appear, so lowering the declared slot count cannot hide an
+upload. A reuse-only member has a real zero-upload selection and no synthetic
+attempt. Distinct native object rows mirror one `ASSESSMENT` reference per
+physical object, with internal reference generation `1`.
+
+A deferred constraint refuses an unsealed owner or incomplete association set
+at commit. A sealed owner cannot gain new slots in a later transaction. Native
+objects and mirrored references cannot be deleted while their owner remains
+active. The SQL boundary proves storage associations, not canonical protobuf
+meaning: the future trusted handler must verify the observed manifest against
+the complete canonical command, including every declaration and byte identity,
+and perform policy, source, target and authenticated-caller checks under the
+complete logical lock set before staging. A raw SQL manifest is not runtime
+validation evidence. Schema-artifact ownership remains separate pending work.
+
+Attempt cleanup now excludes assessment references in both its advisory candidate
+scan and its eligibility check after locking the attempt. A SQL BEFORE trigger
+also refuses direct cleanup claims under that same attempt lock. Acquisition
+that commits first therefore protects the bytes; cleanup that commits first
+leaves a permanent tombstone that later assessment acquisition cannot adopt.
+
+`release_expired_document_assessment` is an internal recovery operation. It takes
+the operation recovery fence, assessment-owner lock and full source/physical
+lock set, then removes slots, native objects, mirrors and owner atomically.
+Expiry alone changes none of those references. A partial release cannot commit,
+and retry after a completed release reports that the owner is absent. Generation
+replacement alone does not authorize release. No assessment reader admission or
+terminal transfer is enabled; both must extend the release gate before use, with
+reader drain and terminal retention deadlines respectively.
+
+Operation inventory for this increment: physical batch locking and staging/seal/
+expired-stage release are new internal operations; attempt cleanup and native
+reference verification are extended; protobuf contracts, successful publication,
+normal reads and external transports are unchanged. Terminal promotion,
+independent replay, schema/evidence pruning and ADMISSION_REJECTED emission are
+still unfinished. PostgreSQL lifecycle fixtures deliberately use synthetic SQL
+byte declarations; they do not claim provider I/O or canonical handler admission.
+
+`DocumentAssessmentRetentionIT` covers sparse upload ordinals, omitted selected
+uploads despite a lowered count, stale generation/selection, incomplete seals,
+retirement and cleanup tombstones, reference forgery, immutable associations,
+expiry without automatic release, partial recovery rollback, and cleanup waiting
+for acquisition commit or rollback. `DocumentAssessmentReuseIT` covers repeated
+physical objects under a zero-upload selection and mismatched source ordinals.
+The affected PostgreSQL run passed 66 cases including existing retention,
+retirement, cleanup, lock-set and operation-bound attempt regressions. Recovery
+versus cleanup races, additional account/source-revocation cases and large-batch
+latency qualification remain to be added before the complete assessment path is
+considered finished.
