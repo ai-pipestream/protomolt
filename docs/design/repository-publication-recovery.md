@@ -54,6 +54,42 @@ heartbeat or expired execution claim cannot substitute for this fixture's actual
 process-exit proof. Production takeover still requires the late-provider-effect
 policy and host ownership protocol.
 
+### Late provider effects and reclamation policy
+
+Claim fencing governs SQL state. It cannot revoke a provider request already
+issued, and a timeout or provider client cancellation does not prove that the
+provider did not store bytes. An attempt's immutable plan fixes its exact backend,
+namespace, UUID-scoped keys and content hashes. Verification captures exact
+provider versions.
+Unknown PUT outcomes remain unverified; they cannot be promoted as successful
+uploads. Stale completion must fail the current claim and selection fences.
+
+Cleanup may report observed absence while a stale PUT is still pending. `ABSENT`
+is therefore an observation, not permanent deletion or proof that every writer
+has stopped. Retain the attempt plan and cleanup tombstone and keep scheduling
+bounded exact-key passes, including after an ABSENT result. Each pass uses the
+original backend identity and removes versions only for those exact abandoned
+keys. Never replace that lookup with the current drive configuration or a broad
+prefix deletion. Published history and assessment references exclude attempts
+from reclamation; expiration alone does not permit deleting retained content.
+
+`DocumentSelectedTransferIT` now delays a real LocalStack PUT before adapter
+execution, expires and transfers the execution claim, and observes cleanup
+absence before releasing the PUT. The stale verification fails, but real bytes
+are present afterward. The attempt remains a cleanup candidate; another pass
+removes those bytes and preserves a neighboring key/version. This tests the
+claim-only storage primitive, not journaled successor coordination.
+
+Before enabling automatic takeover, qualify the full coordinator with fresh
+successor generation/attempt identities, disjoint provider keys, cancelled or
+draining old work, and concurrent publication/reference retention. Do not assume
+an old attempt can be adopted merely because the content hash matches. Establish
+cleanup scheduling and durable tombstone retention in the managed host. Until a
+separate proof bounds the last possible provider arrival, no finite recheck count
+or quiet interval can justify forgetting an abandoned key. Eventual cleanup
+depends on provider availability and writers eventually stopping; it is not a
+fixed-time reclamation guarantee.
+
 ## Persisted preparation
 
 Before the first uncertain admission or takeover, store a bounded, versioned

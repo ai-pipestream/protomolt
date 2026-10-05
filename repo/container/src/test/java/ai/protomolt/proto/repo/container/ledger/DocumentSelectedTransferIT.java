@@ -134,6 +134,49 @@ class DocumentSelectedTransferIT {
         assertThat(verifiedCount(f)).isZero();
     }
 
+    @Test void lateRealPutAcrossClaimTransferCannotVerifyAndIsReclaimedAgain() throws Exception {
+        var f=fixture(Duration.ofSeconds(1), Duration.ofSeconds(3));
+        String neighbor=f.planned.objectKey()+"-retained-neighbor";
+        var protectedPut=opened.store().put(new BlobStore.PutSpec(NAMESPACE,neighbor,f.planned.contentType(),Map.of(),f.planned.sha256()),f.body);
+        var entered=new CountDownLatch(1); var release=new CountDownLatch(1);
+        var puts=new java.util.concurrent.atomic.AtomicInteger();
+        var store=intercept((method,args,invoke) -> {
+            if(method.equals("put")) {
+                entered.countDown();
+                if(!release.await(15,TimeUnit.SECONDS)) throw new IllegalStateException("Late claim PUT gate timed out");
+                Object receipt=invoke.call(); puts.incrementAndGet(); return receipt;
+            }
+            return invoke.call();
+        });
+        try(var executor=java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var pending=executor.submit(() -> record(f,transfer(f,store)));
+            try {
+                assertThat(entered.await(5,TimeUnit.SECONDS)).isTrue();
+                tx.readOnly(em -> em.createNativeQuery("""
+                        SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM lease_until-clock_timestamp()))+0.05)
+                        FROM repository_execution_claims WHERE operation_id=:id
+                        """).setParameter("id",f.command.operationId()).getSingleResult());
+                expire(f);
+                var prior=f.owner.executionClaim().orElseThrow();
+                var next=new RepositoryExecutionClaimLedger(tx).takeOver(f.owner.key(),f.command,prior.epoch(),UUID.randomUUID(),LEASE);
+                assertThat(next.epoch()).isEqualTo(prior.epoch()+1);
+                assertThat(next.token()).isNotEqualTo(prior.token());
+                recover(f); // Absence observed before the delayed real provider call completes.
+                assertThat(pending.isDone()).isFalse();
+                release.countDown();
+                assertThatThrownBy(() -> pending.get(5,TimeUnit.SECONDS))
+                        .hasCauseInstanceOf(RepositoryExecutionClaimLedger.Fenced.class);
+            } finally { release.countDown(); }
+        }
+        assertThat(puts.get()).isEqualTo(1);
+        assertThat(opened.store().get(NAMESPACE,f.planned.objectKey()).data()).containsExactly(f.body);
+        assertThat(verifiedCount(f)).isZero();
+        assertThat(new DocumentPublicationReplay(tx).observe(ADMIN,f.command).state()).isEqualTo(DocumentPublicationReplay.State.PENDING);
+        assertThat(new DocumentAttemptCleanupLedger(tx).candidates(Duration.ZERO,100,GENERATION)).contains(f.selection.attempt());
+        recover(f);
+        assertThat(opened.store().getBounded(NAMESPACE,neighbor,protectedPut.versionId(),f.body.length).data()).containsExactly(f.body);
+    }
+
     private static DocumentPartTransfer.Verified transfer(Fixture f,BlobStore store) {
         // The fixture's private codec output was matched to the admitted declaration.
         return DocumentPartTransfer.upload(store,NAMESPACE,f.planned,f.body,Map.of(),() -> {},() -> {});
@@ -174,6 +217,9 @@ class DocumentSelectedTransferIT {
                 }));
     }
     private static Fixture fixture(Duration attemptLease) {
+        return fixture(attemptLease,null);
+    }
+    private static Fixture fixture(Duration attemptLease,Duration claimLease) {
         String docId=UUID.randomUUID().toString();
         var payloads=DocumentPartCodec.split(Document.newBuilder().setDocId(docId)
                 .setSearchMetadata(SearchMetadata.newBuilder().addSemanticResults(SemanticProcessingResult.newBuilder().setResultId("result"))).build(),PartLayouts.document());
@@ -191,7 +237,9 @@ class DocumentSelectedTransferIT {
                 .setUpload(PublicationUpload.newBuilder().setSizeBytes(part.bytes().length).setSha256(part.sha256()).setContentType("application/protobuf")));
         var command=new DocumentPublicationCommand(DocumentPublicationIntent.newBuilder().setEncodingVersion(1).setAccountId("account")
                 .setOperationId(UUID.randomUUID().toString()).addMembers(member).build());
-        var owner=new RepositoryOperationLedger(tx).admit(new RepositoryOperationLedger.Key("account","principal",command.operationId()),command,UUID.randomUUID(),LEASE).owner().orElseThrow();
+        var key=new RepositoryOperationLedger.Key("account","principal",command.operationId());
+        var claim=claimLease==null ? null : new RepositoryExecutionClaimLedger(tx).acquire(key,command,UUID.randomUUID(),claimLease);
+        var owner=new RepositoryOperationLedger(tx).admit(key,command,UUID.randomUUID(),LEASE,claim).owner().orElseThrow();
         UUID id=UUID.randomUUID();
         var attempt=admission.admit(ADMIN,owner,DocumentOperationUploadAdmission.prepare(command,placements,Map.of("member",id),attemptLease)).getFirst();
         var plan=DocumentUploadPlan.prepare(command,placements,Map.of("member",id));
