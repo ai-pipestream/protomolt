@@ -18,14 +18,41 @@ resolver, admission or takeover input. It checks the discovered assessment UUID
 and database deadline against the saved start before capturing retained content;
 terminal results use ordinary authorized replay.
 
-This is not automatic failover or a managed-host restore API. A forced writer exit
-with fresh-process restoration, claim loss between restoration and resume, host
-lifecycle integration, and delayed provider effects across transfer remain gates.
+This is not automatic failover or a managed-host restore API. Host lifecycle
+integration and delayed provider effects across transfer remain gates. The
+qualification fixture additionally checks claim loss and a forced writer exit as
+described below; those checks do not authorize arbitrary live-token discovery.
 
 The original-owner checkpoint passed nine PostgreSQL journal cases and the
 production-JAR LocalStack gate, including actual handle reconciliation and exact
 durable rejection replay after lost assessment COMMIT acknowledgment. See
 [the retained evidence](../evidence/repository/2026-10-05-original-owner-restoration/README.md).
+
+### Claim-loss and forced-exit qualification
+
+The production-JAR LocalStack gate passed these cases. See the
+[retained evidence](../evidence/repository/2026-10-05-restoration-crash/README.md).
+
+The claim-loss fixture restores under a live ten-second claim, waits using the
+database clock, and confirms the operation owner is still live. The old handle
+must fail with the claim fence before assessment reads or terminal decisions,
+both after expiry and after an explicit epoch/token transfer. It does not execute
+with the successor claim or delay an external write across transfer.
+
+The forced-exit fixture creates provider content and a sealed assessment, then
+halts the writer JVM after the real assessment COMMIT while its JDBC acknowledgment
+is lost. The parent requires the designated exit code and reaps the writer before
+starting a fresh reader. Only the public operation ID and normal runtime connection
+configuration cross that boundary; there is no command or capability handoff file.
+The reader uses explicitly test-only privileged SQL to recover the original live
+owner/claim, then reads preparation and uses the restoration handle. Its rejection
+receipt must bind the original assessment, manifest and deadline, with exact retry.
+
+The privileged bootstrap is not a production API. Shared token visibility alone
+does not prove the former owner process is dead. A network timeout, missing host
+heartbeat or expired execution claim cannot substitute for this fixture's actual
+process-exit proof. Production takeover still requires the late-provider-effect
+policy and host ownership protocol.
 
 ## Persisted preparation
 

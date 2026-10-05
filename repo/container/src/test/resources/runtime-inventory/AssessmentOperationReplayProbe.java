@@ -17,14 +17,24 @@ public final class AssessmentOperationReplayProbe {
     static DocumentSchemaPolicies.Selection run(Tx tx, AssessmentProviderProbe provider, DocumentSchemaPolicies.Selection policy,
             DocumentAssessmentRuntimeObserver.Observation observation, javax.sql.DataSource database,
             List<DocumentPublicationMember> rejectionTargets) throws Exception {
+        return run(tx, provider, policy, observation, database, rejectionTargets, 0, 8);
+    }
+    static void crash(Tx tx, AssessmentProviderProbe provider, DocumentSchemaPolicies.Selection policy,
+            DocumentAssessmentRuntimeObserver.Observation observation, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, policy, observation, database, List.of(), 8, 9);
+        throw new AssertionError("Crash writer returned without halting");
+    }
+    private static DocumentSchemaPolicies.Selection run(Tx tx, AssessmentProviderProbe provider, DocumentSchemaPolicies.Selection policy,
+            DocumentAssessmentRuntimeObserver.Observation observation, javax.sql.DataSource database,
+            List<DocumentPublicationMember> rejectionTargets, int first, int end) throws Exception {
         var valid = ObservedAssessmentProbe.asset(StringValue.getDescriptor());
         var invalid = ObservedAssessmentProbe.invalidSchema();
         var current = policy;
-        for (int scenario = 0; scenario < 7; scenario++) {
+        for (int scenario = first; scenario < end; scenario++) {
             var caller = new RepositoryCaller("principal", true);
             var a = ObservedAssessmentProbe.member("a"); var b = ObservedAssessmentProbe.member("b");
             var intent = DocumentPublicationIntent.newBuilder().setEncodingVersion(1).setAccountId("account")
-                    .setOperationId(UUID.randomUUID().toString());
+                    .setOperationId(scenario == 8 ? System.getenv("PROTOMOLT_TEST_CRASH_OPERATION") : UUID.randomUUID().toString());
             for (var member : List.of(b.member(), a.member())) intent.addMembers(member.toBuilder().setDestination(
                     member.getDestination().toBuilder().setAddress(member.getDestination().getAddress().toBuilder()
                             .setGraphId("replay-" + UUID.randomUUID()))));
@@ -51,7 +61,8 @@ public final class AssessmentOperationReplayProbe {
             if (scenario >= 4) {
                 var seeds = DocumentPublicationSeeds.mint(key, command);
                 var saved = new DocumentPublicationPreparationRecord(key, command, seeds, placements, Duration.ofMinutes(5), 0);
-                var claim = new RepositoryExecutionClaimLedger(tx).acquire(key, command, UUID.randomUUID(), Duration.ofMinutes(5));
+                var claim = new RepositoryExecutionClaimLedger(tx).acquire(key, command, UUID.randomUUID(),
+                        scenario == 7 ? Duration.ofSeconds(10) : Duration.ofMinutes(5));
                 new DocumentPublicationPreparationJournal(tx, budget).save(caller, claim, saved, RepositoryReadControl.NONE);
                 new DocumentPublicationModesJournal(tx, budget).bind(caller, claim, 0, scenario == 5
                         ? Map.of("a", DocumentPublicationCandidate.Mode.TYPED, "b", DocumentPublicationCandidate.Mode.OPAQUE) : modes,
@@ -103,8 +114,8 @@ public final class AssessmentOperationReplayProbe {
                         return null;
                     }
                     new RepositorySchemaArtifacts(tx).stage(owner, command, List.copyOf(evidence.artifacts(() -> {}).values()), () -> {});
-                    if (mode == 4 || mode == 6) return JournaledAssessmentProbe.createWithLostAcknowledgment(tx, database, caller, owner,
-                            command, prepared, selected, evidence, budget);
+                    if (mode == 4 || mode >= 6) return JournaledAssessmentProbe.createWithLostAcknowledgment(tx, database, caller, owner,
+                            command, prepared, selected, evidence, budget, mode == 8);
                     return new DocumentAssessmentCreation(tx, drives).create(caller, owner, prepared, selected, evidence, UUID.randomUUID(),
                             Instant.now().plusSeconds(mode == 2 ? 20 : 300).truncatedTo(java.time.temporal.ChronoUnit.MICROS), budget, () -> {});
                 });
@@ -172,6 +183,10 @@ public final class AssessmentOperationReplayProbe {
                          + (SELECT count(*) FROM repository_operation_rejection WHERE operation_id=:op)
                     """).setParameter("op", command.operationId()).getSingleResult()).longValue());
             require(outcomes == 0, "replay grants no terminal decision");
+            if (scenario == 7) {
+                JournaledAssessmentProbe.claimLoss(tx, provider, caller, owner, command, observation, LIMITS);
+                continue;
+            }
             if (scenario == 6) {
                 JournaledAssessmentProbe.resume(tx, provider, caller, owner, command, observation, LIMITS);
                 continue;

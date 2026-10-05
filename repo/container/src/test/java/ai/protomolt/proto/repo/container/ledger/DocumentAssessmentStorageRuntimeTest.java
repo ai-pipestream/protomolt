@@ -43,6 +43,11 @@ class DocumentAssessmentStorageRuntimeTest {
             }
             sources.add(source.toString());
         }
+        var crashSource = directory.resolve("JournaledAssessmentCrashProbe.java");
+        try (var input = getClass().getResourceAsStream("/runtime-inventory/JournaledAssessmentCrashProbe.java")) {
+            assertThat(input).isNotNull(); Files.copy(input, crashSource);
+        }
+        sources.add(crashSource.toString());
         var arguments = new ArrayList<>(List.of("-proc:none", "-classpath", classpath, "-d", classes.toString()));
         arguments.addAll(sources);
         assertThat(javax.tools.ToolProvider.getSystemJavaCompiler().run(null, null, null, arguments.toArray(String[]::new))).isZero();
@@ -87,7 +92,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 assertThat(result).contains("ASSESSMENT_REPLAY_INPUTS_OK");
                 assertThat(result).contains("ASSESSMENT_OPERATION_REPLAY_OK");
                 assertThat(result).contains("JOURNALED_ASSESSMENT_COMMIT_RECOVERY_OK", "JOURNALED_ASSESSMENT_DECISION_OK",
-                        "JOURNALED_ASSESSMENT_HANDLE_RESUME_OK");
+                        "JOURNALED_ASSESSMENT_HANDLE_RESUME_OK", "JOURNALED_RESTORATION_CLAIM_LOSS_OK");
                 assertThat(result).contains("JOURNALED_OBSERVED_MODE_MISMATCH_OK");
                 assertThat(result).contains("JOURNALED_DIRECT_COMMIT_MISMATCH_OK", "JOURNALED_DIRECT_COMMIT_MATCH_OK");
                 assertThat(result).contains("ASSESSMENT_POLICY_ADVANCEMENT_REPLAY_OK");
@@ -143,6 +148,31 @@ class DocumentAssessmentStorageRuntimeTest {
                     rejected.destroyForcibly();
                     assertThat(rejected.waitFor(10, TimeUnit.SECONDS)).isTrue();
                 }
+            }
+            // Only the public operation ID crosses processes. No command, nonce or token handoff file.
+            builder.environment().remove("PROTOMOLT_TEST_RESTART_REQUEST");
+            builder.environment().put("PROTOMOLT_TEST_CRASH_OPERATION", java.util.UUID.randomUUID().toString());
+            for (String role : List.of("writer", "reader")) {
+                builder.command(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                        "-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading", "-cp",
+                        classpath + java.io.File.pathSeparator + probe,
+                        "ai.protomolt.proto.repo.container.ledger.JournaledAssessmentCrashProbe", role, bundle.toString());
+                var crashLog = directory.resolve("journaled-crash-" + role + ".log");
+                var child = builder.redirectOutput(crashLog.toFile()).start();
+                try {
+                    assertThat(child.waitFor(40, TimeUnit.SECONDS)).as("Journaled crash %s completed", role).isTrue();
+                    assertThat(child.isAlive()).isFalse();
+                    assertThat(Files.size(crashLog)).isLessThan(1_048_576);
+                    String output = Files.readString(crashLog);
+                    assertThat(child.exitValue()).as(output).isEqualTo(role.equals("writer") ? 86 : 0);
+                    if (role.equals("reader")) assertThat(output).contains("JOURNALED_FORCED_CRASH_RECOVERY_OK");
+                } finally {
+                    if (child.isAlive()) {
+                        child.destroyForcibly();
+                        assertThat(child.waitFor(10, TimeUnit.SECONDS)).isTrue();
+                    }
+                }
+                // The loop cannot start the reader until the writer's expected halt is confirmed and reaped.
             }
         }
     }

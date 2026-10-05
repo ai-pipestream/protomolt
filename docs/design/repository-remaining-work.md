@@ -31,10 +31,11 @@ features available. Recovery is one workstream, not the whole goal.
 ## Work gated by publication and retention guarantees
 
 4. **Recovery.** Follow the [recovery design](repository-publication-recovery.md).
-   Restore exact preparation, modes and sticky assessment coordinates under an
-   explicitly supplied original live claim. A shared token is not proof that its
-   previous process is dead. Prove same-owner reconciliation after a forced writer
-   process exit without a local handoff file. Keep automatic claim transfer off
+   Original-owner stage reconciliation now has real lost-acknowledgment and
+   fresh-process forced-exit evidence without a capability handoff file. Claim
+   expiry and transfer refuse the stale handle. Complete managed-host lifecycle
+   integration next; a shared token is not proof that its previous process is
+   dead. Keep automatic claim transfer off
    until delayed provider writes and cleanup across claim loss are qualified.
 5. **Restore, pruning and backup.** Test retained schema/content reachability,
    active read and pending-operation pins, current ACLs and failure recovery.
