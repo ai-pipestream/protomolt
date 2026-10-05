@@ -352,9 +352,9 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                 // entry's metadata still takes the request's values.
                 entry.currentVersion = base;
                 ledger.mergeEntry(entry);
-                return putResponse(entryUuid, base, root, totalBytes, true,
-                        manifestProto(address, base, root, totalBytes, ordered,
-                                versionCreatedAt(retained, base)));
+                // No new version was stored. Return its retained provenance,
+                // not candidate timestamps or descriptors synthesized for this retry.
+                return putResponse(entryUuid, base, root, totalBytes, true, current);
             }
 
             // Object IO first, outside any transaction: only keys no retained
@@ -1211,11 +1211,6 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                 .map(row -> ArchiveManifests.fromJson(row.manifest))
                 .orElseThrow(() -> failedPrecondition(
                         "the entry's current version " + version + " has no retained manifest"));
-    }
-
-    private static Instant versionCreatedAt(List<ArchiveVersionRecord> rows, long version) {
-        return rows.stream().filter(row -> row.version == version).findFirst()
-                .map(row -> row.createdAt).orElse(Instant.now());
     }
 
     /** The ownership set after a mutation: retained rows minus the dropped one, plus the new manifest. */

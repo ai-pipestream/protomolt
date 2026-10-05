@@ -268,6 +268,7 @@ class ArchiveServiceIT {
                 .build());
         assertThat(again.getDeduplicated()).isTrue();
         assertThat(again.getVersion()).isEqualTo(2);
+        assertThat(again.getManifest()).isEqualTo(v2.getManifest());
         assertThat(entryOf(again.getManifest(), "markdown").getObjectKey())
                 .isEqualTo(entryOf(v2.getManifest(), "markdown").getObjectKey());
 
