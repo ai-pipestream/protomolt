@@ -110,8 +110,62 @@ class DocumentAssessmentSlotsIT {
     private record Staged(List<DocumentAssessmentSlots.Slot> slots, DocumentAssessmentSlotSnapshot.Identity identity,
                           DocumentUploadPlan.Prepared plan, Map<String,DocumentSelectedAttemptLedger.Selected> selected) {}
 
+    @Test void revokedReadAccessPreventsRetainedAssociationDisclosure() throws Exception {
+        try (var c = DocumentNativePublicationFixture.context(POSTGRES)) {
+            var f = DocumentNativePublicationFixture.prepare(c, 2);
+            var retained = stage(c, f, f.command(), false);
+            var caller = new RepositoryCaller("principal", false, java.util.Set.of("account"), java.util.Set.of());
+            c.tx().inTransaction(em -> { em.createNativeQuery("UPDATE documents SET security=CAST(:policy AS jsonb)")
+                    .setParameter("policy", "{\"permissions\":[{\"identityType\":\"public\",\"identity\":\"public\",\"access\":\"ACCESS_READ\"}]}")
+                    .executeUpdate(); });
+            verifyAuthorized(c, f, retained, caller);
+            c.tx().inTransaction(em -> { em.createNativeQuery("UPDATE documents SET security=CAST(:policy AS jsonb) WHERE node_id=:node")
+                    .setParameter("policy", "{\"permissions\":[{\"identityType\":\"public\",\"identity\":\"public\",\"access\":\"ACCESS_DENY\"}]}")
+                    .setParameter("node", f.sources().get(1).row().nodeId).executeUpdate(); });
+            assertThatThrownBy(() -> verifyAuthorized(c, f, retained, caller))
+                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.NOT_FOUND));
+            long snapshots = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM document_assessment_slot_snapshots WHERE assessment_id=:id")
+                    .setParameter("id", retained.identity().assessment()).getSingleResult()).longValue());
+            assertThat(snapshots).isEqualTo(1);
+        }
+    }
+
+    @Test void stageWithoutSnapshotCannotBeAdoptedAsOriginalProvenance() throws Exception {
+        try (var c = DocumentNativePublicationFixture.context(POSTGRES)) {
+            var f = DocumentNativePublicationFixture.prepare(c, 1);
+            var retained = stage(c, f, f.command(), false, false);
+            assertThatThrownBy(() -> verifyAuthorized(c, f, retained, CALLER))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("original staging identity");
+            long objects = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM document_assessment_objects WHERE assessment_id=:id")
+                    .setParameter("id", retained.identity().assessment()).getSingleResult()).longValue());
+            assertThat(objects).isEqualTo(2);
+        }
+    }
+
+    private static void verifyAuthorized(DocumentNativePublicationFixture.Context c, DocumentNativePublicationFixture.Prepared f,
+            Staged retained, RepositoryCaller caller) {
+        c.tx().inTransaction(em -> {
+            DocumentAdmissionAuthorization.requireCaller(caller, f.owner(), "account");
+            RepositoryOperationLedger.fenceLiveOwner(em, f.owner());
+            DocumentAdmissionAuthorization.authorizeRejection(em, caller, f.command());
+            em.createNativeQuery("SELECT assessment_id FROM document_assessment_owners WHERE assessment_id=:id FOR UPDATE")
+                    .setParameter("id", retained.identity().assessment()).getSingleResult();
+            var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(20_000_000);
+            try { DocumentAssessmentRetainedSlots.verify(em, retained.identity(), retained.plan(), retained.selected(), budget, () -> {}); }
+            finally { assertThat(budget.reservedBytes()).isZero(); }
+        });
+    }
+
     private static Staged stage(DocumentNativePublicationFixture.Context c,
             DocumentNativePublicationFixture.Prepared f, DocumentPublicationCommand projected, boolean omitPhysical) {
+        return stage(c, f, projected, omitPhysical, true);
+    }
+
+    private static Staged stage(DocumentNativePublicationFixture.Context c,
+            DocumentNativePublicationFixture.Prepared f, DocumentPublicationCommand projected, boolean omitPhysical, boolean snapshotPresent) {
         var driveId = UUID.fromString(f.command().intent().getMembers(0).getDriveId());
         var drive = new DriveLedger(c.tx()).findById(driveId).orElseThrow();
         var profile = new ManagedBackendLedger(c.tx()).find("native-test").orElseThrow();
@@ -168,7 +222,7 @@ class DocumentAssessmentSlotsIT {
             var identity = new DocumentAssessmentSlotSnapshot.Identity(assessment, f.owner().key(), f.owner().generation(),
                     f.command().sha256(), (String) header[0], java.time.Instant.ofEpochSecond(micros / 1000000, micros % 1000000 * 1000));
             var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(20_000_000);
-            try (var snapshot = DocumentAssessmentSlotSnapshot.encode(identity, slots, budget, () -> {})) {
+            if (snapshotPresent) try (var snapshot = DocumentAssessmentSlotSnapshot.encode(identity, slots, budget, () -> {})) {
                 em.createNativeQuery("""
                         INSERT INTO document_assessment_slot_snapshots VALUES(:id,:codec,:version,:bytes,decode(:sha,'hex'))
                         """).setParameter("id", assessment).setParameter("codec", DocumentAssessmentSlotSnapshot.CODEC)
@@ -177,7 +231,7 @@ class DocumentAssessmentSlotsIT {
             }
             // Synthetic manifest, genuine frozen selection/physical history: this
             // verifies retained association identity, not observed admission.
-            DocumentAssessmentRetainedSlots.verify(em, identity, plan, selected, budget, () -> {});
+            if (snapshotPresent) DocumentAssessmentRetainedSlots.verify(em, identity, plan, selected, budget, () -> {});
             assertThat(budget.reservedBytes()).isZero();
             return new Staged(slots, identity, plan, Map.copyOf(selected));
         });

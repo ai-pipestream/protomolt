@@ -4121,5 +4121,40 @@ a separate operation to publish a new source revision. It verifies that the sour
 current pointer actually changes and the original slot snapshot still verifies
 under current read authorization. This uses synthetic manifest/provider evidence;
 full observed-evidence reconciliation after source movement remains unqualified.
-Revoked-access, legacy-snapshot refusal and restart qualification also remain
-required before public exposure.
+The same SQL fixture verifies that a non-process caller initially granted read
+access is refused after an explicit deny on one source/destination, before retained
+evidence is disclosed. A committed physical stage without a snapshot is also
+refused rather than adopted; its object ownership remains intact. These cover the
+shared read gate and association verifier, not the full observed handler. End-to-end
+revoked-access, legacy-snapshot and restart qualification remain required before
+public exposure.
+
+#### Restart acknowledgement contract (implementation pending)
+
+Acknowledging a committed stage after restart must not require rerunning semantic
+validation or fetching candidate bytes. The coordinator must durably retain the
+original operation nonce, generation, canonical command, caller-chosen assessment
+UUID, fixed deadline, expected manifest digest and upload member/selection-revision/
+attempt identities. Same-generation acknowledgement requires the original live
+owner fence. An expired or replaced owner must use an explicit recovery path;
+neither a missing nonce nor an expired lease permits adopting an old stage.
+
+The current `DocumentUploadPlan.Prepared` dependency must be removed from the
+historical verifier before claiming restart support. Rebuilding it from current
+drive/backend configuration could change the sampled placement. Instead, verify
+the original upload identities using immutable selection history, attempt objects,
+retained associations and the slot snapshot. Do not read current selection or
+source pointers, reacquire bytes or require current upload leases/staging claims.
+
+A restart acknowledgement will check the supplied command and authenticated
+identity, acquire the live operation fence and current read authorization, then
+lock the retained owner. Decode its bounded canonical manifest as stored identity,
+not as a fresh observed-runtime or validation claim. Match its schema/root reference
+sets against retained rows and fresh SQL checksums, and verify the full slot
+snapshot against frozen history. Root locator/fragment identity and reused source
+revision/ordinal are retained-row provenance; the validation manifest alone does
+not contain them. Final ownership, terminal-state and database-time expiry checks
+precede returning only assessment UUID, manifest digest and deadline. No provider
+read, schema registry lookup, current-policy evaluation or semantic-review authority
+belongs in this acknowledgement. Durable candidate readers and fresh independent
+semantic replay remain separate work with their own retention and revocation gates.
