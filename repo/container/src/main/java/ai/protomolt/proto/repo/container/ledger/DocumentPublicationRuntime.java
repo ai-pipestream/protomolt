@@ -13,6 +13,8 @@ import ai.protomolt.proto.repo.v1.DocumentPublicationMember;
 import ai.protomolt.proto.repo.v1.DocumentPublicationResult;
 import ai.protomolt.proto.repo.v1.DocumentPublicationRejection;
 import com.google.protobuf.InvalidProtocolBufferException;
+import java.io.IOException;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
@@ -37,6 +39,17 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
         public DocumentPublicationRejection receipt() { return receipt; }
     }
     public enum Mode { TYPED, OPAQUE }
+    /**
+     * Trusted host configuration for retained validation rejections. The bundle describes
+     * the immutable standard-JAR runtime; it is observed at construction, never accepted
+     * from a client as an attestation. Expiry and decision windows use database checks.
+     */
+    public record Assessments(Path runtimeBundle, Duration retention, Duration minimumRemaining) {
+        public Assessments {
+            Objects.requireNonNull(runtimeBundle);
+            DocumentPublicationAssessmentExecution.requireWindows(retention, minimumRemaining);
+        }
+    }
     public record PayloadKey(String member, int revisionOrdinal) {
         public PayloadKey {
             Objects.requireNonNull(member);
@@ -79,6 +92,41 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
             Backends backends, DocumentRevisionAssembly.Limits assemblyLimits, SqlTimeouts sqlTimeouts,
             int parallelism, Duration flushAge, Duration lease, int maxSessions, long maxCommandBytes,
             int cleanupBatchSize, boolean deliverEvents) {
+        this(tx, drives, ledger, reader, budget, backends, assemblyLimits, sqlTimeouts, parallelism,
+                flushAge, lease, maxSessions, maxCommandBytes, cleanupBatchSize, deliverEvents,
+                (DocumentPublicationAssessmentExecution) null);
+    }
+
+    /**
+     * Enable retained validation rejection with a reader supporting both source and
+     * assessment reads. Runtime observation failure aborts construction; it never
+     * selects the unobserved path. The caller owns reader cleanup on failure.
+     * Retry identity remains in this runtime's bounded sessions, not a durable host store.
+     */
+    public <R extends DocumentRetainedReader & DocumentAssessmentReader & DocumentReadLifecycle.Reader> DocumentPublicationRuntime(
+            Tx tx, DriveLedger drives, DocumentReadLedger ledger, R reader, PayloadBudget budget,
+            Backends backends, DocumentRevisionAssembly.Limits assemblyLimits, SqlTimeouts sqlTimeouts,
+            int parallelism, Duration flushAge, Duration lease, int maxSessions, long maxCommandBytes,
+            int cleanupBatchSize, boolean deliverEvents, Assessments assessments) throws IOException {
+        this(tx, drives, ledger, reader, budget, backends, assemblyLimits, sqlTimeouts, parallelism,
+                flushAge, lease, maxSessions, maxCommandBytes, cleanupBatchSize, deliverEvents,
+                observeAssessments(tx, drives, ledger, reader, budget, assemblyLimits, assessments));
+    }
+
+    private static DocumentPublicationAssessmentExecution observeAssessments(Tx tx, DriveLedger drives,
+            DocumentReadLedger ledger, DocumentAssessmentReader reader, PayloadBudget budget,
+            DocumentRevisionAssembly.Limits limits, Assessments assessments) throws IOException {
+        Objects.requireNonNull(assessments);
+        var observed = DocumentAssessmentRuntimeObserver.observe(assessments.runtimeBundle(), RepositoryReadControl.NONE::check);
+        return new DocumentPublicationAssessmentExecution(tx, drives, ledger, reader, budget, limits,
+                observed, assessments.retention(), assessments.minimumRemaining());
+    }
+
+    private <R extends DocumentRetainedReader & DocumentReadLifecycle.Reader> DocumentPublicationRuntime(
+            Tx tx, DriveLedger drives, DocumentReadLedger ledger, R reader, PayloadBudget budget,
+            Backends backends, DocumentRevisionAssembly.Limits assemblyLimits, SqlTimeouts sqlTimeouts,
+            int parallelism, Duration flushAge, Duration lease, int maxSessions, long maxCommandBytes,
+            int cleanupBatchSize, boolean deliverEvents, DocumentPublicationAssessmentExecution assessments) {
         Objects.requireNonNull(backends);
         reads = new DocumentReadLifecycle(ledger, reader, cleanupBatchSize);
         uploads = new DocumentUploadCoordinator(tx, drives, budget, (generation, profile) -> {
@@ -86,7 +134,7 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
             return new DocumentUploadCoordinator.Backend(selected.identity(), selected.opened());
         }, parallelism, flushAge, sqlTimeouts);
         var execution = new DocumentPublicationExecution(tx, drives, ledger, uploads, reader, budget,
-                assemblyLimits, deliverEvents);
+                assemblyLimits, deliverEvents, assessments);
         sessions = new DocumentPublicationSessions(tx, execution, lease, maxSessions, maxCommandBytes);
     }
 

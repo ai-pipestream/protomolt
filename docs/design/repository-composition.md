@@ -5554,3 +5554,39 @@ The complete production-JAR PostgreSQL/LocalStack gate passes with this handoff
 fixture and its cleanup fix. Sol reviewed the authority, assertions and cleanup.
 The test establishes internal recovery behavior only; it does not qualify latency,
 crash-safe host persistence or a new public endpoint.
+
+#### Explicit native runtime assessment configuration
+
+`DocumentPublicationRuntime` now has an opt-in constructor taking `Assessments`
+with a trusted immutable runtime-bundle path, retention and minimum remaining
+window. The reader type must implement both retained-source and assessment reads
+plus lifecycle ownership. Construction observes the actual supported standard-JAR
+runtime before composing execution; a missing or incompatible bundle aborts
+startup. The caller retains borrowed-reader cleanup on constructor failure. The
+host must trust the local bundle path and keep the observed classpath immutable;
+clients cannot submit an attestation or choose that path.
+
+Configured execution uses the reviewed assessment flow and exposes the existing
+`Rejected.receipt()` on durable rejection. The default constructor retains its
+existing explicit behavior. Both paths share the same session registry, ownership,
+publication and shutdown machinery. An uncertain stage retains its session slot;
+a terminal outcome frees that slot only after active users release it. Shutdown
+refuses new calls, waits for accepted work, and then drains uploads, provider work,
+read pins and budgets. It does not destroy borrowed database/provider clients.
+
+The production-JAR PostgreSQL/LocalStack gate passes configured accepted and
+invalid publication, lost stage and decision acknowledgement retries, pre-commit
+stage failure, terminal replay, one-slot session retention/retirement, and shutdown
+initiated from active schema admission. A missing bundle fails before provider
+lookup or read registration; constructing the valid runtime with the same reader
+then succeeds. Configuration tests reject invalid or rounded duration windows.
+Sol reviewed the configuration, routing and lifecycle fixture.
+
+This qualifies the native Java host composition. No typed publication transport
+endpoint or durable private-owner session store is added. The controlled
+fresh-process handoff above remains separate from crash recovery. Retained evidence
+pruning, restore, provider qualification and RustFS latency/replica measurements
+remain required before the complete goal can close.
+
+The unchanged constructor's typed and opaque real-provider publication/history
+cases also pass after this constructor refactoring, alongside the window tests.

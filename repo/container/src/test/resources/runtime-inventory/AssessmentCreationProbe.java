@@ -17,6 +17,7 @@ public final class AssessmentCreationProbe {
         var mixedSource = AssessmentMixedReuseProbe.publishSource(tx, provider);
         var promotedSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "promoted", true);
         var executionSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "execution");
+        var runtimeSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "runtime");
         List<DocumentPublicationMember> restartMembers = new ArrayList<>();
         for (String memberId : List.of("a", "b")) {
             var member = ObservedAssessmentProbe.member(memberId).member();
@@ -41,6 +42,7 @@ public final class AssessmentCreationProbe {
         var initial = new DocumentSchemaPolicies(tx).activate(policy, 0, () -> {});
         initial = PromotedAssessmentCommitProbe.run(tx, provider, promotedSource, initial);
         NativeAssessmentExecutionProbe.run(tx, database, provider, executionSource, observation);
+        NativeAssessmentRuntimeProbe.run(database, provider, runtimeSource);
         AssessmentMixedReuseProbe.run(tx, provider, mixedSource, initial, observation);
         var active = AssessmentOperationReplayProbe.run(tx, provider, initial, observation, database, rejectionTargets);
         for (int scenario : new int[]{0, 2, 1}) {

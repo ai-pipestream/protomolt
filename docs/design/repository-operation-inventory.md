@@ -5735,3 +5735,30 @@ available only after every typed and opaque member completes its applicable
 checks. Independent frozen-evidence verification and durable decision integration
 remain open; current-policy and authorization fences are not replaced by an
 in-memory selection. Existing protobuf names, fields and public RPCs are unchanged.
+
+### Native runtime retained-assessment configuration
+
+- **New:** `DocumentPublicationRuntime.Assessments` carries a trusted local runtime
+  bundle path, evidence retention and minimum decision window. Both durations are
+  positive exact microseconds within one day, with retention greater than the
+  minimum window. The host must keep the observed runtime and bundle immutable.
+- **Extended:** an explicit `DocumentPublicationRuntime` constructor overload
+  requires a reader implementing source reads, assessment reads and lifecycle
+  ownership. It observes the actual runtime before composing execution. Failure
+  aborts construction and leaves the borrowed reader under caller ownership.
+- **Extended:** configured `execute` promotes accepted assessments or retains,
+  re-reads and verifies invalid evidence before a fenced durable rejection.
+  `Rejected.receipt()` carries the existing durable receipt. After stage creation
+  starts, session retries discover the original stage; no upload or schema
+  resolution runs again. Absent uncertain stages require explicit recovery.
+- **Unchanged:** the constructor without assessment configuration, existing public
+  result/receipt encoding, Java takeover operation and all protobuf names, tags,
+  imports and Any URLs. This adds no transport method or caller-supplied runtime
+  attestation. It does not make private owner identity crash-persistent.
+
+The production-JAR gate exercises the public configured runtime against PostgreSQL
+and LocalStack. It covers missing-bundle startup refusal followed by use of the
+same reader, accepted publication, retained rejection, lost stage/decision commit
+acknowledgements, stage rollback, terminal session retirement, unresolved session
+capacity and shutdown during admission. The fixture uses one session and one read
+slot, then checks drained memory/read ownership. Sol reviewed this checkpoint.

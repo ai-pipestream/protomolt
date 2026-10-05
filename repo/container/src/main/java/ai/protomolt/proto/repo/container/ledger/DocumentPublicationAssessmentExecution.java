@@ -32,13 +32,20 @@ final class DocumentPublicationAssessmentExecution {
         this.reads = Objects.requireNonNull(reads); this.reader = Objects.requireNonNull(reader);
         this.budget = Objects.requireNonNull(budget); this.limits = Objects.requireNonNull(limits);
         this.observation = Objects.requireNonNull(observation); this.retention = Objects.requireNonNull(retention);
-        Objects.requireNonNull(minimumWindow);
-        if (retention.isNegative() || retention.isZero() || retention.compareTo(Duration.ofDays(1)) > 0
-                || retention.getNano() % 1000 != 0 || retention.compareTo(minimumWindow) <= 0)
-            throw new IllegalArgumentException("Assessment retention must be exact microseconds within one day and exceed its decision window");
+        requireWindows(retention, minimumWindow);
         rejections = new DocumentAssessmentRejections(tx, minimumWindow);
         creation = new DocumentAssessmentCreation(tx, drives); discovery = new DocumentAssessmentDiscovery(tx);
         artifacts = new RepositorySchemaArtifacts(tx); replay = new DocumentPublicationReplay(tx);
+    }
+
+    static void requireWindows(Duration retention, Duration minimumWindow) {
+        Objects.requireNonNull(retention); Objects.requireNonNull(minimumWindow);
+        if (minimumWindow.isNegative() || minimumWindow.isZero() || minimumWindow.compareTo(Duration.ofDays(1)) > 0
+                || minimumWindow.getNano() % 1000 != 0)
+            throw new IllegalArgumentException("Minimum assessment window must be positive exact microseconds within one day");
+        if (retention.isNegative() || retention.isZero() || retention.compareTo(Duration.ofDays(1)) > 0
+                || retention.getNano() % 1000 != 0 || retention.compareTo(minimumWindow) <= 0)
+            throw new IllegalArgumentException("Assessment retention must be exact microseconds within one day and exceed its decision window");
     }
 
     /** Sources remain pinned until this returns or throws. No decision occurs in the writer callback. */

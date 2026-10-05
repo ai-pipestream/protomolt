@@ -114,7 +114,7 @@ public final class NativeAssessmentExecutionProbe {
         System.out.println("NATIVE_ASSESSMENT_EXECUTION_OK");
     }
 
-    private static DataSource faultSource(DataSource database, UUID operation, int mode, AtomicBoolean armed, AtomicBoolean faulted) {
+    static DataSource faultSource(DataSource database, UUID operation, int mode, AtomicBoolean armed, AtomicBoolean faulted) {
         return (DataSource) Proxy.newProxyInstance(DataSource.class.getClassLoader(), new Class<?>[]{DataSource.class}, (proxy, method, args) -> {
             var result = invoke(database, method, args);
             if (!method.getName().equals("getConnection")) return result;
