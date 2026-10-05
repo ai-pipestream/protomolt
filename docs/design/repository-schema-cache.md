@@ -3,6 +3,14 @@
 Implementation plan; this does not declare a shared repository cache available.
 The cache complements retained archival assets and never replaces them.
 
+The first ownership primitive, `DocumentSchemaArtifactCache` in `repo/admission`,
+now holds digest-verified immutable byte copies with bounded entries and byte
+capacity. It provides leased lookup and insertion, not registry integration.
+Insertion reserves twice the input size for copying; retained entries reserve
+their exact serialized size. Concurrent copies consume capacity independently.
+The adapter must compose artifact digests into the complete definition identity
+below, authorize selection, and hold all leases through its consumers' copies.
+
 ## Existing seams
 
 `DocumentSchemaAdmission.Resolver.select(Selection)` already receives the member

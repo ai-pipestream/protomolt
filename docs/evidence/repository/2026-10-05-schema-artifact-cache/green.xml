@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.admission.DocumentSchemaArtifactCacheTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-05T23:02:56.254Z" hostname="krick" time="0.044">
+  <properties/>
+  <testcase name="leasesRetainBytesAcrossShutdownAndCloseIdempotently()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaArtifactCacheTest" time="0.016"/>
+  <testcase name="concurrentEqualArtifactsConvergeWithoutLosingPins()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaArtifactCacheTest" time="0.011"/>
+  <testcase name="byteCapacityIncludesTemporaryCopyAndRejectsOversizedInput()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaArtifactCacheTest" time="0.003"/>
+  <testcase name="corruptionAndEveryCancellationCheckpointReleaseReservations()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaArtifactCacheTest" time="0.004"/>
+  <testcase name="cancellationAfterLookupReleasesItsPin()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaArtifactCacheTest" time="0.001"/>
+  <testcase name="shutdownDuringCopyRefusesPublicationAndDrainsPendingCapacity()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaArtifactCacheTest" time="0.001"/>
+  <testcase name="pinnedEntriesRefuseCapacityAndIdleEntriesCanBeEvicted()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaArtifactCacheTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
