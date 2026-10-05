@@ -114,6 +114,8 @@ public final class NativeHistoricalMaterializationProbe {
                             throw new AssertionError("unknown ordinal returned content");
                         } catch (RepositoryException missing) { require(missing.code() == RepositoryException.Code.NOT_FOUND, "unknown ordinal unavailable"); }
                         require(calls.get() == 1, "unknown ordinal does not fetch provider content");
+                        NativeHistoricalMaterializationTransportProbe.run(operations, address, id, selection, limits,
+                                () -> security(tx, node, "{}"), () -> security(tx, node, originalSecurity));
                     } else {
                         try (var unexpected = operations.readMaterialized(caller, address, id, selection, limits, control)) {
                             throw new AssertionError("faulted materialization returned content");

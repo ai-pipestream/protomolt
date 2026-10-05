@@ -67,12 +67,13 @@ public interface HistoricalMaterializationRepository {
     /** Borrowed content and request identity; keep the owning Result open through consumption. */
     record View(Selection selection, Any original, DynamicMessage value,
             RepositoryResolvedSchema schema, Occurrence occurrence, Definition definition,
-            ai.protomolt.proto.repo.v1.RepositorySchemaOccurrencePath path) {
+            ai.protomolt.proto.repo.v1.RepositorySchemaOccurrencePath path, NodeAddress address, UUID revision) {
         public View {
             Objects.requireNonNull(selection); Objects.requireNonNull(original); Objects.requireNonNull(value);
             Objects.requireNonNull(schema); Objects.requireNonNull(occurrence);
             Objects.requireNonNull(definition);
             Objects.requireNonNull(path);
+            Objects.requireNonNull(address); Objects.requireNonNull(revision);
         }
     }
 

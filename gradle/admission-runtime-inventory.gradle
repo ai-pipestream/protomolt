@@ -14,9 +14,12 @@ def runtime = configurations.getByName(project.hasProperty('admissionRuntimeConf
 def admissionPath = project.hasProperty('admissionRuntimeRootProject') ? project.admissionRuntimeRootProject : project.path
 def admissionProject = project(admissionPath)
 def ownJar = admissionProject.tasks.named('jar')
-def destination = layout.buildDirectory.dir('admission-runtime')
+def destination = layout.buildDirectory.dir(project.hasProperty('admissionRuntimeDirectory')
+        ? project.admissionRuntimeDirectory : 'admission-runtime')
+def inventoryTaskName = project.hasProperty('admissionRuntimeTaskName')
+        ? project.admissionRuntimeTaskName : 'admissionRuntimeInventory'
 
-tasks.register('admissionRuntimeInventory') {
+tasks.register(inventoryTaskName) {
     group = 'build'
     description = 'Copy and identify the resolved production admission runtime artifacts'
     dependsOn runtime, ownJar, admissionProject.tasks.named('checkRuntimeBoundaries')

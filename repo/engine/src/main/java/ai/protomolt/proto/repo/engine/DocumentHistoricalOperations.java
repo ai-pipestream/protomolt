@@ -109,7 +109,7 @@ public final class DocumentHistoricalOperations implements HistoricalDocumentRep
                     new HistoricalMaterializationRepository.Occurrence(occurrence.ordinal(), occurrence.root(), occurrence.typeUrl(),
                             occurrence.prefix(), occurrence.valueSha256(), occurrence.valueSizeBytes()),
                     new HistoricalMaterializationRepository.Definition(view.metadata(), view.descriptorArtifact(),
-                            view.reference(), view.metadataArtifact()), view.path());
+                            view.reference(), view.metadataArtifact()), view.path(), view.address(), view.revision());
         }
         @Override public synchronized void close() { result.close(); }
     }

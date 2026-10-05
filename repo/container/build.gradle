@@ -2,6 +2,15 @@ description = 'Claim-check part storage and Postgres ledger over the provider-ne
 
 // Test host composition resolved as one production graph, without JUnit/test fixtures.
 configurations {
+    // Correctness transport host only. Keep performance hosts and published runtime unchanged.
+    assessmentTransportRuntime {
+        canBeConsumed = false
+        canBeResolved = true
+        attributes {
+            attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage, Usage.JAVA_RUNTIME))
+            attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, objects.named(LibraryElements, LibraryElements.JAR))
+        }
+    }
     assessmentHostRuntime {
         canBeConsumed = false
         canBeResolved = true
@@ -13,7 +22,10 @@ configurations {
     }
 }
 
+configurations.assessmentTransportRuntime.extendsFrom(configurations.assessmentHostRuntime)
+
 dependencies {
+    assessmentTransportRuntime project(':protomolt-repo-service')
     assessmentHostRuntime project(':protomolt-repo-engine')
     assessmentHostRuntime project(':protomolt-repo-blob-s3')
     api project(':protomolt-repo-admission')
@@ -104,21 +116,28 @@ ext.admissionRuntimeRootProject = ':protomolt-repo-admission'
 ext.admissionRuntimeConfiguration = 'assessmentHostRuntime'
 apply from: rootProject.file('gradle/admission-runtime-inventory.gradle')
 def hostAdmissionInventory = layout.buildDirectory.dir('admission-runtime')
+// The transport host must inventory the admission subtree selected in that same
+// graph. Combining independently resolved closures can shadow attested classes.
+ext.admissionRuntimeConfiguration = 'assessmentTransportRuntime'
+ext.admissionRuntimeTaskName = 'admissionTransportRuntimeInventory'
+ext.admissionRuntimeDirectory = 'admission-transport-runtime'
+apply from: rootProject.file('gradle/admission-runtime-inventory.gradle')
+def transportAdmissionInventory = layout.buildDirectory.dir('admission-transport-runtime')
 tasks.named('test') { exclude '**/DocumentAssessmentStorageRuntimeTest*' }
 tasks.register('admissionStorageTest', Test) {
     group = 'verification'
     description = 'Qualify observed admission and PostgreSQL together in a production JAR host'
-    dependsOn tasks.named('admissionRuntimeInventory'), tasks.named('jar'), configurations.assessmentHostRuntime
+    dependsOn tasks.named('admissionTransportRuntimeInventory'), tasks.named('jar'), configurations.assessmentTransportRuntime
     testClassesDirs = sourceSets.test.output.classesDirs
     classpath = sourceSets.test.runtimeClasspath
     filter { includeTestsMatching 'ai.protomolt.proto.repo.container.ledger.DocumentAssessmentStorageRuntimeTest' }
-    inputs.dir(hostAdmissionInventory)
-    inputs.files(configurations.assessmentHostRuntime)
+    inputs.dir(transportAdmissionInventory)
+    inputs.files(configurations.assessmentTransportRuntime)
     inputs.file(tasks.named('jar').flatMap { it.archiveFile })
     doFirst {
-        systemProperty 'protomolt.test.admissionRuntimeBundle', hostAdmissionInventory.get().asFile.absolutePath
+        systemProperty 'protomolt.test.admissionRuntimeBundle', transportAdmissionInventory.get().asFile.absolutePath
         systemProperty 'protomolt.test.storageHostClasspath', files(tasks.named('jar').get().archiveFile,
-                configurations.assessmentHostRuntime).asPath
+                configurations.assessmentTransportRuntime).asPath
     }
     useJUnitPlatform()
 }
@@ -129,18 +148,18 @@ tasks.named('check') { dependsOn tasks.named('admissionStorageTest') }
 tasks.register('admissionRustFsTest', Test) {
     group = 'verification'
     description = 'Run native publication and retained recovery against pinned RustFS'
-    dependsOn tasks.named('admissionRuntimeInventory'), tasks.named('jar'), configurations.assessmentHostRuntime
+    dependsOn tasks.named('admissionTransportRuntimeInventory'), tasks.named('jar'), configurations.assessmentTransportRuntime
     testClassesDirs = sourceSets.test.output.classesDirs
     classpath = sourceSets.test.runtimeClasspath
     filter { includeTestsMatching 'ai.protomolt.proto.repo.container.ledger.DocumentAssessmentStorageRuntimeTest' }
-    inputs.dir(hostAdmissionInventory)
-    inputs.files(configurations.assessmentHostRuntime)
+    inputs.dir(transportAdmissionInventory)
+    inputs.files(configurations.assessmentTransportRuntime)
     inputs.file(tasks.named('jar').flatMap { it.archiveFile })
     systemProperty 'protomolt.test.nativeStorage', 'rustfs'
     doFirst {
-        systemProperty 'protomolt.test.admissionRuntimeBundle', hostAdmissionInventory.get().asFile.absolutePath
+        systemProperty 'protomolt.test.admissionRuntimeBundle', transportAdmissionInventory.get().asFile.absolutePath
         systemProperty 'protomolt.test.storageHostClasspath', files(tasks.named('jar').get().archiveFile,
-                configurations.assessmentHostRuntime).asPath
+                configurations.assessmentTransportRuntime).asPath
     }
     useJUnitPlatform()
 }

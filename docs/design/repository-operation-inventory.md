@@ -5996,3 +5996,40 @@ DATA_LOSS for corrupt required retained content, RESOURCE_EXHAUSTED for host/res
 bounds, and CANCELLED/DEADLINE_EXCEEDED for interrupted work. Unsupported capability
 is not mounted (UNIMPLEMENTED), never a successful raw fallback. Internal failures
 must be sanitized; cancellation and uncertainty never imply a successful response.
+
+### Explicit selected-read gRPC adapter
+
+**Implemented explicit adapter; no automatic managed-host mount:**
+`DocumentHistoryMaterializationGrpcService` takes the optional repository SPI,
+authoritative caller bindings, host work limits, response budget and call bound.
+Each client limit is capped by the host. Captured address and revision now travel
+from the same pinned plan through the SQL/SPI view, so the adapter can reject a
+wrong-revision result instead of merely echoing the request.
+
+`DocumentHistoricalResponseVerifier` reuses the canonical evidence/metadata codecs
+and descriptor binding checks. It verifies request identity, full root/path digests,
+exact descriptor and metadata identities, complete descriptor imports, reference
+association and final Any URL/value size/digest. It does not authenticate compiler
+claims, independently establish source retention, or issue a new validation verdict.
+
+The adapter measures the serialized response, refuses more than 8 MiB, reserves
+space before making an independent snapshot and accounts for verification scratch.
+Parsed heap still needs the host's bounded call concurrency. Current READ is checked
+again before delivery; denial also suppresses verification failures. Snapshot
+reservations are released only after producer completion and transport termination.
+
+The production-JAR PostgreSQL/LocalStack gate now exercises this adapter through
+real in-process gRPC over the same provider-backed repository. Cases cover success,
+unauthenticated requests, cross-account denial, malformed requests, a deliberately
+misbound revision, malformed metadata after a real read, current revocation and a
+lower client fragment limit. The response budget drains after transport shutdown.
+
+The composed correctness host has its own admission inventory derived from the
+same resolved service graph. Combining two separately resolved graphs previously
+failed class-shadow attestation on Gson; that check remains intact. Performance
+hosts and published module dependencies are unchanged.
+
+Before managed-host exposure, finish held-send cancellation/callback races, deadline
+and aggregate response-limit qualification, full malformed-response cases, explicit
+host wiring and the remote client. This checkpoint is not complete transport
+conformance or a deployment/performance claim.
