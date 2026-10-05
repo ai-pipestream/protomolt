@@ -20,7 +20,7 @@ public final class AssessmentOperationReplayProbe {
         var valid = ObservedAssessmentProbe.asset(StringValue.getDescriptor());
         var invalid = ObservedAssessmentProbe.invalidSchema();
         var current = policy;
-        for (int scenario = 0; scenario < 4; scenario++) {
+        for (int scenario = 0; scenario < 5; scenario++) {
             var caller = new RepositoryCaller("principal", true);
             var a = ObservedAssessmentProbe.member("a"); var b = ObservedAssessmentProbe.member("b");
             var intent = DocumentPublicationIntent.newBuilder().setEncodingVersion(1).setAccountId("account")
@@ -30,8 +30,10 @@ public final class AssessmentOperationReplayProbe {
                             .setGraphId("replay-" + UUID.randomUUID()))));
             if (scenario == 1) intent.clearMembers().addAllMembers(rejectionTargets);
             var command = new DocumentPublicationCommand(intent.build());
-            var owner = new RepositoryOperationLedger(tx).admit(new RepositoryOperationLedger.Key("account", "principal", command.operationId()),
-                    command, UUID.randomUUID(), scenario == 1 ? Duration.ofSeconds(60) : Duration.ofMinutes(5)).owner().orElseThrow();
+            var key = new RepositoryOperationLedger.Key("account", "principal", command.operationId());
+            var budget = new PayloadBudget(128_000_000);
+            var modes = Map.of("a", DocumentPublicationCandidate.Mode.TYPED, "b", scenario == 0
+                    ? DocumentPublicationCandidate.Mode.OPAQUE : DocumentPublicationCandidate.Mode.TYPED);
             new ManagedBackendLedger(tx).bind("assessment-s3", provider.profile());
             var placements = new HashMap<UUID,DocumentUploadPlan.Placement>();
             var attempts = new HashMap<String,UUID>();
@@ -44,7 +46,21 @@ public final class AssessmentOperationReplayProbe {
                 placements.put(drive.driveId, DocumentUploadPlan.Placement.sample(drive, "assessment-s3", provider.profile()));
                 attempts.put(member.getMemberId(), UUID.randomUUID());
             }
-            var prepared = DocumentOperationUploadAdmission.prepare(command, placements, attempts, Duration.ofMinutes(5));
+            final RepositoryOperationLedger.Owner owner;
+            final DocumentOperationUploadAdmission.Prepared prepared;
+            if (scenario == 4) {
+                var seeds = DocumentPublicationSeeds.mint(key, command);
+                var saved = new DocumentPublicationPreparationRecord(key, command, seeds, placements, Duration.ofMinutes(5), 0);
+                var claim = new RepositoryExecutionClaimLedger(tx).acquire(key, command, UUID.randomUUID(), Duration.ofMinutes(5));
+                new DocumentPublicationPreparationJournal(tx, budget).save(caller, claim, saved, RepositoryReadControl.NONE);
+                new DocumentPublicationModesJournal(tx, budget).bind(caller, claim, 0, modes, RepositoryReadControl.NONE);
+                owner = new RepositoryOperationLedger(tx).admit(key, command, seeds.ownerNonce(), Duration.ofMinutes(5), claim).owner().orElseThrow();
+                prepared = saved.prepare();
+            } else {
+                owner = new RepositoryOperationLedger(tx).admit(key, command, UUID.randomUUID(),
+                        scenario == 1 ? Duration.ofSeconds(60) : Duration.ofMinutes(5)).owner().orElseThrow();
+                prepared = DocumentOperationUploadAdmission.prepare(command, placements, attempts, Duration.ofMinutes(5));
+            }
             var admitted = new DocumentOperationUploadAdmission(tx, drives).admit(caller, owner, prepared);
             var selected = new HashMap<String,DocumentSelectedAttemptLedger.Selected>();
             for (var member : prepared.plan().members()) {
@@ -59,16 +75,14 @@ public final class AssessmentOperationReplayProbe {
                             object.contentType(), measured.version(), measured.etag());
                 }).toList());
             }
-            var budget = new PayloadBudget(128_000_000);
             String expectedFirst = scenario == 0 ? null : scenario == 2 ? "b" : "a";
             int mode = scenario;
             DocumentAssessmentCreation.Created stage;
             var recordedRuntime = observation.identity(() -> {});
             try (var assessment = DocumentPublicationAssessment.prepare(command, current,
-                    Map.of("a", DocumentPublicationCandidate.Mode.TYPED, "b", scenario == 0
-                            ? DocumentPublicationCandidate.Mode.OPAQUE : DocumentPublicationCandidate.Mode.TYPED),
+                    modes,
                     fragments, Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())),
-                    (member, occurrence) -> mode == 1 || mode == 3 || (mode == 2 && member.getMemberId().equals("b")) ? invalid : valid,
+                    (member, occurrence) -> mode == 1 || mode >= 3 || (mode == 2 && member.getMemberId().equals("b")) ? invalid : valid,
                     budget, LIMITS, Instant.now(), () -> {})) {
                 require(Objects.equals(assessment.failure().map(failure -> failure.member()).orElse(null), expectedFirst),
                         "fixture has expected first failure");
@@ -76,6 +90,8 @@ public final class AssessmentOperationReplayProbe {
                         "both typed members actually fail");
                 stage = assessment.withRetentionEvidence(owner, observation, () -> {}, evidence -> {
                     new RepositorySchemaArtifacts(tx).stage(owner, command, List.copyOf(evidence.artifacts(() -> {}).values()), () -> {});
+                    if (mode == 4) return JournaledAssessmentProbe.createWithLostAcknowledgment(tx, database, caller, owner,
+                            command, prepared, selected, evidence, budget);
                     return new DocumentAssessmentCreation(tx, drives).create(caller, owner, prepared, selected, evidence, UUID.randomUUID(),
                             Instant.now().plusSeconds(mode == 2 ? 20 : 300).truncatedTo(java.time.temporal.ChronoUnit.MICROS), budget, () -> {});
                 });
@@ -138,6 +154,7 @@ public final class AssessmentOperationReplayProbe {
             require(outcomes == 0, "replay grants no terminal decision");
             current = AssessmentRejectionProbe.run(tx, database, provider, caller, owner, command,
                     DocumentAssessmentRetainedSlots.uploadSelections(selected), stage, current, observation, scenario);
+            if (scenario == 4) System.out.println("JOURNALED_ASSESSMENT_DECISION_OK");
             if (scenario == 1) {
                 var file = java.nio.file.Path.of(System.getenv("PROTOMOLT_TEST_RESTART_REQUEST") + ".rejected");
                 java.nio.file.Files.createFile(file, java.nio.file.attribute.PosixFilePermissions.asFileAttribute(

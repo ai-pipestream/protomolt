@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.container.ledger.DocumentAssessmentStorageRuntimeTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-05T20:59:20.080Z" hostname="krick" time="130.175">
+  <properties/>
+  <testcase name="observedAssessmentAndSqlRunTogetherOnProductionJars()" classname="ai.protomolt.proto.repo.container.ledger.DocumentAssessmentStorageRuntimeTest" time="130.168"/>
+  <system-out><![CDATA[NATIVE_STORAGE_BACKEND=rustfs image=rustfs/rustfs:1.0.0-beta.11-preview.1 image_id=sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
+]]></system-out>
+  <system-err><![CDATA[Note: /tmp/junit-27758037699306937/AssessmentCreationProbe.java uses unchecked or unsafe operations.
+Note: Recompile with -Xlint:unchecked for details.
+[Test worker] INFO org.testcontainers.images.PullPolicy - Image pull policy will be performed by: DefaultPullPolicy()
+[Test worker] INFO org.testcontainers.utility.ImageNameSubstitutor - Image name substitution will be performed by: DefaultImageNameSubstitutor (composite of 'ConfigurationFileImageNameSubstitutor' and 'PrefixingImageNameSubstitutor')
+[Test worker] INFO org.testcontainers.DockerClientFactory - Testcontainers version: 2.0.5
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Loaded org.testcontainers.dockerclient.UnixSocketClientProviderStrategy from ~/.testcontainers.properties, will try it first
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Found Docker environment with local Unix socket (unix:///var/run/docker.sock)
+[Test worker] INFO org.testcontainers.DockerClientFactory - Docker host IP address is localhost
+[Test worker] INFO org.testcontainers.DockerClientFactory - Connected to docker: 
+  Server Version: 29.8.1
+  API Version: 1.56
+  Operating System: Ubuntu 26.04.1 LTS
+  Total Memory: 124142 MB
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Creating container for image: testcontainers/ryuk:0.14.0
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 is starting: 335627ecc66f07b779be5c65a6122da09d44a47cd2b72f467c3c85cccb558499
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 started in PT0.356968646S
+[Test worker] INFO org.testcontainers.utility.RyukResourceReaper - Ryuk started - will monitor and terminate Testcontainers containers on JVM exit
+[Test worker] INFO org.testcontainers.DockerClientFactory - Checking the system...
+[Test worker] INFO org.testcontainers.DockerClientFactory - ✔︎ Docker server version should be at least 1.6.0
+[Test worker] INFO tc.postgres:18-alpine - Creating container for image: postgres:18-alpine
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine is starting: 460a4117d4b30d08605e879b45b7eb3cd68fb7610c99527ef41f8dcae01142e6
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine started in PT1.007808534S
+[Test worker] INFO tc.postgres:18-alpine - Container is started (JDBC URL: jdbc:postgresql://localhost:49140/test?loggerLevel=OFF)
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Creating container for image: rustfs/rustfs:1.0.0-beta.11-preview.1
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Container rustfs/rustfs:1.0.0-beta.11-preview.1 is starting: c5b162b7f3baffdea2b1f89a89175c7ed8bc4a517c1d24f540cce3d46ecf5bad
+[Test worker] INFO org.testcontainers.containers.wait.strategy.HttpWaitStrategy - /jovial_wilson: Waiting for 60 seconds for URL: http://localhost:49141/health (where port 49141 maps to container port 9000)
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Container rustfs/rustfs:1.0.0-beta.11-preview.1 started in PT0.281005078S
+]]></system-err>
+</testsuite>

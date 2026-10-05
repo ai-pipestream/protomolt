@@ -320,3 +320,37 @@ the original owner to remain live, so it does not adopt a predecessor's assessme
 under a new generation. Automatic session restoration, SQL fixed-mode consumption
 guards, successful retained-evidence integration, late provider effects and the
 forced-process-crash qualification remain open before recovery activation.
+
+### Journaled provider assessment qualification
+
+The production-JAR fixture now has a separate journaled scenario, preserving the
+existing short-lease and restart cases. It saves preparation and fixed modes before
+claimed owner admission, builds upload attempts from the saved seeds, and uploads
+real provider bytes. It commits the sticky start before invoking real assessment
+creation. A JDBC wrapper delegates the actual COMMIT, then raises SQL state 08006
+to withhold its acknowledgment. Fresh journal/discovery helpers recover the exact
+coordinates, selected attempts and one sealed stage without retrying CREATE. The
+existing retained replay and terminal rejection path checks exact receipt identity.
+
+This fixture is same-process reconciliation under the original live claim/owner,
+not writer death, claim transfer or automatic session restoration. Its trusted
+process caller does not establish current ACL enforcement for a scoped client.
+It does not claim zero additional provider reads or reload the entire preparation
+as a new host would. Run evidence is recorded separately after qualification.
+
+Another activation prerequisite is explicit mode consumption: the current fixture
+passes the same mode map to V82 and assessment preparation, but V83 checks only
+coordinates/command/owner, not equality with observed assessment modes. Before
+restored sessions can execute, load and compare the retained V82 map at the owned
+preparation/staging boundary and reject a mismatch before artifacts or stage writes.
+Add a deliberately mismatched-mode fixture; SQL mode-dependent mutation guards
+and the hard-crash/late-provider-effect requirements remain open.
+
+The journaled provider fixture passed both LocalStack and RustFS correctness gates;
+see `docs/evidence/repository/2026-10-05-journaled-assessment/`. The next activation
+change must also distinguish an intentionally unjournaled operation from a partially
+journaled one. V79 supports claim-only primitives, so a claim alone does not declare
+journal activation. An exact V81 preparation is the current durable signal: when
+it exists, absent V82 modes must refuse owner admission and assessment CREATE.
+V83 currently uses mode-row presence as the discriminator, allowing that partial
+state to reach the legacy path. Close this gap in SQL and shared Java creation.

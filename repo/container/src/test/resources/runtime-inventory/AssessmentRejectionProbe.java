@@ -40,7 +40,7 @@ public final class AssessmentRejectionProbe {
                         () -> new DocumentAssessmentRejections(tx, Duration.ofDays(1)).decide(caller, owner, command, verified, RepositoryReadControl.NONE));
                 expect(RepositoryException.Code.CANCELLED,
                         () -> gate.decide(caller, owner, command, verified, control(() -> true)));
-                var wrong = new RepositoryOperationLedger.Owner(owner.key(), owner.generation(), UUID.randomUUID(), owner.leaseUntil());
+                var wrong = new RepositoryOperationLedger.Owner(owner.key(), owner.generation(), UUID.randomUUID(), owner.leaseUntil(), owner.executionClaim());
                 try {
                     gate.decide(caller, wrong, command, verified, RepositoryReadControl.NONE);
                     throw new AssertionError("Wrong owner nonce was accepted");
@@ -233,6 +233,13 @@ public final class AssessmentRejectionProbe {
 
     private static javax.sql.DataSource faultAfterDecisionCommit(javax.sql.DataSource delegate, int fault,
             AtomicBoolean fired, AtomicBoolean cancelled) {
+        return faultAfterCommit(delegate, fault, fired, cancelled, "INSERT INTO repository_operation_rejection");
+    }
+    static javax.sql.DataSource faultAfterAssessmentCommit(javax.sql.DataSource delegate, AtomicBoolean fired) {
+        return faultAfterCommit(delegate, 1, fired, new AtomicBoolean(), "INSERT INTO document_assessment_owners");
+    }
+    private static javax.sql.DataSource faultAfterCommit(javax.sql.DataSource delegate, int fault,
+            AtomicBoolean fired, AtomicBoolean cancelled, String insert) {
         return (javax.sql.DataSource) java.lang.reflect.Proxy.newProxyInstance(javax.sql.DataSource.class.getClassLoader(),
                 new Class<?>[]{javax.sql.DataSource.class}, (proxy, method, args) -> {
                     Object value = invoke(delegate, method, args);
@@ -243,7 +250,7 @@ public final class AssessmentRejectionProbe {
                             new Class<?>[]{java.sql.Connection.class}, (p, operation, parameters) -> {
                                 Object result = invoke(connection, operation, parameters);
                                 if (operation.getName().equals("prepareStatement") && parameters[0] instanceof String sql
-                                        && sql.contains("INSERT INTO repository_operation_rejection")) {
+                                        && sql.contains(insert)) {
                                     decision.set(true);
                                     if (fault == -1) return java.lang.reflect.Proxy.newProxyInstance(java.sql.PreparedStatement.class.getClassLoader(),
                                             new Class<?>[]{java.sql.PreparedStatement.class}, (s, action, values) -> {
@@ -253,7 +260,7 @@ public final class AssessmentRejectionProbe {
                                             });
                                 }
                                 if (operation.getName().equals("commit") && decision.get() && fault != -1 && fired.compareAndSet(false, true)) {
-                                    if (fault == 1) throw new java.sql.SQLException("Injected rejection commit acknowledgement loss", "08006");
+                                    if (fault == 1) throw new java.sql.SQLException("Injected commit acknowledgement loss", "08006");
                                     cancelled.set(true);
                                 }
                                 return result;

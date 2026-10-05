@@ -36,7 +36,7 @@ class DocumentAssessmentStorageRuntimeTest {
         String classpath = String.join(java.io.File.pathSeparator, jars.values().stream().map(Path::toString).toList());
         var classes = Files.createDirectory(directory.resolve("classes"));
         var sources = new ArrayList<String>();
-        for (String name : List.of("ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentCaptureFaultProbe", "AssessmentProviderProbe", "AssessmentMixedReuseProbe", "AssessmentReplayInputsProbe", "AssessmentOperationReplayProbe", "AssessmentRejectionProbe", "AssessmentStorageProbe", "AssessmentRestartProbe", "RejectedAssessmentRestartProbe", "RejectedAssessmentExpiryProbe", "RejectedAssessmentSourceProbe", "NativeAssessmentPreparationProbe", "PromotedAssessmentCommitProbe", "AssessmentStageFaultProbe", "NativeAssessmentExecutionProbe", "NativeAssessmentRestartProbe", "NativeAssessmentRuntimeProbe", "NativeSchemaRevisionProbe", "NativeHistoricalMaterializationProbe", "NativeHistoricalMaterializationTransportProbe", "NativeHistoricalMaterializationLifecycleProbe")) {
+        for (String name : List.of("ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentCaptureFaultProbe", "AssessmentProviderProbe", "AssessmentMixedReuseProbe", "AssessmentReplayInputsProbe", "AssessmentOperationReplayProbe", "JournaledAssessmentProbe", "AssessmentRejectionProbe", "AssessmentStorageProbe", "AssessmentRestartProbe", "RejectedAssessmentRestartProbe", "RejectedAssessmentExpiryProbe", "RejectedAssessmentSourceProbe", "NativeAssessmentPreparationProbe", "PromotedAssessmentCommitProbe", "AssessmentStageFaultProbe", "NativeAssessmentExecutionProbe", "NativeAssessmentRestartProbe", "NativeAssessmentRuntimeProbe", "NativeSchemaRevisionProbe", "NativeHistoricalMaterializationProbe", "NativeHistoricalMaterializationTransportProbe", "NativeHistoricalMaterializationLifecycleProbe")) {
             var source = directory.resolve(name + ".java");
             try (var input = getClass().getResourceAsStream("/runtime-inventory/" + name + ".java")) {
                 assertThat(input).isNotNull(); Files.copy(input, source);
@@ -86,6 +86,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 assertThat(result).contains("ASSESSMENT_SOURCE_ADVANCED_OK");
                 assertThat(result).contains("ASSESSMENT_REPLAY_INPUTS_OK");
                 assertThat(result).contains("ASSESSMENT_OPERATION_REPLAY_OK");
+                assertThat(result).contains("JOURNALED_ASSESSMENT_COMMIT_RECOVERY_OK", "JOURNALED_ASSESSMENT_DECISION_OK");
                 assertThat(result).contains("ASSESSMENT_POLICY_ADVANCEMENT_REPLAY_OK");
                 assertThat(result).contains("ASSESSMENT_MIXED_REPLAY_OK");
                 assertThat(result).contains("ASSESSMENT_REPLAY_CANCELLED_DELIVERY_OK");
