@@ -59,12 +59,21 @@ features available. Recovery is one workstream, not the whole goal.
    An internal process-authority session now registers claim, preparation and
    modes before admitting a claimed owner, with lost-acknowledgment tests at all
    four stages. Ordinary runtime creation is still unchanged. Before enabling it,
-   qualify the registered session through actual provider staging and preserve
-   scoped request authorization separately from private journal authority. The
+   preserve scoped request authorization separately from private journal authority. The
    execution stage now uses the durable assessment-start marker for journaled
    sessions and commits it before CREATE; ambiguous marker acknowledgment leaves
    local staging sticky. Specify retention and
    cleanup for registered commands that later fail policy or ACL checks.
+   Registered sessions now pass the real-provider acceptance/rejection matrix,
+   including CREATE rollback and lost CREATE/decision acknowledgments. Separate
+   a host-owned journal capability from the actual scoped caller for V82/V83;
+   keep bootstrap/readCommand process-only. Preflight current destination/source
+   access before new registration, and repeat authoritative checks at mutation.
+   Before any possible journal commit a denial may discard the in-memory entry;
+   afterward retain its exact identity for authorized retry or explicit cleanup.
+   Scoped creation of a truly absent destination is currently rejected by replay
+   authorization; resolve that policy explicitly, without widening journal access
+   into a document-creation grant.
 5. **Restore, pruning and backup.** Test retained schema/content reachability,
    active read and pending-operation pins, current ACLs and failure recovery.
    Restore publishes through the same concurrency and validation boundaries;

@@ -18,8 +18,9 @@ import javax.sql.DataSource;
 public final class NativeAssessmentExecutionProbe {
     static void run(Tx observer, DataSource database, AssessmentProviderProbe provider,
             AssessmentMixedReuseProbe.Source source, DocumentAssessmentRuntimeObserver.Observation observation) throws Exception {
-        for (int scenario : new int[]{1, 2, 3, 4, 5, 0}) {
-            int mode = scenario; // accepted, invalid, stage lost ACK, stage rollback, decision lost ACK, fresh-process recovery
+        for (int scenario : new int[]{1, 2, 3, 4, 5, 11, 12, 13, 14, 10}) {
+            boolean journaled = scenario >= 10;
+            int mode = scenario % 10; // accepted, invalid, stage lost ACK, stage rollback, decision lost ACK, fresh-process recovery
             var member = source.candidate();
             if (mode == 0) {
                 // Update an actual versioned publication, not the legacy authorization-only seed row.
@@ -38,8 +39,9 @@ public final class NativeAssessmentExecutionProbe {
                 var budget = new PayloadBudget(128_000_000); var payload = new PayloadBudget(16_000_000);
                 var limits = new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000);
                 var reads = new DocumentReadLedger(tx, UUID.randomUUID(), 1);
-                var session = new DocumentPublicationSession(tx, caller, command,
-                        Map.of(source.placement().drive().id(), source.placement()), Duration.ofMinutes(5));
+                var placements = Map.of(source.placement().drive().id(), source.placement());
+                var session = journaled ? DocumentPublicationSession.journaled(tx, caller, command, placements, Duration.ofMinutes(5), budget)
+                        : new DocumentPublicationSession(tx, caller, command, placements, Duration.ofMinutes(5));
                 var bodies = new HashMap<DocumentUploadPayloads.Key, PartObject>();
                 for (int ordinal = 0; ordinal < source.candidate().getPartsCount(); ordinal++) {
                     var part = source.candidate().getParts(ordinal);
@@ -96,6 +98,14 @@ public final class NativeAssessmentExecutionProbe {
                         require(repeated instanceof DocumentPublicationReplay.Terminated, "retained rejection or terminal replay");
                         var receipt = ((DocumentPublicationReplay.Terminated) repeated).receipt();
                         require(receipt.hasAssessment(), "rejection binds original assessment");
+                        if (journaled) {
+                            var started = observer.readOnly(em -> (Object[]) em.createNativeQuery(
+                                    "SELECT assessment_id,(extract(epoch from retain_until)*1000000)::bigint FROM repository_publication_assessment_starts WHERE operation_id=:op")
+                                    .setParameter("op", command.operationId()).getSingleResult());
+                            require(receipt.getAssessment().getAssessmentId().equals(started[0].toString())
+                                    && receipt.getAssessment().getRetainUntilEpochMicros() == ((Number) started[1]).longValue(),
+                                    "receipt uses journaled assessment identity and deadline");
+                        }
                         if (first instanceof DocumentPublicationReplay.Terminated terminal)
                             require(terminal.receipt().equals(receipt), "exact rejection replay");
                     }
@@ -103,6 +113,18 @@ public final class NativeAssessmentExecutionProbe {
                             "SELECT count(*) FROM document_assessment_owners WHERE operation_id=:op")
                             .setParameter("op", command.operationId()).getSingleResult()).longValue());
                     require(stages == (mode == 0 || mode == 3 ? 0 : 1), "no second stage after uncertain creation");
+                    if (journaled) {
+                        for (var table : List.of("repository_execution_claims", "repository_publication_preparations", "repository_publication_modes")) {
+                            long rows = observer.readOnly(em -> ((Number) em.createNativeQuery(
+                                    "SELECT count(*) FROM " + table + " WHERE operation_id=:op")
+                                    .setParameter("op", command.operationId()).getSingleResult()).longValue());
+                            require(rows == 1, "registered execution retains exact " + table);
+                        }
+                        long starts = observer.readOnly(em -> ((Number) em.createNativeQuery(
+                                "SELECT count(*) FROM repository_publication_assessment_starts WHERE operation_id=:op")
+                                .setParameter("op", command.operationId()).getSingleResult()).longValue());
+                        require(starts == (mode == 0 ? 0 : 1), "journal marker is sticky even when CREATE rolls back");
+                    }
                     require(resolverCalls.get() == 1, "no second schema resolution");
                     reader.close(); require(reader.awaitIdle(Duration.ofSeconds(5)), "reader drained");
                     reads.releaseDrained(1);
