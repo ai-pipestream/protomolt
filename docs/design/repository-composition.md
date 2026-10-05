@@ -5351,14 +5351,30 @@ sessions and their byte reservations drain. The expanded production-JAR gate pas
 against real PostgreSQL and versioned LocalStack. No production change was needed
 for these authorization cases.
 
-Native integration must begin inside `DocumentPublicationPreparation`, while the
-uploaded selections and protected source inputs are still owned. Its current
-`DocumentPublicationCandidate.prepare` path throws on invalid admission; catching
-that exception after preparation unwinds is not retained rejection evidence. The
-next change must return an owned accepted-or-assessed outcome, preserve the existing
-success fences, and keep cancellation, missing definitions, provider failures and
-capacity refusal distinct from a reproducible validation failure. Do not run a
-second mutable registry resolution to reconstruct a rejected candidate.
+Native preparation now has an internal `assess` branch alongside the existing
+successful-candidate `prepare` branch. Both share upload coordination and protected
+input capture. `assess` returns an owned whole-candidate assessment and immutable
+upload selections after borrowed input batches close. Evaluation time is explicit.
+The result can retain a genuine value failure; operational and structural failures
+still propagate without a verdict. Neither branch catches a generic admission
+exception to manufacture rejection evidence, nor runs a second registry resolution
+to reconstruct that evidence. The existing successful commit path is unchanged.
+
+The production-JAR fixture exercises this branch with real PostgreSQL, versioned
+LocalStack uploads and retained source reads. Accepted and invalid assessments
+survive borrowed-input closure and caller-buffer mutation with one resolver pass;
+resolver failure and cancellation release reservations and source pins without
+creating a decision. The invalid native assessment also passes the retained
+source-authorization rejection cases above. The runtime fixture and five focused
+publication-precondition tests pass. These are correctness tests, not storage
+latency measurements; performance qualification uses RustFS.
+
+An all-valid assessment is still not an admission Proof. Promotion must independently
+check its owned roots, schema references and artifact bytes through a budgeted
+admission bridge before building the existing schema batch. The public unbudgeted
+`DocumentSchemaAdmission.check` overload is not an acceptable production shortcut.
+This promotion, an explicit accepted-or-assessed execution outcome, and the native
+decision integration remain unfinished; no application path selects `assess` yet.
 
 The host must explicitly configure evidence retention, the minimum remaining
 decision window and the observed validation runtime. Invalid evidence must be

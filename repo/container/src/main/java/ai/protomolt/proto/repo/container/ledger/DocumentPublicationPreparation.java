@@ -7,6 +7,7 @@ import ai.protomolt.proto.repo.codec.PartObject;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryReadControl;
 import com.google.protobuf.InvalidProtocolBufferException;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -47,6 +48,30 @@ final class DocumentPublicationPreparation {
         }
     }
 
+    /** Owns the complete assessment, including invalid values; grants no publication or rejection authority. */
+    static final class Assessed implements AutoCloseable {
+        private DocumentPublicationAssessment assessment;
+        private Map<String, DocumentSelectedAttemptLedger.Selected> selections;
+        private Assessed(DocumentPublicationAssessment assessment,
+                Map<String, DocumentSelectedAttemptLedger.Selected> selections) {
+            this.assessment = assessment; this.selections = Map.copyOf(selections);
+        }
+        synchronized DocumentPublicationAssessment assessment() { requireOpen(); return assessment; }
+        synchronized Map<String, DocumentSelectedAttemptLedger.Selected> selections() { requireOpen(); return selections; }
+        private void requireOpen() {
+            if (assessment == null) throw new IllegalStateException("Publication assessment preparation is closed");
+        }
+        @Override public synchronized void close() {
+            if (assessment == null) return;
+            assessment.close(); assessment = null; selections = Map.of();
+        }
+    }
+
+    @FunctionalInterface private interface OwnedPreparation<T extends AutoCloseable> {
+        T create(DocumentPublicationInputs inputs, Map<String, DocumentSelectedAttemptLedger.Selected> selections,
+                RepositoryReadControl control) throws InvalidProtocolBufferException;
+    }
+
     private final DocumentUploadCoordinator uploads;
     private final DocumentRetainedReader retained;
     private final PayloadBudget budget;
@@ -66,7 +91,41 @@ final class DocumentPublicationPreparation {
             DocumentOperationUploadAdmission.Prepared plan, Map<DocumentUploadPayloads.Key, PartObject> bodies,
             Map<String, String> attributes, DocumentReadLedger.PinnedPlan pinned, Admission admission,
             RepositoryReadControl control) throws InvalidProtocolBufferException {
-        Objects.requireNonNull(admission); Objects.requireNonNull(pinned); Objects.requireNonNull(control).check();
+        Objects.requireNonNull(admission);
+        return prepareOwned(caller, owner, plan, bodies, attributes, pinned, control, (inputs, selections, active) -> {
+            var candidate = DocumentPublicationCandidate.prepare(plan.plan().command(), admission.policy(),
+                    admission.modes(), inputs.fragments(), admission.container(), admission.resolver(),
+                    budget, admission.opaqueLimits(), active::check);
+            try { return new Prepared(candidate, selections); }
+            catch (RuntimeException | Error failure) { candidate.close(); throw failure; }
+        });
+    }
+
+    /**
+     * Assess once while upload and retained-source inputs are still owned. The
+     * returned scope owns copied fragments and schema evidence after those inputs
+     * close. The caller must separately stage, replay and fence any terminal
+     * decision; operational and structural failures propagate without a verdict.
+     */
+    Assessed assess(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentOperationUploadAdmission.Prepared plan, Map<DocumentUploadPayloads.Key, PartObject> bodies,
+            Map<String, String> attributes, DocumentReadLedger.PinnedPlan pinned, Admission admission,
+            Instant evaluatedAt, RepositoryReadControl control) throws InvalidProtocolBufferException {
+        Objects.requireNonNull(admission); Objects.requireNonNull(evaluatedAt);
+        return prepareOwned(caller, owner, plan, bodies, attributes, pinned, control, (inputs, selections, active) -> {
+            var assessment = DocumentPublicationAssessment.prepare(plan.plan().command(), admission.policy(),
+                    admission.modes(), inputs.fragments(), admission.container(), admission.resolver(),
+                    budget, admission.opaqueLimits(), evaluatedAt, active::check);
+            try { return new Assessed(assessment, selections); }
+            catch (RuntimeException | Error failure) { assessment.close(); throw failure; }
+        });
+    }
+
+    private <T extends AutoCloseable> T prepareOwned(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentOperationUploadAdmission.Prepared plan, Map<DocumentUploadPayloads.Key, PartObject> bodies,
+            Map<String, String> attributes, DocumentReadLedger.PinnedPlan pinned, RepositoryReadControl control,
+            OwnedPreparation<T> preparation) throws InvalidProtocolBufferException {
+        Objects.requireNonNull(pinned); Objects.requireNonNull(control).check();
         try {
             return uploads.stageAndPrepareOwned(caller, owner, plan, bodies, attributes, control::check,
                 (staged, view, active) -> {
@@ -82,11 +141,7 @@ final class DocumentPublicationPreparation {
                     }
                     try (var inputs = DocumentPublicationInputs.capture(plan.plan().command(), owner, view, pinned,
                             retained, readControl)) {
-                        var candidate = DocumentPublicationCandidate.prepare(plan.plan().command(), admission.policy(),
-                                admission.modes(), inputs.fragments(), admission.container(), admission.resolver(),
-                                budget, admission.opaqueLimits(), readControl::check);
-                        try { return new Prepared(candidate, selections); }
-                        catch (RuntimeException | Error failure) { candidate.close(); throw failure; }
+                        return preparation.create(inputs, selections, readControl);
                     } catch (InvalidProtocolBufferException failure) {
                         throw new ParseFailure(failure);
                     }

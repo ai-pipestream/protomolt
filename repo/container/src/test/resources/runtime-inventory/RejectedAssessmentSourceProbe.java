@@ -1,13 +1,10 @@
 package ai.protomolt.proto.repo.container.ledger;
 
-import ai.protomolt.proto.repo.admission.*;
 import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
 import ai.protomolt.proto.repo.codec.DocumentRevisionAssembly;
 import ai.protomolt.proto.repo.engine.DocumentPartReader;
 import ai.protomolt.proto.repo.spi.*;
-import ai.protomolt.proto.repo.v1.Document;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -19,26 +16,7 @@ public final class RejectedAssessmentSourceProbe {
 
     static Candidate prepare(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
             DocumentSchemaPolicies.Selection policy, DocumentAssessmentRuntimeObserver.Observation observation) throws Exception {
-        var command = AssessmentMixedReuseProbe.command(source.candidate());
-        var owner = AssessmentMixedReuseProbe.owner(tx, command);
-        var uploaded = AssessmentMixedReuseProbe.upload(tx, provider, command, owner, source.placement(), source.fragments());
-        var budget = new PayloadBudget(64_000_000);
-        var invalid = ObservedAssessmentProbe.invalidSchema();
-        DocumentAssessmentCreation.Created retained;
-        try (var assessment = DocumentPublicationAssessment.prepare(command, policy,
-                Map.of("a", DocumentPublicationCandidate.Mode.TYPED), Map.of("a", source.fragments()),
-                Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())), (member, occurrence) -> invalid,
-                budget, LIMITS, Instant.now(), () -> {})) {
-            require(assessment.failure().isPresent(), "mixed candidate fails actual validator");
-            retained = assessment.withRetentionEvidence(owner, observation, () -> {}, evidence -> {
-                new RepositorySchemaArtifacts(tx).stage(owner, command, List.copyOf(evidence.artifacts(() -> {}).values()), () -> {});
-                return new DocumentAssessmentCreation(tx, new DriveLedger(tx)).create(new RepositoryCaller("principal", true),
-                        owner, uploaded.prepared(), uploaded.selected(), evidence, UUID.randomUUID(),
-                        Instant.now().plusSeconds(120).truncatedTo(java.time.temporal.ChronoUnit.MICROS), budget, () -> {});
-            });
-        }
-        require(budget.reservedBytes() == 0, "invalid mixed assessment closes its evidence");
-        return new Candidate(command, owner, DocumentAssessmentRetainedSlots.uploadSelections(uploaded.selected()), retained);
+        return NativeAssessmentPreparationProbe.run(tx, provider, source, policy, observation);
     }
 
     static void verify(Tx tx, AssessmentProviderProbe provider, UUID source, Candidate candidate,
