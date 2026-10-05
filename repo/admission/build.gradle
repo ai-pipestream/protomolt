@@ -12,7 +12,7 @@ dependencies {
 
 ext.forbiddenRuntimeModules = [
         'protomolt-repo-container', 'protomolt-repo-engine', 'protomolt-repo-service',
-        'protomolt-sources', 'protomolt-schema-registry',
+        'protomolt-sources', 'protomolt-registry', 'protomolt-repo-schema-registry',
         's3', 'jedis', 'hibernate-core', 'HikariCP', 'postgresql',
         'flyway-core', 'kafka-clients', 'grpc-netty-shaded', 'grpc-inprocess'
 ]

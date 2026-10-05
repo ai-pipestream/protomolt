@@ -1,5 +1,18 @@
 # Repository operation inventory
 
+## Registry adapter addition (2026-10-05)
+
+- **New Java composition:** `RegistrySchemaResolver.open` creates a bounded,
+  thread-confined attempt implementing the existing admission resolver. Every
+  occurrence invokes host-authorized selection before leased descriptor reuse.
+- **Reused:** `SchemaRegistryStore.descriptorSet`, `RepositorySchemaAsset`,
+  `DocumentSchemaAdmission.Selection`, `Definition` and owned proof creation.
+- **Unchanged:** protobuf services, names, field tags, Any URLs, publication
+  receipts and idempotency contracts. No registry adapter RPC is introduced.
+- **Unfinished:** managed-host selection/authorization wiring, shared concurrent
+  registry loads and fleet performance qualification. See the
+  [adapter guide](../../repo/schema/registry/README.md).
+
 Implementation baseline: `528117a2d48cda3b3abedadd75b5706d7ac68ca7`.
 Design: [repository composition](repository-composition.md).
 Architectural gate: [optional JCR 2.0 compatibility](repository-jcr-compatibility.md).

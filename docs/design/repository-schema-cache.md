@@ -11,6 +11,13 @@ their exact serialized size. Concurrent copies consume capacity independently.
 The adapter must compose artifact digests into the complete definition identity
 below, authorize selection, and hold all leases through its consumers' copies.
 
+The separate `repo/schema/registry` leaf now connects the existing store to the
+admission resolver. Its host supplies authorized metadata/source selection for
+each occurrence; a bounded attempt pins descriptors through admission's owned
+copies. Real Git fixtures cover missing artifacts, outage recovery, cancellation,
+context isolation and typed admission with a warm cache. This does not mount the
+adapter in managed repository services or coalesce concurrent registry calls.
+
 ## Existing seams
 
 `DocumentSchemaAdmission.Resolver.select(Selection)` already receives the member
