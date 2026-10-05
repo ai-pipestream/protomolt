@@ -5898,3 +5898,48 @@ required historical data loss from optional discovery absence, and keep result
 ownership until the last consumer releases it. Preserve must not load retained
 schemas. Registry/cache integration, custom JSON rendering, public read contracts,
 restore and pruning remain open; no implementation status is inferred for them.
+
+#### Retained typed-root materialization adapter
+
+`DocumentRetainedRootMaterialization` connects the internal decoder to the existing
+strict Document fragment inventory and full retained schema association reader.
+The host first authenticates the revision/part ordinal, verifies stored evidence
+through its canonical codec/digest checks, inventories the exact pinned fragment,
+and owns input/descriptor/result capacity. This adapter does not establish those
+host facts merely by accepting the corresponding objects.
+
+The adapter matches recorded root access coordinates and then the complete locator:
+slot, fragment identity, containing schema and layout. It uses the inventoried Any
+and recorded URL/value identity, rather than trusting a separately supplied payload.
+An access-first scan avoids repeated full inventory-membership scans on unrelated
+roots. CORE and PARSED root coordinates are supported by the existing inventory;
+opaque unknown-field fragments continue to use the raw-fragment path rather than
+being forced through strict typed inventory.
+
+Optional root decoding resolves the recorded full `Reference` through
+`DocumentRetainedSchemaAssets`, verifying canonical metadata, exact descriptor
+closure and any retained source association. Both artifact identity and the full
+schema condition must match the recorded boundary. Missing/corrupt required assets,
+wrong locator/value identity and malformed retained typed payloads are data loss.
+Configured payload refusal remains a resource outcome, and resolver/control
+exceptions propagate without being mistaken for a value-identity failure.
+Malformed parsed evidence violates the canonical-evidence input precondition;
+its shape errors are not remapped by this adapter. The host must classify failure
+of the stored evidence codec separately.
+
+Preserving an already inventoried typed root loads no Any schema assets. It does
+not verify their current durability or confer a validation verdict. Raw-fragment
+preservation remains the zero-schema path for arbitrary opaque content. Locating
+a nested Any requires parent decoding; nested selection must not promise zero
+schema lookup. The next separate path walker must check each recorded boundary,
+field/index/map transition and duplicate-key ambiguity before selecting a child.
+
+Eight file-backed retained-root tests and the complete 193-test admission suite
+passed. Fresh readers load exact metadata/descriptors with no registry; deletion
+and byte corruption fail while preserve performs zero asset reads. Tests cover
+CORE and PARSED selection, full schema/reference mismatch, malformed payload versus
+capacity, and host/storage exception identity. These are internal adapter results,
+not PostgreSQL ownership, process-restart, public transport or deployment proof.
+See `docs/evidence/repository/2026-10-05-retained-root-materialization/README.md`.
+The SQL read host, owned delivery result, nested traversal and public read contract
+integration remain open. No existing read operation changes behavior in this slice.

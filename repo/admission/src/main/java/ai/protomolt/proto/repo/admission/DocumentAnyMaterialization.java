@@ -24,6 +24,10 @@ final class DocumentAnyMaterialization {
     private DocumentAnyMaterialization() {}
 
     enum Mode { PRESERVE, MATERIALIZE_IF_AVAILABLE }
+    /** The supplied envelope does not match its selected value identity. */
+    static final class IdentityMismatch extends IllegalArgumentException {
+        IdentityMismatch(String message) { super(message); }
+    }
     enum Reason {
         DEFINITION_MISSING, AMBIGUOUS, ACCESS_DENIED, LOOKUP_UNAVAILABLE,
         CORRUPT_DEFINITION, MALFORMED_PAYLOAD, RESOURCE_LIMIT
@@ -84,11 +88,11 @@ final class DocumentAnyMaterialization {
         active.run();
         if (!original.getTypeUrl().equals(occurrence.typeUrl())
                 || original.getValue().size() != occurrence.valueSizeBytes())
-            throw new IllegalArgumentException("Any differs from selected URL or value size");
+            throw new IdentityMismatch("Any differs from selected URL or value size");
         if (original.getValue().size() > limits.maxValueBytes())
             return deliver(new Failed(original, occurrence, Failure.of(Reason.RESOURCE_LIMIT)), active);
         if (!digest(original, active).equals(occurrence.valueSha256()))
-            throw new IllegalArgumentException("Any differs from selected value digest");
+            throw new IdentityMismatch("Any differs from selected value digest");
         if (mode == Mode.PRESERVE) return deliver(new Preserved(original, occurrence), active);
 
         var lookup = Objects.requireNonNull(resolver.resolve(occurrence), "resolver returned null");

@@ -5855,3 +5855,13 @@ verdict. The host still authenticates document paths, resolves retained referenc
 owns memory/lifetime and enforces access. No RPC, registry adapter, cache or
 historical optional-mode operation is enabled. Sixteen decoder cases and the full
 185-test admission suite passed, with the existing runtime dependency gate.
+
+### Retained typed-root decoding adapter
+
+**New internal adapter, unchanged public operations:** root selection now connects
+strict CORE/PARSED fragment inventory, recorded root identity, exact retained
+schema association and optional decoding. Preserve reads no payload schema assets;
+required historical asset loss and typed value inconsistency fail explicitly.
+The host still verifies stored evidence, authorization, physical revision ordinal
+and ownership lifetime. Eight file-backed tests and all 193 admission tests pass;
+SQL-host/public transport integration and nested traversal remain pending.
