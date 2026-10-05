@@ -59,7 +59,10 @@ class DocumentReadReconciliationIT {
                     assertThatThrownBy(() -> ledger.captureHistorical(ADMIN, published.getAddress(), revision))
                             .hasStackTraceContaining("Injected lost SQL commit acknowledgment");
                     assertThat(armed).isFalse();
-                    assertThat(ledger.outstandingReads()).isZero(); // no handle was returned
+                    assertThat(ledger.outstandingReads()).isEqualTo(1); // uncertain commit still owns capacity
+                    assertThat(ledger.releaseDrained(1)).isZero(); // absence cannot prove rollback while active
+                    assertThatThrownBy(() -> ledger.captureHistorical(ADMIN, published.getAddress(), revision))
+                            .hasMessageContaining("capacity exhausted");
                     assertThat(count(c, "document_read_pins")).isEqualTo(2); // commit really happened
                 } else {
                     var read = ledger.captureHistorical(ADMIN, published.getAddress(), revision);
@@ -74,7 +77,7 @@ class DocumentReadReconciliationIT {
                 ledger.fence(); ledger.attestLocalQuiescence();
                 assertThat(recovery.recoverBatch(incarnation, 10)).isEqualTo(operation.equals("capture") ? 2 : 0);
                 assertThat(recovery.recoverBatch(incarnation, 10)).isZero();
-                assertThat(ledger.reconcileDrained(1)).isEqualTo(operation.equals("capture") ? 0 : 1);
+                assertThat(ledger.reconcileDrained(1)).isEqualTo(1);
                 assertThat(ledger.outstandingReads()).isZero();
                 assertThat(count(c, "document_read_pins")).isZero();
             }

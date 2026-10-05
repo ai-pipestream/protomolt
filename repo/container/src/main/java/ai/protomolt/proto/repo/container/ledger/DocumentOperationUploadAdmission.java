@@ -72,20 +72,27 @@ final class DocumentOperationUploadAdmission {
     /** Capture exact retained reads without creating attempts or claiming fresh upload selection. */
     DocumentRetainedReadPlan captureRetainedReads(RepositoryCaller caller,
             RepositoryOperationLedger.Owner owner, Prepared prepared) {
-        return captureReads(caller, owner, prepared, null, null).plan();
+        return captureReads(caller, owner, prepared, null, null, ignored -> {}).plan();
     }
 
     /** Durable whole-plan protection; no host/provider read lifetime is activated by this handle. */
     DocumentReadPins.Captured<DocumentRetainedReadPlan> capturePinnedReads(RepositoryCaller caller,
             RepositoryOperationLedger.Owner owner, Prepared prepared, UUID reader) {
+        return capturePinnedReads(caller, owner, prepared, reader, ignored -> {});
+    }
+
+    DocumentReadPins.Captured<DocumentRetainedReadPlan> capturePinnedReads(RepositoryCaller caller,
+            RepositoryOperationLedger.Owner owner, Prepared prepared, UUID reader,
+            java.util.function.Consumer<DocumentReadPins.Captured<DocumentRetainedReadPlan>> beforeCommit) {
         Objects.requireNonNull(reader);
         Objects.requireNonNull(prepared);
         var pins = DocumentReadPins.prepare(prepared.plan.command());
-        return captureReads(caller, owner, prepared, reader, pins);
+        return captureReads(caller, owner, prepared, reader, pins, Objects.requireNonNull(beforeCommit));
     }
 
     private DocumentReadPins.Captured<DocumentRetainedReadPlan> captureReads(RepositoryCaller caller,
-            RepositoryOperationLedger.Owner owner, Prepared prepared, UUID reader, DocumentReadPins.Prepared pins) {
+            RepositoryOperationLedger.Owner owner, Prepared prepared, UUID reader, DocumentReadPins.Prepared pins,
+            java.util.function.Consumer<DocumentReadPins.Captured<DocumentRetainedReadPlan>> beforeCommit) {
         Objects.requireNonNull(owner); Objects.requireNonNull(prepared);
         var command = prepared.plan.command();
         DocumentAdmissionAuthorization.requireCaller(caller, owner, command.intent().getAccountId());
@@ -104,6 +111,7 @@ final class DocumentOperationUploadAdmission {
             em.createNativeQuery("SELECT require_repository_operation_write_fence(:account,:principal,:operation,:generation)")
                     .setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())
                     .setParameter("operation", owner.key().operationId()).setParameter("generation", owner.generation()).getSingleResult();
+            beforeCommit.accept(protectedReads);
             return protectedReads;
         });
     }

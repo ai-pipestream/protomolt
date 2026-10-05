@@ -4528,10 +4528,14 @@ empty. V73 exact release, or exact recovery after durable quiescence, resolves t
 ticket. Quiesced discovery must include assessment sessions as well as document
 pins before shutdown can report all durable protection reconciled.
 
-The existing document capture and historical-capture exception paths also call
-failedCapture unconditionally. They return no provider handle on failure, but an
-ambiguous committed pin can then remain outside local outstanding-capacity
-accounting until quiesced discovery. Remediating those paths is required before
-claiming that the shared reader capacity bounds uncertain admissions. Keep this
-as an explicit implementation item alongside assessment capture; do not copy the
-exception accounting into the new path.
+Document capture and historical capture now preserve their exact prepared pin
+set locally before the transaction helper attempts commit. If the call then
+fails, the ledger retains a private closed handle and its outstanding capacity;
+no provider handle escapes. Normal release skips this uncertain capture. After
+durable quiescence, discovery and exact confirmation retire the handle. Failures
+before the final prepared-set handoff cannot reach commit and return capacity.
+The prior unconditional failedCapture path could leave committed pins outside
+local accounting after a lost acknowledgement; real JDBC post-commit fault tests
+cover historical and reuse capture. This conservatively retains capacity even
+for a commit-time rollback until quiescence establishes the outcome. Assessment
+capture still requires its own V73 identity integration and shutdown discovery.

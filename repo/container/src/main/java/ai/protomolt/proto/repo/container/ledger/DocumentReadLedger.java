@@ -49,14 +49,15 @@ public final class DocumentReadLedger {
     PinnedPlan capture(DocumentOperationUploadAdmission admission, RepositoryCaller caller,
             RepositoryOperationLedger.Owner owner, DocumentOperationUploadAdmission.Prepared prepared) {
         beginCapture();
+        var pending = new java.util.concurrent.atomic.AtomicReference<DocumentReadPins.Captured<DocumentRetainedReadPlan>>();
         boolean handedOff = false;
         try {
-            var result = new PinnedPlan(admission.capturePinnedReads(caller, owner, prepared, incarnation));
+            var result = new PinnedPlan(admission.capturePinnedReads(caller, owner, prepared, incarnation, pending::set));
             register(result);
             handedOff = true;
             return result;
         } finally {
-            if (!handedOff) failedCapture();
+            if (!handedOff) finishFailedCapture(pending.get());
         }
     }
 
@@ -68,6 +69,7 @@ public final class DocumentReadLedger {
             ai.protomolt.proto.repo.v1.NodeAddress address, UUID revision) {
         Objects.requireNonNull(address); Objects.requireNonNull(revision);
         beginCapture();
+        var pending = new java.util.concurrent.atomic.AtomicReference<DocumentReadPins.Captured<DocumentHistoricalReadPlan>>();
         boolean handedOff = false;
         try {
             var captured = tx.inTransaction(em -> {
@@ -75,14 +77,16 @@ public final class DocumentReadLedger {
                         .setParameter("reader", incarnation).getSingleResult();
                 DocumentAdmissionAuthorization.authorizeHistory(em, caller, address);
                 var plan = DocumentHistoricalReadRows.capture(em, address, revision);
-                return DocumentReadPins.acquireHistorical(em, plan, incarnation);
+                var protectedRead = DocumentReadPins.acquireHistorical(em, plan, incarnation);
+                pending.set(protectedRead);
+                return protectedRead;
             });
             var result = new PinnedHistory(captured, caller);
             register(result);
             handedOff = true;
             return result;
         } finally {
-            if (!handedOff) failedCapture();
+            if (!handedOff) finishFailedCapture(pending.get());
         }
     }
 
@@ -99,6 +103,14 @@ public final class DocumentReadLedger {
 
     private void failedCapture() {
         synchronized (lifetime) { outstandingReads--; activeLifetimes--; lifetime.notifyAll(); }
+    }
+
+    /** No provider use escaped; keep exact identities if commit may have been attempted. */
+    private <P> void finishFailedCapture(DocumentReadProtection<P> pending) {
+        if (pending == null) { failedCapture(); return; }
+        var retained = new PinnedRead<>(pending, true) {};
+        register(retained);
+        retained.close();
     }
 
     private void register(PinnedRead<?> read) {
@@ -283,13 +295,18 @@ public final class DocumentReadLedger {
     /** Shared ownership of a ledger-issued plan; only this ledger can create handles. */
     public abstract class PinnedRead<P> implements AutoCloseable {
         private final DocumentReadProtection<P> captured;
+        private final boolean uncertainCapture;
         private final CountDownLatch drained = new CountDownLatch(1);
         private final Object releaseLock = new Object();
         private int uses;
         private boolean closed;
         private boolean released;
 
-        private PinnedRead(DocumentReadProtection<P> captured) { this.captured = captured; }
+        private PinnedRead(DocumentReadProtection<P> captured) { this(captured, false); }
+        private PinnedRead(DocumentReadProtection<P> captured, boolean uncertainCapture) {
+            this.captured = captured;
+            this.uncertainCapture = uncertainCapture;
+        }
 
         public Use use() {
             synchronized (lifetime) {
@@ -336,6 +353,9 @@ public final class DocumentReadLedger {
             if (!isDrained()) throw new IllegalStateException("Read plan must be closed and drained before release");
             synchronized (releaseLock) {
                 if (released) return false;
+                // A failed commit acknowledgment is not permission to treat missing
+                // pins as released while the original transaction could still finish.
+                if (uncertainCapture && completion == Completion.RELEASE) return false;
                 switch (completion) {
                     case RELEASE -> captured.release(tx);
                     case RECOVER -> captured.recover(tx);

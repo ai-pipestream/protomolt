@@ -663,6 +663,36 @@ class DocumentOperationUploadAdmissionIT {
         assertThat(readPins(reader)).isZero();
     }
 
+    @Test void lostReuseCaptureAcknowledgmentRetainsCapacityUntilQuiescedRecovery() {
+        var f = fixture(0);
+        var prepared = f.prepare();
+        var armed = new java.util.concurrent.atomic.AtomicBoolean();
+        var source = DocumentJdbcFaults.afterCommit(database.dataSource(), () -> {
+            if (armed.compareAndSet(true, false)) throw new java.sql.SQLException("Lost reuse capture acknowledgment", "08006");
+        });
+        try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
+            var uncertainTx = new Tx(emf);
+            UUID reader = UUID.randomUUID();
+            var ledger = new DocumentReadLedger(uncertainTx, reader, 1);
+            var captures = new DocumentOperationUploadAdmission(uncertainTx, new DriveLedger(uncertainTx));
+            armed.set(true);
+            assertThatThrownBy(() -> ledger.capture(captures, SCOPED, f.owner, prepared))
+                    .hasStackTraceContaining("Lost reuse capture acknowledgment");
+            assertThat(armed).isFalse();
+            assertThat(readPins(reader)).isEqualTo(1);
+            assertThat(ledger.outstandingReads()).isEqualTo(1);
+            assertThat(ledger.releaseDrained(1)).isZero();
+            assertThatThrownBy(() -> ledger.capture(captures, SCOPED, f.owner, prepared))
+                    .hasMessageContaining("capacity exhausted");
+            ledger.fence(); ledger.attestLocalQuiescence();
+            assertThat(new DocumentReadRecovery(tx).recoverBatch(reader, 10)).isEqualTo(1);
+            assertThat(ledger.reconcileDrained(1)).isEqualTo(1);
+            assertThat(ledger.outstandingReads()).isZero();
+            assertThat(readPins(reader)).isZero();
+        }
+    }
+
     @Test void capturedPinRecoveryUsesTheDurableQuiescenceGate() {
         var f = fixture(0); UUID reader = activeReader();
         var captured = admission.capturePinnedReads(SCOPED, f.owner, f.prepare(), reader);
