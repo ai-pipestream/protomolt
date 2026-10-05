@@ -31,6 +31,7 @@ public final class AssessmentCreationProbe {
                         .setMaxDecodedBytes(1_000_000)).build(), () -> {});
         var active = new DocumentSchemaPolicies(tx).activate(policy, 0, () -> {});
         AssessmentMixedReuseProbe.run(tx, provider, mixedSource, active, observation);
+        AssessmentOperationReplayProbe.run(tx, provider, active, observation);
         for (int scenario : new int[]{0, 2, 1}) {
             boolean invalid = scenario == 1;
             boolean afterScope = scenario == 2;

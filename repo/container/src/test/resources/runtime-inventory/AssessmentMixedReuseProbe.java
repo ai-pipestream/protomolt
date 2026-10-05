@@ -126,6 +126,7 @@ public final class AssessmentMixedReuseProbe {
         var selections = DocumentAssessmentRetainedSlots.uploadSelections(uploaded.selected());
         AssessmentReplayInputsProbe.run(tx, owner, command, selections, retained, source.node(), active.policy().sha256());
         provider.verifyReads(tx, owner, command, selections, retained, budget, Map.of("a", source.fragments()), source.node());
+        AssessmentOperationReplayProbe.verifyMixed(tx, provider, owner, command, selections, retained, source.node(), observation);
         require(budget.reservedBytes() == 0, "mixed capture releases verification memory");
         long publications = tx.readOnly(em -> ((Number) em.createNativeQuery(
                 "SELECT count(*) FROM document_revision_commits WHERE operation_id=:op")

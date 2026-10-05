@@ -4741,8 +4741,8 @@ failure in a later member after an earlier success, proving canonical first-fail
 selection without inventing verdicts for unrecorded members. The result-returning
 member method has tests for accepted, rejected and time-dependent values, each
 missing/corrupt retained asset and reader cancellation after the original assessment
-closes. Operation aggregation and integration with provider fragments are not
-implemented or exposed as a public API yet.
+closes. Operation replay now has an internal adapter, described below; it is not
+exposed as a public API or terminal decision handler.
 
 DocumentAssessmentReplayInputs implements the internal owned SQL input scope.
 PinnedAssessment supplies its captured command and a new Use, and delivery is
@@ -4767,3 +4767,26 @@ reauthorization attempt; thread interruption is preserved. No registry resolver
 is supplied to the loader. These checks qualify loading, not
 operation-level historical revalidation or semantic-review authority. Its SQL
 round trips and decoding costs still require performance measurement.
+
+DocumentAssessmentReplay combines the owned input scope with the assessment reader
+port. It verifies all typed/opaque modes against the retained policy before provider
+I/O, reserves private fragment copies and consumes one member batch at a time. It
+reproduces every typed member, including members after the first failure, and
+checks opaque assembly without claiming typed validity. Canonical command order
+selects the first value failure; the full failure identity must equal the retained
+manifest. Stored runtime provenance and currently observed replay runtime remain
+separate in the returned diagnostic identity. Delivery authorization precedes the
+final runtime-context check and return. Detailed failures are reauthorized, while
+cancellation/deadline responses remain generic. No success, rejection or review
+authority is written or inferred.
+
+The production-JAR fixture exercises accepted typed/opaque members, two typed
+failures, and a later failure after an earlier success. Caller input order is
+reversed, while every member is read in canonical order. All original assessment
+scopes close before replay. A separate mixed-source case revalidates the original
+retained fragments after source advancement and a newer provider version, without
+any registry resolver. Revocation after a real provider batch has already passed
+the reader's delivery gate must still suppress the replay result and injected
+private failure. Resources drain after each case. Current-policy advancement,
+additional replay fault interleavings and performance measurements remain required
+before broader host integration.
