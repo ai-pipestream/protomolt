@@ -4741,5 +4741,29 @@ failure in a later member after an earlier success, proving canonical first-fail
 selection without inventing verdicts for unrecorded members. The result-returning
 member method has tests for accepted, rejected and time-dependent values, each
 missing/corrupt retained asset and reader cancellation after the original assessment
-closes. The repository loading and operation aggregation adapter is not implemented
-or exposed as a public API yet.
+closes. Operation aggregation and integration with provider fragments are not
+implemented or exposed as a public API yet.
+
+DocumentAssessmentReplayInputs implements the internal owned SQL input scope.
+PinnedAssessment supplies its captured command and a new Use, and delivery is
+authorized before loading and before returning the scope. The loader reads bounded
+sizes before blobs, reserves JDBC/protobuf copy space, checks byte hashes, then
+checks the complete manifest member/root/artifact sets. Manifest, policy and root
+decoding run after their SQL reads return. Canonical root decoding also verifies
+the stored locator digest and slot against the evidence and command. The original
+policy is selected by account and immutable digest. Closing the scope clears its
+snapshot, releases reservations and ends the Use. Snapshot bytes are borrowed;
+callers must finish using them before closing, just as for provider batches.
+
+The production-JAR probe loads this scope after the original assessment closes and
+the source publishes new content. It checks retained session ownership after the
+capture handle closes, byte-budget refusal, cancellation and thread interruption after reservation, source
+revocation during loading and released resources on each failure. A disposable
+PostgreSQL-only corruption fixture changes one root locator after capture, expects
+DATA_LOSS, and restores that exact row. It temporarily bypasses triggers only in
+the two test transactions using SET LOCAL; this is not a repository write path.
+Cancellation/deadline failures return generic errors without an additional SQL
+reauthorization attempt; thread interruption is preserved. No registry resolver
+is supplied to the loader. These checks qualify loading, not
+operation-level historical revalidation or semantic-review authority. Its SQL
+round trips and decoding costs still require performance measurement.

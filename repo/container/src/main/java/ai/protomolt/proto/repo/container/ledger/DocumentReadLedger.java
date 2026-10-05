@@ -291,6 +291,12 @@ public final class DocumentReadLedger {
             DocumentAssessmentDeliveryAuthorization.check(tx, caller, owner, command, assessment, control);
             use.plan(); // Refuse delivery if the caller ended its lifetime while SQL waited.
         }
+
+        /** Internal owned evidence scope; provider fragments and replay remain separate. */
+        DocumentAssessmentReplayInputs loadReplayInputs(ai.protomolt.proto.repo.blob.spi.PayloadBudget budget,
+                ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
+            return DocumentAssessmentReplayInputs.load(tx, this, command, budget, control);
+        }
     }
 
     public final class PinnedHistory extends PinnedRead<DocumentHistoricalReadPlan> {

@@ -75,6 +75,23 @@ class DocumentSchemaAssessmentReplayTest {
         }
     }
 
+    @Test void retainedRootInspectionChecksCanonicalBytesAndRecoversLocatorIdentity() throws Exception {
+        var captured = capture("false");
+        var encoded = captured.request().candidate().evidence().get(0).getFirst();
+        var budget = new Reservations();
+        var decoded = DocumentSchemaAdmission.decodeRootEvidence(0, encoded, budget, () -> {});
+        assertThat(decoded.locatorSha256()).isEqualTo(DocumentSchemaRootCodec.encode(decoded.locator(), () -> {}).sha256());
+        assertThat(decoded.locator().getSlot()).isEqualTo(captured.request().candidate().member().getParts(0).getSlot());
+        assertThat(decoded.encoded()).isEqualTo(encoded);
+        assertThat(budget.live).isZero();
+        assertThat(budget.peak).isPositive();
+        var corrupt = new DocumentSchemaAdmission.EncodedEvidence(encoded.codec(), encoded.version(),
+                ByteString.copyFromUtf8("corrupt"), encoded.sha256());
+        assertThatThrownBy(() -> DocumentSchemaAdmission.decodeRootEvidence(0, corrupt, budget, () -> {}))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(budget.live).isZero();
+    }
+
     @Test void recordedTimeAndExpectedVerdictAreBothRequired() throws Exception {
         var captured = capture("now == timestamp('2000-01-01T00:00:00Z')");
         var budget = new Reservations();

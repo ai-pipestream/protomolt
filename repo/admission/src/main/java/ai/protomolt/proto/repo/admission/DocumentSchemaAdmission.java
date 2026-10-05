@@ -109,6 +109,23 @@ public final class DocumentSchemaAdmission {
     public record RootEvidence(int ordinal, DocumentSchemaRootLocator locator, String locatorSha256,
                                EncodedEvidence encoded) {}
 
+    /**
+     * Decode canonical evidence and recover its locator identity. The supplied ordinal
+     * is not authenticated here; the repository must bind it and the locator to the
+     * retained slot. This performs no candidate validation or registry lookup.
+     * Encoded bytes and parsed heap remain caller-owned; scratch is reserved and closed.
+     */
+    public static RootEvidence decodeRootEvidence(int ordinal, EncodedEvidence encoded,
+            DocumentAdmissionReservations reservations, Runnable control) throws InvalidProtocolBufferException {
+        if (ordinal < 0 || ordinal >= 10000) throw new IllegalArgumentException("Evidence ordinal outside member bound");
+        Objects.requireNonNull(encoded); Objects.requireNonNull(reservations); Objects.requireNonNull(control);
+        var evidence = DocumentRootSchemaEvidenceCodec.decode(encoded.codec(), encoded.version(), encoded.bytes(),
+                encoded.sha256(), reservations, control);
+        try (var locator = DocumentSchemaEvidenceCodec.encodeOwned(evidence.getRoot(), reservations, control)) {
+            return new RootEvidence(ordinal, evidence.getRoot(), locator.value().sha256(), encoded);
+        }
+    }
+
     /** Complete definition from the host's authorized registry/compiler, never executable code. */
     public record Definition(RepositorySchemaAsset metadata, ByteString descriptors, Optional<ByteString> source) {
         public Definition { Objects.requireNonNull(metadata); Objects.requireNonNull(descriptors); Objects.requireNonNull(source); }

@@ -124,6 +124,7 @@ public final class AssessmentMixedReuseProbe {
                 && ((Number) slot[3]).intValue() == source.sourceOrdinal() + 1, "exact original source and shifted ordinal");
         advanceSource(tx, provider, source, active);
         var selections = DocumentAssessmentRetainedSlots.uploadSelections(uploaded.selected());
+        AssessmentReplayInputsProbe.run(tx, owner, command, selections, retained, source.node(), active.policy().sha256());
         provider.verifyReads(tx, owner, command, selections, retained, budget, Map.of("a", source.fragments()), source.node());
         require(budget.reservedBytes() == 0, "mixed capture releases verification memory");
         long publications = tx.readOnly(em -> ((Number) em.createNativeQuery(
