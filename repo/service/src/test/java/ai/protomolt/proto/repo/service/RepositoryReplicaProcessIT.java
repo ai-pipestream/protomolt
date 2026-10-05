@@ -52,7 +52,7 @@ class RepositoryReplicaProcessIT {
                 assertCompetingRevisions(writer, survivor, request.toBuilder().setAddress(
                         address.toBuilder().setEntryId("contended")).build());
                 assertStats(survivor, 2, 3);
-                killWriterBlockedBeforeCommit(first, writer, request, saved);
+                var abandoned = killWriterBlockedBeforeCommit(first, writer, request, saved);
                 assertThat(first.process().isAlive()).isFalse();
                 var replay = survivor.withDeadlineAfter(20, TimeUnit.SECONDS).putEntry(request);
                 assertThat(replay.getEntryUuid()).isEqualTo(saved.getEntryUuid());
@@ -70,6 +70,11 @@ class RepositoryReplicaProcessIT {
                         GetEntryRequest.newBuilder().setAddress(address).setVersion(saved.getVersion()).build());
                 assertThat(read.getRenditions(0).getData()).isEqualTo(payload);
                 assertStats(survivor, 2, 4);
+                awaitPhysicalCleanup(abandoned, second);
+                var retainedAfterCleanup = survivor.withDeadlineAfter(20, TimeUnit.SECONDS).getEntry(
+                        GetEntryRequest.newBuilder().setAddress(address).setVersion(saved.getVersion()).build());
+                assertThat(retainedAfterCleanup.getRenditions(0).getData()).isEqualTo(payload);
+                assertStats(survivor, 2, 4);
             } finally {
                 a.shutdownNow();
                 if (b != null) b.shutdownNow();
@@ -79,8 +84,43 @@ class RepositoryReplicaProcessIT {
         }
     }
 
-    private void killWriterBlockedBeforeCommit(Host host, ArchiveServiceGrpc.ArchiveServiceBlockingStub writer,
+    private record Abandoned(UUID objectId, String bucket, String key) {}
+
+    private void awaitPhysicalCleanup(Abandoned abandoned, Host survivor) throws Exception {
+        try (var store = software.amazon.awssdk.services.s3.S3Client.builder().endpointOverride(S3.getEndpoint())
+                .region(software.amazon.awssdk.regions.Region.of(S3.getRegion())).forcePathStyle(true)
+                .credentialsProvider(software.amazon.awssdk.auth.credentials.StaticCredentialsProvider.create(
+                        software.amazon.awssdk.auth.credentials.AwsBasicCredentials.create(S3.getAccessKey(), S3.getSecretKey()))).build();
+                var connection = java.sql.DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+                var query = connection.prepareStatement("SELECT state,lease_until<=clock_timestamp() FROM archive_object_uploads WHERE object_id=?")) {
+            var head = software.amazon.awssdk.services.s3.model.HeadObjectRequest.builder()
+                    .bucket(abandoned.bucket()).key(abandoned.key()).build();
+            assertThat(store.headObject(head).contentLength()).isPositive();
+            query.setObject(1, abandoned.objectId());
+            long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(6);
+            boolean deleted = false;
+            while (System.nanoTime() < deadline) {
+                assertThat(survivor.process().isAlive()).as("surviving recovery process").isTrue();
+                try (var result = query.executeQuery()) {
+                    assertThat(result.next()).isTrue();
+                    if ("DELETED".equals(result.getString(1))) {
+                        assertThat(result.getBoolean(2)).as("real database lease elapsed before cleanup").isTrue();
+                        deleted = true;
+                        break;
+                    }
+                }
+                Thread.sleep(1000);
+            }
+            assertThat(deleted).as("survivor reclaimed abandoned upload after its real five-minute lease").isTrue();
+            assertThatThrownBy(() -> store.headObject(head))
+                    .isInstanceOfSatisfying(software.amazon.awssdk.services.s3.model.S3Exception.class,
+                            failure -> assertThat(failure.statusCode()).isEqualTo(404));
+        }
+    }
+
+    private Abandoned killWriterBlockedBeforeCommit(Host host, ArchiveServiceGrpc.ArchiveServiceBlockingStub writer,
             PutEntryRequest original, PutEntryResponse saved) throws Exception {
+        Abandoned abandoned = null;
         try (var lock = java.sql.DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
             lock.setAutoCommit(false);
             try {
@@ -114,7 +154,7 @@ class RepositoryReplicaProcessIT {
                         }
                         assertThat(blocked).as("writer observed waiting on the held entry lock").isTrue();
                         try (var staged = observer.prepareStatement("""
-                                SELECT count(*) FROM archive_object_uploads u
+                                SELECT u.object_id,b.bucket,b.object_key FROM archive_object_uploads u
                                 JOIN archive_object_bindings b USING(object_id)
                                 WHERE b.entry_uuid=? AND u.state='VERIFIED' AND u.sha256=?
                                 AND NOT EXISTS(SELECT 1 FROM archive_version_object_refs r WHERE r.object_id=u.object_id)
@@ -124,7 +164,8 @@ class RepositoryReplicaProcessIT {
                                     .digest(candidate.getRenditions(0).getData().toByteArray())));
                             try (var result = staged.executeQuery()) {
                                 assertThat(result.next()).isTrue();
-                                assertThat(result.getLong(1)).as("uploaded candidate remains verified but unpublished").isEqualTo(1);
+                                abandoned = new Abandoned(result.getObject(1, UUID.class), result.getString(2), result.getString(3));
+                                assertThat(result.next()).as("exactly one verified unpublished candidate").isFalse();
                             }
                         }
                         host.close(); // No graceful hooks: the in-flight transaction loses its client process.
@@ -139,6 +180,7 @@ class RepositoryReplicaProcessIT {
                 }
             } finally { lock.rollback(); }
         }
+        return java.util.Objects.requireNonNull(abandoned);
     }
 
     private void assertStats(ArchiveServiceGrpc.ArchiveServiceBlockingStub stub, long entries, long versions) {

@@ -11,7 +11,8 @@ public final class ReplicaHostProcess {
         var config = new RepoServiceConfig(0,
                 new LedgerConfig(env.get("TEST_JDBC"), env.get("TEST_DB_USER"), env.get("TEST_DB_PASSWORD")),
                 env.get("TEST_S3_ENDPOINT"), env.get("TEST_S3_REGION"), env.get("TEST_S3_KEY"), env.get("TEST_S3_SECRET"),
-                "process-host", 0, null, null, null, null, 0, 0L)
+                "process-host", 0, null, null, null, null, 0, 0L,
+                true, 1000, 1000, false, true, 1000)
                 .withManagedStorage(new ManagedStoragePolicy("process-original", "process-realm", true));
         try (var host = RepoServices.build(config)) {
             var server = host.startNetty(0, env.get("TEST_API_TOKEN"), null);

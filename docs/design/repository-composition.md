@@ -1339,7 +1339,21 @@ terminates the writer, awaits process exit and an UNAVAILABLE RPC result, and
 releases the test lock. The survivor must still replay the old committed content,
 advance from its original version and read its retained bytes with exact version
 totals. This proves unpublished content does not become visible in that schedule.
-Reclamation of the abandoned physical upload remains a separate recovery test.
+The cleanup extension records the exact abandoned object's identity and original
+storage location, verifies its bytes exist with a real provider HEAD, and keeps
+the surviving process running through the unchanged five-minute upload lease.
+Only the test host's scan interval and minimum scheduling age are reduced to one
+second. No timestamp or state is rewritten. The surviving host must transition
+the unreferenced upload to DELETED after database lease expiry, the provider must
+return 404 for that exact object, and retained historical bytes and version counts
+must remain intact. This takes roughly five minutes and covers the qualified
+LocalStack S3 adapter; it is not evidence for every backend or for a provider write
+that continues after the writer process exits.
+
+The focused RepositoryReplicaProcessIT run passed in 5m16s with the real lease
+and surviving host recovery loop. Treat this as correctness evidence for this
+schedule, not operation latency: most of that wall time is the intentional
+five-minute eligibility wait.
 
 ### Upload verification evidence at the provider boundary
 
@@ -4503,3 +4517,21 @@ does not force the narrower commit-between-release-lookups schedule; that exact
 interleaving still needs a deterministic regression test. Permanent identity
 storage also needs growth measurements before production qualification; no
 unproven pruning rule is introduced here.
+
+Pending-capture integration must reserve an identity and outstanding-capacity
+ticket under the local lifetime lock before starting SQL. Successful admission
+attaches the verified plan; shutdown racing that handoff closes admission without
+exposing a new provider use. A capture whose Java call ended with unknown commit
+outcome can be locally drained while still consuming outstanding capacity. It
+cannot start provider work or retire its ticket merely because a row lookup is
+empty. V73 exact release, or exact recovery after durable quiescence, resolves the
+ticket. Quiesced discovery must include assessment sessions as well as document
+pins before shutdown can report all durable protection reconciled.
+
+The existing document capture and historical-capture exception paths also call
+failedCapture unconditionally. They return no provider handle on failure, but an
+ambiguous committed pin can then remain outside local outstanding-capacity
+accounting until quiesced discovery. Remediating those paths is required before
+claiming that the shared reader capacity bounds uncertain admissions. Keep this
+as an explicit implementation item alongside assessment capture; do not copy the
+exception accounting into the new path.
