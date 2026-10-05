@@ -157,13 +157,15 @@ final class DocumentAssessmentRetainedSlots {
                 """).setParameter("id", identity.assessment()).getSingleResult();
         if (((Number) counts[0]).longValue() != slots.size() || ((Number) counts[1]).longValue() != objects.size()
                 || ((Number) counts[2]).longValue() != objects.size()) throw conflict();
-        try (var readBudget = budget.reserve(2L * DocumentAssessmentSlotSnapshot.MAX_BYTES);
-             var expected = DocumentAssessmentSlotSnapshot.encode(identity, slots, budget, control)) {
+        // Reserve the exact expected payload before JDBC materializes it. The SQL
+        // projection refuses any other length, including a corrupt oversized row.
+        try (var expected = DocumentAssessmentSlotSnapshot.encode(identity, slots, budget, control);
+             var readBudget = budget.reserve(2L * expected.bytes().size())) {
             var snapshots = em.createNativeQuery("""
                     SELECT snapshot_codec,snapshot_version,
-                        CASE WHEN octet_length(snapshot_bytes)<=4194304 THEN snapshot_bytes END,encode(snapshot_sha256,'hex')
+                        CASE WHEN octet_length(snapshot_bytes)=:expectedLength THEN snapshot_bytes END,encode(snapshot_sha256,'hex')
                     FROM document_assessment_slot_snapshots WHERE assessment_id=:id
-                    """).setParameter("id", identity.assessment()).getResultList();
+                    """).setParameter("id", identity.assessment()).setParameter("expectedLength", expected.bytes().size()).getResultList();
             if (snapshots.size() != 1) throw conflict();
             var row = (Object[]) snapshots.getFirst();
             if (!DocumentAssessmentSlotSnapshot.CODEC.equals(row[0]) || ((Number) row[1]).intValue() != DocumentAssessmentSlotSnapshot.VERSION

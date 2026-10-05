@@ -6083,3 +6083,12 @@ reads and their joined callers have drained. Hosts close the resolver, close liv
 attempts, and obtain a successful drain before closing the borrowed registry store.
 The store must provide concurrent-safe, bounded reads with host-bound credentials.
 There are no protobuf changes and no managed-host activation in this change.
+
+### Exact retained slot snapshot read reservations
+
+**Unchanged operation, corrected resource accounting:** retained assessment slot
+verification reserves two copies of the exact canonical expected snapshot length.
+Its SQL projection refuses any other byte length before JDBC materialization;
+original identity, association, content and digest checks remain. No protobuf,
+publication semantics, payload capacity or authorization rules change. A real
+PostgreSQL small-budget regression and corruption cases accompany the fix.

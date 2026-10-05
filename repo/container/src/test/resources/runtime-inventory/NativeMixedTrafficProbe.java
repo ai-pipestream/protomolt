@@ -20,7 +20,7 @@ final class NativeMixedTrafficProbe {
     static void run(Tx tx, DataSource dataSource, Path root, String worker, OpenedBlobStore provider,
             ManagedBackendLedger.Profile profile) throws Exception {
         int clients = Integer.parseInt(System.getenv("PROTOMOLT_NATIVE_CLIENTS"));
-        if (clients < 1 || clients > 4) throw new IllegalArgumentException("Invalid client count");
+        if (clients < 1 || clients > 8) throw new IllegalArgumentException("Invalid client count");
         int requestedPool = Integer.parseInt(System.getenv("PROTOMOLT_NATIVE_POOL"));
         require(dataSource instanceof com.zaxxer.hikari.HikariDataSource, "actual Hikari source");
         var pool = (com.zaxxer.hikari.HikariDataSource) dataSource;

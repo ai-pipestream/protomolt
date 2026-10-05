@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.container.ledger.DocumentAssessmentSlotSnapshotTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-05T23:47:37.030Z" hostname="krick" time="0.145">
+  <properties/>
+  <testcase name="cancellationAfterAllocationReleasesReservation()" classname="ai.protomolt.proto.repo.container.ledger.DocumentAssessmentSlotSnapshotTest" time="0.045"/>
+  <testcase name="boundsMaximumSetAndRefusesBudgetBeforeEncoding()" classname="ai.protomolt.proto.repo.container.ledger.DocumentAssessmentSlotSnapshotTest" time="0.07"/>
+  <testcase name="deterministicOrderingAndOwnedLifetime()" classname="ai.protomolt.proto.repo.container.ledger.DocumentAssessmentSlotSnapshotTest" time="0.007"/>
+  <testcase name="rejectsDuplicatesMalformedAlternativesAndPrecision()" classname="ai.protomolt.proto.repo.container.ledger.DocumentAssessmentSlotSnapshotTest" time="0.001"/>
+  <testcase name="everySlotIdentityChangesDigest()" classname="ai.protomolt.proto.repo.container.ledger.DocumentAssessmentSlotSnapshotTest" time="0.001"/>
+  <testcase name="everyHeaderIdentityChangesDigest()" classname="ai.protomolt.proto.repo.container.ledger.DocumentAssessmentSlotSnapshotTest" time="0.001"/>
+  <testcase name="versionOneWireLayoutHasExplicitLengthsAndFullSourceOrdinal()" classname="ai.protomolt.proto.repo.container.ledger.DocumentAssessmentSlotSnapshotTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

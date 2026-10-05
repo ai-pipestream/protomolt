@@ -110,6 +110,39 @@ class DocumentAssessmentSlotsIT {
     private record Staged(List<DocumentAssessmentSlots.Slot> slots, DocumentAssessmentSlotSnapshot.Identity identity,
                           DocumentUploadPlan.Prepared plan, Map<String,DocumentSelectedAttemptLedger.Selected> selected) {}
 
+    @Test void smallRetainedSnapshotUsesItsActualByteBudget() throws Exception {
+        try (var c = DocumentNativePublicationFixture.context(POSTGRES)) {
+            var f = DocumentNativePublicationFixture.prepare(c, 1, true);
+            var retained = stage(c, f, f.command(), false);
+            verifyAuthorized(c, f, retained, CALLER, 20_000);
+        }
+    }
+
+    @Test void corruptedSnapshotLengthsAndBytesFailWithoutMaxSizeReservation() throws Exception {
+        try (var c = DocumentNativePublicationFixture.context(POSTGRES)) {
+            var f = DocumentNativePublicationFixture.prepare(c, 1, true);
+            var retained = stage(c, f, f.command(), false);
+            int originalSize = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT octet_length(snapshot_bytes) FROM document_assessment_slot_snapshots WHERE assessment_id=:id")
+                    .setParameter("id", retained.identity().assessment()).getSingleResult()).intValue());
+            for (int size : new int[] {1, 200_000, originalSize}) {
+                // Deliberate privileged corruption; normal SQL updates are forbidden.
+                c.tx().inTransaction(em -> {
+                    em.createNativeQuery("ALTER TABLE document_assessment_slot_snapshots DISABLE TRIGGER document_assessment_slot_snapshot_guard").executeUpdate();
+                    em.createNativeQuery("""
+                            UPDATE document_assessment_slot_snapshots
+                            SET snapshot_bytes=decode(repeat('ab',:size),'hex'),
+                                snapshot_sha256=sha256(decode(repeat('ab',:size),'hex'))
+                            WHERE assessment_id=:id
+                            """).setParameter("size", size).setParameter("id", retained.identity().assessment()).executeUpdate();
+                    em.createNativeQuery("ALTER TABLE document_assessment_slot_snapshots ENABLE TRIGGER document_assessment_slot_snapshot_guard").executeUpdate();
+                });
+                assertThatThrownBy(() -> verifyAuthorized(c, f, retained, CALLER, 20_000))
+                        .isInstanceOf(IllegalStateException.class).hasMessageContaining("original staging identity");
+            }
+        }
+    }
+
     @Test void revokedReadAccessPreventsRetainedAssociationDisclosure() throws Exception {
         try (var c = DocumentNativePublicationFixture.context(POSTGRES)) {
             var f = DocumentNativePublicationFixture.prepare(c, 2);
@@ -166,13 +199,18 @@ class DocumentAssessmentSlotsIT {
 
     private static void verifyAuthorized(DocumentNativePublicationFixture.Context c, DocumentNativePublicationFixture.Prepared f,
             Staged retained, RepositoryCaller caller) {
+        verifyAuthorized(c, f, retained, caller, 20_000_000);
+    }
+
+    private static void verifyAuthorized(DocumentNativePublicationFixture.Context c, DocumentNativePublicationFixture.Prepared f,
+            Staged retained, RepositoryCaller caller, long capacity) {
         c.tx().inTransaction(em -> {
             DocumentAdmissionAuthorization.requireCaller(caller, f.owner(), "account");
             RepositoryOperationLedger.fenceLiveOwner(em, f.owner());
             DocumentAdmissionAuthorization.authorizeRejection(em, caller, f.command());
             em.createNativeQuery("SELECT assessment_id FROM document_assessment_owners WHERE assessment_id=:id FOR UPDATE")
                     .setParameter("id", retained.identity().assessment()).getSingleResult();
-            var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(20_000_000);
+            var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(capacity);
             try { DocumentAssessmentRetainedSlots.verify(em, retained.identity(), retained.plan().command(), DocumentAssessmentRetainedSlots.uploadSelections(retained.selected()), budget, () -> {}); }
             finally { assertThat(budget.reservedBytes()).isZero(); }
         });

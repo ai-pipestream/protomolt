@@ -116,18 +116,21 @@ class NativeReplicaRuntimeTest {
     }
 
     private void benchmark(ProcessBuilder builder, String classpath, PostgreSQLContainer postgres) throws Exception {
+        int totalClients = Integer.parseInt(System.getProperty("protomolt.test.nativeBenchmarkClients", "4"));
+        if (totalClients != 4 && totalClients != 8)
+            throw new IllegalArgumentException("Benchmark client count must be 4 or 8");
         Path output = Path.of(System.getProperty("protomolt.test.nativeBenchmarkOutput")).resolve(java.util.UUID.randomUUID().toString());
         Files.createDirectories(output);
         Files.writeString(output.resolve("environment.txt"), "java=" + System.getProperty("java.version")
                 + "\nos=" + System.getProperty("os.name") + " " + System.getProperty("os.arch")
                 + "\nloadavg=" + Files.readString(Path.of("/proc/loadavg")).trim()
-                + "\nclients=4\nworker_heap_limit=512MiB\npayload=small typed StringValue\nNo host isolation or container CPU/memory limits; trusted internal Java path.\n");
+                + "\nclients=" + totalClients + "\nworker_heap_limit=512MiB\npayload=small typed StringValue\nNo host isolation or container CPU/memory limits; trusted internal Java path.\n");
         try (var sampler = new NativeTrafficSampler(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), output)) {
             var windows = new StringBuilder("window,replicas,pool_per_replica,clients_per_replica,operations,inclusive_nanos\n");
             int window = 0;
             for (String config : new String[] {"f1", "a4", "f2", "a1", "f4", "a2", "a2", "f4", "a1", "f2", "a4", "f1"}) {
                 String name = String.format(java.util.Locale.ROOT, "t%02d", window++);
-                int replicas = Integer.parseInt(config.substring(1)), clients = 4 / replicas;
+                int replicas = Integer.parseInt(config.substring(1)), clients = totalClients / replicas;
                 int pool = config.startsWith("f") ? 8 / replicas : 8;
                 builder.environment().put("PROTOMOLT_NATIVE_POOL", Integer.toString(pool));
                 builder.environment().put("PROTOMOLT_NATIVE_CLIENTS", Integer.toString(clients));
@@ -164,7 +167,7 @@ class NativeReplicaRuntimeTest {
                         if (!done) Thread.sleep(25);
                     } while (!done);
                     long elapsed = System.nanoTime() - start;
-                    sampler.finish(name);
+                    sampler.finish(name, totalClients);
                     Files.writeString(directory.resolve(name + ".release"), "release", java.nio.file.StandardOpenOption.CREATE_NEW);
                     for (int index = 0; index < replicas; index++) {
                         var process = children.get(index);
@@ -192,7 +195,7 @@ class NativeReplicaRuntimeTest {
                         }
                     }
                     windows.append(name).append(',').append(replicas).append(',').append(pool).append(',').append(clients)
-                            .append(",128,").append(elapsed).append('\n');
+                            .append(',').append(32L * totalClients).append(',').append(elapsed).append('\n');
                     Files.writeString(output.resolve("windows.csv"), windows);
                 } catch (Exception | Error failure) { primary = failure; throw failure; }
                 finally { stopChildren(children, primary); }

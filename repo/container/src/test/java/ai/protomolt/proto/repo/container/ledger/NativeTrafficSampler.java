@@ -70,7 +70,7 @@ final class NativeTrafficSampler implements AutoCloseable {
         }
         Files.writeString(output.resolve(name + "-rss.csv"), rss, StandardOpenOption.APPEND);
     }
-    void finish(String name) throws Exception {
+    void finish(String name, int clients) throws Exception {
         var csv = new StringBuilder("query_id,calls,total_exec_ms,rows\n");
         try (var statement = connection.createStatement()) {
             statement.setQueryTimeout(5);
@@ -93,9 +93,9 @@ final class NativeTrafficSampler implements AutoCloseable {
             try (var row = statement.executeQuery("SELECT (SELECT count(*) FROM documents), (SELECT count(*) FROM document_revision_commits), (SELECT count(*) FROM repository_operation_rejection)")) {
                 if (!row.next()) throw new IllegalStateException("Missing final counts");
                 long docs = row.getLong(1) - baseline[0], revisions = row.getLong(2) - baseline[1], rejections = row.getLong(3) - baseline[2];
-                if (docs != 48 || revisions != 48 || rejections != 16)
-                    throw new AssertionError("Measured durable counts differ: " + docs + "," + revisions + "," + rejections);
                 Files.writeString(output.resolve(name + "-durable-delta.csv"), "documents,revisions,rejections\n" + docs + "," + revisions + "," + rejections + "\n");
+                if (docs != 12L * clients || revisions != 12L * clients || rejections != 4L * clients)
+                    throw new AssertionError("Measured durable counts differ: " + docs + "," + revisions + "," + rejections);
             }
         }
     }

@@ -36,6 +36,18 @@ features available. Recovery is one workstream, not the whole goal.
    abandoned load capacity through provider completion. Next select
    the authenticated registry context in managed-host composition. Keep provider
    timeout/allocation and shutdown ownership explicit at that boundary.
+   `ManagedDocumentServices` owns a native runtime, but the managed publication
+   accessor is package-private and no publication RPC is mounted. Add explicit
+   optional schema-scope composition there without presenting it as a public write
+   API. Keep the registry adapter outside `repo/service`; host-selected scopes
+   capture the actual caller and member and authorize every occurrence. Host
+   shutdown must reject new scopes, quiesce publication, and drain abandoned
+   registry workers before closing the borrowed registry store. A drain timeout
+   retains those resources for another drain attempt. Validate configuration
+   before registering readers. Qualify this with real PostgreSQL/LocalStack/Git,
+   typed/opaque/replay paths and a held registry read during shutdown. Public
+   publication activation additionally needs the scoped authorization and durable
+   session work below; schema wiring is not a document-creation grant.
    Establish tenant/security scope, exact schema identity, bounded ownership,
    eviction, concurrent lookup and cancellation before sharing cached entries.
    Test equal type URLs with different occurrence definitions, registry outage,
@@ -47,8 +59,12 @@ features available. Recovery is one workstream, not the whole goal.
    boundaries. Use RustFS for local performance and LocalStack for S3 correctness;
    record correctness parity separately from timings. Increase offered load in
    the existing multi-JVM benchmark, retaining latency distributions, pool sizes,
-   provider failures and database contention. The four-client measurement showed
-   no replica speedup; it is not a saturation or scale-out result.
+   provider failures and database contention. The four- and eight-client measurements
+   showed no replica speedup; neither is a saturation or scale-out result. Eight
+   clients exposed maximum-size slot-snapshot over-reservation, now fixed with
+   exact-size reservation and a SQL length gate. The complete repeated workload
+   passed without increasing its 128 MB payload budget. Review the remaining
+   maximum-size manifest reservations before increasing concurrency further.
 
 ## Work gated by publication and retention guarantees
 
