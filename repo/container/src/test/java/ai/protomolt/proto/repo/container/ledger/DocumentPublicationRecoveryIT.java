@@ -97,6 +97,69 @@ class DocumentPublicationRecoveryIT {
                 failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.UNAVAILABLE));
     }
 
+    @Test void runtimeShutdownRetainsResourcesUntilCommittedRecoveryAcknowledgmentReturns() throws Exception {
+        try (var c = context(POSTGRES)) {
+            var input = input(c);
+            expire(c, input);
+            var ledger = new RepositoryOperationLedger(c.tx());
+            var entered = new CountDownLatch(1);
+            var release = new CountDownLatch(1);
+            var armed = new AtomicBoolean();
+            var source = DocumentJdbcFaults.afterCommit(c.pool(), () -> {
+                if (armed.get() && ledger.find(input.key()).orElseThrow().generation() == 2
+                        && armed.compareAndSet(true, false)) {
+                    entered.countDown();
+                    try {
+                        if (!release.await(10, TimeUnit.SECONDS)) throw new java.sql.SQLException("Runtime shutdown gate timed out");
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new java.sql.SQLException("Runtime shutdown gate interrupted", interrupted);
+                    }
+                    throw new java.sql.SQLException("Runtime recovery acknowledgment lost", "08006");
+                }
+            });
+            var budget = new PayloadBudget(8_000_000);
+            try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                    Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"));
+                    var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, profile) -> {
+                        throw new AssertionError("Ownership recovery must not read storage");
+                    }, 4, 1_000_000, budget);
+                    var executor = Executors.newSingleThreadExecutor()) {
+                var bounded = new Tx(emf);
+                var reads = new DocumentReadLedger(bounded, UUID.randomUUID());
+                var runtime = new DocumentPublicationRuntime(bounded, new DriveLedger(bounded), reads, reader, budget,
+                        (generation, profile) -> { throw new AssertionError("Recovery must not select storage"); },
+                        new DocumentRevisionAssembly.Limits(1_000_000, 100, 100, 100, 100_000),
+                        new SqlTimeouts(Duration.ofSeconds(2), Duration.ofSeconds(5)), 2, Duration.ofMillis(25), LEASE,
+                        4, 4_000_000, 100, false);
+                var placements = new java.util.HashMap<UUID, DocumentPublicationRuntime.Placement>();
+                input.placements().forEach((id, selected) -> placements.put(id, new DocumentPublicationRuntime.Placement(
+                        new DriveLedger(c.tx()).findById(id).orElseThrow(), selected.generation(), selected.profile())));
+                var modes = new java.util.HashMap<String, DocumentPublicationRuntime.Mode>();
+                input.modes().forEach((id, mode) -> modes.put(id, DocumentPublicationRuntime.Mode.TYPED));
+                armed.set(true);
+                var running = executor.submit(() -> runtime.recover(CALLER, input.command(), placements, 1, modes, RepositoryReadControl.NONE));
+                try {
+                    assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+                    assertThat(runtime.shutdownStep(Duration.ofMillis(10))).isFalse();
+                    assertClosed(() -> runtime.recover(CALLER, input.command(), placements, 1, modes, RepositoryReadControl.NONE));
+                    assertThatThrownBy(() -> runtime.tick()).isInstanceOf(IllegalStateException.class);
+                    // The reader is still open: shutdown has not advanced beyond session drain.
+                    assertThatThrownBy(() -> reader.awaitIdle(Duration.ZERO)).isInstanceOf(IllegalStateException.class);
+                    assertThat(ledger.find(input.key()).orElseThrow().generation()).isEqualTo(2);
+                } finally { release.countDown(); }
+                assertThatThrownBy(() -> running.get(10, TimeUnit.SECONDS)).hasStackTraceContaining("Runtime recovery acknowledgment lost");
+                boolean stopped = false;
+                for (int pass = 0; pass < 3 && !stopped; pass++) stopped = runtime.shutdownStep(Duration.ofSeconds(1));
+                assertThat(stopped).isTrue();
+                assertThat(runtime.shutdownStep(Duration.ZERO)).isTrue();
+                assertThat(reads.outstandingReads()).isZero();
+                assertThat(budget.reservedBytes()).isZero();
+                assertThat(ledger.find(input.key()).orElseThrow().generation()).isEqualTo(2);
+            }
+        }
+    }
+
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
     void uncertainTakeoverKeepsExclusiveTransitionAndExactRetryIdentity(boolean cancel) throws Exception {

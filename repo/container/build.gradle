@@ -16,7 +16,7 @@ configurations {
 dependencies {
     assessmentHostRuntime project(':protomolt-repo-engine')
     assessmentHostRuntime project(':protomolt-repo-blob-s3')
-    implementation project(':protomolt-repo-admission')
+    api project(':protomolt-repo-admission')
     testImplementation project(':protomolt-descriptors')
     api project(':protomolt-repo-codec')
     api project(':protomolt-repo-blob-spi')

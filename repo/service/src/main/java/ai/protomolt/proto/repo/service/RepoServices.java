@@ -108,6 +108,7 @@ public final class RepoServices implements AutoCloseable {
     private boolean lifecycleStarted;
     private final ArchiveOperations archiveOperations;
     private final ManagedArchiveServices managedArchive;
+    private final ManagedDocumentServices managedDocuments;
     private final DriveProvisioner driveProvisioner;
     private final ai.protomolt.proto.repo.spi.DriveRepository driveOperations;
     private final List<BindableService> services;
@@ -135,6 +136,7 @@ public final class RepoServices implements AutoCloseable {
     }
 
     RepoServices(RepoServiceConfig config, BridgeEngine bridges, ai.protomolt.proto.repo.blob.spi.BlobStores providers) {
+        ManagedArchiveServices startingArchive = null;
         try {
             this.config = config;
             if (config.managedStorage().retentionQualified()
@@ -249,7 +251,7 @@ public final class RepoServices implements AutoCloseable {
                         });
                 this.rawIngestion = new ai.protomolt.proto.repo.engine.RawIngestionOperations(documents, documentLedger,
                         driveLedger, blobStore, generation, managedCapabilities);
-                this.managedArchive = new ManagedArchiveServices(tx, archiveLedger, blobStore,
+                this.managedArchive = startingArchive = new ManagedArchiveServices(tx, archiveLedger, blobStore,
                         managedCapabilities, generation, profile, reclaimer);
             } else {
                 this.rawIngestion = null;
@@ -278,7 +280,27 @@ public final class RepoServices implements AutoCloseable {
             this.purgeSweeper = new PurgeSweeper(tx, documentLedger, driveLedger, purgeQueue);
             this.storageReconciler = new StorageReconciler(documentLedger);
             this.coherenceProbe = new CoherenceProbe(documentLedger, driveLedger);
+            // Register the native reader last: no later constructor step may fail
+            // after this component acquires its durable lifecycle identity.
+            this.managedDocuments = generation == null ? null : new ManagedDocumentServices(tx, driveLedger,
+                    generation, new ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger(tx).find(generation).orElseThrow(),
+                    managedBacking, config.kafkaEnabled());
         } catch (RuntimeException | Error failure) {
+            if (startingArchive != null) {
+                // Construction has not exposed services or started workers. Preserve
+                // its registered reader identity before releasing the borrowed ledger.
+                try {
+                    startingArchive.reader.close();
+                    if (!startingArchive.reader.awaitIdle(java.time.Duration.ofSeconds(5)))
+                        throw new IllegalStateException("Fresh archive reader did not drain after startup failure");
+                    startingArchive.reader.attestLocalQuiescence();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    failure.addSuppressed(interrupted);
+                } catch (RuntimeException | Error cleanup) {
+                    if (cleanup != failure) failure.addSuppressed(cleanup);
+                }
+            }
             try { owned.close(); } catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
             throw failure;
         }
@@ -539,6 +561,12 @@ public final class RepoServices implements AutoCloseable {
             return;
         }
         try {
+            if (managedDocuments != null) {
+                startLifecycleThread("repo-document-read-reconciliation", () -> {
+                    managedDocuments.publication.tick();
+                    sleep(config.sweepIntervalMs());
+                });
+            }
             if (managedArchive != null) {
                 startLifecycleThread("repo-archive-mutation-recovery", () -> {
                     managedArchive.recoverMutations(java.time.Instant.now().minusMillis(config.purgeIntervalMs()), 100);
@@ -674,6 +702,7 @@ public final class RepoServices implements AutoCloseable {
         java.util.Objects.requireNonNull(timeout);
         if (timeout.isNegative() || timeout.isZero()) throw new IllegalArgumentException("Shutdown timeout must be positive");
         lifecycleClosed = true;
+        if (managedDocuments != null) managedDocuments.publication.close();
         if (managedArchive != null) managedArchive.reader.close();
         LifecycleShutdown.stopBeforeRelease(lifecycleThreads, timeout, () -> releaseAfterWorkersStop(timeout));
     }
@@ -683,6 +712,7 @@ public final class RepoServices implements AutoCloseable {
         transports.addAll(httpServers);
         transports.addAll(servers);
         ShutdownBarrier.releaseAfter(transports, () -> {
+            if (managedDocuments != null) managedDocuments.drain(timeout);
             if (managedArchive != null) {
                 try {
                     if (!managedArchive.reader.awaitIdle(timeout))
@@ -729,6 +759,13 @@ public final class RepoServices implements AutoCloseable {
 
     DocumentLedger documentLedger() {
         return documentLedger;
+    }
+
+    ai.protomolt.proto.repo.container.ledger.DocumentPublicationRuntime documentPublication() {
+        requireOpen();
+        if (managedDocuments == null) throw new IllegalStateException("Managed document storage is not configured");
+        startLifecycle();
+        return managedDocuments.publication;
     }
 
     DriveLedger driveLedger() {

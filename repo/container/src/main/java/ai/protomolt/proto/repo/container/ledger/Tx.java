@@ -53,7 +53,7 @@ public final class Tx implements AutoCloseable {
     }
 
     /** Borrowed transactional view; it owns no pool and closing it does not close the factory. */
-    Tx withTimeouts(SqlTimeouts timeouts) {
+    public Tx withTimeouts(SqlTimeouts timeouts) {
         return new Tx(emf, timeouts);
     }
 

@@ -5,8 +5,8 @@ import java.time.Duration;
 import java.util.Objects;
 
 /** Explicit per-lock and per-statement limits, not a whole-operation or network deadline. */
-record SqlTimeouts(Duration lockWait, Duration statement) {
-    SqlTimeouts {
+public record SqlTimeouts(Duration lockWait, Duration statement) {
+    public SqlTimeouts {
         milliseconds(lockWait);
         milliseconds(statement);
         if (lockWait.compareTo(statement) > 0)

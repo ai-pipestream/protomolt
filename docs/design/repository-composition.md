@@ -2739,18 +2739,21 @@ inspection at `9d1f7c7f` confirms that `RepoServices` constructs
 `DocumentUploadCoordinator` and `DocumentPublicationCommit` remain internal
 ledger components. A publication fixture is not a host entry point.
 
-Current integration checkpoint (2026-10-05): `DocumentPublicationExecution`
-and `DocumentPublicationSessions` now compose the internal execution and bounded
-retry ownership. Reuse those components rather than creating a second coordinator.
-`RepoServices` still does not own them, and `document_service.proto` has no typed
-publication RPC. The next host slice is an internal facade in the ledger package,
-with qualified backend resolution, shared payload capacity, retained-read lifetime,
-schema resolution, bounded sessions and shutdown drain supplied by the host.
-Qualify exact retry, terminal replay, uncertain-outcome retention, policy changes
-and orderly resource closure before mounting a public endpoint.
+Current integration checkpoint (2026-10-05): `DocumentPublicationRuntime` composes
+`DocumentPublicationExecution`, bounded retry sessions, uploads and protected-read
+cleanup. `RepoServices` now owns this component through `ManagedDocumentServices`
+when managed storage is configured. The component is registered last during startup;
+its package-private host accessor starts maintenance before use. The public Java
+composition port requires authenticated callers, immutable sampled placements and
+caller-authorized schema resolution. It exposes durable rejection receipts through
+`DocumentPublicationRuntime.Rejected`; a transient execution failure is not a
+rejection receipt. Explicit takeover remains a trusted host operation.
+`document_service.proto` still has no typed publication RPC. Qualify the remaining
+host authentication, policy activation, restart/recovery and transport boundaries
+before mounting a public endpoint.
 `DocumentAssessmentReplay` is diagnostic: its result cannot authorize publication
 or a terminal rejection. The numbered sequence below remains the integration
-acceptance plan; its first step has internal implementation but is not host-ready.
+acceptance plan; host resource ownership is implemented, public delivery is not.
 
 Publication session shutdown now has its own call boundary. Closing
 `DocumentPublicationSessions` refuses new execution, recovery and retirement calls
@@ -2767,8 +2770,45 @@ or interruption retains the same resource scope so shutdown can be retried.
 No shutdown action grants takeover or publication
 authority. Real PostgreSQL tests hold observation and committed recovery responses
 open, verify drain timeout and refusal of new calls, then inject acknowledgment
-loss and verify retained ownership after the call exits. Host wiring and restart
-qualification remain outstanding.
+loss and verify retained ownership after the call exits. Public transport and crash
+recovery qualification remain outstanding.
+
+The host currently configures a 64 MiB shared native-publication payload budget,
+32 retained sessions, an 8 MiB aggregate command reservation, 16 concurrent reads,
+four upload workers per operation and a cleanup batch of 100. Opaque assembly is
+bounded to 8 MiB, 10,000 fragments, depth 100, 100,000 chunk elements and 1,000,000
+wire values. SQL lock/statement limits are two/five seconds; these are not whole
+operation deadlines or measured throughput defaults. Existing public document
+operations and their payload limits are unchanged. Provider resolution checks
+the original generation and full profile and borrows the backing provider directly.
+No current-drive or cache fallback is used for retained native data.
+
+Qualification now includes typed and opaque publication through the composition
+port over PostgreSQL and versioned LocalStack, exact successful and rejected receipt
+replay, caller-bound schema resolution, immutable placement sampling, and shutdown
+without closing borrowed provider/database clients. A real committed recovery call
+with its acknowledgment held back prevents runtime shutdown from closing the reader;
+lost acknowledgment then permits draining without changing durable ownership.
+Two real service startups register fresh document/archive reader incarnations and
+quiesce both before database closure. These clean restart checks do not establish
+crash recovery or registry-free public historical delivery. RustFS remains the local
+performance target; LocalStack here provides correctness fixtures.
+
+Startup cleanup also covers failure of document-reader registration after the archive
+component was constructed: a PostgreSQL trigger rejects that second registration,
+and the previously registered archive reader is quiesced before borrowed resources
+close. This is best-effort cleanup of unexposed resources, distinct from a retryable
+live shutdown. Failures inside the archive component before its constructor returns,
+and lost SQL acknowledgments during reader-incarnation registration, still need
+constructor-level identity recovery tests and handling. Do not infer those cases
+from successful shutdown or this rejected-insert fixture.
+
+Operation inventory for this slice: all protobuf operations, names, tags, imports
+and Any URLs are unchanged. The Java host composition port and package-private host
+resource wiring are new; `SqlTimeouts` and `Tx.withTimeouts` are now public for host
+configuration. No existing Java class moved. The container module exports its
+already-present admission dependency as `api` because the composition signatures
+include admission definitions. The byte SPI and provider dependency edges are unchanged.
 
 1. Add the shared native publication coordinator over these existing components.
    It must own policy selection, immutable candidate preparation, authorized

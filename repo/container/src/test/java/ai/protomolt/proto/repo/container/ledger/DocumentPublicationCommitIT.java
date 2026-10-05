@@ -57,6 +57,95 @@ class DocumentPublicationCommitIT {
             DocumentOperationUploadAdmission.Prepared prepared,Map<DocumentUploadPayloads.Key,PartObject> bodies) {}
     private record Checked(Map<String,DocumentCommandContent> content,Map<String,DocumentSelectedAttemptLedger.Selected> selected) {}
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void hostRuntimePublishesAndReplaysThenDrainsRealProviderResources(boolean typed) throws Exception {
+        var fixture = fixture(1, 1, DocumentSecurity.getDefaultInstance(), "runtime-" + UUID.randomUUID(), typed);
+        var command = new DocumentPublicationCommand(fixture.command.intent().toBuilder()
+                .setOperationId(UUID.randomUUID().toString()).build());
+        var policy = ai.protomolt.proto.repo.admission.DocumentAdmissionPolicy.of(DocumentSchemaPolicy.newBuilder()
+                .setEncodingVersion(1).setAccountId(command.intent().getAccountId())
+                .setMode(typed ? DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_TYPED_REQUIRED
+                        : DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_OPAQUE_ALLOWED).setAnyResolvedSchema(true)
+                .setValidationProfile("protomolt-retained-schema-admission/v1")
+                .setLimits(DocumentSchemaPolicyLimits.newBuilder().setMaxFragments(32).setMaxFragmentBytes(4_000_000)
+                        .setMaxRoots(100).setMaxEvidenceBytes(4_000_000).setMaxBindings(20)
+                        .setMaxRetainedBytes(16_000_000).setMaxDecodedBytes(1_000_000)).build(), () -> {});
+        new DocumentSchemaPolicies(tx).activate(policy, 0, () -> {});
+        var drives = new DriveLedger(tx);
+        var driveId = UUID.fromString(command.intent().getMembers(0).getDriveId());
+        var sampledDrive = drives.findById(driveId).orElseThrow();
+        var placements = Map.of(driveId, new DocumentPublicationRuntime.Placement(sampledDrive, GENERATION, profile));
+        sampledDrive.bucket = "changed-after-snapshot";
+        var bodies = new HashMap<DocumentPublicationRuntime.PayloadKey, PartObject>();
+        fixture.bodies.forEach((key, value) -> bodies.put(new DocumentPublicationRuntime.PayloadKey(key.member(), key.revisionOrdinal()), value));
+        var modes = Map.of("member-0", typed ? DocumentPublicationRuntime.Mode.TYPED : DocumentPublicationRuntime.Mode.OPAQUE);
+        var budget = new PayloadBudget(8_000_000);
+        var reads = new DocumentReadLedger(tx, UUID.randomUUID());
+        var selectedSchemas = new java.util.concurrent.atomic.AtomicInteger();
+        try (var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, selected) -> {
+            assertThat(generation).isEqualTo(GENERATION); assertThat(selected).isEqualTo(profile);
+            return opened.store();
+        }, 4, 1_000_000, budget)) {
+            var runtime = new DocumentPublicationRuntime(tx, drives, reads, reader, budget, (generation, selected) -> {
+                assertThat(generation).isEqualTo(GENERATION); assertThat(selected).isEqualTo(profile);
+                return new DocumentPublicationRuntime.Backend(profile.identity(), opened);
+            }, LIMITS, new SqlTimeouts(Duration.ofSeconds(2), Duration.ofSeconds(5)),
+                    4, Duration.ofMillis(25), LEASE, 4, 4_000_000, 100, false);
+            try {
+                var result = runtime.execute(ADMIN, command, placements, bodies, Map.of(), modes,
+                        typed ? java.util.Optional.of(DocumentSchemaRetentionFixture.definition(Document.getDescriptor())) : java.util.Optional.empty(),
+                        (caller, member, occurrence) -> {
+                            assertThat(caller).isSameAs(ADMIN);
+                            assertThat(member).isEqualTo(command.intent().getMembers(0));
+                            selectedSchemas.incrementAndGet();
+                            return DocumentSchemaRetentionFixture.definition(com.google.protobuf.StringValue.getDescriptor());
+                        }, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+                assertThat(result.getMembersCount()).isEqualTo(1);
+                assertThat(selectedSchemas.get()).isEqualTo(typed ? 1 : 0);
+                assertThat(runtime.execute(ADMIN, command, Map.of(), Map.of(), Map.of(), Map.of(), java.util.Optional.empty(),
+                        (caller, member, occurrence) -> { throw new AssertionError("Terminal replay must not resolve schemas"); },
+                        ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isEqualTo(result);
+                var conflict = new DocumentPublicationCommand(command.intent().toBuilder()
+                        .setOperationId(UUID.randomUUID().toString()).build());
+                var rejection = catchThrowableOfType(DocumentPublicationRuntime.Rejected.class,
+                        () -> runtime.execute(ADMIN, conflict, placements, bodies, Map.of(), modes, java.util.Optional.empty(),
+                                (caller, member, occurrence) -> { throw new AssertionError("Conflict must precede schema resolution"); },
+                                ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE));
+                assertThat(rejection).isNotNull();
+                assertThat(rejection.receipt().getReason()).isEqualTo(
+                        DocumentPublicationRejectionReason.DOCUMENT_PUBLICATION_REJECTION_REASON_PRECONDITION_NOT_MET);
+                assertThatThrownBy(() -> runtime.execute(ADMIN, conflict, Map.of(), Map.of(), Map.of(), Map.of(), java.util.Optional.empty(),
+                        (caller, member, occurrence) -> { throw new AssertionError("Rejection replay must not resolve schemas"); },
+                        ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                        .isInstanceOfSatisfying(DocumentPublicationRuntime.Rejected.class,
+                                failure -> assertThat(failure.receipt()).isEqualTo(rejection.receipt()));
+                assertThatThrownBy(() -> runtime.recover(ADMIN, conflict, Map.of(), 1, Map.of(),
+                        ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                        .isInstanceOfSatisfying(DocumentPublicationRuntime.Rejected.class,
+                                failure -> assertThat(failure.receipt()).isEqualTo(rejection.receipt()));
+                assertThat(budget.reservedBytes()).isZero();
+                runtime.tick();
+                runtime.close();
+                assertThatThrownBy(() -> runtime.execute(ADMIN, command, Map.of(), Map.of(), Map.of(), Map.of(), java.util.Optional.empty(),
+                        (caller, member, occurrence) -> { throw new AssertionError("Closed runtime must not resolve schemas"); },
+                        ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                        .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                                failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.UNAVAILABLE));
+            } finally {
+                boolean stopped = false;
+                for (int pass = 0; pass < 3 && !stopped; pass++) stopped = runtime.shutdownStep(Duration.ofSeconds(5));
+                assertThat(stopped).isTrue();
+            }
+            assertThat(runtime.shutdownStep(Duration.ZERO)).isTrue();
+            assertThat(reads.outstandingReads()).isZero();
+            assertThat(budget.reservedBytes()).isZero();
+            // Runtime shutdown must not close its borrowed provider or SQL pool.
+            opened.store().headBucket(NAMESPACE);
+            assertThat(new DocumentPublicationReplay(tx).observe(ADMIN, command).result()).isPresent();
+        }
+    }
+
     @Test void commitsTwoRealDocumentsWithOpaqueAnyAndReplaysExactOutcome() {
         var fixture=fixture(2);
         var checked=stage(fixture);
