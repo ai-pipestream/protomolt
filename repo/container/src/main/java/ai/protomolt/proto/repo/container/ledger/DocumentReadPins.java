@@ -16,8 +16,11 @@ import java.util.UUID;
 final class DocumentReadPins {
     private DocumentReadPins() {}
     record Pin(UUID id, UUID object) {}
-    record Captured<P>(P plan, UUID reader, List<Pin> pins) {
+    record Captured<P>(P plan, UUID reader, List<Pin> pins) implements DocumentReadProtection<P> {
         Captured { pins = List.copyOf(pins); }
+        public void release(Tx tx) { DocumentReadPins.release(tx, this); }
+        public void recover(Tx tx) { DocumentReadPins.recover(tx, this); }
+        public boolean confirmReleased(Tx tx) { return DocumentReadPins.confirmReleased(tx, this); }
     }
     static final class Prepared {
         private final DocumentPublicationCommand command;

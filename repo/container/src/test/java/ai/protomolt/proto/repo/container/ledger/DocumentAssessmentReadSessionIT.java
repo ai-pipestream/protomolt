@@ -90,6 +90,38 @@ class DocumentAssessmentReadSessionIT {
                 """).setParameter("id", c.assessment()).getSingleResult()).longValue())).isEqualTo(2);
     }
 
+    @Test void exactLocalReleaseIsAtomicAfterAssessmentExpiryWithoutReaderQuiescence() {
+        var c = staged(2, true); UUID reader = reader(), session = UUID.randomUUID();
+        capture(c, session, reader);
+        fixture.expire("document_assessment_owners", "assessment_id", c.assessment(), "retain_until");
+        fence(reader); // Local drain and incarnation quiescence are different authorities.
+        assertThatThrownBy(() -> release(session, UUID.randomUUID(), c.assessment()))
+                .hasStackTraceContaining("another reader or assessment");
+        assertThatThrownBy(() -> release(session, reader, UUID.randomUUID()))
+                .hasStackTraceContaining("another reader or assessment");
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            em.createNativeQuery("UPDATE document_assessment_read_sessions SET release_xid=pg_current_xact_id() WHERE session_id=:id")
+                    .setParameter("id", session).executeUpdate();
+        })).hasStackTraceContaining("must remove its session atomically");
+        assertThatThrownBy(() -> tx.inTransaction((java.util.function.Consumer<jakarta.persistence.EntityManager>) em -> {
+            em.createNativeQuery("SELECT release_document_assessment_read_session(:id,:reader,:assessment)")
+                    .setParameter("id", session).setParameter("reader", reader).setParameter("assessment", c.assessment()).getSingleResult();
+            throw new DeliberateRollback();
+        })).isInstanceOf(DeliberateRollback.class);
+        assertThatThrownBy(() -> fixture.release(c)).hasStackTraceContaining("all reader sessions to drain");
+        // Synthetic host drain assertion: this exercises SQL, not provider completion.
+        assertThat(release(session, reader, c.assessment())).isTrue();
+        assertThat(release(session, reader, c.assessment())).isTrue();
+        assertThat(fixture.release(c)).isTrue();
+        assertThat(references(c.assessment())).isZero();
+    }
+
+    private static final class DeliberateRollback extends RuntimeException {}
+    private static boolean release(UUID session, UUID reader, UUID assessment) {
+        return tx.inTransaction(em -> (Boolean) em.createNativeQuery("SELECT release_document_assessment_read_session(:id,:reader,:assessment)")
+                .setParameter("id", session).setParameter("reader", reader).setParameter("assessment", assessment).getSingleResult());
+    }
+
     private static DocumentAssessmentRetentionFixture.Candidate staged(int seconds, boolean snapshot) {
         var c = fixture.candidate(120);
         tx.inTransaction(em -> {

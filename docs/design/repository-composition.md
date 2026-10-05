@@ -4361,7 +4361,7 @@ Session acquisition requires an active incarnation, the original live operation
 write fence, a sealed/unreleased/unexpired owner and retained slot provenance.
 The trusted handler must still verify canonical content and current authorization.
 
-At this checkpoint, session deletion requires durable `QUIESCED` evidence. The
+V71 session deletion requires durable `QUIESCED` evidence. The
 exact internal recovery function validates session/reader/assessment identity and
 supports retry after deletion without taking owner or physical locks. Ordinary
 per-handle local-drain release, capture acknowledgement reconciliation, provider
@@ -4371,3 +4371,25 @@ immutable identities, missing provenance and retiring objects protected by their
 existing references. These use explicitly synthetic manifest/snapshot bytes and
 quiescence attestations; they are not proof of canonical reader admission or
 actual provider-worker drain.
+
+V72 adds normal local-drain release separately from quiescent recovery. The
+internal function validates the exact existing session/reader/assessment tuple,
+locks the session row, marks release with the current transaction identity and
+deletes it atomically. A deferred constraint rejects committing the marker alone.
+No operation lease, assessment deadline, read grant or incarnation quiescence is
+needed to release already-drained local work. Failed transactions retain the
+session and protection; exact retries may observe an already removed session.
+Raw database DML belongs to the same trusted host boundary: a table writer can
+perform the marker/delete transition directly. SQL cannot prove Java/provider
+drain, and this function must never be exposed directly as a client RPC.
+
+`DocumentReadProtection` separates durable release/recovery/reconciliation from
+the existing `DocumentReadLedger` use-counting, close, drain and capacity logic.
+Current and historical document pins are the first implementation. Assessment
+capture is not enabled yet. Before adding it, allocate and retain a session UUID
+and capacity reservation before SQL. An uncertain commit cannot use the existing
+unconditional `failedCapture()` accounting path: preserve a pending handle,
+perform no provider I/O, and reconcile through exact identity and an appropriate
+reader fence. A missing row while the original transaction may still commit is
+not rollback evidence. These uncertainty rules and the assessment protection
+implementation remain prerequisites to mounting capture.

@@ -282,14 +282,14 @@ public final class DocumentReadLedger {
 
     /** Shared ownership of a ledger-issued plan; only this ledger can create handles. */
     public abstract class PinnedRead<P> implements AutoCloseable {
-        private final DocumentReadPins.Captured<P> captured;
+        private final DocumentReadProtection<P> captured;
         private final CountDownLatch drained = new CountDownLatch(1);
         private final Object releaseLock = new Object();
         private int uses;
         private boolean closed;
         private boolean released;
 
-        private PinnedRead(DocumentReadPins.Captured<P> captured) { this.captured = captured; }
+        private PinnedRead(DocumentReadProtection<P> captured) { this.captured = captured; }
 
         public Use use() {
             synchronized (lifetime) {
@@ -337,10 +337,10 @@ public final class DocumentReadLedger {
             synchronized (releaseLock) {
                 if (released) return false;
                 switch (completion) {
-                    case RELEASE -> DocumentReadPins.release(tx, captured);
-                    case RECOVER -> DocumentReadPins.recover(tx, captured);
+                    case RELEASE -> captured.release(tx);
+                    case RECOVER -> captured.recover(tx);
                     case CONFIRM_RELEASED -> {
-                        if (!DocumentReadPins.confirmReleased(tx, captured)) return false;
+                        if (!captured.confirmReleased(tx)) return false;
                     }
                 }
                 released = true;
