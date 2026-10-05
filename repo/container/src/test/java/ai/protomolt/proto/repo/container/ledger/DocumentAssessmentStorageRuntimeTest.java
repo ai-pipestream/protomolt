@@ -54,8 +54,7 @@ class DocumentAssessmentStorageRuntimeTest {
             }
         }
         try (var postgres = new PostgreSQLContainer("postgres:18-alpine");
-                var storage = new org.testcontainers.localstack.LocalStackContainer("localstack/localstack:3.8")
-                        .withServices("s3")) {
+                var storage = new AssessmentStorageBackend(System.getProperty("protomolt.test.nativeStorage", "localstack"))) {
             postgres.start();
             storage.start();
             var log = directory.resolve("host.log");

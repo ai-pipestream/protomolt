@@ -5796,3 +5796,11 @@ now has a real versioning case covering exact old-version bounded GET following
 same-key replacement and explicit new-version deletion. Native typed publication
 and retained-assessment replica performance remain pending; the next workload and
 measurement requirements are recorded in the composition design.
+
+### Native RustFS backend parity
+
+No repository operation changes. The opt-in `admissionRustFsTest` executes the
+production-JAR native assessment/publication/recovery fixture against pinned
+RustFS. The existing `admissionStorageTest` keeps its LocalStack default. Backend
+selection is explicit and rejects unknown values. This adds provider parity
+coverage; it does not establish measured native scaling or a new public API.

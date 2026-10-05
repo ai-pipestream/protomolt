@@ -123,3 +123,24 @@ tasks.register('admissionStorageTest', Test) {
     useJUnitPlatform()
 }
 tasks.named('check') { dependsOn tasks.named('admissionStorageTest') }
+
+// Opt-in backend parity before native RustFS latency/replica qualification. The
+// fault-injection and expiry waits are correctness checks, never benchmark samples.
+tasks.register('admissionRustFsTest', Test) {
+    group = 'verification'
+    description = 'Run native publication and retained recovery against pinned RustFS'
+    dependsOn tasks.named('admissionRuntimeInventory'), tasks.named('jar'), configurations.assessmentHostRuntime
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    filter { includeTestsMatching 'ai.protomolt.proto.repo.container.ledger.DocumentAssessmentStorageRuntimeTest' }
+    inputs.dir(hostAdmissionInventory)
+    inputs.files(configurations.assessmentHostRuntime)
+    inputs.file(tasks.named('jar').flatMap { it.archiveFile })
+    systemProperty 'protomolt.test.nativeStorage', 'rustfs'
+    doFirst {
+        systemProperty 'protomolt.test.admissionRuntimeBundle', hostAdmissionInventory.get().asFile.absolutePath
+        systemProperty 'protomolt.test.storageHostClasspath', files(tasks.named('jar').get().archiveFile,
+                configurations.assessmentHostRuntime).asPath
+    }
+    useJUnitPlatform()
+}

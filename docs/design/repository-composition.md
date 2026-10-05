@@ -5695,3 +5695,31 @@ same-key historical version reads, passed without skips. Applicable Buf lint and
 complete-import FILE compatibility against `f81dd580` pass. Sol reviewed the
 codec, capture/transport wiring, limits and RustFS prerequisite. These are local
 results, not hosted CI, deployment or native-replica performance evidence.
+
+The native replica harness must separate initialization from worker traffic. One
+parent creates and versions the RustFS namespace, migrates PostgreSQL, binds the
+shared backend/drive and activates the account policy. Workers open and verify
+those existing resources; bucket creation, migrations and policy activation are
+outside measurement. Each worker receives the exact trusted runtime bundle and
+an immutable test configuration, with credentials provided through its environment.
+
+Build commands from actual `DocumentPartCodec.split` output with unique operation
+and destination identities for each process/iteration. Reusing a mixed-source
+fixture is not appropriate: those fixtures deliberately seed legacy destinations
+and mutate policies/source revisions for correctness scenarios. The measured
+worker instead uses a small independent main, configured native runtime, fixed
+retained definitions and real provider transfers. Prepare the contested revision
+separately, then release competing writers against the same expected revision.
+Coordinate barriers explicitly and terminate/reap every child on failure. Failure
+and expiry scenarios remain in the correctness gate, outside timed windows.
+
+#### Native RustFS backend parity gate
+
+`admissionRustFsTest` runs the existing production-JAR native assessment/storage
+suite with an explicit RustFS backend. The pinned real container passed publication,
+retained rejection/replay, historical schema/metadata revisions and controlled
+fresh-process recovery. LocalStack remains the default `admissionStorageTest`
+backend. There is no automatic fallback between them. See
+`docs/evidence/repository/2026-10-05-native-rustfs/README.md` for the recorded image
+identity, source hashes and test scope. Deliberate expiry/fault waits make this a
+correctness gate; the separate native replica workload remains unimplemented.
