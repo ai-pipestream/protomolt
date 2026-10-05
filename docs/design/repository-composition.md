@@ -1312,6 +1312,16 @@ counter still serializes the short statistics update; measure its contention in
 the separate-process load experiment. This regression does not prove process
 failure recovery, throughput scaling or the typed document publication path.
 
+RepositoryReplicaProcessIT adds two separate child JVMs, each mounting the real
+RepoServices assembly on its own TCP port with the shared PostgreSQL/LocalStack
+services. After an acknowledged archive write, the test forcibly terminates the
+writer and waits for process exit. The surviving process repeats the same-content
+write without changing entry/version/storage identity and reads the retained
+bytes. This verifies completed archive-write persistence independently of the
+writer's heap. It uses the test runtime classpath, not a packaged distribution;
+it does not inject a crash inside a transaction, recover an active provider call,
+test typed publication takeover or measure scale-out throughput.
+
 ### Upload verification evidence at the provider boundary
 
 S3BlobStore.putRequest already supplies the expected SHA-256 through the S3

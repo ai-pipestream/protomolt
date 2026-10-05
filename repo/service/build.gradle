@@ -79,6 +79,8 @@ application {
 }
 
 tasks.named('test') {
+    // Separate-JVM host tests need the complete test runtime, not Gradle's worker bootstrap classpath.
+    doFirst { systemProperty 'protomolt.test.runtimeClasspath', sourceSets.test.runtimeClasspath.asPath }
     def partialBenchmark = providers.environmentVariable('PROTOMOLT_PARTIAL_BENCHMARK').map { it == 'true' }.orElse(false)
     inputs.property('partialBenchmark', partialBenchmark)
     outputs.upToDateWhen { !partialBenchmark.get() }
