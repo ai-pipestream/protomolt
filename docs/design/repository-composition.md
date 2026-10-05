@@ -4572,6 +4572,11 @@ semantic-review authority, and no new public RPC is mounted.
 The production-JAR probe exercises canonical capture after the original evidence
 scope closes: wrong manifest refusal, correct retained identity, use-counted drain,
 normal release and quiesced discovery/confirmation. Physical slot observations in
-that fixture remain synthetic. Assessment-specific lost-commit injection,
-concurrent release/revocation, provider read-plan assembly and delivery-time
+that fixture remain synthetic. A JDBC fault probe delegates to real PostgreSQL
+before injecting lost commit acknowledgement or cancellation before/after commit.
+It checks durable sessions, local capacity, verification-memory release and exact
+drained/quiesced recovery counts. An uncertain committed capture retains capacity
+and refuses a second capture until recovery; cancellation before commit rolls back,
+while cancellation after acknowledged commit permits ordinary drained release.
+Concurrent release/revocation, provider read-plan assembly and delivery-time
 authorization remain required before enabling the full assessment reader.

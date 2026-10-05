@@ -12,7 +12,7 @@ import java.util.*;
 
 /** Real observed evidence and SQL transaction; physical observations are explicitly synthetic. */
 public final class AssessmentCreationProbe {
-    public static void run(Tx tx, DocumentAssessmentRuntimeObserver.Observation observation) throws Exception {
+    public static void run(Tx tx, DocumentAssessmentRuntimeObserver.Observation observation, javax.sql.DataSource database) throws Exception {
         List<DocumentPublicationMember> restartMembers = new ArrayList<>();
         for (String memberId : List.of("a", "b")) {
             var member = ObservedAssessmentProbe.member(memberId).member();
@@ -202,6 +202,7 @@ public final class AssessmentCreationProbe {
                 var recoveryBudget = new PayloadBudget(64_000_000);
                 var recovery = new DocumentAssessmentReconciliation(tx);
                 var selections = DocumentAssessmentRetainedSlots.uploadSelections(selected);
+                AssessmentCaptureFaultProbe.run(database, tx, caller, recoveredOwner, recoveredCommand, selections, retained);
                 var assessmentReader = new DocumentReadLedger(tx, UUID.randomUUID(), 1);
                 try {
                     assessmentReader.captureAssessment(caller, recoveredOwner, recoveredCommand, selections,

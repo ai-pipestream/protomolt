@@ -26,7 +26,7 @@ public final class AssessmentStorageProbe {
             // Exercise genuine typed/opaque assessment, real validation and scoped
             // evidence while the production Hibernate/JDBC host is initialized.
             ObservedAssessmentProbe.run(observation);
-            AssessmentCreationProbe.run(tx, observation);
+            AssessmentCreationProbe.run(tx, observation, database.dataSource());
             observation.identity(() -> {});
         }
         System.out.println("OBSERVED_SQL_HOST_OK");

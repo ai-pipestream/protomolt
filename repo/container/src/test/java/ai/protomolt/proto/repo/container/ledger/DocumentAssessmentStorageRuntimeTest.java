@@ -36,7 +36,7 @@ class DocumentAssessmentStorageRuntimeTest {
         String classpath = String.join(java.io.File.pathSeparator, jars.values().stream().map(Path::toString).toList());
         var classes = Files.createDirectory(directory.resolve("classes"));
         var sources = new ArrayList<String>();
-        for (String name : List.of("ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentStorageProbe", "AssessmentRestartProbe")) {
+        for (String name : List.of("ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentCaptureFaultProbe", "AssessmentStorageProbe", "AssessmentRestartProbe")) {
             var source = directory.resolve(name + ".java");
             try (var input = getClass().getResourceAsStream("/runtime-inventory/" + name + ".java")) {
                 assertThat(input).isNotNull(); Files.copy(input, source);
@@ -73,6 +73,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 assertThat(process.exitValue()).as(result).isZero();
                 assertThat(result).contains("OBSERVED_SQL_HOST_OK");
                 assertThat(result).contains("OBSERVED_ASSESSMENT_CREATION_OK", "CLOSED_SCOPE_ASSESSMENT_ACK_OK");
+                assertThat(result).contains("ASSESSMENT_CAPTURE_FAULTS_OK");
             } finally {
                 if (process.isAlive()) {
                     process.destroyForcibly();
