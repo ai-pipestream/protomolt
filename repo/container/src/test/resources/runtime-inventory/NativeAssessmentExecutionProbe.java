@@ -18,8 +18,8 @@ import javax.sql.DataSource;
 public final class NativeAssessmentExecutionProbe {
     static void run(Tx observer, DataSource database, AssessmentProviderProbe provider,
             AssessmentMixedReuseProbe.Source source, DocumentAssessmentRuntimeObserver.Observation observation) throws Exception {
-        for (int scenario : new int[]{1, 2, 3, 4, 0}) {
-            int mode = scenario; // accepted, invalid, stage lost ACK, stage rollback, decision lost ACK
+        for (int scenario : new int[]{1, 2, 3, 4, 5, 0}) {
+            int mode = scenario; // accepted, invalid, stage lost ACK, stage rollback, decision lost ACK, fresh-process recovery
             var member = source.candidate();
             if (mode == 0) {
                 // Update an actual versioned publication, not the legacy authorization-only seed row.
@@ -82,6 +82,8 @@ public final class NativeAssessmentExecutionProbe {
                     }
                     else if (mode == 1) require(first instanceof DocumentPublicationReplay.Terminated, "invalid assessment durably rejected");
                     else require(faulted.get(), "requested real transaction fault fired");
+                    if (mode == 5) NativeAssessmentRestartProbe.run(command,
+                            session.admit(caller, RepositoryReadControl.NONE).orElseThrow());
                     retry.set(true);
                     Object repeated;
                     try { repeated = execution.execute(caller, session, Map.of(), Map.of(), modes, container, resolver, RepositoryReadControl.NONE); }

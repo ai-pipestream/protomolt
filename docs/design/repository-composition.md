@@ -5530,3 +5530,27 @@ transport remain unfinished. The broader metadata/schema-only revision, restore,
 non-S3 durability, RustFS scaling and bounded hydration gates remain open. The
 current declared Any-root graph already has inventory regression coverage in
 `DocumentAnyRootInventoryTest`; future descriptor changes must preserve that gate.
+
+#### Fresh-process pre-terminal assessment handoff
+
+`NativeAssessmentRestartProbe` qualifies a controlled handoff after a real stage
+commit loses its acknowledgement. The writer retains the original command and
+private owner capability in an owner-only temporary file. A fresh production-JAR
+JVM, observed runtime and reader incarnation discover the original sealed stage,
+capture its retained data and schemas, replay validation and commit the fenced
+rejection. The receipt must bind the original assessment UUID and manifest digest.
+The parent session then observes the same terminal receipt without another upload
+or schema lookup. Both processes drain their read and memory reservations.
+
+This is a trusted handoff fixture, not a public nonce-bearing API, a forced process
+crash, or an implemented durable host session store. The handoff file is created
+with owner-only permissions and deletion is attempted even when child termination
+fails. Original live-owner, expiry, current policy and authorization requirements
+remain in force; restarting does not confer takeover authority. The public runtime
+still needs explicit assessment configuration and lifecycle/recovery acceptance
+before activation. Optional JCR and bounded hydration remain separate extensions.
+
+The complete production-JAR PostgreSQL/LocalStack gate passes with this handoff
+fixture and its cleanup fix. Sol reviewed the authority, assertions and cleanup.
+The test establishes internal recovery behavior only; it does not qualify latency,
+crash-safe host persistence or a new public endpoint.

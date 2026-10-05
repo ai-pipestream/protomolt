@@ -36,7 +36,7 @@ class DocumentAssessmentStorageRuntimeTest {
         String classpath = String.join(java.io.File.pathSeparator, jars.values().stream().map(Path::toString).toList());
         var classes = Files.createDirectory(directory.resolve("classes"));
         var sources = new ArrayList<String>();
-        for (String name : List.of("ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentCaptureFaultProbe", "AssessmentProviderProbe", "AssessmentMixedReuseProbe", "AssessmentReplayInputsProbe", "AssessmentOperationReplayProbe", "AssessmentRejectionProbe", "AssessmentStorageProbe", "AssessmentRestartProbe", "RejectedAssessmentRestartProbe", "RejectedAssessmentExpiryProbe", "RejectedAssessmentSourceProbe", "NativeAssessmentPreparationProbe", "PromotedAssessmentCommitProbe", "AssessmentStageFaultProbe", "NativeAssessmentExecutionProbe")) {
+        for (String name : List.of("ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentCaptureFaultProbe", "AssessmentProviderProbe", "AssessmentMixedReuseProbe", "AssessmentReplayInputsProbe", "AssessmentOperationReplayProbe", "AssessmentRejectionProbe", "AssessmentStorageProbe", "AssessmentRestartProbe", "RejectedAssessmentRestartProbe", "RejectedAssessmentExpiryProbe", "RejectedAssessmentSourceProbe", "NativeAssessmentPreparationProbe", "PromotedAssessmentCommitProbe", "AssessmentStageFaultProbe", "NativeAssessmentExecutionProbe", "NativeAssessmentRestartProbe")) {
             var source = directory.resolve(name + ".java");
             try (var input = getClass().getResourceAsStream("/runtime-inventory/" + name + ".java")) {
                 assertThat(input).isNotNull(); Files.copy(input, source);
@@ -64,6 +64,7 @@ class DocumentAssessmentStorageRuntimeTest {
                     classpath + java.io.File.pathSeparator + probe,
                     "ai.protomolt.proto.repo.container.ledger.AssessmentStorageProbe", bundle.toString());
             builder.environment().put("PROTOMOLT_TEST_JDBC", postgres.getJdbcUrl());
+            builder.environment().put("PROTOMOLT_TEST_RUNTIME_BUNDLE", bundle.toString());
             builder.environment().put("PROTOMOLT_TEST_USER", postgres.getUsername());
             builder.environment().put("PROTOMOLT_TEST_PASSWORD", postgres.getPassword());
             builder.environment().put("PROTOMOLT_TEST_S3_ENDPOINT", storage.getEndpoint().toString());
@@ -93,7 +94,7 @@ class DocumentAssessmentStorageRuntimeTest {
                         "ASSESSMENT_REJECTION_CANCEL_AFTER_COMMIT_OK", "ASSESSMENT_REJECTION_STALE_POLICY_OK",
                         "ASSESSMENT_REJECTION_TERMINAL_READ_OK", "REJECTED_ASSESSMENT_CAPTURE_FAULTS_OK",
                         "REJECTED_ASSESSMENT_AUTHORITY_GUARDS_OK", "REJECTED_ASSESSMENT_EXPIRY_WAITS_OK",
-                        "REJECTED_ASSESSMENT_SOURCE_AUTHORIZATION_OK", "NATIVE_ASSESSMENT_PREPARATION_OK", "PROMOTED_ASSESSMENT_COMMIT_OK", "ASSESSMENT_STAGE_LOST_ACK_DISCOVERY_OK", "NATIVE_ASSESSMENT_EXECUTION_OK");
+                        "REJECTED_ASSESSMENT_SOURCE_AUTHORIZATION_OK", "NATIVE_ASSESSMENT_PREPARATION_OK", "PROMOTED_ASSESSMENT_COMMIT_OK", "ASSESSMENT_STAGE_LOST_ACK_DISCOVERY_OK", "NATIVE_ASSESSMENT_EXECUTION_OK", "NATIVE_PRETERMINAL_RESTART_OK");
             } finally {
                 if (process.isAlive()) {
                     process.destroyForcibly();
