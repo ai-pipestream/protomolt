@@ -168,11 +168,79 @@ class RepositoryRetentionLockSetIT {
     }
 
     private static int lock(Connection connection, UUID... ids) throws SQLException {
+        return lockSet(connection, "lock_repository_retention_set", ids);
+    }
+
+    private static int share(Connection connection, UUID... ids) throws SQLException {
+        return lockSet(connection, "share_repository_retention_set", ids);
+    }
+
+    private static int lockSet(Connection connection, String function, UUID... ids) throws SQLException {
         var array = connection.createArrayOf("uuid", ids);
-        try (var statement = connection.prepareStatement("SELECT lock_repository_retention_set(?)")) {
+        try (var statement = connection.prepareStatement("SELECT " + function + "(?)")) {
             statement.setArray(1, array);
             try (var rows = statement.executeQuery()) { assertThat(rows.next()).isTrue(); return rows.getInt(1); }
         } finally { array.free(); }
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {true, false})
+    void sharedSetsOverlapButExcludeWritersUntilBothTransactionsFinish(boolean commit) throws Exception {
+        try (var first = connection(); var second = connection(); var observer = connection()) {
+            String before = snapshot(observer);
+            first.setAutoCommit(false); second.setAutoCommit(false);
+            try {
+                assertThat(share(first, documentObject, archiveObject, documentObject)).isEqualTo(2);
+                // A conflicting lock implementation would time out here.
+                execute(second, "SET lock_timeout='500ms'");
+                assertThat(share(second, archiveObject, documentObject)).isEqualTo(2);
+                assertLocked(observer, "archive_object_uploads", "object_id", archiveObject);
+                assertLocked(observer, "document_part_attempts", "attempt_id", attempt);
+                assertLocked(observer, "repository_object_retention", "object_id", documentObject);
+                assertThat(lock(observer, unrelatedObject)).isEqualTo(1);
+                if (commit) first.commit(); else first.rollback();
+                assertLocked(observer, "repository_object_retention", "object_id", documentObject);
+                if (commit) second.commit(); else second.rollback();
+                nowait(observer, "repository_object_retention", "object_id", documentObject);
+                assertThat(snapshot(observer)).isEqualTo(before);
+            } finally { first.rollback(); second.rollback(); }
+        }
+    }
+
+    @Test void sharedSetLocksAllSourcesBeforePhysicalRows() throws Exception {
+        try (var blocker = connection(); var contender = connection(); var observer = connection();
+                var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            blocker.setAutoCommit(false);
+            nowait(blocker, "document_part_attempts", "attempt_id", attempt);
+            int contenderPid = (int) number(contender, "SELECT pg_backend_pid()");
+            int blockerPid = (int) number(blocker, "SELECT pg_backend_pid()");
+            try {
+                var pending = executor.submit(() -> share(contender, documentObject, archiveObject));
+                awaitWait(observer, contenderPid, blockerPid);
+                assertLocked(observer, "archive_object_uploads", "object_id", archiveObject);
+                nowait(observer, "repository_object_retention", "object_id", archiveObject);
+                nowait(observer, "repository_object_retention", "object_id", documentObject);
+                assertThat(share(observer, unrelatedObject)).isEqualTo(1);
+                blocker.rollback();
+                assertThat(pending.get(10, TimeUnit.SECONDS)).isEqualTo(2);
+            } finally { blocker.rollback(); }
+        }
+    }
+
+    @Test void sharedSetRejectsMalformedMissingAndSnapshotInputs() throws Exception {
+        try (var connection = connection()) {
+            for (String input : new String[]{"NULL::uuid[]", "ARRAY[NULL]::uuid[]", "ARRAY[[gen_random_uuid()]]",
+                    "array_fill(gen_random_uuid(),ARRAY[10001])"})
+                assertThatThrownBy(() -> number(connection, "SELECT share_repository_retention_set(" + input + ")"))
+                        .isInstanceOf(SQLException.class).hasMessageContaining("Repository retention shared lock set");
+            assertThatThrownBy(() -> share(connection, archiveObject, UUID.randomUUID()))
+                    .hasMessageContaining("requires every physical location");
+            assertThat(share(connection)).isZero();
+            connection.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
+            connection.setAutoCommit(false);
+            try {
+                assertThatThrownBy(() -> share(connection)).hasMessageContaining("requires READ COMMITTED");
+            } finally { connection.rollback(); }
+        }
     }
 
     private static void nowait(Connection connection, String table, String column, UUID id) throws SQLException {

@@ -4339,3 +4339,18 @@ native reference guards and bounded reader lifecycle dispatch are extended.
 Existing protobuf contracts, document reader scopes and public transports are
 unchanged. Implement and review the database protection and lifecycle gates before
 mounting any reader entry point.
+
+The first database prerequisite is implemented in V70:
+`share_repository_retention_set` validates and deduplicates the complete bounded
+object set, locks archive owners then document-attempt owners in PostgreSQL UUID
+order, and only then locks retention rows, using `FOR SHARE` throughout. Its
+validation and ordering match the V65 exclusive primitive. It neither creates
+references nor authorizes reads, and deliberately leaves retirement/reclamation
+state checks to the admission operation. Empty sets still require READ COMMITTED.
+
+Real PostgreSQL tests prove overlapping shared sets coexist, writers remain
+excluded until both readers commit or roll back, unrelated objects progress,
+all source locks precede physical locks, invalid/missing inputs are refused and
+existing retention metadata survives migration unchanged. The assessment session,
+native reader references, lifecycle dispatch and release guard remain unimplemented;
+this primitive alone must not be exposed as a read operation.
