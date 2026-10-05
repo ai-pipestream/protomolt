@@ -5990,3 +5990,41 @@ This remains package-private, storage-independent composition. SQL capture and
 current authorization, owned result delivery, public read contracts, registry/cache
 integration, restore/pruning and hydration remain open. These tests do not establish
 process restart, public transport or deployment behavior.
+
+#### Historical binding seam and remaining recovery gate
+
+`DocumentHistoricalSchemaBinding` now isolates retained command/member/policy/
+container reconstruction from payload validation. Strict replay uses its
+complete-candidate request and continues to check validation, policy proof,
+artifact/root completeness and current access. Nine focused PostgreSQL tests
+pass, including revocation suppressing either a result or validation details.
+Sol reviewed this extraction. Evidence is in
+`docs/evidence/repository/2026-10-05-historical-binding/`.
+
+Optional selected-content materialization must branch before strict replay. It
+must independently verify the chosen command part's ordinal/size/hash, the retained
+root row, canonical root evidence and selected path membership. Its input should
+express a selected fragment, not reuse the complete-candidate admission Request.
+Its owned handle must retain copied fragment/evidence/assets, decoding capacity
+and the read pin until consumption ends, with current READ checked before capture
+and delivery. Decoding must not imply an admission verdict. Raw preservation uses
+the existing raw reader without typed snapshot capture or schema lookup. Initial
+typed SQL capture may load the existing bounded artifact set; selected decoding
+must not claim unrelated assets were validated.
+
+The broader goal remains active. In addition to this owned-read integration, the
+next separate recovery gate is durable private-owner session recovery after a
+forced process crash following stage COMMIT and a lost acknowledgement. The
+existing fresh-process handoff test does not establish it. A recovery fixture must
+restart from independently durable owner/command state, discover the exact sealed
+stage without uploading again or consulting the registry, and establish one
+terminal receipt plus released pins and memory reservations. The owner capability
+must remain private; this requirement does not introduce a public nonce API.
+Durable session storage needs its own reviewed lifecycle and fencing design before
+that test can qualify it.
+
+Registry resolution/cache scope, restore/pruning, non-S3 durability, larger and
+higher-load RustFS measurements, bounded hydration and optional JCR capabilities
+remain separate completion gates. LocalStack remains the correctness fixture;
+RustFS is the local performance target. The current small mixed workload showed
+no replica speedup and cannot establish saturation or horizontal capacity.

@@ -5877,3 +5877,13 @@ was moved without changing its rules so both paths reuse it. Twenty-one new path
 cases and all 214 admission tests pass. Host authorization, evidence membership,
 physical ordinal binding and result ownership remain prerequisites, with SQL/public
 integration still pending.
+
+### Shared historical binding reconstruction
+
+**Extracted internal implementation; unchanged public operations:**
+`DocumentHistoricalSchemaBinding` reconstructs the retained command, member,
+policy and container association before strict replay. It does not certify
+fragment identity, evidence membership or current delivery authorization.
+`DocumentHistoricalSchemas` retains its complete validation and authorization
+checks. Nine focused PostgreSQL replay/revocation cases pass; optional selected
+materialization still needs its own owned result and host integration.
