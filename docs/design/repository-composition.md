@@ -5722,4 +5722,43 @@ fresh-process recovery. LocalStack remains the default `admissionStorageTest`
 backend. There is no automatic fallback between them. See
 `docs/evidence/repository/2026-10-05-native-rustfs/README.md` for the recorded image
 identity, source hashes and test scope. Deliberate expiry/fault waits make this a
-correctness gate; the separate native replica workload remains unimplemented.
+correctness gate; the separate native replica measurement remains pending.
+
+#### Independent native process workload
+
+`nativeReplicaTest` now runs a small production-JAR workload against shared
+PostgreSQL and RustFS, independently of the fault/expiry suite. A seed JVM creates
+the namespace, drive, backend binding and policy once. Topologies of one, two and
+four writer JVMs initialize their own runtimes and wait at a ready/go barrier.
+Each writer creates two distinct typed documents and one invalid candidate using
+real split payloads, provider transfers, schema admission and retained rejection.
+All operations have unique destination and operation identities.
+
+Each writer verifies exact terminal replay without another schema lookup, then
+drains its runtime before exit. A fresh reader JVM after each topology checks
+retained historical content, metadata account, original mutation revision and
+command digest. It independently observes exact stored success/rejection receipts
+and checks that rejected creates have neither a normal document nor a published
+revision. The complete run requires 14 successes and seven retained rejections.
+No failure/expiry seed, inserted success row or synthetic provider transfer is
+used by this workload. All child processes are owned and stopped by the harness.
+
+This is trusted internal composition: the caller has process authority. Reads
+follow each write topology, rather than running concurrently with writes. Full
+runtime execution retry happens in the original writer; fresh readers observe the
+persisted terminal receipts. The local operation durations are diagnostic and
+are not yet qualified performance samples. A small correctness workload cannot
+prove a throughput gain from additional replicas.
+
+Still required for native scaling qualification: the competing expected-revision
+pair, mixed concurrent reads/writes, explicit physical-version comparisons,
+interleaved measured windows with fixed versus added SQL capacity, provider/pool/
+SQL/lock/RSS telemetry and preserved raw samples. Startup migrations remain outside
+traffic, though each child currently uses the standard database host constructor
+and validates/migrates the already-current schema. No public typed publication
+transport or deployment claim is added.
+
+The final native process qualification passed after Sol review and readiness/
+cleanup fixes. Parent and worker barriers have compatible bounded deadlines;
+cleanup attempts all children and preserves the primary failure. Evidence and
+source hashes are in `docs/evidence/repository/2026-10-05-native-replicas/README.md`.

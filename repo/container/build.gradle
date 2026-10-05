@@ -144,3 +144,23 @@ tasks.register('admissionRustFsTest', Test) {
     }
     useJUnitPlatform()
 }
+
+// Separate native multi-process workload. Not part of the fault/expiry benchmark.
+tasks.named('test') { exclude '**/NativeReplicaRuntimeTest*' }
+tasks.register('nativeReplicaTest', Test) {
+    group = 'verification'
+    description = 'Exercise native publication across 1/2/4 production-JAR processes on RustFS'
+    dependsOn tasks.named('admissionRuntimeInventory'), tasks.named('jar'), configurations.assessmentHostRuntime
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    filter { includeTestsMatching 'ai.protomolt.proto.repo.container.ledger.NativeReplicaRuntimeTest' }
+    inputs.dir(hostAdmissionInventory)
+    inputs.files(configurations.assessmentHostRuntime)
+    inputs.file(tasks.named('jar').flatMap { it.archiveFile })
+    doFirst {
+        systemProperty 'protomolt.test.admissionRuntimeBundle', hostAdmissionInventory.get().asFile.absolutePath
+        systemProperty 'protomolt.test.storageHostClasspath', files(tasks.named('jar').get().archiveFile,
+                configurations.assessmentHostRuntime).asPath
+    }
+    useJUnitPlatform()
+}

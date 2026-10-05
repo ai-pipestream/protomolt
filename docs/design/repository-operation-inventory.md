@@ -5804,3 +5804,13 @@ production-JAR native assessment/publication/recovery fixture against pinned
 RustFS. The existing `admissionStorageTest` keeps its LocalStack default. Backend
 selection is explicit and rejects unknown values. This adds provider parity
 coverage; it does not establish measured native scaling or a new public API.
+
+### Independent native process workload
+
+No API changes. `nativeReplicaTest` adds real shared PostgreSQL/RustFS coverage for
+1/2/4 production-JAR writers, unique typed creates, retained invalid-create
+rejections, same-runtime exact retry and fresh-process history/terminal observation.
+It requires 14 successful publications and seven rejections; rejected creates
+must have no current document or published revision. The fixture uses trusted
+process authority and does not qualify concurrent mixed traffic, scoped API-key
+bindings, production transport or measured scaling.
