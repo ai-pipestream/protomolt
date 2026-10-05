@@ -244,6 +244,13 @@ public final class DocumentSchemaAdmission {
     /** Resources already own reader assets; this check additionally retains final encoded evidence. */
     static Proof check(Request request, Reader reader, Limits limits, DocumentAdmissionResources resources,
             Runnable control) throws InvalidProtocolBufferException {
+        return check(request, reader, limits, resources, java.time.Instant.now(), control);
+    }
+
+    /** Internal proof checking at the exact assessment time, with the same ownership requirements. */
+    static Proof check(Request request, Reader reader, Limits limits, DocumentAdmissionResources resources,
+            java.time.Instant evaluatedAt, Runnable control) throws InvalidProtocolBufferException {
+        Objects.requireNonNull(evaluatedAt);
         Objects.requireNonNull(request); Objects.requireNonNull(reader); Objects.requireNonNull(limits);
         Objects.requireNonNull(control); active(control);
         if (request.commandSha256().size() != 32 || !request.policySha256().matches("[0-9a-f]{64}"))
@@ -253,7 +260,7 @@ public final class DocumentSchemaAdmission {
                 || request.evidence().size() > limits.maxFragments() || request.references().size() >= limits.maxBindings())
             throw new IllegalArgumentException("member admission count exceeds limit");
         var fragments = Map.copyOf(request.fragments());
-        var assembly = checkMember(member, fragments, request.requireStructuredRoot(), limits, control);
+        var assembly = checkMember(member, fragments, request.requireStructuredRoot(), limits, evaluatedAt, control);
         var bundles = decodeEvidence(request.evidence(), limits, resources, control);
         if (bundles.keySet().stream().anyMatch(ordinal -> ordinal >= member.getPartsCount()))
             throw new IllegalArgumentException("evidence ordinal is outside the member");
@@ -306,13 +313,9 @@ public final class DocumentSchemaAdmission {
                     new DocumentPayloadCheck.Limits((int) Math.max(1, decodedRemaining), 1_000_000, 64, 4096, 65536),
                     DocumentSchemaOccurrences.Limits.DEFAULT, new DocumentSchemaReplay.Limits(4096, 4L * MIB, 65536),
                     limits.maxEvidenceBytes());
-            var checked = resources == null
-                    ? DocumentFragmentSchemaReplay.check(container, part.getSlot(), fragments.get(ordinal),
+            var checked = DocumentFragmentSchemaReplay.check(container, part.getSlot(), fragments.get(ordinal),
                             member.getDestination().getAddress().getDocId(), evidence, metadata, retained, VALIDATOR,
-                            replayLimits, () -> active(control))
-                    : DocumentFragmentSchemaReplay.check(container, part.getSlot(), fragments.get(ordinal),
-                            member.getDestination().getAddress().getDocId(), evidence, metadata, retained, VALIDATOR,
-                            replayLimits, resources, () -> active(control));
+                            replayLimits, resources, evaluatedAt, () -> active(control));
             for (int i = 0; i < checked.size(); i++) {
                 var root = checked.get(i);
                 decodedRemaining -= root.checked().payload().decodedBytes();

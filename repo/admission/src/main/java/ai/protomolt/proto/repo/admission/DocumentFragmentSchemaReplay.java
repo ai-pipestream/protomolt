@@ -44,7 +44,7 @@ final class DocumentFragmentSchemaReplay {
             DocumentRetainedSchemaAssets retained, ProtoValidator validator, Limits limits, Runnable control)
             throws InvalidProtocolBufferException {
         return checkInternal(container, expectedSlot, fragment, expectedDocumentId, bundles, metadata,
-                retained, validator, limits, null, control);
+                retained, validator, limits, null, java.time.Instant.now(), control);
     }
 
     /** Reserves canonical scratch bytes only; callers own inputs, retained assets and parsed results. */
@@ -54,14 +54,25 @@ final class DocumentFragmentSchemaReplay {
             DocumentRetainedSchemaAssets retained, ProtoValidator validator, Limits limits,
             DocumentAdmissionReservations reservations, Runnable control) throws InvalidProtocolBufferException {
         return checkInternal(container, expectedSlot, fragment, expectedDocumentId, bundles, metadata,
-                retained, validator, limits, java.util.Objects.requireNonNull(reservations), control);
+                retained, validator, limits, java.util.Objects.requireNonNull(reservations), java.time.Instant.now(), control);
+    }
+
+    /** All roots share the assessment's evaluation time. Reservations may be absent for caller-owned checks. */
+    static List<CheckedRoot> check(DocumentSchemaBinding container, DocumentPublicationSlot expectedSlot,
+            ByteString fragment, String expectedDocumentId, List<DocumentRootSchemaEvidence> bundles,
+            Map<DocumentPayloadCheck.SchemaKey, RepositorySchemaAsset> metadata,
+            DocumentRetainedSchemaAssets retained, ProtoValidator validator, Limits limits,
+            DocumentAdmissionReservations reservations, java.time.Instant evaluatedAt, Runnable control)
+            throws InvalidProtocolBufferException {
+        return checkInternal(container, expectedSlot, fragment, expectedDocumentId, bundles, metadata,
+                retained, validator, limits, reservations, java.util.Objects.requireNonNull(evaluatedAt), control);
     }
 
     private static List<CheckedRoot> checkInternal(DocumentSchemaBinding container, DocumentPublicationSlot expectedSlot,
             ByteString fragment, String expectedDocumentId, List<DocumentRootSchemaEvidence> bundles,
             Map<DocumentPayloadCheck.SchemaKey, RepositorySchemaAsset> metadata,
             DocumentRetainedSchemaAssets retained, ProtoValidator validator, Limits limits,
-            DocumentAdmissionReservations reservations, Runnable control) throws InvalidProtocolBufferException {
+            DocumentAdmissionReservations reservations, java.time.Instant evaluatedAt, Runnable control) throws InvalidProtocolBufferException {
         active(control);
         if (bundles.size() > limits.fragment().maxRoots())
             throw new IllegalArgumentException("fragment evidence root count exceeds limit");
@@ -107,7 +118,7 @@ final class DocumentFragmentSchemaReplay {
                     limits.payload().maxDepth(), limits.payload().maxSchemaTypes(), limits.payload().maxSchemaFields());
             var bundle = ordered.get(i);
             var checked = DocumentSchemaReplay.check(inventory.roots().get(i).envelope(), bundle.getOccurrencesList(),
-                    metadata, retained, validator, perRoot, limits.occurrences(), limits.replay(), () -> active(control));
+                    metadata, retained, validator, perRoot, limits.occurrences(), limits.replay(), evaluatedAt, () -> active(control));
             remaining -= checked.payload().decodedBytes();
             results.add(new CheckedRoot(bundle.getRoot(), checked));
         }

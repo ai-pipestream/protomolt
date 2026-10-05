@@ -39,6 +39,16 @@ final class DocumentSchemaReplay {
             DocumentRetainedSchemaAssets retained, ProtoValidator validator,
             DocumentPayloadCheck.Limits payloadLimits, DocumentSchemaOccurrences.Limits evidenceLimits,
             Limits limits, Runnable control) throws InvalidProtocolBufferException {
+        return check(candidate, recorded, metadata, retained, validator, payloadLimits, evidenceLimits,
+                limits, java.time.Instant.now(), control);
+    }
+
+    static DocumentPayloadCheck.AssetResult check(Any candidate, List<RepositorySchemaOccurrencePath> recorded,
+            Map<DocumentPayloadCheck.SchemaKey, RepositorySchemaAsset> metadata,
+            DocumentRetainedSchemaAssets retained, ProtoValidator validator,
+            DocumentPayloadCheck.Limits payloadLimits, DocumentSchemaOccurrences.Limits evidenceLimits,
+            Limits limits, java.time.Instant evaluatedAt, Runnable control) throws InvalidProtocolBufferException {
+        Objects.requireNonNull(evaluatedAt, "evaluatedAt");
         Objects.requireNonNull(candidate, "candidate");
         Objects.requireNonNull(recorded, "recorded");
         Objects.requireNonNull(metadata, "metadata");
@@ -88,7 +98,7 @@ final class DocumentSchemaReplay {
                 validator, payloadLimits, () -> active(control), request -> {
                     var selection = requireSelection(index, request);
                     return retained.resolve(requireMetadata(selection, metadata), () -> active(control));
-                }, evidenceLimits);
+                }, evidenceLimits, evaluatedAt);
         var actual = DocumentSchemaOccurrenceProjection.project(checked.payload(), () -> active(control));
         if (actual.size() != expected.size() || !expected.equals(new HashSet<>(actual)))
             throw new IllegalArgumentException("rechecked occurrences differ from retained evidence");

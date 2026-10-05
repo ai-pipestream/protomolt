@@ -92,6 +92,30 @@ class DocumentSchemaAssessmentReplayTest {
         assertThat(budget.live).isZero();
     }
 
+    @Test void strictProofReplayUsesAssessmentTimeAndStillRejectsInvalidValues() throws Exception {
+        var captured = capture("now == timestamp('2000-01-01T00:00:00Z')");
+        for (boolean budgeted : List.of(false, true)) {
+            var budget = new Reservations();
+            try (var resources = new DocumentAdmissionResources(budget)) {
+                var proof = DocumentSchemaAdmission.check(captured.request().candidate(),
+                        hash -> Optional.ofNullable(captured.assets().get(hash)), POLICY.limits(),
+                        budgeted ? resources : null, AT, () -> {});
+                assertThat(proof.member()).isEqualTo(captured.request().candidate().member());
+                assertThat(proof.roots()).isNotEmpty();
+                assertThatThrownBy(() -> DocumentSchemaAdmission.check(captured.request().candidate(),
+                        hash -> Optional.ofNullable(captured.assets().get(hash)), POLICY.limits(),
+                        budgeted ? resources : null, AT.plusSeconds(1), () -> {}))
+                        .isInstanceOf(ai.protomolt.proto.validate.ValidationResult.ValidationException.class);
+            }
+            assertThat(budget.live).isZero();
+            if (budgeted) assertThat(budget.peak).isPositive();
+        }
+        var invalid = capture("false");
+        assertThatThrownBy(() -> DocumentSchemaAdmission.check(invalid.request().candidate(),
+                hash -> Optional.ofNullable(invalid.assets().get(hash)), POLICY.limits(), null, AT, () -> {}))
+                .isInstanceOf(ai.protomolt.proto.validate.ValidationResult.ValidationException.class);
+    }
+
     @Test void recordedTimeAndExpectedVerdictAreBothRequired() throws Exception {
         var captured = capture("now == timestamp('2000-01-01T00:00:00Z')");
         var budget = new Reservations();

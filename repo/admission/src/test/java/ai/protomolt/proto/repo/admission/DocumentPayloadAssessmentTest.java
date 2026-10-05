@@ -91,6 +91,24 @@ class DocumentPayloadAssessmentTest {
                 .isInstanceOf(DocumentPayloadAssessment.Invalid.class);
     }
 
+    @Test void strictCheckPinsTimeAcrossNestedAnyValues() throws Exception {
+        var outer = wrapper();
+        var inner = binding(choice("now == timestamp('2000-01-01T00:00:00Z')"));
+        var payload = wrapped(outer, candidate(inner, "left", ""), candidate(inner, "right", ""));
+        var calls = new AtomicInteger();
+        var checked = DocumentPayloadCheck.checkContextualAssets(asset(outer, payload.getTypeUrl()), payload,
+                payload.getTypeUrl(), validator(), LIMITS, () -> {}, request -> {
+                    calls.incrementAndGet();
+                    return asset(inner, URL);
+                }, DocumentSchemaOccurrences.Limits.DEFAULT, AT);
+        assertThat(checked.payload().occurrences()).hasSize(3);
+        assertThat(calls.get()).isEqualTo(2);
+        assertThatThrownBy(() -> DocumentPayloadCheck.checkContextualAssets(asset(outer, payload.getTypeUrl()), payload,
+                payload.getTypeUrl(), validator(), LIMITS, () -> {}, request -> asset(inner, URL),
+                DocumentSchemaOccurrences.Limits.DEFAULT, AT.plusSeconds(1)))
+                .isInstanceOf(ai.protomolt.proto.validate.ValidationResult.ValidationException.class);
+    }
+
     private static DocumentPayloadAssessment assess(DocumentSchemaAssetBinding root, Any payload,
             Function<DocumentPayloadCheck.ResolutionRequest, DocumentSchemaAssetBinding> resolver) throws Exception {
         return DocumentPayloadCheck.assessContextualAssets(root, payload, payload.getTypeUrl(), validator(), LIMITS,

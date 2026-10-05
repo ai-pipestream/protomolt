@@ -5373,6 +5373,13 @@ An all-valid assessment is still not an admission Proof. Promotion must independ
 check its owned roots, schema references and artifact bytes through a budgeted
 admission bridge before building the existing schema batch. The public unbudgeted
 `DocumentSchemaAdmission.check` overload is not an acceptable production shortcut.
+The internal strict checker now accepts an explicit evaluation time and carries
+it through member assembly, every fragment root and nested Any validation. The
+existing convenience entry points select the current time once per check. Tests
+replay a captured time-dependent assessment at its recorded instant, reject it
+one second later, and exercise both budgeted checking and nested Any traversal.
+All 167 admission tests pass. This supplies the time semantics for promotion;
+it does not yet supply the owned promotion bridge.
 This promotion, an explicit accepted-or-assessed execution outcome, and the native
 decision integration remain unfinished; no application path selects `assess` yet.
 

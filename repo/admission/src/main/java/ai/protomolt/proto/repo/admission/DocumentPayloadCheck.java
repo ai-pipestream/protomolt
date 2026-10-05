@@ -95,9 +95,19 @@ final class DocumentPayloadCheck {
             ProtoValidator validator, Limits limits, Runnable control,
             Function<ResolutionRequest, DocumentSchemaAssetBinding> resolver,
             DocumentSchemaOccurrences.Limits evidenceLimits) throws InvalidProtocolBufferException {
+        return checkContextualAssets(root, candidate, acceptedTypeUrl, validator, limits, control,
+                resolver, evidenceLimits, java.time.Instant.now());
+    }
+
+    /** Strict checking at one caller-selected time, including every nested Any value. */
+    static AssetResult checkContextualAssets(DocumentSchemaAssetBinding root, Any candidate, String acceptedTypeUrl,
+            ProtoValidator validator, Limits limits, Runnable control,
+            Function<ResolutionRequest, DocumentSchemaAssetBinding> resolver,
+            DocumentSchemaOccurrences.Limits evidenceLimits, java.time.Instant evaluatedAt)
+            throws InvalidProtocolBufferException {
         var selections = assetSelections(root, acceptedTypeUrl, resolver, control);
         var payload = check(root.schema(), candidate, acceptedTypeUrl, validator, limits, control,
-                selections.resolver(), new DocumentSchemaOccurrences(evidenceLimits));
+                selections.resolver(), new DocumentSchemaOccurrences(evidenceLimits), evaluatedAt);
         return new AssetResult(payload, selections.assets());
     }
 
@@ -185,8 +195,16 @@ final class DocumentPayloadCheck {
     private static DocumentPayloadCheck check(DocumentSchemaBinding schema, Any candidate, String acceptedTypeUrl,
             ProtoValidator validator, Limits limits, Runnable control,
             Function<ResolutionRequest, DocumentSchemaBinding> resolver, DocumentSchemaOccurrences evidence) throws InvalidProtocolBufferException {
+        return check(schema, candidate, acceptedTypeUrl, validator, limits, control, resolver, evidence,
+                java.time.Instant.now());
+    }
+
+    private static DocumentPayloadCheck check(DocumentSchemaBinding schema, Any candidate, String acceptedTypeUrl,
+            ProtoValidator validator, Limits limits, Runnable control,
+            Function<ResolutionRequest, DocumentSchemaBinding> resolver, DocumentSchemaOccurrences evidence,
+            java.time.Instant evaluatedAt) throws InvalidProtocolBufferException {
         var scan = scan(schema, candidate, acceptedTypeUrl, validator, limits, control, resolver, evidence,
-                java.time.Instant.now(), false);
+                Objects.requireNonNull(evaluatedAt), false);
         return new DocumentPayloadCheck(schema, candidate, scan.decoded(), scan.session().bindings,
                 evidence == null ? java.util.List.of() : evidence.result(), scan.session().decodedBytes);
     }
