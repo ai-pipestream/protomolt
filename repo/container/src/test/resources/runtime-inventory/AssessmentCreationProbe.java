@@ -24,6 +24,13 @@ public final class AssessmentCreationProbe {
         }
         // Pre-policy legacy rows; the restart candidate updates these destinations.
         restartMembers = AssessmentRestartProbe.seedDestinations(tx, restartMembers);
+        var rejectionMembers = new ArrayList<DocumentPublicationMember>();
+        for (String id : List.of("a", "b")) {
+            var member = ObservedAssessmentProbe.member(id).member();
+            rejectionMembers.add(member.toBuilder().setDestination(member.getDestination().toBuilder()
+                    .setAddress(member.getDestination().getAddress().toBuilder().setGraphId("rejection-authorization"))).build());
+        }
+        var rejectionTargets = AssessmentRestartProbe.seedDestinations(tx, rejectionMembers);
         var policy = DocumentAdmissionPolicy.of(DocumentSchemaPolicy.newBuilder().setEncodingVersion(1).setAccountId("account")
                 .setValidationProfile(DocumentSchemaAdmission.PROFILE).setMode(DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_OPAQUE_ALLOWED)
                 .setAnyResolvedSchema(true).setLimits(DocumentSchemaPolicyLimits.newBuilder().setMaxFragments(20).setMaxFragmentBytes(4_000_000)
@@ -31,7 +38,7 @@ public final class AssessmentCreationProbe {
                         .setMaxDecodedBytes(1_000_000)).build(), () -> {});
         var initial = new DocumentSchemaPolicies(tx).activate(policy, 0, () -> {});
         AssessmentMixedReuseProbe.run(tx, provider, mixedSource, initial, observation);
-        var active = AssessmentOperationReplayProbe.run(tx, provider, initial, observation);
+        var active = AssessmentOperationReplayProbe.run(tx, provider, initial, observation, database, rejectionTargets);
         for (int scenario : new int[]{0, 2, 1}) {
             boolean invalid = scenario == 1;
             boolean afterScope = scenario == 2;

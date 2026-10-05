@@ -5198,3 +5198,67 @@ cases. Complete descriptor compilation, protobuf lint and strict FILE compatibil
 against the preceding checkpoint pass. JSON Schema exposes the digest constraint
 and retains the cross-field rules as `x-protomolt-cel`; it does not translate those
 rules into equivalent standard OpenAPI constraints. Generator work remains separate.
+
+#### Internal retained-assessment rejection decision
+
+`DocumentAssessmentRejections` now connects completed retained replay to a fresh
+terminal decision transaction. It is internal and unmounted. Native execution
+still does not turn an escaping validation exception into a rejection receipt.
+`DocumentAssessmentReplay.verify` returns a private-constructor owned scope only
+after every member and the complete recorded first failure reproduce. That scope
+keeps the retained inputs, their memory reservations and read Uses alive through
+the decision. The existing diagnostic `replay` method closes this scope before
+returning its result. A caller-constructed diagnostic result is not decision input.
+
+The gate rejects accepted assessments, mismatched command/owner identity and a
+replay runtime different from the recorded runtime. It checks the observed runtime
+context again before committing. Replay and provider work finish before the fresh
+transaction. The transaction locks the operation owner, checks an existing terminal
+outcome, fences the live owner, locks the current policy revision/digest, authorizes
+the complete destination/source set, then locks the exact sealed, unreleased
+assessment row. Historical replay under an older policy remains useful diagnostically
+but cannot authorize a new rejection after the current policy changes.
+
+The host must supply a positive, exact-microsecond minimum remaining evidence
+window, bounded by the existing one-day staging limit. The gate checks database
+time after lock acquisition and again at INSERT. It does not extend retention.
+V76 stores the receipt's five assessment coordinates relationally and checks their
+exact association with the retained owner during insertion. Other rejection reasons
+cannot carry these columns. Replay checks their equality with the canonical receipt
+body. There is no permanent foreign key to the expiring assessment owner; immutable
+receipt replay must survive the end of evidence retention. Upgrading an old unbound
+ADMISSION_REJECTED row fails rather than treating it as verified evidence.
+
+Decision errors are outside replay's error-reauthorization catch. In particular,
+a JDBC acknowledgement failure after COMMIT remains an uncertain outcome requiring
+exact receipt replay. Cancellation observed after INSERT but before COMMIT rolls
+back. Cancellation after COMMIT does not turn the durable outcome into a rollback
+claim. Closing the verified scope releases local resources without post-decision
+SQL authorization, which would incorrectly reject an operation that just became
+terminal. An already committed terminal outcome is returned before provider or
+evidence access on an authorized retry.
+
+Before host integration, add a distinct receipt-authorized assessment capture and
+delivery path. The existing live-owner path intentionally rejects terminal
+operations; it cannot reopen rejected evidence after restart. The new path must
+use the exact stored admission-rejection binding, current destination/source READ
+authorization and unexpired sealed retention, without requiring the old write
+lease or that the historical policy remain current. It must grant no write fence.
+Receipt replay is implemented; post-rejection evidence re-evaluation is not yet
+available. Keep native execution and public exposure disabled until that path,
+expiry/cleanup behavior and restart cases are qualified.
+
+The focused gate passes 45 tests, including the production-JAR subprocess using
+real PostgreSQL and versioned LocalStack storage. It reproduces genuine invalid
+values, refuses accepted candidates, stale policy revisions, wrong owner nonces,
+insufficient retention, changed runtime context and revoked destination access.
+Faults around actual INSERT/COMMIT prove pre-commit cancellation rollback, unchanged
+post-commit receipts and recovery through exact replay after lost acknowledgement.
+V76 SQL fixtures reject a wrong assessment UUID, manifest hash, deadline and an
+extraneous binding on a cancellation row. A disposable header-corruption fixture
+proves receipt/header disagreement returns DATA_LOSS, then restores the exact row.
+Migration from V75 preserves an existing cancellation receipt and refuses an old
+unbound admission-rejection row without repairing it. SPI and engine dependency
+boundary gates pass. These are correctness results, not RustFS latency measurements.
+Source-access revocation specifically between verification and this new decision,
+and post-terminal retention expiry/restart, remain required before host exposure.

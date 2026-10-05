@@ -22,6 +22,47 @@ final class DocumentAssessmentReplay {
     static Result replay(DocumentReadLedger.PinnedAssessment capture, DocumentAssessmentReader reader,
             PayloadBudget budget, DocumentRevisionAssembly.Limits opaqueLimits,
             DocumentAssessmentRuntimeObserver.Observation observation, RepositoryReadControl control) {
+        try (var verified = verify(capture, reader, budget, opaqueLimits, observation, control)) {
+            return verified.result();
+        }
+    }
+
+    /** Only completed whole-assessment replay can create this still-owned scope. */
+    static final class Verified implements AutoCloseable {
+        private final DocumentAssessmentReplayInputs inputs;
+        private final DocumentReadLedger.PinnedRead<DocumentAssessmentReadPlan>.Use delivery;
+        private final Result result;
+        private final DocumentAssessmentRuntimeObserver.Observation observation;
+        private boolean closed;
+        private Verified(DocumentAssessmentReplayInputs inputs,
+                DocumentReadLedger.PinnedRead<DocumentAssessmentReadPlan>.Use delivery, Result result,
+                DocumentAssessmentRuntimeObserver.Observation observation) {
+            this.inputs = inputs; this.delivery = delivery; this.result = result; this.observation = observation;
+        }
+        Result result() { requireOpen(); return result; }
+        DocumentAssessmentReplayInputs.Snapshot snapshot() { requireOpen(); return inputs.snapshot(); }
+        DocumentAssessmentCreation.Created stage() { requireOpen(); return delivery.plan().stage(); }
+        void check(RepositoryReadControl control) {
+            requireOpen(); delivery.plan();
+            try {
+                if (!result.replayRuntime().equals(observation.identity(control::check)))
+                    throw invalid("Replay runtime observation changed");
+            } catch (java.util.concurrent.CancellationException interrupted) {
+                throw new RepositoryException(RepositoryException.Code.CANCELLED, "Assessment decision cancelled");
+            }
+        }
+        private void requireOpen() { if (closed) throw new IllegalStateException("Verified assessment scope is closed"); }
+        @Override public void close() {
+            if (closed) return;
+            closed = true;
+            try { inputs.close(); } finally { delivery.close(); }
+        }
+    }
+
+    /** Caller owns the returned scope through its decision; closing performs no SQL. */
+    static Verified verify(DocumentReadLedger.PinnedAssessment capture, DocumentAssessmentReader reader,
+            PayloadBudget budget, DocumentRevisionAssembly.Limits opaqueLimits,
+            DocumentAssessmentRuntimeObserver.Observation observation, RepositoryReadControl control) {
         Objects.requireNonNull(capture); Objects.requireNonNull(reader); Objects.requireNonNull(budget);
         Objects.requireNonNull(opaqueLimits); Objects.requireNonNull(observation); Objects.requireNonNull(control);
         var active = new RepositoryReadControl() {
@@ -32,8 +73,12 @@ final class DocumentAssessmentReplay {
             @Override public long remainingNanos() { return control.remainingNanos(); }
         };
         active.check();
-        try (var delivery = capture.use()) {
-            try (var inputs = capture.loadReplayInputs(budget, active)) {
+        var delivery = capture.use();
+        DocumentAssessmentReplayInputs inputs = null;
+        boolean transferred = false;
+        try {
+            try {
+                inputs = capture.loadReplayInputs(budget, active);
                 var runtime = observation.identity(active::check);
                 var snapshot = inputs.snapshot(); var command = snapshot.command(); var manifest = snapshot.manifest();
                 var recorded = new HashMap<String,DocumentMemberAssessment>();
@@ -88,8 +133,11 @@ final class DocumentAssessmentReplay {
                 capture.authorizeDelivery(delivery, active);
                 if (!runtime.equals(observation.identity(active::check))) throw invalid("Replay runtime observation changed");
                 var stage = delivery.plan().stage();
-                return new Result(stage.assessment(), command.sha256(), stage.manifestSha256(), manifest.getOwnerGeneration(),
+                var result = new Result(stage.assessment(), command.sha256(), stage.manifestSha256(), manifest.getOwnerGeneration(),
                         manifest.getRuntime(), runtime, Optional.ofNullable(first));
+                var verified = new Verified(inputs, delivery, result, observation);
+                transferred = true;
+                return verified;
             } catch (java.util.concurrent.CancellationException cancelled) {
                 throw new RepositoryException(RepositoryException.Code.CANCELLED, "Assessment replay cancelled");
             } catch (InvalidProtocolBufferException failure) {
@@ -101,6 +149,10 @@ final class DocumentAssessmentReplay {
                     throw new RepositoryException(repository.code(), "Assessment replay cancelled or expired");
                 active.check(); capture.authorizeDelivery(delivery, active);
                 throw failure;
+            }
+        } finally {
+            if (!transferred) {
+                try { if (inputs != null) inputs.close(); } finally { delivery.close(); }
             }
         }
     }

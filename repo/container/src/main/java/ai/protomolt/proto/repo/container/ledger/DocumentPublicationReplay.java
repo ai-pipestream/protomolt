@@ -74,7 +74,8 @@ final class DocumentPublicationReplay {
                     """), key).getResultList();
             var rejections = bind(em.createNativeQuery("""
                     SELECT owner_generation,result_codec,result_version,result_bytes,encode(result_sha256,'hex'),
-                        recorded_at_epoch_micros,disposition,reason,command_codec,command_version,encode(command_sha256,'hex')
+                        recorded_at_epoch_micros,disposition,reason,command_codec,command_version,encode(command_sha256,'hex'),
+                        assessment_id,manifest_codec,manifest_version,encode(manifest_sha256,'hex'),retain_until_epoch_micros
                     FROM repository_operation_rejection
                     WHERE account_id=:account AND principal=:principal AND operation_id=:operation
                     """), key).getResultList();
@@ -92,6 +93,7 @@ final class DocumentPublicationReplay {
                             || receipt.getDispositionValue() != ((Number) row[6]).intValue() || receipt.getReasonValue() != ((Number) row[7]).intValue()
                             || !receipt.getCommandCodec().equals(row[8]) || receipt.getCommandEncodingVersion() != ((Number) row[9]).intValue()
                             || !receipt.getCommandSha256().equals(row[10])) throw new IllegalArgumentException("Rejection header differs from receipt");
+                    requireAssessmentBinding(receipt, row);
                     return new Observation(State.TERMINATED, Optional.empty(), Optional.of(receipt));
                 } catch (IllegalArgumentException | InvalidProtocolBufferException failure) {
                     throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Stored publication rejection is invalid", failure);
@@ -110,6 +112,20 @@ final class DocumentPublicationReplay {
             }
             requireRevisions(em, key, result, generation);
             return new Observation(State.COMMITTED, Optional.of(result));
+    }
+
+    private static void requireAssessmentBinding(DocumentPublicationRejection receipt, Object[] row) {
+        if (!receipt.hasAssessment()) {
+            for (int i = 11; i <= 15; i++)
+                if (row[i] != null) throw new IllegalArgumentException("Unexpected stored assessment binding");
+            return;
+        }
+        var binding = receipt.getAssessment();
+        if (!UUID.fromString(binding.getAssessmentId()).equals(row[11]) || !binding.getManifestCodec().equals(row[12])
+                || !(row[13] instanceof Number version) || binding.getManifestEncodingVersion() != version.intValue()
+                || !binding.getManifestSha256().equals(row[14]) || !(row[15] instanceof Number deadline)
+                || binding.getRetainUntilEpochMicros() != deadline.longValue())
+            throw new IllegalArgumentException("Stored assessment binding differs from rejection receipt");
     }
 
     private static void requireRevisions(EntityManager em, RepositoryOperationLedger.Key key,

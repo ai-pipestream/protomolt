@@ -15,11 +15,12 @@ import java.util.*;
 public final class AssessmentOperationReplayProbe {
     private static final DocumentRevisionAssembly.Limits LIMITS = new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000);
     static DocumentSchemaPolicies.Selection run(Tx tx, AssessmentProviderProbe provider, DocumentSchemaPolicies.Selection policy,
-            DocumentAssessmentRuntimeObserver.Observation observation) throws Exception {
+            DocumentAssessmentRuntimeObserver.Observation observation, javax.sql.DataSource database,
+            List<DocumentPublicationMember> rejectionTargets) throws Exception {
         var valid = ObservedAssessmentProbe.asset(StringValue.getDescriptor());
         var invalid = ObservedAssessmentProbe.invalidSchema();
         var current = policy;
-        for (int scenario = 0; scenario < 3; scenario++) {
+        for (int scenario = 0; scenario < 4; scenario++) {
             var caller = new RepositoryCaller("principal", true);
             var a = ObservedAssessmentProbe.member("a"); var b = ObservedAssessmentProbe.member("b");
             var intent = DocumentPublicationIntent.newBuilder().setEncodingVersion(1).setAccountId("account")
@@ -27,6 +28,7 @@ public final class AssessmentOperationReplayProbe {
             for (var member : List.of(b.member(), a.member())) intent.addMembers(member.toBuilder().setDestination(
                     member.getDestination().toBuilder().setAddress(member.getDestination().getAddress().toBuilder()
                             .setGraphId("replay-" + UUID.randomUUID()))));
+            if (scenario == 1) intent.clearMembers().addAllMembers(rejectionTargets);
             var command = new DocumentPublicationCommand(intent.build());
             var owner = new RepositoryOperationLedger(tx).admit(new RepositoryOperationLedger.Key("account", "principal", command.operationId()),
                     command, UUID.randomUUID(), Duration.ofMinutes(5)).owner().orElseThrow();
@@ -58,7 +60,7 @@ public final class AssessmentOperationReplayProbe {
                 }).toList());
             }
             var budget = new PayloadBudget(128_000_000);
-            String expectedFirst = scenario == 0 ? null : scenario == 1 ? "a" : "b";
+            String expectedFirst = scenario == 0 ? null : scenario == 2 ? "b" : "a";
             int mode = scenario;
             DocumentAssessmentCreation.Created stage;
             var recordedRuntime = observation.identity(() -> {});
@@ -66,7 +68,7 @@ public final class AssessmentOperationReplayProbe {
                     Map.of("a", DocumentPublicationCandidate.Mode.TYPED, "b", scenario == 0
                             ? DocumentPublicationCandidate.Mode.OPAQUE : DocumentPublicationCandidate.Mode.TYPED),
                     fragments, Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())),
-                    (member, occurrence) -> mode == 1 || (mode == 2 && member.getMemberId().equals("b")) ? invalid : valid,
+                    (member, occurrence) -> mode == 1 || mode == 3 || (mode == 2 && member.getMemberId().equals("b")) ? invalid : valid,
                     budget, LIMITS, Instant.now(), () -> {})) {
                 require(Objects.equals(assessment.failure().map(failure -> failure.member()).orElse(null), expectedFirst),
                         "fixture has expected first failure");
@@ -134,6 +136,8 @@ public final class AssessmentOperationReplayProbe {
                          + (SELECT count(*) FROM repository_operation_rejection WHERE operation_id=:op)
                     """).setParameter("op", command.operationId()).getSingleResult()).longValue());
             require(outcomes == 0, "replay grants no terminal decision");
+            current = AssessmentRejectionProbe.run(tx, database, provider, caller, owner, command,
+                    DocumentAssessmentRetainedSlots.uploadSelections(selected), stage, current, observation, scenario);
         }
         System.out.println("ASSESSMENT_OPERATION_REPLAY_OK");
         System.out.println("ASSESSMENT_POLICY_ADVANCEMENT_REPLAY_OK");
