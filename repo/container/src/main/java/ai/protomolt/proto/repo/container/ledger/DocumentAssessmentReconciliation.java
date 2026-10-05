@@ -39,20 +39,23 @@ final class DocumentAssessmentReconciliation {
             DocumentPublicationCommand command, Map<String,DocumentAssessmentRetainedSlots.UploadSelection> selected,
             UUID assessment, String manifestSha, Instant deadline, PayloadBudget budget, Runnable callerControl) {
         return observeRetained(caller, owner, command, selected, assessment, manifestSha, deadline, budget,
-                callerControl, null, null, () -> {});
+                callerControl, null, null, () -> {}).map(Verified::stage);
     }
 
-    /** Verifies the complete stored evidence and creates its reader session in the same transaction. */
-    DocumentAssessmentCreation.Created captureRetained(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+    /** Verifies stored evidence and physical bindings and creates the reader session in one transaction. */
+    DocumentAssessmentReadPlan captureRetained(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentPublicationCommand command, Map<String,DocumentAssessmentRetainedSlots.UploadSelection> selected,
             UUID assessment, String manifestSha, Instant deadline, PayloadBudget budget, Runnable callerControl,
             UUID reader, UUID session, Runnable beforeCommit) {
         Objects.requireNonNull(reader); Objects.requireNonNull(session); Objects.requireNonNull(beforeCommit);
-        return observeRetained(caller, owner, command, selected, assessment, manifestSha, deadline, budget,
+        var verified = observeRetained(caller, owner, command, selected, assessment, manifestSha, deadline, budget,
                 callerControl, reader, session, beforeCommit).orElseThrow(DocumentAssessmentReconciliation::conflict);
+        return new DocumentAssessmentReadPlan(verified.stage(), verified.entries());
     }
 
-    private Optional<DocumentAssessmentCreation.Created> observeRetained(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+    private record Verified(DocumentAssessmentCreation.Created stage, java.util.List<DocumentAssessmentReadPlan.Entry> entries) {}
+
+    private Optional<Verified> observeRetained(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentPublicationCommand command, Map<String,DocumentAssessmentRetainedSlots.UploadSelection> selected,
             UUID assessment, String manifestSha, Instant deadline, PayloadBudget budget, Runnable callerControl,
             UUID reader, UUID session, Runnable beforeCommit) {
@@ -98,6 +101,8 @@ final class DocumentAssessmentReconciliation {
                         || ((Number) row[2]).intValue() != DocumentPublicationCommand.ENCODING_VERSION || !command.sha256().equals(row[3])
                         || !Boolean.TRUE.equals(row[4]) || !Boolean.TRUE.equals(row[5]) || !Boolean.TRUE.equals(row[6]) || !Boolean.TRUE.equals(row[7])
                         || ((Number) row[8]).intValue() != slots || !manifestSha.equals(row[11]) || !(row[12] instanceof byte[] stored)) throw conflict();
+                var entries = reader == null ? java.util.List.<DocumentAssessmentReadPlan.Entry>of()
+                        : DocumentAssessmentReadRows.capture(em, assessment, control);
                 DocumentAssessmentRetainedSlots.verify(em, identity, command, selections, budget, control);
                 DocumentAssessmentRetainedEvidence.verify(em, identity, command, ByteString.copyFrom(stored),
                         ((Number) row[9]).intValue(), ((Number) row[10]).intValue(), budget, control);
@@ -116,7 +121,7 @@ final class DocumentAssessmentReconciliation {
                     control.run();
                     beforeCommit.run();
                 }
-                return Optional.of(new DocumentAssessmentCreation.Created(assessment, manifestSha, deadline));
+                return Optional.of(new Verified(new DocumentAssessmentCreation.Created(assessment, manifestSha, deadline), entries));
             });
         }
     }

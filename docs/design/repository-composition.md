@@ -4565,9 +4565,18 @@ final in-transaction control check precedes the commit-ready marker, so cancella
 there returns capacity. Cancellation observed after an acknowledged commit closes
 the known-committed handle for normal drained release instead of requiring
 quiescent uncertainty recovery. The
-returned internal PinnedAssessment protects retained evidence and exposes only
-the verified stage identity. It provides neither a provider byte-read plan nor
-semantic-review authority, and no new public RPC is mounted.
+returned internal PinnedAssessment protects retained evidence and exposes its
+verified stage identity and frozen physical bindings only through a local Use.
+Capture locks the complete assessment-owned physical set with V70 before fresh
+slot, snapshot and evidence verification. The bounded plan preserves member/full
+revision ordinals (including gaps for empty parts), original backend profiles,
+namespace, keys, content identity, provider versions and etags. It checks native
+and mirrored assessment ownership and refuses reclaiming objects; retiring objects
+are allowed only under that existing ownership. Current drive configuration and
+source revisions are not substituted. No provider calls occur under SQL locks.
+The plan is internal groundwork: the provider reader must hold its Use through
+actual worker/batch drain and reauthorize delivery before exposing results. It
+grants no semantic-review authority, and no new public RPC is mounted.
 
 The production-JAR probe exercises canonical capture after the original evidence
 scope closes: wrong manifest refusal, correct retained identity, use-counted drain,
@@ -4586,5 +4595,11 @@ remain synthetic evidence fixtures, not provider reads. The production-JAR resta
 probe separately exercises canonical capture waiting on an uncommitted destination
 permission revocation. After revocation commits, capture refuses with NOT_FOUND
 and retains no session, read capacity or verification-memory reservation.
-Provider read-plan assembly, reused-source revocation during provider I/O and
-delivery-time authorization remain required before enabling the full assessment reader.
+The production-JAR capture probe also checks retained backend/profile/namespace,
+provider version, candidate ordinals and payload identity, and identical bindings
+after the owned objects become retiring. These physical measurements remain
+synthetic; no provider read is claimed by this probe. The current typed candidate
+path accepts DOCUMENT_PART origins; ARCHIVE origins fail the complete-set check
+until a corresponding supported candidate path exists. Provider execution,
+reused-source revocation during provider I/O and delivery-time authorization remain
+required before enabling the full assessment reader.

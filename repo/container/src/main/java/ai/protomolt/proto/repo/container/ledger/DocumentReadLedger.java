@@ -101,22 +101,22 @@ public final class DocumentReadLedger {
         }
     }
 
-    /** Internal evidence retention only; provider reads require a separately verified plan and current delivery authorization. */
+    /** Internal retained bindings; provider reads require an open Use and current delivery authorization. */
     PinnedAssessment captureAssessment(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             ai.protomolt.proto.repo.spi.DocumentPublicationCommand command,
             java.util.Map<String,DocumentAssessmentRetainedSlots.UploadSelection> selections,
             UUID assessment, String manifestSha, java.time.Instant deadline,
             ai.protomolt.proto.repo.blob.spi.PayloadBudget budget, Runnable control) {
-        var protection = new DocumentAssessmentReadProtection(
-                new DocumentAssessmentCreation.Created(assessment, manifestSha, deadline), incarnation, UUID.randomUUID());
+        var protection = new DocumentAssessmentReadProtection<>(
+                new DocumentAssessmentCreation.Created(assessment, manifestSha, deadline), assessment, incarnation, UUID.randomUUID());
         beginCapture();
         boolean handedOff = false;
         var commitReady = new java.util.concurrent.atomic.AtomicBoolean();
         try {
-            new DocumentAssessmentReconciliation(tx).captureRetained(caller, owner, command, selections,
+            var plan = new DocumentAssessmentReconciliation(tx).captureRetained(caller, owner, command, selections,
                     assessment, manifestSha, deadline, budget, control, incarnation, protection.session(),
                     () -> commitReady.set(true));
-            var result = new PinnedAssessment(protection);
+            var result = new PinnedAssessment(new DocumentAssessmentReadProtection<>(plan, assessment, incarnation, protection.session()));
             register(result);
             handedOff = true;
             try {
@@ -271,8 +271,8 @@ public final class DocumentReadLedger {
         private PinnedPlan(DocumentReadPins.Captured<DocumentRetainedReadPlan> captured) { super(captured); }
     }
 
-    final class PinnedAssessment extends PinnedRead<DocumentAssessmentCreation.Created> {
-        private PinnedAssessment(DocumentAssessmentReadProtection captured) { super(captured); }
+    final class PinnedAssessment extends PinnedRead<DocumentAssessmentReadPlan> {
+        private PinnedAssessment(DocumentAssessmentReadProtection<DocumentAssessmentReadPlan> captured) { super(captured); }
     }
 
     public final class PinnedHistory extends PinnedRead<DocumentHistoricalReadPlan> {

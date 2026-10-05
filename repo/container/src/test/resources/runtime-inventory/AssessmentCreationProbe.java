@@ -215,14 +215,41 @@ public final class AssessmentCreationProbe {
                 var protectedAssessment = assessmentReader.captureAssessment(caller, recoveredOwner, recoveredCommand, selections,
                         retained.assessment(), retained.manifestSha256(), retained.retainUntil(), recoveryBudget, () -> {});
                 var retainedUse = protectedAssessment.use();
-                require(retainedUse.plan().equals(retained), "canonical evidence capture matches original stage");
+                require(retainedUse.plan().stage().equals(retained), "canonical evidence capture matches original stage");
+                var readEntries = retainedUse.plan().entries();
+                require(readEntries.size() == recoveredCommand.intent().getMembersList().stream()
+                        .mapToInt(member -> (int) member.getPartsList().stream().filter(part -> !part.hasEmpty()).count()).sum(),
+                        "read plan covers every nonempty candidate slot");
+                for (var entry : readEntries) {
+                    var declared = recoveredCommand.intent().getMembersList().stream()
+                            .filter(member -> member.getMemberId().equals(entry.member())).findFirst().orElseThrow()
+                            .getParts(entry.revisionOrdinal());
+                    require(declared.hasUpload() && declared.getUpload().getSizeBytes() == entry.part().part().size()
+                            && declared.getUpload().getSha256().equals(entry.part().part().sha256())
+                            && declared.getSlot().getPart() == entry.part().part().part()
+                            && declared.getSlot().getSubKey().equals(entry.part().part().subKey()),
+                            "read plan preserves candidate ordinals and payload identity");
+                    require(entry.part().binding().generation().equals("creation-probe")
+                            && entry.part().binding().namespace().equals("namespace")
+                            && entry.part().binding().profile().equals(profile), "read plan retains original backend identity");
+                    require("fixture-version".equals(entry.part().part().providerVersion()), "read plan retains provider version");
+                }
                 protectedAssessment.close();
                 require(assessmentReader.releaseDrained(1) == 0, "assessment use blocks release until drain");
                 retainedUse.close();
                 require(assessmentReader.releaseDrained(1) == 1, "exact assessment session released after drain");
                 require(assessmentReader.outstandingReads() == 0, "assessment release returns capacity");
+                tx.inTransaction(em -> {
+                    em.createNativeQuery("SELECT lock_repository_retention_set(array_agg(object_id)) FROM document_assessment_objects WHERE assessment_id=:id")
+                            .setParameter("id", retained.assessment()).getSingleResult();
+                    em.createNativeQuery("UPDATE repository_object_retention SET retiring=true WHERE object_id IN (SELECT object_id FROM document_assessment_objects WHERE assessment_id=:id)")
+                            .setParameter("id", retained.assessment()).executeUpdate();
+                });
                 var recoveredCapture = assessmentReader.captureAssessment(caller, recoveredOwner, recoveredCommand, selections,
                         retained.assessment(), retained.manifestSha256(), retained.retainUntil(), recoveryBudget, () -> {});
+                try (var use = recoveredCapture.use()) {
+                    require(use.plan().entries().equals(readEntries), "existing assessment may read its exact retiring objects");
+                }
                 recoveredCapture.close();
                 assessmentReader.fence(); assessmentReader.attestLocalQuiescence();
                 require(assessmentReader.recoverQuiescedPins(1) == 1, "assessment recovery finds durable session");

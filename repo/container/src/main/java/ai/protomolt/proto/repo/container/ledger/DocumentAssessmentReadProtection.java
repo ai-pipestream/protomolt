@@ -4,10 +4,10 @@ import java.util.Objects;
 import java.util.UUID;
 
 /** Protects the whole retained assessment; contains no provider-read authorization. */
-record DocumentAssessmentReadProtection(DocumentAssessmentCreation.Created plan, UUID reader, UUID session)
-        implements DocumentReadProtection<DocumentAssessmentCreation.Created> {
+record DocumentAssessmentReadProtection<P>(P plan, UUID assessment, UUID reader, UUID session)
+        implements DocumentReadProtection<P> {
     DocumentAssessmentReadProtection {
-        Objects.requireNonNull(plan); Objects.requireNonNull(reader); Objects.requireNonNull(session);
+        Objects.requireNonNull(plan); Objects.requireNonNull(assessment); Objects.requireNonNull(reader); Objects.requireNonNull(session);
     }
 
     @Override public void release(Tx tx) { finish(tx, "release_document_assessment_read_session"); }
@@ -17,7 +17,7 @@ record DocumentAssessmentReadProtection(DocumentAssessmentCreation.Created plan,
         tx.inTransaction(em -> {
             if (!Boolean.TRUE.equals(em.createNativeQuery("SELECT " + function + "(:session,:reader,:assessment)")
                     .setParameter("session", session).setParameter("reader", reader)
-                    .setParameter("assessment", plan.assessment()).getSingleResult()))
+                    .setParameter("assessment", assessment).getSingleResult()))
                 throw new IllegalStateException("Assessment session release was not acknowledged");
         });
     }
@@ -36,7 +36,7 @@ record DocumentAssessmentReadProtection(DocumentAssessmentCreation.Created plan,
                     """).setParameter("session", session).getResultList();
             if (!identities.isEmpty()) {
                 var row = (Object[]) identities.getFirst();
-                if (!reader.equals(row[0]) || !plan.assessment().equals(row[1]))
+                if (!reader.equals(row[0]) || !assessment.equals(row[1]))
                     throw new IllegalStateException("Assessment session identity differs");
                 if (!Boolean.TRUE.equals(row[2])) return false;
             }
