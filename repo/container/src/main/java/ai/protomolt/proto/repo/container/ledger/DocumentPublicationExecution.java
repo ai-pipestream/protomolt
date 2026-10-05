@@ -15,6 +15,8 @@ import java.util.Optional;
 
 /** One already-admitted native publication, including authorized replay and owned cleanup. */
 final class DocumentPublicationExecution {
+    private final Tx tx;
+    private final PayloadBudget budget;
     private final DocumentPublicationReplay replay;
     private final DocumentPublicationRejections rejections;
     private final DocumentSchemaPolicies policies;
@@ -38,6 +40,7 @@ final class DocumentPublicationExecution {
             DocumentRevisionAssembly.Limits opaqueLimits, boolean deliverEvents,
             DocumentPublicationAssessmentExecution assessments) {
         this.assessments = assessments;
+        this.tx = Objects.requireNonNull(tx); this.budget = Objects.requireNonNull(budget);
         fixedModes = new DocumentPublicationModesJournal(tx, budget);
         this.reads = Objects.requireNonNull(reads); this.opaqueLimits = Objects.requireNonNull(opaqueLimits);
         replay = new DocumentPublicationReplay(tx); policies = new DocumentSchemaPolicies(tx);
@@ -46,6 +49,23 @@ final class DocumentPublicationExecution {
         preparation = new DocumentPublicationPreparation(uploads, retained, budget);
         artifacts = new RepositorySchemaArtifacts(tx);
         publication = new DocumentPublicationCommit(tx, drives, false, deliverEvents);
+    }
+
+    DocumentPublicationRestoration restoreStarted(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            RepositoryReadControl control) {
+        requireAssessments();
+        return DocumentPublicationRestoration.restore(tx, budget, caller, owner, control);
+    }
+
+    DocumentPublicationResult resumeStarted(RepositoryCaller caller, DocumentPublicationRestoration restoration,
+            RepositoryReadControl control) {
+        requireAssessments();
+        return restoration.resume(caller, assessments, control);
+    }
+
+    private void requireAssessments() {
+        if (assessments == null) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                "Retained assessment execution is not configured");
     }
 
     /** Retained host session: serial execution, exact admission retry, and authorized terminal replay. */

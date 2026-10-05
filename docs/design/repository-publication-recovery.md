@@ -18,10 +18,35 @@ resolver, admission or takeover input. It checks the discovered assessment UUID
 and database deadline against the saved start before capturing retained content;
 terminal results use ordinary authorized replay.
 
-This is not automatic failover or a managed-host restore API. Host lifecycle
-integration and delayed provider effects across transfer remain gates. The
+This is not automatic failover or a public restore API. Durable registration of
+ordinary runtime sessions and complete successor coordination remain gates. The
 qualification fixture additionally checks claim loss and a forced writer exit as
 described below; those checks do not authorize arbitrary live-token discovery.
+
+### Coordinator ownership of restored state
+
+`DocumentPublicationSessions.resumeStarted` integrates the stage-only handle with
+the existing bounded manager. Its supplied owner must match the command's account,
+operation and digest before authorized terminal replay. Private process authority
+does not waive those identity checks. A terminal receipt needs no preparation load.
+
+For a pending operation, the manager reserves session and command capacity before
+loading the journals outside its monitor. A restored entry has one active user,
+retains the exact supplied owner, and cannot enter ordinary execution or takeover.
+Uncertain failures retain its preparation reservation for retry. Terminal results
+evict and close it after use. Shutdown refuses new calls, allows accepted calls to
+finish, and drains restored handles only when all active calls leave; ordinary
+unpersisted session identities retain their previous lifecycle behavior.
+
+`DocumentPublicationRuntime` has a package-private bridge to this path. It does
+not expose owner capabilities through protobuf, discover SQL tokens, register
+ordinary sessions durably, or authorize successor execution. The current host
+still needs an explicit ownership/bootstrap protocol before public activation.
+
+The session and real-provider gates passed; the latter repeats forced-exit
+reconciliation through this manager. See the
+[manager evidence](../evidence/repository/2026-10-05-managed-restoration/README.md),
+including the account-binding regression found during Sol review.
 
 The original-owner checkpoint passed nine PostgreSQL journal cases and the
 production-JAR LocalStack gate, including actual handle reconciliation and exact

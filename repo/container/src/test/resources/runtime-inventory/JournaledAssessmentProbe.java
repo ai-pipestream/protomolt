@@ -62,18 +62,46 @@ public final class JournaledAssessmentProbe {
 
     static void resume(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentPublicationCommand command, DocumentAssessmentRuntimeObserver.Observation observation,
-            ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits limits) throws InterruptedException {
+            ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits limits)
+            throws InterruptedException, com.google.protobuf.InvalidProtocolBufferException {
         var budget = new PayloadBudget(128_000_000); var payload = new PayloadBudget(16_000_000);
         var reads = new DocumentReadLedger(tx, UUID.randomUUID(), 1);
         var count = new java.util.concurrent.atomic.AtomicInteger();
+        var calls = new java.util.concurrent.atomic.AtomicInteger();
+        var manager = new java.util.concurrent.atomic.AtomicReference<DocumentPublicationSessions>();
+        var interrupted = new IllegalStateException("Injected retained read interruption");
         var reader = new DocumentPartReader((generation, profile) -> {
             require(generation.equals("assessment-s3") && profile.equals(provider.profile()), "original provider identity");
             return provider.store();
         }, 2, 16_000_000, payload);
         var execution = new DocumentPublicationAssessmentExecution(tx, new DriveLedger(tx), reads,
-                (captured, member, control) -> { count.incrementAndGet(); return reader.readAssessment(captured, member, control); },
+                (captured, member, control) -> {
+                    int call = calls.incrementAndGet();
+                    if (call <= 2) {
+                        var active = manager.get();
+                        if (call == 1) {
+                            try {
+                                active.resumeStarted(caller, command, owner, RepositoryReadControl.NONE);
+                                throw new AssertionError("Concurrent restoration entered the same session");
+                            } catch (RepositoryException conflict) {
+                                require(conflict.code() == RepositoryException.Code.CONFLICT, "exclusive restored entry");
+                            }
+                        } else {
+                            active.close();
+                            try { require(!active.awaitIdle(Duration.ZERO), "active restoration delays shutdown drain"); }
+                            catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new AssertionError(failure); }
+                            require(budget.reservedBytes() > 0, "shutdown preserves active borrowed preparation");
+                        }
+                        throw interrupted;
+                    }
+                    count.incrementAndGet(); return reader.readAssessment(captured, member, control);
+                },
                 budget, limits, observation, Duration.ofMinutes(5), Duration.ofSeconds(5));
-        try (reader; var restored = DocumentPublicationRestoration.restore(tx, budget, caller, owner, RepositoryReadControl.NONE)) {
+        var uploads = new DocumentUploadCoordinator(tx, new DriveLedger(tx), budget,
+                (generation, profile) -> { throw new AssertionError("Restoration attempted an upload"); },
+                1, Duration.ofMillis(10), new SqlTimeouts(Duration.ofSeconds(1), Duration.ofSeconds(5)));
+        var publication = new DocumentPublicationExecution(tx, new DriveLedger(tx), reads, uploads, reader, budget, limits, false, execution);
+        try (reader; uploads) {
             var start = new DocumentAssessmentStartJournal(tx, budget).load(caller, owner, command, RepositoryReadControl.NONE).orElseThrow();
             var original = new DocumentAssessmentDiscovery(tx).discover(caller, owner, command, () -> {}).orElseThrow().stage();
             for (var changed : java.util.List.of(new DocumentAssessmentStartJournal.Started(UUID.randomUUID(), start.retainUntil()),
@@ -87,7 +115,45 @@ public final class JournaledAssessmentProbe {
                 }
             }
             require(count.get() == 0, "mismatched coordinates never read provider content");
-            var result = rejection(restored, caller, execution);
+            try (var tooSmall = new DocumentPublicationSessions(tx, publication, Duration.ofMinutes(5), 1, 1)) {
+                try {
+                    tooSmall.resumeStarted(caller, command, owner, RepositoryReadControl.NONE);
+                    throw new AssertionError("Restoration bypassed command capacity");
+                } catch (RepositoryException exhausted) {
+                    require(exhausted.code() == RepositoryException.Code.RESOURCE_EXHAUSTED, "restoration capacity refusal");
+                }
+                require(tooSmall.retainedSessions() == 0 && budget.reservedBytes() == 0, "capacity refusal loads no preparation");
+            }
+            manager.set(new DocumentPublicationSessions(tx, publication, Duration.ofMinutes(5), 1, 4_000_000));
+            for (int phase = 0; phase < 2; phase++) {
+                try {
+                    manager.get().resumeStarted(caller, command, owner, RepositoryReadControl.NONE);
+                    throw new AssertionError("Injected read failure produced success");
+                } catch (IllegalStateException failure) { require(failure == interrupted, "original read failure propagated"); }
+                if (phase == 0) {
+                    require(manager.get().retainedSessions() == 1 && manager.get().retainedCommandBytes() > 0
+                            && budget.reservedBytes() > 0, "uncertainty retains restoration and capacity");
+                    try {
+                        manager.get().execute(caller, command, Map.of(), Map.of(), Map.of(), Map.of(), java.util.Optional.empty(),
+                                (member, occurrence) -> { throw new AssertionError("Restored entry resolved a schema"); }, RepositoryReadControl.NONE);
+                        throw new AssertionError("Restored entry entered ordinary execution");
+                    } catch (RepositoryException conflict) { require(conflict.code() == RepositoryException.Code.CONFLICT, "ordinary execution refuses restored entry"); }
+                    try {
+                        manager.get().recover(caller, command, Map.of(), 1, Map.of(), RepositoryReadControl.NONE);
+                        throw new AssertionError("Restored entry entered takeover");
+                    } catch (RepositoryException conflict) { require(conflict.code() == RepositoryException.Code.CONFLICT, "takeover refuses restored entry"); }
+                    var wrong = new RepositoryOperationLedger.Owner(owner.key(), owner.generation(), UUID.randomUUID(),
+                            owner.leaseUntil(), owner.executionClaim());
+                    try {
+                        manager.get().resumeStarted(caller, command, wrong, RepositoryReadControl.NONE);
+                        throw new AssertionError("Changed owner replaced retained restoration");
+                    } catch (RepositoryException conflict) { require(conflict.code() == RepositoryException.Code.CONFLICT, "fixed owner refusal"); }
+                }
+            }
+            require(manager.get().awaitIdle(Duration.ZERO) && manager.get().retainedSessions() == 0
+                    && manager.get().retainedCommandBytes() == 0 && budget.reservedBytes() == 0, "idle shutdown releases restored state");
+            manager.set(new DocumentPublicationSessions(tx, publication, Duration.ofMinutes(5), 1, 4_000_000));
+            var result = rejection(manager.get(), caller, command, owner);
             var receipt = new DocumentPublicationReplay(tx).observe(caller, command).rejection().orElseThrow();
             require(result.equals(receipt), "restored terminal signal carries durable receipt");
             require(receipt.getReasonValue() == 2
@@ -97,9 +163,24 @@ public final class JournaledAssessmentProbe {
                             + start.retainUntil().getNano() / 1000, "restored rejection binds original assessment receipt");
             require(count.get() == command.intent().getMembersCount(), "original members read once for decision");
             int after = count.get();
-            require(rejection(restored, caller, execution).equals(result), "restored exact terminal replay");
+            require(manager.get().retainedSessions() == 0 && manager.get().retainedCommandBytes() == 0
+                    && budget.reservedBytes() == 0, "terminal rejection evicts restored handle");
+            var otherKey = new RepositoryOperationLedger.Key("another-account", owner.key().principal(), owner.key().operationId());
+            var originalClaim = owner.executionClaim().orElseThrow();
+            var otherClaim = new RepositoryExecutionClaimLedger.Claim(otherKey, originalClaim.commandSha256(),
+                    originalClaim.epoch(), originalClaim.token(), originalClaim.leaseUntil());
+            var otherOwner = new RepositoryOperationLedger.Owner(otherKey, owner.generation(), owner.token(),
+                    owner.leaseUntil(), java.util.Optional.of(otherClaim));
+            try {
+                rejection(manager.get(), caller, command, otherOwner);
+                throw new AssertionError("Wrong-account owner reached terminal replay");
+            } catch (IllegalArgumentException expected) {
+                require(expected.getMessage().equals("Restoration owner differs from command"), "account mismatch refused before terminal replay");
+            }
+            require(rejection(manager.get(), caller, command, owner).equals(result), "restored exact terminal replay");
             require(count.get() == after, "terminal replay does not reread provider content");
         } finally {
+            if (manager.get() != null) manager.get().close();
             require(reader.awaitIdle(Duration.ofSeconds(5)), "restoration provider work drains");
             reads.releaseDrained(1);
         }
@@ -108,10 +189,10 @@ public final class JournaledAssessmentProbe {
         System.out.println("JOURNALED_ASSESSMENT_HANDLE_RESUME_OK");
     }
 
-    private static ai.protomolt.proto.repo.v1.DocumentPublicationRejection rejection(DocumentPublicationRestoration restored,
-            RepositoryCaller caller, DocumentPublicationAssessmentExecution execution) {
+    private static ai.protomolt.proto.repo.v1.DocumentPublicationRejection rejection(DocumentPublicationSessions restored,
+            RepositoryCaller caller, DocumentPublicationCommand command, RepositoryOperationLedger.Owner owner) {
         try {
-            restored.resume(caller, execution, RepositoryReadControl.NONE);
+            restored.resumeStarted(caller, command, owner, RepositoryReadControl.NONE);
             throw new AssertionError("Invalid retained candidate produced success");
         } catch (DocumentPublicationReplay.Terminated rejected) { return rejected.receipt(); }
     }

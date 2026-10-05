@@ -32,6 +32,8 @@ final class DocumentPublicationSessions implements AutoCloseable {
         final DocumentPublicationCommand command;
         final long commandBytes;
         DocumentPublicationSession session;
+        DocumentPublicationRestoration restoration;
+        RepositoryOperationLedger.Owner restorationOwner;
         int users = 1;
         boolean terminal;
         boolean recovering;
@@ -142,7 +144,75 @@ final class DocumentPublicationSessions implements AutoCloseable {
     }
 
     private void remove(RepositoryOperationLedger.Key key, Entry entry) {
-        if (entries.remove(key, entry)) commandBytes -= entry.commandBytes;
+        if (entries.remove(key, entry)) {
+            if (entry.restoration != null) entry.restoration.close();
+            commandBytes -= entry.commandBytes;
+        }
+    }
+
+    /** Trusted original-owner reconciliation only; no claim lookup, takeover or replacement payloads. */
+    DocumentPublicationResult resumeStarted(RepositoryCaller caller, DocumentPublicationCommand command,
+            RepositoryOperationLedger.Owner owner, RepositoryReadControl control) {
+        try (var call = beginCall()) {
+            Objects.requireNonNull(command); Objects.requireNonNull(owner); Objects.requireNonNull(control).check();
+            DocumentAdmissionAuthorization.requireCaller(caller, owner.key(), command.intent().getAccountId());
+            if (!caller.processAuthority()) throw new RepositoryException(RepositoryException.Code.PERMISSION_DENIED,
+                    "Publication restoration requires private process authority");
+            if (!owner.key().account().equals(command.intent().getAccountId())
+                    || !owner.key().operationId().equals(command.operationId())
+                    || !owner.executionClaim().orElseThrow(() -> new IllegalArgumentException("Restoration requires claim"))
+                            .commandSha256().equals(command.sha256()))
+                throw new IllegalArgumentException("Restoration owner differs from command");
+            var observed = replay.observe(caller, command);
+            control.check();
+            if (observed.rejection().isPresent() || observed.result().isPresent()) {
+                completed(owner.key(), command);
+                observed.requireNotTerminated();
+                return observed.result().orElseThrow();
+            }
+            var entry = reserveRestoration(owner, command);
+            boolean terminal = false;
+            try {
+                if (entry.restoration == null) {
+                    // SQL and bounded decoding stay outside the shared manager monitor.
+                    var restored = execution.restoreStarted(caller, owner, control);
+                    synchronized (this) { entry.restoration = restored; }
+                }
+                var result = execution.resumeStarted(caller, entry.restoration, control);
+                terminal = true;
+                return result;
+            } catch (DocumentPublicationReplay.Terminated rejected) {
+                terminal = true;
+                throw rejected;
+            } finally {
+                synchronized (this) {
+                    entry.recovering = false;
+                    release(owner.key(), entry, terminal);
+                    if (entry.restoration == null && entry.users == 0) remove(owner.key(), entry);
+                }
+            }
+        }
+    }
+
+    private synchronized Entry reserveRestoration(RepositoryOperationLedger.Owner owner, DocumentPublicationCommand command) {
+        var entry = entries.get(owner.key());
+        if (entry == null) {
+            entry = new Entry(command);
+            if (entries.size() >= capacity || entry.commandBytes > maxCommandBytes - commandBytes)
+                throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED, "Publication session capacity exhausted");
+            entry.restorationOwner = owner;
+            entries.put(owner.key(), entry);
+            commandBytes += entry.commandBytes;
+        } else {
+            requireCommand(entry, command);
+            if (entry.users != 0 || entry.recovering || entry.session != null || entry.restoration == null)
+                throw new RepositoryException(RepositoryException.Code.CONFLICT, "Publication session is in use");
+            if (!owner.equals(entry.restorationOwner))
+                throw new RepositoryException(RepositoryException.Code.CONFLICT, "Retained restoration owner changed");
+            entry.users = 1;
+        }
+        entry.recovering = true;
+        return entry;
     }
 
     synchronized int retainedSessions() { return entries.size(); }
@@ -300,13 +370,21 @@ final class DocumentPublicationSessions implements AutoCloseable {
                 if (released) return;
                 released = true;
                 activeCalls--;
+                releaseClosedRestorations();
                 DocumentPublicationSessions.this.notifyAll();
             }
         }
     }
 
     /** Refuse new calls without cancelling accepted work or discarding uncertain identities. */
-    @Override public synchronized void close() { closed = true; }
+    @Override public synchronized void close() { closed = true; releaseClosedRestorations(); }
+
+    private void releaseClosedRestorations() {
+        if (!closed || activeCalls != 0) return;
+        for (var item : Map.copyOf(entries).entrySet()) {
+            if (item.getValue().restoration != null) remove(item.getKey(), item.getValue());
+        }
+    }
 
     /**
      * Includes SQL admission, receipt replay and recovery, even before a session exists.

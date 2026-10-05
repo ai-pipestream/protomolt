@@ -179,6 +179,13 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
         return sessions.retireSuperseded(caller, command, control);
     }
 
+    /** Package-private until the host's coordinator ownership protocol is qualified. */
+    DocumentPublicationResult resumeStarted(RepositoryCaller caller, DocumentPublicationCommand command,
+            RepositoryOperationLedger.Owner owner, RepositoryReadControl control) {
+        try { return sessions.resumeStarted(caller, command, owner, control); }
+        catch (DocumentPublicationReplay.Terminated rejected) { throw new Rejected(rejected.receipt()); }
+    }
+
     private static Map<UUID, DocumentUploadPlan.Placement> placements(Map<UUID, Placement> selected) {
         var result = new HashMap<UUID, DocumentUploadPlan.Placement>();
         selected.forEach((id, placement) -> result.put(id, placement.selected));
