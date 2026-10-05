@@ -88,6 +88,7 @@ class DocumentAssessmentPartsIT {
         var plan = f.prepared().plan();
         var authorization = DocumentAdmissionAuthorization.prepare(plan);
         var reuse = DocumentReuseAdmission.prepare(plan);
+        var slots = DocumentAssessmentSlots.prepare(f.command(), () -> {});
         return c.tx().inTransaction(em -> {
             RepositoryOperationLedger.fenceLiveOwner(em, f.owner());
             RepositoryOperationLedger.requireCommand(em, f.owner().key(), f.command());
@@ -106,13 +107,13 @@ class DocumentAssessmentPartsIT {
                     .setParameter("count", f.command().intent().getMembers(0).getPartsCount())
                     .setParameter("op", f.command().operationId()).executeUpdate();
             var parts = DocumentCommitParts.bindAssessment(em, f.owner(), plan, selected, reuse, () -> {});
-            for (var entry : parts.parts().entrySet()) {
+            for (var entry : DocumentAssessmentSlots.bind(em, slots, parts, () -> {})) {
                 em.createNativeQuery("""
                         INSERT INTO document_assessment_slots(assessment_id,member_id,revision_ordinal,selection_revision,object_id,declaration)
                         VALUES(:id,:member,:ordinal,:selection,:object,'NEW_CONTENT')
-                        """).setParameter("id", assessment).setParameter("member", entry.getKey().member())
-                        .setParameter("ordinal", entry.getKey().ordinal()).setParameter("selection", parts.selections().get(entry.getKey().member()))
-                        .setParameter("object", entry.getValue().id()).executeUpdate();
+                        """).setParameter("id", assessment).setParameter("member", entry.member())
+                        .setParameter("ordinal", entry.ordinal()).setParameter("selection", entry.selection())
+                        .setParameter("object", entry.object()).executeUpdate();
             }
             em.createNativeQuery("UPDATE document_assessment_owners SET sealed=true WHERE assessment_id=:id")
                     .setParameter("id", assessment).executeUpdate();

@@ -3907,3 +3907,28 @@ affected run passed those four plus 23 publication-commit and six schema-retenti
 cases. These fixtures use synthetic provider observations. End-to-end assessment
 writer coverage, including reuse-only candidates and staging reconciliation,
 remains required.
+
+`DocumentAssessmentSlots` supplies the candidate association projection for a new
+stage. It prepares bounded source-node/part/object lookup batches before locks,
+then runs after physical binding under the complete logical and physical fences.
+Each reused slot takes its source revision UUID and full ordinal from exactly one
+matching current source part. The physical object alone is insufficient, and
+missing or duplicate source matches are refused. This also handles zero-upload
+members: their selection revision remains part of the association.
+
+Upload associations have no source revision fields; empty declarations create no
+physical association. The result must match the complete nonempty command slot
+set and complete member selection set. Its immutable records are input to V66
+insertion, not independent authorization or evidence of a completed assessment.
+The helper must not be used to reconstruct a previously retained stage from
+current source pointers during retry reconciliation.
+The writer must check exact operation identity and canonical command equality
+between observed evidence, the physical plan and slot preparation. Equal physical
+slots alone do not prove equal destination conditions, ownership or policy.
+
+The projection run passed 22 PostgreSQL cases across slot projection, assessment
+binding/reuse and native publication. Reuse-only and mixed candidates use sparse
+source manifests whose full source ordinals differ from candidate and physical
+upload ordinals. Wrong source-object claims and incomplete physical bindings
+roll back the assessment owner. This adds an internal projection operation and
+changes no protobuf contracts or external read/write availability.
