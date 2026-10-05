@@ -3513,3 +3513,126 @@ after encoding while the output reservation is live and verifies rejection,
 cleanup and retry. It also covers cancellation, reentrant encode/close refusal,
 independent output lifetime, access refusal under a changed context loader, and
 closing the output under that unsupported context without leaking its lease.
+
+#### Assessment retention foundation: reviewed implementation direction
+
+The next storage increment reuses the physical retention bridge rather than
+introducing an independent attempt-only retention mechanism. V26 introduced
+`repository_object_retention`, `repository_object_references` and exact native
+owner verification. V27 separates retirement from reclamation; V29 requires
+READ COMMITTED and source-owner locks before physical retention locks. V44 and
+V63 show how reader ownership extends that foundation. These mechanisms already
+cover archive and document physical locations independently of provider vocabulary.
+
+The new native assessment owner will bind account, principal, operation,
+generation, command, observed manifest and the exact selected attempts/source
+versions. Its object associations will mirror an assessment owner kind into
+`repository_object_references`. Repeated use of one physical object deduplicates
+the physical reference while retaining every command-slot association. The
+owner's internal reference generation must be distinguished from a document
+revision, provider version or JCR version. No successful revision/history row is
+created for a rejected candidate.
+
+This is still a design requirement, not an implemented retention table or public
+API. The first migration must preserve existing owners/references and extend the
+native-owner guard and reference-kind constraint together. Direct reference
+insertion without an exact native assessment association must fail.
+
+Acquisition requires the live operation write fence, exact current selection and
+complete verified physical bindings. For new uploads, the attempt must be the
+selected live VERIFIED `NEW_CONTENT` attempt in that operation generation.
+Any cleanup tombstone permanently disqualifies it, including expired claims and
+ABSENT observations. The physical retention rows must exist and remain open;
+neither a SQL pin nor a digest proves that provider bytes exist. Candidate reads,
+descriptor checks and observed-manifest replay occur before the final SQL fences.
+No provider I/O, hashing or schema validation belongs inside the lock sequence.
+
+Attempt cleanup needs an explicit admission check as well as the shared physical
+reference guard. `DocumentAttemptCleanupLedger.claim` locks the attempt before
+rechecking eligibility. Its BEFORE trigger must reject a new cleanup claim while
+any of that attempt's physical objects has an assessment reference. The candidate
+scan gets the same predicate only as an optimization. This is essential because
+the existing cleanup tombstone and AFTER trigger irreversibly retire/reclaim the
+attempt's objects. A claim that won first cannot be repaired by a late pin.
+
+All native owner/object associations and reference mirrors are acquired atomically
+for the bounded operation, not committed one document at a time. Preserve the
+existing order: operation owner fence, complete document/source authorization
+fences, deterministic source-owner locks, then deterministic physical-retention
+locks. Recheck policy, selection and database time after waits. The implementation
+must derive one ordering compatible with existing readers, cleanup and publication;
+it must not add retention-row-to-attempt lock inversion. Unrelated objects must
+remain independently writable and readable.
+
+Within that outer fence order, acquire the assessment owner row before all
+distinct physical source-owner rows in canonical source-kind/UUID order, then
+physical retention rows in object UUID order, then reference/read-pin rows.
+Prelock the complete source set before bulk mirror insertion: per-row reference
+triggers alone do not establish a global order across mixed sources. Acquisition,
+promotion, replay admission and reaping must agree on this sequence. Attempt
+cleanup consults reference existence under its attempt lock and must not then
+lock an assessment owner, which would introduce the reverse edge.
+
+Expiry is eligibility for explicit recovery, not automatic disappearance of a
+native reference. A clock comparison inside `repository_native_reference_exists`
+must not silently invalidate ownership while mirrored rows or active readers
+still exist. Recovery changes/removes the native association and its physical
+reference in one transaction under the same owner/physical locks. Staging needs
+an explicit bounded recovery deadline; terminal evidence needs the explicit host
+replay deadline. No default replay period is selected. Transition from staging
+to terminal ownership must never drop the last protecting reference in between.
+A failed terminal insert must leave either recoverable staging or a full rollback.
+Promote the same native owner and reference set in the decision transaction;
+do not delete and reacquire references under a new owner kind. An original source
+may have entered retirement after staging, legitimately refusing new references
+while an existing assessment reference still protects the bytes. Promotion must
+preserve that protection without reopening the retired source.
+
+Reused source objects reveal a separate read gap: an original source can become
+`retiring` while assessment references still prevent physical reclamation. Future
+assessment replay therefore needs a distinct authorization and native-owner check
+for its exact retained object, not a current-source or successful-history lookup.
+It must not clear the retirement flag or grant new unrelated owners access. A
+scoped read pin must protect already-authorized workers through drain/recovery
+before assessment release permits reclamation. Revocation still controls new
+reads; physical retention is never permission to disclose data.
+
+Schema retention remains normalized in the existing account-scoped artifact
+catalog. Assessment ownership must retain the exact descriptor, metadata, optional
+source and root-evidence associations independently of replaced-generation staging
+claims. The immutable policy snapshot is reused. The protected manifest's digest
+is a binding, not storage ownership; the receipt may survive after evidence expiry,
+but independent re-evaluation must then report evidence unavailable.
+
+Implementation and acceptance order:
+
+1. Native assessment owner, exact physical associations and reference mirrors:
+   real PostgreSQL tests reject wrong account/generation/selection, incomplete
+   physical bindings, raw reference forgery and preexisting cleanup/retirement.
+   Migrate existing rows without inventing owners or reopening retired objects.
+2. Cleanup coordination: race acquisition against claim commit and rollback in
+   both orders; prove stale scans cannot bypass the SQL guard. Verify missing or
+   expired cleanup leases never permit attaching evidence to a claimed attempt.
+   Check lock waits do not serialize unrelated objects.
+3. Recovery and transfer: rollback partial acquisition, lose acknowledgements,
+   retry idempotently, replace the operation owner, expire abandoned staging and
+   transfer to terminal ownership without a retention gap. Release native and
+   mirrored ownership atomically; do not release active read workers by elapsed
+   time alone. Retire an original source between staging and terminal promotion
+   and prove the existing references survive without reacquisition.
+4. Schema/evidence ownership and replay: retain exact normalized assets, prune or
+   retire original sources, remove the registry, then reproduce the retained
+   candidate from a fresh process. Test revocation, corrupt bytes and explicit
+   replay expiry separately from receipt replay.
+5. Terminal rejection: accept only the live observed-manifest wrapper, require a
+   reproduced value violation and complete retained associations, then fence the
+   owner, policy and authorized target/source set in one decision transaction.
+   Provider failure, unsupported rules or missing evidence remain operational
+   failures. Only after these gates pass may ADMISSION_REJECTED be emitted.
+
+The reusable foundation here is atomic multi-object retention ownership, stable
+physical identity and explicit acquisition/release. An optional content-repository
+extension can build on it for JCR semantics. It does not establish JCR sessions,
+workspaces, node identity across moves, node/property types, reference integrity
+or version restoration. Existing account/workspace/version fields remain distinct
+from those capabilities, and base storage gains no JCR dependencies.
