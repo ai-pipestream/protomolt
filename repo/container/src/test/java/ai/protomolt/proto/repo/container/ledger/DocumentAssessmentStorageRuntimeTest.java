@@ -88,6 +88,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 assertThat(result).contains("ASSESSMENT_OPERATION_REPLAY_OK");
                 assertThat(result).contains("ASSESSMENT_POLICY_ADVANCEMENT_REPLAY_OK");
                 assertThat(result).contains("ASSESSMENT_MIXED_REPLAY_OK");
+                assertThat(result).contains("ASSESSMENT_REPLAY_CANCELLED_DELIVERY_OK");
             } finally {
                 if (process.isAlive()) {
                     process.destroyForcibly();

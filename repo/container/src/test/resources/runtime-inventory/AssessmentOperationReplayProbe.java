@@ -147,11 +147,19 @@ public final class AssessmentOperationReplayProbe {
             DocumentPublicationCommand command, Map<String,DocumentAssessmentRetainedSlots.UploadSelection> selected,
             DocumentAssessmentCreation.Created stage, UUID source, DocumentAssessmentRuntimeObserver.Observation observation) throws Exception {
         var caller = new RepositoryCaller("principal", false, Set.of("account"), Set.of());
-        for (int scenario = 0; scenario < 3; scenario++) {
+        for (int scenario = 0; scenario < 5; scenario++) {
             int mode = scenario;
             var reads = new DocumentReadLedger(tx, UUID.randomUUID(), 1);
             var budget = new PayloadBudget(128_000_000); var payload = new PayloadBudget(16_000_000);
             var invoked = new java.util.concurrent.atomic.AtomicBoolean();
+            var completedReads = new java.util.concurrent.atomic.AtomicInteger();
+            var interruptedDelivery = new java.util.concurrent.atomic.AtomicBoolean();
+            var replayControl = new RepositoryReadControl() {
+                @Override public boolean isCancelled() { return mode == 3 && interruptedDelivery.get(); }
+                @Override public long remainingNanos() {
+                    return mode == 4 && interruptedDelivery.get() ? 0 : Long.MAX_VALUE;
+                }
+            };
             var reader = new DocumentPartReader((generation, profile) -> {
                 require(generation.equals("assessment-s3") && profile.equals(provider.profile()), "exact mixed provider binding");
                 return provider.store();
@@ -164,8 +172,10 @@ public final class AssessmentOperationReplayProbe {
                         boolean returned = false;
                         try {
                             invoked.set(true);
-                            if (mode != 0) policy(tx, source, "ACCESS_DENY");
+                            if (mode == 1 || mode == 2) policy(tx, source, "ACCESS_DENY");
                             if (mode == 2) throw new IllegalStateException("private-replay-provider-detail");
+                            if (completedReads.incrementAndGet() == command.intent().getMembersCount())
+                                interruptedDelivery.set(true);
                             returned = true; return batch;
                         } finally { if (!returned) batch.close(); }
                     };
@@ -175,22 +185,32 @@ public final class AssessmentOperationReplayProbe {
                                 "mixed historical fragments revalidate without registry");
                     } else {
                         try {
-                            DocumentAssessmentReplay.replay(capture, delegated, budget, LIMITS, observation, RepositoryReadControl.NONE);
-                            throw new AssertionError("Revoked replay result or private error delivered");
+                            DocumentAssessmentReplay.replay(capture, delegated, budget, LIMITS, observation, replayControl);
+                            throw new AssertionError("Refused replay result or private error delivered");
                         } catch (RepositoryException expected) {
-                            require(expected.code() == RepositoryException.Code.NOT_FOUND && expected.getCause() == null
-                                    && expected.getSuppressed().length == 0, "revoked replay suppresses result and private error");
+                            var code = mode == 3 ? RepositoryException.Code.CANCELLED
+                                    : mode == 4 ? RepositoryException.Code.DEADLINE_EXCEEDED : RepositoryException.Code.NOT_FOUND;
+                            require(expected.code() == code && expected.getCause() == null
+                                    && expected.getSuppressed().length == 0, "refused replay suppresses result and private error");
                         }
                     }
                     require(invoked.get(), "real reader supplied provider batch before fault");
+                    if (mode >= 3) require(completedReads.get() == command.intent().getMembersCount(),
+                            "all real provider batches complete before cancellation or expiry");
                     require(budget.reservedBytes() == 0 && payload.reservedBytes() == 0, "mixed replay releases all byte reservations");
                 } finally {
                     require(reader.awaitIdle(Duration.ofSeconds(5)), "mixed provider workers drained");
                     require(reads.releaseDrained(1) == 1 && reads.outstandingReads() == 0, "mixed replay releases session");
                 }
             }
+            long outcomes = tx.readOnly(em -> ((Number) em.createNativeQuery("""
+                    SELECT (SELECT count(*) FROM repository_operation_success WHERE operation_id=:op)
+                         + (SELECT count(*) FROM repository_operation_rejection WHERE operation_id=:op)
+                    """).setParameter("op", command.operationId()).getSingleResult()).longValue());
+            require(outcomes == 0, "diagnostic replay never creates a terminal outcome");
         }
         System.out.println("ASSESSMENT_MIXED_REPLAY_OK");
+        System.out.println("ASSESSMENT_REPLAY_CANCELLED_DELIVERY_OK");
     }
     private static void policy(Tx tx, UUID source, String access) {
         tx.inTransaction(em -> {

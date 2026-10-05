@@ -2605,10 +2605,14 @@ Before closing this repository goal, the acceptance inventory must include:
 
 - Every document Any location: record which roots are discovered, intentionally
   opaque, or unsupported for typed admission. CORE structured data and PARSED
-  parser shapes are the current implemented discovery coverage. Add fixtures for
-  other identified roots or explicit rejection under typed-required policy; do
-  not silently skip them. Nested occurrences within discovered roots remain part
-  of strict checking.
+  parser shapes are the current implemented discovery coverage. The descriptor-
+  graph inventory test currently finds exactly `structured_data` and
+  `parser_results.value.document.shape`; no additional declared roots were found
+  in BLOBS or CHUNKS. The inventory fails if another Any-bearing route is added,
+  including recursive routes. Typed admission rejects unknown fields and unsupported
+  root paths rather than silently skipping them. New schema roots still require
+  explicit fixtures and discovery support before acceptance. Nested occurrences
+  within discovered roots remain part of strict checking.
 - Historical restore tests after registry removal, cache clearing and process
   restart, including complete imports, old schema/compiler provenance, layout
   selection, revoked access, missing/corrupt retained assets and unchanged bytes.
@@ -2734,6 +2738,19 @@ inspection at `9d1f7c7f` confirms that `RepoServices` constructs
 `managedWriter`. `DocumentSchemaPolicies`, `DocumentSchemaBatch`,
 `DocumentUploadCoordinator` and `DocumentPublicationCommit` remain internal
 ledger components. A publication fixture is not a host entry point.
+
+Current integration checkpoint (2026-10-05): `DocumentPublicationExecution`
+and `DocumentPublicationSessions` now compose the internal execution and bounded
+retry ownership. Reuse those components rather than creating a second coordinator.
+`RepoServices` still does not own them, and `document_service.proto` has no typed
+publication RPC. The next host slice is an internal facade in the ledger package,
+with qualified backend resolution, shared payload capacity, retained-read lifetime,
+schema resolution, bounded sessions and shutdown drain supplied by the host.
+Qualify exact retry, terminal replay, uncertain-outcome retention, policy changes
+and orderly resource closure before mounting a public endpoint.
+`DocumentAssessmentReplay` is diagnostic: its result cannot authorize publication
+or a terminal rejection. The numbered sequence below remains the integration
+acceptance plan; its first step has internal implementation but is not host-ready.
 
 1. Add the shared native publication coordinator over these existing components.
    It must own policy selection, immutable candidate preparation, authorized
@@ -4855,3 +4872,13 @@ accepted result from retained evidence, without granting publication authority.
 The fixture also compares stored runtime provenance with the original observation.
 Additional replay fault interleavings and performance measurements remain required
 before broader host integration.
+
+The production-JAR mixed replay fixture now cancels or expires the read control
+after the final real provider batch returns. It requires every member's storage
+read to have completed before injecting the control change. Replay returns only
+generic CANCELLED or DEADLINE_EXCEEDED, with no cause/suppressed private detail,
+and releases schema/fragment reservations, provider workers and the exact SQL
+read session. No success or rejection receipt may appear. This qualifies refusal
+after storage reads; it does not implement terminal admission decisions or public
+transport delivery. The next integration work must preserve that distinction
+when connecting retained assessments to publication and rejection handling.
