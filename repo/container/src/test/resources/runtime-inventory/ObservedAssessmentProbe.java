@@ -14,7 +14,7 @@ import java.util.*;
 /** Real typed/opaque assessment and ownership checks in the observed standard JVM. */
 public final class ObservedAssessmentProbe {
     private static final Instant AT = Instant.parse("2000-01-01T00:00:00.123456789Z");
-    private record Member(DocumentPublicationMember member, Map<Integer, ByteString> fragments) {}
+    record Member(DocumentPublicationMember member, Map<Integer, ByteString> fragments) {}
     public static void run(DocumentAssessmentRuntimeObserver.Observation observation) throws Exception {
         var a = member("a"); var b = member("b");
         var command = new DocumentPublicationCommand(DocumentPublicationIntent.newBuilder().setEncodingVersion(1)
@@ -150,7 +150,7 @@ public final class ObservedAssessmentProbe {
         }
         require(budget.reservedBytes() == 0, "all reservations released");
     }
-    private static Member member(String id) throws Exception {
+    static Member member(String id) throws Exception {
         var ownership = OwnershipContext.newBuilder().setAccountId("account").setDatasourceId("source").setSecurity(DocumentSecurity.getDefaultInstance()).build();
         var document = Document.newBuilder().setDocId("doc-" + id).setOwnership(ownership).setStructuredData(Any.pack(StringValue.of("payload"), "type.test")).build();
         var member = DocumentPublicationMember.newBuilder().setMemberId(id).setDriveId(UUID.randomUUID().toString()).setOwnership(ownership)
@@ -165,7 +165,7 @@ public final class ObservedAssessmentProbe {
         }
         return new Member(member.build(), Map.copyOf(fragments));
     }
-    private static DocumentSchemaAdmission.Definition invalidSchema() throws Exception {
+    static DocumentSchemaAdmission.Definition invalidSchema() throws Exception {
         var proto = StringValue.getDescriptor().getFile().toProto().toBuilder().addDependency(ValidateProto.getDescriptor().getName());
         for (var type : proto.getMessageTypeBuilderList()) if (type.getName().equals("StringValue"))
             type.setOptions(type.getOptions().toBuilder().setExtension(ValidateProto.message,
@@ -173,7 +173,7 @@ public final class ObservedAssessmentProbe {
         return asset(com.google.protobuf.Descriptors.FileDescriptor.buildFrom(proto.build(),
                 new com.google.protobuf.Descriptors.FileDescriptor[]{ValidateProto.getDescriptor()}).findMessageTypeByName("StringValue"));
     }
-    private static DocumentSchemaAdmission.Definition asset(com.google.protobuf.Descriptors.Descriptor type) throws Exception {
+    static DocumentSchemaAdmission.Definition asset(com.google.protobuf.Descriptors.Descriptor type) throws Exception {
         var closure = DescriptorFingerprints.closure(type); var bytes = closure.toByteString();
         var metadata = RepositorySchemaAsset.newBuilder().setSchema(PublicationSchemaCondition.newBuilder().setTypeName(type.getFullName())
                         .setDescriptorFingerprint(DescriptorFingerprints.fingerprint(closure))).setArtifactSha256(sha(bytes))

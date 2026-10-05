@@ -29,6 +29,8 @@ final class DocumentAssessmentEvidence implements AutoCloseable {
     private DocumentPublicationAssessment.ObservedManifest manifest;
     private Map<String, ByteString> artifacts;
     private List<Root> roots;
+    private RepositoryOperationLedger.Key ownerKey;
+    private long ownerGeneration;
 
     /** Called only while the parent is busy, after its observed replay completed. */
     DocumentAssessmentEvidence(DocumentPublicationAssessment assessment, RepositoryOperationLedger.Owner owner,
@@ -38,6 +40,8 @@ final class DocumentAssessmentEvidence implements AutoCloseable {
         this.command = assessment.command();
         this.policy = assessment.policy();
         this.manifest = manifest;
+        this.ownerKey = owner.key();
+        this.ownerGeneration = owner.generation();
         this.artifacts = Collections.unmodifiableMap(new TreeMap<>(assessment.artifacts()));
         var typed = assessment.typed();
         var modes = assessment.modes();
@@ -127,6 +131,11 @@ final class DocumentAssessmentEvidence implements AutoCloseable {
     synchronized DocumentSchemaPolicies.Selection policy(Runnable control) { check(control); return policy; }
     synchronized Map<String, ByteString> artifacts(Runnable control) { check(control); return artifacts; }
     synchronized List<Root> roots(Runnable control) { check(control); return roots; }
+    synchronized void requireOwner(RepositoryOperationLedger.Owner owner, Runnable control) {
+        check(control);
+        if (!ownerKey.equals(owner.key()) || ownerGeneration != owner.generation())
+            throw new IllegalArgumentException("Assessment evidence differs from operation owner");
+    }
     synchronized ByteString manifestBytes(Runnable control) {
         check(control); var value = manifest.bytes(control); requireOpen(); return value;
     }
@@ -143,5 +152,6 @@ final class DocumentAssessmentEvidence implements AutoCloseable {
         // The enclosing scope closes the encoded manifest and releases the parent's
         // busy guard. Drop borrowed byte references even if this handle escapes.
         manifest = null; command = null; policy = null; artifacts = Map.of(); roots = List.of();
+        ownerKey = null; ownerGeneration = 0;
     }
 }
