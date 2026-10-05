@@ -4787,6 +4787,13 @@ scopes close before replay. A separate mixed-source case revalidates the origina
 retained fragments after source advancement and a newer provider version, without
 any registry resolver. Revocation after a real provider batch has already passed
 the reader's delivery gate must still suppress the replay result and injected
-private failure. Resources drain after each case. Current-policy advancement,
-additional replay fault interleavings and performance measurements remain required
+private failure. Resources drain after each case.
+
+The policy-advancement case stages a typed/opaque candidate under an opaque-allowed
+policy, closes its assessment, then activates a typed-required policy in PostgreSQL.
+Fresh assessment of the same modes must fail, and the publication policy fence
+must refuse the old selection. Historical replay must still reproduce the original
+accepted result from retained evidence, without granting publication authority.
+The fixture also compares stored runtime provenance with the original observation.
+Additional replay fault interleavings and performance measurements remain required
 before broader host integration.

@@ -29,9 +29,9 @@ public final class AssessmentCreationProbe {
                 .setAnyResolvedSchema(true).setLimits(DocumentSchemaPolicyLimits.newBuilder().setMaxFragments(20).setMaxFragmentBytes(4_000_000)
                         .setMaxRoots(100).setMaxEvidenceBytes(4_000_000).setMaxBindings(20).setMaxRetainedBytes(16_000_000)
                         .setMaxDecodedBytes(1_000_000)).build(), () -> {});
-        var active = new DocumentSchemaPolicies(tx).activate(policy, 0, () -> {});
-        AssessmentMixedReuseProbe.run(tx, provider, mixedSource, active, observation);
-        AssessmentOperationReplayProbe.run(tx, provider, active, observation);
+        var initial = new DocumentSchemaPolicies(tx).activate(policy, 0, () -> {});
+        AssessmentMixedReuseProbe.run(tx, provider, mixedSource, initial, observation);
+        var active = AssessmentOperationReplayProbe.run(tx, provider, initial, observation);
         for (int scenario : new int[]{0, 2, 1}) {
             boolean invalid = scenario == 1;
             boolean afterScope = scenario == 2;

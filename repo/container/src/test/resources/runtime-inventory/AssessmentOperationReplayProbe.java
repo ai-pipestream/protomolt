@@ -14,10 +14,11 @@ import java.util.*;
 /** Real provider bytes and retained SQL evidence, with no live assessment or registry during replay. */
 public final class AssessmentOperationReplayProbe {
     private static final DocumentRevisionAssembly.Limits LIMITS = new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000);
-    static void run(Tx tx, AssessmentProviderProbe provider, DocumentSchemaPolicies.Selection policy,
+    static DocumentSchemaPolicies.Selection run(Tx tx, AssessmentProviderProbe provider, DocumentSchemaPolicies.Selection policy,
             DocumentAssessmentRuntimeObserver.Observation observation) throws Exception {
         var valid = ObservedAssessmentProbe.asset(StringValue.getDescriptor());
         var invalid = ObservedAssessmentProbe.invalidSchema();
+        var current = policy;
         for (int scenario = 0; scenario < 3; scenario++) {
             var caller = new RepositoryCaller("principal", true);
             var a = ObservedAssessmentProbe.member("a"); var b = ObservedAssessmentProbe.member("b");
@@ -60,7 +61,8 @@ public final class AssessmentOperationReplayProbe {
             String expectedFirst = scenario == 0 ? null : scenario == 1 ? "a" : "b";
             int mode = scenario;
             DocumentAssessmentCreation.Created stage;
-            try (var assessment = DocumentPublicationAssessment.prepare(command, policy,
+            var recordedRuntime = observation.identity(() -> {});
+            try (var assessment = DocumentPublicationAssessment.prepare(command, current,
                     Map.of("a", DocumentPublicationCandidate.Mode.TYPED, "b", scenario == 0
                             ? DocumentPublicationCandidate.Mode.OPAQUE : DocumentPublicationCandidate.Mode.TYPED),
                     fragments, Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())),
@@ -77,6 +79,31 @@ public final class AssessmentOperationReplayProbe {
                 });
             }
             require(budget.reservedBytes() == 0, "original assessment closed");
+            if (scenario == 0) {
+                var stricter = DocumentAdmissionPolicy.of(current.policy().definition().toBuilder()
+                        .setMode(DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_TYPED_REQUIRED).build(), () -> {});
+                current = new DocumentSchemaPolicies(tx).activate(stricter, current.revision(), () -> {});
+                require(current.revision() > policy.revision() && !current.policy().sha256().equals(policy.policy().sha256()),
+                        "current policy advances to a different definition");
+                var selectedPolicy = new DocumentSchemaPolicies(tx).read("account", () -> {});
+                require(selectedPolicy.revision() == current.revision()
+                        && selectedPolicy.policy().bytes().equals(current.policy().bytes()), "changed policy is active in SQL");
+                try (var refused = DocumentPublicationAssessment.prepare(command, current,
+                        Map.of("a", DocumentPublicationCandidate.Mode.TYPED, "b", DocumentPublicationCandidate.Mode.OPAQUE),
+                        fragments, Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())),
+                        (member, occurrence) -> valid, budget, LIMITS, Instant.now(), () -> {})) {
+                    throw new AssertionError("Current policy accepted historical opaque mode");
+                } catch (IllegalArgumentException expected) {
+                    require(expected.getMessage().equals("Policy requires typed admission for member"), "current policy rejects opaque mode");
+                }
+                try {
+                    tx.inTransaction(em -> { DocumentSchemaPolicies.lockCurrent(em, policy, () -> {}); });
+                    throw new AssertionError("Stale policy passed publication fence");
+                } catch (DocumentSchemaPolicies.StalePolicy expected) {
+                    require(expected.getMessage().equals("Prepared schema policy is no longer active"), "publication policy fence remains current");
+                }
+                require(budget.reservedBytes() == 0, "refused current assessment leaks no bytes");
+            }
             var reads = new DocumentReadLedger(tx, UUID.randomUUID(), 1);
             var payload = new PayloadBudget(16_000_000);
             var visited = new ArrayList<String>();
@@ -96,6 +123,7 @@ public final class AssessmentOperationReplayProbe {
                 require(result.assessment().equals(stage.assessment()) && result.manifestSha256().equals(stage.manifestSha256())
                         && result.commandSha256().equals(command.sha256()) && result.ownerGeneration() == owner.generation(), "replay identity bound");
                 require(result.replayRuntime().equals(observation.identity(() -> {})), "current runtime observed separately");
+                require(result.recordedRuntime().equals(recordedRuntime), "stored runtime matches original assessment observation");
                 require(budget.reservedBytes() == 0 && payload.reservedBytes() == 0, "replay releases inputs and fragment copies");
             } finally {
                 require(reader.awaitIdle(Duration.ofSeconds(5)), "provider workers drained");
@@ -108,6 +136,12 @@ public final class AssessmentOperationReplayProbe {
             require(outcomes == 0, "replay grants no terminal decision");
         }
         System.out.println("ASSESSMENT_OPERATION_REPLAY_OK");
+        System.out.println("ASSESSMENT_POLICY_ADVANCEMENT_REPLAY_OK");
+        // Later scenarios deliberately exercise opaque admission. Restore its definition
+        // through normal administration, preserving the monotonic revision history.
+        var restored = new DocumentSchemaPolicies(tx).activate(policy.policy(), current.revision(), () -> {});
+        require(restored.revision() > current.revision(), "policy restoration advances revision");
+        return restored;
     }
     static void verifyMixed(Tx tx, AssessmentProviderProbe provider, RepositoryOperationLedger.Owner owner,
             DocumentPublicationCommand command, Map<String,DocumentAssessmentRetainedSlots.UploadSelection> selected,
