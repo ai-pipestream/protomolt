@@ -4,6 +4,8 @@ import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.authz.grpc.CallerContexts;
 import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
 import ai.protomolt.proto.repo.service.DocumentHistoryMaterializationGrpcService;
+import ai.protomolt.proto.repo.history.grpc.HistoricalOccurrenceClient;
+import ai.protomolt.proto.repo.admission.DocumentHistoricalResponseMaterialization;
 import ai.protomolt.proto.repo.spi.*;
 import ai.protomolt.proto.repo.v1.*;
 import io.grpc.*;
@@ -79,6 +81,28 @@ public final class NativeHistoricalMaterializationTransportProbe {
                 var plain = DocumentHistoryMaterializationServiceGrpc.newBlockingStub(channel).withDeadlineAfter(20, TimeUnit.SECONDS);
                 var headers = new Metadata(); headers.put(identity, "owner");
                 var owner = plain.withInterceptors(MetadataUtils.newAttachHeadersInterceptor(headers));
+                var clientBudget = new PayloadBudget(32L * 1024 * 1024);
+                var client = new HistoricalOccurrenceClient(DocumentHistoryMaterializationServiceGrpc.newFutureStub(channel)
+                        .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(headers)), clientBudget,
+                        new DocumentHistoricalResponseMaterialization.Limits(8 * 1024 * 1024, 100_000, 100),
+                        java.time.Duration.ofSeconds(20), 1);
+                try (var decoded = client.read(request, RepositoryReadControl.NONE)) {
+                    var value = decoded.view(RepositoryReadControl.NONE).value();
+                    require(value.getField(value.getDescriptorForType().findFieldByNumber(1)).equals("retained payload"),
+                            "client dynamically decodes actual retained descriptor");
+                    require(clientBudget.reservedBytes() > 0, "client retains owned response bytes");
+                    status(() -> client.read(request, RepositoryReadControl.NONE), Status.Code.RESOURCE_EXHAUSTED);
+                }
+                require(clientBudget.reservedBytes() == 0, "client result released its bytes");
+                revoke.run();
+                try { status(() -> client.read(request, RepositoryReadControl.NONE), Status.Code.NOT_FOUND); }
+                finally { restore.run(); }
+                require(clientBudget.reservedBytes() == 0, "denied client read releases incoming bytes");
+                var closed = client.read(request, RepositoryReadControl.NONE);
+                closed.close(); closed.close();
+                try { closed.view(RepositoryReadControl.NONE); throw new AssertionError("closed client view allowed"); }
+                catch (IllegalStateException expected) {}
+                require(clientBudget.reservedBytes() == 0, "repeated close drains client");
                 status(() -> plain.readHistoricalOccurrence(request), Status.Code.UNAUTHENTICATED);
                 var response = owner.readHistoricalOccurrence(request);
                 require(response.getAddress().equals(address) && response.getRevisionId().equals(revision.toString()), "captured transport identity");

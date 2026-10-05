@@ -1,0 +1,13 @@
+description = 'Verified historical occurrence client without repository server or provider SDKs'
+dependencies {
+    api project(':protomolt-repo-admission')
+    api project(':protomolt-repo-proto')
+    api project(':protomolt-repo-blob-spi')
+    api project(':protomolt-repo-spi')
+}
+ext.forbiddenRuntimeModules = [
+        'protomolt-repo-service', 'protomolt-repo-container',
+        's3', 'jedis', 'hibernate-core', 'HikariCP', 'postgresql',
+        'flyway-core', 'kafka-clients'
+]
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

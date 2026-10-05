@@ -4,6 +4,8 @@ import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.authz.grpc.CallerContexts;
 import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
 import ai.protomolt.proto.repo.service.DocumentHistoryMaterializationGrpcService;
+import ai.protomolt.proto.repo.history.grpc.HistoricalOccurrenceClient;
+import ai.protomolt.proto.repo.admission.DocumentHistoricalResponseMaterialization;
 import ai.protomolt.proto.repo.spi.*;
 import ai.protomolt.proto.repo.v1.*;
 import io.grpc.*;
@@ -90,6 +92,57 @@ public final class NativeHistoricalMaterializationLifecycleProbe {
                     require(retry.getRevisionId().equals(request.getRevisionId()), "call capacity recovered for real retry");
                     await(() -> budget.reservedBytes() == 0, "retry snapshot released");
                 }
+                for (int mode = 0; mode < 5; mode++) {
+                    int selectedMode = mode;
+                    var gate = new Gate(); active.set(gate);
+                    var clientBudget = new PayloadBudget(32L * 1024 * 1024);
+                    var client = new HistoricalOccurrenceClient(DocumentHistoryMaterializationServiceGrpc.newFutureStub(channel),
+                            clientBudget, new DocumentHistoricalResponseMaterialization.Limits(8 * 1024 * 1024, 100_000, 100),
+                            java.time.Duration.ofSeconds(mode == 1 ? 2 : 10), 1);
+                    var stop = new java.util.concurrent.atomic.AtomicBoolean();
+                    var worker = new AtomicReference<Thread>();
+                    var interruptedAtExit = new java.util.concurrent.atomic.AtomicBoolean();
+                    RuntimeException injected = mode == 4 ? capacityFailure() : new IllegalArgumentException("host control failure");
+                    var control = new RepositoryReadControl() {
+                        public boolean isCancelled() { return selectedMode == 0 && stop.get(); }
+                        public long remainingNanos() { return Long.MAX_VALUE; }
+                        @Override public void check() {
+                            if (selectedMode >= 3 && stop.get()) throw injected;
+                            RepositoryReadControl.super.check();
+                        }
+                    };
+                    var reading = executor.submit(() -> {
+                        worker.set(Thread.currentThread());
+                        try (var result = client.read(request, control)) {
+                            throw new AssertionError("held client unexpectedly returned content");
+                        } finally { interruptedAtExit.set(Thread.currentThread().isInterrupted()); }
+                    });
+                    try {
+                        require(gate.entered.await(5, TimeUnit.SECONDS), "client reached held real send");
+                        if (mode == 2) worker.get().interrupt(); else if (mode != 1) stop.set(true);
+                        try { reading.get(5, TimeUnit.SECONDS); throw new AssertionError("client stop ignored"); }
+                        catch (ExecutionException failure) {
+                            var cause = failure.getCause();
+                            if (mode == 0) require(cause instanceof RepositoryException
+                                    && ((RepositoryException) cause).code() == RepositoryException.Code.CANCELLED, "local cancellation preserved");
+                            else if (mode >= 3) require(cause == injected, "host control failure preserved");
+                            else if (mode == 2 && cause instanceof RepositoryException local)
+                                require(local.code() == RepositoryException.Code.CANCELLED, "interrupted local control cancellation");
+                            else require(Status.fromThrowable(cause).getCode() == (mode == 1
+                                    ? Status.Code.DEADLINE_EXCEEDED : Status.Code.CANCELLED), "client terminal status");
+                        }
+                        if (mode == 2) require(interruptedAtExit.get(), "client preserves interrupt flag");
+                        require(clientBudget.reservedBytes() == 0, "stopped client releases bytes");
+                        await(() -> gate.call.isCancelled(), "stopped client cancels real call");
+                    } finally { active.set(null); gate.release.countDown(); }
+                    await(() -> budget.reservedBytes() == 0, "stopped producer drained");
+                    try (var retry = client.read(request, RepositoryReadControl.NONE)) {
+                        require(retry.view(RepositoryReadControl.NONE).response().getRevisionId().equals(request.getRevisionId()),
+                                "client slot recovered after stopped read");
+                    }
+                    require(clientBudget.reservedBytes() == 0, "retry client bytes drained");
+                    await(() -> budget.reservedBytes() == 0, "retry producer drained");
+                }
             } finally {
                 var remaining = active.getAndSet(null); if (remaining != null) remaining.release.countDown();
                 channel.shutdownNow(); server.shutdownNow();
@@ -98,6 +151,11 @@ public final class NativeHistoricalMaterializationLifecycleProbe {
         }
         require(budget.reservedBytes() == 0, "lifecycle budget drained");
         System.out.println("NATIVE_HISTORICAL_MATERIALIZATION_LIFECYCLE_OK");
+    }
+
+    private static RuntimeException capacityFailure() {
+        try (var ignored = new PayloadBudget(1).reserve(2)) { throw new AssertionError("expected real budget refusal"); }
+        catch (PayloadBudget.CapacityExceededException failure) { return failure; }
     }
 
     private static void await(BooleanSupplier condition, String message) throws InterruptedException {

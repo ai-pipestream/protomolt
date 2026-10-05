@@ -576,4 +576,6 @@ include 'protomolt-repo-engine'
 project(':protomolt-repo-engine').projectDir = file('repo/engine')
 
 include 'protomolt-repo-admission'
+include 'protomolt-repo-history-grpc'
+project(':protomolt-repo-history-grpc').projectDir = file('repo/history/grpc')
 project(':protomolt-repo-admission').projectDir = file('repo/admission')
