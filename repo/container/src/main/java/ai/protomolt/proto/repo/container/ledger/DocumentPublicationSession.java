@@ -149,8 +149,29 @@ final class DocumentPublicationSession {
         /** Call immediately before stage CREATE; uncertainty can only resume original evidence. */
         synchronized void beginAssessmentStage() {
             requireOpen();
+            if (registration != null) throw new IllegalStateException("Journaled assessment requires durable start");
             if (assessmentStageStarted) throw new IllegalStateException("Assessment stage creation already started");
             assessmentStageStarted = true;
+        }
+
+        /** Commit the sticky journal before CREATE; uncertainty can only reconcile original evidence. */
+        synchronized DocumentAssessmentStartJournal.Started beginAssessmentStage(RepositoryCaller caller,
+                RepositoryOperationLedger.Owner owner, Duration retention, RepositoryReadControl control) {
+            requireOpen();
+            Objects.requireNonNull(control).check();
+            DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+            if (!owner.key().equals(key) || owner.generation() != predecessorGeneration + 1 || !owner.token().equals(ownerNonce))
+                throw new IllegalArgumentException("Assessment owner differs from session");
+            if (retention == null || retention.isNegative() || retention.isZero()
+                    || retention.compareTo(Duration.ofDays(1)) > 0 || retention.getNano() % 1000 != 0)
+                throw new IllegalArgumentException("Assessment retention requires exact microseconds within one day");
+            if (assessmentStageStarted) throw new IllegalStateException("Assessment stage creation already started");
+            // Set before journal I/O: a thrown acknowledgment must never permit a new CREATE attempt.
+            if (registration != null) registration.requireStart(caller, owner);
+            assessmentStageStarted = true;
+            if (registration != null) return registration.start(caller, owner, retention, control);
+            return new DocumentAssessmentStartJournal.Started(UUID.randomUUID(),
+                    java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS).plus(retention));
         }
 
         private void requireOpen() {

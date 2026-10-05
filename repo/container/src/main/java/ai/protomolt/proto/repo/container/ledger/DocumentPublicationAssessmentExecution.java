@@ -6,11 +6,8 @@ import ai.protomolt.proto.repo.spi.*;
 import ai.protomolt.proto.repo.v1.DocumentPublicationResult;
 import com.google.protobuf.InvalidProtocolBufferException;
 import java.time.Duration;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Objects;
-import java.util.UUID;
 
 /** Internal opt-in retained rejection flow. The owning host keeps reader, ledger and observation alive. */
 final class DocumentPublicationAssessmentExecution {
@@ -58,11 +55,10 @@ final class DocumentPublicationAssessmentExecution {
         if (assessment.failure().isEmpty()) throw new IllegalArgumentException("Accepted assessment cannot be staged for rejection");
         assessment.withRetentionEvidence(owner, observation, control::check, evidence -> {
             artifacts.stage(owner, plan.plan().command(), List.copyOf(evidence.artifacts(control::check).values()), control::check);
-            UUID id = UUID.randomUUID();
-            Instant deadline = Instant.now().truncatedTo(ChronoUnit.MICROS).plus(retention);
             control.check();
-            execution.beginAssessmentStage();
-            return creation.create(caller, owner, plan, assessed.selections(), evidence, id, deadline, budget, control::check);
+            var started = execution.beginAssessmentStage(caller, owner, retention, control);
+            return creation.create(caller, owner, plan, assessed.selections(), evidence,
+                    started.assessment(), started.retainUntil(), budget, control::check);
         });
     }
 

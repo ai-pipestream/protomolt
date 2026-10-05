@@ -59,8 +59,11 @@ features available. Recovery is one workstream, not the whole goal.
    An internal process-authority session now registers claim, preparation and
    modes before admitting a claimed owner, with lost-acknowledgment tests at all
    four stages. Ordinary runtime creation is still unchanged. Before enabling it,
-   integrate the durable assessment-start marker and preserve scoped request
-   authorization separately from private journal authority. Specify retention and
+   qualify the registered session through actual provider staging and preserve
+   scoped request authorization separately from private journal authority. The
+   execution stage now uses the durable assessment-start marker for journaled
+   sessions and commits it before CREATE; ambiguous marker acknowledgment leaves
+   local staging sticky. Specify retention and
    cleanup for registered commands that later fail policy or ACL checks.
 5. **Restore, pruning and backup.** Test retained schema/content reachability,
    active read and pending-operation pins, current ACLs and failure recovery.

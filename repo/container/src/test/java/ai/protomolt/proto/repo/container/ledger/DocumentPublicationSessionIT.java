@@ -24,6 +24,77 @@ class DocumentPublicationSessionIT {
     private static final Duration LEASE = Duration.ofMinutes(5);
 
     @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {0, 1, 2})
+    void journaledAssessmentStartKeepsOriginalCoordinatesAfterAcknowledgmentUncertainty(int fault) {
+        try (var c = context(POSTGRES)) {
+            var input = input(c);
+            var armed = new AtomicBoolean(); var cancelled = new AtomicBoolean();
+            var source = DocumentJdbcFaults.afterCommit(c.pool(), () -> {
+                if (armed.get() && c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                        "SELECT count(*) FROM repository_publication_assessment_starts WHERE operation_id=:id")
+                        .setParameter("id", input.command().operationId()).getSingleResult()).intValue()) == 1
+                        && armed.compareAndSet(true, false)) {
+                    if (fault == 1) throw new java.sql.SQLException("Assessment start acknowledgment lost", "08006");
+                    if (fault == 2) cancelled.set(true);
+                }
+            });
+            var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(32L * 1024 * 1024);
+            try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                    Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
+                var session = DocumentPublicationSession.journaled(new Tx(emf), CALLER, input.command(), input.placements(), LEASE, budget);
+                var modes = new java.util.HashMap<String, DocumentPublicationCandidate.Mode>();
+                input.command().intent().getMembersList().forEach(member -> modes.put(member.getMemberId(), DocumentPublicationCandidate.Mode.TYPED));
+                var control = new RepositoryReadControl() {
+                    public long remainingNanos() { return Long.MAX_VALUE; }
+                    public boolean isCancelled() { return cancelled.get(); }
+                };
+                try (var execution = session.begin(CALLER, RepositoryReadControl.NONE)) {
+                    execution.bindModes(modes);
+                    var owner = session.admit(CALLER, RepositoryReadControl.NONE).orElseThrow();
+                    var wrong = new RepositoryOperationLedger.Owner(owner.key(), owner.generation(), UUID.randomUUID(),
+                            owner.leaseUntil(), owner.executionClaim());
+                    assertThatThrownBy(() -> execution.beginAssessmentStage(CALLER, wrong, Duration.ofHours(1), control))
+                            .hasMessageContaining("owner differs");
+                    var claim = owner.executionClaim().orElseThrow();
+                    var wrongClaim = owner.withClaim(new RepositoryExecutionClaimLedger.Claim(claim.key(), claim.commandSha256(),
+                            claim.epoch() + 1, claim.token(), claim.leaseUntil()));
+                    assertThatThrownBy(() -> execution.beginAssessmentStage(CALLER, wrongClaim, Duration.ofHours(1), control))
+                            .hasMessageContaining("claim differs");
+                    cancelled.set(true);
+                    assertThatThrownBy(() -> execution.beginAssessmentStage(CALLER, owner, Duration.ofHours(1), control))
+                            .isInstanceOfSatisfying(RepositoryException.class,
+                                    error -> assertThat(error.code()).isEqualTo(RepositoryException.Code.CANCELLED));
+                    cancelled.set(false);
+                    assertThatThrownBy(execution::beginAssessmentStage).hasMessageContaining("requires durable start");
+                    assertThat(execution.assessmentStageStarted()).isFalse();
+                    armed.set(true);
+                    DocumentAssessmentStartJournal.Started returned = null;
+                    if (fault == 0) returned = execution.beginAssessmentStage(CALLER, owner, Duration.ofHours(1), control);
+                    else {
+                        var failure = catchThrowable(() -> execution.beginAssessmentStage(CALLER, owner, Duration.ofHours(1), control));
+                        if (fault == 1) assertThat(failure).hasStackTraceContaining("Assessment start acknowledgment lost");
+                        else assertThat(failure).isInstanceOfSatisfying(RepositoryException.class,
+                                error -> assertThat(error.code()).isEqualTo(RepositoryException.Code.CANCELLED));
+                    }
+                    assertThat(armed.get()).isFalse(); cancelled.set(false);
+                    assertThat(execution.assessmentStageStarted()).isTrue();
+                    var stored = new DocumentAssessmentStartJournal(c.tx(), budget)
+                            .load(CALLER, owner, input.command(), RepositoryReadControl.NONE).orElseThrow();
+                    if (returned != null) assertThat(stored).isEqualTo(returned);
+                    assertThatThrownBy(() -> execution.beginAssessmentStage(CALLER, owner, Duration.ofHours(2), control))
+                            .hasMessageContaining("already started");
+                    assertThat(new DocumentAssessmentStartJournal(c.tx(), budget)
+                            .load(CALLER, owner, input.command(), RepositoryReadControl.NONE)).contains(stored);
+                }
+                try (var retry = session.begin(CALLER, RepositoryReadControl.NONE)) {
+                    assertThat(retry.assessmentStageStarted()).isTrue();
+                }
+                assertThat(budget.reservedBytes()).isZero();
+            }
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(ints = {0, 1, 2, 3})
     void journaledRegistrationReconcilesEachLostAcknowledgmentWithoutNewIdentities(int stage) {
         try (var c = context(POSTGRES)) {

@@ -15,6 +15,7 @@ final class DocumentPublicationRegistration {
     private final RepositoryExecutionClaimLedger claims;
     private final DocumentPublicationPreparationJournal preparations;
     private final DocumentPublicationModesJournal modes;
+    private final DocumentAssessmentStartJournal starts;
 
     DocumentPublicationRegistration(Tx tx, PayloadBudget budget, DocumentPublicationPreparationRecord preparation) {
         this.preparation = Objects.requireNonNull(preparation);
@@ -22,6 +23,20 @@ final class DocumentPublicationRegistration {
         claims = new RepositoryExecutionClaimLedger(tx);
         preparations = new DocumentPublicationPreparationJournal(tx, budget);
         modes = new DocumentPublicationModesJournal(tx, budget);
+        starts = new DocumentAssessmentStartJournal(tx, budget);
+    }
+
+    DocumentAssessmentStartJournal.Started start(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            java.time.Duration retention, RepositoryReadControl control) {
+        requireStart(caller, owner);
+        return starts.start(caller, owner, preparation.command(), UUID.randomUUID(), retention, control);
+    }
+
+    void requireStart(RepositoryCaller caller, RepositoryOperationLedger.Owner owner) {
+        requireProcess(caller);
+        if (!owner.executionClaim().map(claim -> claim.token().equals(claimToken) && claim.epoch() == 1
+                && claim.commandSha256().equals(preparation.command().sha256())).orElse(false))
+            throw new IllegalArgumentException("Assessment claim differs from registered session");
     }
 
     RepositoryExecutionClaimLedger.Claim register(RepositoryCaller caller,
