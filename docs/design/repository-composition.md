@@ -4237,7 +4237,7 @@ recovery flow or transfer of retained evidence to a replacement assessment. An
 empty observation in the new generation still does not authorize deletion,
 recreation or adoption of the old stage.
 
-#### Retained assessment reader boundary (design; not implemented)
+#### Retained assessment reader boundary (database protection implemented; reader integration pending)
 
 The current and historical document readers are not assessment readers. V63's
 `document_read_pins` requires a sealed document publication and rejects retiring
@@ -4248,10 +4248,13 @@ reader-incarnation fence and proven-quiescence recovery, but supply a distinct
 internal assessment protection strategy rather than duplicating cancellation and
 batch ownership logic.
 
-An assessment read needs a durable parent session and exact child object pins.
-The session identifies its reader incarnation, assessment UUID, account/principal,
-original operation generation, command/manifest identity and caller-chosen read
-request UUID. Its foreign key must prevent assessment-owner deletion while any
+An assessment read needs one durable whole-assessment session. Existing immutable
+`ASSESSMENT` references retain every physical object, so there are no additional
+per-object reader pins or mirrors.
+The session stores its reader incarnation, assessment UUID and caller-chosen read
+request UUID. The immutable assessment owner supplies account/principal, original
+operation generation and command/manifest identity without duplicating them.
+Its foreign key must prevent assessment-owner deletion while any
 session exists. This keeps the manifest, root evidence and normalized schema
 associations protected together with payloads: individual payload pins alone
 would let V69 release schemas while a worker still needs them. A failed or lost
@@ -4259,30 +4262,26 @@ capture acknowledgement must leave discoverable protection, with exact retry
 identity; capacity pressure cannot discard an uncertain local capture.
 
 The session's distinct physical set is derived from retained assessment slots,
-not caller-supplied locations. Child pins use their own native assessment-reader
-reference kind. Admission requires the sealed, unreleased, unexpired assessment
+not caller-supplied locations. Admission requires the sealed, unreleased,
+unexpired assessment
 and its complete verified slot snapshot, exact original generation and current
 read permission over the command's complete destination/source set. It does not
 recheck current source revisions, current drive configuration or old upload leases.
 Initial implementation admits only the original live operation owner; replacement
 owner recovery and terminal assessment readers need explicit separate authority.
-A pin grants no normal document visibility or external semantic-review authority.
+A session grants no normal document visibility or external semantic-review authority.
 
 A previously retiring source may serve these exact already-retained objects,
 provided the assessment's native and mirrored ownership still exists and the
-physical object is not reclaiming. This exception belongs only in the new
-assessment-reader admission and exact native-reference guard. Do not clear
-`retiring`, loosen current/historical document readers, or let unrelated owners
-acquire references through it. Raw mirror inserts must still require the matching
-native pin and exact assessment ownership. All checks must run again after waits.
-Both the native pin INSERT guard and its mirror branch in
-`guard_repository_reference` must enforce this same narrow retiring-object rule;
-changing only one would either block legitimate reads or admit forged references.
+physical object is not reclaiming. The session keeps that existing ownership
+alive; it does not acquire new object references. Do not clear `retiring`, loosen
+current/historical document readers or change the general native-reference guard.
+The capture handler must verify the complete retained set after waits.
 
 Admission locks the active reader incarnation first, then the live operation,
 complete authorized document/source set, assessment owner, complete physical source
 set in canonical kind/UUID order, retention rows in object UUID order, and finally
-session/pin rows. Reader capture uses shared physical locks; V65's exclusive
+session rows. Reader capture uses shared physical locks; V65's exclusive
 writer/recovery helper must not be reused as a reader-wide serialization point.
 Resolve the entire physical set before taking any individual retention lock. The
 assessment-owner lock protects admission against release; release must explicitly
@@ -4292,8 +4291,9 @@ references without acquiring assessment or reader-incarnation locks in reverse.
 
 Commit protection before storage I/O. A local use remains held through actual
 provider completion, schema decoding and every returned batch, including after
-cancellation. Close stops new uses; it neither proves drain nor deletes pins.
-Release removes the exact pin set and session atomically only after local drain.
+cancellation. Close stops new uses; it neither proves drain nor deletes the session.
+Release removes the exact session only after local drain; the original assessment
+references remain until separate assessment recovery.
 Recovery requires durable proven quiescence, not a timeout, `FENCED` state or a
 replacement process claiming the old process is gone. Failed release retains the
 session, references and local capacity until exact retry or reconciliation. Release
@@ -4301,14 +4301,13 @@ must not require the operation lease or current read grant to remain live: neith
 loss of authority nor owner expiry may prevent safe cleanup of already-drained
 work. Session and physical lock ordering must match admission without taking a
 reader-incarnation lock after physical locks.
-No pin DELETE or mirror trigger may acquire the assessment-owner lock after
-source/retention locks. If release needs that owner, acquire it first for the
-complete batch; never hide an inverted acquisition inside a per-row trigger.
+Session deletion needs no physical locks or reference changes. Never acquire an
+assessment-owner lock after the session-row lock; the immutable association and
+parent foreign key protect its identity through deletion.
 
 Before exposing a returned batch, reauthorize the complete current read set and
-check the assessment's replay deadline and owner state. Revocation or expiry
-uses database time, consistent with the retention release gate, and
-refuses further delivery while retaining protection until actual drain. Already
+check the assessment's replay deadline using database time and its owner state.
+Revocation or expiry refuses further delivery while retaining protection until actual drain. Already
 returned bytes cannot be recalled. Publication or semantic decisions additionally
 need their own final transaction fences; a read handle is not that authority.
 SQL locks never span provider calls, registry access, dynamic compilation or
@@ -4318,7 +4317,7 @@ retained assets; it must not silently substitute the registry's newest definitio
 Acceptance work for this boundary:
 
 - Migrate existing V69 owners without inventing sessions; preserve current and
-  historical read behavior and reject malformed/raw assessment pin identities.
+  historical read behavior and reject malformed/raw assessment session identities.
 - Prove concurrent readers share physical locks, unrelated objects progress, and
   capture versus expiry/release commits in either order without a protection gap.
 - Retire an original source after staging; admit only its exact assessment-owned
@@ -4335,7 +4334,7 @@ Acceptance work for this boundary:
 
 Operation inventory: assessment reader capture, delivery reauthorization and
 session release/reconciliation are new internal operations; V69 assessment release,
-native reference guards and bounded reader lifecycle dispatch are extended.
+the assessment owner transition guard and bounded reader lifecycle dispatch are extended.
 Existing protobuf contracts, document reader scopes and public transports are
 unchanged. Implement and review the database protection and lifecycle gates before
 mounting any reader entry point.
@@ -4351,6 +4350,24 @@ state checks to the admission operation. Empty sets still require READ COMMITTED
 Real PostgreSQL tests prove overlapping shared sets coexist, writers remain
 excluded until both readers commit or roll back, unrelated objects progress,
 all source locks precede physical locks, invalid/missing inputs are refused and
-existing retention metadata survives migration unchanged. The assessment session,
-native reader references, lifecycle dispatch and release guard remain unimplemented;
-this primitive alone must not be exposed as a read operation.
+existing retention metadata survives migration unchanged. This primitive alone
+must not be exposed as a read operation.
+
+V71 adds the immutable whole-assessment session and a non-cascading assessment
+foreign key. The owner transition guard refuses release before acquiring physical
+locks whenever sessions remain, including direct `release_xid` updates. Existing
+V66 references protect all bytes with no per-reader object-reference inserts.
+Session acquisition requires an active incarnation, the original live operation
+write fence, a sealed/unreleased/unexpired owner and retained slot provenance.
+The trusted handler must still verify canonical content and current authorization.
+
+At this checkpoint, session deletion requires durable `QUIESCED` evidence. The
+exact internal recovery function validates session/reader/assessment identity and
+supports retry after deletion without taking owner or physical locks. Ordinary
+per-handle local-drain release, capture acknowledgement reconciliation, provider
+reads and lifecycle dispatch are not enabled. SQL fixtures exercise multiple
+sessions across expiry, direct release refusal, partial reader recovery,
+immutable identities, missing provenance and retiring objects protected by their
+existing references. These use explicitly synthetic manifest/snapshot bytes and
+quiescence attestations; they are not proof of canonical reader admission or
+actual provider-worker drain.
