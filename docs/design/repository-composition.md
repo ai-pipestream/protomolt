@@ -1322,6 +1322,15 @@ writer's heap. It uses the test runtime classpath, not a packaged distribution;
 it does not inject a crash inside a transaction, recover an active provider call,
 test typed publication takeover or measure scale-out throughput.
 
+Before terminating either process, the same test releases two distinct payload
+updates against a separate entry's identical expected version through the two
+hosts. Exactly one returns success and the other ABORTED; both hosts must read
+the winner and the original retained revision. Exact archive entry/version totals
+exclude an extra committed revision from the rejected contender or replay.
+The client barrier coordinates request starts, not a deterministic interleaving
+inside SQL. This is transport-level optimistic concurrency coverage; it does not
+replace controlled races at the commit boundary or prove failed-upload cleanup.
+
 ### Upload verification evidence at the provider boundary
 
 S3BlobStore.putRequest already supplies the expected SHA-256 through the S3

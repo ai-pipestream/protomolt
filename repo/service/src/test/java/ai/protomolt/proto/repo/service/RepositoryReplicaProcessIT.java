@@ -49,6 +49,9 @@ class RepositoryReplicaProcessIT {
                 var request = PutEntryRequest.newBuilder().setAddress(address).addRenditions(RenditionContent.newBuilder()
                         .setRendition(RenditionDescriptor.newBuilder().setName("original")).setData(payload)).build();
                 var saved = writer.withDeadlineAfter(20, TimeUnit.SECONDS).putEntry(request);
+                assertCompetingRevisions(writer, survivor, request.toBuilder().setAddress(
+                        address.toBuilder().setEntryId("contended")).build());
+                assertStats(survivor, 2, 3);
                 first.close(); // Forceful exit: no shutdown hooks or shared JVM objects can help the survivor.
                 assertThat(first.process().isAlive()).isFalse();
                 var replay = survivor.withDeadlineAfter(20, TimeUnit.SECONDS).putEntry(request);
@@ -66,12 +69,62 @@ class RepositoryReplicaProcessIT {
                 var read = survivor.withDeadlineAfter(20, TimeUnit.SECONDS).getEntry(
                         GetEntryRequest.newBuilder().setAddress(address).setVersion(saved.getVersion()).build());
                 assertThat(read.getRenditions(0).getData()).isEqualTo(payload);
+                assertStats(survivor, 2, 4);
             } finally {
                 a.shutdownNow();
                 if (b != null) b.shutdownNow();
                 a.awaitTermination(10, TimeUnit.SECONDS);
                 if (b != null) b.awaitTermination(10, TimeUnit.SECONDS);
             }
+        }
+    }
+
+    private void assertStats(ArchiveServiceGrpc.ArchiveServiceBlockingStub stub, long entries, long versions) {
+        var stats = stub.withDeadlineAfter(20, TimeUnit.SECONDS).getArchiveStats(GetArchiveStatsRequest.newBuilder()
+                .setAccountId("process-account").setArchive("records").build()).getStats();
+        assertThat(stats.getEntries()).isEqualTo(entries);
+        assertThat(stats.getVersions()).isEqualTo(versions);
+    }
+
+    private void assertCompetingRevisions(ArchiveServiceGrpc.ArchiveServiceBlockingStub first,
+            ArchiveServiceGrpc.ArchiveServiceBlockingStub second, PutEntryRequest initial) throws Exception {
+        var baseline = first.withDeadlineAfter(20, TimeUnit.SECONDS).putEntry(initial);
+        var left = initial.toBuilder().setExpectedVersion(baseline.getVersion()).setRenditions(0,
+                initial.getRenditions(0).toBuilder().setData(ByteString.copyFromUtf8("left contender"))).build();
+        var right = initial.toBuilder().setExpectedVersion(baseline.getVersion()).setRenditions(0,
+                initial.getRenditions(0).toBuilder().setData(ByteString.copyFromUtf8("right contender"))).build();
+        var start = new java.util.concurrent.CyclicBarrier(2);
+        try (var workers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var a = workers.submit(() -> contend(first, left, start));
+            var b = workers.submit(() -> contend(second, right, start));
+            var resultA = a.get(30, TimeUnit.SECONDS);
+            var resultB = b.get(30, TimeUnit.SECONDS);
+            assertThat(java.util.List.of(resultA.code(), resultB.code()))
+                    .containsExactlyInAnyOrder(io.grpc.Status.Code.OK, io.grpc.Status.Code.ABORTED);
+            var winner = resultA.code() == io.grpc.Status.Code.OK ? resultA : resultB;
+            assertThat(winner.version()).isEqualTo(baseline.getVersion() + 1);
+            for (var reader : java.util.List.of(first, second)) {
+                var current = reader.withDeadlineAfter(20, TimeUnit.SECONDS).getEntry(
+                        GetEntryRequest.newBuilder().setAddress(initial.getAddress()).build());
+                assertThat(current.getRenditions(0).getData()).isEqualTo(winner.payload());
+                var historical = reader.withDeadlineAfter(20, TimeUnit.SECONDS).getEntry(
+                        GetEntryRequest.newBuilder().setAddress(initial.getAddress()).setVersion(baseline.getVersion()).build());
+                assertThat(historical.getRenditions(0).getData()).isEqualTo(initial.getRenditions(0).getData());
+            }
+        }
+    }
+
+    private record Contender(io.grpc.Status.Code code, long version, ByteString payload) {}
+
+    private Contender contend(ArchiveServiceGrpc.ArchiveServiceBlockingStub stub, PutEntryRequest request,
+            java.util.concurrent.CyclicBarrier start) throws Exception {
+        start.await(10, TimeUnit.SECONDS);
+        try {
+            var response = stub.withDeadlineAfter(20, TimeUnit.SECONDS).putEntry(request);
+            return new Contender(io.grpc.Status.Code.OK, response.getVersion(), request.getRenditions(0).getData());
+        } catch (io.grpc.StatusRuntimeException failure) {
+            if (failure.getStatus().getCode() != io.grpc.Status.Code.ABORTED) throw failure;
+            return new Contender(failure.getStatus().getCode(), 0, ByteString.EMPTY);
         }
     }
 
