@@ -112,6 +112,7 @@ public final class AssessmentRejectionProbe {
             require(reads.releaseDrained(1) == 1 && reads.outstandingReads() == 0, "decision releases exact SQL read session");
         }
         verifyTerminalReads(tx, provider, caller, owner, command, selected, stage, current, observation, scenario);
+        if (scenario == 1) AssessmentCaptureFaultProbe.runRejected(database, tx, caller, command);
         return current;
     }
 
@@ -119,7 +120,8 @@ public final class AssessmentRejectionProbe {
             RepositoryOperationLedger.Owner owner, DocumentPublicationCommand command,
             Map<String,DocumentAssessmentRetainedSlots.UploadSelection> selected, DocumentAssessmentCreation.Created stage,
             DocumentSchemaPolicies.Selection current, DocumentAssessmentRuntimeObserver.Observation observation, int scenario) throws Exception {
-        var reads = new DocumentReadLedger(tx, UUID.randomUUID(), 1);
+        var incarnation = UUID.randomUUID();
+        var reads = new DocumentReadLedger(tx, incarnation, 1);
         var budget = new PayloadBudget(128_000_000); var payload = new PayloadBudget(16_000_000);
         var reader = new DocumentPartReader((generation, profile) -> {
             require(generation.equals("assessment-s3") && profile.equals(provider.profile()), "exact terminal provider");
@@ -147,12 +149,25 @@ public final class AssessmentRejectionProbe {
             expect(RepositoryException.Code.CANCELLED, () -> DocumentAssessmentReplay.replay(capture, reader,
                     budget, LIMITS, observation, control(() -> true)));
             if (scenario == 1) {
+                verifySessionAuthority(tx, incarnation, stage);
                 var node = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(
                         command.intent().getMembers(0).getDestination().getAddress());
                 try {
                     policy(tx, node, "ACCESS_DENY");
                     expect(RepositoryException.Code.NOT_FOUND, () -> DocumentAssessmentReplay.replay(capture, reader,
                             budget, LIMITS, observation, RepositoryReadControl.NONE));
+                } finally { policy(tx, node, "ACCESS_READ"); }
+                var fetched = new AtomicBoolean();
+                try {
+                    expect(RepositoryException.Code.NOT_FOUND, () -> DocumentAssessmentReplay.replay(capture,
+                            (captured, member, control) -> {
+                                var batch = reader.readAssessment(captured, member, control);
+                                try {
+                                    if (fetched.compareAndSet(false, true)) policy(tx, node, "ACCESS_DENY");
+                                    return batch;
+                                } catch (RuntimeException | Error failure) { batch.close(); throw failure; }
+                            }, budget, LIMITS, observation, RepositoryReadControl.NONE));
+                    require(fetched.get(), "revocation happened after real provider fetch");
                 } finally { policy(tx, node, "ACCESS_READ"); }
                 require(DocumentAssessmentReplay.replay(capture, reader, budget, LIMITS, observation,
                         RepositoryReadControl.NONE).equals(result), "restored current access reproduces exact result");
@@ -162,6 +177,54 @@ public final class AssessmentRejectionProbe {
             require(reader.awaitIdle(Duration.ofSeconds(5)), "terminal provider work drains");
             require(budget.reservedBytes() == 0 && payload.reservedBytes() == 0, "terminal read budgets drain");
             require(reads.releaseDrained(1) == 1 && reads.outstandingReads() == 0, "terminal SQL session drains");
+        }
+    }
+
+    private static void verifySessionAuthority(Tx tx, UUID reader, DocumentAssessmentCreation.Created stage) {
+        UUID other = tx.readOnly(em -> (UUID) em.createNativeQuery("""
+                SELECT a.assessment_id FROM document_assessment_owners a
+                WHERE a.sealed AND a.release_xid IS NULL AND a.retain_until>clock_timestamp()
+                  AND NOT EXISTS(SELECT 1 FROM repository_operation_rejection r
+                    WHERE r.account_id=a.account_id AND r.principal=a.principal AND r.operation_id=a.operation_id)
+                ORDER BY a.assessment_id LIMIT 1
+                """).getSingleResult());
+        sqlRefusal("P0002", "query returned no rows", () -> tx.inTransaction(em -> {
+            em.createNativeQuery("""
+                    INSERT INTO document_assessment_read_sessions(session_id,reader_incarnation,assessment_id,authority)
+                    VALUES(:session,:reader,:assessment,'ADMISSION_REJECTION')
+                    """).setParameter("session", UUID.randomUUID()).setParameter("reader", reader)
+                    .setParameter("assessment", other).executeUpdate();
+        }));
+        sqlRefusal("P0001", "Repository operation is terminal", () -> tx.inTransaction(em -> {
+            em.createNativeQuery("""
+                    INSERT INTO document_assessment_read_sessions(session_id,reader_incarnation,assessment_id,authority)
+                    VALUES(:session,:reader,:assessment,'LIVE_OWNER')
+                    """).setParameter("session", UUID.randomUUID()).setParameter("reader", reader)
+                    .setParameter("assessment", stage.assessment()).executeUpdate();
+        }));
+        sqlRefusal("P0001", "Assessment read session identity is immutable", () -> tx.inTransaction(em -> {
+            require(em.createNativeQuery("""
+                    UPDATE document_assessment_read_sessions SET authority='LIVE_OWNER'
+                    WHERE reader_incarnation=:reader AND assessment_id=:assessment
+                    """).setParameter("reader", reader).setParameter("assessment", stage.assessment()).executeUpdate() == 1,
+                    "exact session authority mutation attempted");
+        }));
+        long remaining = tx.readOnly(em -> ((Number) em.createNativeQuery("""
+                SELECT count(*) FROM document_assessment_read_sessions
+                WHERE reader_incarnation=:reader AND assessment_id=:assessment AND authority='ADMISSION_REJECTION'
+                """).setParameter("reader", reader).setParameter("assessment", stage.assessment()).getSingleResult()).longValue());
+        require(remaining == 1, "forgeries leave exactly the original rejection session");
+        System.out.println("REJECTED_ASSESSMENT_AUTHORITY_GUARDS_OK");
+    }
+
+    private static void sqlRefusal(String state, String message, Runnable action) {
+        try { action.run(); throw new AssertionError("Forged session authority was accepted"); }
+        catch (RuntimeException failure) {
+            boolean matched = false;
+            for (Throwable cause = failure; cause != null; cause = cause.getCause())
+                if (cause instanceof java.sql.SQLException sql && state.equals(sql.getSQLState())
+                        && sql.getMessage().contains(message)) matched = true;
+            require(matched, "SQL authority refusal matches intended guard: " + message);
         }
     }
 

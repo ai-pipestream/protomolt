@@ -91,7 +91,8 @@ class DocumentAssessmentStorageRuntimeTest {
                 assertThat(result).contains("ASSESSMENT_REPLAY_CANCELLED_DELIVERY_OK");
                 assertThat(result).contains("ASSESSMENT_REJECTION_ACCEPTED_REFUSED", "ASSESSMENT_REJECTION_LOST_ACK_OK",
                         "ASSESSMENT_REJECTION_CANCEL_AFTER_COMMIT_OK", "ASSESSMENT_REJECTION_STALE_POLICY_OK",
-                        "ASSESSMENT_REJECTION_TERMINAL_READ_OK");
+                        "ASSESSMENT_REJECTION_TERMINAL_READ_OK", "REJECTED_ASSESSMENT_CAPTURE_FAULTS_OK",
+                        "REJECTED_ASSESSMENT_AUTHORITY_GUARDS_OK");
             } finally {
                 if (process.isAlive()) {
                     process.destroyForcibly();

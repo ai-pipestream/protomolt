@@ -5289,12 +5289,30 @@ SPI and engine dependency boundary checks pass. These are correctness results;
 they do not establish RustFS performance or horizontal throughput improvements.
 
 Before exposing this path, qualify capture/delivery expiry across lock waits,
-source-access races during provider completion, forged SQL session authority,
-lost session-commit acknowledgement and quiescence recovery for rejection sessions.
+source-access races during provider completion and revocation after the final
+member batch. The rejection-session fault and authority cases below are qualified.
 Receipt replay after evidence expiry remains distinct from evidence re-evaluation.
 The broader provider-neutral composition, non-S3 managed lifecycle qualification,
 metadata/restore, optional JCR boundaries and bounded hydration requirements remain
 part of this goal; this read-path checkpoint does not complete them.
+
+The real production-JAR fixture now applies the same capture fault cases to live
+and receipt-authorized reads. Cancellation after the real session INSERT and before
+COMMIT leaves no durable session or capacity reservation. Lost acknowledgement
+after the real COMMIT preserves the exact uncertain session and its capacity;
+ordinary release refuses it until fencing, local quiescence and exact recovery
+complete. Cancellation observed after acknowledged COMMIT permits ordinary drained
+release. All three cases leave no residual SQL sessions or byte reservations.
+
+SQL fixtures refuse a rejection-authorized session on a sealed assessment with no
+rejection receipt, a live-owner session on a terminal operation, and changing a
+legitimate session's authority. The original session remains usable and releasable.
+A destination-permission race revokes access after a real first-member provider
+batch and proves replay refuses delivery; restoration reproduces the original
+result. This does not isolate revocation after the final member or a reused-source
+ACL race. The focused gate passes 30 tests including the expanded production-JAR
+fixture, 12 read-session cases and 17 retention cases. Sol reviewed these additions;
+no production behavior change was needed for these cases.
 
 #### Selected authoritative backend composition
 

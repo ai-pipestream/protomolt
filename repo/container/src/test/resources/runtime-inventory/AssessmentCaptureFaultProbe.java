@@ -15,6 +15,28 @@ public final class AssessmentCaptureFaultProbe {
             RepositoryOperationLedger.Owner owner, DocumentPublicationCommand command,
             Map<String,DocumentAssessmentRetainedSlots.UploadSelection> selections,
             DocumentAssessmentCreation.Created retained) {
+        run(database, observer, (ledger, budget, cancelled) -> ledger.captureAssessment(caller, owner, command,
+                selections, retained.assessment(), retained.manifestSha256(), retained.retainUntil(), budget, () -> {
+                    if (cancelled.get()) throw new CancellationException("Injected assessment cancellation");
+                }), false);
+        System.out.println("ASSESSMENT_CAPTURE_FAULTS_OK");
+    }
+
+    static void runRejected(javax.sql.DataSource database, Tx observer, RepositoryCaller caller,
+            DocumentPublicationCommand command) {
+        run(database, observer, (ledger, budget, cancelled) -> ledger.captureRejectedAssessment(caller, command,
+                budget, new RepositoryReadControl() {
+                    @Override public boolean isCancelled() { return cancelled.get(); }
+                    @Override public long remainingNanos() { return Long.MAX_VALUE; }
+                }), true);
+        System.out.println("REJECTED_ASSESSMENT_CAPTURE_FAULTS_OK");
+    }
+
+    @FunctionalInterface private interface Capture {
+        DocumentReadLedger.PinnedAssessment open(DocumentReadLedger ledger, PayloadBudget budget, AtomicBoolean cancelled);
+    }
+
+    private static void run(javax.sql.DataSource database, Tx observer, Capture capture, boolean rejected) {
         for (var fault : Fault.values()) {
             var armed = new AtomicBoolean();
             var cancelled = new AtomicBoolean();
@@ -26,10 +48,7 @@ public final class AssessmentCaptureFaultProbe {
                 var budget = new PayloadBudget(64_000_000);
                 armed.set(true);
                 try {
-                    ledger.captureAssessment(caller, owner, command, selections, retained.assessment(),
-                            retained.manifestSha256(), retained.retainUntil(), budget, () -> {
-                                if (cancelled.get()) throw new CancellationException("Injected assessment cancellation");
-                            });
+                    capture.open(ledger, budget, cancelled);
                     throw new AssertionError("Faulted assessment capture returned a handle: " + fault);
                 } catch (RuntimeException failure) {
                     if (fault == Fault.LOST_ACK) {
@@ -37,7 +56,9 @@ public final class AssessmentCaptureFaultProbe {
                         for (Throwable cause = failure; cause != null; cause = cause.getCause())
                             if (cause instanceof java.sql.SQLException sql && "08006".equals(sql.getSQLState())) found = true;
                         require(found, "lost acknowledgement must propagate actual JDBC failure");
-                    } else require(failure instanceof CancellationException, "cancellation must propagate unchanged");
+                    } else if (rejected) require(failure instanceof RepositoryException repository
+                            && repository.code() == RepositoryException.Code.CANCELLED, "typed read cancellation propagates");
+                    else require(failure instanceof CancellationException, "cancellation must propagate unchanged");
                 }
                 require(!armed.get(), "fault actually executed");
                 require(budget.reservedBytes() == 0, "failed capture releases verification memory");
@@ -48,8 +69,7 @@ public final class AssessmentCaptureFaultProbe {
                         "only acknowledged cancelled capture permits ordinary release");
                 if (fault == Fault.LOST_ACK) {
                     try {
-                        ledger.captureAssessment(caller, owner, command, selections, retained.assessment(),
-                                retained.manifestSha256(), retained.retainUntil(), budget, () -> {});
+                        capture.open(ledger, budget, cancelled);
                         throw new AssertionError("Uncertain capture lost its capacity reservation");
                     } catch (RepositoryException expected) {
                         require(expected.code() == RepositoryException.Code.RESOURCE_EXHAUSTED, "capacity refusal");
@@ -62,7 +82,6 @@ public final class AssessmentCaptureFaultProbe {
                 require(budget.reservedBytes() == 0, "recovery leaves no verification memory reserved");
             }
         }
-        System.out.println("ASSESSMENT_CAPTURE_FAULTS_OK");
     }
 
     private static long sessions(Tx tx, UUID reader) {
