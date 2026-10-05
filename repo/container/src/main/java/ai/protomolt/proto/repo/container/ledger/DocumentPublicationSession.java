@@ -5,7 +5,6 @@ import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryException;
 import ai.protomolt.proto.repo.spi.RepositoryReadControl;
 import java.time.Duration;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -18,6 +17,7 @@ final class DocumentPublicationSession {
     private final RepositoryOperationLedger.Key key;
     private final DocumentPublicationCommand command;
     private final UUID ownerNonce;
+    private final DocumentPublicationSeeds seeds;
     private final Duration lease;
     private final long predecessorGeneration;
     private final DocumentOperationUploadAdmission.Prepared prepared;
@@ -51,13 +51,9 @@ final class DocumentPublicationSession {
         DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
         if (lease.compareTo(Duration.ofSeconds(1)) < 0 || lease.compareTo(Duration.ofDays(1)) > 0)
             throw new IllegalArgumentException("Operation lease requires one second to one day");
-        var attempts = new HashMap<String, UUID>();
-        for (var member : command.intent().getMembersList()) {
-            if (member.getPartsList().stream().anyMatch(part -> part.hasUpload()))
-                attempts.put(member.getMemberId(), UUID.randomUUID());
-        }
-        prepared = DocumentOperationUploadAdmission.prepare(command, placements, attempts, lease);
-        ownerNonce = UUID.randomUUID();
+        seeds = DocumentPublicationSeeds.mint(key, command);
+        prepared = DocumentOperationUploadAdmission.prepare(command, placements, seeds.attempts(), lease, seeds.uploadTokens());
+        ownerNonce = seeds.ownerNonce();
         operations = new RepositoryOperationLedger(Objects.requireNonNull(tx));
     }
 
@@ -79,6 +75,7 @@ final class DocumentPublicationSession {
     }
 
     DocumentOperationUploadAdmission.Prepared prepared() { return prepared; }
+    DocumentPublicationSeeds seeds() { return seeds; }
     long predecessorGeneration() { return predecessorGeneration; }
 
     boolean isSuperseded(RepositoryCaller caller, RepositoryReadControl control) {

@@ -6142,3 +6142,17 @@ durability, higher-load RustFS qualification and bounded hydration remain open.
 The next recovery design must preserve private identities before uncertain SQL
 admission and distinguish a recoverable owner from a second live coordinator;
 a local handoff file alone does not qualify multi-replica recovery.
+
+#### Private publication identities and recovery requirements
+
+Preparation now mints owner, per-upload attempt and upload-lease identities as one
+immutable command-bound set. Explicit preparation can reconstruct the exact upload
+identities; it does not restore session authority or enable cross-host recovery.
+The focused PostgreSQL suite passes 103 cases, including four new identity tests.
+Evidence: `docs/evidence/repository/2026-10-05-publication-seeds/`.
+
+The next recovery requirements are recorded in
+[Durable publication recovery](repository-publication-recovery.md). A separate
+execution claim must fence SQL mutations even when replicas share an operation
+nonce. Provider effects across claim loss require an explicit tested policy before
+live transfer is enabled. The other repository goal work remains open there.

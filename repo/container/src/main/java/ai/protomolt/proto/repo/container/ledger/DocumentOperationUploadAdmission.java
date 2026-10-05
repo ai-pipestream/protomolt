@@ -40,14 +40,19 @@ final class DocumentOperationUploadAdmission {
         private final DocumentReuseAdmission.Prepared reuse;
         private final String selections;
 
-        private Prepared(DocumentUploadPlan.Prepared plan, Duration lease) {
+        private Prepared(DocumentUploadPlan.Prepared plan, Duration lease, Map<String, UUID> tokens) {
             this.plan = plan;
             this.authorization = DocumentAdmissionAuthorization.prepare(plan);
             this.reuse = DocumentReuseAdmission.prepare(plan);
             this.selections = DocumentOperationSelection.encode(plan);
             this.lease = lease;
-            this.uploads = plan.members().stream().filter(member -> member.attempt().isPresent())
-                    .map(member -> new UploadMember(member, UUID.randomUUID())).toList();
+            var members = plan.members().stream().filter(member -> member.attempt().isPresent()).toList();
+            var memberIds = members.stream().map(member -> member.intent().getMemberId()).collect(java.util.stream.Collectors.toSet());
+            if (!tokens.keySet().equals(memberIds)) throw new IllegalArgumentException("Upload lease tokens differ from uploading members");
+            var retainedTokens = Map.copyOf(tokens);
+            if (new java.util.HashSet<>(retainedTokens.values()).size() != retainedTokens.size())
+                throw new IllegalArgumentException("Upload lease tokens must be distinct");
+            this.uploads = members.stream().map(member -> new UploadMember(member, retainedTokens.get(member.intent().getMemberId()))).toList();
             this.placements = plan.members().stream().map(DocumentUploadPlan.Member::placement).distinct()
                     .sorted(Comparator.comparing(placement -> placement.drive().id())).toList();
         }
@@ -64,6 +69,10 @@ final class DocumentOperationUploadAdmission {
         List<DocumentUploadPlan.Member> members() { return plan.members(); }
         DocumentUploadPlan.Prepared plan() { return plan; }
         Duration lease() { return lease; }
+        Map<String, UUID> uploadTokens() {
+            return uploads.stream().collect(java.util.stream.Collectors.toUnmodifiableMap(
+                    upload -> upload.member().intent().getMemberId(), UploadMember::token));
+        }
     }
 
     private record EncodedMember(DocumentUploadPlan.Member member, UUID token, DocumentAttemptPlanEncoding encoded) {}
@@ -121,7 +130,19 @@ final class DocumentOperationUploadAdmission {
         Objects.requireNonNull(lease);
         if (lease.compareTo(Duration.ofSeconds(1)) < 0 || lease.compareTo(Duration.ofDays(1)) > 0)
             throw new IllegalArgumentException("Upload admission lease requires one second to one day");
-        return new Prepared(DocumentUploadPlan.prepare(command, placements, attempts), lease);
+        var tokens = new java.util.HashMap<String, UUID>();
+        command.intent().getMembersList().stream().filter(member -> member.getPartsList().stream().anyMatch(part -> part.hasUpload()))
+                .forEach(member -> tokens.put(member.getMemberId(), UUID.randomUUID()));
+        return prepare(command, placements, attempts, lease, tokens);
+    }
+
+    /** Rebuild exact executable placement/attempt/lease identities without minting replacements. */
+    static Prepared prepare(DocumentPublicationCommand command, Map<UUID, DocumentUploadPlan.Placement> placements,
+            Map<String, UUID> attempts, Duration lease, Map<String, UUID> uploadTokens) {
+        Objects.requireNonNull(lease); Objects.requireNonNull(uploadTokens);
+        if (lease.compareTo(Duration.ofSeconds(1)) < 0 || lease.compareTo(Duration.ofDays(1)) > 0)
+            throw new IllegalArgumentException("Upload admission lease requires one second to one day");
+        return new Prepared(DocumentUploadPlan.prepare(command, placements, attempts), lease, uploadTokens);
     }
 
     /** All rows commit together; duplicate attempt identity fails without adopting existing bytes. */
