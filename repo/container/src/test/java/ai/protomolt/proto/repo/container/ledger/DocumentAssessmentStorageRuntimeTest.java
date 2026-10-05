@@ -91,7 +91,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 assertThat(Files.size(restartLog)).isLessThan(1_048_576);
                 String result = Files.readString(restartLog);
                 assertThat(restarted.exitValue()).as(result).isZero();
-                assertThat(result).contains("RESTARTED_ASSESSMENT_ACK_OK");
+                assertThat(result).contains("RESTARTED_ASSESSMENT_ACK_OK", "RESTARTED_ASSESSMENT_REVOCATION_OK");
             } finally {
                 if (restarted.isAlive()) {
                     restarted.destroyForcibly();

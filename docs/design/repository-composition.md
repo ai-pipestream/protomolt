@@ -4128,8 +4128,9 @@ access is refused after an explicit deny on one source/destination, before retai
 evidence is disclosed. A committed physical stage without a snapshot is also
 refused rather than adopted; its object ownership remains intact. These cover the
 shared read gate and association verifier, not the full observed handler. End-to-end
-revoked-access and legacy-snapshot qualification remain required before public
-exposure. Process restart coverage is described below.
+legacy-snapshot qualification remains required before public exposure. Process
+restart and current destination-access revocation coverage are described below;
+revoked reuse-source access still needs full observed-handler coverage.
 
 #### Restart acknowledgement contract (live-owner process restart qualified)
 
@@ -4208,3 +4209,17 @@ qualify expired-owner takeover, abrupt database or storage failure, deployment
 recovery, provider rehydration, public authentication, or semantic-review/read
 authority. The private properties file is a test fixture, not a public credential
 or durable coordinator journal format.
+
+The restarted host also exercises the full acknowledgement handler with a
+non-process caller bound to the account. Two explicitly synthetic legacy
+destination rows are seeded before policy activation, with database-generated
+mutation revisions sampled into the update command. All migration guards stay
+enabled; these authorization fixtures do not publish the staged candidate or
+claim provider I/O. After restart, both destinations initially grant read access.
+A committed deny on the second destination produces `NOT_FOUND` for both the
+correct manifest digest and a different valid-form digest, before retained
+identity can be disclosed. Restoring read access permits the exact original
+assessment to be acknowledged, despite the ACL changes advancing document
+mutation revisions. Payload reservations return to zero. This real PostgreSQL and
+production-JAR test passes; concurrent revocation races and full-handler reuse-
+source revocation remain separate coverage.

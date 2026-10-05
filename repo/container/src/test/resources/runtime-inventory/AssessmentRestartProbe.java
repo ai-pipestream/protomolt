@@ -79,9 +79,74 @@ public final class AssessmentRestartProbe {
                     "SELECT count(*) FROM document_revision_commits WHERE operation_id=:op")
                     .setParameter("op", command.operationId()).getSingleResult()).longValue());
             if (publications != 0) throw new AssertionError("Acknowledgement published candidate");
+            verifyRevokedAccess(tx, owner, command, selections, retained, budget);
         }
         if (budget.reservedBytes() != 0) throw new AssertionError("Restart leaked payload reservations");
         System.out.println("RESTARTED_ASSESSMENT_ACK_OK");
+    }
+
+    static java.util.List<ai.protomolt.proto.repo.v1.DocumentPublicationMember> seedDestinations(Tx tx,
+            java.util.List<ai.protomolt.proto.repo.v1.DocumentPublicationMember> members) {
+        String readPolicy = "{\"permissions\":[{\"identityType\":\"public\",\"identity\":\"public\",\"access\":\"ACCESS_READ\"}]}";
+        // Controlled SQL authorization fixture, not publication of the staged candidate.
+        // These current destination rows allow a non-process caller to be checked.
+        return tx.inTransaction(em -> {
+            var sampled = new java.util.ArrayList<ai.protomolt.proto.repo.v1.DocumentPublicationMember>();
+            for (var member : members) {
+                var address = member.getDestination().getAddress();
+                var row = new DocumentRecord();
+                row.nodeId = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(address);
+                row.accountId = address.getAccountId(); row.docId = address.getDocId();
+                row.graphId = address.getGraphId(); row.graphAddressId = address.getGraphAddressId();
+                row.rowKind = DocumentRowKind.PIPELINE; row.datasourceId = member.getOwnership().getDatasourceId();
+                row.checksum = "authorization-fixture"; row.driveName = "creation-" + member.getDriveId();
+                row.etag = "authorization-fixture"; row.sizeBytes = 0L;
+                row.objectKey = "authorization-fixture/" + row.nodeId;
+                row.security = readPolicy;
+                em.persist(row);
+                em.flush(); em.refresh(row);
+                sampled.add(member.toBuilder().setDestination(member.getDestination().toBuilder()
+                        .setExpectedMutationRevision(row.mutationRevision)).build());
+            }
+            return java.util.List.copyOf(sampled);
+        });
+    }
+
+    private static void verifyRevokedAccess(Tx tx, RepositoryOperationLedger.Owner owner, DocumentPublicationCommand command,
+            Map<String, DocumentAssessmentRetainedSlots.UploadSelection> selections, DocumentAssessmentCreation.Created retained,
+            PayloadBudget budget) {
+        String readPolicy = "{\"permissions\":[{\"identityType\":\"public\",\"identity\":\"public\",\"access\":\"ACCESS_READ\"}]}";
+        var caller = new RepositoryCaller("principal", false, java.util.Set.of("account"), java.util.Set.of());
+        var handler = new DocumentAssessmentReconciliation(tx);
+        if (!handler.observeRetained(caller, owner, command, selections, retained.assessment(), retained.manifestSha256(),
+                retained.retainUntil(), budget, () -> {}).orElseThrow().equals(retained)) throw new AssertionError("Granted read failed");
+        var denied = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(command.intent().getMembers(1).getDestination().getAddress());
+        tx.inTransaction(em -> {
+            int changed = em.createNativeQuery("UPDATE documents SET security=CAST(:policy AS jsonb) WHERE node_id=:node")
+                    .setParameter("policy", "{\"permissions\":[{\"identityType\":\"public\",\"identity\":\"public\",\"access\":\"ACCESS_DENY\"}]}")
+                    .setParameter("node", denied).executeUpdate();
+            if (changed != 1) throw new AssertionError("Revocation fixture missed destination");
+        });
+        for (String digest : java.util.List.of(retained.manifestSha256(), "00".repeat(32))) {
+            try {
+                handler.observeRetained(caller, owner, command, selections, retained.assessment(), digest,
+                        retained.retainUntil(), budget, () -> {});
+                throw new AssertionError("Revoked caller received assessment");
+            } catch (ai.protomolt.proto.repo.spi.RepositoryException expected) {
+                if (expected.code() != ai.protomolt.proto.repo.spi.RepositoryException.Code.NOT_FOUND)
+                    throw new AssertionError("Revocation disclosed assessment identity", expected);
+            }
+        }
+        tx.inTransaction(em -> {
+            int changed = em.createNativeQuery("UPDATE documents SET security=CAST(:policy AS jsonb) WHERE node_id=:node")
+                    .setParameter("policy", readPolicy).setParameter("node", denied).executeUpdate();
+            if (changed != 1) throw new AssertionError("Read grant missed destination");
+        });
+        if (!handler.observeRetained(caller, owner, command, selections, retained.assessment(), retained.manifestSha256(),
+                retained.retainUntil(), budget, () -> {}).orElseThrow().equals(retained))
+            throw new AssertionError("Revocation damaged retained evidence");
+        if (budget.reservedBytes() != 0) throw new AssertionError("Authorization path leaked reservations");
+        System.out.println("RESTARTED_ASSESSMENT_REVOCATION_OK");
     }
 
     private static String required(Properties fields, String name) {

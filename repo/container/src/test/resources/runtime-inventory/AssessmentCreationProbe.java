@@ -13,6 +13,15 @@ import java.util.*;
 /** Real observed evidence and SQL transaction; physical observations are explicitly synthetic. */
 public final class AssessmentCreationProbe {
     public static void run(Tx tx, DocumentAssessmentRuntimeObserver.Observation observation) throws Exception {
+        List<DocumentPublicationMember> restartMembers = new ArrayList<>();
+        for (String memberId : List.of("a", "b")) {
+            var member = ObservedAssessmentProbe.member(memberId).member();
+            restartMembers.add(member.toBuilder().setDestination(DocumentRevisionCondition.newBuilder()
+                    .setAddress(member.getDestination().getAddress().toBuilder().setGraphId("restart"))
+                    .setExpectedMutationRevision(1)).build());
+        }
+        // Pre-policy legacy rows; the restart candidate updates these destinations.
+        restartMembers = AssessmentRestartProbe.seedDestinations(tx, restartMembers);
         var policy = DocumentAdmissionPolicy.of(DocumentSchemaPolicy.newBuilder().setEncodingVersion(1).setAccountId("account")
                 .setValidationProfile(DocumentSchemaAdmission.PROFILE).setMode(DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_OPAQUE_ALLOWED)
                 .setAnyResolvedSchema(true).setLimits(DocumentSchemaPolicyLimits.newBuilder().setMaxFragments(20).setMaxFragmentBytes(4_000_000)
@@ -24,7 +33,8 @@ public final class AssessmentCreationProbe {
             boolean afterScope = scenario == 2;
             var a = ObservedAssessmentProbe.member("a"); var b = ObservedAssessmentProbe.member("b");
             var command = new DocumentPublicationCommand(DocumentPublicationIntent.newBuilder().setEncodingVersion(1)
-                    .setOperationId(UUID.randomUUID().toString()).setAccountId("account").addMembers(a.member()).addMembers(b.member()).build());
+                    .setOperationId(UUID.randomUUID().toString()).setAccountId("account")
+                    .addAllMembers(afterScope ? restartMembers : List.of(a.member(), b.member())).build());
             var caller = new RepositoryCaller("principal", true);
             var owner = new RepositoryOperationLedger(tx).admit(new RepositoryOperationLedger.Key("account", "principal", command.operationId()),
                     command, UUID.randomUUID(), Duration.ofMinutes(5)).owner().orElseThrow();
