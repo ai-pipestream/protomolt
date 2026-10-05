@@ -21,6 +21,62 @@ class DocumentAssessmentReadSessionIT {
     }
     @AfterAll static void close() { if (database != null) database.close(); }
 
+    @Test void shutdownSharesOneBudgetAcrossDocumentPinsAndAssessmentSessions() throws Exception {
+        try (var context = DocumentNativePublicationFixture.context(POSTGRES);
+                var providerReader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, profile) -> {
+                    throw new AssertionError("SQL shutdown fixture must not perform provider reads");
+                })) {
+            var local = context.tx();
+            var published = DocumentNativePublicationFixture.publish(context,
+                    DocumentNativePublicationFixture.prepare(context, 1), DocumentNativePublicationFixture.Fault.NONE,
+                    em -> {}).getMembers(0);
+            var candidate = staged(local, new DocumentAssessmentRetentionFixture(local), 120, true);
+            UUID reader = UUID.randomUUID();
+            var ledger = new DocumentReadLedger(local, reader, 1);
+            ledger.captureHistorical(new ai.protomolt.proto.repo.spi.RepositoryCaller("reader", true),
+                    published.getAddress(), UUID.fromString(published.getRevisionId())).close();
+            capture(local, candidate, UUID.randomUUID(), reader);
+            var lifecycle = new DocumentReadLifecycle(ledger, providerReader, 1);
+            assertThat(lifecycle.shutdownStep(java.time.Duration.ZERO)).isFalse();
+            assertThat(lifecycle.shutdownStep(java.time.Duration.ZERO)).isFalse();
+            assertThat(local.<Long>readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM document_assessment_read_sessions WHERE reader_incarnation=:reader")
+                    .setParameter("reader", reader).getSingleResult()).longValue())).isEqualTo(1);
+            assertThat(lifecycle.shutdownStep(java.time.Duration.ZERO)).isFalse();
+            assertThat(lifecycle.shutdownStep(java.time.Duration.ZERO)).isTrue();
+            assertThat(ledger.outstandingReads()).isZero();
+            assertThat(local.<Long>readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM document_assessment_read_sessions WHERE reader_incarnation=:reader")
+                    .setParameter("reader", reader).getSingleResult()).longValue())).isZero();
+        }
+    }
+
+    @Test void boundedShutdownRecoveryIncludesAssessmentSessionsAndPreservesOtherReaders() {
+        var c = staged(120, true);
+        UUID reader = UUID.randomUUID(), other = reader();
+        var ledger = new DocumentReadLedger(tx, reader, 1);
+        capture(c, UUID.randomUUID(), reader);
+        capture(c, UUID.randomUUID(), reader);
+        capture(c, UUID.randomUUID(), other);
+        var recovery = new DocumentAssessmentReadRecovery(tx);
+        assertThatThrownBy(() -> recovery.recoverBatch(reader, 1)).hasMessageContaining("proven reader quiescence");
+        assertThatThrownBy(() -> recovery.recoverBatch(reader, 0)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> recovery.recoverBatch(reader, 10001)).isInstanceOf(IllegalArgumentException.class);
+        ledger.fence();
+        assertThatThrownBy(() -> recovery.recoverBatch(reader, 1)).hasMessageContaining("proven reader quiescence");
+        ledger.attestLocalQuiescence(); // SQL fixture has no provider work; this does not prove provider drain.
+        assertThat(ledger.recoverQuiescedPins(1)).isEqualTo(1);
+        assertThat(ledger.recoverQuiescedPins(1)).isEqualTo(1);
+        assertThat(ledger.recoverQuiescedPins(1)).isZero();
+        assertThat(tx.<Long>readOnly(em -> ((Number) em.createNativeQuery(
+                "SELECT count(*) FROM document_assessment_read_sessions WHERE reader_incarnation=:reader")
+                .setParameter("reader", other).getSingleResult()).longValue())).isEqualTo(1);
+        assertThat(references(c.assessment())).isEqualTo(2);
+        fence(other); quiesce(other);
+        assertThat(recovery.recoverBatch(other, 10)).isEqualTo(1);
+        assertThat(recovery.recoverBatch(other, 10)).isZero();
+    }
+
     @Test void sessionsPreserveWholeAssessmentAcrossExpiryUntilEveryReaderQuiesces() {
         var c = staged(2, true);
         UUID first = reader(), second = reader(), one = UUID.randomUUID(), two = UUID.randomUUID();

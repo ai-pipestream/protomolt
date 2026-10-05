@@ -4538,4 +4538,13 @@ The prior unconditional failedCapture path could leave committed pins outside
 local accounting after a lost acknowledgement; real JDBC post-commit fault tests
 cover historical and reuse capture. This conservatively retains capacity even
 for a commit-time rollback until quiescence establishes the outcome. Assessment
-capture still requires its own V73 identity integration and shutdown discovery.
+capture still requires its own V73 identity integration. Shutdown discovery now
+includes assessment sessions: DocumentAssessmentReadRecovery requires durable
+QUIESCED state even for an empty batch, selects exact session/assessment pairs in
+UUID order, and performs V73 recovery in one transaction. DocumentReadLedger spends
+the configured batch limit on ordinary pins first, then uses only the remaining
+budget for assessment sessions. A zero result requires both sets empty. Tests
+exercise active/fenced refusal, reader isolation, bounded session recovery and a
+mixed shutdown with two document pins plus an assessment session at batch size
+one. These use synthetic SQL assessment evidence and an idle real reader; they do
+not establish admission or provider-worker drain for assessment reads.

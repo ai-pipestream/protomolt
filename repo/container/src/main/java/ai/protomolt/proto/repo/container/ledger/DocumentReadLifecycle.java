@@ -37,7 +37,7 @@ public final class DocumentReadLifecycle {
 
     /**
      * Stops admission, drains actual work and caller batch uses, then performs at
-     * most one durable discovery batch and one local reconciliation batch. Repeat
+     * most one combined pin/session recovery budget and one local reconciliation batch. Repeat
      * until true. A positive recovery count requires another pass to observe zero.
      * waitBudget bounds local waits together, not SQL statement/network duration;
      * configure the ledger's Tx with appropriate SQL timeouts independently.
