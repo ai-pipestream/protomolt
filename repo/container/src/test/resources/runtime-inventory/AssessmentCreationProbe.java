@@ -37,7 +37,7 @@ public final class AssessmentCreationProbe {
                     .addAllMembers(afterScope ? restartMembers : List.of(a.member(), b.member())).build());
             var caller = new RepositoryCaller("principal", true);
             var owner = new RepositoryOperationLedger(tx).admit(new RepositoryOperationLedger.Key("account", "principal", command.operationId()),
-                    command, UUID.randomUUID(), Duration.ofMinutes(5)).owner().orElseThrow();
+                    command, UUID.randomUUID(), afterScope ? Duration.ofSeconds(60) : Duration.ofMinutes(5)).owner().orElseThrow();
             var profile = new ManagedBackendLedger.Profile(new BackendIdentity("test-location", "test-location/v1",
                     Map.of("endpoint", "synthetic-provider-observations")), "creation-probe");
             new ManagedBackendLedger(tx).bind("creation-probe", profile);

@@ -4205,7 +4205,7 @@ JARs; physical provider observations remain explicitly synthetic.
 
 This qualifies internal acknowledgement across a process restart while the
 original owner lease and assessment retention deadline remain live. It does not
-qualify expired-owner takeover, abrupt database or storage failure, deployment
+qualify automatic adoption by a replacement owner, abrupt database or storage failure, deployment
 recovery, provider rehydration, public authentication, or semantic-review/read
 authority. The private properties file is a test fixture, not a public credential
 or durable coordinator journal format.
@@ -4223,3 +4223,16 @@ assessment to be acknowledged, despite the ACL changes advancing document
 mutation revisions. Payload reservations return to zero. This real PostgreSQL and
 production-JAR test passes; concurrent revocation races and full-handler reuse-
 source revocation remain separate coverage.
+
+The same fresh-JVM test lets the original operation lease expire using database
+time, without modifying lease rows or disabling triggers. Acknowledgement with
+the expired owner is refused by the operation fence. An explicit typed-ledger
+takeover verifies the exact command and advances the owner generation; the old
+owner remains fenced, and the replacement generation cannot acknowledge the old
+assessment as its own. The original sealed, unreleased assessment, slot snapshot
+and native `ASSESSMENT` object references remain retained while their deadline is
+live. Neither expiry nor takeover publishes a document or records a terminal
+rejection. This covers generation isolation, not a complete authenticated host
+recovery flow or transfer of retained evidence to a replacement assessment. An
+empty observation in the new generation still does not authorize deletion,
+recreation or adoption of the old stage.

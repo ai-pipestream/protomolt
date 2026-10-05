@@ -80,9 +80,67 @@ public final class AssessmentRestartProbe {
                     .setParameter("op", command.operationId()).getSingleResult()).longValue());
             if (publications != 0) throw new AssertionError("Acknowledgement published candidate");
             verifyRevokedAccess(tx, owner, command, selections, retained, budget);
+            verifyExpiredOwner(tx, owner, command, selections, retained, budget);
         }
         if (budget.reservedBytes() != 0) throw new AssertionError("Restart leaked payload reservations");
         System.out.println("RESTARTED_ASSESSMENT_ACK_OK");
+    }
+
+    private static void verifyExpiredOwner(Tx tx, RepositoryOperationLedger.Owner owner, DocumentPublicationCommand command,
+            Map<String, DocumentAssessmentRetainedSlots.UploadSelection> selections, DocumentAssessmentCreation.Created retained,
+            PayloadBudget budget) throws Exception {
+        // Observe real database time. Never rewrite a lease or disable fencing triggers.
+        long stop = System.nanoTime() + java.time.Duration.ofSeconds(65).toNanos();
+        while (!tx.readOnly(em -> (Boolean) em.createNativeQuery("""
+                SELECT lease_until<=clock_timestamp() FROM repository_operation_owners
+                WHERE account_id=:account AND principal=:principal AND operation_id=:operation
+                """).setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())
+                .setParameter("operation", owner.key().operationId()).getSingleResult())) {
+            if (System.nanoTime() >= stop) throw new AssertionError("Owner did not expire within fixture bound");
+            Thread.sleep(100);
+        }
+        var caller = new RepositoryCaller("principal", false, java.util.Set.of("account"), java.util.Set.of());
+        var handler = new DocumentAssessmentReconciliation(tx);
+        expectFenced(handler, caller, owner, command, selections, retained, budget);
+        var replacement = new RepositoryOperationLedger(tx).takeOver(owner.key(), command, owner.generation(),
+                UUID.randomUUID(), java.time.Duration.ofMinutes(1));
+        if (replacement.generation() != owner.generation() + 1) throw new AssertionError("Takeover did not advance generation");
+        expectFenced(handler, caller, owner, command, selections, retained, budget);
+        if (handler.observeRetained(caller, replacement, command, selections, retained.assessment(), retained.manifestSha256(),
+                retained.retainUntil(), budget, () -> {}).isPresent())
+            throw new AssertionError("New generation adopted old assessment");
+        Object[] stored = tx.readOnly(em -> (Object[]) em.createNativeQuery("""
+                SELECT o.owner_generation, o.release_xid IS NULL, o.retain_until>clock_timestamp(),
+                    (SELECT count(*) FROM document_assessment_slot_snapshots s WHERE s.assessment_id=o.assessment_id),
+                    (SELECT count(*) FROM document_assessment_objects r WHERE r.assessment_id=o.assessment_id), o.sealed,
+                    (SELECT count(*) FROM document_assessment_objects a JOIN repository_object_references r
+                        ON r.object_id=a.object_id AND r.owner_kind='ASSESSMENT' AND r.owner_id=a.assessment_id
+                        AND r.owner_revision=1 WHERE a.assessment_id=o.assessment_id)
+                FROM document_assessment_owners o WHERE o.assessment_id=:id
+                """).setParameter("id", retained.assessment()).getSingleResult());
+        if (((Number) stored[0]).longValue() != owner.generation() || !Boolean.TRUE.equals(stored[1])
+                || !Boolean.TRUE.equals(stored[2]) || ((Number) stored[3]).intValue() != 1 || ((Number) stored[4]).intValue() < 1
+                || !Boolean.TRUE.equals(stored[5]) || ((Number) stored[6]).intValue() != ((Number) stored[4]).intValue())
+            throw new AssertionError("Expiry or takeover changed retained ownership");
+        Object[] outcomes = tx.readOnly(em -> (Object[]) em.createNativeQuery("""
+                SELECT (SELECT count(*) FROM document_revision_commits WHERE operation_id=:op),
+                       (SELECT count(*) FROM repository_operation_rejection WHERE operation_id=:op)
+                """).setParameter("op", command.operationId()).getSingleResult());
+        if (((Number) outcomes[0]).longValue() != 0 || ((Number) outcomes[1]).longValue() != 0)
+            throw new AssertionError("Expiry or takeover created a publication or terminal rejection");
+        if (budget.reservedBytes() != 0) throw new AssertionError("Owner fencing leaked reservations");
+        System.out.println("RESTARTED_ASSESSMENT_OWNER_FENCE_OK");
+    }
+
+    private static void expectFenced(DocumentAssessmentReconciliation handler, RepositoryCaller caller,
+            RepositoryOperationLedger.Owner owner, DocumentPublicationCommand command,
+            Map<String, DocumentAssessmentRetainedSlots.UploadSelection> selections, DocumentAssessmentCreation.Created retained,
+            PayloadBudget budget) {
+        try {
+            handler.observeRetained(caller, owner, command, selections, retained.assessment(), retained.manifestSha256(),
+                    retained.retainUntil(), budget, () -> {});
+            throw new AssertionError("Expired or replaced owner acknowledged assessment");
+        } catch (RepositoryOperationLedger.OwnerFencedException expected) { /* exact fence failure */ }
     }
 
     static java.util.List<ai.protomolt.proto.repo.v1.DocumentPublicationMember> seedDestinations(Tx tx,
