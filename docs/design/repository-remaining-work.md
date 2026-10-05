@@ -13,10 +13,14 @@ features available. Recovery is one workstream, not the whole goal.
    exact retained descriptors with the original registry unavailable. Never
    substitute the latest registry definition for historical evidence.
    The next bounded slice is an explicit `repo/service` client using the existing
-   selected-response verifier. Expose checked decode material from admission
-   rather than linking descriptors again in the transport layer. Bound inbound
+   selected-response verifier. Admission now exposes a closeable selected-response
+   decode result using the already verified descriptor. Bound inbound
    messages and shared reservations, retain them through a closeable result, and
    test a real in-process service before adding managed-host wiring.
+   The remote adapter must preserve current READ authorization at each exposure:
+   cached decoded bytes and local cancellation checks alone cannot satisfy the
+   repository SPI. Bind the caller to transport credentials explicitly; a request
+   account ID or locally asserted process authority is not a remote grant.
 2. **Schema resolution and cache.** Reuse the existing resolver and registry
    abstractions. Separate authorized discovery from immutable artifact lookup.
    Establish tenant/security scope, exact schema identity, bounded ownership,

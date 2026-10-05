@@ -25,6 +25,127 @@ class DocumentRetainedPathMaterializationTest {
             100_000, 10, 10, new DocumentAnyMaterialization.Limits(100_000, 1000, 20));
     @TempDir Path store;
 
+    private static final DocumentHistoricalResponseMaterialization.Limits WIRE_LIMITS =
+            new DocumentHistoricalResponseMaterialization.Limits(100_000, 1000, 20);
+
+    @Test void selectedWireDecodeOwnsReservationsAndUsesRetainedDefinition() throws Exception {
+        var response = wireResponse();
+        var reservations = new WireReservations();
+        var result = DocumentHistoricalResponseMaterialization.read(wireRequest(response), response,
+                WIRE_LIMITS, reservations, () -> {});
+        assertThat(reservations.held).isEqualTo(response.getSerializedSize() + response.getOriginal().getValue().size());
+        var view = result.view(() -> {});
+        assertThat(view.response()).isSameAs(response);
+        assertThat(view.value().getAllFields().keySet()).extracting(Descriptors.FieldDescriptor::getName)
+                .containsExactly("first_label");
+        assertThat(view.value().getField(view.value().getDescriptorForType().findFieldByNumber(1))).isEqualTo("first");
+        var cancelled = new CancellationException();
+        assertThatThrownBy(() -> result.view(() -> { throw cancelled; })).isSameAs(cancelled);
+        result.close(); result.close();
+        assertThat(reservations.held).isZero();
+        assertThatThrownBy(() -> result.view(() -> {})).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test void selectedWireDecodeReleasesAtEveryCancellationAndReservationRefusal() throws Exception {
+        var response = wireResponse(); var request = wireRequest(response);
+        var reservations = new WireReservations();
+        var total = new java.util.concurrent.atomic.AtomicInteger();
+        try (var result = DocumentHistoricalResponseMaterialization.read(request, response, WIRE_LIMITS,
+                reservations, total::incrementAndGet)) { result.view(() -> {}); }
+        for (int point = 1; point <= total.get(); point++) {
+            int stop = point;
+            var calls = new java.util.concurrent.atomic.AtomicInteger();
+            var cancelled = new CancellationException();
+            assertThatThrownBy(() -> DocumentHistoricalResponseMaterialization.read(request, response,
+                    WIRE_LIMITS, reservations, () -> { if (calls.incrementAndGet() == stop) throw cancelled; }))
+                    .isSameAs(cancelled);
+            assertThat(reservations.held).isZero();
+        }
+        var count = new java.util.concurrent.atomic.AtomicInteger();
+        try (var result = DocumentHistoricalResponseMaterialization.read(request, response, WIRE_LIMITS,
+                bytes -> { count.incrementAndGet(); return reservations.reserve(bytes); }, () -> {})) {}
+        for (int point = 1; point <= count.get(); point++) {
+            int stop = point;
+            var calls = new java.util.concurrent.atomic.AtomicInteger();
+            var refused = new IllegalStateException("capacity refused");
+            assertThatThrownBy(() -> DocumentHistoricalResponseMaterialization.read(request, response, WIRE_LIMITS,
+                    bytes -> { if (calls.incrementAndGet() == stop) throw refused; return reservations.reserve(bytes); }, () -> {}))
+                    .isSameAs(refused);
+            assertThat(reservations.held).isZero();
+        }
+    }
+
+    @Test void selectedWireDecodeRejectsInvalidRequestsAndByteLimits() throws Exception {
+        var response = wireResponse(); var request = wireRequest(response);
+        var reservations = new WireReservations();
+        var unknown = UnknownFieldSet.newBuilder().addField(999,
+                UnknownFieldSet.Field.newBuilder().addVarint(1).build()).build();
+        for (var invalid : List.of(request.toBuilder().clearLimits().build(),
+                request.toBuilder().setLimits(request.getLimits().toBuilder().setMaxDecodedBytes(0)).build(),
+                request.toBuilder().setSelection(request.getSelection().toBuilder().setUnknownFields(unknown)).build())) {
+            assertThatThrownBy(() -> DocumentHistoricalResponseMaterialization.read(invalid, response,
+                    WIRE_LIMITS, reservations, () -> {})).isInstanceOf(IllegalArgumentException.class);
+            assertThat(reservations.held).isZero();
+        }
+        assertThatThrownBy(() -> DocumentHistoricalResponseMaterialization.read(request, response,
+                new DocumentHistoricalResponseMaterialization.Limits(0, 1000, 20), reservations, () -> {}))
+                .isInstanceOf(DocumentHistoricalResponseMaterialization.ResourceLimit.class);
+        assertThat(reservations.held).isZero();
+    }
+
+    @Test void selectedWireDecodeDistinguishesMalformedPayloadFromWireCapacity() throws Exception {
+        var response = wireResponse(); var reservations = new WireReservations();
+        var malformed = withWireValue(response, ByteString.copyFrom(new byte[] {0}));
+        assertThatThrownBy(() -> DocumentHistoricalResponseMaterialization.read(wireRequest(malformed), malformed,
+                WIRE_LIMITS, reservations, () -> {})).isInstanceOf(IllegalArgumentException.class)
+                .isNotInstanceOf(DocumentHistoricalResponseMaterialization.ResourceLimit.class)
+                .hasMessageContaining("MALFORMED_PAYLOAD");
+        assertThat(reservations.held).isZero();
+        var repeated = withWireValue(response, response.getOriginal().getValue().concat(response.getOriginal().getValue()));
+        assertThatThrownBy(() -> DocumentHistoricalResponseMaterialization.read(wireRequest(repeated), repeated,
+                new DocumentHistoricalResponseMaterialization.Limits(100_000, 1, 20), reservations, () -> {}))
+                .isInstanceOf(DocumentHistoricalResponseMaterialization.ResourceLimit.class);
+        assertThat(reservations.held).isZero();
+        var corrupt = response.toBuilder().setDefinition(response.getDefinition().toBuilder()
+                .setDescriptorArtifact(ByteString.copyFromUtf8("corrupt"))).build();
+        assertThatThrownBy(() -> DocumentHistoricalResponseMaterialization.read(wireRequest(corrupt), corrupt,
+                WIRE_LIMITS, reservations, () -> {})).isInstanceOf(IllegalArgumentException.class)
+                .isNotInstanceOf(DocumentHistoricalResponseMaterialization.ResourceLimit.class);
+        assertThat(reservations.held).isZero();
+    }
+
+    @Test void selectedWireDecodeClassifiesDescriptorCapacityAndPreservesControlFailure() throws Exception {
+        var response = wireResponse(); var request = wireRequest(response);
+        var files = FileDescriptorSet.parseFrom(response.getDefinition().getDescriptorArtifact());
+        var oversized = FileDescriptorSet.newBuilder();
+        for (int i = 0; i < 257; i++) oversized.addFile(files.getFile(0).toBuilder().setName("file" + i + ".proto"));
+        var changed = response.toBuilder().setDefinition(response.getDefinition().toBuilder()
+                .setDescriptorArtifact(oversized.build().toByteString())).build();
+        var reservations = new WireReservations();
+        assertThatThrownBy(() -> DocumentHistoricalResponseMaterialization.read(request, changed,
+                WIRE_LIMITS, reservations, () -> {}))
+                .isInstanceOf(DocumentHistoricalResponseMaterialization.ResourceLimit.class)
+                .hasCauseInstanceOf(ClosedDescriptorSet.LimitExceededException.class);
+        assertThat(reservations.held).isZero();
+        var injected = new ClosedDescriptorSet.LimitExceededException("host control failure");
+        var calls = new java.util.concurrent.atomic.AtomicInteger();
+        assertThatThrownBy(() -> DocumentHistoricalResponseMaterialization.read(request, response,
+                WIRE_LIMITS, reservations, () -> { if (calls.incrementAndGet() == 3) throw injected; }))
+                .isSameAs(injected);
+        assertThat(reservations.held).isZero();
+    }
+
+    private static ReadHistoricalOccurrenceResponse withWireValue(ReadHistoricalOccurrenceResponse response,
+            ByteString value) {
+        var path = response.getPath().toBuilder();
+        int last = path.getStepsCount() - 1;
+        path.setSteps(last, path.getSteps(last).toBuilder().setAnyBoundary(path.getSteps(last).getAnyBoundary()
+                .toBuilder().setValueSizeBytes(value.size()).setValueSha256(DocumentSchemaOccurrences.sha256(value, () -> {}))));
+        return response.toBuilder().setOriginal(response.getOriginal().toBuilder().setValue(value)).setPath(path)
+                .setSelection(response.getSelection().toBuilder()
+                        .setPathSha256(DocumentSchemaEvidenceCodec.encode(path.build(), () -> {}).sha256())).build();
+    }
+
     @Test void selectedWireEvidenceRejectsChangedRequestContentAndArtifacts() throws Exception {
         var response = wireResponse();
         var request = wireRequest(response);

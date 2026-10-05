@@ -19,6 +19,12 @@ public final class DocumentHistoricalResponseVerifier {
 
     public static void verify(ReadHistoricalOccurrenceRequest request, ReadHistoricalOccurrenceResponse response,
             DocumentAdmissionReservations reservations, Runnable control) throws InvalidProtocolBufferException {
+        verifyBinding(request, response, reservations, control);
+    }
+
+    static DocumentSchemaAssetBinding verifyBinding(ReadHistoricalOccurrenceRequest request,
+            ReadHistoricalOccurrenceResponse response, DocumentAdmissionReservations reservations,
+            Runnable control) throws InvalidProtocolBufferException {
         Objects.requireNonNull(request); Objects.requireNonNull(response);
         Objects.requireNonNull(reservations); Objects.requireNonNull(control).run();
         if (response.getSerializedSize() > MAX_BYTES) throw new IllegalArgumentException("Selected response exceeds wire bound");
@@ -55,5 +61,6 @@ public final class DocumentHistoricalResponseVerifier {
                 || !boundary.getResolved().getArtifactSha256().equals(binding.schema().artifactSha256()))
             throw new IllegalArgumentException("Selected Any or descriptor differs from retained boundary");
         control.run();
+        return binding;
     }
 }
