@@ -122,6 +122,7 @@ public final class AssessmentMixedReuseProbe {
         require(slot[0].equals(source.object()) && slot[1].equals(source.revision())
                 && ((Number) slot[2]).intValue() == source.sourceOrdinal()
                 && ((Number) slot[3]).intValue() == source.sourceOrdinal() + 1, "exact original source and shifted ordinal");
+        var rejected = RejectedAssessmentSourceProbe.prepare(tx, provider, source, active, observation);
         advanceSource(tx, provider, source, active);
         var selections = DocumentAssessmentRetainedSlots.uploadSelections(uploaded.selected());
         AssessmentReplayInputsProbe.run(tx, owner, command, selections, retained, source.node(), active.policy().sha256());
@@ -132,6 +133,7 @@ public final class AssessmentMixedReuseProbe {
                 "SELECT count(*) FROM document_revision_commits WHERE operation_id=:op")
                 .setParameter("op", command.operationId()).getSingleResult()).longValue());
         require(publications == 0, "staged mixed candidate is not published");
+        RejectedAssessmentSourceProbe.verify(tx, provider, source.node(), rejected, observation);
         System.out.println("ASSESSMENT_MIXED_REUSE_OK");
     }
 
@@ -174,7 +176,7 @@ public final class AssessmentMixedReuseProbe {
         System.out.println("ASSESSMENT_SOURCE_ADVANCED_OK");
     }
 
-    private static Uploads upload(Tx tx, AssessmentProviderProbe provider, DocumentPublicationCommand command,
+    static Uploads upload(Tx tx, AssessmentProviderProbe provider, DocumentPublicationCommand command,
             RepositoryOperationLedger.Owner owner, DocumentUploadPlan.Placement placement, Map<Integer,ByteString> fragments) {
         var prepared = DocumentOperationUploadAdmission.prepare(command, Map.of(placement.drive().id(), placement),
                 Map.of("a", UUID.randomUUID()), Duration.ofMinutes(5));
@@ -191,11 +193,11 @@ public final class AssessmentMixedReuseProbe {
         new DocumentSelectedAttemptLedger(tx).verifyBatch(owner, selected, measured);
         return new Uploads(prepared, Map.of("a", selected));
     }
-    private static DocumentPublicationCommand command(DocumentPublicationMember member) {
+    static DocumentPublicationCommand command(DocumentPublicationMember member) {
         return new DocumentPublicationCommand(DocumentPublicationIntent.newBuilder().setEncodingVersion(1).setAccountId("account")
                 .setOperationId(UUID.randomUUID().toString()).addMembers(member).build());
     }
-    private static RepositoryOperationLedger.Owner owner(Tx tx, DocumentPublicationCommand command) {
+    static RepositoryOperationLedger.Owner owner(Tx tx, DocumentPublicationCommand command) {
         return new RepositoryOperationLedger(tx).admit(new RepositoryOperationLedger.Key("account", "principal", command.operationId()),
                 command, UUID.randomUUID(), Duration.ofMinutes(5)).owner().orElseThrow();
     }

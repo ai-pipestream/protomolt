@@ -5288,9 +5288,10 @@ without a schema registry after policy advancement. The receipt remains unchange
 SPI and engine dependency boundary checks pass. These are correctness results;
 they do not establish RustFS performance or horizontal throughput improvements.
 
-Before exposing this path, qualify reused-source access races during provider
-completion and the final decision. The rejection-session fault, authority,
-destination revocation and expiry cases below are qualified.
+The rejection-session fault, authority, destination/source revocation and expiry
+cases below are qualified. Native publication integration and its complete host
+lifecycle remain required before public exposure; these internal probes do not
+enable automatic rejection decisions in the application.
 Receipt replay after evidence expiry remains distinct from evidence re-evaluation.
 The broader provider-neutral composition, non-S3 managed lifecycle qualification,
 metadata/restore, optional JCR boundaries and bounded hydration requirements remain
@@ -5331,6 +5332,40 @@ member batch. Both refuse delivery and release the batches; restoring access per
 exact replay. The expanded production-JAR gate passes with real PostgreSQL and
 versioned LocalStack, including the existing restart and commit-fault probes.
 This is correctness evidence, not a latency measurement or public API qualification.
+
+The reused-source rejection fixture stages a separate operation before advancing
+the source through a real native publication. It retains the original reused CORE
+with shifted ordinals and actual newly uploaded fragments. A deliberately invalid
+schema annotation produces the failure through ProtoMolt's runtime validator.
+Current source access is revoked after complete verification but before the
+decision: no rejection is committed. Restoring access permits the exact retained
+assessment to authorize a reason-2 receipt. Source advancement alone does not
+invalidate diagnostic access to the pinned historical bytes.
+
+After rejection, source denial blocks both capture and receipt replay. Revocation
+after the final real provider batch blocks evidence delivery; a separately injected
+error after that batch is also concealed by the current-authorization check. That
+case tests replay error sanitization, not an error originating inside a blob adapter.
+Restored access reproduces the original invalid result, and both live and terminal
+sessions and their byte reservations drain. The expanded production-JAR gate passes
+against real PostgreSQL and versioned LocalStack. No production change was needed
+for these authorization cases.
+
+Native integration must begin inside `DocumentPublicationPreparation`, while the
+uploaded selections and protected source inputs are still owned. Its current
+`DocumentPublicationCandidate.prepare` path throws on invalid admission; catching
+that exception after preparation unwinds is not retained rejection evidence. The
+next change must return an owned accepted-or-assessed outcome, preserve the existing
+success fences, and keep cancellation, missing definitions, provider failures and
+capacity refusal distinct from a reproducible validation failure. Do not run a
+second mutable registry resolution to reconstruct a rejected candidate.
+
+The host must explicitly configure evidence retention, the minimum remaining
+decision window and the observed validation runtime. Invalid evidence must be
+sealed and re-read through the retained path before its verified decision commits.
+That integration also needs upload/source-pin lifetime, uncertain commit, shutdown
+and restart tests through the native runtime. The internal test probes above are
+not a substitute for those application-path acceptance cases.
 
 #### Selected authoritative backend composition
 
