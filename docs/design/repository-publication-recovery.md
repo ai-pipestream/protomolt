@@ -82,3 +82,28 @@ restore/pruning, non-S3 durability and bounded hydration remain required alongsi
 recovery. Historical reads must retain schema assets independently of a live
 registry. Optional JCR semantics require their separate capability assessment;
 this private recovery journal is not a JCR transaction or workspace design.
+
+## Implemented claim primitive (2026-10-05)
+
+V78 and `RepositoryExecutionClaimLedger` now provide a private, per-operation SQL
+claim. They do not yet register publication sessions or fence publication writes.
+The claim binds the key and command digest; acquisition uses epoch one and exact
+retry never renews the lease. Renewal requires the live token/epoch. Transfer
+requires an expired predecessor and advances exactly one epoch with a new token;
+replaying that transfer returns its original still-live lease. Deletion is refused
+until a retention protocol can prevent identity reuse.
+
+The row is locked before database time is checked. A failed transaction-local
+`lockLive` marks rollback-only even if its caller catches the exception. Snapshot
+isolation is rejected. The predecessor epoch is sufficient for compare-and-set
+because the row cannot be deleted/recreated and epochs advance exactly once.
+This does not authenticate takeover: the future private session host must authorize
+it before using the primitive. Claims left by failed pre-admission preparation are
+retained; they are not silently replaced.
+
+Remaining integration: persist complete session preparation; propagate claim
+identity with operation authority; add transaction-visible claim write stamps and
+SQL guards for registered-session mutations; exercise claim transfer across every
+owner/attempt/stage/decision/publication path. A lock-only call is not yet the
+SQL-visible proof those guards require. No provider transfer policy or hard-crash
+recovery capability is enabled by this primitive.
