@@ -1304,8 +1304,25 @@ byte-only adjustments; database arithmetic rejects overflow. Real concurrent and
 rollback tests and the RustFS replica diagnostic pass. Sampled waits decreased,
 but per-configuration throughput moved in both directions. Shared serialization
 remains, and longer warmup plus CPU/GC evidence is needed before attributing the
-remaining latency to it. Nonnegative counter invariants are still not enforced
-by the schema; invalid negative deltas require a separate correctness follow-up.
+remaining latency to it.
+
+V75 now enforces nonnegative final archive and rendition counters with AFTER
+INSERT/UPDATE row triggers. Ordinary CHECK constraints would also inspect the
+proposed negative INSERT delta before ON CONFLICT applies a legitimate decrement.
+The guards instead check the final stored result, retaining the single additive
+UPSERT and transaction-wide rollback. They add no lookup or additional client
+round trip; their CPU cost has not been benchmarked. Overflow still fails through
+PostgreSQL arithmetic. No counter is clamped or silently repaired.
+
+Migration takes writer-excluding locks on both counter tables, refuses any existing
+negative coordinate, and installs enforcement without a write gap. Operators must
+reconcile corrupt aggregates before retrying; the migration does not guess totals.
+Real PostgreSQL tests first reproduced unchecked underflow in all six coordinates,
+then verified new/existing-row refusal, rollback of preceding counter updates,
+valid decrements to zero and concurrent exact totals. Migration fixtures stopped
+at V74 verify every corrupt coordinate remains unchanged after refusal and valid
+rows survive upgrade. Mutation, metadata revision, retained revision and cleanup
+tests also pass. This correctness change makes no new throughput or scaling claim.
 
 Multiple repository service instances must share one logical repository through
 the durable ledger and configured storage identities. Independent requests must

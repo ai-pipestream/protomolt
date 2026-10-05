@@ -122,6 +122,53 @@ class ArchiveStatisticsIT {
         }
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {0, 1, 2, 3, 4, 5})
+    void underflowFailsAtomicallyForNewAndExistingCounters(int coordinate) {
+        try (var database = database()) {
+            var tx = new Tx(database.entityManagerFactory());
+            var ledger = new ArchiveLedger(tx);
+            for (boolean existing : new boolean[]{false, true}) {
+                String account = UUID.randomUUID().toString();
+                if (existing) apply(tx, account, new ArchiveLedger.StatsDelta(1, 1, 1, 1,
+                        Map.of("original", 1L), Map.of("original", 1L)));
+                long[] values = {1, 1, 1, 1, 1, 1};
+                values[coordinate] = existing ? -2 : -1;
+                var delta = new ArchiveLedger.StatsDelta(values[0], values[1], values[2], values[3],
+                        Map.of("original", values[4]), Map.of("original", values[5]));
+                assertThatThrownBy(() -> apply(tx, account, delta)).rootCause()
+                        .isInstanceOfSatisfying(java.sql.SQLException.class,
+                                failure -> assertThat(failure.getSQLState()).isEqualTo("23514"));
+                if (existing) {
+                    var stats = ledger.findStats(account, "records").orElseThrow();
+                    assertThat(new long[]{stats.entries, stats.versions, stats.retainedBytes, stats.currentBytes})
+                            .containsExactly(1, 1, 1, 1);
+                    assertThat(ledger.findRenditionStats(account, "records")).singleElement().satisfies(row -> {
+                        assertThat(row.objectCount).isEqualTo(1); assertThat(row.totalBytes).isEqualTo(1);
+                    });
+                } else {
+                    assertThat(ledger.findStats(account, "records")).isEmpty();
+                    assertThat(ledger.findRenditionStats(account, "records")).isEmpty();
+                }
+            }
+        }
+    }
+
+    @Test void legitimateDecrementsCanReachExactlyZero() {
+        try (var database = database()) {
+            var tx = new Tx(database.entityManagerFactory());
+            String account = UUID.randomUUID().toString();
+            apply(tx, account, new ArchiveLedger.StatsDelta(1, 2, 3, 4, Map.of("original", 5L), Map.of("original", 6L)));
+            apply(tx, account, new ArchiveLedger.StatsDelta(-1, -2, -3, -4, Map.of("original", -5L), Map.of("original", -6L)));
+            var ledger = new ArchiveLedger(tx);
+            var stats = ledger.findStats(account, "records").orElseThrow();
+            assertThat(new long[]{stats.entries, stats.versions, stats.retainedBytes, stats.currentBytes}).containsOnly(0);
+            assertThat(ledger.findRenditionStats(account, "records")).singleElement().satisfies(row -> {
+                assertThat(row.objectCount).isZero(); assertThat(row.totalBytes).isZero();
+            });
+        }
+    }
+
     private static void apply(Tx tx, String account, ArchiveLedger.StatsDelta delta) {
         tx.inTransaction(em -> { ArchiveLedger.applyDelta(em, account, "records", delta); });
     }
