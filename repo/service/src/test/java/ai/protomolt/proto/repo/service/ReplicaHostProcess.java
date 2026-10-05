@@ -17,13 +17,19 @@ public final class ReplicaHostProcess {
                 "process-host", 0, null, null, null, null, 0, 0L,
                 true, 1000, 1000, false, true, 1000)
                 .withManagedStorage(new ManagedStoragePolicy("process-original", "process-realm", true));
-        try (var host = RepoServices.build(config)) {
+        boolean measured = "true".equals(env.get("TEST_METRICS"));
+        var metrics = measured ? new ReplicaMetrics() : null;
+        try (var host = measured ? new RepoServices(config, ai.protomolt.proto.asset.bridge.BridgeEngine.standard(), metrics.providers())
+                : RepoServices.build(config)) {
+            if (measured) metrics.attach(host.ledgerDataSource());
             var server = host.startNetty(0, env.get("TEST_API_TOKEN"), null);
             Path ready = Path.of(args[0]);
             Path pending = ready.resolveSibling(ready.getFileName() + ".pending");
             Files.writeString(pending, Integer.toString(server.getPort()));
             Files.move(pending, ready, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-            server.awaitTermination();
+            if (measured) {
+                while (!server.isShutdown()) { metrics.respond(ready); Thread.sleep(10); }
+            } else server.awaitTermination();
         }
     }
 }

@@ -739,6 +739,10 @@ public final class RepoServices implements AutoCloseable {
         return blobStore;
     }
 
+    javax.sql.DataSource ledgerDataSource() {
+        return database.dataSource();
+    }
+
 
     PurgeQueue purgeQueue() {
         return purgeQueue;

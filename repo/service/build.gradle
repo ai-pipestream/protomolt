@@ -72,6 +72,7 @@ dependencies {
     testImplementation project(':protomolt-grpc-workflow')
     testImplementation libs.confluent.kafka.protobuf.serializer
     testImplementation libs.confluent.kafka.schema.registry.client
+    testImplementation libs.hikari
 }
 
 application {

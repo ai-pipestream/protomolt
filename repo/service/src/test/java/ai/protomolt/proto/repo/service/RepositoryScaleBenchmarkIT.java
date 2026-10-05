@@ -30,6 +30,8 @@ class RepositoryScaleBenchmarkIT {
     private final Path output = Path.of("build/reports/replica-scale", Instant.now().toString().replace(':', '-'));
     private final Queue<String> observations = new ConcurrentLinkedQueue<>();
     private final List<String> windows = new ArrayList<>();
+    private long snapshotSequence;
+    private final Map<Path, Map<String, List<Long>>> previousMetrics = new HashMap<>();
 
     @Test void measureRealTransportAcrossReplicaCounts() throws Exception {
         Files.createDirectories(output);
@@ -40,7 +42,10 @@ class RepositoryScaleBenchmarkIT {
                 + "Fixed mode fixes aggregate SQL connections only; CPU and heap are not capped in aggregate.\n"
                 + "Configurations run in fixed order; retained history grows across windows. Warmup sample is -1.\n"
                 + "Memory files are Linux post-window snapshots, not measured per-window peaks.\n"
-                + "Provider timing, SQL acquisition wait and lock-wait duration are not instrumented.\n");
+                + "Metrics are approximate cumulative whole-child snapshots, including lifecycle work; they are not atomic window boundaries.\n"
+                + "Acquisition time is not pure pool queue wait; checkout time is not SQL execution time.\n"
+                + "Provider API times exclude namespace/reclaimer operations and are not HTTP-only latency.\n"
+                + "SQL lock-wait duration and provider connection counts are not instrumented.\n");
         try {
             for (String mode : List.of("fixed_sql", "added_sql")) for (int replicas : new int[]{1, 2, 4}) {
                 int pool = mode.equals("fixed_sql") ? 8 / replicas : 4;
@@ -63,9 +68,12 @@ class RepositoryScaleBenchmarkIT {
                         var saved = stubs.get(worker % replicas).withDeadlineAfter(20, TimeUnit.SECONDS).putEntry(put(address, original, 0));
                         entries.add(new Entry(address, original, saved.getVersion()));
                     }
+                    snapshots(hosts, run + "-baseline");
                     for (int sample = -1; sample < SAMPLES; sample++) {
                         mixed(run, pool, sample, stubs, entries);
+                        snapshots(hosts, run + "-" + sample + "-mixed");
                         contended(run, pool, sample, stubs);
+                        snapshots(hosts, run + "-" + sample + "-contended");
                         for (int i = 0; i < hosts.size(); i++) {
                             Files.writeString(output.resolve(run + "-" + sample + "-" + i + "-memory.txt"),
                                     Files.readString(Path.of("/proc", Long.toString(hosts.get(i).process().pid()), "status")));
@@ -185,12 +193,13 @@ class RepositoryScaleBenchmarkIT {
         env.put("TEST_JDBC", POSTGRES.getJdbcUrl()); env.put("TEST_DB_USER", POSTGRES.getUsername()); env.put("TEST_DB_PASSWORD", POSTGRES.getPassword());
         env.put("TEST_S3_ENDPOINT", S3.getEndpoint().toString()); env.put("TEST_S3_REGION", S3.getRegion()); env.put("TEST_S3_KEY", S3.getAccessKey());
         env.put("TEST_S3_SECRET", S3.getSecretKey()); env.put("TEST_API_TOKEN", token); env.put("TEST_POOL_SIZE", Integer.toString(pool));
+        env.put("TEST_METRICS", "true");
         var process = builder.start();
         try {
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(45);
             while (process.isAlive() && System.nanoTime() < deadline) {
                 if (Files.exists(ready)) return new Host(process, NettyChannelBuilder.forAddress("127.0.0.1", Integer.parseInt(Files.readString(ready)))
-                        .usePlaintext().build());
+                        .usePlaintext().build(), ready);
                 Thread.sleep(50);
             }
             throw new AssertionError("Replica startup failed: " + Files.readString(log));
@@ -199,7 +208,51 @@ class RepositoryScaleBenchmarkIT {
             throw failure;
         }
     }
-    private record Host(Process process, ManagedChannel channel) implements AutoCloseable {
+    private void snapshots(List<Host> hosts, String label) throws Exception {
+        for (int index = 0; index < hosts.size(); index++) {
+            var host = hosts.get(index);
+            String id = Long.toString(++snapshotSequence);
+            Path request = Path.of(host.ready() + ".metrics-request"), pending = Path.of(request + ".pending");
+            Files.writeString(pending, id);
+            Files.move(pending, request, StandardCopyOption.ATOMIC_MOVE);
+            Path reply = Path.of(host.ready() + ".metrics");
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            String result = null;
+            while (host.process().isAlive() && System.nanoTime() < deadline) {
+                if (Files.exists(reply)) {
+                    String candidate = Files.readString(reply);
+                    if (candidate.startsWith("request," + id + "\n")) { result = candidate; break; }
+                }
+                Thread.sleep(10);
+            }
+            assertThat(result).as("Child metrics acknowledgement %s", label).isNotNull();
+            assertThat(result).contains("pool_total,", "sql_timeouts,0,0,0");
+            var parsed = new HashMap<String, List<Long>>();
+            for (String line : result.lines().skip(2).toList()) {
+                var fields = line.split(",");
+                assertThat(fields).hasSize(4);
+                var values = List.of(Long.parseLong(fields[1]), Long.parseLong(fields[2]), Long.parseLong(fields[3]));
+                assertThat(values).allMatch(value -> value >= 0);
+                assertThat(parsed.put(fields[0], values)).isNull();
+            }
+            var before = previousMetrics.getOrDefault(host.ready(), Map.of());
+            before.forEach((metric, values) -> {
+                if (metric.startsWith("pool_")) return; // Gauges can decrease; counters cannot.
+                assertThat(parsed).containsKey(metric);
+                for (int i = 0; i < values.size(); i++) assertThat(parsed.get(metric).get(i)).isGreaterThanOrEqualTo(values.get(i));
+            });
+            if (label.endsWith("-mixed")) {
+                // Every child receives real puts/reads in each mixed window.
+                for (String metric : List.of("provider_s3_put", "provider_s3_getBounded", "sql_acquire", "sql_usage")) {
+                    assertThat(parsed).containsKey(metric);
+                    assertThat(parsed.get(metric).getFirst()).isGreaterThan(before.getOrDefault(metric, List.of(0L, 0L, 0L)).getFirst());
+                }
+            }
+            previousMetrics.put(host.ready(), Map.copyOf(parsed));
+            Files.writeString(output.resolve(label + "-" + index + "-metrics.csv"), result);
+        }
+    }
+    private record Host(Process process, ManagedChannel channel, Path ready) implements AutoCloseable {
         @Override public void close() throws Exception {
             channel.shutdownNow(); process.destroyForcibly();
             boolean channelStopped = channel.awaitTermination(10, TimeUnit.SECONDS);

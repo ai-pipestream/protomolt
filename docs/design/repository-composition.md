@@ -1258,6 +1258,13 @@ This is not completion of the qualification below. The diagnostic also exposed a
 unchanged-content retry response rebuilding rendition timestamps; that response
 now returns the retained version manifest, covered by ArchiveServiceIT.
 
+The [instrumented follow-up](../evidence/repository/2026-10-05-replica-metrics/README.md)
+adds real child-process provider-call timing and Hikari acquisition/checkout
+counters. The same workload passes with positive per-window telemetry on every
+child. These cumulative snapshots include lifecycle work and do not measure SQL
+execution or lock-wait duration. Acquisition means alone cannot qualify pool-wait
+tails, and neither run establishes a saturated service or production capacity.
+
 Multiple repository service instances must share one logical repository through
 the durable ledger and configured storage identities. Independent requests must
 benefit from additional service capacity when service CPU or I/O concurrency is
