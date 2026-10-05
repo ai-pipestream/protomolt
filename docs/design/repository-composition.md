@@ -4236,3 +4236,106 @@ rejection. This covers generation isolation, not a complete authenticated host
 recovery flow or transfer of retained evidence to a replacement assessment. An
 empty observation in the new generation still does not authorize deletion,
 recreation or adoption of the old stage.
+
+#### Retained assessment reader boundary (design; not implemented)
+
+The current and historical document readers are not assessment readers. V63's
+`document_read_pins` requires a sealed document publication and rejects retiring
+objects. Reusing its publication UUID/revision fields for an assessment would
+invent a published revision and weaken the existing read contract. Preserve those
+checks. Reuse the bounded local lifetime machinery in `DocumentReadLedger`, the
+reader-incarnation fence and proven-quiescence recovery, but supply a distinct
+internal assessment protection strategy rather than duplicating cancellation and
+batch ownership logic.
+
+An assessment read needs a durable parent session and exact child object pins.
+The session identifies its reader incarnation, assessment UUID, account/principal,
+original operation generation, command/manifest identity and caller-chosen read
+request UUID. Its foreign key must prevent assessment-owner deletion while any
+session exists. This keeps the manifest, root evidence and normalized schema
+associations protected together with payloads: individual payload pins alone
+would let V69 release schemas while a worker still needs them. A failed or lost
+capture acknowledgement must leave discoverable protection, with exact retry
+identity; capacity pressure cannot discard an uncertain local capture.
+
+The session's distinct physical set is derived from retained assessment slots,
+not caller-supplied locations. Child pins use their own native assessment-reader
+reference kind. Admission requires the sealed, unreleased, unexpired assessment
+and its complete verified slot snapshot, exact original generation and current
+read permission over the command's complete destination/source set. It does not
+recheck current source revisions, current drive configuration or old upload leases.
+Initial implementation admits only the original live operation owner; replacement
+owner recovery and terminal assessment readers need explicit separate authority.
+A pin grants no normal document visibility or external semantic-review authority.
+
+A previously retiring source may serve these exact already-retained objects,
+provided the assessment's native and mirrored ownership still exists and the
+physical object is not reclaiming. This exception belongs only in the new
+assessment-reader admission and exact native-reference guard. Do not clear
+`retiring`, loosen current/historical document readers, or let unrelated owners
+acquire references through it. Raw mirror inserts must still require the matching
+native pin and exact assessment ownership. All checks must run again after waits.
+Both the native pin INSERT guard and its mirror branch in
+`guard_repository_reference` must enforce this same narrow retiring-object rule;
+changing only one would either block legitimate reads or admit forged references.
+
+Admission locks the active reader incarnation first, then the live operation,
+complete authorized document/source set, assessment owner, complete physical source
+set in canonical kind/UUID order, retention rows in object UUID order, and finally
+session/pin rows. Reader capture uses shared physical locks; V65's exclusive
+writer/recovery helper must not be reused as a reader-wide serialization point.
+Resolve the entire physical set before taking any individual retention lock. The
+assessment-owner lock protects admission against release; release must explicitly
+refuse active sessions before marking `release_xid`, with a non-cascading foreign
+key as an additional guard. Cleanup holds source/physical locks and checks native
+references without acquiring assessment or reader-incarnation locks in reverse.
+
+Commit protection before storage I/O. A local use remains held through actual
+provider completion, schema decoding and every returned batch, including after
+cancellation. Close stops new uses; it neither proves drain nor deletes pins.
+Release removes the exact pin set and session atomically only after local drain.
+Recovery requires durable proven quiescence, not a timeout, `FENCED` state or a
+replacement process claiming the old process is gone. Failed release retains the
+session, references and local capacity until exact retry or reconciliation. Release
+must not require the operation lease or current read grant to remain live: neither
+loss of authority nor owner expiry may prevent safe cleanup of already-drained
+work. Session and physical lock ordering must match admission without taking a
+reader-incarnation lock after physical locks.
+No pin DELETE or mirror trigger may acquire the assessment-owner lock after
+source/retention locks. If release needs that owner, acquire it first for the
+complete batch; never hide an inverted acquisition inside a per-row trigger.
+
+Before exposing a returned batch, reauthorize the complete current read set and
+check the assessment's replay deadline and owner state. Revocation or expiry
+uses database time, consistent with the retention release gate, and
+refuses further delivery while retaining protection until actual drain. Already
+returned bytes cannot be recalled. Publication or semantic decisions additionally
+need their own final transaction fences; a read handle is not that authority.
+SQL locks never span provider calls, registry access, dynamic compilation or
+semantic evaluation. Descriptor resolution for independent replay uses the pinned
+retained assets; it must not silently substitute the registry's newest definition.
+
+Acceptance work for this boundary:
+
+- Migrate existing V69 owners without inventing sessions; preserve current and
+  historical read behavior and reject malformed/raw assessment pin identities.
+- Prove concurrent readers share physical locks, unrelated objects progress, and
+  capture versus expiry/release commits in either order without a protection gap.
+- Retire an original source after staging; admit only its exact assessment-owned
+  object, refuse reclaiming objects, and prove cleanup waits through worker drain.
+- Hold schema/root access and a provider batch open while release is attempted;
+  cancellation and deadline expiry must not free either protection early.
+- Lose capture/release acknowledgements, restart, and reconcile exact request
+  identities. Unknown or merely fenced incarnations cannot be reaped as drained.
+- Revoke a destination and a reused source during I/O; reauthorization must refuse
+  delivery without leaking byte buffers, permits or durable ownership.
+- Exercise bounded mixed upload/reuse/empty slots through genuine adapters and
+  retained definitions with the registry unavailable. Keep SQL-only fixtures and
+  provider execution evidence explicitly distinct.
+
+Operation inventory: assessment reader capture, delivery reauthorization and
+session release/reconciliation are new internal operations; V69 assessment release,
+native reference guards and bounded reader lifecycle dispatch are extended.
+Existing protobuf contracts, document reader scopes and public transports are
+unchanged. Implement and review the database protection and lifecycle gates before
+mounting any reader entry point.
