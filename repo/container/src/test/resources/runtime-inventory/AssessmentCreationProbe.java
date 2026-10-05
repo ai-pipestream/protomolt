@@ -229,6 +229,8 @@ public final class AssessmentCreationProbe {
                 } finally { Thread.interrupted(); }
                 require(recoveryBudget.reservedBytes() == 0, "durable acknowledgement reservations released");
                 System.out.println("CLOSED_SCOPE_ASSESSMENT_ACK_OK");
+                AssessmentRestartProbe.persist(java.nio.file.Path.of(System.getenv("PROTOMOLT_TEST_RESTART_REQUEST")),
+                        recoveredOwner, recoveredCommand, selections, retained);
             }
         }
         System.out.println("OBSERVED_ASSESSMENT_CREATION_OK");

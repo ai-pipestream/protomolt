@@ -36,7 +36,7 @@ class DocumentAssessmentStorageRuntimeTest {
         String classpath = String.join(java.io.File.pathSeparator, jars.values().stream().map(Path::toString).toList());
         var classes = Files.createDirectory(directory.resolve("classes"));
         var sources = new ArrayList<String>();
-        for (String name : List.of("ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentStorageProbe")) {
+        for (String name : List.of("ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentStorageProbe", "AssessmentRestartProbe")) {
             var source = directory.resolve(name + ".java");
             try (var input = getClass().getResourceAsStream("/runtime-inventory/" + name + ".java")) {
                 assertThat(input).isNotNull(); Files.copy(input, source);
@@ -63,6 +63,8 @@ class DocumentAssessmentStorageRuntimeTest {
             builder.environment().put("PROTOMOLT_TEST_JDBC", postgres.getJdbcUrl());
             builder.environment().put("PROTOMOLT_TEST_USER", postgres.getUsername());
             builder.environment().put("PROTOMOLT_TEST_PASSWORD", postgres.getPassword());
+            var request = directory.resolve("restart-request.properties");
+            builder.environment().put("PROTOMOLT_TEST_RESTART_REQUEST", request.toString());
             var process = builder.redirectErrorStream(true).redirectOutput(log.toFile()).start();
             try {
                 assertThat(process.waitFor(60, TimeUnit.SECONDS)).as("Observed SQL host completed").isTrue();
@@ -75,6 +77,25 @@ class DocumentAssessmentStorageRuntimeTest {
                 if (process.isAlive()) {
                     process.destroyForcibly();
                     assertThat(process.waitFor(10, TimeUnit.SECONDS)).isTrue();
+                }
+            }
+            assertThat(Files.isRegularFile(request)).as("Writer persisted restart identities").isTrue();
+            var restartLog = directory.resolve("restart.log");
+            builder.command(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                    "-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading", "-cp",
+                    classpath + java.io.File.pathSeparator + probe,
+                    "ai.protomolt.proto.repo.container.ledger.AssessmentRestartProbe", request.toString());
+            var restarted = builder.redirectOutput(restartLog.toFile()).start();
+            try {
+                assertThat(restarted.waitFor(60, TimeUnit.SECONDS)).as("Restart acknowledgement completed").isTrue();
+                assertThat(Files.size(restartLog)).isLessThan(1_048_576);
+                String result = Files.readString(restartLog);
+                assertThat(restarted.exitValue()).as(result).isZero();
+                assertThat(result).contains("RESTARTED_ASSESSMENT_ACK_OK");
+            } finally {
+                if (restarted.isAlive()) {
+                    restarted.destroyForcibly();
+                    assertThat(restarted.waitFor(10, TimeUnit.SECONDS)).isTrue();
                 }
             }
         }

@@ -4107,8 +4107,9 @@ An absent owner is only a not-observed result, not rollback evidence or permissi
 to create a replacement. A different UUID for an existing generation conflicts.
 This internal participant neither publishes bytes nor grants semantic-review or
 payload-read authority. The same-process call checks the original observed scope;
-the retained-evidence entry described below does not require that scope. Separate-
-process restart qualification and a public entry point are not enabled.
+the retained-evidence entry described below does not require that scope. The
+separate-process test below qualifies internal acknowledgement with a live owner;
+a public entry point is not enabled.
 The production-runtime probe covers successful acknowledgement of valid/invalid
 stages, absence, principal/UUID mismatch, changed selection and deadline, and a
 subsequent policy revision. It waits for the stored deadline using database time
@@ -4127,10 +4128,10 @@ access is refused after an explicit deny on one source/destination, before retai
 evidence is disclosed. A committed physical stage without a snapshot is also
 refused rather than adopted; its object ownership remains intact. These cover the
 shared read gate and association verifier, not the full observed handler. End-to-end
-revoked-access, legacy-snapshot and restart qualification remain required before
-public exposure.
+revoked-access and legacy-snapshot qualification remain required before public
+exposure. Process restart coverage is described below.
 
-#### Restart acknowledgement contract (separate-process qualification pending)
+#### Restart acknowledgement contract (live-owner process restart qualified)
 
 Acknowledging a committed stage after restart must not require rerunning semantic
 validation or fetching candidate bytes. The coordinator must durably retain the
@@ -4187,3 +4188,23 @@ payload reservations. The final-callback regression failed before the second
 interrupt check was added. Upload selection identities in this fixture still come
 from the original process, so this is closed-scope qualification, not a separate-
 process restart test.
+
+The storage integration host additionally writes a private temporary request file
+containing the serialized protobuf command, original owner nonce/generation,
+assessment identity/digest/deadline and every upload selection identity. After the
+writer JVM exits, it launches a fresh standard JVM against the same PostgreSQL
+container. That process reconstructs the request exclusively from the file and
+uses the trusted host's independently supplied caller identity. It has no original
+assessment scope, runtime observation, registry resolver or upload plan. It
+acknowledges the exact original result, checks that no document revision was
+published and releases all payload reservations. The writer advances the schema
+policy before exiting, so acknowledgement does not depend on the old policy
+remaining current. The integration run passed with both processes using production
+JARs; physical provider observations remain explicitly synthetic.
+
+This qualifies internal acknowledgement across a process restart while the
+original owner lease and assessment retention deadline remain live. It does not
+qualify expired-owner takeover, abrupt database or storage failure, deployment
+recovery, provider rehydration, public authentication, or semantic-review/read
+authority. The private properties file is a test fixture, not a public credential
+or durable coordinator journal format.
