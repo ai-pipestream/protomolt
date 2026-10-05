@@ -5940,3 +5940,17 @@ current READ; close releases retained resources and refuses further views.
 This exposes no admission or container types in the SPI. It does not add an RPC,
 registry lookup, expanded JSON format, or fresh validation verdict. Transport
 framing, registry/cache integration and capacity qualification remain open.
+
+### Exact retained definition on selected views
+
+**Extended Java result; unchanged RPCs:** selected materialization views now carry
+the final boundary's original descriptor artifact, canonical schema metadata
+bytes, recorded asset reference and parsed metadata. These remain borrowed from
+the same budgeted result and are exposed only after current READ authorization.
+No registry lookup, descriptor normalization or extra provider read is added.
+The descriptor and metadata byte hashes retain distinct recorded identities.
+Compiler provenance is preserved; source bytes are not exported by this view.
+
+The planned selected-read transport will use these assets with the original Any
+bytes for offline decoding. Its contract, validator fixtures and transport lifetime
+tests are still unfinished; no new endpoint is advertised by this checkpoint.

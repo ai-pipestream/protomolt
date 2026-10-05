@@ -3,9 +3,12 @@ package ai.protomolt.proto.repo.spi;
 import ai.protomolt.proto.repo.v1.DocumentSchemaRootLocator;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v1.RepositoryResolvedSchema;
+import ai.protomolt.proto.repo.v1.RepositorySchemaAsset;
+import ai.protomolt.proto.repo.v1.RepositorySchemaAssetReference;
 import ai.protomolt.proto.repo.v1.RepositorySchemaOccurrenceStep;
 import com.google.protobuf.Any;
 import com.google.protobuf.DynamicMessage;
+import com.google.protobuf.ByteString;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -63,10 +66,25 @@ public interface HistoricalMaterializationRepository {
 
     /** Borrowed content and request identity; keep the owning Result open through consumption. */
     record View(Selection selection, Any original, DynamicMessage value,
-            RepositoryResolvedSchema schema, Occurrence occurrence) {
+            RepositoryResolvedSchema schema, Occurrence occurrence, Definition definition) {
         public View {
             Objects.requireNonNull(selection); Objects.requireNonNull(original); Objects.requireNonNull(value);
             Objects.requireNonNull(schema); Objects.requireNonNull(occurrence);
+            Objects.requireNonNull(definition);
+        }
+    }
+
+    /**
+     * Exact retained descriptor bytes and verified compiler provenance for the selected boundary.
+     * The artifact is a complete FileDescriptorSet, not regenerated from linked Java descriptors.
+     * Source hashes describe verified retained source; source bytes are not included here.
+     * Borrowed until the owning result closes; carries no new validation or authorization grant.
+     */
+    record Definition(RepositorySchemaAsset metadata, ByteString descriptorArtifact,
+            RepositorySchemaAssetReference reference, ByteString metadataArtifact) {
+        public Definition {
+            Objects.requireNonNull(metadata); Objects.requireNonNull(descriptorArtifact);
+            Objects.requireNonNull(reference); Objects.requireNonNull(metadataArtifact);
         }
     }
 

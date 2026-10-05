@@ -38,9 +38,26 @@ class DocumentSchemaMaterializationTest {
         assertThat(result.original().unpack(StringValue.class)).isEqualTo(StringValue.of("retained"));
         assertThat(result.value().getField(result.value().getDescriptorForType().findFieldByNumber(1))).isEqualTo("retained");
         assertThat(result.schema().getArtifactSha256()).isEqualTo(f.child.reference.descriptorSha256());
+        assertThat(result.reference()).isEqualTo(f.child.reference.toProto());
+        assertThat(result.descriptorArtifact()).isEqualTo(ByteString.copyFrom(Files.readAllBytes(store.resolve(f.child.reference.descriptorSha256()))));
+        assertThat(result.metadataArtifact()).isEqualTo(ByteString.copyFrom(Files.readAllBytes(store.resolve(f.child.reference.metadataSha256()))));
+        assertThat(result.metadata()).isEqualTo(f.child.binding.metadata());
+        // A remote consumer can reconstruct the selected type using only delivered bytes.
+        // Delete the retained fixture store to ensure the result owns its complete inputs.
+        try (var paths = Files.list(store)) { for (var path : paths.toList()) Files.delete(path); }
+        var files = ClosedDescriptorSet.load(result.descriptorArtifact(), new ClosedDescriptorSet.Limits(16_000_000, 256, 4096, 64));
+        var type = files.stream().flatMap(file -> file.getMessageTypes().stream())
+                .filter(value -> value.getFullName().equals(result.schema().getSchema().getTypeName())).findFirst().orElseThrow();
+        var offline = DynamicMessage.parseFrom(type, result.original().getValue());
+        assertThat(offline.getField(type.findFieldByNumber(1))).isEqualTo("retained");
+        assertThat(sha(result.descriptorArtifact())).isEqualTo(result.reference().getDescriptorSha256());
+        assertThat(sha(result.metadataArtifact())).isEqualTo(result.reference().getMetadataSha256());
         assertThat(reads).doesNotHaveDuplicates();
         assertThat(reads).doesNotContain(f.unused.reference.metadataSha256(), f.unused.reference.descriptorSha256());
         result.close(); result.close();
+        assertThatThrownBy(result::descriptorArtifact).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(result::metadataArtifact).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(result::reference).isInstanceOf(IllegalStateException.class);
         assertThat(budget.bytes).isZero();
         assertThatThrownBy(result::value).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(result::original).isInstanceOf(IllegalStateException.class);

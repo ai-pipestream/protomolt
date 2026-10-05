@@ -73,16 +73,27 @@ public final class DocumentSchemaMaterialization {
     public static final class Result implements AutoCloseable {
         private DocumentAnyMaterialization.Decoded decoded;
         private List<ByteString> inputs;
+        private RepositorySchemaAssetReference reference;
+        private ByteString metadataArtifact;
         private final DocumentAdmissionResources resources;
         private final List<DocumentAdmissionReservations.Lease> decodeLeases;
         private Result(DocumentAnyMaterialization.Decoded decoded, List<ByteString> inputs,
-                DocumentAdmissionResources resources, List<DocumentAdmissionReservations.Lease> decodeLeases) {
+                DocumentAdmissionResources resources, List<DocumentAdmissionReservations.Lease> decodeLeases,
+                RepositorySchemaAssetReference reference, ByteString metadataArtifact) {
             this.decoded = decoded; this.inputs = List.copyOf(inputs); this.resources = resources;
             this.decodeLeases = decodeLeases;
+            this.reference = reference; this.metadataArtifact = metadataArtifact;
         }
         public Any original() { return open().original(); }
         public DynamicMessage value() { return open().value(); }
         public RepositoryResolvedSchema schema() { return open().schema(); }
+        /** Verified original metadata, including compiler provenance; no executable tools are loaded. */
+        public RepositorySchemaAsset metadata() { return open().metadata(); }
+        /** Exact retained FileDescriptorSet bytes, not a re-encoding of linked descriptors. Borrowed until close. */
+        public ByteString descriptorArtifact() { return open().descriptorArtifact(); }
+        public RepositorySchemaAssetReference reference() { open(); return reference; }
+        /** Original canonical metadata bytes with the independent digest recorded in reference(). */
+        public ByteString metadataArtifact() { open(); return metadataArtifact; }
         public DocumentSchemaAdmission.Selection occurrence() { return open().occurrence(); }
         private DocumentAnyMaterialization.Decoded open() {
             if (decoded == null) throw new IllegalStateException("Materialization is closed");
@@ -90,7 +101,7 @@ public final class DocumentSchemaMaterialization {
         }
         @Override public void close() {
             if (decoded == null) return;
-            decoded = null; inputs = null;
+            decoded = null; inputs = null; reference = null; metadataArtifact = null;
             for (int i = decodeLeases.size() - 1; i >= 0; i--) decodeLeases.get(i).close();
             resources.close();
         }
@@ -203,8 +214,16 @@ public final class DocumentSchemaMaterialization {
                             limits.maxBoundaries(), limits.maxReferences(),
                             new DocumentAnyMaterialization.Limits((int) limits.maxDecodedBytes(), 1_000_000, 64)), active);
             var inputs = new ArrayList<>(copies.values()); inputs.add(fragment); inputs.add(evidenceBytes);
+            // Traversal rejects conflicting associations and verifies these exact bytes.
+            // Select the final boundary, not a name-only match or the container's schema.
+            var selectedReference = references.stream().filter(reference ->
+                    reference.typeUrl().equals(decoded.original().getTypeUrl())
+                            && reference.descriptorSha256().equals(decoded.schema().getArtifactSha256()))
+                    .findFirst().orElseThrow(() -> new DataLoss("selected schema association is missing"));
+            var metadataArtifact = copies.get(selectedReference.metadataSha256());
+            if (metadataArtifact == null) throw new DataLoss("selected schema metadata bytes are missing");
             active.run();
-            var result = new Result(decoded, inputs, resources, leases);
+            var result = new Result(decoded, inputs, resources, leases, selectedReference.toProto(), metadataArtifact);
             transferred = true;
             return result;
         } catch (HostFailure failure) {

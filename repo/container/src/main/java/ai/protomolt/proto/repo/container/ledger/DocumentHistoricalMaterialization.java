@@ -11,7 +11,11 @@ import com.google.protobuf.DynamicMessage;
 public final class DocumentHistoricalMaterialization implements AutoCloseable {
     /** Borrowed content: keep the owning result open until the last consumer finishes. */
     public record View(Any original, DynamicMessage value, RepositoryResolvedSchema schema,
-            DocumentSchemaAdmission.Selection occurrence) {}
+            DocumentSchemaAdmission.Selection occurrence,
+            ai.protomolt.proto.repo.v1.RepositorySchemaAsset metadata,
+            com.google.protobuf.ByteString descriptorArtifact,
+            ai.protomolt.proto.repo.v1.RepositorySchemaAssetReference reference,
+            com.google.protobuf.ByteString metadataArtifact) {}
     private DocumentSchemaMaterialization.Result result;
     private final DocumentReadLedger.PinnedHistory history;
     private final DocumentReadLedger.PinnedRead<?>.Use pin;
@@ -25,7 +29,8 @@ public final class DocumentHistoricalMaterialization implements AutoCloseable {
         pin.plan();
         history.authorizeDelivery(control);
         pin.plan();
-        return new View(result.original(), result.value(), result.schema(), result.occurrence());
+        return new View(result.original(), result.value(), result.schema(), result.occurrence(),
+                result.metadata(), result.descriptorArtifact(), result.reference(), result.metadataArtifact());
     }
     @Override public synchronized void close() {
         if (result == null) return;

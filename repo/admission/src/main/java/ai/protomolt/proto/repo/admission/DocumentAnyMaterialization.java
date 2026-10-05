@@ -67,7 +67,9 @@ final class DocumentAnyMaterialization {
     record Preserved(Any original, DocumentSchemaAdmission.Selection occurrence) implements View {}
     /** Nested Any payloads remain bytes. A decoded proto2 value may still be uninitialized. */
     record Decoded(Any original, DocumentSchemaAdmission.Selection occurrence,
-                   RepositoryResolvedSchema schema, DynamicMessage value) implements View {}
+                   RepositoryResolvedSchema schema, DynamicMessage value,
+                   ai.protomolt.proto.repo.v1.RepositorySchemaAsset metadata,
+                   com.google.protobuf.ByteString descriptorArtifact) implements View {}
     record Failed(Any original, DocumentSchemaAdmission.Selection occurrence, Failure failure) implements View {}
 
     /**
@@ -131,7 +133,7 @@ final class DocumentAnyMaterialization {
             return deliver(new Failed(original, occurrence,
                     new Failure(Reason.MALFORMED_PAYLOAD, Optional.of(failure))), active);
         }
-        return deliver(new Decoded(original, occurrence, schema, decoded), active);
+        return deliver(new Decoded(original, occurrence, schema, decoded, binding.metadata(), binding.schema().artifact()), active);
     }
 
     private static View deliver(View view, Runnable active) { active.run(); return view; }

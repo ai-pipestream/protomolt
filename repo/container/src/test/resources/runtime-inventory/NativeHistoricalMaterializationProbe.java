@@ -87,6 +87,17 @@ public final class NativeHistoricalMaterializationProbe {
                             require(view.original().unpack(StringValue.class).getValue().equals("retained payload"), "archived version decoded");
                             require(view.schema().getArtifactSha256().equals(path.getSteps(0).getAnyBoundary().getResolved().getArtifactSha256()),
                                     "recorded schema selected");
+                            var definition = view.definition();
+                            require(DocumentPartCodec.sha256Hex(definition.descriptorArtifact().toByteArray()).equals(view.schema().getArtifactSha256())
+                                    && definition.reference().getDescriptorSha256().equals(view.schema().getArtifactSha256()), "exact retained descriptor delivered");
+                            require(DocumentPartCodec.sha256Hex(definition.metadataArtifact().toByteArray()).equals(definition.reference().getMetadataSha256())
+                                    && definition.metadata().getSchema().equals(view.schema().getSchema()), "retained metadata identity delivered");
+                            var offlineFiles = ai.protomolt.proto.descriptors.ClosedDescriptorSet.load(definition.descriptorArtifact(),
+                                    new ai.protomolt.proto.descriptors.ClosedDescriptorSet.Limits(16_000_000, 256, 4096, 64));
+                            var offlineType = offlineFiles.stream().flatMap(file -> file.getMessageTypes().stream())
+                                    .filter(type -> type.getFullName().equals(view.schema().getSchema().getTypeName())).findFirst().orElseThrow();
+                            var offline = com.google.protobuf.DynamicMessage.parseFrom(offlineType, view.original().getValue());
+                            require(offline.getField(offlineType.findFieldByNumber(1)).equals("retained payload"), "offline decoding uses delivered definition");
                             require(ledger.releaseDrained(1) == 0 && budget.reservedBytes() > 0, "result owns independent pin and bytes");
                             security(tx, node, "{}");
                             try { result.view(control); throw new AssertionError("revoked SPI view exposed content"); }

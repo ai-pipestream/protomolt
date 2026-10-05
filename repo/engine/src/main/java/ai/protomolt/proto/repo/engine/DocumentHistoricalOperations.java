@@ -107,7 +107,9 @@ public final class DocumentHistoricalOperations implements HistoricalDocumentRep
             var occurrence = view.occurrence();
             return new HistoricalMaterializationRepository.View(selection, view.original(), view.value(), view.schema(),
                     new HistoricalMaterializationRepository.Occurrence(occurrence.ordinal(), occurrence.root(), occurrence.typeUrl(),
-                            occurrence.prefix(), occurrence.valueSha256(), occurrence.valueSizeBytes()));
+                            occurrence.prefix(), occurrence.valueSha256(), occurrence.valueSizeBytes()),
+                    new HistoricalMaterializationRepository.Definition(view.metadata(), view.descriptorArtifact(),
+                            view.reference(), view.metadataArtifact()));
         }
         @Override public synchronized void close() { result.close(); }
     }

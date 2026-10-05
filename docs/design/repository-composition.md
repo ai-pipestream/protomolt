@@ -6184,3 +6184,39 @@ mode. Registry/cache integration must still distinguish exact artifact lookup fr
 authorized discovery; retained historical reads never consult registry latest.
 Restore/pruning, non-S3 durability, RustFS capacity, bounded hydration and optional
 JCR semantics remain separate goal requirements.
+
+#### Exact retained definition delivery
+
+The selected materialization result now retains the final boundary's verified
+schema metadata and original FileDescriptorSet bytes, plus its recorded asset
+reference and exact canonical metadata bytes. These are the existing private,
+budgeted copies; exposing them adds no registry lookup, provider GET or descriptor
+re-encoding. Selection matches the exact type URL and artifact digest after path
+traversal has rejected conflicting associations. It cannot select the enclosing
+root's schema merely because the names match.
+
+The SQL and optional Java SPI views expose these bytes under the same current
+READ check and result lifetime as decoded content. The descriptor digest covers
+the exact archived artifact; the metadata digest independently covers its
+canonical stored bytes. Compiler provenance remains observed, reported or unknown
+as recorded. A source digest describes retained source that the reader verified;
+this view does not export the source archive or execute a compiler.
+
+Transport design must preserve these identities. Send the original selected Any
+value, exact request/occurrence identity, retained asset reference, descriptor
+artifact and canonical metadata bytes. A remote consumer can check their digests,
+decode the metadata, verify its schema/type binding, and load the complete
+descriptor imports before parsing Any.value. Never label a newly generated or
+normalized descriptor set with the original artifact digest. DynamicMessage itself
+is a local Java representation, not the wire payload. Nested Any values remain
+opaque unless a separately selected occurrence is decoded.
+
+The future additive selected-read RPC must use explicit request limits and an
+aggregate response cap, reserve its owned snapshot through transport completion,
+reauthorize before delivery, and refuse oversized results without truncation or
+raw fallback. Its successful-response validator must cover shape and cross-field
+identity; the handler must additionally verify cryptographic hashes and retained
+bindings. Authentication, cancellation/deadline, error sanitization, wrong-request
+binding and real in-process transport conformance remain required tests. Existing
+RAW/VALIDATED wire messages, field tags, import paths and Any URLs remain unchanged.
+This section specifies unfinished transport work; it does not mount an RPC.
