@@ -1249,6 +1249,15 @@ production-qualified until these results and failure/recovery tests support it.
 
 ### Horizontal service scaling acceptance
 
+The first separate-process archive diagnostic is recorded in
+[the 2026-10-05 evidence](../evidence/repository/2026-10-05-replica-scale/README.md).
+All six 1/2/4-process SQL-budget configurations passed byte, revision, retry and
+competing-update checks. Mixed throughput did not improve with additional replicas
+in that run; missing SQL/provider/CPU measurements leave the bottleneck unresolved.
+This is not completion of the qualification below. The diagnostic also exposed an
+unchanged-content retry response rebuilding rendition timestamps; that response
+now returns the retained version manifest, covered by ArchiveServiceIT.
+
 Multiple repository service instances must share one logical repository through
 the durable ledger and configured storage identities. Independent requests must
 benefit from additional service capacity when service CPU or I/O concurrency is

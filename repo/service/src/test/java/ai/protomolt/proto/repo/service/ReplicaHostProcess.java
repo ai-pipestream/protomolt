@@ -8,8 +8,11 @@ import java.nio.file.Path;
 public final class ReplicaHostProcess {
     public static void main(String[] args) throws Exception {
         var env = System.getenv();
+        int poolSize = env.containsKey("TEST_POOL_SIZE") ? Integer.parseInt(env.get("TEST_POOL_SIZE")) : LedgerConfig.DEFAULT_POOL_SIZE;
+        if (poolSize < 1) throw new IllegalArgumentException("TEST_POOL_SIZE must be positive");
         var config = new RepoServiceConfig(0,
-                new LedgerConfig(env.get("TEST_JDBC"), env.get("TEST_DB_USER"), env.get("TEST_DB_PASSWORD")),
+                new LedgerConfig(env.get("TEST_JDBC"), env.get("TEST_DB_USER"), env.get("TEST_DB_PASSWORD"),
+                        poolSize, LedgerConfig.DEFAULT_MIGRATION_LOCATION),
                 env.get("TEST_S3_ENDPOINT"), env.get("TEST_S3_REGION"), env.get("TEST_S3_KEY"), env.get("TEST_S3_SECRET"),
                 "process-host", 0, null, null, null, null, 0, 0L,
                 true, 1000, 1000, false, true, 1000)
