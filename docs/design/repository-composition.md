@@ -3864,3 +3864,46 @@ coverage includes exact sparse ordinals and fragment identities, invalid codecs
 and checksums, zero-byte fragments, incomplete/excess counts, independent schema
 and root budgets, oversized evidence, partial recovery rollback, and a populated
 V67-to-V68 migration that preserves existing schema and physical ownership.
+
+#### Admission writer integration and retry boundaries
+
+The writer must reuse `DocumentCommitParts` selection, reuse and physical identity
+checks. Its assessment binding path takes V65's complete lock set for proposed
+objects only; a stage does not replace current pointers or remove old destination
+references. The successful-publication path continues to lock both old and new
+objects. Both paths check exact selected attempts, current source projections,
+provider identity, verified bytes and cleanup state after acquiring physical locks.
+
+For a new stage, the writer acquires the operation fence, current schema policy,
+complete logical destination/source authorization and drive locks, then inserts
+the assessment owner before binding physical objects. Candidate slot insertion
+and sealing follow. Schema and root evidence are attached in that same transaction,
+and the scoped observed evidence is checked before commit. Provider reads,
+registry resolution and semantic replay precede this transaction.
+
+Replacing an upload attempt requires rebuilding the prepared plan as well as the
+selected-attempt map. The plan includes attempt-derived object keys. Supplying
+the previous plan after replacement must fail rather than silently retargeting
+its physical claims. A REUSE association records the locked source revision UUID
+and full source ordinal, not a revision guessed from the physical object: the
+same object may occur in multiple revisions.
+
+An ambiguous staging acknowledgement requires reconciliation under the operation
+fence. V66 permits one assessment owner per operation generation. The writer must
+compare the persisted canonical manifest and complete slot, schema and root sets
+before returning an existing stage. Divergent evidence conflicts. It must not
+delete and recreate an existing owner or reacquire its sources: they may have
+retired while the assessment still legitimately retains them. Current caller
+authorization and terminal-operation state must be checked before any replayed
+result is disclosed. This reconciliation path remains to be implemented alongside
+the writer; the binding helper alone does not make staging retry-safe.
+
+The shared binder also requires exactly the uploading members in its selected
+attempt map before physical lookup or locking. An extra entry could otherwise
+cause a new attempt lock after candidate retention locks. Four PostgreSQL
+assessment-binding cases cover complete verified uploads without publication,
+wrong token rollback, displaced selection and excess selected entries. The final
+affected run passed those four plus 23 publication-commit and six schema-retention
+cases. These fixtures use synthetic provider observations. End-to-end assessment
+writer coverage, including reuse-only candidates and staging reconciliation,
+remains required.

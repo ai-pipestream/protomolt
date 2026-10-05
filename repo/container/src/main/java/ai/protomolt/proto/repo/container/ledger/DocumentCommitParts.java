@@ -23,7 +23,27 @@ final class DocumentCommitParts {
 
     static Bound bind(EntityManager em, RepositoryOperationLedger.Owner owner, DocumentUploadPlan.Prepared plan,
             Map<String,DocumentSelectedAttemptLedger.Selected> selected, DocumentReuseAdmission.Prepared reuse, Runnable control) {
+        return bind(em, owner, plan, selected, reuse, control, false);
+    }
+
+    /**
+     * Retain only the proposed candidate, without touching old destination objects.
+     * Caller holds operation, policy, logical/source, drive and assessment-owner
+     * locks, in that order. No publication or admission authority is granted here.
+     */
+    static Bound bindAssessment(EntityManager em, RepositoryOperationLedger.Owner owner, DocumentUploadPlan.Prepared plan,
+            Map<String,DocumentSelectedAttemptLedger.Selected> selected, DocumentReuseAdmission.Prepared reuse, Runnable control) {
+        return bind(em, owner, plan, selected, reuse, control, true);
+    }
+
+    private static Bound bind(EntityManager em, RepositoryOperationLedger.Owner owner, DocumentUploadPlan.Prepared plan,
+            Map<String,DocumentSelectedAttemptLedger.Selected> selected, DocumentReuseAdmission.Prepared reuse,
+            Runnable control, boolean assessment) {
         control.run();
+        selected = Map.copyOf(selected);
+        var uploadingMembers = plan.members().stream().filter(member -> member.attempt().isPresent())
+                .map(member -> member.intent().getMemberId()).collect(Collectors.toSet());
+        if (!selected.keySet().equals(uploadingMembers)) throw conflict();
         var selectionRevisions=selections(em,owner,plan,selected);
         Set<UUID> attempts=selected.values().stream().map(DocumentSelectedAttemptLedger.Selected::attempt).collect(Collectors.toSet());
         var fresh=new HashMap<UUID,Map<Integer,UUID>>();
@@ -63,8 +83,16 @@ final class DocumentCommitParts {
         }
         var objects=Set.copyOf(claims.values());
         control.run();
-        var locks=DocumentPublicationLocks.lockIndependentOrigins(em,destinations,objects,attempts);
-        DocumentPublicationLocks.lockIndependentRetention(em,locks);
+        DocumentPublicationLocks.IndependentOrigins locks = null;
+        if (assessment) {
+            // V65 locks every source before any retention row. Unlike publication,
+            // assessment does not replace current pointers or release old bytes.
+            em.createNativeQuery("SELECT lock_repository_retention_set(CAST(:objects AS uuid[]))")
+                    .setParameter("objects", ids(objects)).getSingleResult();
+        } else {
+            locks=DocumentPublicationLocks.lockIndependentOrigins(em,destinations,objects,attempts);
+            DocumentPublicationLocks.lockIndependentRetention(em,locks);
+        }
         // All origin rows were acquired in global order, including fresh attempts.
         for (var selection:selected.values())
             if (!DocumentSelectedAttemptLedger.lockSelected(em,owner,selection).state().equals("VERIFIED")) throw conflict();
@@ -94,7 +122,7 @@ final class DocumentCommitParts {
             }
             parts.put(slot,actual);
         }
-        locks.requirePlan(destinations,objects,attempts);
+        if (locks != null) locks.requirePlan(destinations,objects,attempts);
         return new Bound(parts,selectionRevisions);
     }
 
