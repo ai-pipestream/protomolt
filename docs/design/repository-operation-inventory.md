@@ -5900,3 +5900,15 @@ failures remain distinct. The SQL adapter must still authenticate the revision,
 retain read pins, budget parsed heap and recheck current READ through delivery.
 Ten new cases and all 224 admission tests pass. Raw preservation stays separate;
 no public optional-read operation or registry resolution/cache is enabled.
+
+### Authenticated selected historical materialization
+
+**New internal-host Java operation; unchanged public RPCs:**
+`PinnedHistory.materializeFragment` binds an exact fragment and requested retained
+root/path to the authenticated sealed SQL revision. Its result owns an independent
+pin use plus copied decoding resources, and `view(control)` rechecks current READ
+before returning borrowed content. Snapshot reservations close after copying.
+Unknown selections return NOT_FOUND; corruption and resource exhaustion retain
+separate codes. Seven new PostgreSQL cases, 20 focused historical tests and all
+224 admission tests pass. Real provider orchestration and public transport remain
+pending; SQL still captures the complete bounded artifact set.

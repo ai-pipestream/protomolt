@@ -378,6 +378,36 @@ public final class DocumentReadLedger {
             }
         }
 
+        /**
+         * Decodes one recorded typed occurrence, without rerunning admission validation.
+         * Caller supplies a stable exact provider fragment; this method copies it and
+         * retains its own pin use until result close. Host budgets parsed heap separately.
+         */
+        public DocumentHistoricalMaterialization materializeFragment(int ordinal, com.google.protobuf.ByteString fragment,
+                ai.protomolt.proto.repo.admission.DocumentSchemaMaterialization.Selection selection,
+                ai.protomolt.proto.repo.admission.DocumentSchemaMaterialization.Limits limits,
+                ai.protomolt.proto.repo.blob.spi.PayloadBudget budget,
+                ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
+            Objects.requireNonNull(fragment); Objects.requireNonNull(selection); Objects.requireNonNull(limits);
+            Objects.requireNonNull(budget); Objects.requireNonNull(control);
+            var pin = use();
+            ai.protomolt.proto.repo.admission.DocumentSchemaMaterialization.Result decoded = null;
+            boolean handedOff = false;
+            try {
+                var value = new DocumentHistoricalMaterializer(tx).read(caller, address, revision, ordinal,
+                        fragment, selection, limits, budget, control);
+                decoded = value;
+                var result = new DocumentHistoricalMaterialization(this, pin, value);
+                handedOff = true;
+                return result;
+            } finally {
+                if (!handedOff) {
+                    if (decoded != null) decoded.close();
+                    pin.close();
+                }
+            }
+        }
+
         /** Rechecks current policy for the exact caller bound at capture; grants no new read lifetime. */
         public void authorizeDelivery(ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
             Objects.requireNonNull(control).check();

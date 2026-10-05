@@ -56,7 +56,7 @@ class DocumentSchemaMaterializationTest {
             var budget = new Budget();
             assertThatThrownBy(() -> DocumentSchemaMaterialization.read(f.input, selected,
                     hash -> { throw new AssertionError("must fail before asset read"); }, LIMITS, budget, () -> {}))
-                    .isInstanceOf(DocumentSchemaMaterialization.DataLoss.class);
+                    .isInstanceOf(selected.equals(wrong) ? DocumentSchemaMaterialization.OccurrenceNotFound.class : DocumentSchemaMaterialization.DataLoss.class);
             assertThat(budget.bytes).isZero();
         }
         var budget = new Budget();

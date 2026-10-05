@@ -56,6 +56,10 @@ public final class DocumentSchemaMaterialization {
     public static final class LimitExceeded extends IllegalArgumentException {
         LimitExceeded(String message) { super(message); }
     }
+    /** The requested path digest is not a member of the retained evidence. */
+    public static final class OccurrenceNotFound extends IllegalStateException {
+        OccurrenceNotFound() { super("selected path is absent from retained evidence"); }
+    }
     public static final class DataLoss extends IllegalStateException {
         DataLoss(String message) { super(message); }
         DataLoss(String message, Throwable cause) { super(message, cause); }
@@ -155,7 +159,7 @@ public final class DocumentSchemaMaterialization {
                     }
                 }
             }
-            if (selected == null) throw new DataLoss("selected path is absent from retained evidence");
+            if (selected == null) throw new OccurrenceNotFound();
             long decodedBytes = fragment.size() + (long) evidenceBytes.size();
             int boundaries = 0;
             for (var step : selected.getStepsList()) if (step.hasAnyBoundary()) {

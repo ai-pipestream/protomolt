@@ -6067,3 +6067,43 @@ consumption, and recheck current READ before delivering content or error details
 Raw/opaque preservation remains the existing zero-schema read path. Registry
 resolution/cache, restore/pruning, forced-crash durable owner recovery, horizontal
 capacity and hydration remain open gates of the broader goal.
+
+#### SQL authorization and owned historical materialization
+
+`DocumentHistoricalMaterializer` captures the existing sealed retained-schema
+snapshot under current READ authorization, reconstructs its command/member/policy/
+container binding and selects the exact ordinal/root row. It invokes the owned
+selected-occurrence library without replaying payload admission validation.
+Snapshot SQL copies have their own reservations and close once the decoder has
+copied the inputs it needs; only the decoder's resources survive in the result.
+The current capture still loads the complete bounded artifact set, so this does
+not establish selected-only SQL I/O or large-history performance.
+
+`PinnedHistory.materializeFragment` acquires a separate read-pin Use before work
+and transfers it only with a successful result. Failed setup releases that use
+and any decoder resources. `DocumentHistoricalMaterialization.view(control)`
+serializes with close, checks the use before and after current READ authorization,
+and returns the envelope, decoded message, selected schema and occurrence together.
+The returned view borrows the owner's lifetime; the last consumer must finish
+before close. Revocation suppresses future delivery, not content already obtained.
+History close cannot drain/release pins while the result's use remains open.
+
+Unknown requested root/path/ordinal selections return NOT_FOUND. The library now
+has an explicit OccurrenceNotFound outcome for an absent requested path digest;
+this is distinct from mismatched fragment identity, corrupted retained evidence
+or missing required schema assets. Current denial suppresses both a successful
+result and detailed decoding/storage failures. Cancellation and deadline checks
+surround SQL reauthorization; resource limits retain RESOURCE_EXHAUSTED.
+
+Seven new real-PostgreSQL cases verify pin ownership, SQL pin presence/release,
+byte cleanup, selection absence, cross-account denial and revocation before and
+after decoding. All 20 focused historical tests and 224 admission tests pass.
+Publication fixtures use synthetic provider observations; they do not establish
+end-to-end provider I/O. Evidence is in
+`docs/evidence/repository/2026-10-05-sql-materialization/`.
+
+Next, the shared provider reader must supply selected exact fragments under its
+existing batch ownership and qualify the complete path with a real object store.
+No public optional-read RPC is enabled yet. Durable private-owner crash recovery,
+restore/pruning, registry/cache integration, non-S3 durability, horizontal capacity,
+bounded hydration and optional JCR requirements remain open.
