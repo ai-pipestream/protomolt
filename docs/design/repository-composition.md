@@ -5404,11 +5404,24 @@ The real storage fixture promotes and stages accepted schemas after borrowed
 inputs close; invalid promotion leaves the assessment available for retained
 rejection. This is correctness evidence, not a RustFS performance measurement.
 
-Production routing still needs a promoted
-candidate committed through the native runtime, terminal replay, and stale policy,
-owner and source refusal tests. An explicit accepted-or-assessed execution outcome
-and native rejection integration remain unfinished; no application path selects
-`assess` yet.
+The promoted-candidate commit fixture uses actual provider uploads, schema staging
+and `DocumentPublicationCommit`, followed by exact result replay. It verifies that
+the committed revision references the original reused physical object. A separate
+writable source and destination let a scoped caller pass authorization before a
+source ACL change. Denial must conceal the source, and restoring access must still
+refuse the old source mutation revision. A fresh command must sample that revision;
+restoring access alone cannot revive an old publication precondition. The fixture
+also waits for a real short owner lease and takes over through the normal CAS,
+then refuses the original owner. Reactivating identical policy bytes at a newer
+revision must refuse the prepared policy selection. Every refused commit leaves
+no terminal outcome and no destination change. These tests exercise the native
+commit primitive; they do not enable assessment routing in the hosted runtime.
+The expanded production-JAR gate passes against PostgreSQL and versioned
+LocalStack, including the existing retained-rejection and restart cases. Sol
+reviewed the corrected scoped-caller, real-expiry and isolated-source fixture.
+
+An explicit accepted-or-assessed execution outcome and native rejection integration
+remain unfinished; no application path selects `assess` yet.
 
 The host must explicitly configure evidence retention, the minimum remaining
 decision window and the observed validation runtime. Invalid evidence must be

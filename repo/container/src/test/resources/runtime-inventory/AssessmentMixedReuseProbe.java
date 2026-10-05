@@ -23,12 +23,22 @@ public final class AssessmentMixedReuseProbe {
 
     /** Publish before the account enables schema admission; no SQL success fixtures are inserted. */
     static Source publishSource(Tx tx, AssessmentProviderProbe provider) throws Exception {
+        return publishSource(tx, provider, "mixed");
+    }
+
+    static Source publishSource(Tx tx, AssessmentProviderProbe provider, String prefix) throws Exception {
+        return publishSource(tx, provider, prefix, false);
+    }
+
+    static Source publishSource(Tx tx, AssessmentProviderProbe provider, String prefix, boolean writable) throws Exception {
         var security = DocumentSecurity.newBuilder();
         com.google.protobuf.util.JsonFormat.parser().merge(
                 "{\"permissions\":[{\"identityType\":\"public\",\"identity\":\"public\",\"access\":\"ACCESS_READ\"}]}", security);
+        if (writable) security.addPermissions(AccessRule.newBuilder().setIdentityType("public")
+                .setIdentity("public").setAccess(Access.ACCESS_WRITE));
         var ownership = OwnershipContext.newBuilder().setAccountId("account").setDatasourceId("source")
                 .setSecurity(security).build();
-        var document = Document.newBuilder().setDocId("mixed-source").setOwnership(ownership)
+        var document = Document.newBuilder().setDocId(prefix + "-source").setOwnership(ownership)
                 .setStructuredData(Any.pack(StringValue.of("retained payload"), "type.test"))
                 .setSearchMetadata(SearchMetadata.newBuilder().addSemanticResults(
                         SemanticProcessingResult.newBuilder().setResultId("chunk"))).build();
@@ -41,7 +51,7 @@ public final class AssessmentMixedReuseProbe {
         var member = DocumentPublicationMember.newBuilder().setMemberId("a").setDriveId(drive.driveId.toString())
                 .setOwnership(ownership).setRowKind(DocumentPublicationRowKind.DOCUMENT_PUBLICATION_ROW_KIND_PIPELINE)
                 .setDestination(DocumentRevisionCondition.newBuilder().setIfAbsent(true).setAddress(NodeAddress.newBuilder()
-                        .setAccountId("account").setDocId(document.getDocId()).setGraphId("mixed-source").setGraphAddressId("node")));
+                        .setAccountId("account").setDocId(document.getDocId()).setGraphId(prefix + "-source").setGraphAddressId("node")));
         var bytes = new HashMap<Integer,ByteString>();
         for (var part : DocumentPartCodec.split(document, PartLayouts.document())) {
             bytes.put(member.getPartsCount(), ByteString.copyFrom(part.bytes()));
@@ -72,7 +82,7 @@ public final class AssessmentMixedReuseProbe {
                 .setSizeBytes(core.part().size()).setSha256(core.part().sha256()).setContentType(core.part().contentType());
         var condition = member.getDestination().toBuilder().clearIfAbsent().setExpectedMutationRevision(current.mutationRevision);
         var candidate = member.clone().clearParts().setDestination(member.getDestination().toBuilder()
-                .setAddress(member.getDestination().getAddress().toBuilder().setGraphId("mixed-destination")));
+                .setAddress(member.getDestination().getAddress().toBuilder().setGraphId(prefix + "-destination")));
         // An empty first slot makes candidate ordinals differ from source ordinals.
         candidate.addParts(DocumentPublicationPart.newBuilder().setSlot(DocumentPublicationSlot.newBuilder()
                 .setPart(DocumentPart.DOCUMENT_PART_BLOBS)).setEmpty(true));
