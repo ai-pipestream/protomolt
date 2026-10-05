@@ -31,7 +31,7 @@ public final class AssessmentOperationReplayProbe {
             if (scenario == 1) intent.clearMembers().addAllMembers(rejectionTargets);
             var command = new DocumentPublicationCommand(intent.build());
             var owner = new RepositoryOperationLedger(tx).admit(new RepositoryOperationLedger.Key("account", "principal", command.operationId()),
-                    command, UUID.randomUUID(), Duration.ofMinutes(5)).owner().orElseThrow();
+                    command, UUID.randomUUID(), scenario == 1 ? Duration.ofSeconds(60) : Duration.ofMinutes(5)).owner().orElseThrow();
             new ManagedBackendLedger(tx).bind("assessment-s3", provider.profile());
             var placements = new HashMap<UUID,DocumentUploadPlan.Placement>();
             var attempts = new HashMap<String,UUID>();
@@ -77,7 +77,7 @@ public final class AssessmentOperationReplayProbe {
                 stage = assessment.withRetentionEvidence(owner, observation, () -> {}, evidence -> {
                     new RepositorySchemaArtifacts(tx).stage(owner, command, List.copyOf(evidence.artifacts(() -> {}).values()), () -> {});
                     return new DocumentAssessmentCreation(tx, drives).create(caller, owner, prepared, selected, evidence, UUID.randomUUID(),
-                            Instant.now().plusSeconds(120).truncatedTo(java.time.temporal.ChronoUnit.MICROS), budget, () -> {});
+                            Instant.now().plusSeconds(300).truncatedTo(java.time.temporal.ChronoUnit.MICROS), budget, () -> {});
                 });
             }
             require(budget.reservedBytes() == 0, "original assessment closed");
@@ -138,6 +138,12 @@ public final class AssessmentOperationReplayProbe {
             require(outcomes == 0, "replay grants no terminal decision");
             current = AssessmentRejectionProbe.run(tx, database, provider, caller, owner, command,
                     DocumentAssessmentRetainedSlots.uploadSelections(selected), stage, current, observation, scenario);
+            if (scenario == 1) {
+                var file = java.nio.file.Path.of(System.getenv("PROTOMOLT_TEST_RESTART_REQUEST") + ".rejected");
+                java.nio.file.Files.createFile(file, java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+                        java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")));
+                java.nio.file.Files.write(file, command.intent().toByteArray());
+            }
         }
         System.out.println("ASSESSMENT_OPERATION_REPLAY_OK");
         System.out.println("ASSESSMENT_POLICY_ADVANCEMENT_REPLAY_OK");

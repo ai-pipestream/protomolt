@@ -28,9 +28,32 @@ final class DocumentAssessmentRetainedSlots {
                 entry -> new UploadSelection(entry.getValue().member(), entry.getValue().revision(), entry.getValue().attempt())));
     }
 
+    /** Original immutable selection history for a receipt-authorized read, never the current pointer. */
+    static Map<String,UploadSelection> retainedSelections(EntityManager em, DocumentAssessmentSlotSnapshot.Identity identity,
+            Runnable control) {
+        control.run();
+        var rows = em.createNativeQuery("""
+                SELECT DISTINCT s.member_id,s.selection_revision,h.attempt_id
+                FROM document_assessment_slots s JOIN document_operation_selection_attempts h
+                  ON h.account_id=:account AND h.principal=:principal AND h.operation_id=:op AND h.owner_generation=:generation
+                  AND h.member_id=s.member_id AND h.selection_revision=s.selection_revision
+                WHERE s.assessment_id=:id AND h.attempt_id IS NOT NULL LIMIT 65
+                """).setParameter("account", identity.key().account()).setParameter("principal", identity.key().principal())
+                .setParameter("op", identity.key().operationId()).setParameter("generation", identity.generation())
+                .setParameter("id", identity.assessment()).getResultList();
+        if (rows.size() > 64) throw conflict();
+        var selections = new HashMap<String,UploadSelection>();
+        for (var value : rows) {
+            control.run(); var row = (Object[]) value;
+            var selection = new UploadSelection((String) row[0], ((Number) row[1]).longValue(), (UUID) row[2]);
+            if (selections.put(selection.member(), selection) != null) throw conflict();
+        }
+        return Map.copyOf(selections);
+    }
+
     /**
-     * Caller holds the live operation fence, complete current read-authorization
-     * locks and retained owner lock, in that order. This checks storage identity,
+     * Caller holds the live operation fence or verified terminal receipt, complete
+     * current read-authorization locks and retained owner lock, in that order. This checks storage identity,
      * not authorization, runtime evidence, expiry, or permission to publish.
      */
     static void verify(EntityManager em, DocumentAssessmentSlotSnapshot.Identity identity,

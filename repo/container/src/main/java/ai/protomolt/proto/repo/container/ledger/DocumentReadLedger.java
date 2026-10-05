@@ -127,7 +127,7 @@ public final class DocumentReadLedger {
                     assessment, manifestSha, deadline, budget, control, incarnation, protection.session(),
                     () -> commitReady.set(true));
             var result = new PinnedAssessment(new DocumentAssessmentReadProtection<>(plan, assessment, incarnation, protection.session()),
-                    caller, owner, command);
+                    caller, new DocumentAssessmentReadAuthority.LiveOwner(owner), command);
             register(result);
             handedOff = true;
             try {
@@ -141,6 +141,29 @@ public final class DocumentReadLedger {
             }
         } finally {
             if (!handedOff) finishFailedCapture(commitReady.get() ? protection : null);
+        }
+    }
+
+    /** Receipt-authorized evidence read; no write-owner nonce, lease or current schema policy. */
+    PinnedAssessment captureRejectedAssessment(RepositoryCaller caller,
+            ai.protomolt.proto.repo.spi.DocumentPublicationCommand command,
+            ai.protomolt.proto.repo.blob.spi.PayloadBudget budget, ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
+        Objects.requireNonNull(control).check();
+        UUID session = UUID.randomUUID();
+        var pending = new java.util.concurrent.atomic.AtomicReference<DocumentAssessmentReadProtection<DocumentAssessmentReadPlan>>();
+        beginCapture();
+        boolean handedOff = false;
+        try {
+            var captured = DocumentRejectedAssessmentReads.capture(tx, caller, command, budget, incarnation, session, control,
+                    plan -> pending.set(new DocumentAssessmentReadProtection<>(plan, plan.stage().assessment(), incarnation, session)));
+            var result = new PinnedAssessment(new DocumentAssessmentReadProtection<>(captured.plan(), captured.plan().stage().assessment(), incarnation, session),
+                    caller, new DocumentAssessmentReadAuthority.Rejected(captured.receipt()), command);
+            register(result);
+            handedOff = true;
+            try { control.check(); return result; }
+            catch (RuntimeException | Error failure) { result.close(); throw failure; }
+        } finally {
+            if (!handedOff) finishFailedCapture(pending.get());
         }
     }
 
@@ -285,20 +308,20 @@ public final class DocumentReadLedger {
     public final class PinnedAssessment extends PinnedRead<DocumentAssessmentReadPlan> {
         private final DocumentAssessmentReadProtection<DocumentAssessmentReadPlan> assessment;
         private final RepositoryCaller caller;
-        private final RepositoryOperationLedger.Owner owner;
+        private final DocumentAssessmentReadAuthority authority;
         private final ai.protomolt.proto.repo.spi.DocumentPublicationCommand command;
         private PinnedAssessment(DocumentAssessmentReadProtection<DocumentAssessmentReadPlan> captured,
-                RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+                RepositoryCaller caller, DocumentAssessmentReadAuthority authority,
                 ai.protomolt.proto.repo.spi.DocumentPublicationCommand command) {
             super(captured);
-            this.assessment = captured; this.caller = caller; this.owner = owner; this.command = command;
+            this.assessment = captured; this.caller = caller; this.authority = authority; this.command = command;
         }
 
         /** The provider/batch owner supplies its existing Use; this check creates no new lifetime. */
         public void authorizeDelivery(PinnedRead<?>.Use use, ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
             if (Objects.requireNonNull(use).plan() != assessment.plan())
                 throw new IllegalArgumentException("Delivery use belongs to another assessment capture");
-            DocumentAssessmentDeliveryAuthorization.check(tx, caller, owner, command, assessment, control);
+            authority.check(tx, caller, command, assessment, control);
             use.plan(); // Refuse delivery if the caller ended its lifetime while SQL waited.
         }
 

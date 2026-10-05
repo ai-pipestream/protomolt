@@ -111,7 +111,58 @@ public final class AssessmentRejectionProbe {
             require(budget.reservedBytes() == 0 && payload.reservedBytes() == 0, "decision releases all byte reservations");
             require(reads.releaseDrained(1) == 1 && reads.outstandingReads() == 0, "decision releases exact SQL read session");
         }
+        verifyTerminalReads(tx, provider, caller, owner, command, selected, stage, current, observation, scenario);
         return current;
+    }
+
+    private static void verifyTerminalReads(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller,
+            RepositoryOperationLedger.Owner owner, DocumentPublicationCommand command,
+            Map<String,DocumentAssessmentRetainedSlots.UploadSelection> selected, DocumentAssessmentCreation.Created stage,
+            DocumentSchemaPolicies.Selection current, DocumentAssessmentRuntimeObserver.Observation observation, int scenario) throws Exception {
+        var reads = new DocumentReadLedger(tx, UUID.randomUUID(), 1);
+        var budget = new PayloadBudget(128_000_000); var payload = new PayloadBudget(16_000_000);
+        var reader = new DocumentPartReader((generation, profile) -> {
+            require(generation.equals("assessment-s3") && profile.equals(provider.profile()), "exact terminal provider");
+            return provider.store();
+        }, 2, 16_000_000, payload);
+        // A terminal receipt must not revive the former writer's authority.
+        try {
+            reads.captureAssessment(caller, owner, command, selected, stage.assessment(),
+                    stage.manifestSha256(), stage.retainUntil(), budget, () -> {});
+            throw new AssertionError("Terminal operation revived live-owner capture");
+        } catch (RuntimeException failure) {
+            boolean terminal = false;
+            for (Throwable cause = failure; cause != null; cause = cause.getCause())
+                if (cause instanceof java.sql.SQLException sql && "P0001".equals(sql.getSQLState())
+                        && sql.getMessage().contains("Repository operation is terminal")) terminal = true;
+            require(terminal, "live capture refused by terminal SQL write fence");
+        }
+        require(reads.outstandingReads() == 0, "refused live capture consumes no capacity");
+        var scoped = scenario == 1 ? new RepositoryCaller(owner.key().principal(), false,
+                java.util.Set.of(owner.key().account()), java.util.Set.of()) : caller;
+        try (reader; var capture = reads.captureRejectedAssessment(scoped, command, budget, RepositoryReadControl.NONE)) {
+            var result = DocumentAssessmentReplay.replay(capture, reader, budget, LIMITS, observation, RepositoryReadControl.NONE);
+            require(result.assessment().equals(stage.assessment()) && result.firstFailure().isPresent()
+                    && result.manifestSha256().equals(stage.manifestSha256()), "terminal replay reproduces retained invalid candidate");
+            expect(RepositoryException.Code.CANCELLED, () -> DocumentAssessmentReplay.replay(capture, reader,
+                    budget, LIMITS, observation, control(() -> true)));
+            if (scenario == 1) {
+                var node = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(
+                        command.intent().getMembers(0).getDestination().getAddress());
+                try {
+                    policy(tx, node, "ACCESS_DENY");
+                    expect(RepositoryException.Code.NOT_FOUND, () -> DocumentAssessmentReplay.replay(capture, reader,
+                            budget, LIMITS, observation, RepositoryReadControl.NONE));
+                } finally { policy(tx, node, "ACCESS_READ"); }
+                require(DocumentAssessmentReplay.replay(capture, reader, budget, LIMITS, observation,
+                        RepositoryReadControl.NONE).equals(result), "restored current access reproduces exact result");
+            }
+            System.out.println("ASSESSMENT_REJECTION_TERMINAL_READ_OK");
+        } finally {
+            require(reader.awaitIdle(Duration.ofSeconds(5)), "terminal provider work drains");
+            require(budget.reservedBytes() == 0 && payload.reservedBytes() == 0, "terminal read budgets drain");
+            require(reads.releaseDrained(1) == 1 && reads.outstandingReads() == 0, "terminal SQL session drains");
+        }
     }
 
     private static javax.sql.DataSource faultAfterDecisionCommit(javax.sql.DataSource delegate, int fault,

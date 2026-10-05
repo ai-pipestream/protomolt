@@ -36,7 +36,7 @@ class DocumentAssessmentStorageRuntimeTest {
         String classpath = String.join(java.io.File.pathSeparator, jars.values().stream().map(Path::toString).toList());
         var classes = Files.createDirectory(directory.resolve("classes"));
         var sources = new ArrayList<String>();
-        for (String name : List.of("ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentCaptureFaultProbe", "AssessmentProviderProbe", "AssessmentMixedReuseProbe", "AssessmentReplayInputsProbe", "AssessmentOperationReplayProbe", "AssessmentRejectionProbe", "AssessmentStorageProbe", "AssessmentRestartProbe")) {
+        for (String name : List.of("ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentCaptureFaultProbe", "AssessmentProviderProbe", "AssessmentMixedReuseProbe", "AssessmentReplayInputsProbe", "AssessmentOperationReplayProbe", "AssessmentRejectionProbe", "AssessmentStorageProbe", "AssessmentRestartProbe", "RejectedAssessmentRestartProbe")) {
             var source = directory.resolve(name + ".java");
             try (var input = getClass().getResourceAsStream("/runtime-inventory/" + name + ".java")) {
                 assertThat(input).isNotNull(); Files.copy(input, source);
@@ -90,7 +90,8 @@ class DocumentAssessmentStorageRuntimeTest {
                 assertThat(result).contains("ASSESSMENT_MIXED_REPLAY_OK");
                 assertThat(result).contains("ASSESSMENT_REPLAY_CANCELLED_DELIVERY_OK");
                 assertThat(result).contains("ASSESSMENT_REJECTION_ACCEPTED_REFUSED", "ASSESSMENT_REJECTION_LOST_ACK_OK",
-                        "ASSESSMENT_REJECTION_CANCEL_AFTER_COMMIT_OK", "ASSESSMENT_REJECTION_STALE_POLICY_OK");
+                        "ASSESSMENT_REJECTION_CANCEL_AFTER_COMMIT_OK", "ASSESSMENT_REJECTION_STALE_POLICY_OK",
+                        "ASSESSMENT_REJECTION_TERMINAL_READ_OK");
             } finally {
                 if (process.isAlive()) {
                     process.destroyForcibly();
@@ -116,6 +117,25 @@ class DocumentAssessmentStorageRuntimeTest {
                 if (restarted.isAlive()) {
                     restarted.destroyForcibly();
                     assertThat(restarted.waitFor(10, TimeUnit.SECONDS)).isTrue();
+                }
+            }
+            var rejectedLog = directory.resolve("rejected-restart.log");
+            builder.command(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                    "-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading", "-cp",
+                    classpath + java.io.File.pathSeparator + probe,
+                    "ai.protomolt.proto.repo.container.ledger.RejectedAssessmentRestartProbe",
+                    request + ".rejected", bundle.toString());
+            var rejected = builder.redirectOutput(rejectedLog.toFile()).start();
+            try {
+                assertThat(rejected.waitFor(30, TimeUnit.SECONDS)).as("Rejected evidence restart completed").isTrue();
+                assertThat(Files.size(rejectedLog)).isLessThan(1_048_576);
+                String result = Files.readString(rejectedLog);
+                assertThat(rejected.exitValue()).as(result).isZero();
+                assertThat(result).contains("RESTARTED_REJECTION_EVIDENCE_OK");
+            } finally {
+                if (rejected.isAlive()) {
+                    rejected.destroyForcibly();
+                    assertThat(rejected.waitFor(10, TimeUnit.SECONDS)).isTrue();
                 }
             }
         }

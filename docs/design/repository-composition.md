@@ -119,8 +119,11 @@ contract and behavior requirements below still apply.
   content, and does not implement all BlobStore operations. A remote blob client
   is not a remote implementation of the complete repository API.
 - [RepoServices](../../repo/service/src/main/java/ai/protomolt/proto/repo/service/RepoServices.java)
-  owns composition and constructs an S3 client even when selecting another blob
-  provider. Provider-specific drive provisioning also needs separation.
+  owns composition. The original baseline constructed an S3 client even when
+  another provider was selected; current composition opens only the selected
+  provider (plus Redis for the explicitly selected S3 cache). Qualified managed
+  storage still requires S3 and enabled recovery. The managed identity lookup
+  remains hardcoded to S3 and needs to follow the selected authoritative provider.
 - [Document](../../repo/proto/src/main/proto/ai/protomolt/proto/repo/v1/document.proto)
   has `Any structured_data`, parser results with `Any shape`, and ownership.
   [DocumentPartCodec](../../repo/codec/src/main/java/ai/protomolt/proto/repo/codec/DocumentPartCodec.java)
@@ -5238,15 +5241,10 @@ SQL authorization, which would incorrectly reject an operation that just became
 terminal. An already committed terminal outcome is returned before provider or
 evidence access on an authorized retry.
 
-Before host integration, add a distinct receipt-authorized assessment capture and
-delivery path. The existing live-owner path intentionally rejects terminal
-operations; it cannot reopen rejected evidence after restart. The new path must
-use the exact stored admission-rejection binding, current destination/source READ
-authorization and unexpired sealed retention, without requiring the old write
-lease or that the historical policy remain current. It must grant no write fence.
-Receipt replay is implemented; post-rejection evidence re-evaluation is not yet
-available. Keep native execution and public exposure disabled until that path,
-expiry/cleanup behavior and restart cases are qualified.
+The distinct receipt-authorized capture and delivery path below now supports
+internal post-rejection re-evaluation. The existing live-owner path intentionally
+rejects terminal operations. Keep native execution and public exposure disabled
+until the remaining expiry, fault and recovery cases are qualified.
 
 The focused gate passes 45 tests, including the production-JAR subprocess using
 real PostgreSQL and versioned LocalStack storage. It reproduces genuine invalid
@@ -5262,3 +5260,38 @@ unbound admission-rejection row without repairing it. SPI and engine dependency
 boundary gates pass. These are correctness results, not RustFS latency measurements.
 Source-access revocation specifically between verification and this new decision,
 and post-terminal retention expiry/restart, remain required before host exposure.
+
+#### Receipt-authorized evidence reads
+
+`DocumentReadLedger.captureRejectedAssessment` is an internal entry point accepting
+an authenticated caller and the original command. It obtains the exact canonical
+admission-rejection receipt and current destination/source READ authorization,
+then locks the sealed, unreleased assessment and its retained physical objects.
+It reconstructs original upload selections from immutable selection history and
+checks the complete slot and evidence bindings. It does not need the former
+writer's nonce or lease, or the historical schema policy to remain current.
+
+V77 distinguishes `LIVE_OWNER` and `ADMISSION_REJECTION` read sessions. Existing
+rows retain live-owner authority. A rejection session requires the exact stored
+receipt and retained assessment identity; it grants no operation write fence.
+Session authority is immutable. Delivery rechecks the receipt, current READ
+permissions, retention deadline and exact active session. Both modes use the
+existing reader lifetime, capacity, release and uncertain-capture bookkeeping.
+
+The focused 43-test gate passes with real PostgreSQL, versioned LocalStack and
+production-JAR subprocesses. The new cases reproduce invalid retained candidates
+after rejection, refuse the former live-owner capture, enforce destination access
+revocation after capture, honor cancellation and drain byte/provider/SQL resources.
+A separate JVM receives only command bytes, verifies that the original writer's
+lease has expired using database time, and reproduces the receipt-bound evidence
+without a schema registry after policy advancement. The receipt remains unchanged.
+SPI and engine dependency boundary checks pass. These are correctness results;
+they do not establish RustFS performance or horizontal throughput improvements.
+
+Before exposing this path, qualify capture/delivery expiry across lock waits,
+source-access races during provider completion, forged SQL session authority,
+lost session-commit acknowledgement and quiescence recovery for rejection sessions.
+Receipt replay after evidence expiry remains distinct from evidence re-evaluation.
+The broader provider-neutral composition, non-S3 managed lifecycle qualification,
+metadata/restore, optional JCR boundaries and bounded hydration requirements remain
+part of this goal; this read-path checkpoint does not complete them.
