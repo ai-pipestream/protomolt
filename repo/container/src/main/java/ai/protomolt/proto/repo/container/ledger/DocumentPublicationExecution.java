@@ -24,10 +24,19 @@ final class DocumentPublicationExecution {
     private final RepositorySchemaArtifacts artifacts;
     private final DocumentPublicationCommit publication;
     private final DocumentRevisionAssembly.Limits opaqueLimits;
+    private final DocumentPublicationAssessmentExecution assessments;
 
     DocumentPublicationExecution(Tx tx, DriveLedger drives, DocumentReadLedger reads,
             DocumentUploadCoordinator uploads, DocumentRetainedReader retained, PayloadBudget budget,
             DocumentRevisionAssembly.Limits opaqueLimits, boolean deliverEvents) {
+        this(tx, drives, reads, uploads, retained, budget, opaqueLimits, deliverEvents, null);
+    }
+
+    DocumentPublicationExecution(Tx tx, DriveLedger drives, DocumentReadLedger reads,
+            DocumentUploadCoordinator uploads, DocumentRetainedReader retained, PayloadBudget budget,
+            DocumentRevisionAssembly.Limits opaqueLimits, boolean deliverEvents,
+            DocumentPublicationAssessmentExecution assessments) {
+        this.assessments = assessments;
         this.reads = Objects.requireNonNull(reads); this.opaqueLimits = Objects.requireNonNull(opaqueLimits);
         replay = new DocumentPublicationReplay(tx); policies = new DocumentSchemaPolicies(tx);
         rejections = new DocumentPublicationRejections(tx);
@@ -58,7 +67,11 @@ final class DocumentPublicationExecution {
             } catch (RepositoryOperationLedger.TerminalOperationException terminal) {
                 return replayWithoutOwner(caller, prepared, control);
             }
-            return executeNew(caller, owner, prepared, bodies, attributes, selectedModes, container, resolver, control);
+            if (execution.assessmentStageStarted()) {
+                if (assessments == null) throw new IllegalStateException("Assessment recovery is not configured");
+                return assessments.resume(caller, owner, prepared.plan().command(), control);
+            }
+            return executeNew(caller, owner, prepared, bodies, attributes, selectedModes, container, resolver, control, execution);
         }
     }
 
@@ -93,23 +106,55 @@ final class DocumentPublicationExecution {
         control.check();
         observed.requireNotTerminated();
         if (observed.result().isPresent()) return observed.result().orElseThrow();
-        return executeNew(caller, owner, prepared, bodies, attributes, modes, container, resolver, control);
+        if (assessments != null) throw new IllegalStateException("Assessment execution requires a retained publication session");
+        return executeNew(caller, owner, prepared, bodies, attributes, modes, container, resolver, control, null);
     }
 
     private DocumentPublicationResult executeNew(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
             Map<String, String> attributes, Map<String, DocumentPublicationCandidate.Mode> modes,
             Optional<DocumentSchemaAdmission.Definition> container, DocumentPublicationCandidate.Resolver resolver,
-            RepositoryReadControl control) throws InvalidProtocolBufferException {
+            RepositoryReadControl control, DocumentPublicationSession.Execution execution) throws InvalidProtocolBufferException {
         try {
+            if (assessments != null)
+                return executeAssessed(caller, owner, prepared, bodies, attributes, modes, container, resolver, control, execution);
             return executeCandidate(caller, owner, prepared, bodies, attributes, modes, container, resolver, control);
         } catch (DocumentLedger.RevisionConflictException conflict) {
+            if (execution != null && execution.assessmentStageStarted()) throw conflict;
             // Candidate transactions and local scopes have unwound. Recheck in a fresh
             // transaction; the earlier exception is not proof of a terminal decision.
             var observed = rejections.rejectRevisionPreconditions(caller, owner, prepared.plan().command(), control);
             observed.requireNotTerminated();
             return observed.result().orElseThrow(() -> conflict);
         }
+    }
+
+    private DocumentPublicationResult executeAssessed(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
+            Map<String, String> attributes, Map<String, DocumentPublicationCandidate.Mode> modes,
+            Optional<DocumentSchemaAdmission.Definition> container, DocumentPublicationCandidate.Resolver resolver,
+            RepositoryReadControl control, DocumentPublicationSession.Execution execution) throws InvalidProtocolBufferException {
+        var command = prepared.plan().command();
+        var policy = policies.read(command.intent().getAccountId(), control::check);
+        var settings = new DocumentPublicationPreparation.Admission(policy, modes, container, resolver, opaqueLimits);
+        reads.releaseDrainedAtCapacity(1);
+        control.check();
+        var pinned = reads.capture(admission, caller, owner, prepared);
+        try (var assessed = preparation.assess(caller, owner, prepared, bodies, attributes, pinned, settings,
+                java.time.Instant.now(), control)) {
+            if (assessed.assessment().failure().isEmpty()) {
+                try (var candidate = assessed.promoteAccepted(control::check)) {
+                    candidate.candidate().schemas().stage(artifacts, owner, control::check);
+                    return publication.commit(caller, owner, prepared, candidate.candidate().opaque(), candidate.selections(),
+                            candidate.candidate().schemas(), control::check);
+                }
+            }
+            assessments.stage(caller, owner, prepared, assessed, execution, control);
+        } finally {
+            pinned.close();
+        }
+        // Capture the original retained evidence only after the source plan relinquishes its slot.
+        return assessments.resume(caller, owner, command, control);
     }
 
     private DocumentPublicationResult executeCandidate(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,

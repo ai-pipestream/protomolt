@@ -23,6 +23,7 @@ final class DocumentPublicationSession {
     private final DocumentOperationUploadAdmission.Prepared prepared;
     private final AtomicBoolean executing = new AtomicBoolean();
     private Map<String, DocumentPublicationCandidate.Mode> modes;
+    private boolean assessmentStageStarted;
 
     DocumentPublicationSession(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
             Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease) {
@@ -123,6 +124,23 @@ final class DocumentPublicationSession {
 
     final class Execution implements AutoCloseable {
         private final AtomicBoolean closed = new AtomicBoolean();
+
+        /** Sticky across execution scopes; no borrowed candidate bytes are retained here. */
+        synchronized boolean assessmentStageStarted() {
+            requireOpen();
+            return assessmentStageStarted;
+        }
+
+        /** Call immediately before stage CREATE; uncertainty can only resume original evidence. */
+        synchronized void beginAssessmentStage() {
+            requireOpen();
+            if (assessmentStageStarted) throw new IllegalStateException("Assessment stage creation already started");
+            assessmentStageStarted = true;
+        }
+
+        private void requireOpen() {
+            if (closed.get()) throw new IllegalStateException("Publication execution is closed");
+        }
 
         /** Host choices remain fixed even when admission or publication fails. */
         synchronized Map<String, DocumentPublicationCandidate.Mode> bindModes(Map<String, DocumentPublicationCandidate.Mode> requested) {

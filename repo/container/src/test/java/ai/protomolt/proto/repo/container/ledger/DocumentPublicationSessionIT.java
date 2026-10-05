@@ -23,6 +23,26 @@ class DocumentPublicationSessionIT {
     private static final RepositoryCaller CALLER = new RepositoryCaller("principal", true);
     private static final Duration LEASE = Duration.ofMinutes(5);
 
+    @Test void assessmentStageUncertaintySurvivesExecutionRetry() {
+        try (var c = context(POSTGRES)) {
+            var input = input(c);
+            var session = new DocumentPublicationSession(c.tx(), CALLER, input.command(), input.placements(), LEASE);
+            var first = session.begin(CALLER, RepositoryReadControl.NONE);
+            assertThat(first.assessmentStageStarted()).isFalse();
+            first.beginAssessmentStage();
+            assertThat(first.assessmentStageStarted()).isTrue();
+            first.close();
+            assertThatThrownBy(first::beginAssessmentStage).hasMessageContaining("closed");
+            assertThatThrownBy(first::assessmentStageStarted).hasMessageContaining("closed");
+            try (var retry = session.begin(CALLER, RepositoryReadControl.NONE)) {
+                assertThat(retry.assessmentStageStarted()).isTrue();
+                assertThatThrownBy(retry::beginAssessmentStage).hasMessageContaining("already started");
+                first.close();
+                assertThat(retry.assessmentStageStarted()).isTrue();
+            }
+        }
+    }
+
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
     void recoveryRetainsFreshAttemptAndModeIdentitiesAfterCommittedSqlFailure(boolean cancel) {

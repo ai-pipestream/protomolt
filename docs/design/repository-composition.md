@@ -5490,3 +5490,43 @@ S3-only managed qualification guard remains. A non-S3 provider still needs prove
 streaming writes, non-expiring content, physical reclamation, retention and crash
 recovery before that restriction can be lifted. Identity support alone is not
 durability qualification. Remote-client startup isolation remains a separate gate.
+
+#### Native session assessment execution
+
+The internal `DocumentPublicationExecution` can now explicitly compose
+`DocumentPublicationAssessmentExecution`. Accepted assessments promote into the
+existing candidate commit path. Invalid assessments stage owned evidence, close
+the source plan, capture that exact retained stage, replay its validation and
+request the existing fenced rejection decision. No decision runs inside the
+stage writer callback. This internal option is not yet exposed by the public
+runtime constructor or a transport endpoint.
+
+A session-owned marker is set immediately before assessment CREATE. It survives
+execution-scope closure. Once set, retries use the original owner and command to
+discover the original stage; they bypass upload, policy selection and schema
+resolution. An absent stage requires explicit recovery. Policy, ACL, expiry and
+runtime refusals do not authorize restaging or an unrelated precondition receipt.
+Failures before CREATE, including schema-artifact staging, can still retry normal
+preparation and resolution. This is not an exactly-once registry-call guarantee.
+
+Eight PostgreSQL session tests pass, including sticky uncertainty and refusal of
+closed execution mutation. The production-JAR PostgreSQL/LocalStack gate passes
+accepted publication and exact replay, invalid retained rejection, actual stage
+commit followed by a lost acknowledgement, stage failure before commit, and a
+lost rejection acknowledgement. The same session retries with no payload bodies
+and upload/resolver callbacks that fail if invoked. It creates at most one stage
+and drains a one-slot read ledger plus provider and assessment memory budgets.
+The accepted fixture updates a genuinely published versioned source; an
+unversioned legacy authorization seed is not a valid native publication target.
+Sol reviewed the wiring and fault fixtures. These are correctness checks, not
+RustFS performance measurements.
+
+The next recovery gate is a fresh-process handoff of a sealed pre-terminal
+assessment using explicitly retained private owner identity and the command.
+Coordinate discovery, retained capture, observed replay, durable rejection and
+terminal replay must run with a fresh reader incarnation and no registry access.
+Public host configuration, shutdown/restart composition and rejected-evidence
+transport remain unfinished. The broader metadata/schema-only revision, restore,
+non-S3 durability, RustFS scaling and bounded hydration gates remain open. The
+current declared Any-root graph already has inventory regression coverage in
+`DocumentAnyRootInventoryTest`; future descriptor changes must preserve that gate.
