@@ -20,12 +20,23 @@ public final class NativeHistoricalMaterializationTransportProbe {
             HistoricalMaterializationRepository.Selection selection, HistoricalMaterializationRepository.Limits limits,
             Runnable revoke, Runnable restore) throws Exception {
         var corrupt = new AtomicBoolean(); var revokeOnView = new AtomicBoolean(); var invalidMetadata = new AtomicBoolean();
+        var oversized = new AtomicBoolean();
         HistoricalMaterializationRepository observed = (caller, node, id, selected, bound, control) -> {
             var actual = repository.readMaterialized(caller, node, id, selected, bound, control);
             return new HistoricalMaterializationRepository.Result() {
                 public HistoricalMaterializationRepository.View view(RepositoryReadControl active) {
                     var view = actual.view(active);
                     if (revokeOnView.compareAndSet(true, false)) revoke.run();
+                    if (oversized.get()) {
+                        // Invalid output injection after real storage: each byte field fits its
+                        // own contract bound, but their serialized aggregate exceeds 8 MiB.
+                        var bytes = com.google.protobuf.ByteString.copyFrom(new byte[4 * 1024 * 1024]);
+                        var original = view.original().toBuilder().setValue(bytes).build();
+                        var definition = new HistoricalMaterializationRepository.Definition(view.definition().metadata(), bytes,
+                                view.definition().reference(), view.definition().metadataArtifact());
+                        return new HistoricalMaterializationRepository.View(view.selection(), original, view.value(), view.schema(),
+                                view.occurrence(), definition, view.path(), view.address(), view.revision());
+                    }
                     if (invalidMetadata.get()) {
                         var metadata = view.definition().metadata().toBuilder().clearTypeUrl().build();
                         var bytes = metadata.toByteString();
@@ -82,6 +93,9 @@ public final class NativeHistoricalMaterializationTransportProbe {
                 invalidMetadata.set(true);
                 status(() -> owner.readHistoricalOccurrence(request), Status.Code.DATA_LOSS);
                 invalidMetadata.set(false);
+                oversized.set(true);
+                status(() -> owner.readHistoricalOccurrence(request), Status.Code.RESOURCE_EXHAUSTED);
+                oversized.set(false);
                 revokeOnView.set(true);
                 try { status(() -> owner.readHistoricalOccurrence(request), Status.Code.NOT_FOUND); }
                 finally { restore.run(); }
@@ -94,6 +108,7 @@ public final class NativeHistoricalMaterializationTransportProbe {
             }
         }
         require(budget.reservedBytes() == 0, "transport reservations drained");
+        NativeHistoricalMaterializationLifecycleProbe.run(repository, request, limits);
         System.out.println("NATIVE_HISTORICAL_MATERIALIZATION_TRANSPORT_OK");
     }
     private static void status(Runnable work, Status.Code expected) {

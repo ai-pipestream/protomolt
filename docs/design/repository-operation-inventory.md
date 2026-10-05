@@ -6033,3 +6033,18 @@ Before managed-host exposure, finish held-send cancellation/callback races, dead
 and aggregate response-limit qualification, full malformed-response cases, explicit
 host wiring and the remote client. This checkpoint is not complete transport
 conformance or a deployment/performance claim.
+
+### Selected-read cancellation and aggregate response qualification
+
+The real in-process transport now holds server delivery after a provider-backed
+read and successful response verification. Cancellation and deadline tests observe
+the client failure and server cancellation while the producer remains held. Call
+capacity and response-byte reservations remain occupied until producer exit, then
+drain and permit a successful retry. This tests transport resource ownership; it
+does not measure latency or assert Netty-specific behavior.
+
+A separate injected-output case substitutes two individually bounded 4 MiB fields
+after a real read. The combined envelope exceeds the 8 MiB response limit and is
+rejected with RESOURCE_EXHAUSTED before snapshot copying. It is not a claim that
+those injected descriptor bytes form a valid retained schema. Full malformed-output
+conformance, managed-host wiring and remote-client work remain open.
