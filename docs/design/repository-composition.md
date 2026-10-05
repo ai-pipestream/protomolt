@@ -3437,6 +3437,48 @@ missing artifacts, repeated paths/content, unrelated host classes, shadowing in
 either order, multi-release collisions, hidden manifest dependencies, oversized
 manifests, links, cancellation and file drift. The method currently accepts paths
 and returns observed hash/path associations; it does not assert they came from
-the effective classloader. Actual deployment topology checks, fixed production
-anchors, JVM identity and binding the resulting observation to assessment use
-remain required before replacing the internal raw runtime declaration.
+the effective classloader. The observer below supplies the restricted topology
+and loaded-origin checks; binding its observation to assessment use remains
+required before replacing the internal raw runtime declaration.
+
+#### Host runtime observation
+
+`DocumentAssessmentRuntimeObserver` produces an internally constructed observation
+for a standard OpenJDK application classloader over immutable local JARs. It reads
+the trusted launch `java.class.path` declaration, qualifies every inventory
+artifact and checks the loaded origins of the fixed admission, validator, rule
+source, CEL, formats, descriptors, repository codec/protobuf and protobuf runtime
+anchors. Each anchor must use that application loader in an unnamed module.
+Custom loaders, nonmatching context loaders, module launches, exploded classpath
+entries and recognized startup instrumentation options are unsupported.
+
+The observer reads the validation profile and catalog configuration by invoking
+`DocumentSchemaAdmission.runtimeProfile()` on the loaded implementation. This
+avoids relying on a consumer's inlined public string constant. The admission
+validator explicitly constructs the ordered native and Buf-compatible sources
+with empty taxonomy and postal catalogs. The observer accepts only the qualified
+v1 profile and configuration. JVM identity records observed VM vendor/name,
+`Runtime.version()` and VM build; it does not invent a JVM artifact digest.
+
+Artifact hashing and archive scans happen when observing the runtime, outside SQL
+locks and request latency paths. The observation's identity accessor rechecks
+loader/context, classpath declaration and JVM identity. It does not rehash JARs
+per request. The host must keep code/resources immutable and prevent untracked
+instrumentation. Startup-option rejection does not establish absence of dynamic
+agents. The mutable `java.class.path` property is a trusted launch declaration,
+not access to the loader's internal URL state; loaded anchor origins cross-check
+it but cannot attest every dynamically loaded byte.
+
+An additional qualification test launches a fresh ordinary JVM with the 38
+production admission JARs, the container JAR and a test probe JAR. It observes
+runtime identity, runs the same real valid/invalid validation probe, refuses
+changed thread context and classpath declarations, propagates cancellation and
+allows retry after restoring context. No test framework is on that process's
+classpath. The test disables dynamic attach/agent loading for its process; this
+is test setup, not a claim about deployed hosts.
+
+This observer is not yet the producer consumed by assessment encoding or a host
+startup path. The internal encoder still accepts a raw runtime declaration for
+codec/projection tests. Replacing that boundary with a validated observation,
+retaining candidate/evidence bytes and fencing the durable rejection decision
+remain outstanding. No terminal admission rejection is enabled by this step.

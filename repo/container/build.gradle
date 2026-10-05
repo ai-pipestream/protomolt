@@ -56,11 +56,14 @@ tasks.register('admissionRuntimeTest', Test) {
     group = 'verification'
     description = 'Run the admission validator in an isolated production bundle classloader'
     dependsOn ':protomolt-repo-admission:admissionRuntimeInventory'
+    dependsOn tasks.named('jar')
     testClassesDirs = sourceSets.test.output.classesDirs
     classpath = sourceSets.test.runtimeClasspath
     filter { includeTestsMatching 'ai.protomolt.proto.repo.container.ledger.DocumentAdmissionRuntimeTest' }
     inputs.dir(admissionInventory)
+    inputs.file(tasks.named('jar').flatMap { it.archiveFile })
     systemProperty 'protomolt.test.admissionRuntimeBundle', admissionInventory.get().asFile.absolutePath
+    systemProperty 'protomolt.test.containerJar', tasks.named('jar').get().archiveFile.get().asFile.absolutePath
     useJUnitPlatform()
 }
 tasks.named('check') { dependsOn tasks.named('admissionRuntimeTest') }

@@ -94,6 +94,48 @@ class DocumentAdmissionRuntimeTest {
         } finally { thread.setContextClassLoader(previous); }
     }
 
+    @Test void observesActualStandardClasspathInAFreshJvm() throws Exception {
+        var root = bundle();
+        var inventory = DocumentRuntimeInventory.read(root, () -> {});
+        var components = new ArrayList<>(components(root, inventory));
+        var container = Path.of(System.getProperty("protomolt.test.containerJar"));
+        assertThat(container).isRegularFile();
+        components.add(new Component("container-test-host", container));
+        var output = compileProbe(components);
+        var source = directory.resolve("RuntimeObservationProbe.java");
+        try (var input = getClass().getResourceAsStream("/runtime-inventory/RuntimeObservationProbe.java")) {
+            assertThat(input).isNotNull(); Files.copy(input, source);
+        }
+        String classpath = String.join(java.io.File.pathSeparator, components.stream().map(c -> c.jar().toString()).toList());
+        assertThat(javax.tools.ToolProvider.getSystemJavaCompiler().run(null, null, null,
+                "-proc:none", "-classpath", classpath, "-d", output.toString(), source.toString())).isZero();
+        var fixture = directory.resolve("probe.jar");
+        try (var jar = new java.util.jar.JarOutputStream(Files.newOutputStream(fixture)); var paths = Files.walk(output)) {
+            for (var path : paths.filter(Files::isRegularFile).sorted().toList()) {
+                jar.putNextEntry(new java.util.jar.JarEntry(output.relativize(path).toString().replace(java.io.File.separatorChar, '/')));
+                Files.copy(path, jar); jar.closeEntry();
+            }
+        }
+        var log = directory.resolve("process.log");
+        var process = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading", "-cp",
+                classpath + java.io.File.pathSeparator + fixture,
+                "ai.protomolt.proto.repo.container.ledger.RuntimeObservationProbe", root.toString())
+                .redirectErrorStream(true).redirectOutput(log.toFile()).start();
+        try {
+            assertThat(process.waitFor(60, java.util.concurrent.TimeUnit.SECONDS)).as("Forked runtime observer completed").isTrue();
+            assertThat(Files.size(log)).isLessThan(65536);
+            String text = Files.readString(log);
+            assertThat(process.exitValue()).as(text).isZero();
+            assertThat(text).contains("OBSERVED " + inventory.identities().size() + " artifacts; validation and context guards passed");
+        } finally {
+            if (process.isAlive()) {
+                process.destroyForcibly();
+                assertThat(process.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            }
+        }
+    }
+
     private static void anchor(List<DocumentRuntimeInventory.Anchor> anchors, List<Component> components,
                                ClassLoader loader, String prefix, String className) throws Exception {
         var matching = components.stream().filter(c -> c.name().startsWith(prefix)).toList();

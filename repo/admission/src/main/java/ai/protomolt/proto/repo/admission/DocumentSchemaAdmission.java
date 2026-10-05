@@ -21,7 +21,15 @@ public final class DocumentSchemaAdmission {
     /** Fixed rule dialects and structural ceilings, independent of ServiceLoader state. */
     public static final String PROFILE = "protomolt-retained-schema-admission/v1";
     static final ProtoValidator VALIDATOR = ProtoValidator.create(
-            List.of(new ProtomoltRuleSource(), new ProtovalidateRuleSource()));
+            List.of(new ProtomoltRuleSource(), new ProtovalidateRuleSource()),
+            ai.protomolt.proto.validate.spi.TaxonomyCatalog.empty(),
+            ai.protomolt.proto.validate.spi.PostalCodeCatalog.empty());
+    /** Fixed configuration of this loaded admission implementation, not caller-supplied provenance. */
+    public record RuntimeProfile(String validationProfile, String catalogConfiguration) {}
+    /** Method invocation reads the loaded implementation; public string constants may be inlined by consumers. */
+    public static RuntimeProfile runtimeProfile() {
+        return new RuntimeProfile(PROFILE, "empty-taxonomy-and-postal/v1");
+    }
     private static final int MIB = 1024 * 1024;
     private DocumentSchemaAdmission() {}
 
