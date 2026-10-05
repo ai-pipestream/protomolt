@@ -24,6 +24,7 @@ import java.util.concurrent.Future;
 /** Original-backend reads of an already-authorized, published document snapshot. */
 public final class DocumentPartReader implements AutoCloseable,
         ai.protomolt.proto.repo.container.ledger.DocumentRetainedReader,
+        ai.protomolt.proto.repo.container.ledger.DocumentAssessmentReader,
         ai.protomolt.proto.repo.container.ledger.DocumentReadLifecycle.Reader {
     @FunctionalInterface
     public interface BackendResolver {
@@ -205,6 +206,42 @@ public final class DocumentPartReader implements AutoCloseable,
             return readFragments(wanted.stream().map(DocumentPublicationLedger.BoundPart::part).toList(),
                     () -> resolveBoundParts(wanted, control), control, false, protection);
         } finally { exitOperation(); }
+    }
+
+    /** Retained candidate reads; returned fragments have no publication or semantic-review authority. */
+    @Override public DocumentReadBatch readAssessment(DocumentReadLedger.PinnedAssessment assessment,
+            String member, RepositoryReadControl control) {
+        Objects.requireNonNull(assessment); Objects.requireNonNull(member); Objects.requireNonNull(control);
+        enterOperation();
+        DocumentReadBatch batch = null;
+        boolean delivered = false;
+        // The setup use transfers to workers/batch. A separate admitted use stays
+        // here so failed I/O can still be authorized after its batch has closed.
+        try (var delivery = assessment.use(); var setup = assessment.use()) {
+            try {
+                checkActive(control);
+                var wanted = setup.plan().entries(member).stream().map(entry -> entry.part()).toList();
+                batch = readFragments(wanted.stream().map(DocumentPublicationLedger.BoundPart::part).toList(),
+                        () -> resolveBoundParts(wanted, control), control, false, setup);
+                checkActive(control);
+            } catch (java.util.concurrent.CancellationException cancelled) {
+                throw new RepositoryException(RepositoryException.Code.CANCELLED, "Assessment read cancelled");
+            } catch (RuntimeException failure) {
+                if (failure instanceof RepositoryException repository
+                        && (repository.code() == RepositoryException.Code.CANCELLED
+                            || repository.code() == RepositoryException.Code.DEADLINE_EXCEEDED))
+                    throw new RepositoryException(repository.code(), "Assessment read cancelled or expired");
+                control.check();
+                assessment.authorizeDelivery(delivery, control);
+                throw failure;
+            }
+            assessment.authorizeDelivery(delivery, control);
+            delivered = true;
+            return batch;
+        } finally {
+            if (!delivered && batch != null) batch.close();
+            exitOperation();
+        }
     }
 
     /**

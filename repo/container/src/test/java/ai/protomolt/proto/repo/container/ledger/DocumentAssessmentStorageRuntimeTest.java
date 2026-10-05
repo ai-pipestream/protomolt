@@ -36,7 +36,7 @@ class DocumentAssessmentStorageRuntimeTest {
         String classpath = String.join(java.io.File.pathSeparator, jars.values().stream().map(Path::toString).toList());
         var classes = Files.createDirectory(directory.resolve("classes"));
         var sources = new ArrayList<String>();
-        for (String name : List.of("ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentCaptureFaultProbe", "AssessmentStorageProbe", "AssessmentRestartProbe")) {
+        for (String name : List.of("ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentCaptureFaultProbe", "AssessmentProviderProbe", "AssessmentStorageProbe", "AssessmentRestartProbe")) {
             var source = directory.resolve(name + ".java");
             try (var input = getClass().getResourceAsStream("/runtime-inventory/" + name + ".java")) {
                 assertThat(input).isNotNull(); Files.copy(input, source);
@@ -53,8 +53,11 @@ class DocumentAssessmentStorageRuntimeTest {
                 Files.copy(file, output); output.closeEntry();
             }
         }
-        try (var postgres = new PostgreSQLContainer("postgres:18-alpine")) {
+        try (var postgres = new PostgreSQLContainer("postgres:18-alpine");
+                var storage = new org.testcontainers.localstack.LocalStackContainer("localstack/localstack:3.8")
+                        .withServices("s3")) {
             postgres.start();
+            storage.start();
             var log = directory.resolve("host.log");
             var builder = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                     "-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading", "-cp",
@@ -63,6 +66,10 @@ class DocumentAssessmentStorageRuntimeTest {
             builder.environment().put("PROTOMOLT_TEST_JDBC", postgres.getJdbcUrl());
             builder.environment().put("PROTOMOLT_TEST_USER", postgres.getUsername());
             builder.environment().put("PROTOMOLT_TEST_PASSWORD", postgres.getPassword());
+            builder.environment().put("PROTOMOLT_TEST_S3_ENDPOINT", storage.getEndpoint().toString());
+            builder.environment().put("PROTOMOLT_TEST_S3_REGION", storage.getRegion());
+            builder.environment().put("PROTOMOLT_TEST_S3_ACCESS", storage.getAccessKey());
+            builder.environment().put("PROTOMOLT_TEST_S3_SECRET", storage.getSecretKey());
             var request = directory.resolve("restart-request.properties");
             builder.environment().put("PROTOMOLT_TEST_RESTART_REQUEST", request.toString());
             var process = builder.redirectErrorStream(true).redirectOutput(log.toFile()).start();
@@ -74,6 +81,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 assertThat(result).contains("OBSERVED_SQL_HOST_OK");
                 assertThat(result).contains("OBSERVED_ASSESSMENT_CREATION_OK", "CLOSED_SCOPE_ASSESSMENT_ACK_OK");
                 assertThat(result).contains("ASSESSMENT_CAPTURE_FAULTS_OK");
+                assertThat(result).contains("ASSESSMENT_PROVIDER_READS_OK");
             } finally {
                 if (process.isAlive()) {
                     process.destroyForcibly();

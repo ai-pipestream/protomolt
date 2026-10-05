@@ -10,7 +10,8 @@ public final class AssessmentStorageProbe {
             throw new AssertionError("Ambient test framework leaked into production host");
         } catch (ClassNotFoundException expected) { /* Deliberately absent. */ }
         var observation = DocumentAssessmentRuntimeObserver.observe(Path.of(args[0]), () -> {});
-        try (var database = new LedgerDatabase(new LedgerConfig(System.getenv("PROTOMOLT_TEST_JDBC"),
+        try (var provider = new AssessmentProviderProbe();
+                var database = new LedgerDatabase(new LedgerConfig(System.getenv("PROTOMOLT_TEST_JDBC"),
                 System.getenv("PROTOMOLT_TEST_USER"), System.getenv("PROTOMOLT_TEST_PASSWORD")))) {
             var tx = new Tx(database.entityManagerFactory());
             tx.inTransaction(em -> {
@@ -26,7 +27,7 @@ public final class AssessmentStorageProbe {
             // Exercise genuine typed/opaque assessment, real validation and scoped
             // evidence while the production Hibernate/JDBC host is initialized.
             ObservedAssessmentProbe.run(observation);
-            AssessmentCreationProbe.run(tx, observation, database.dataSource());
+            AssessmentCreationProbe.run(tx, observation, database.dataSource(), provider);
             observation.identity(() -> {});
         }
         System.out.println("OBSERVED_SQL_HOST_OK");

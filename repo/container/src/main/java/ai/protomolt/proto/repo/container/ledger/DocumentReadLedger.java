@@ -272,7 +272,7 @@ public final class DocumentReadLedger {
         private PinnedPlan(DocumentReadPins.Captured<DocumentRetainedReadPlan> captured) { super(captured); }
     }
 
-    final class PinnedAssessment extends PinnedRead<DocumentAssessmentReadPlan> {
+    public final class PinnedAssessment extends PinnedRead<DocumentAssessmentReadPlan> {
         private final DocumentAssessmentReadProtection<DocumentAssessmentReadPlan> assessment;
         private final RepositoryCaller caller;
         private final RepositoryOperationLedger.Owner owner;
@@ -285,7 +285,7 @@ public final class DocumentReadLedger {
         }
 
         /** The provider/batch owner supplies its existing Use; this check creates no new lifetime. */
-        void authorizeDelivery(PinnedRead<?>.Use use, ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
+        public void authorizeDelivery(PinnedRead<?>.Use use, ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
             if (Objects.requireNonNull(use).plan() != assessment.plan())
                 throw new IllegalArgumentException("Delivery use belongs to another assessment capture");
             DocumentAssessmentDeliveryAuthorization.check(tx, caller, owner, command, assessment, control);

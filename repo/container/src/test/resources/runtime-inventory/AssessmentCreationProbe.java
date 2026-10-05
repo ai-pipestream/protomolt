@@ -12,7 +12,8 @@ import java.util.*;
 
 /** Real observed evidence and SQL transaction; physical observations are explicitly synthetic. */
 public final class AssessmentCreationProbe {
-    public static void run(Tx tx, DocumentAssessmentRuntimeObserver.Observation observation, javax.sql.DataSource database) throws Exception {
+    public static void run(Tx tx, DocumentAssessmentRuntimeObserver.Observation observation, javax.sql.DataSource database,
+            AssessmentProviderProbe provider) throws Exception {
         List<DocumentPublicationMember> restartMembers = new ArrayList<>();
         for (String memberId : List.of("a", "b")) {
             var member = ObservedAssessmentProbe.member(memberId).member();
@@ -38,18 +39,19 @@ public final class AssessmentCreationProbe {
             var caller = new RepositoryCaller("principal", true);
             var owner = new RepositoryOperationLedger(tx).admit(new RepositoryOperationLedger.Key("account", "principal", command.operationId()),
                     command, UUID.randomUUID(), afterScope ? Duration.ofSeconds(60) : Duration.ofMinutes(5)).owner().orElseThrow();
-            var profile = new ManagedBackendLedger.Profile(new BackendIdentity("test-location", "test-location/v1",
+            String generation = afterScope ? "assessment-s3" : "creation-probe";
+            var profile = afterScope ? provider.profile() : new ManagedBackendLedger.Profile(new BackendIdentity("test-location", "test-location/v1",
                     Map.of("endpoint", "synthetic-provider-observations")), "creation-probe");
-            new ManagedBackendLedger(tx).bind("creation-probe", profile);
+            new ManagedBackendLedger(tx).bind(generation, profile);
             var drives = new DriveLedger(tx);
             var placements = new HashMap<UUID,DocumentUploadPlan.Placement>();
             var attempts = new HashMap<String,UUID>();
             for (var member : command.intent().getMembersList()) {
                 var drive = new DriveRecord(); drive.driveId = UUID.fromString(member.getDriveId()); drive.accountId = "account";
                 drive.name = "creation-" + drive.driveId; drive.bucket = "namespace"; drive.prefix = "root";
-                drive.provider = "test-location"; drive.driveType = "CUSTOM"; drive.status = "ACTIVE";
+                drive.provider = profile.identity().provider(); drive.driveType = "CUSTOM"; drive.status = "ACTIVE";
                 drives.insert(drive);
-                placements.put(drive.driveId, DocumentUploadPlan.Placement.sample(drive, "creation-probe", profile));
+                placements.put(drive.driveId, DocumentUploadPlan.Placement.sample(drive, generation, profile));
                 attempts.put(member.getMemberId(), UUID.randomUUID());
             }
             var prepared = DocumentOperationUploadAdmission.prepare(command, placements, attempts, Duration.ofMinutes(5));
@@ -59,10 +61,17 @@ public final class AssessmentCreationProbe {
                 var attempt = admitted.stream().filter(value -> value.id().equals(member.attempt().orElseThrow().id())).findFirst().orElseThrow();
                 var selection = new DocumentSelectedAttemptLedger.Selected(member.intent().getMemberId(), 1, attempt.id(), attempt.token());
                 selected.put(selection.member(), selection);
-                // Exercise production verification SQL with labelled synthetic measurements,
-                // never a fake successful object-store adapter.
+                // Earlier negative fixtures use labelled synthetic measurements.
+                // The afterScope fixture performs real S3 PUT and bounded read-back.
                 new DocumentSelectedAttemptLedger(tx).verifyBatch(owner, selection, member.attempt().orElseThrow().uploads().stream().map(upload -> {
                     var object = upload.object();
+                    if (afterScope) {
+                        var fragments = member.intent().getMemberId().equals("a") ? a.fragments() : b.fragments();
+                        var measured = DocumentPartTransfer.upload(provider.store(), "namespace", object,
+                                fragments.get(upload.revisionOrdinal()).toByteArray(), Map.of(), () -> {}, () -> {});
+                        return new DocumentSelectedAttemptLedger.Observation(object.objectKey(), object.size(), object.sha256(),
+                                object.contentType(), measured.version(), measured.etag());
+                    }
                     return new DocumentSelectedAttemptLedger.Observation(object.objectKey(), object.size(), object.sha256(),
                             object.contentType(), "fixture-version", "fixture-etag");
                 }).toList());
@@ -229,16 +238,19 @@ public final class AssessmentCreationProbe {
                             && declared.getSlot().getPart() == entry.part().part().part()
                             && declared.getSlot().getSubKey().equals(entry.part().part().subKey()),
                             "read plan preserves candidate ordinals and payload identity");
-                    require(entry.part().binding().generation().equals("creation-probe")
+                    require(entry.part().binding().generation().equals(generation)
                             && entry.part().binding().namespace().equals("namespace")
                             && entry.part().binding().profile().equals(profile), "read plan retains original backend identity");
-                    require("fixture-version".equals(entry.part().part().providerVersion()), "read plan retains provider version");
+                    require(entry.part().part().providerVersion() != null && !entry.part().part().providerVersion().isBlank(),
+                            "read plan retains provider version");
                 }
                 protectedAssessment.close();
                 require(assessmentReader.releaseDrained(1) == 0, "assessment use blocks release until drain");
                 retainedUse.close();
                 require(assessmentReader.releaseDrained(1) == 1, "exact assessment session released after drain");
                 require(assessmentReader.outstandingReads() == 0, "assessment release returns capacity");
+                provider.verifyReads(tx, recoveredOwner, recoveredCommand, selections, retained, recoveryBudget,
+                        Map.of("a", a.fragments(), "b", b.fragments()));
                 tx.inTransaction(em -> {
                     em.createNativeQuery("SELECT lock_repository_retention_set(array_agg(object_id)) FROM document_assessment_objects WHERE assessment_id=:id")
                             .setParameter("id", retained.assessment()).getSingleResult();

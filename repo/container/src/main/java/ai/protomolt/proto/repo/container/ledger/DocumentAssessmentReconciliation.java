@@ -50,7 +50,8 @@ final class DocumentAssessmentReconciliation {
         Objects.requireNonNull(reader); Objects.requireNonNull(session); Objects.requireNonNull(beforeCommit);
         var verified = observeRetained(caller, owner, command, selected, assessment, manifestSha, deadline, budget,
                 callerControl, reader, session, beforeCommit).orElseThrow(DocumentAssessmentReconciliation::conflict);
-        return new DocumentAssessmentReadPlan(verified.stage(), verified.entries());
+        return new DocumentAssessmentReadPlan(verified.stage(), verified.entries(), command.intent().getMembersList().stream()
+                .map(member -> member.getMemberId()).collect(java.util.stream.Collectors.toSet()));
     }
 
     private record Verified(DocumentAssessmentCreation.Created stage, java.util.List<DocumentAssessmentReadPlan.Entry> entries) {}

@@ -9,7 +9,8 @@ import java.util.zip.ZipFile
 final int maximumArtifacts = 64
 final long maximumBytes = 1024L * 1024 * 1024
 final String format = 'protomolt-admission-runtime-inventory/v1'
-def runtime = configurations.runtimeClasspath
+def runtime = configurations.getByName(project.hasProperty('admissionRuntimeConfiguration')
+        ? project.admissionRuntimeConfiguration : 'runtimeClasspath')
 def admissionPath = project.hasProperty('admissionRuntimeRootProject') ? project.admissionRuntimeRootProject : project.path
 def admissionProject = project(admissionPath)
 def ownJar = admissionProject.tasks.named('jar')

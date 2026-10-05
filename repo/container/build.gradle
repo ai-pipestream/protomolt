@@ -1,6 +1,21 @@
 description = 'Claim-check part storage and Postgres ledger over the provider-neutral byte SPI'
 
+// Test host composition resolved as one production graph, without JUnit/test fixtures.
+configurations {
+    assessmentHostRuntime {
+        canBeConsumed = false
+        canBeResolved = true
+        extendsFrom runtimeClasspath
+        attributes {
+            attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage, Usage.JAVA_RUNTIME))
+            attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, objects.named(LibraryElements, LibraryElements.JAR))
+        }
+    }
+}
+
 dependencies {
+    assessmentHostRuntime project(':protomolt-repo-engine')
+    assessmentHostRuntime project(':protomolt-repo-blob-s3')
     implementation project(':protomolt-repo-admission')
     testImplementation project(':protomolt-descriptors')
     api project(':protomolt-repo-codec')
@@ -77,23 +92,24 @@ tasks.named('check') { dependsOn tasks.named('admissionRuntimeTest') }
 // Observe the actual admission runtime alongside the production SQL host. The
 // subprocess receives JARs only; Gradle/JUnit classloaders cannot attest it.
 ext.admissionRuntimeRootProject = ':protomolt-repo-admission'
+ext.admissionRuntimeConfiguration = 'assessmentHostRuntime'
 apply from: rootProject.file('gradle/admission-runtime-inventory.gradle')
 def hostAdmissionInventory = layout.buildDirectory.dir('admission-runtime')
 tasks.named('test') { exclude '**/DocumentAssessmentStorageRuntimeTest*' }
 tasks.register('admissionStorageTest', Test) {
     group = 'verification'
     description = 'Qualify observed admission and PostgreSQL together in a production JAR host'
-    dependsOn tasks.named('admissionRuntimeInventory'), tasks.named('jar'), configurations.runtimeClasspath
+    dependsOn tasks.named('admissionRuntimeInventory'), tasks.named('jar'), configurations.assessmentHostRuntime
     testClassesDirs = sourceSets.test.output.classesDirs
     classpath = sourceSets.test.runtimeClasspath
     filter { includeTestsMatching 'ai.protomolt.proto.repo.container.ledger.DocumentAssessmentStorageRuntimeTest' }
     inputs.dir(hostAdmissionInventory)
-    inputs.files(configurations.runtimeClasspath)
+    inputs.files(configurations.assessmentHostRuntime)
     inputs.file(tasks.named('jar').flatMap { it.archiveFile })
     doFirst {
         systemProperty 'protomolt.test.admissionRuntimeBundle', hostAdmissionInventory.get().asFile.absolutePath
         systemProperty 'protomolt.test.storageHostClasspath', files(tasks.named('jar').get().archiveFile,
-                configurations.runtimeClasspath).asPath
+                configurations.assessmentHostRuntime).asPath
     }
     useJUnitPlatform()
 }

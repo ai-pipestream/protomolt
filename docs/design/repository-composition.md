@@ -4580,8 +4580,10 @@ grants no semantic-review authority, and no new public RPC is mounted.
 
 The production-JAR probe exercises canonical capture after the original evidence
 scope closes: wrong manifest refusal, correct retained identity, use-counted drain,
-normal release and quiesced discovery/confirmation. Physical slot observations in
-that fixture remain synthetic. A JDBC fault probe delegates to real PostgreSQL
+normal release and quiesced discovery/confirmation. This closed-scope candidate
+now uses real versioned S3 uploads and bounded read-back through LocalStack;
+earlier negative creation fixtures still use explicitly synthetic measurements.
+A JDBC fault probe delegates to real PostgreSQL
 before injecting lost commit acknowledgement or cancellation before/after commit.
 It checks durable sessions, local capacity, verification-memory release and exact
 drained/quiesced recovery counts. An uncertain committed capture retains capacity
@@ -4597,11 +4599,10 @@ permission revocation. After revocation commits, capture refuses with NOT_FOUND
 and retains no session, read capacity or verification-memory reservation.
 The production-JAR capture probe also checks retained backend/profile/namespace,
 provider version, candidate ordinals and payload identity, and identical bindings
-after the owned objects become retiring. These physical measurements remain
-synthetic; no provider read is claimed by this probe. The current typed candidate
+after the owned objects become retiring. The current typed candidate
 path accepts DOCUMENT_PART origins; ARCHIVE origins fail the complete-set check
-until a corresponding supported candidate path exists. Provider execution,
-reused-source revocation during provider I/O and integration of the delivery gate
+until a corresponding supported candidate path exists. Mixed retained-reuse reads,
+reused-source revocation during provider I/O and offline historical revalidation
 remain required before enabling the full assessment reader.
 
 PinnedAssessment now binds its delivery check to the capture caller, exact operation
@@ -4623,5 +4624,26 @@ The production-JAR restart probe checks delivery beside an independently held
 shared operation-owner lock, and delivery after permission revocation and
 restoration, ended Uses, natural owner expiry and takeover. Refusal retains
 capacity until the held Use drains, and cleanup remains possible after owner
-expiry. These are real authorization/session checks with synthetic physical
-evidence; provider-I/O race qualification is still pending.
+expiry. These checks use the same candidate's measured S3 observations.
+
+DocumentAssessmentReader is a trusted host port implemented by DocumentPartReader;
+capture remains internal and no transport entry point is mounted. Reads select a
+member's nonempty entries without changing their full revision ordinals. Two Uses
+are admitted before I/O: setup transfers to the batch/workers, while delivery stays
+open through result/error authorization. SQL locks never surround provider calls.
+Returned batches retain payload reservations and session protection until closed;
+cancelled workers retain both until actual exit. Detailed provider failures are
+returned only after current delivery authorization succeeds.
+
+The production-JAR host resolves engine, S3 and container artifacts in one
+test-only production graph, without adding those dependencies to the published
+container runtime. The child still refuses ambient JUnit classes and observes the
+admission closure selected in that same graph. LocalStack tests exercise measured
+PUT/read-back, exact old-version GET after a newer version is written, both typed
+and opaque member bytes, returned-batch retention, and permission revocation after
+real GET. Revocation refuses both successful results and injected provider errors,
+without attaching the private provider error as a cause or suppressed exception.
+A controlled post-GET worker gate proves prompt cancellation while SQL retention
+and payload reservations remain owned until completion; the reader is explicitly
+idle before its borrowed client closes. This qualifies that provider path, not
+all adapters, multi-replica throughput, or semantic review/publication authority.
