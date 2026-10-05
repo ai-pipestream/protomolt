@@ -11,11 +11,17 @@ import java.util.UUID;
 final class DocumentAssessmentRetentionFixture {
     final Tx tx;
     final RepositoryOperationLedger operations;
+    private final long fragmentSize;
     final String backend = "assessment-" + UUID.randomUUID();
     record Candidate(RepositoryOperationLedger.Owner owner, UUID attempt, UUID assessment) {}
 
     DocumentAssessmentRetentionFixture(Tx tx) {
+        this(tx, 1);
+    }
+
+    DocumentAssessmentRetentionFixture(Tx tx, long fragmentSize) {
         this.tx = tx;
+        this.fragmentSize = fragmentSize;
         operations = new RepositoryOperationLedger(tx);
         new ManagedBackendLedger(tx).bind(backend, new ManagedBackendLedger.Profile(
                 new BackendIdentity("test-location", "test-location/v1", Map.of("endpoint", "synthetic-sql-fixture")), "realm"));
@@ -77,11 +83,11 @@ final class DocumentAssessmentRetentionFixture {
                 em.createNativeQuery("""
                         INSERT INTO document_part_attempt_objects(attempt_id,ordinal,revision_ordinal,part,sub_key,
                             storage_realm,storage_namespace,object_key,expected_size,expected_sha256,content_type)
-                        VALUES (:id,:dense,:ordinal,3,:sub,'realm','namespace',:key,1,:sha,'application/protobuf')
+                        VALUES (:id,:dense,:ordinal,3,:sub,'realm','namespace',:key,:size,:sha,'application/protobuf')
                         """).setParameter("id", candidate.attempt).setParameter("dense", dense).setParameter("ordinal", ordinal)
                         .setParameter("sub", "chunk-" + ordinal)
                         .setParameter("key", "documents/account/" + node + "/attempts/" + candidate.attempt + "/part-" + ordinal)
-                        .setParameter("sha", "a".repeat(64)).executeUpdate();
+                        .setParameter("size", fragmentSize).setParameter("sha", "a".repeat(64)).executeUpdate();
             }
             em.createNativeQuery("UPDATE document_part_attempts SET state='STAGING' WHERE attempt_id=:id")
                     .setParameter("id", candidate.attempt).executeUpdate();

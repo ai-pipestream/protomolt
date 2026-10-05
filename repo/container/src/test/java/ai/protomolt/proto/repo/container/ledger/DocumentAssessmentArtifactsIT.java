@@ -53,7 +53,7 @@ class DocumentAssessmentArtifactsIT {
             org.flywaydb.core.Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
                     .schemas(schema).defaultSchema(schema).locations("classpath:db/migration/repo").load().migrate();
             String after = context.tx().readOnly(em -> (String) em.createNativeQuery(
-                    "SELECT (to_jsonb(o)-'expected_artifacts')::text FROM document_assessment_owners o WHERE assessment_id=:id")
+                    "SELECT (to_jsonb(o)-'expected_artifacts'-'expected_roots')::text FROM document_assessment_owners o WHERE assessment_id=:id")
                     .setParameter("id", c.assessment()).getSingleResult());
             assertThat(after).isEqualTo(before);
             Object[] counts = context.tx().readOnly(em -> (Object[]) em.createNativeQuery("""

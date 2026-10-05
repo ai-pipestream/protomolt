@@ -3751,7 +3751,7 @@ considered finished.
 V67 adds `document_assessment_artifacts`, which references the existing
 account-scoped `repository_schema_artifacts` catalog. An assessment stores digest
 references, not a private copy of every descriptor, metadata record or source
-file. Root evidence is a separate set and is not retained by V67. The owner
+file. Root evidence is a separate set, retained by V68 rather than V67. The owner
 declares a schema artifact count from zero through 64;
 zero preserves existing physical-only staging. The final association set must
 match that count and total no more than 64 MiB. Exact correspondence to the
@@ -3811,12 +3811,13 @@ The future writer must recheck operation, policy, authorization and selection
 fences within its decision transaction before committing. A post-callback check
 cannot replace those fences or undo a committed transaction.
 
-Durable root evidence remains required before terminal assessment use. Preserve
-the separate limits: at most 64 schema artifacts totaling 64 MiB, and at most
+Root evidence requires separate storage limits: at most 64 schema artifacts
+totaling 64 MiB, and at most
 4,096 root evidence entries totaling 64 MiB. Root evidence must not be forced
-into the schema artifact count limit. Its storage needs exact manifest and part
-bindings, atomic acquisition/release and authorized replay alongside V67's
-normalized schema artifacts. Terminal promotion, replay reader admission and
+into the schema artifact count limit. V68 below adds durable part bindings and
+atomic acquisition/release. The admission writer still needs exact manifest
+correspondence and authorized replay alongside V67's normalized schema artifacts.
+Terminal promotion, replay reader admission and
 ADMISSION_REJECTED emission remain disabled pending that complete path.
 
 The scoped-evidence change passed 25 assessment/runtime unit tests and three
@@ -3824,3 +3825,42 @@ production-bundle runtime tests. The fresh-JVM probe checks borrowed evidence,
 reservation lifetime, parent-close refusal, callback cancellation, runtime drift,
 reentrant scope closure and mismatched owner generation. These checks do not
 establish durable root storage or SQL admission behavior.
+
+#### Durable assessment root evidence
+
+V68 adds `document_assessment_roots` with an exact foreign key to the assessment's
+member and full part ordinal. Each immutable entry records the locator digest,
+fragment digest and size, and encoded evidence with its codec, version and digest.
+Insertion requires a sealed assessment in its creation transaction under the live
+operation fence. The fragment identity must match the slot's verified physical
+object. A zero-byte fragment is allowed; the evidence encoding itself must be
+nonempty. Storage can bind any retained candidate slot, while supported root
+discovery and semantic interpretation remain admission-handler responsibilities.
+
+The owner declares an immutable root count from zero through 4,096. A deferred
+check requires the exact count and at most 64 MiB of evidence; each encoding is
+limited to 4 MiB. Budget aggregation reads stored lengths after assembly rather
+than rescanning all prior evidence for every insertion. Trusted callers must
+enforce their input and reservation bounds before assembly. These SQL limits do
+not replace the admission engine's stricter per-member limits or canonical checks.
+
+Root insertion uses source and retention locks already acquired by physical
+sealing. Recovery removes root evidence before candidate slots in the same
+transaction as schema and physical reference release. Expiry alone removes
+nothing. Direct deletion without recovery, partial recovery and late insertion
+are refused. Existing assessments migrate with zero declared roots; no semantic
+evidence is synthesized for them.
+
+This extends internal assessment acquisition and expired recovery. Public
+protobuf/gRPC contracts, normal reads and successful revision behavior are
+unchanged. The SQL fixtures use synthetic evidence bytes and prove storage
+lifecycle only. They do not prove canonical admission, provider availability,
+registry-offline replay or terminal decision safety. The next integration work
+is the trusted writer connecting scoped Java evidence to these durable bindings.
+
+The affected PostgreSQL run passed 35 cases: nine root-evidence cases, seven
+schema-artifact cases, 17 physical-retention cases and two reuse cases. Root
+coverage includes exact sparse ordinals and fragment identities, invalid codecs
+and checksums, zero-byte fragments, incomplete/excess counts, independent schema
+and root budgets, oversized evidence, partial recovery rollback, and a populated
+V67-to-V68 migration that preserves existing schema and physical ownership.
