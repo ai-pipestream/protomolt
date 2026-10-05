@@ -2798,10 +2798,39 @@ Startup cleanup also covers failure of document-reader registration after the ar
 component was constructed: a PostgreSQL trigger rejects that second registration,
 and the previously registered archive reader is quiesced before borrowed resources
 close. This is best-effort cleanup of unexposed resources, distinct from a retryable
-live shutdown. Failures inside the archive component before its constructor returns,
-and lost SQL acknowledgments during reader-incarnation registration, still need
-constructor-level identity recovery tests and handling. Do not infer those cases
-from successful shutdown or this rejected-insert fixture.
+live shutdown. The archive component now constructs its configuration-dependent
+writer/recovery components before registering a reader. A real-provider fixture
+with deliberately unsupported writer capabilities verifies that refusal creates
+no reader incarnation. This closes the configuration-failure window before the
+component constructor returns.
+
+Reader-incarnation registration now has separate constructor-failure reconciliation.
+V74 adds an immutable registration nonce and backfills existing rows without changing
+their states. Document and archive ledger constructors mint that nonce before SQL.
+On registration failure, cleanup first inserts the same UUID/nonce with conflict
+handling, so an unresolved insertion must finish before cleanup decides ownership.
+If the original transaction rolled back, this reserves a permanent closed tombstone.
+Cleanup locks the row and fences/attests it only when the nonce matches. A different
+nonce is reported as FOREIGN_IDENTITY and left untouched; it is not evidence of
+quiescence. No read handle or provider work has escaped this failed constructor.
+
+`ReaderRegistration.Failure` preserves the original exception and initial cleanup error.
+It retains the private nonce for explicit `retryCleanup(Tx)` against the same repository
+after database access returns. PENDING includes a lost cleanup acknowledgment; even
+if cleanup committed, the caller must retry to verify it. QUIESCED is recorded locally
+only after commit acknowledgment. Subsequent retry failures propagate and leave the
+private retry identity intact. This does not recover a crashed or live reader and
+does not let a caller manufacture cleanup authority for an arbitrary incarnation.
+The V74 migration is required before these Java constructors run. Wire contracts,
+read-pin identities and protobuf names/tags remain unchanged.
+
+Registration tests cover lost registration and cleanup acknowledgments for both
+ledger types, cleanup rollback with later explicit retry, UUID collision after
+rollback, permanent tombstones and immutable nonce migration over existing states.
+A separate connection holds an uncommitted conflicting insertion; PostgreSQL's
+blocking graph proves cleanup waits before either preserving the committed foreign
+owner or creating its own quiesced tombstone after rollback. These are startup-only
+transactions; the change adds no SQL round trips to ordinary reads or writes.
 
 Operation inventory for this slice: all protobuf operations, names, tags, imports
 and Any URLs are unchanged. The Java host composition port and package-private host

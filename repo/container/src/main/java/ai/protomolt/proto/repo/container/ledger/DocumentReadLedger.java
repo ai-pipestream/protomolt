@@ -39,10 +39,7 @@ public final class DocumentReadLedger {
         this.maxOutstandingReads = maxOutstandingReads;
         this.tx = Objects.requireNonNull(tx);
         this.incarnation = Objects.requireNonNull(incarnation);
-        tx.inTransaction(em -> {
-            em.createNativeQuery("INSERT INTO repository_reader_incarnations(incarnation,state) VALUES(:id,'ACTIVE')")
-                    .setParameter("id", incarnation).executeUpdate();
-        });
+        ReaderRegistration.register(tx, incarnation);
     }
 
     /** Counts capture itself, so fencing cannot attest quiescence during SQL admission. */

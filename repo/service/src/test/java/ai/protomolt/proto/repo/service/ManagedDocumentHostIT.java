@@ -24,7 +24,22 @@ class ManagedDocumentHostIT {
                 "document-host", 0, null, null, null, null, 0, 0L)
                 .withManagedStorage(new ManagedStoragePolicy("document-host-original", "document-host-realm", true));
         try (var database = new ai.protomolt.proto.repo.container.ledger.LedgerDatabase(config.ledger())) {
-            // Migrate before installing a fault around actual host registration SQL.
+            // Invalid writer capability configuration must fail before registering
+            // an archive reader, even though the backing client is a real adapter.
+            var providers = ai.protomolt.proto.repo.blob.spi.BlobStores.discover();
+            var options = java.util.Map.of("endpoint", S3.getEndpoint().toString(), "region", S3.getRegion(),
+                    "path-style", "true", "conditional-writes", "false", "access-key", S3.getAccessKey(), "secret-key", S3.getSecretKey());
+            try (var backing = providers.open("s3", options)) {
+                var tx = new ai.protomolt.proto.repo.container.ledger.Tx(database.entityManagerFactory());
+                var profile = new ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger.Profile(
+                        providers.managedIdentity("s3", options), "rejected-writer-realm");
+                new ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger(tx).bind("rejected-writer", profile);
+                assertThatThrownBy(() -> new ManagedArchiveServices(tx,
+                        new ai.protomolt.proto.repo.container.archive.ArchiveLedger(tx), backing.store(), java.util.Set.of(),
+                        "rejected-writer", profile, backing.reclaimer())).isInstanceOf(UnsupportedOperationException.class);
+                assertThat(count("ACTIVE")).isZero();
+                assertThat(count("QUIESCED")).isZero();
+            }
         }
         sql("""
                 CREATE FUNCTION test_fail_second_host_reader() RETURNS trigger LANGUAGE plpgsql AS $$

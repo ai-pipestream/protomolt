@@ -25,10 +25,7 @@ public final class ArchiveReadLedger {
     public ArchiveReadLedger(Tx tx, UUID incarnation) {
         this.tx = Objects.requireNonNull(tx);
         this.incarnation = Objects.requireNonNull(incarnation);
-        tx.inTransaction(em -> {
-            em.createNativeQuery("INSERT INTO repository_reader_incarnations(incarnation,state) VALUES(:id,'ACTIVE')")
-                    .setParameter("id", incarnation).executeUpdate();
-        });
+        ai.protomolt.proto.repo.container.ledger.ReaderRegistration.register(tx, incarnation);
     }
 
     /** Permanently stops new pin admission. Does not prove that existing reads stopped. */

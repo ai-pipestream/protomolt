@@ -28,11 +28,6 @@ final class ManagedArchiveServices {
         var profiles = new ManagedBackendLedger(tx);
         if (!profiles.find(generation).filter(profile::equals).isPresent())
             throw new IllegalStateException("Original archive backend profile is not bound");
-        reader = new ArchiveObjectReader(new ArchiveReadLedger(tx, UUID.randomUUID()), (original, realm) -> {
-            if (!generation.equals(original) || !profile.storageRealm().equals(realm))
-                throw new IllegalStateException("Original archive backend is not configured on this host");
-            return store;
-        });
         writer = new ArchiveObjectWriter(new ArchiveUploadLedger(tx), store, generation, capabilities, Duration.ofMinutes(5));
         mutations = new ArchiveMutationOperations(archive, new ArchiveMutationLedger(tx), new ArchiveMutationObservations(tx));
         cleanup = new ArchiveCleanupLedger(tx);
@@ -41,6 +36,13 @@ final class ManagedArchiveServices {
             if (!generation.equals(original) || !profile.equals(originalProfile))
                 throw new IllegalStateException("Original archive backend is not configured on this host");
             return reclaimer;
+        });
+        // Register only after all configuration-dependent components are built.
+        // The final reader constructor accepts the non-null ledger and resolver only.
+        reader = new ArchiveObjectReader(new ArchiveReadLedger(tx, UUID.randomUUID()), (original, realm) -> {
+            if (!generation.equals(original) || !profile.storageRealm().equals(realm))
+                throw new IllegalStateException("Original archive backend is not configured on this host");
+            return store;
         });
     }
 
