@@ -1,0 +1,1 @@
+insert into archive_entries (account_id,archive,classification,classification_state,content_type,created_at,current_version,entry_id,filename,metadata,source_modified_at,source_uri,title,updated_at,entry_uuid) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)

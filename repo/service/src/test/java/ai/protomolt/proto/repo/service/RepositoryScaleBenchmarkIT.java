@@ -24,9 +24,10 @@ import static org.assertj.core.api.Assertions.*;
 @EnabledIfEnvironmentVariable(named = "PROTOMOLT_REPLICA_BENCHMARK", matches = "true")
 @Timeout(600)
 class RepositoryScaleBenchmarkIT {
-    @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
+    @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine")
+            .withCommand("postgres", "-c", "shared_preload_libraries=pg_stat_statements", "-c", "pg_stat_statements.track=top");
     @Container static final LocalStackContainer S3 = new LocalStackContainer("localstack/localstack:3.8").withServices("s3");
-    private static final int WORKERS = 8, SAMPLES = 3, CYCLES = 3;
+    private static final int WORKERS = workers(), SAMPLES = 3, CYCLES = 3;
     private final Path output = Path.of("build/reports/replica-scale", Instant.now().toString().replace(':', '-'));
     private final Queue<String> observations = new ConcurrentLinkedQueue<>();
     private final List<String> windows = new ArrayList<>();
@@ -46,7 +47,7 @@ class RepositoryScaleBenchmarkIT {
                 + "Acquisition time is not pure pool queue wait; checkout time is not SQL execution time.\n"
                 + "Provider API times exclude namespace/reclaimer operations and are not HTTP-only latency.\n"
                 + "SQL lock-wait duration and provider connection counts are not instrumented.\n");
-        try {
+        try (var sql = new ReplicaSqlMetrics(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword(), output)) {
             for (String mode : List.of("fixed_sql", "added_sql")) for (int replicas : new int[]{1, 2, 4}) {
                 int pool = mode.equals("fixed_sql") ? 8 / replicas : 4;
                 String run = mode + "-" + replicas;
@@ -68,12 +69,16 @@ class RepositoryScaleBenchmarkIT {
                         var saved = stubs.get(worker % replicas).withDeadlineAfter(20, TimeUnit.SECONDS).putEntry(put(address, original, 0));
                         entries.add(new Entry(address, original, saved.getVersion()));
                     }
+                    sql.reset();
                     snapshots(hosts, run + "-baseline");
+                    sql.snapshot(run + "-baseline");
                     for (int sample = -1; sample < SAMPLES; sample++) {
                         mixed(run, pool, sample, stubs, entries);
                         snapshots(hosts, run + "-" + sample + "-mixed");
+                        sql.snapshot(run + "-" + sample + "-mixed");
                         contended(run, pool, sample, stubs);
                         snapshots(hosts, run + "-" + sample + "-contended");
+                        sql.snapshot(run + "-" + sample + "-contended");
                         for (int i = 0; i < hosts.size(); i++) {
                             Files.writeString(output.resolve(run + "-" + sample + "-" + i + "-memory.txt"),
                                     Files.readString(Path.of("/proc", Long.toString(hosts.get(i).process().pid()), "status")));
@@ -85,6 +90,13 @@ class RepositoryScaleBenchmarkIT {
             Files.writeString(output.resolve("requests.csv"), "run,pool_per_child,sample,phase,worker,host,operation,elapsed_nanos,status\n" + String.join("\n", observations) + "\n");
             Files.writeString(output.resolve("windows.csv"), "run,pool_per_child,sample,phase,operations,elapsed_nanos\n" + String.join("\n", windows) + "\n");
         }
+    }
+
+    private static int workers() {
+        String configured = System.getenv("PROTOMOLT_REPLICA_WORKERS");
+        int value = configured == null ? 8 : Integer.parseInt(configured);
+        if (value < 4 || value > 64 || value % 4 != 0) throw new IllegalArgumentException("PROTOMOLT_REPLICA_WORKERS must be a multiple of four from 4 to 64");
+        return value;
     }
 
     private void mixed(String run, int pool, int sample, List<ArchiveServiceGrpc.ArchiveServiceBlockingStub> stubs,

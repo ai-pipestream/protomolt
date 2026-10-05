@@ -1,0 +1,1 @@
+insert into archive_versions (created_at,manifest,root_checksum,total_bytes,entry_uuid,version) values ($1,$2,$3,$4,$5,$6)

@@ -1265,6 +1265,14 @@ child. These cumulative snapshots include lifecycle work and do not measure SQL
 execution or lock-wait duration. Acquisition means alone cannot qualify pool-wait
 tails, and neither run establishes a saturated service or production capacity.
 
+The [32-worker statement profile](../evidence/repository/2026-10-05-replica-sql-32/README.md)
+passes the same correctness gates and records PostgreSQL statement execution time.
+The locking archive-statistics select dominates cumulative statement time in each
+configuration. Independent entries share this row; rendition-counter updates and
+final flush/refresh operations follow its acquisition. Measure lock waits and
+shorten that critical section without weakening atomic totals before considering
+broader changes. Statement execution time alone does not isolate waiting.
+
 Multiple repository service instances must share one logical repository through
 the durable ledger and configured storage identities. Independent requests must
 benefit from additional service capacity when service CPU or I/O concurrency is

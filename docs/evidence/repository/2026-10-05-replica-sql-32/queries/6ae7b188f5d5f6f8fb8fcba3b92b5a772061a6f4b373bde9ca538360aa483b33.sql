@@ -1,0 +1,1 @@
+INSERT INTO archive_version_object_refs(entry_uuid,version,object_id) VALUES ($1,$2,$3)
