@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-10-05T18:36:09.279Z" hostname="krick" time="1.043">
+  <properties/>
+  <testcase name="readerFailuresKeepTheirIdentityEvenWhenTheirTypeResemblesAnInternalLimit()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" time="0.363"/>
+  <testcase name="oversizedDescriptorClosureIsAResourceFailureNotCorruption()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" time="0.098"/>
+  <testcase name="missingRequiredDefinitionIsDataLossAndResourceRefusalIsSeparate()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" time="0.056"/>
+  <testcase name="exactDecodedAllowanceSucceedsAndSmallerBoundsRefuseWithoutLeaking()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" time="0.131"/>
+  <testcase name="rootPathAndFragmentMustBelongToTheRecordedSelectionBeforeAnyAssetRead()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" time="0.027"/>
+  <testcase name="malformedStoredAssociationFailsAsDataLossBeforeAssetReads()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" time="0.036"/>
+  <testcase name="everyReservationRefusalReleasesEarlierLeasesAndPreservesTheHostException()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" time="0.185"/>
+  <testcase name="cancellationAndHostLimitErrorsAreNeverCorruptionAndReleaseOwnership()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" time="0.097"/>
+  <testcase name="ownsNestedResultUntilCloseAndDoesNotResolveUnselectedAssociations()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" time="0.027"/>
+  <testcase name="changedRetainedRowAndEvidenceBytesCannotBeSubstituted()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" time="0.016"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

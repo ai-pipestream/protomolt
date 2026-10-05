@@ -5887,3 +5887,16 @@ fragment identity, evidence membership or current delivery authorization.
 `DocumentHistoricalSchemas` retains its complete validation and authorization
 checks. Nine focused PostgreSQL replay/revocation cases pass; optional selected
 materialization still needs its own owned result and host integration.
+
+### Owned retained occurrence materialization
+
+**New library entry point; unchanged repository RPCs:**
+`DocumentSchemaMaterialization.read` selects a canonical retained path and returns
+an owned decoded result. It checks the selected command part and retained row,
+verifies evidence membership and exact schema associations, and keeps private byte
+copies plus decoded-input reservations until close. It does not rerun admission
+validation. Missing required assets/corruption, configured resource limits and host
+failures remain distinct. The SQL adapter must still authenticate the revision,
+retain read pins, budget parsed heap and recheck current READ through delivery.
+Ten new cases and all 224 admission tests pass. Raw preservation stays separate;
+no public optional-read operation or registry resolution/cache is enabled.

@@ -30,6 +30,10 @@ final class DocumentAnyRootInventory {
                 throw new IllegalArgumentException("positive root inventory limits required; depth at most 100");
         }
     }
+    static final class LimitExceeded extends IllegalArgumentException {
+        LimitExceeded(String message) { super(message); }
+    }
+
     record Root(List<DocumentSchemaOccurrences.Step> access, Any envelope) {
         Root { access = List.copyOf(access); }
     }
@@ -51,7 +55,7 @@ final class DocumentAnyRootInventory {
         if (!slot.getUnknownFields().asMap().isEmpty() || !slot.getSubKey().isEmpty()
                 || (slot.getPart() != DocumentPart.DOCUMENT_PART_CORE && slot.getPart() != DocumentPart.DOCUMENT_PART_PARSED))
             throw new IllegalArgumentException("root inventory requires a CORE or PARSED slot");
-        if (bytes.size() > limits.maxBytes()) throw new IllegalArgumentException("root inventory byte bound exceeded");
+        if (bytes.size() > limits.maxBytes()) throw new LimitExceeded("root inventory byte bound exceeded");
         new MessageWireBudget(limits.maxWireValues(), limits.maxDepth(), () -> active(control)).check(bytes, container.type());
         var input = bytes.newCodedInput();
         input.setRecursionLimit(limits.maxDepth());
@@ -74,7 +78,7 @@ final class DocumentAnyRootInventory {
         } else {
             var field = document.getDescriptorForType().findFieldByNumber(5);
             if (document.getRepeatedFieldCount(field) > limits.maxParserEntries())
-                throw new IllegalArgumentException("parser entry bound exceeded");
+                throw new LimitExceeded("parser entry bound exceeded");
             var keys = new HashSet<String>();
             for (int i = 0; i < document.getRepeatedFieldCount(field); i++) {
                 active(control);
@@ -100,7 +104,7 @@ final class DocumentAnyRootInventory {
 
     private static void add(ArrayList<Root> roots, List<DocumentSchemaOccurrences.Step> access, Message any, Limits limits) {
         known(any);
-        if (roots.size() >= limits.maxRoots()) throw new IllegalArgumentException("root count bound exceeded");
+        if (roots.size() >= limits.maxRoots()) throw new LimitExceeded("root count bound exceeded");
         // Preserve the effective envelope. No definition lookup or payload parsing occurs.
         roots.add(new Root(access, Any.newBuilder().setTypeUrl((String) value(any, 1))
                 .setValue((ByteString) value(any, 2)).build()));

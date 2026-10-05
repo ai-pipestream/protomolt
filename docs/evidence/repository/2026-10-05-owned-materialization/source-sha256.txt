@@ -1,0 +1,4 @@
+e5a7e741a96f472983858087ba3039b328012303e405f645c4f17182dac71f98  repo/admission/src/main/java/ai/protomolt/proto/repo/admission/DocumentSchemaMaterialization.java
+7359149e53ca8426010a7cc5d4da5b1c8848c5f222747db01c8bbc23fc8abde0  repo/admission/src/main/java/ai/protomolt/proto/repo/admission/DocumentAnyRootInventory.java
+8a1bf478b63ba40a1ef24a81f506ba0809fb78ba35fd1247c1cc29a1513b30d7  repo/admission/src/main/java/ai/protomolt/proto/repo/admission/DocumentRetainedSchemaAssets.java
+de34152f662d3cc1d4970de65a80506b156a4eb421bbfe8b7d8a72af653fc105  repo/admission/src/test/java/ai/protomolt/proto/repo/admission/DocumentSchemaMaterializationTest.java

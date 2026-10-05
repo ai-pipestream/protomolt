@@ -43,6 +43,10 @@ final class DocumentRetainedSchemaAssets {
         }
     }
 
+    static final class LimitExceeded extends IllegalArgumentException {
+        LimitExceeded(String message) { super(message); }
+    }
+
     static final class DataLoss extends IllegalStateException {
         DataLoss(String message) { super(message); }
         DataLoss(String message, Throwable cause) { super(message, cause); }
@@ -144,7 +148,7 @@ final class DocumentRetainedSchemaAssets {
             return cached;
         }
         if (bindings.size() >= limits.maxBindings())
-            throw new IllegalArgumentException("retained schema binding count exceeds limit");
+            throw new LimitExceeded("retained schema binding count exceeds limit");
         if (metadata.getSerializedSize() > DocumentSchemaAssetCodec.MAX_BYTES)
             throw new DataLoss("invalid retained schema metadata");
         requireHash(metadata.getArtifactSha256());
@@ -167,7 +171,7 @@ final class DocumentRetainedSchemaAssets {
         boolean newlyRead = bytes == null;
         if (newlyRead) {
             if (limits.maxRetainedBytes() - retainedBytes - batch.bytes < 1)
-                throw new IllegalArgumentException("retained schema byte count exceeds limit");
+                throw new LimitExceeded("retained schema byte count exceeds limit");
             bytes = Objects.requireNonNull(reader.read(hash), "reader result")
                     .orElseThrow(() -> new DataLoss("required retained schema artifact is missing: " + hash));
             active(control);
@@ -179,7 +183,7 @@ final class DocumentRetainedSchemaAssets {
         }
         if (newlyRead) {
             if (bytes.size() > limits.maxRetainedBytes() - retainedBytes - batch.bytes)
-                throw new IllegalArgumentException("retained schema byte count exceeds limit");
+                throw new LimitExceeded("retained schema byte count exceeds limit");
             if (!DocumentSchemaOccurrences.sha256(bytes, () -> active(control)).equals(hash))
                 throw new DataLoss("retained schema artifact digest mismatch: " + hash);
             batch.artifacts.put(hash, bytes);

@@ -6028,3 +6028,42 @@ higher-load RustFS measurements, bounded hydration and optional JCR capabilities
 remain separate completion gates. LocalStack remains the correctness fixture;
 RustFS is the local performance target. The current small mixed workload showed
 no replica speedup and cannot establish saturation or horizontal capacity.
+
+#### Owned selected-occurrence library boundary
+
+`DocumentSchemaMaterialization.read` now takes a selected complete-member ordinal,
+exact fragment, retained root row, canonical root/path digests and full schema
+associations. It checks the fragment size/hash against both command and row,
+decodes copied canonical evidence, and finds the path by digest within that
+bundle. It inventories the copied fragment using the retained container and
+traverses the recorded path through exact retained definitions. It performs no
+payload admission check and produces no admission verdict. Unselected associations
+are shape-checked but their assets are not loaded or claimed verified.
+
+The result owns copied fragment/evidence/loaded assets and reservations until
+close. Canonical scratch reservations close during the call. Decoded-input
+allowance counts evidence, fragment and every traversed Any boundary, including
+parents; this is not an estimate of actual Java heap. The host must separately
+bound parsed descriptor/message heap and concurrent work. Result access and close
+are confined to the host's serialized lifecycle; callers keeping extracted
+messages beyond close must retain their own ownership budget.
+
+Required asset loss, malformed retained evidence/associations and mismatched
+identities fail as data loss. Configured input, descriptor, retained-asset,
+inventory and path limits have explicit resource failures. Host control, reader
+and reservation exceptions preserve their original identity. No failure hands
+out a partially decoded target; reservations acquired earlier are released.
+Root inventory and retained-asset internal limit exceptions now have distinct
+types while remaining IllegalArgumentException subclasses for existing callers.
+
+Ten file-backed facade tests and the full 224-test admission suite passed with
+the runtime dependency gate. Sol reviewed identity checks, ownership and failure
+classification. Evidence is in
+`docs/evidence/repository/2026-10-05-owned-materialization/`.
+These fixtures establish library behavior, not SQL authentication, pin lifetime,
+process restart or a public read operation. The next SQL adapter must construct
+this input from the sealed authenticated snapshot, own its copies and pin through
+consumption, and recheck current READ before delivering content or error details.
+Raw/opaque preservation remains the existing zero-schema read path. Registry
+resolution/cache, restore/pruning, forced-crash durable owner recovery, horizontal
+capacity and hydration remain open gates of the broader goal.
