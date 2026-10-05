@@ -1273,6 +1273,16 @@ final flush/refresh operations follow its acquisition. Measure lock waits and
 shorten that critical section without weakening atomic totals before considering
 broader changes. Statement execution time alone does not isolate waiting.
 
+The [lock-sampled follow-up](../evidence/repository/2026-10-05-replica-locks/README.md)
+observes actual PostgreSQL lock waits involving that statement. The first small
+change flushes publication/removal triggers and refreshes entry/version revisions
+before acquiring the statistics lock. Counter changes still commit atomically
+with publication. Targeted integration cases and the 32-worker replica diagnostic
+pass, including exact aggregate counters read through every replica. Sampled
+waiters decreased, but throughput changed in both directions; no repeatable
+speedup or full scaling qualification is claimed. Destructive mutations still
+hold the statistics lock through subsequent target checks and receipt creation.
+
 Multiple repository service instances must share one logical repository through
 the durable ledger and configured storage identities. Independent requests must
 benefit from additional service capacity when service CPU or I/O concurrency is

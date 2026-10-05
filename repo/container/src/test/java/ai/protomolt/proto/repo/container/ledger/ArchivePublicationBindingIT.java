@@ -46,6 +46,10 @@ class ArchivePublicationBindingIT {
                     .isInstanceOf(ArchiveUploadLedger.FenceException.class);
             assertThat(ledger.findEntry(entry.entryUuid)).isEmpty();
             ledger.commitSave(entry, 0, first, 0, ArchiveLedger.StatsDelta.none(), Map.of(upload.objectId(), upload.leaseToken()));
+            assertThat(entry.mutationRevision).isPositive()
+                    .isEqualTo(ledger.findEntry(entry.entryUuid).orElseThrow().mutationRevision);
+            assertThat(first.mutationRevision).isPositive()
+                    .isEqualTo(ledger.findVersion(entry.entryUuid, 1).orElseThrow().mutationRevision);
             assertThat(referenceCount(tx, upload.objectId())).isEqualTo(1);
             var cleanup = new ArchiveCleanupLedger(tx);
             assertThat(cleanup.claim(upload.objectId(), Instant.now().plusSeconds(60))).isEmpty();
@@ -60,8 +64,14 @@ class ArchivePublicationBindingIT {
             assertThatThrownBy(() -> uploads.renew(upload.objectId(), upload.leaseToken(), Duration.ofMinutes(1)))
                     .isInstanceOf(ArchiveUploadLedger.FenceException.class);
             var current = ledger.findEntry(entry.entryUuid).orElseThrow();
+            long previousRevision = current.mutationRevision;
             current.currentVersion = 2;
-            ledger.commitSave(current, 1, version(current, upload.objectId()), 1, ArchiveLedger.StatsDelta.none());
+            var replacement = version(current, upload.objectId());
+            ledger.commitSave(current, 1, replacement, 1, ArchiveLedger.StatsDelta.none());
+            assertThat(current.mutationRevision).isGreaterThan(previousRevision)
+                    .isEqualTo(ledger.findEntry(entry.entryUuid).orElseThrow().mutationRevision);
+            assertThat(replacement.mutationRevision).isPositive()
+                    .isEqualTo(ledger.findVersion(entry.entryUuid, 2).orElseThrow().mutationRevision);
             assertThat(ledger.findVersion(entry.entryUuid, 1)).isEmpty();
             assertThat(objects.readable(entry.entryUuid, 1, upload.objectId())).isEmpty();
             assertThat(objects.readable(entry.entryUuid, 2, upload.objectId())).contains(readable);

@@ -46,7 +46,8 @@ class RepositoryScaleBenchmarkIT {
                 + "Metrics are approximate cumulative whole-child snapshots, including lifecycle work; they are not atomic window boundaries.\n"
                 + "Acquisition time is not pure pool queue wait; checkout time is not SQL execution time.\n"
                 + "Provider API times exclude namespace/reclaimer operations and are not HTTP-only latency.\n"
-                + "SQL lock-wait duration and provider connection counts are not instrumented.\n");
+                + "Lock waits are sampled through pg_stat_activity and pg_blocking_pids; samples do not measure total wait duration.\n"
+                + "Provider connection counts are not instrumented.\n");
         try (var sql = new ReplicaSqlMetrics(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword(), output)) {
             for (String mode : List.of("fixed_sql", "added_sql")) for (int replicas : new int[]{1, 2, 4}) {
                 int pool = mode.equals("fixed_sql") ? 8 / replicas : 4;
@@ -73,7 +74,10 @@ class RepositoryScaleBenchmarkIT {
                     snapshots(hosts, run + "-baseline");
                     sql.snapshot(run + "-baseline");
                     for (int sample = -1; sample < SAMPLES; sample++) {
-                        mixed(run, pool, sample, stubs, entries);
+                        try (var locks = new ReplicaLockSamples(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword(),
+                                output.resolve(run + "-" + sample + "-locks.csv"))) {
+                            mixed(run, pool, sample, stubs, entries);
+                        }
                         snapshots(hosts, run + "-" + sample + "-mixed");
                         sql.snapshot(run + "-" + sample + "-mixed");
                         contended(run, pool, sample, stubs);
@@ -83,6 +87,16 @@ class RepositoryScaleBenchmarkIT {
                             Files.writeString(output.resolve(run + "-" + sample + "-" + i + "-memory.txt"),
                                     Files.readString(Path.of("/proc", Long.toString(hosts.get(i).process().pid()), "status")));
                         }
+                    }
+                    long expectedEntries = WORKERS + SAMPLES + 1L;
+                    long expectedVersions = WORKERS * (1L + (SAMPLES + 1L) * CYCLES) + 2L * (SAMPLES + 1L);
+                    for (var stub : stubs) {
+                        var stats = stub.withDeadlineAfter(20, TimeUnit.SECONDS).getArchiveStats(GetArchiveStatsRequest.newBuilder()
+                                .setAccountId(run).setArchive("records").build()).getStats();
+                        assertThat(stats.getEntries()).isEqualTo(expectedEntries);
+                        assertThat(stats.getVersions()).isEqualTo(expectedVersions);
+                        assertThat(stats.getCurrentBytes()).isEqualTo(expectedEntries * 4096);
+                        assertThat(stats.getRetainedBytes()).isEqualTo(expectedVersions * 4096);
                     }
                 }
             }

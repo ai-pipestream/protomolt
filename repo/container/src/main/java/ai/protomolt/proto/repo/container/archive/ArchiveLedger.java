@@ -339,10 +339,13 @@ public final class ArchiveLedger {
                     em.remove(dropped);
                 }
             }
-            applyDelta(em, entry.accountId, entry.archive, delta);
+            // Publication/removal triggers revise the entry. Finish their flush and
+            // refresh before locking the archive-wide counters shared by other entries.
             em.flush();
             em.refresh(managed);
             em.refresh(version);
+            applyDelta(em, entry.accountId, entry.archive, delta);
+            em.flush();
             entry.mutationRevision = managed.mutationRevision;
         });
     }

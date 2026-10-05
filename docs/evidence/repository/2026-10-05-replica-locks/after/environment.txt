@@ -1,0 +1,15 @@
+java=25.0.3+9-jvmci-25.1-b19
+os=Linux
+processors=32
+workers=32
+payload_bytes=4096
+heap_per_child=256MiB
+load_average_begin=14.65380859375
+Fixed mode fixes aggregate SQL connections only; CPU and heap are not capped in aggregate.
+Configurations run in fixed order; retained history grows across windows. Warmup sample is -1.
+Memory files are Linux post-window snapshots, not measured per-window peaks.
+Metrics are approximate cumulative whole-child snapshots, including lifecycle work; they are not atomic window boundaries.
+Acquisition time is not pure pool queue wait; checkout time is not SQL execution time.
+Provider API times exclude namespace/reclaimer operations and are not HTTP-only latency.
+Lock waits are sampled through pg_stat_activity and pg_blocking_pids; samples do not measure total wait duration.
+Provider connection counts are not instrumented.
