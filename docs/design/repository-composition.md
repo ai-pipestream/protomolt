@@ -4139,12 +4139,18 @@ attempt identities. Same-generation acknowledgement requires the original live
 owner fence. An expired or replaced owner must use an explicit recovery path;
 neither a missing nonce nor an expired lease permits adopting an old stage.
 
-The current `DocumentUploadPlan.Prepared` dependency must be removed from the
-historical verifier before claiming restart support. Rebuilding it from current
-drive/backend configuration could change the sampled placement. Instead, verify
-the original upload identities using immutable selection history, attempt objects,
-retained associations and the slot snapshot. Do not read current selection or
-source pointers, reacquire bytes or require current upload leases/staging claims.
+The historical verifier and acknowledgement entry point now accept the canonical
+command and `UploadSelection(member, revision, attempt)` identities, without an
+upload plan or upload lease token. They use immutable selection history and its
+original placement anchor, attempt objects, retained associations and the slot
+snapshot. Upload scope, member/node/drive identity, sampled destination revision,
+upload count, original physical key/profile and command content claims are checked
+against those frozen records. No current drive/backend configuration is sampled.
+The SQL fixture changes the actual drive namespace and prefix after staging and
+confirms the original mixed candidate still verifies. This establishes historical
+placement independence, not process-restart support by itself. Current selection
+or source pointers, byte reacquisition and current upload leases/staging claims
+remain outside acknowledgement.
 
 A restart acknowledgement will check the supplied command and authenticated
 identity, acquire the live operation fence and current read authorization, then

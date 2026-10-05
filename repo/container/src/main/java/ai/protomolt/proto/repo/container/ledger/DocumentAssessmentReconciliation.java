@@ -23,12 +23,12 @@ final class DocumentAssessmentReconciliation {
 
     /** Empty means not observed under this fence, not proof of rollback or permission to recreate. */
     Optional<DocumentAssessmentCreation.Created> observe(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
-            DocumentOperationUploadAdmission.Prepared prepared, Map<String,DocumentSelectedAttemptLedger.Selected> selected,
+            DocumentPublicationCommand command, Map<String,DocumentAssessmentRetainedSlots.UploadSelection> selected,
             DocumentAssessmentEvidence evidence, UUID assessment, Instant deadline, PayloadBudget budget, Runnable control) {
         evidence.requireOwner(owner, control);
-        var command = evidence.command(control);
-        if (!command.operationId().equals(prepared.plan().command().operationId())
-                || !command.canonical().equals(prepared.plan().command().canonical())) throw conflict();
+        var observedCommand = evidence.command(control);
+        if (!command.operationId().equals(observedCommand.operationId())
+                || !command.canonical().equals(observedCommand.canonical())) throw conflict();
         DocumentAdmissionAuthorization.requireCaller(caller, owner, command.intent().getAccountId());
         var manifest = evidence.manifestBytes(control);
         var manifestSha = evidence.manifestSha256(control);
@@ -65,7 +65,7 @@ final class DocumentAssessmentReconciliation {
                         || ((Number) row[8]).intValue() != slots || ((Number) row[9]).intValue() != evidence.artifacts(control).size()
                         || ((Number) row[10]).intValue() != evidence.roots(control).size() || !manifestSha.equals(row[11])
                         || !(row[12] instanceof byte[] stored) || !manifest.asReadOnlyByteBuffer().equals(ByteBuffer.wrap(stored))) throw conflict();
-                DocumentAssessmentRetainedSlots.verify(em, identity, prepared.plan(), selections, budget, control);
+                DocumentAssessmentRetainedSlots.verify(em, identity, command, selections, budget, control);
                 verifyArtifacts(em, assessment, evidence.artifacts(control), control);
                 verifyRoots(em, assessment, evidence, control);
                 RepositoryOperationLedger.fenceLiveOwner(em, owner);

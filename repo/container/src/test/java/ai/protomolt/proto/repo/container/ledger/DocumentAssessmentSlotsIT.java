@@ -101,7 +101,7 @@ class DocumentAssessmentSlotsIT {
                 em.createNativeQuery("SELECT assessment_id FROM document_assessment_owners WHERE assessment_id=:id FOR UPDATE")
                         .setParameter("id", retained.identity().assessment()).getSingleResult();
                 var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(20_000_000);
-                DocumentAssessmentRetainedSlots.verify(em, retained.identity(), retained.plan(), retained.selected(), budget, () -> {});
+                DocumentAssessmentRetainedSlots.verify(em, retained.identity(), retained.plan().command(), DocumentAssessmentRetainedSlots.uploadSelections(retained.selected()), budget, () -> {});
                 assertThat(budget.reservedBytes()).isZero();
             });
         }
@@ -145,6 +145,25 @@ class DocumentAssessmentSlotsIT {
         }
     }
 
+    @Test void originalPlacementSurvivesDriveConfigurationChanges() throws Exception {
+        try (var c = DocumentNativePublicationFixture.context(POSTGRES)) {
+            var f = DocumentNativePublicationFixture.prepare(c, 1, true);
+            var retained = stage(c, f, f.command(), false);
+            UUID drive = UUID.fromString(f.command().intent().getMembers(0).getDriveId());
+            c.tx().inTransaction(em -> { em.createNativeQuery("UPDATE drives SET bucket='different-namespace',prefix='new-prefix' WHERE drive_id=:id")
+                    .setParameter("id", drive).executeUpdate(); });
+            var changed = new DriveLedger(c.tx()).findById(drive).orElseThrow();
+            assertThat(changed.bucket).isEqualTo("different-namespace");
+            assertThat(changed.prefix).isEqualTo("new-prefix");
+            verifyAuthorized(c, f, retained, CALLER);
+            // These frozen records, not current drive configuration or lease tokens,
+            // are all the retained verifier receives for upload selection.
+            var selections = DocumentAssessmentRetainedSlots.uploadSelections(retained.selected());
+            assertThat(selections).hasSize(1);
+            assertThat(selections.get("member-0").attempt()).isEqualTo(f.uploads().get(0).attempt());
+        }
+    }
+
     private static void verifyAuthorized(DocumentNativePublicationFixture.Context c, DocumentNativePublicationFixture.Prepared f,
             Staged retained, RepositoryCaller caller) {
         c.tx().inTransaction(em -> {
@@ -154,7 +173,7 @@ class DocumentAssessmentSlotsIT {
             em.createNativeQuery("SELECT assessment_id FROM document_assessment_owners WHERE assessment_id=:id FOR UPDATE")
                     .setParameter("id", retained.identity().assessment()).getSingleResult();
             var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(20_000_000);
-            try { DocumentAssessmentRetainedSlots.verify(em, retained.identity(), retained.plan(), retained.selected(), budget, () -> {}); }
+            try { DocumentAssessmentRetainedSlots.verify(em, retained.identity(), retained.plan().command(), DocumentAssessmentRetainedSlots.uploadSelections(retained.selected()), budget, () -> {}); }
             finally { assertThat(budget.reservedBytes()).isZero(); }
         });
     }
@@ -231,7 +250,7 @@ class DocumentAssessmentSlotsIT {
             }
             // Synthetic manifest, genuine frozen selection/physical history: this
             // verifies retained association identity, not observed admission.
-            if (snapshotPresent) DocumentAssessmentRetainedSlots.verify(em, identity, plan, selected, budget, () -> {});
+            if (snapshotPresent) DocumentAssessmentRetainedSlots.verify(em, identity, plan.command(), DocumentAssessmentRetainedSlots.uploadSelections(selected), budget, () -> {});
             assertThat(budget.reservedBytes()).isZero();
             return new Staged(slots, identity, plan, Map.copyOf(selected));
         });

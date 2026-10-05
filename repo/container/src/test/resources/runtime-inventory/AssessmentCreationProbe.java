@@ -81,17 +81,17 @@ public final class AssessmentCreationProbe {
                     require(count(tx, "document_assessment_owners", id) == 0, "owner rollback");
                     require(count(tx, "document_assessment_objects", id) == 0, "physical rollback");
                     var reconciliation = new DocumentAssessmentReconciliation(tx);
-                    require(reconciliation.observe(caller, owner, prepared, selected, evidence, id, deadline, budget, () -> {}).isEmpty(),
+                    require(reconciliation.observe(caller, owner, command, DocumentAssessmentRetainedSlots.uploadSelections(selected), evidence, id, deadline, budget, () -> {}).isEmpty(),
                             "absent stage is not observed");
                     new RepositorySchemaArtifacts(tx).stage(owner, command, List.copyOf(evidence.artifacts(() -> {}).values()), () -> {});
                     cancelledRootInsert(tx, writer, caller, owner, prepared, selected, evidence, deadline, budget);
                     var result = writer.create(caller, owner, prepared, selected, evidence, id, deadline, budget, () -> {});
-                    require(reconciliation.observe(caller, owner, prepared, selected, evidence, id, deadline, budget, () -> {}).orElseThrow().equals(result),
+                    require(reconciliation.observe(caller, owner, command, DocumentAssessmentRetainedSlots.uploadSelections(selected), evidence, id, deadline, budget, () -> {}).orElseThrow().equals(result),
                             "original committed stage acknowledged");
-                    try { reconciliation.observe(new RepositoryCaller("other-principal", true), owner, prepared, selected,
+                    try { reconciliation.observe(new RepositoryCaller("other-principal", true), owner, command, DocumentAssessmentRetainedSlots.uploadSelections(selected),
                             evidence, id, deadline, budget, () -> {}); throw new AssertionError("other principal acknowledged stage"); }
                     catch (RepositoryException expected) { require(expected.getMessage().contains("principal differs"), "current caller refusal"); }
-                    try { reconciliation.observe(caller, owner, prepared, selected, evidence, UUID.randomUUID(), deadline, budget, () -> {});
+                    try { reconciliation.observe(caller, owner, command, DocumentAssessmentRetainedSlots.uploadSelections(selected), evidence, UUID.randomUUID(), deadline, budget, () -> {});
                         throw new AssertionError("different assessment identity adopted"); }
                     catch (IllegalStateException expected) { require(expected.getMessage().contains("requested original stage"), "assessment identity refusal"); }
                     require(result.assessment().equals(id) && result.retainUntil().equals(deadline), "exact create result");
@@ -149,11 +149,11 @@ public final class AssessmentCreationProbe {
                                 .setLimits(policy.definition().getLimits().toBuilder().setMaxRoots(101)).build(), () -> {});
                         var changedPolicy = new DocumentSchemaPolicies(tx).activate(revised, active.revision(), () -> {});
                         require(changedPolicy.revision() > active.revision(), "policy actually advanced");
-                        require(reconciliation.observe(caller, owner, prepared, selected, evidence, id, deadline, budget, () -> {})
+                        require(reconciliation.observe(caller, owner, command, DocumentAssessmentRetainedSlots.uploadSelections(selected), evidence, id, deadline, budget, () -> {})
                                 .orElseThrow().equals(result), "policy advance does not erase original staging acknowledgement");
                         var cancelled = new DocumentPublicationRejections(tx).cancel(caller, owner, command, RepositoryReadControl.NONE);
                         require(cancelled.state() == DocumentPublicationReplay.State.TERMINATED, "explicit cancellation is terminal");
-                        try { reconciliation.observe(caller, owner, prepared, selected, evidence, id, deadline, budget, () -> {});
+                        try { reconciliation.observe(caller, owner, command, DocumentAssessmentRetainedSlots.uploadSelections(selected), evidence, id, deadline, budget, () -> {});
                             throw new AssertionError("terminal operation acknowledged as active"); }
                         catch (RuntimeException expected) { require(hasMessage(expected, "Repository operation is terminal"), "terminal fence refusal"); }
                     } else {
@@ -162,7 +162,7 @@ public final class AssessmentCreationProbe {
                                 SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM retain_until-clock_timestamp()))+0.02)
                                 FROM document_assessment_owners WHERE assessment_id=:id
                                 """).setParameter("id", id).getSingleResult());
-                        try { reconciliation.observe(caller, owner, prepared, selected, evidence, id, deadline, budget, () -> {});
+                        try { reconciliation.observe(caller, owner, command, DocumentAssessmentRetainedSlots.uploadSelections(selected), evidence, id, deadline, budget, () -> {});
                             throw new AssertionError("expired stage acknowledged as usable"); }
                         catch (IllegalStateException expected) { require(expected.getMessage().contains("unavailable"), "expired stage refusal"); }
                     }
@@ -190,7 +190,7 @@ public final class AssessmentCreationProbe {
             DocumentAdmissionAuthorization.authorizeRejection(em, caller, command);
             em.createNativeQuery("SELECT assessment_id FROM document_assessment_owners WHERE assessment_id=:id FOR UPDATE")
                     .setParameter("id", identity.assessment()).getSingleResult();
-            DocumentAssessmentRetainedSlots.verify(em, identity, prepared.plan(), selected, budget, () -> {});
+            DocumentAssessmentRetainedSlots.verify(em, identity, command, DocumentAssessmentRetainedSlots.uploadSelections(selected), budget, () -> {});
         });
     }
     /** Cancel real SQL after owner/physical/schema insertion; no successful backend is simulated. */
