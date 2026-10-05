@@ -17,6 +17,66 @@ class RepositoryExecutionClaimLedgerIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
     private static final Duration LEASE = Duration.ofMinutes(1);
 
+    @Test void ownerHeartbeatRenewsItsClaimWithoutChangingIdentity() {
+        try (var c = context(POSTGRES)) {
+            var command = command(c); var key = key(command);
+            var claims = new RepositoryExecutionClaimLedger(c.tx());
+            var claim = claims.acquire(key, command, UUID.randomUUID(), LEASE);
+            var operations = new RepositoryOperationLedger(c.tx());
+            var owner = operations.admit(key, command, UUID.randomUUID(), LEASE, claim).owner().orElseThrow();
+            var renewed = operations.renew(owner, Duration.ofMinutes(2));
+            var renewedClaim = renewed.executionClaim().orElseThrow();
+            assertThat(renewedClaim.leaseUntil()).isAfter(claim.leaseUntil());
+            assertThat(renewedClaim.token()).isEqualTo(claim.token());
+            assertThat(renewedClaim.epoch()).isEqualTo(claim.epoch());
+            assertThat(renewedClaim.commandSha256()).isEqualTo(claim.commandSha256());
+            assertThat(renewed.token()).isEqualTo(owner.token());
+            assertThat(renewed.leaseUntil()).isAfter(owner.leaseUntil());
+            var observed = c.tx().inTransaction(em -> { return RepositoryExecutionClaimLedger.lockLive(em, claim); });
+            assertThat(observed).isEqualTo(renewedClaim);
+            var wrong = new RepositoryOperationLedger.Owner(key, owner.generation(), UUID.randomUUID(),
+                    owner.leaseUntil(), owner.executionClaim());
+            assertThatThrownBy(() -> operations.renew(wrong, Duration.ofHours(1)))
+                    .isInstanceOf(RepositoryOperationLedger.OwnerFencedException.class);
+            var afterRefusal = c.tx().inTransaction(em -> { return RepositoryExecutionClaimLedger.lockLive(em, claim); });
+            assertThat(afterRefusal).isEqualTo(renewedClaim);
+        }
+    }
+
+    @Test void expiredClaimCannotBeRevivedByAnOtherwiseLiveOwner() {
+        try (var c = context(POSTGRES)) {
+            var command = command(c); var key = key(command);
+            var claims = new RepositoryExecutionClaimLedger(c.tx());
+            var claim = claims.acquire(key, command, UUID.randomUUID(), Duration.ofSeconds(1));
+            var operations = new RepositoryOperationLedger(c.tx());
+            var owner = operations.admit(key, command, UUID.randomUUID(), LEASE, claim).owner().orElseThrow();
+            expire(c);
+            assertThatThrownBy(() -> operations.renew(owner, Duration.ofHours(1)))
+                    .isInstanceOf(RepositoryExecutionClaimLedger.Fenced.class);
+            assertThat(operations.find(key).orElseThrow().leaseUntil()).isEqualTo(owner.leaseUntil());
+            var successor = claims.takeOver(key, command, claim.epoch(), UUID.randomUUID(), LEASE);
+            assertThatThrownBy(() -> operations.renew(owner, Duration.ofHours(1)))
+                    .isInstanceOf(RepositoryExecutionClaimLedger.Fenced.class);
+            var observed = c.tx().inTransaction(em -> { return RepositoryExecutionClaimLedger.lockLive(em, successor); });
+            assertThat(observed).isEqualTo(successor);
+        }
+    }
+
+    @Test void expiredOwnerCannotExtendItsStillLiveClaim() {
+        try (var c = context(POSTGRES)) {
+            var command = command(c); var key = key(command);
+            var claims = new RepositoryExecutionClaimLedger(c.tx());
+            var claim = claims.acquire(key, command, UUID.randomUUID(), LEASE);
+            var operations = new RepositoryOperationLedger(c.tx());
+            var owner = operations.admit(key, command, UUID.randomUUID(), Duration.ofSeconds(1), claim).owner().orElseThrow();
+            expire(c);
+            assertThatThrownBy(() -> operations.renew(owner, Duration.ofHours(1)))
+                    .isInstanceOf(RepositoryOperationLedger.OwnerFencedException.class);
+            var observed = c.tx().inTransaction(em -> { return RepositoryExecutionClaimLedger.lockLive(em, claim); });
+            assertThat(observed).isEqualTo(claim);
+        }
+    }
+
     @Test void exactAdmissionReplayNeverRenewsAndCannotChangeCommandOrToken() {
         try (var c = context(POSTGRES)) {
             var command = command(c); var key = key(command); var claims = new RepositoryExecutionClaimLedger(c.tx());

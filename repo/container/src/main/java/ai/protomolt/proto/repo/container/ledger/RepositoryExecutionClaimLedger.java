@@ -71,17 +71,20 @@ final class RepositoryExecutionClaimLedger {
     }
 
     Claim renew(Claim expected, Duration lease) {
+        return tx.inTransaction(em -> { return renewLive(em, expected, lease); });
+    }
+
+    /** Explicit renewal within the caller's transaction, including owner heartbeat updates. */
+    static Claim renewLive(EntityManager em, Claim expected, Duration lease) {
         long millis = millis(lease);
-        return tx.inTransaction(em -> {
-            lockLive(em, expected);
-            bind(em.createNativeQuery("""
-                    UPDATE repository_execution_claims SET lease_until=GREATEST(lease_until,
-                        clock_timestamp()+(:millis * interval '1 millisecond')),fence_epoch=:epoch,fence_token=:token
-                    WHERE account_id=:account AND principal=:principal AND operation_id=:id
-                    """), expected.key).setParameter("millis", millis).setParameter("epoch", expected.epoch)
-                    .setParameter("token", expected.token).executeUpdate();
-            return readLocked(em, expected.key);
-        });
+        lockLive(em, expected);
+        bind(em.createNativeQuery("""
+                UPDATE repository_execution_claims SET lease_until=GREATEST(lease_until,
+                    clock_timestamp()+(:millis * interval '1 millisecond')),fence_epoch=:epoch,fence_token=:token
+                WHERE account_id=:account AND principal=:principal AND operation_id=:id
+                """), expected.key).setParameter("millis", millis).setParameter("epoch", expected.epoch)
+                .setParameter("token", expected.token).executeUpdate();
+        return readLocked(em, expected.key);
     }
 
     /** First lock in a short mutation transaction; not a reusable preflight grant. */

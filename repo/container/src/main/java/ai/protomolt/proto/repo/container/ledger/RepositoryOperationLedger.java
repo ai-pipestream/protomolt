@@ -221,6 +221,8 @@ final class RepositoryOperationLedger {
         long millis = leaseMillis(lease);
         return tx.inTransaction(em -> {
             lockLiveOwner(em, owner);
+            // Both leases advance or neither does. Claim locking remains before owner locking.
+            var claim = owner.executionClaim.map(value -> RepositoryExecutionClaimLedger.renewLive(em, value, lease));
             int changed = bind(em.createNativeQuery("""
                     UPDATE repository_operation_owners SET lease_until=GREATEST(lease_until,
                         clock_timestamp()+(:millis * interval '1 millisecond'))
@@ -229,7 +231,7 @@ final class RepositoryOperationLedger {
                     """), owner.key).setParameter("millis", millis).executeUpdate();
             if (changed != 1) throw new OwnerFencedException();
             var renewed = readOwner(em, owner.key, false).orElseThrow();
-            return new Owner(renewed.key, renewed.generation, renewed.token, renewed.leaseUntil, owner.executionClaim);
+            return new Owner(renewed.key, renewed.generation, renewed.token, renewed.leaseUntil, claim);
         });
     }
 

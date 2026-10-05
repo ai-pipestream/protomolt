@@ -12,6 +12,11 @@ features available. Recovery is one workstream, not the whole goal.
    current authorization at delivery, cancellation and byte-budget release. Test
    exact retained descriptors with the original registry unavailable. Never
    substitute the latest registry definition for historical evidence.
+   The next bounded slice is an explicit `repo/service` client using the existing
+   selected-response verifier. Expose checked decode material from admission
+   rather than linking descriptors again in the transport layer. Bound inbound
+   messages and shared reservations, retain them through a closeable result, and
+   test a real in-process service before adding managed-host wiring.
 2. **Schema resolution and cache.** Reuse the existing resolver and registry
    abstractions. Separate authorized discovery from immutable artifact lookup.
    Establish tenant/security scope, exact schema identity, bounded ownership,
@@ -35,7 +40,10 @@ features available. Recovery is one workstream, not the whole goal.
    fresh-process forced-exit evidence without a capability handoff file. Claim
    expiry and transfer refuse the stale handle. The bounded manager now owns
    restoration lifetime and shutdown. Next, durably register ordinary runtime
-   sessions and qualify the host ownership protocol; a shared token is not proof
+   sessions. Claimed owner heartbeats now renew the owner and execution claim in
+   one transaction; expired or transferred claims cannot be revived. This does
+   not automatically register ordinary sessions or enable transfer. Also qualify
+   the host ownership protocol; a shared token is not proof
    that its previous process is dead. Keep automatic claim transfer off
    until delayed provider writes and cleanup across claim loss are qualified.
 5. **Restore, pruning and backup.** Test retained schema/content reachability,
