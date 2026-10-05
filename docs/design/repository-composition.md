@@ -3750,8 +3750,9 @@ considered finished.
 
 V67 adds `document_assessment_artifacts`, which references the existing
 account-scoped `repository_schema_artifacts` catalog. An assessment stores digest
-references, not a private copy of every descriptor, metadata record, source file
-or root-evidence blob. The owner declares an artifact count from zero through 64;
+references, not a private copy of every descriptor, metadata record or source
+file. Root evidence is a separate set and is not retained by V67. The owner
+declares a schema artifact count from zero through 64;
 zero preserves existing physical-only staging. The final association set must
 match that count and total no more than 64 MiB. Exact correspondence to the
 canonical manifest, including asset roles and complete import/root coverage,
@@ -3787,3 +3788,39 @@ artifact run also passed after tightening the partial-release assertion and
 adding a populated V66-to-V67 migration case. That case preserves the existing
 owner fields and physical references, defaults artifact ownership to zero
 without inventing associations, and exercises release after migration.
+
+#### Scoped assessment evidence for the admission writer
+
+`DocumentPublicationAssessment.withRetentionEvidence` keeps the assessment and
+its reservations alive while a consumer borrows the observed manifest, schema
+artifacts and root evidence. Independent replay and runtime observation precede
+the callback. The scope checks exact command, owner, policy, evaluation time,
+first failure, member modes, schema roles, artifact digests and root identities
+against the canonical observed manifest. Root bindings also carry the full part
+ordinal, locator digest and candidate fragment digest and size. Collection
+structures are copied; retained payload bytes are borrowed without duplication.
+
+The parent cannot close or start another verification during the callback.
+Cancellation, callback failure and runtime-context changes release the encoded
+manifest reservation and close the borrowed scope. Context is checked again after
+the callback. Returned values must not escape the scope; holding a ByteString is
+not independent admission proof or authorization.
+
+This is an internal Java operation, not a SQL staging writer or public API.
+The future writer must recheck operation, policy, authorization and selection
+fences within its decision transaction before committing. A post-callback check
+cannot replace those fences or undo a committed transaction.
+
+Durable root evidence remains required before terminal assessment use. Preserve
+the separate limits: at most 64 schema artifacts totaling 64 MiB, and at most
+4,096 root evidence entries totaling 64 MiB. Root evidence must not be forced
+into the schema artifact count limit. Its storage needs exact manifest and part
+bindings, atomic acquisition/release and authorized replay alongside V67's
+normalized schema artifacts. Terminal promotion, replay reader admission and
+ADMISSION_REJECTED emission remain disabled pending that complete path.
+
+The scoped-evidence change passed 25 assessment/runtime unit tests and three
+production-bundle runtime tests. The fresh-JVM probe checks borrowed evidence,
+reservation lifetime, parent-close refusal, callback cancellation, runtime drift,
+reentrant scope closure and mismatched owner generation. These checks do not
+establish durable root storage or SQL admission behavior.

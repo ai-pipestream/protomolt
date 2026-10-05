@@ -57,6 +57,55 @@ public final class ObservedAssessmentProbe {
             })) { throw new AssertionError("Cancellation accepted"); }
             catch (java.util.concurrent.CancellationException expected) { require(expected == stop, "original cancellation"); }
             require(budget.reservedBytes() == owned, "cancellation releases scratch");
+            var escaped = new java.util.concurrent.atomic.AtomicReference<DocumentAssessmentEvidence>();
+            String result = assessment.withRetentionEvidence(owner, observation, () -> {}, evidence -> {
+                escaped.set(evidence);
+                require(evidence.command(() -> {}).equals(command), "retention command identity");
+                require(evidence.policy(() -> {}).equals(assessment.policy()), "retention policy identity");
+                require(evidence.artifacts(() -> {}).equals(assessment.artifacts()), "complete normalized schema set");
+                var roots = evidence.roots(() -> {});
+                require(roots.size() == assessment.typed().get("a").roots().size(), "complete independent root set");
+                for (var root : roots) {
+                    require(root.member().equals("a"), "opaque member contributes no typed roots");
+                    var source = assessment.typed().get("a").roots().stream()
+                            .filter(value -> value.ordinal() == root.ordinal() && value.locatorSha256().equals(root.locatorSha256()))
+                            .findFirst().orElseThrow();
+                    require(source.encoded().bytes().equals(root.bytes()) && source.encoded().sha256().equals(root.sha256()), "exact encoded root ownership");
+                    var upload = a.member().getParts(root.ordinal()).getUpload();
+                    require(root.fragmentSha256().equals(upload.getSha256()) && root.fragmentSize() == upload.getSizeBytes(), "full ordinal fragment binding");
+                }
+                try { assessment.close(); throw new AssertionError("Retention callback allowed parent close"); }
+                catch (IllegalStateException expected) { require(expected.getMessage().contains("verification is active"), "retention busy guard"); }
+                require(budget.reservedBytes() == owned + evidence.manifestBytes(() -> {}).size(), "retention borrows without payload copies");
+                return evidence.manifestSha256(() -> {});
+            });
+            require(result.matches("[0-9a-f]{64}") && budget.reservedBytes() == owned, "scope success releases encoding");
+            try { escaped.get().artifacts(() -> {}); throw new AssertionError("Escaped retention scope remained live"); }
+            catch (IllegalStateException expected) { require(expected.getMessage().contains("scope is closed"), "scope invalidated"); }
+            try {
+                assessment.withRetentionEvidence(owner, observation, () -> {}, evidence -> { throw stop; });
+                throw new AssertionError("Retention callback cancellation accepted");
+            } catch (java.util.concurrent.CancellationException expected) { require(expected == stop, "retention preserves callback failure"); }
+            require(budget.reservedBytes() == owned, "failed callback releases encoding");
+            try {
+                assessment.withRetentionEvidence(owner, observation, () -> {}, evidence -> evidence.manifestBytes(() -> {
+                    boolean exposingBytes = StackWalker.getInstance().walk(frames -> frames.anyMatch(frame ->
+                            frame.getClassName().equals(DocumentPublicationAssessment.ObservedManifest.class.getName())
+                                    && frame.getMethodName().equals("bytes")));
+                    if (exposingBytes) evidence.close();
+                }));
+                throw new AssertionError("Reentrant scope close exposed manifest bytes");
+            } catch (IllegalStateException expected) { require(expected.getMessage().contains("scope is closed"), "closed getter guard"); }
+            require(budget.reservedBytes() == owned, "closed getter releases encoding");
+            try {
+                assessment.withRetentionEvidence(owner, observation, () -> {}, evidence -> {
+                    System.setProperty("java.class.path", classpath + java.io.File.pathSeparator + "changed.jar");
+                    return "must not return";
+                });
+                throw new AssertionError("Post-callback runtime drift accepted");
+            } catch (IllegalStateException expected) { require(expected.getMessage().contains("differs from its observation"), "post-callback context guard"); }
+            finally { System.setProperty("java.class.path", classpath); }
+            require(budget.reservedBytes() == owned, "post-callback failure releases encoding");
             var checkedBusy = new java.util.concurrent.atomic.AtomicBoolean();
             try (var encoded = assessment.encodeManifest(owner, observation, () -> {
                 if (checkedBusy.compareAndSet(false, true)) {
@@ -81,6 +130,11 @@ public final class ObservedAssessmentProbe {
                 require(manifest.getMembers(0).hasTyped() && manifest.getMembers(1).getOpaque(), "explicit modes retained");
                 require(manifest.getEvaluatedAt().getNanos() == AT.getNano(), "exact evaluation instant");
                 require(calls.get() == 1, "replay uses retained schema instead of registry");
+                var wrongOwner = new RepositoryOperationLedger.Owner(owner.key(), owner.generation() + 1, owner.token(), owner.leaseUntil());
+                try (var unexpected = new DocumentAssessmentEvidence(assessment, wrongOwner, encoded, bytes -> {
+                    var lease = budget.reserve(bytes); return lease::close;
+                }, () -> {})) { throw new AssertionError("Mismatched retention generation accepted"); }
+                catch (IllegalArgumentException expected) { require(expected.getMessage().contains("retention identity differs"), "retention owner binding"); }
                 assessment.close();
                 require(budget.reservedBytes() == encoded.bytes(() -> {}).size(), "independent output lifetime");
                 var thread = Thread.currentThread(); var previous = thread.getContextClassLoader();

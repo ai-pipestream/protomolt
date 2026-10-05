@@ -138,6 +138,32 @@ final class DocumentPublicationAssessment implements AutoCloseable {
             DocumentAssessmentRuntimeObserver.Observation observation, Runnable control) throws InvalidProtocolBufferException {
         Objects.requireNonNull(observation);
         beginVerification();
+        try { return observeOwned(owner, observation, control); }
+        finally { finishVerification(); }
+    }
+
+    /**
+     * Borrow the exact schema and root evidence while the parent remains protected
+     * from close/reentrant verification. No independent payload copies are made.
+     * The consumer owns all SQL/authorization fences and must check the evidence
+     * inside its decision transaction before commit. Borrowed values must not escape.
+     */
+    <T> T withRetentionEvidence(RepositoryOperationLedger.Owner owner,
+            DocumentAssessmentRuntimeObserver.Observation observation, Runnable control,
+            java.util.function.Function<DocumentAssessmentEvidence, T> consumer) throws InvalidProtocolBufferException {
+        Objects.requireNonNull(observation); Objects.requireNonNull(consumer);
+        beginVerification();
+        try (var observed = observeOwned(owner, observation, control);
+                var evidence = new DocumentAssessmentEvidence(this, owner, observed, reservations(budget), control)) {
+            evidence.check(control);
+            T result = consumer.apply(evidence);
+            evidence.check(control);
+            return result;
+        } finally { finishVerification(); }
+    }
+
+    private ObservedManifest observeOwned(RepositoryOperationLedger.Owner owner,
+            DocumentAssessmentRuntimeObserver.Observation observation, Runnable control) throws InvalidProtocolBufferException {
         DocumentAssessmentManifestCodec.Encoded encoded = null;
         try {
             var runtime = observation.identity(control);
@@ -147,8 +173,7 @@ final class DocumentPublicationAssessment implements AutoCloseable {
             encoded = null;
             return result;
         } finally {
-            try { if (encoded != null) encoded.close(); }
-            finally { finishVerification(); }
+            if (encoded != null) encoded.close();
         }
     }
 
