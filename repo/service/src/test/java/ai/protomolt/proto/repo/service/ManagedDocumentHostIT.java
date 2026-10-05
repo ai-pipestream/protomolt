@@ -62,7 +62,8 @@ class ManagedDocumentHostIT {
         }
         for (int restart = 0; restart < 2; restart++) {
             try (var host = RepoServices.build(config)) {
-                assertThat(host.services()).noneMatch(service -> service instanceof DocumentHistoryGrpcService);
+                assertThat(host.services()).noneMatch(service -> service instanceof DocumentHistoryGrpcService
+                        || service instanceof DocumentHistoryMaterializationGrpcService);
                 host.startInProcess("document-host-" + UUID.randomUUID());
                 assertThat(host.documentPublication()).isNotNull();
                 assertThat(host.documentHistory()).isSameAs(host.documentHistory());
@@ -84,10 +85,17 @@ class ManagedDocumentHostIT {
         ai.protomolt.proto.authz.CallerResolver credentials = token -> "synthetic-owner-key".equals(token)
                 ? java.util.Optional.of(ai.protomolt.proto.actions.Caller.scoped("history-owner", java.util.Set.of()))
                 : java.util.Optional.empty();
+        try (var rawOnly = RepoServices.build(config, ai.protomolt.proto.asset.bridge.BridgeEngine.standard(), historical)) {
+            assertThat(rawOnly.services()).noneMatch(service -> service instanceof DocumentHistoryMaterializationGrpcService);
+        }
+        var selectedAccess = historical.withMaterialization(new ai.protomolt.proto.repo.spi.HistoricalMaterializationRepository.Limits(
+                8L * 1024 * 1024, 1024 * 1024, 16L * 1024 * 1024, 32, 32L * 1024 * 1024, 32));
         for (boolean serialized : new boolean[] {false, true}) {
-            try (var host = RepoServices.build(config, ai.protomolt.proto.asset.bridge.BridgeEngine.standard(), historical)) {
+            try (var host = RepoServices.build(config, ai.protomolt.proto.asset.bridge.BridgeEngine.standard(), selectedAccess)) {
                 assertThat(host.services()).filteredOn(service -> service instanceof DocumentHistoryGrpcService).hasSize(1);
+                assertThat(host.services()).filteredOn(service -> service instanceof DocumentHistoryMaterializationGrpcService).hasSize(1);
                 assertThat(host.historicalRepository()).isSameAs(host.documentHistory());
+                assertThat(host.historicalMaterializationRepository()).isSameAs(host.historicalRepository());
                 assertThatThrownBy(() -> host.startNetty(0)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("API token");
                 assertThatThrownBy(() -> host.startNetty(0, " ", null)).isInstanceOf(IllegalArgumentException.class);
                 assertThatThrownBy(() -> host.startInProcess("missing-token")).isInstanceOf(IllegalArgumentException.class);
@@ -115,6 +123,24 @@ class ManagedDocumentHostIT {
                     assertThatThrownBy(() -> authenticated.readRevision(request)).isInstanceOfSatisfying(io.grpc.StatusRuntimeException.class,
                             error -> assertThat(error.getStatus().getCode()).isEqualTo(io.grpc.Status.Code.NOT_FOUND));
                     assertThat(bindings.get()).isEqualTo(before + 1);
+                    var selected = ai.protomolt.proto.repo.v1.DocumentHistoryMaterializationServiceGrpc.newBlockingStub(channel)
+                            .withDeadlineAfter(5, java.util.concurrent.TimeUnit.SECONDS);
+                    var selectedRequest = ai.protomolt.proto.repo.v1.ReadHistoricalOccurrenceRequest.newBuilder()
+                            .setAddress(request.getAddress()).setRevisionId(request.getRevisionId())
+                            .setSelection(ai.protomolt.proto.repo.v1.HistoricalOccurrenceSelection.newBuilder()
+                                    .setRootSha256("0".repeat(64)).setPathSha256("1".repeat(64)))
+                            .setLimits(ai.protomolt.proto.repo.v1.HistoricalMaterializationLimits.newBuilder()
+                                    .setMaxFragmentBytes(1024).setMaxEvidenceBytes(1024).setMaxRetainedBytes(1024)
+                                    .setMaxDecodedBytes(1024).setMaxReferences(1).setMaxBoundaries(1)).build();
+                    assertThatThrownBy(() -> selected.readHistoricalOccurrence(selectedRequest))
+                            .isInstanceOfSatisfying(io.grpc.StatusRuntimeException.class,
+                                    error -> assertThat(error.getStatus().getCode()).isEqualTo(io.grpc.Status.Code.UNAUTHENTICATED));
+                    assertThat(bindings.get()).isEqualTo(before + 1);
+                    var selectedAuthenticated = selected.withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(metadata));
+                    assertThatThrownBy(() -> selectedAuthenticated.readHistoricalOccurrence(selectedRequest))
+                            .isInstanceOfSatisfying(io.grpc.StatusRuntimeException.class,
+                                    error -> assertThat(error.getStatus().getCode()).isEqualTo(io.grpc.Status.Code.NOT_FOUND));
+                    assertThat(bindings.get()).isEqualTo(before + 2);
                 } finally {
                     channel.shutdownNow();
                     assertThat(channel.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();

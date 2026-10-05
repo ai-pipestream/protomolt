@@ -355,6 +355,14 @@ public final class RepoServices implements AutoCloseable {
         return managedDocuments.history;
     }
 
+    /** Selected retained-schema decoding sharing the native history reader and shutdown lifetime. */
+    public ai.protomolt.proto.repo.spi.HistoricalMaterializationRepository historicalMaterializationRepository() {
+        requireOpen();
+        if (managedDocuments == null) throw new IllegalStateException("Managed document storage is not configured");
+        startLifecycle();
+        return managedDocuments.history;
+    }
+
     /** Archive operations sharing this composition's storage lifetime. */
     public ArchiveRepository archiveRepository() {
         requireOpen();
@@ -398,6 +406,7 @@ public final class RepoServices implements AutoCloseable {
         if (managedDocuments == null || managedDocuments.historyService == null) return services;
         var mounted = new java.util.ArrayList<BindableService>(services);
         mounted.add(managedDocuments.historyService);
+        if (managedDocuments.materializationService != null) mounted.add(managedDocuments.materializationService);
         return List.copyOf(mounted);
     }
 

@@ -3058,6 +3058,28 @@ or enable this option automatically. The service's published Maven/Gradle API
 metadata now exports `repo-spi` and `authz` for these public composition types;
 provider/engine details remain implementation dependencies.
 
+To also mount selected retained-schema decoding, opt in before building the host:
+
+```java
+historicalAccess = historicalAccess.withMaterialization(
+    new HistoricalMaterializationRepository.Limits(
+        4_000_000, 4_000_000, 16_000_000, 64, 8_000_000, 64));
+```
+
+This mounts `DocumentHistoryMaterializationService` over the same managed reader,
+ledger and original provider binding. Both history services share the response
+byte budget; each has its own concurrent-call limit. The three-argument access
+constructor leaves selected decoding unmounted. Local callers use
+`host.historicalMaterializationRepository()` and close every result. Its current
+READ checks remain distinct from the one-shot remote client's delivery semantics.
+
+Managed-host tests compare successful selected responses with the local SPI and
+across fresh in-process and Netty hosts using actual retained PostgreSQL/provider
+data. They require identical Any envelopes, descriptor bytes, metadata bytes and
+paths without a registry callback. Host routing tests also cover default-off,
+authentication and normal reader shutdown. This does not complete every repository
+operation's transport parity or qualify deployment performance.
+
 Host acceptance uses actual API-token interception and scoped credential
 resolution on in-process and Netty listeners, rejects absent/blank listener tokens,
 and verifies normal shutdown quiesces both registered readers. Native publication

@@ -18,8 +18,9 @@ import java.util.Objects;
 /** Host-owned native document resources and explicitly configured historical transport. */
 final class ManagedDocumentServices {
     final DocumentPublicationRuntime publication;
-    final ai.protomolt.proto.repo.spi.HistoricalDocumentRepository history;
+    final ai.protomolt.proto.repo.engine.DocumentHistoricalOperations history;
     final DocumentHistoryGrpcService historyService;
+    final DocumentHistoryMaterializationGrpcService materializationService;
 
     ManagedDocumentServices(Tx tx, DriveLedger drives, String generation,
             ManagedBackendLedger.Profile profile, OpenedBlobStore backing, boolean deliverEvents) {
@@ -42,8 +43,12 @@ final class ManagedDocumentServices {
         var ledger = new DocumentReadLedger(bounded, UUID.randomUUID(), 32);
         try {
             history = new ai.protomolt.proto.repo.engine.DocumentHistoricalOperations(ledger, reader, budget);
+            var responses = access == null ? null : new PayloadBudget(access.responseBudgetBytes());
             historyService = access == null ? null : new DocumentHistoryGrpcService(history, access.bindings(),
-                    new PayloadBudget(access.responseBudgetBytes()), access.maxConcurrentCalls());
+                    responses, access.maxConcurrentCalls());
+            materializationService = access == null ? null : access.materializationLimits().map(limits ->
+                    new DocumentHistoryMaterializationGrpcService(history, access.bindings(), limits,
+                            responses, access.maxConcurrentCalls())).orElse(null);
             publication = new DocumentPublicationRuntime(bounded, drives, ledger, reader, budget, (original, selected) -> {
                 requireOriginal(generation, profile, original, selected);
                 return new DocumentPublicationRuntime.Backend(profile.identity(), backing);

@@ -23,8 +23,10 @@ features available. Recovery is one workstream, not the whole goal.
    account ID or locally asserted process authority is not a remote grant.
    `HistoricalOccurrenceClient` provides one-shot verified reads, with fresh server
    authorization for every RPC. That explicit API advances remote use without
-   claiming cached results implement the SPI's current-READ semantics. Managed
-   mounting and full local/remote repository parity remain unfinished.
+   claiming cached results implement the SPI's current-READ semantics. Explicit
+   managed mounting now shares native reader lifetime and response capacity with
+   ordinary history; selected reads match the local SPI across fresh in-process
+   and Netty hosts. Full local/remote repository parity remains unfinished.
 2. **Schema resolution and cache.** Reuse the existing resolver and registry
    abstractions. Separate authorized discovery from immutable artifact lookup.
    Establish tenant/security scope, exact schema identity, bounded ownership,

@@ -164,7 +164,7 @@ class DocumentPublicationCommitIT {
                         S3.getEndpoint().toString(), S3.getRegion(), S3.getAccessKey(), S3.getSecretKey(),
                         NAMESPACE, 0, null, null, null, null, 0, 0L)
                         .withManagedStorage(new ai.protomolt.proto.repo.service.ManagedStoragePolicy(GENERATION, "native-commit-realm", true));
-                DocumentHistoricalTransportProbe.verifyHost(hostConfig, published, typed);
+                DocumentHistoricalTransportProbe.verifyHost(tx, hostConfig, published, typed);
                 assertThat(runtime.execute(ADMIN, command, Map.of(), Map.of(), Map.of(), Map.of(), java.util.Optional.empty(),
                         (caller, member, occurrence) -> { throw new AssertionError("Terminal replay must not resolve schemas"); },
                         ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isEqualTo(result);

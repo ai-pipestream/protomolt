@@ -21,16 +21,34 @@ import static org.assertj.core.api.Assertions.*;
 
 /** Real transports over the caller's real repository; no alternate storage implementation. */
 final class DocumentHistoricalTransportProbe {
-    static void verifyHost(ai.protomolt.proto.repo.service.RepoServiceConfig config,
+    static void verifyHost(Tx tx, ai.protomolt.proto.repo.service.RepoServiceConfig config,
             DocumentPublishedRevision published, boolean typed) throws Exception {
         var access = new ai.protomolt.proto.repo.service.HistoricalReadAccess(caller -> {
             assertThat(caller.name()).isEqualTo("host-reader");
             assertThat(caller.unrestricted()).isFalse();
             return new RepositoryCaller(caller.name(), false, Set.of(published.getAddress().getAccountId()), Set.of());
-        }, 32L * 1024 * 1024, 4);
+        }, 32L * 1024 * 1024, 4).withMaterialization(new ai.protomolt.proto.repo.spi.HistoricalMaterializationRepository.Limits(
+                4_000_000, 4_000_000, 16_000_000, 64, 8_000_000, 64));
         ai.protomolt.proto.authz.CallerResolver credentials = token -> "synthetic-host-reader-key".equals(token)
                 ? java.util.Optional.of(Caller.scoped("host-reader", Set.of())) : java.util.Optional.empty();
         ReadRevisionResponse first = null;
+        ReadHistoricalOccurrenceResponse firstSelected = null;
+        ReadHistoricalOccurrenceRequest selectedRequest = null;
+        if (typed) {
+            var row = tx.readOnly(em -> (Object[]) em.createNativeQuery("""
+                    SELECT revision_ordinal,encode(root_locator_sha256,'hex'),evidence_bytes
+                    FROM document_revision_schema_evidence WHERE revision_id=:revision ORDER BY revision_ordinal LIMIT 1
+                    """).setParameter("revision", UUID.fromString(published.getRevisionId())).getSingleResult());
+            var evidence = DocumentRootSchemaEvidence.parseFrom((byte[]) row[2]);
+            var path = evidence.getOccurrencesList().stream().filter(value -> value.getStepsCount() == 1).findFirst().orElseThrow();
+            selectedRequest = ReadHistoricalOccurrenceRequest.newBuilder().setAddress(published.getAddress())
+                    .setRevisionId(published.getRevisionId()).setSelection(HistoricalOccurrenceSelection.newBuilder()
+                            .setRevisionOrdinal(((Number) row[0]).intValue()).setRootSha256((String) row[1])
+                            .setPathSha256(ai.protomolt.proto.repo.codec.DocumentPartCodec.sha256Hex(path.toByteArray())))
+                    .setLimits(HistoricalMaterializationLimits.newBuilder().setMaxFragmentBytes(4_000_000)
+                            .setMaxEvidenceBytes(4_000_000).setMaxRetainedBytes(16_000_000)
+                            .setMaxReferences(64).setMaxDecodedBytes(8_000_000).setMaxBoundaries(64)).build();
+        }
         // New hosts/readers/providers each time, over the same retained revision.
         for (boolean serialized : new boolean[] {false, true}) {
             try (var host = ai.protomolt.proto.repo.service.RepoServices.build(config,
@@ -54,6 +72,30 @@ final class DocumentHistoricalTransportProbe {
                     assertThat(response.getMetadata().getKnown().getAccountId()).isEqualTo(published.getAddress().getAccountId());
                     if (first == null) first = response;
                     else assertThat(response).isEqualTo(first);
+                    if (selectedRequest != null) {
+                        var headers = new Metadata();
+                        headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), "synthetic-host-reader-key");
+                        var selected = DocumentHistoryMaterializationServiceGrpc.newBlockingStub(channel)
+                                .withDeadlineAfter(10, TimeUnit.SECONDS)
+                                .withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers))
+                                .readHistoricalOccurrence(selectedRequest);
+                        var caller = new RepositoryCaller("host-reader", false,
+                                Set.of(published.getAddress().getAccountId()), Set.of());
+                        var selection = selectedRequest.getSelection();
+                        try (var local = host.historicalMaterializationRepository().readMaterialized(caller, published.getAddress(),
+                                UUID.fromString(published.getRevisionId()),
+                                new ai.protomolt.proto.repo.spi.HistoricalMaterializationRepository.Selection(selection.getRevisionOrdinal(),
+                                        selection.getRootSha256(), selection.getPathSha256()), access.materializationLimits().orElseThrow(),
+                                ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+                            var view = local.view(ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+                            assertThat(selected.getOriginal()).isEqualTo(view.original());
+                            assertThat(selected.getDefinition().getDescriptorArtifact()).isEqualTo(view.definition().descriptorArtifact());
+                            assertThat(selected.getDefinition().getMetadataArtifact()).isEqualTo(view.definition().metadataArtifact());
+                            assertThat(selected.getPath()).isEqualTo(view.path());
+                        }
+                        if (firstSelected == null) firstSelected = selected;
+                        else assertThat(selected).isEqualTo(firstSelected);
+                    }
                 } finally {
                     channel.shutdownNow();
                     assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
