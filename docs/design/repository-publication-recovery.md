@@ -3,6 +3,30 @@
 Status: design requirements; automatic cross-host session recovery is not enabled.
 This extends the repository composition goal without changing public contracts.
 
+## Original-owner restoration handle
+
+`DocumentPublicationRestoration` is an internal stage-only handle. A trusted
+coordinator must supply the exact claim-bearing original owner; the handle does
+not retrieve execution tokens or establish that another coordinator has stopped.
+It loads preparation, validates fixed modes, and loads the committed assessment
+start under live claim/owner checks. The saved owner nonce, generation and command
+must agree. Missing start state refuses restoration and never authorizes CREATE.
+
+The handle retains its preparation byte reservation through use and releases it
+on close. Concurrent resume and close are refused. Resume has no upload bodies,
+resolver, admission or takeover input. It checks the discovered assessment UUID
+and database deadline against the saved start before capturing retained content;
+terminal results use ordinary authorized replay.
+
+This is not automatic failover or a managed-host restore API. A forced writer exit
+with fresh-process restoration, claim loss between restoration and resume, host
+lifecycle integration, and delayed provider effects across transfer remain gates.
+
+The original-owner checkpoint passed nine PostgreSQL journal cases and the
+production-JAR LocalStack gate, including actual handle reconciliation and exact
+durable rejection replay after lost assessment COMMIT acknowledgment. See
+[the retained evidence](../evidence/repository/2026-10-05-original-owner-restoration/README.md).
+
 ## Persisted preparation
 
 Before the first uncertain admission or takeover, store a bounded, versioned

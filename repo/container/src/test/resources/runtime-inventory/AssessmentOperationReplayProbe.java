@@ -20,7 +20,7 @@ public final class AssessmentOperationReplayProbe {
         var valid = ObservedAssessmentProbe.asset(StringValue.getDescriptor());
         var invalid = ObservedAssessmentProbe.invalidSchema();
         var current = policy;
-        for (int scenario = 0; scenario < 6; scenario++) {
+        for (int scenario = 0; scenario < 7; scenario++) {
             var caller = new RepositoryCaller("principal", true);
             var a = ObservedAssessmentProbe.member("a"); var b = ObservedAssessmentProbe.member("b");
             var intent = DocumentPublicationIntent.newBuilder().setEncodingVersion(1).setAccountId("account")
@@ -103,7 +103,7 @@ public final class AssessmentOperationReplayProbe {
                         return null;
                     }
                     new RepositorySchemaArtifacts(tx).stage(owner, command, List.copyOf(evidence.artifacts(() -> {}).values()), () -> {});
-                    if (mode == 4) return JournaledAssessmentProbe.createWithLostAcknowledgment(tx, database, caller, owner,
+                    if (mode == 4 || mode == 6) return JournaledAssessmentProbe.createWithLostAcknowledgment(tx, database, caller, owner,
                             command, prepared, selected, evidence, budget);
                     return new DocumentAssessmentCreation(tx, drives).create(caller, owner, prepared, selected, evidence, UUID.randomUUID(),
                             Instant.now().plusSeconds(mode == 2 ? 20 : 300).truncatedTo(java.time.temporal.ChronoUnit.MICROS), budget, () -> {});
@@ -172,6 +172,10 @@ public final class AssessmentOperationReplayProbe {
                          + (SELECT count(*) FROM repository_operation_rejection WHERE operation_id=:op)
                     """).setParameter("op", command.operationId()).getSingleResult()).longValue());
             require(outcomes == 0, "replay grants no terminal decision");
+            if (scenario == 6) {
+                JournaledAssessmentProbe.resume(tx, provider, caller, owner, command, observation, LIMITS);
+                continue;
+            }
             current = AssessmentRejectionProbe.run(tx, database, provider, caller, owner, command,
                     DocumentAssessmentRetainedSlots.uploadSelections(selected), stage, current, observation, scenario);
             if (scenario == 4) System.out.println("JOURNALED_ASSESSMENT_DECISION_OK");

@@ -69,6 +69,12 @@ final class DocumentPublicationAssessmentExecution {
     /** Source pins must already be closed; original stage recovery performs no upload or schema resolution. */
     DocumentPublicationResult resume(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentPublicationCommand command, RepositoryReadControl control) {
+        return resume(caller, owner, command, null, control);
+    }
+
+    DocumentPublicationResult resume(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentPublicationCommand command, DocumentAssessmentStartJournal.Started expected,
+            RepositoryReadControl control) {
         Objects.requireNonNull(control).check();
         var existing = replay.observe(caller, command);
         control.check();
@@ -79,6 +85,10 @@ final class DocumentPublicationAssessmentExecution {
                         "Assessment stage outcome is unresolved; explicit recovery is required"));
         reads.releaseDrainedAtCapacity(1);
         var stage = original.stage();
+        if (expected != null && (!expected.assessment().equals(stage.assessment())
+                || !expected.retainUntil().equals(stage.retainUntil())))
+            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Discovered assessment differs from retained start");
         try (var capture = reads.captureAssessment(caller, owner, command, original.selections(), stage.assessment(),
                 stage.manifestSha256(), stage.retainUntil(), budget, control::check)) {
             var decided = rejections.reject(caller, owner, command, capture, reader, budget, limits, observation, control);

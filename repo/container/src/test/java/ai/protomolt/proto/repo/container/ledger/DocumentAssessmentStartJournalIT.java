@@ -23,6 +23,66 @@ class DocumentAssessmentStartJournalIT {
     private static final Duration LEASE = Duration.ofMinutes(1), RETENTION = Duration.ofMinutes(10);
     private static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
 
+    @Test void restorationRetainsItsPreparationReservationUntilClosed() {
+        try (var c = context(POSTGRES)) {
+            var state = setup(c);
+            var journal = new DocumentAssessmentStartJournal(c.tx(), state.budget());
+            var started = journal.start(CALLER, state.owner(), state.value().command(), UUID.randomUUID(), RETENTION, NONE);
+            var restored = DocumentPublicationRestoration.restore(new Tx(c.emf()), state.budget(), CALLER, state.owner(), NONE);
+            assertThat(state.budget().reservedBytes()).isPositive();
+            assertThat(journal.load(CALLER, state.owner(), state.value().command(), NONE)).contains(started);
+            restored.close(); restored.close();
+            assertThat(state.budget().reservedBytes()).isZero();
+        }
+    }
+
+    @Test void restorationCannotReplaceAnAbsentStartOrUseAnotherOwner() {
+        try (var c = context(POSTGRES)) {
+            var state = setup(c);
+            assertThatThrownBy(() -> DocumentPublicationRestoration.restore(c.tx(), state.budget(), CALLER, state.owner(), NONE))
+                    .isInstanceOf(RepositoryException.class).hasMessageContaining("cannot restage");
+            assertThat(state.budget().reservedBytes()).isZero();
+            new DocumentAssessmentStartJournal(c.tx(), state.budget())
+                    .start(CALLER, state.owner(), state.value().command(), UUID.randomUUID(), RETENTION, NONE);
+            var wrong = new RepositoryOperationLedger.Owner(state.owner().key(), state.owner().generation(),
+                    UUID.randomUUID(), state.owner().leaseUntil(), state.owner().executionClaim());
+            assertThatThrownBy(() -> DocumentPublicationRestoration.restore(c.tx(), state.budget(), CALLER, wrong, NONE))
+                    .isInstanceOf(RepositoryException.class).hasMessageContaining("differs from retained preparation");
+            assertThat(state.budget().reservedBytes()).isZero();
+            var scoped = new RepositoryCaller("principal", false, java.util.Set.of(state.owner().key().account()), java.util.Set.of());
+            assertThatThrownBy(() -> DocumentPublicationRestoration.restore(c.tx(), state.budget(), scoped, state.owner(), NONE))
+                    .isInstanceOf(RepositoryException.class).hasMessageContaining("private process authority");
+            assertThat(state.budget().reservedBytes()).isZero();
+        }
+    }
+
+    @Test void restorationCancellationAlwaysReleasesLoadedPreparation() {
+        try (var c = context(POSTGRES)) {
+            var state = setup(c);
+            new DocumentAssessmentStartJournal(c.tx(), state.budget())
+                    .start(CALLER, state.owner(), state.value().command(), UUID.randomUUID(), RETENTION, NONE);
+            var total = new java.util.concurrent.atomic.AtomicInteger();
+            try (var restored = DocumentPublicationRestoration.restore(c.tx(), state.budget(), CALLER, state.owner(),
+                    counting(total, Integer.MAX_VALUE))) { assertThat(state.budget().reservedBytes()).isPositive(); }
+            for (int point = 1; point <= total.get(); point++) {
+                var control = counting(new java.util.concurrent.atomic.AtomicInteger(), point);
+                assertThatThrownBy(() -> DocumentPublicationRestoration.restore(c.tx(), state.budget(), CALLER, state.owner(), control))
+                        .isInstanceOf(java.util.concurrent.CancellationException.class);
+                assertThat(state.budget().reservedBytes()).isZero();
+            }
+        }
+    }
+
+    private static RepositoryReadControl counting(java.util.concurrent.atomic.AtomicInteger calls, int stopAt) {
+        return new RepositoryReadControl() {
+            @Override public boolean isCancelled() { return false; }
+            @Override public long remainingNanos() { return Long.MAX_VALUE; }
+            @Override public void check() {
+                if (calls.incrementAndGet() == stopAt) throw new java.util.concurrent.CancellationException("restoration cancelled");
+            }
+        };
+    }
+
     @Test void lostAcknowledgmentRetainsExactDatabaseDeadlineAndAssessmentIdentity() {
         try (var c = context(POSTGRES)) {
             var state = setup(c); var id = UUID.randomUUID();
