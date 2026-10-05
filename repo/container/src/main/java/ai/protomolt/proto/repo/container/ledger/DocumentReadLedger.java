@@ -101,6 +101,38 @@ public final class DocumentReadLedger {
         }
     }
 
+    /** Internal evidence retention only; provider reads require a separately verified plan and current delivery authorization. */
+    PinnedAssessment captureAssessment(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            ai.protomolt.proto.repo.spi.DocumentPublicationCommand command,
+            java.util.Map<String,DocumentAssessmentRetainedSlots.UploadSelection> selections,
+            UUID assessment, String manifestSha, java.time.Instant deadline,
+            ai.protomolt.proto.repo.blob.spi.PayloadBudget budget, Runnable control) {
+        var protection = new DocumentAssessmentReadProtection(
+                new DocumentAssessmentCreation.Created(assessment, manifestSha, deadline), incarnation, UUID.randomUUID());
+        beginCapture();
+        boolean handedOff = false;
+        var commitReady = new java.util.concurrent.atomic.AtomicBoolean();
+        try {
+            new DocumentAssessmentReconciliation(tx).captureRetained(caller, owner, command, selections,
+                    assessment, manifestSha, deadline, budget, control, incarnation, protection.session(),
+                    () -> commitReady.set(true));
+            var result = new PinnedAssessment(protection);
+            register(result);
+            handedOff = true;
+            try {
+                if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException("Assessment capture interrupted");
+                control.run();
+                if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException("Assessment capture interrupted");
+                return result;
+            } catch (RuntimeException | Error failure) {
+                result.close(); // Commit is acknowledged; ordinary drained release can finish this handle.
+                throw failure;
+            }
+        } finally {
+            if (!handedOff) finishFailedCapture(commitReady.get() ? protection : null);
+        }
+    }
+
     private void failedCapture() {
         synchronized (lifetime) { outstandingReads--; activeLifetimes--; lifetime.notifyAll(); }
     }
@@ -237,6 +269,10 @@ public final class DocumentReadLedger {
      */
     public final class PinnedPlan extends PinnedRead<DocumentRetainedReadPlan> {
         private PinnedPlan(DocumentReadPins.Captured<DocumentRetainedReadPlan> captured) { super(captured); }
+    }
+
+    final class PinnedAssessment extends PinnedRead<DocumentAssessmentCreation.Created> {
+        private PinnedAssessment(DocumentAssessmentReadProtection captured) { super(captured); }
     }
 
     public final class PinnedHistory extends PinnedRead<DocumentHistoricalReadPlan> {

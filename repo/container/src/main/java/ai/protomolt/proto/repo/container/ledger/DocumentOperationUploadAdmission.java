@@ -99,9 +99,9 @@ final class DocumentOperationUploadAdmission {
         if (!owner.key().account().equals(command.intent().getAccountId()) || !owner.key().operationId().equals(command.operationId()))
             throw new IllegalArgumentException("Read command differs from operation scope");
         return tx.inTransaction(em -> {
-            RepositoryOperationLedger.fenceLiveOwner(em, owner);
             if (reader != null) em.createNativeQuery("SELECT require_active_repository_reader(:reader)")
                     .setParameter("reader", reader).getSingleResult();
+            RepositoryOperationLedger.fenceLiveOwner(em, owner);
             RepositoryOperationLedger.requireCommand(em, owner.key(), command);
             DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, prepared.plan, prepared.authorization);
             var captured = DocumentReuseAdmission.capture(em, prepared.reuse, prepared.plan, owner);

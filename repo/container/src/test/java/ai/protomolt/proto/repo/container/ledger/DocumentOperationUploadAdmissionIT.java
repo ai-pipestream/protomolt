@@ -573,12 +573,26 @@ class DocumentOperationUploadAdmissionIT {
                     Thread.sleep(10);
                 } while (System.nanoTime() < deadline);
                 assertThat(waiting).as("capture is inside SQL admission").isTrue();
-                ledger.fence();
-                assertThatThrownBy(ledger::attestLocalQuiescence).isInstanceOf(IllegalStateException.class);
+                var fencing = executor.submit(ledger::fence);
+                deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+                boolean fenceWaiting;
+                do {
+                    fenceWaiting = tx.readOnly(em -> !em.createNativeQuery("""
+                            SELECT pid FROM pg_stat_activity WHERE wait_event_type='Lock'
+                            AND query LIKE '%fence_repository_reader%' AND pid<>pg_backend_pid()
+                            """).getResultList().isEmpty());
+                    if (fenceWaiting || fencing.isDone()) break;
+                    Thread.sleep(10);
+                } while (System.nanoTime() < deadline);
+                assertThat(fenceWaiting).as("reader fence waits for admitted capture transaction").isTrue();
                 blocker.getTransaction().rollback();
-                assertThatThrownBy(() -> capture.get(5, java.util.concurrent.TimeUnit.SECONDS))
-                        .hasStackTraceContaining("ACTIVE");
+                var plan = capture.get(5, java.util.concurrent.TimeUnit.SECONDS);
+                fencing.get(5, java.util.concurrent.TimeUnit.SECONDS);
+                assertThatThrownBy(plan::use).hasMessageContaining("closed");
+                assertThatThrownBy(ledger::attestLocalQuiescence).isInstanceOf(IllegalStateException.class);
+                plan.close();
                 ledger.attestLocalQuiescence();
+                plan.recover();
                 assertThat(readPins(id)).isZero();
             } finally {
                 if (blocker.getTransaction().isActive()) blocker.getTransaction().rollback();

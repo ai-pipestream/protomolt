@@ -38,6 +38,24 @@ final class DocumentAssessmentReconciliation {
     Optional<DocumentAssessmentCreation.Created> observeRetained(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentPublicationCommand command, Map<String,DocumentAssessmentRetainedSlots.UploadSelection> selected,
             UUID assessment, String manifestSha, Instant deadline, PayloadBudget budget, Runnable callerControl) {
+        return observeRetained(caller, owner, command, selected, assessment, manifestSha, deadline, budget,
+                callerControl, null, null, () -> {});
+    }
+
+    /** Verifies the complete stored evidence and creates its reader session in the same transaction. */
+    DocumentAssessmentCreation.Created captureRetained(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentPublicationCommand command, Map<String,DocumentAssessmentRetainedSlots.UploadSelection> selected,
+            UUID assessment, String manifestSha, Instant deadline, PayloadBudget budget, Runnable callerControl,
+            UUID reader, UUID session, Runnable beforeCommit) {
+        Objects.requireNonNull(reader); Objects.requireNonNull(session); Objects.requireNonNull(beforeCommit);
+        return observeRetained(caller, owner, command, selected, assessment, manifestSha, deadline, budget,
+                callerControl, reader, session, beforeCommit).orElseThrow(DocumentAssessmentReconciliation::conflict);
+    }
+
+    private Optional<DocumentAssessmentCreation.Created> observeRetained(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentPublicationCommand command, Map<String,DocumentAssessmentRetainedSlots.UploadSelection> selected,
+            UUID assessment, String manifestSha, Instant deadline, PayloadBudget budget, Runnable callerControl,
+            UUID reader, UUID session, Runnable beforeCommit) {
         Objects.requireNonNull(callerControl);
         Runnable control = () -> {
             if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException("Assessment acknowledgement interrupted");
@@ -55,6 +73,8 @@ final class DocumentAssessmentReconciliation {
         try (var reading = budget.reserve(3L * DocumentAssessmentManifestCodec.MAX_BYTES)) {
             return tx.inTransaction(em -> {
                 control.run();
+                if (reader != null) em.createNativeQuery("SELECT require_active_repository_reader(:reader)")
+                        .setParameter("reader", reader).getSingleResult();
                 RepositoryOperationLedger.fenceLiveOwner(em, owner);
                 RepositoryOperationLedger.requireCommand(em, owner.key(), command);
                 DocumentAdmissionAuthorization.authorizeRejection(em, caller, command);
@@ -87,6 +107,15 @@ final class DocumentAssessmentReconciliation {
                         FROM document_assessment_owners WHERE assessment_id=:id
                         """).setParameter("id", assessment).getSingleResult())) throw conflict();
                 control.run();
+                if (reader != null) {
+                    em.createNativeQuery("""
+                            INSERT INTO document_assessment_read_sessions(session_id,reader_incarnation,assessment_id)
+                            VALUES(:session,:reader,:assessment)
+                            """).setParameter("session", session).setParameter("reader", reader)
+                            .setParameter("assessment", assessment).executeUpdate();
+                    control.run();
+                    beforeCommit.run();
+                }
                 return Optional.of(new DocumentAssessmentCreation.Created(assessment, manifestSha, deadline));
             });
         }

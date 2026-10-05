@@ -202,6 +202,31 @@ public final class AssessmentCreationProbe {
                 var recoveryBudget = new PayloadBudget(64_000_000);
                 var recovery = new DocumentAssessmentReconciliation(tx);
                 var selections = DocumentAssessmentRetainedSlots.uploadSelections(selected);
+                var assessmentReader = new DocumentReadLedger(tx, UUID.randomUUID(), 1);
+                try {
+                    assessmentReader.captureAssessment(caller, recoveredOwner, recoveredCommand, selections,
+                            retained.assessment(), "00".repeat(32), retained.retainUntil(), recoveryBudget, () -> {});
+                    throw new AssertionError("assessment capture accepted a different manifest");
+                } catch (IllegalStateException expected) {
+                    require(expected.getMessage().contains("requested original stage"), "capture validates retained manifest");
+                }
+                require(assessmentReader.outstandingReads() == 0, "invalid capture returns capacity");
+                var protectedAssessment = assessmentReader.captureAssessment(caller, recoveredOwner, recoveredCommand, selections,
+                        retained.assessment(), retained.manifestSha256(), retained.retainUntil(), recoveryBudget, () -> {});
+                var retainedUse = protectedAssessment.use();
+                require(retainedUse.plan().equals(retained), "canonical evidence capture matches original stage");
+                protectedAssessment.close();
+                require(assessmentReader.releaseDrained(1) == 0, "assessment use blocks release until drain");
+                retainedUse.close();
+                require(assessmentReader.releaseDrained(1) == 1, "exact assessment session released after drain");
+                require(assessmentReader.outstandingReads() == 0, "assessment release returns capacity");
+                var recoveredCapture = assessmentReader.captureAssessment(caller, recoveredOwner, recoveredCommand, selections,
+                        retained.assessment(), retained.manifestSha256(), retained.retainUntil(), recoveryBudget, () -> {});
+                recoveredCapture.close();
+                assessmentReader.fence(); assessmentReader.attestLocalQuiescence();
+                require(assessmentReader.recoverQuiescedPins(1) == 1, "assessment recovery finds durable session");
+                require(assessmentReader.reconcileDrained(1) == 1, "exact released identity retires local handle");
+                require(assessmentReader.recoverQuiescedPins(1) == 0, "assessment reader is fully recovered");
                 require(recovery.observeRetained(caller, recoveredOwner, recoveredCommand, selections, retained.assessment(),
                         retained.manifestSha256(), retained.retainUntil(), recoveryBudget, () -> {}).orElseThrow().equals(retained),
                         "closed-scope evidence acknowledged from durable identities");

@@ -4537,8 +4537,7 @@ before the final prepared-set handoff cannot reach commit and return capacity.
 The prior unconditional failedCapture path could leave committed pins outside
 local accounting after a lost acknowledgement; real JDBC post-commit fault tests
 cover historical and reuse capture. This conservatively retains capacity even
-for a commit-time rollback until quiescence establishes the outcome. Assessment
-capture still requires its own V73 identity integration. Shutdown discovery now
+for a commit-time rollback until quiescence establishes the outcome. Shutdown discovery now
 includes assessment sessions: DocumentAssessmentReadRecovery requires durable
 QUIESCED state even for an empty batch, selects exact session/assessment pairs in
 UUID order, and performs V73 recovery in one transaction. DocumentReadLedger spends
@@ -4548,3 +4547,31 @@ exercise active/fenced refusal, reader isolation, bounded session recovery and a
 mixed shutdown with two document pins plus an assessment session at batch size
 one. These use synthetic SQL assessment evidence and an idle real reader; they do
 not establish admission or provider-worker drain for assessment reads.
+
+Internal assessment capture now uses the retained acknowledgement verifier and
+session insertion in one SQL transaction. Reader admission precedes the operation
+fence, followed by current authorization, exact owner/command/manifest checks,
+frozen slot verification and retained schema/root integrity checks. The session
+is inserted only after that verification; final control checks can still roll the
+transaction back. Existing document capture now takes the same reader-before-owner
+lock order, avoiding a cycle when shutdown queues an exclusive reader fence.
+
+DocumentReadLedger allocates the assessment session identity and capacity before
+SQL and records the protection before attempting commit. Failure after that point
+retains a closed uncertain handle under the same quiesced reconciliation rules as
+document captures. DocumentAssessmentReadProtection implements exact V73 release,
+recovery and read-only confirmation, including permanent identity checks. The
+final in-transaction control check precedes the commit-ready marker, so cancellation
+there returns capacity. Cancellation observed after an acknowledged commit closes
+the known-committed handle for normal drained release instead of requiring
+quiescent uncertainty recovery. The
+returned internal PinnedAssessment protects retained evidence and exposes only
+the verified stage identity. It provides neither a provider byte-read plan nor
+semantic-review authority, and no new public RPC is mounted.
+
+The production-JAR probe exercises canonical capture after the original evidence
+scope closes: wrong manifest refusal, correct retained identity, use-counted drain,
+normal release and quiesced discovery/confirmation. Physical slot observations in
+that fixture remain synthetic. Assessment-specific lost-commit injection,
+concurrent release/revocation, provider read-plan assembly and delivery-time
+authorization remain required before enabling the full assessment reader.
