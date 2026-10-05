@@ -55,6 +55,30 @@ class DocumentPublicationRejectionCodecTest {
                 .isInstanceOf(com.google.protobuf.InvalidProtocolBufferException.class);
     }
 
+    @Test void admissionBindingSurvivesCanonicalReplayAndRejectsNestedUnknownFields() throws Exception {
+        var command = command();
+        var binding = DocumentPublicationAssessmentBinding.newBuilder().setAssessmentId(ID)
+                .setManifestCodec("document-publication-assessment").setManifestEncodingVersion(1)
+                .setManifestSha256("b".repeat(64)).setRetainUntilEpochMicros(2).build();
+        var valid = rejection(command).toBuilder().setReasonValue(2).setAssessment(binding).build();
+        var encoded = DocumentPublicationRejectionCodec.encode(command, valid, "principal", 2);
+        assertThat(decode(command, encoded.bytes(), encoded.sha256())).isEqualTo(valid);
+        assertThat(encoded.bytes().size()).isLessThan(DocumentPublicationRejectionCodec.MAX_BYTES);
+        assertThatThrownBy(() -> DocumentPublicationRejectionCodec.encode(command,
+                valid.toBuilder().clearAssessment().build(), "principal", 2))
+                .hasMessageContaining("Invalid publication rejection");
+        var unknown = UnknownFieldSet.newBuilder().addField(999, UnknownFieldSet.Field.newBuilder().addVarint(1).build()).build();
+        var invalid = valid.toBuilder().setAssessment(binding.toBuilder().setUnknownFields(unknown)).build();
+        assertThatThrownBy(() -> DocumentPublicationRejectionCodec.encode(command, invalid, "principal", 2))
+                .hasMessageContaining("Unknown publication fields");
+        assertThatThrownBy(() -> decode(command, invalid.toByteString(), digest(invalid.toByteString())))
+                .hasMessageContaining("Unknown publication fields");
+        // Existing precondition and cancellation receipts need no new field.
+        var cancelled = rejection(command).toBuilder().setReasonValue(3).setDispositionValue(2).build();
+        var cancellation = DocumentPublicationRejectionCodec.encode(command, cancelled, "principal", 2);
+        assertThat(decode(command, cancellation.bytes(), cancellation.sha256())).isEqualTo(cancelled);
+    }
+
     private static DocumentPublicationRejection decode(DocumentPublicationCommand command, ByteString bytes, String sha) throws Exception {
         return DocumentPublicationRejectionCodec.decode(command, "principal", 2, DocumentPublicationRejectionCodec.CODEC, 1, bytes, sha);
     }

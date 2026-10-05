@@ -3373,7 +3373,8 @@ ProtoMolt and Protovalidate rule sources with empty taxonomy/postal catalogs; it
 must not imply that an external catalog was checked. Configurable catalogs will
 need immutable identities of their own.
 
-An additive receipt binding and durable evidence storage are still required.
+The additive receipt binding is now defined below. Connecting durable evidence
+storage to the terminal decision is still required.
 A digest identifies evidence but cannot reproduce a verdict after its evidence
 or candidate bytes have disappeared. Retention, authorization, cleanup and replay
 must distinguish the durable decision from the period during which independent
@@ -5138,3 +5139,45 @@ read session. No success or rejection receipt may appear. This qualifies refusal
 after storage reads; it does not implement terminal admission decisions or public
 transport delivery. The next integration work must preserve that distinction
 when connecting retained assessments to publication and rejection handling.
+
+#### Admission rejection receipt binding
+
+`DocumentPublicationRejection.assessment` now references an exact assessment UUID,
+manifest codec/version/digest and retention deadline. ProtoMolt's validator requires
+this field if and only if the reason is ADMISSION_REJECTED. Its deadline must be
+strictly after the recorded decision time. The unchanged cancellation and
+precondition receipts carry no assessment field. The existing 4 KiB canonical
+receipt codec checks nested unknown fields and preserves the binding on replay.
+No admission-rejection emitter or public RPC is enabled by this contract change.
+
+This reference is not evidence that an invalid candidate was checked. The future
+decision handler must reproduce the complete retained assessment outside SQL locks,
+then enter the owner, current policy and complete authorized document/source fences.
+It must bind the exact sealed, unreleased assessment row under the same account,
+principal, operation, command and deciding generation. All reference values and
+the exact PostgreSQL microsecond deadline must match stored evidence. A diagnostic
+`DocumentAssessmentReplay.Result` is not itself an unforgeable decision capability;
+do not accept a caller-constructed result as authority to reject. Cancellation,
+capacity refusal, missing evidence and runtime failures remain operational errors.
+
+Assessment staging currently limits immutable retention to one day and prevents
+new captures after expiry. The terminal receipt outlives that period. Before
+enabling the decision handler, require an explicit host policy for the minimum
+remaining evidence window and check it using database time inside the decision
+transaction. A nearly expired stage must not produce a receipt promising useful
+re-evaluation time. No implicit duration or retention extension is selected here.
+Longer audit retention requires its own reviewed retention/recovery mechanism.
+After expiry, replay of the immutable receipt remains distinct from independent
+re-evaluation, which may report evidence unavailable. Neither path substitutes
+current registry definitions for historical evidence.
+
+Generated and dynamic protobuf fixtures cover missing and extraneous bindings,
+identity/encoding bounds, deadline equality and order, and maximum timestamps.
+They deliberately accept a well-shaped fictitious digest to distinguish shape
+validity from the handler's evidence obligations. Codec fixtures cover nested
+unknown fields, exact canonical round trips and unchanged cancellation receipts.
+The focused gate passes 20 tests including the existing 13 PostgreSQL rejection
+cases. Complete descriptor compilation, protobuf lint and strict FILE compatibility
+against the preceding checkpoint pass. JSON Schema exposes the digest constraint
+and retains the cross-field rules as `x-protomolt-cel`; it does not translate those
+rules into equivalent standard OpenAPI constraints. Generator work remains separate.

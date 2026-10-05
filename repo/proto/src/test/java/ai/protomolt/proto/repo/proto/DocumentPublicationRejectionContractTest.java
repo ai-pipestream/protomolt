@@ -12,7 +12,8 @@ class DocumentPublicationRejectionContractTest {
     @Test void validatesBothDispositionsOnGeneratedAndDynamicMessages() throws Exception {
         var valid = rejection().build();
         check(valid, true);
-        check(valid.toBuilder().setReasonValue(2).build(), true);
+        check(valid.toBuilder().setReasonValue(2).build(), false);
+        check(valid.toBuilder().setReasonValue(2).setAssessment(assessment()).build(), true);
         check(valid.toBuilder().setDispositionValue(2).setReasonValue(3).build(), true);
         check(valid.toBuilder().setDispositionValue(2).build(), false);
         check(valid.toBuilder().setDispositionValue(2).setReasonValue(2).build(), false);
@@ -26,7 +27,7 @@ class DocumentPublicationRejectionContractTest {
     @Test void rejectsMissingIdentityAndOutOfBoundsValues() throws Exception {
         var valid = rejection().build();
         for (var field : DocumentPublicationRejection.getDescriptor().getFields())
-            check(valid.toBuilder().clearField(field).build(), false);
+            if (!field.getName().equals("assessment")) check(valid.toBuilder().clearField(field).build(), false);
         check(valid.toBuilder().setAccountId(" ").build(), false);
         check(valid.toBuilder().setPrincipal("x".repeat(201)).build(), false);
         check(valid.toBuilder().setCommandSha256("A".repeat(64)).build(), false);
@@ -39,12 +40,47 @@ class DocumentPublicationRejectionContractTest {
         check(valid.toBuilder().setRecordedAtEpochMicros(253402300799999999L).build(), true);
     }
 
+    @Test void admissionRequiresAnExactBoundedBindingWithFutureRetention() throws Exception {
+        var valid = rejection().setReasonValue(2).setAssessment(assessment()).build();
+        check(valid, true);
+        check(valid.toBuilder().clearAssessment().build(), false);
+        check(valid.toBuilder().setReasonValue(1).build(), false);
+        check(valid.toBuilder().setDispositionValue(2).setReasonValue(3).build(), false);
+        for (var field : DocumentPublicationAssessmentBinding.getDescriptor().getFields())
+            check(valid.toBuilder().setAssessment(assessment().clearField(field)).build(), false);
+        for (var bad : new DocumentPublicationAssessmentBinding[]{
+                assessment().setAssessmentId("1-1-1-1-1").build(),
+                assessment().setAssessmentId("ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDEF").build(),
+                assessment().setManifestCodec("other").build(),
+                assessment().setManifestEncodingVersion(2).build(),
+                assessment().setManifestSha256("A".repeat(64)).build(),
+                assessment().setRetainUntilEpochMicros(-1).build(),
+                assessment().setRetainUntilEpochMicros(253402300800000000L).build(),
+                assessment().setRetainUntilEpochMicros(valid.getRecordedAtEpochMicros()).build()})
+            check(valid.toBuilder().setAssessment(bad).build(), false);
+        check(valid.toBuilder().setRecordedAtEpochMicros(3).build(), false);
+        check(valid.toBuilder().setAssessment(assessment().setRetainUntilEpochMicros(253402300799999999L)).build(), true);
+        // Shape cannot establish that this evidence exists or proves an invalid
+        // candidate. The decision handler must verify those state-dependent facts.
+        check(valid.toBuilder().setAssessment(assessment().setManifestSha256("0".repeat(64))).build(), true);
+    }
+
     @Test void jsonSchemaExposesBoundsAndPreservesRuntimeRule() {
         var generator = ai.protomolt.proto.http.jsonschema.ProtoJsonSchemaGenerator.create();
         var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
         com.fasterxml.jackson.databind.JsonNode schema = mapper.valueToTree(generator.generateRooted(DocumentPublicationRejection.getDescriptor()));
         assertThat(schema.at("/properties/accountId/maxLength").asInt()).isEqualTo(200);
         assertThat(schema.path("x-protomolt-cel").toString()).contains("publication-rejection-disposition");
+        assertThat(schema.path("x-protomolt-cel").toString())
+                .contains("publication-rejection-assessment", "publication-rejection-retention");
+        com.fasterxml.jackson.databind.JsonNode binding = mapper.valueToTree(generator.generateRooted(DocumentPublicationAssessmentBinding.getDescriptor()));
+        assertThat(binding.at("/properties/manifestSha256/pattern").asText()).isEqualTo("^[0-9a-f]{64}$");
+    }
+
+    private static DocumentPublicationAssessmentBinding.Builder assessment() {
+        return DocumentPublicationAssessmentBinding.newBuilder().setAssessmentId("abcdefab-cdef-4abc-8def-abcdefabcdef")
+                .setManifestCodec("document-publication-assessment").setManifestEncodingVersion(1)
+                .setManifestSha256("b".repeat(64)).setRetainUntilEpochMicros(2);
     }
 
     private static DocumentPublicationRejection.Builder rejection() {

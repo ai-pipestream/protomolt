@@ -44,6 +44,16 @@ message DocumentPublicationRejection {
     message: "only explicit cancellation has an aborted disposition"
     expression: "(this.disposition == 2) == (this.reason == 3)"
   };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-rejection-assessment"
+    message: "only admission rejection requires a retained assessment binding"
+    expression: "(this.reason == 2) == has(this.assessment)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-rejection-retention"
+    message: "assessment retention must extend beyond the decision time"
+    expression: "!has(this.assessment) || this.assessment.retain_until_epoch_micros > this.recorded_at_epoch_micros"
+  };
   // Scoped to the account and authenticated principal.
   string operation_id = 1 [(ai.protomolt.proto.validate.v1.field).string = {uuid: true, pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}];
   // Account scope of the admitted command.
@@ -64,4 +74,32 @@ message DocumentPublicationRejection {
   DocumentPublicationDisposition disposition = 9 [(ai.protomolt.proto.validate.v1.field).enum = {defined_only: true, not_in: 0}];
   // Fixed reason whose meaning must agree with the disposition.
   DocumentPublicationRejectionReason reason = 10 [(ai.protomolt.proto.validate.v1.field).enum = {defined_only: true, not_in: 0}];
+  // Required only for admission rejection. The handler must verify complete
+  // retained associations, a reproduced invalid verdict, and current owner,
+  // policy and document/source fences before recording this binding. Shape
+  // validation proves none of those facts. No admission-rejection handler is
+  // enabled by adding this field.
+  DocumentPublicationAssessmentBinding assessment = 11;
+}
+
+// Identifies protected assessment evidence without exposing failure paths,
+// candidate data or validator messages. Account, principal, operation, command
+// and deciding generation are inherited from the enclosing receipt and must
+// equal the retained manifest's identity. This is neither a storage locator nor
+// permission to retrieve evidence. After expiry the receipt remains replayable;
+// independent re-evaluation may be unavailable and must not use a live registry
+// as a substitute. The handler must bind the exact persisted retention deadline.
+message DocumentPublicationAssessmentBinding {
+  // Exact retained assessment owner; not a successful document revision.
+  string assessment_id = 1 [(ai.protomolt.proto.validate.v1.field).string = {uuid: true, pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}];
+  // Encoding of the protected manifest, not the enclosing receipt.
+  string manifest_codec = 2 [(ai.protomolt.proto.validate.v1.field).string.const = "document-publication-assessment"];
+  // Exact canonical manifest encoding version.
+  uint32 manifest_encoding_version = 3 [(ai.protomolt.proto.validate.v1.field).uint32.const = 1];
+  // Digest of canonical manifest bytes, including policy, modes, evaluation
+  // instant, runtime provenance and normalized candidate/schema associations.
+  string manifest_sha256 = 4 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$"];
+  // Exclusive retention deadline in PostgreSQL microsecond precision. The
+  // decision transaction must additionally prove this deadline is still future.
+  int64 retain_until_epoch_micros = 5 [(ai.protomolt.proto.validate.v1.field).int64 = {gt: 0, lte: 253402300799999999}];
 }
