@@ -77,7 +77,7 @@ public final class AssessmentOperationReplayProbe {
                 stage = assessment.withRetentionEvidence(owner, observation, () -> {}, evidence -> {
                     new RepositorySchemaArtifacts(tx).stage(owner, command, List.copyOf(evidence.artifacts(() -> {}).values()), () -> {});
                     return new DocumentAssessmentCreation(tx, drives).create(caller, owner, prepared, selected, evidence, UUID.randomUUID(),
-                            Instant.now().plusSeconds(300).truncatedTo(java.time.temporal.ChronoUnit.MICROS), budget, () -> {});
+                            Instant.now().plusSeconds(mode == 2 ? 20 : 300).truncatedTo(java.time.temporal.ChronoUnit.MICROS), budget, () -> {});
                 });
             }
             require(budget.reservedBytes() == 0, "original assessment closed");

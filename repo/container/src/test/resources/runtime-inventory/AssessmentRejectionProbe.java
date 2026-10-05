@@ -113,6 +113,7 @@ public final class AssessmentRejectionProbe {
         }
         verifyTerminalReads(tx, provider, caller, owner, command, selected, stage, current, observation, scenario);
         if (scenario == 1) AssessmentCaptureFaultProbe.runRejected(database, tx, caller, command);
+        if (scenario == 2) RejectedAssessmentExpiryProbe.run(database, tx, caller, command, stage);
         return current;
     }
 
@@ -157,18 +158,20 @@ public final class AssessmentRejectionProbe {
                     expect(RepositoryException.Code.NOT_FOUND, () -> DocumentAssessmentReplay.replay(capture, reader,
                             budget, LIMITS, observation, RepositoryReadControl.NONE));
                 } finally { policy(tx, node, "ACCESS_READ"); }
-                var fetched = new AtomicBoolean();
-                try {
-                    expect(RepositoryException.Code.NOT_FOUND, () -> DocumentAssessmentReplay.replay(capture,
-                            (captured, member, control) -> {
-                                var batch = reader.readAssessment(captured, member, control);
-                                try {
-                                    if (fetched.compareAndSet(false, true)) policy(tx, node, "ACCESS_DENY");
-                                    return batch;
-                                } catch (RuntimeException | Error failure) { batch.close(); throw failure; }
-                            }, budget, LIMITS, observation, RepositoryReadControl.NONE));
-                    require(fetched.get(), "revocation happened after real provider fetch");
-                } finally { policy(tx, node, "ACCESS_READ"); }
+                for (String revokeAfter : java.util.List.of("a", "b")) {
+                    var fetched = new AtomicBoolean();
+                    try {
+                        expect(RepositoryException.Code.NOT_FOUND, () -> DocumentAssessmentReplay.replay(capture,
+                                (captured, member, control) -> {
+                                    var batch = reader.readAssessment(captured, member, control);
+                                    try {
+                                        if (member.equals(revokeAfter) && fetched.compareAndSet(false, true)) policy(tx, node, "ACCESS_DENY");
+                                        return batch;
+                                    } catch (RuntimeException | Error failure) { batch.close(); throw failure; }
+                                }, budget, LIMITS, observation, RepositoryReadControl.NONE));
+                        require(fetched.get(), "revocation happened after real provider fetch");
+                    } finally { policy(tx, node, "ACCESS_READ"); }
+                }
                 require(DocumentAssessmentReplay.replay(capture, reader, budget, LIMITS, observation,
                         RepositoryReadControl.NONE).equals(result), "restored current access reproduces exact result");
             }

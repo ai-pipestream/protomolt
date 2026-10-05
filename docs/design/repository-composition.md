@@ -5288,9 +5288,9 @@ without a schema registry after policy advancement. The receipt remains unchange
 SPI and engine dependency boundary checks pass. These are correctness results;
 they do not establish RustFS performance or horizontal throughput improvements.
 
-Before exposing this path, qualify capture/delivery expiry across lock waits,
-source-access races during provider completion and revocation after the final
-member batch. The rejection-session fault and authority cases below are qualified.
+Before exposing this path, qualify reused-source access races during provider
+completion and the final decision. The rejection-session fault, authority,
+destination revocation and expiry cases below are qualified.
 Receipt replay after evidence expiry remains distinct from evidence re-evaluation.
 The broader provider-neutral composition, non-S3 managed lifecycle qualification,
 metadata/restore, optional JCR boundaries and bounded hydration requirements remain
@@ -5313,6 +5313,24 @@ result. This does not isolate revocation after the final member or a reused-sour
 ACL race. The focused gate passes 30 tests including the expanded production-JAR
 fixture, 12 read-session cases and 17 retention cases. Sol reviewed these additions;
 no production behavior change was needed for these cases.
+
+The production-JAR fixture additionally checks expiry across actual PostgreSQL
+row-lock waits. A JDBC transaction holds the retained assessment row while a new
+capture and an existing session's delivery wait for it; `pg_blocking_pids` confirms
+two blocked database sessions before expiry. After database time crosses the
+retention deadline, releasing that lock makes both reads fail with
+`FAILED_PRECONDITION`. The failed capture retains no capacity. An existing reader
+session still blocks evidence cleanup until it closes and its exact session drains.
+Cleanup then removes the expired evidence; new evidence reads remain unavailable,
+while the unchanged terminal receipt still replays. No deadlines or lease fields
+are rewritten by the test. The fixture uses a 20-second retention window and bounded
+waits, so a heavily loaded test host can exhaust setup time and fail the test.
+
+Destination revocation is now exercised after both the first and the final real
+member batch. Both refuse delivery and release the batches; restoring access permits
+exact replay. The expanded production-JAR gate passes with real PostgreSQL and
+versioned LocalStack, including the existing restart and commit-fault probes.
+This is correctness evidence, not a latency measurement or public API qualification.
 
 #### Selected authoritative backend composition
 
