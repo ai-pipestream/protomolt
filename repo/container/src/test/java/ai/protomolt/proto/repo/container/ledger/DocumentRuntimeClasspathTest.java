@@ -43,9 +43,27 @@ class DocumentRuntimeClasspathTest {
         var extension = jar("extension.jar", Map.of("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\nClass-Path: elsewhere.jar\r\n\r\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         assertThatThrownBy(() -> DocumentRuntimeClasspath.verify(fixture.inventory(), List.of(fixture.jar(), extension), () -> {}))
                 .hasMessageContaining("Manifest Class-Path");
-        var huge = jar("huge.jar", Map.of("META-INF/MANIFEST.MF", new byte[65537]));
+        var huge = jar("huge.jar", Map.of("META-INF/MANIFEST.MF", new byte[262145]));
         assertThatThrownBy(() -> DocumentRuntimeClasspath.verify(fixture.inventory(), List.of(fixture.jar(), huge), () -> {}))
                 .hasMessageContaining("manifest exceeds byte bound");
+    }
+    @Test void acceptsLargeHostMetadataWithoutSkippingClasspathChecks() throws Exception {
+        var fixture = fixture();
+        var manifest = new java.util.jar.Manifest();
+        manifest.getMainAttributes().putValue("Manifest-Version", "1.0");
+        manifest.getMainAttributes().putValue("Implementation-Notes", "x".repeat(171463));
+        var encoded = new java.io.ByteArrayOutputStream();
+        manifest.write(encoded);
+        assertThat(encoded.size()).isGreaterThan(65536).isLessThan(262144);
+        var metadata = jar("metadata.jar", Map.of("META-INF/MANIFEST.MF", encoded.toByteArray()));
+        assertThat(DocumentRuntimeClasspath.verify(fixture.inventory(), List.of(fixture.jar(), metadata), () -> {})).hasSize(1);
+        String original = encoded.toString(java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(original).endsWith("\r\n\r\n");
+        String extended = original.substring(0, original.length() - 2) + "Class-Path: hidden.jar\r\n\r\n";
+        assertThat(extended.indexOf("Class-Path:")).isGreaterThan(65536);
+        var extension = jar("large-extension.jar", Map.of("META-INF/MANIFEST.MF", extended.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        assertThatThrownBy(() -> DocumentRuntimeClasspath.verify(fixture.inventory(), List.of(fixture.jar(), extension), () -> {}))
+                .hasMessageContaining("Manifest Class-Path");
     }
     @Test void refusesLinksDirectoriesEmptyListsAndCancellation() throws Exception {
         var fixture = fixture();

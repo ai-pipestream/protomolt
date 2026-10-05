@@ -10,25 +10,60 @@ final int maximumArtifacts = 64
 final long maximumBytes = 1024L * 1024 * 1024
 final String format = 'protomolt-admission-runtime-inventory/v1'
 def runtime = configurations.runtimeClasspath
-def ownJar = tasks.named('jar')
+def admissionPath = project.hasProperty('admissionRuntimeRootProject') ? project.admissionRuntimeRootProject : project.path
+def admissionProject = project(admissionPath)
+def ownJar = admissionProject.tasks.named('jar')
 def destination = layout.buildDirectory.dir('admission-runtime')
 
 tasks.register('admissionRuntimeInventory') {
     group = 'build'
     description = 'Copy and identify the resolved production admission runtime artifacts'
-    dependsOn runtime, ownJar, tasks.named('checkRuntimeBoundaries')
+    dependsOn runtime, ownJar, admissionProject.tasks.named('checkRuntimeBoundaries')
     inputs.files(runtime)
     inputs.file(ownJar.flatMap { it.archiveFile })
     outputs.dir(destination)
     // Observation must check the actual files, including an already published bundle.
     outputs.upToDateWhen { false }
     doLast {
-        def selected = runtime.incoming.artifacts.artifacts.collect { artifact ->
+        Set admissionComponents = null
+        if (admissionPath != project.path) {
+            // Traverse the admission dependency subtree in THIS host's resolved
+            // graph. A host may select newer transitive versions than the leaf.
+            // Never combine two independently resolved closures on one classpath.
+            def roots = runtime.incoming.resolutionResult.allComponents.findAll { component ->
+                component.id instanceof org.gradle.api.artifacts.component.ProjectComponentIdentifier &&
+                        component.id.projectPath == admissionPath
+            }
+            if (roots.size() != 1) throw new GradleException('Missing or ambiguous admission project in host runtime')
+            admissionComponents = new HashSet()
+            def pending = new ArrayDeque(roots)
+            while (!pending.isEmpty()) {
+                def component = pending.removeFirst()
+                if (!admissionComponents.add(component.id)) continue
+                component.dependencies.each { dependency ->
+                    if (dependency instanceof org.gradle.api.artifacts.result.UnresolvedDependencyResult)
+                        throw new GradleException('Unresolved admission runtime dependency', dependency.failure)
+                    if (dependency instanceof org.gradle.api.artifacts.result.ResolvedDependencyResult && !dependency.isConstraint())
+                        pending.addLast(dependency.selected)
+                }
+            }
+        }
+        def selected = runtime.incoming.artifacts.artifacts.findAll { artifact ->
+            admissionComponents == null || admissionComponents.contains(artifact.id.componentIdentifier)
+        }.collect { artifact ->
             [name: artifact.id.componentIdentifier.displayName + ' :: ' + artifact.file.name,
              file: artifact.file.toPath()]
         }
-        selected.add([name: 'project ' + project.path + ' :: ' + ownJar.get().archiveFile.get().asFile.name,
-                      file: ownJar.get().archiveFile.get().asFile.toPath()])
+        if (admissionComponents == null) {
+            selected.add([name: 'project ' + admissionPath + ' :: ' + ownJar.get().archiveFile.get().asFile.name,
+                          file: ownJar.get().archiveFile.get().asFile.toPath()])
+        } else {
+            // The observer's root identity uses the same spelling as the standalone bundle.
+            def rootJar = ownJar.get().archiveFile.get().asFile.toPath()
+            def matching = selected.findAll { it.file == rootJar }
+            if (matching.size() != 1) throw new GradleException('Admission root JAR missing from resolved host artifacts')
+            matching.first().name = 'project ' + admissionPath + ' :: ' + rootJar.fileName
+        }
         if (selected.size() < 1 || selected.size() > maximumArtifacts)
             throw new GradleException('Admission runtime artifact count exceeds 64')
         def names = new HashSet<String>()

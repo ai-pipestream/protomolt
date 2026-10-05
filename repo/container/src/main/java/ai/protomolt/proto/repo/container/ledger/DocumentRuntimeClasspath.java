@@ -80,7 +80,10 @@ final class DocumentRuntimeClasspath {
                     if (name.equalsIgnoreCase("META-INF/MANIFEST.MF")) {
                         if (seenManifest) throw new IOException("Ambiguous runtime JAR manifest");
                         seenManifest = true;
-                        checkManifest(jar, entry, control);
+                        try { checkManifest(jar, entry, control); }
+                        catch (IOException invalid) {
+                            throw new IOException(invalid.getMessage() + " in " + artifact.path(), invalid);
+                        }
                     }
                     if (entry.isDirectory() || !name.endsWith(".class")) continue;
                     String className = className(name);
@@ -104,7 +107,10 @@ final class DocumentRuntimeClasspath {
     }
 
     private static void checkManifest(ZipFile jar, java.util.zip.ZipEntry entry, Runnable control) throws IOException {
-        final int limit = 64 * 1024;
+        // Hibernate's production OSGi metadata currently occupies 171,463 bytes.
+        // This bounded startup parse still inspects the complete manifest, so a
+        // Class-Path attribute cannot hide beyond the former 64 KiB boundary.
+        final int limit = 256 * 1024;
         if (entry.getSize() > limit) throw new IOException("Runtime JAR manifest exceeds byte bound");
         var bytes = new java.io.ByteArrayOutputStream();
         byte[] buffer = new byte[8192];

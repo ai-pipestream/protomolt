@@ -73,3 +73,28 @@ tasks.register('admissionRuntimeTest', Test) {
     useJUnitPlatform()
 }
 tasks.named('check') { dependsOn tasks.named('admissionRuntimeTest') }
+
+// Observe the actual admission runtime alongside the production SQL host. The
+// subprocess receives JARs only; Gradle/JUnit classloaders cannot attest it.
+ext.admissionRuntimeRootProject = ':protomolt-repo-admission'
+apply from: rootProject.file('gradle/admission-runtime-inventory.gradle')
+def hostAdmissionInventory = layout.buildDirectory.dir('admission-runtime')
+tasks.named('test') { exclude '**/DocumentAssessmentStorageRuntimeTest*' }
+tasks.register('admissionStorageTest', Test) {
+    group = 'verification'
+    description = 'Qualify observed admission and PostgreSQL together in a production JAR host'
+    dependsOn tasks.named('admissionRuntimeInventory'), tasks.named('jar'), configurations.runtimeClasspath
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    filter { includeTestsMatching 'ai.protomolt.proto.repo.container.ledger.DocumentAssessmentStorageRuntimeTest' }
+    inputs.dir(hostAdmissionInventory)
+    inputs.files(configurations.runtimeClasspath)
+    inputs.file(tasks.named('jar').flatMap { it.archiveFile })
+    doFirst {
+        systemProperty 'protomolt.test.admissionRuntimeBundle', hostAdmissionInventory.get().asFile.absolutePath
+        systemProperty 'protomolt.test.storageHostClasspath', files(tasks.named('jar').get().archiveFile,
+                configurations.runtimeClasspath).asPath
+    }
+    useJUnitPlatform()
+}
+tasks.named('check') { dependsOn tasks.named('admissionStorageTest') }
