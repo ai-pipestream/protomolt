@@ -5380,6 +5380,18 @@ replay a captured time-dependent assessment at its recorded instant, reject it
 one second later, and exercise both budgeted checking and nested Any traversal.
 All 167 admission tests pass. This supplies the time semantics for promotion;
 it does not yet supply the owned promotion bridge.
+The reviewed bridge should perform one independent strict check, not reassessment
+followed by another strict check. Strict checking already verifies canonical
+evidence, complete root/occurrence coverage, retained asset identity and the exact
+used schema union. Require no recorded member or operation failure, and exact
+typed/opaque membership. An admission-module API must return an owned
+`PreparedProof`, copying retained assets and evidence under the shared budget;
+`DocumentSchemaBatch.prepare` then checks policy binding and eligibility. Keep
+the original `Assessed` open as the fragment owner and every prepared proof open
+through staging and commit. Failure closes proofs before the assessment. A result
+that outlives `Assessed` needs explicit fragment ownership transfer; a copied map
+does not transfer byte reservations. Budget exhaustion must fail without an
+unbudgeted retry. The bridge and lifecycle tests are still implementation work.
 This promotion, an explicit accepted-or-assessed execution outcome, and the native
 decision integration remain unfinished; no application path selects `assess` yet.
 
