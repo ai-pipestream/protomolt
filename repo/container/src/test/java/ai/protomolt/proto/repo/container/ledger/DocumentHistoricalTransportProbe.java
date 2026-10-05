@@ -21,6 +21,85 @@ import static org.assertj.core.api.Assertions.*;
 
 /** Real transports over the caller's real repository; no alternate storage implementation. */
 final class DocumentHistoricalTransportProbe {
+    static void verifyHost(ai.protomolt.proto.repo.service.RepoServiceConfig config,
+            DocumentPublishedRevision published, boolean typed) throws Exception {
+        var access = new ai.protomolt.proto.repo.service.HistoricalReadAccess(caller -> {
+            assertThat(caller.name()).isEqualTo("host-reader");
+            assertThat(caller.unrestricted()).isFalse();
+            return new RepositoryCaller(caller.name(), false, Set.of(published.getAddress().getAccountId()), Set.of());
+        }, 32L * 1024 * 1024, 4);
+        ai.protomolt.proto.authz.CallerResolver credentials = token -> "synthetic-host-reader-key".equals(token)
+                ? java.util.Optional.of(Caller.scoped("host-reader", Set.of())) : java.util.Optional.empty();
+        ReadRevisionResponse first = null;
+        // New hosts/readers/providers each time, over the same retained revision.
+        for (boolean serialized : new boolean[] {false, true}) {
+            try (var host = ai.protomolt.proto.repo.service.RepoServices.build(config,
+                    ai.protomolt.proto.asset.bridge.BridgeEngine.standard(), access)) {
+                String name = "host-history-" + UUID.randomUUID();
+                var server = serialized ? host.startNetty(0, "synthetic-host-operator-key", credentials)
+                        : host.startInProcess(name, "synthetic-host-operator-key", credentials);
+                var channel = serialized ? NettyChannelBuilder.forAddress("127.0.0.1", server.getPort()).usePlaintext().build()
+                        : InProcessChannelBuilder.forName(name).build();
+                try {
+                    var request = ReadRevisionRequest.newBuilder().setAddress(published.getAddress()).setRevisionId(published.getRevisionId())
+                            .setMode(typed ? HistoricalDocumentReadMode.HISTORICAL_DOCUMENT_READ_MODE_VALIDATED
+                                    : HistoricalDocumentReadMode.HISTORICAL_DOCUMENT_READ_MODE_RAW).build();
+                    var stub = identified(DocumentHistoryServiceGrpc.newBlockingStub(channel).withDeadlineAfter(10, TimeUnit.SECONDS),
+                            Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), "synthetic-host-reader-key");
+                    var response = stub.readRevision(request);
+                    assertThat(response.getRevisionId()).isEqualTo(published.getRevisionId());
+                    assertThat(response.getMutationRevision()).isEqualTo(published.getMutationRevision());
+                    assertThat(response.hasValidated()).isEqualTo(typed);
+                    if (first == null) first = response;
+                    else assertThat(response).isEqualTo(first);
+                } finally {
+                    channel.shutdownNow();
+                    assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+                }
+            }
+        }
+    }
+
+    static void verifySize(HistoricalDocumentRepository history, DocumentPublishedRevision published, boolean oversized) throws Exception {
+        var request = ReadRevisionRequest.newBuilder().setAddress(published.getAddress()).setRevisionId(published.getRevisionId())
+                .setMode(HistoricalDocumentReadMode.HISTORICAL_DOCUMENT_READ_MODE_RAW).build();
+        // Test-owned protobuf copies independently measure real wire framing.
+        // Every individual fragment fits; manifest/framing can exceed the total cap.
+        ReadRevisionResponse expected;
+        try (var raw = history.readRaw(new RepositoryCaller("operator", true), published.getAddress(),
+                UUID.fromString(published.getRevisionId()), ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+            var fragments = RawHistoricalDocument.newBuilder();
+            for (var fragment : raw.fragments()) {
+                assertThat(fragment.bytes().remaining()).isLessThan(8 * 1024 * 1024);
+                fragments.addFragments(HistoricalDocumentFragment.newBuilder().setRevisionOrdinal(fragment.revisionOrdinal())
+                        .setContent(com.google.protobuf.ByteString.copyFrom(fragment.bytes())));
+            }
+            expected = ReadRevisionResponse.newBuilder().setAddress(raw.address()).setRevisionId(raw.revision().toString())
+                    .setMutationRevision(raw.publicationRevision()).setManifest(raw.manifest()).setRaw(fragments).build();
+        }
+        assertThat(expected.getSerializedSize() > 8 * 1024 * 1024).isEqualTo(oversized);
+        var responses = new PayloadBudget(32L * 1024 * 1024);
+        var service = new DocumentHistoryGrpcService(history, caller -> new RepositoryCaller(caller.name(), caller.unrestricted()), responses, 2);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var server = NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0)).executor(executor)
+                    .intercept(new ai.protomolt.proto.authz.grpc.ApiTokenServerInterceptor("synthetic-size-test-key"))
+                    .addService(service).build().start();
+            var channel = NettyChannelBuilder.forAddress("127.0.0.1", server.getPort()).usePlaintext()
+                    .maxInboundMessageSize(8 * 1024 * 1024).build();
+            try {
+                var stub = identified(DocumentHistoryServiceGrpc.newBlockingStub(channel).withDeadlineAfter(20, TimeUnit.SECONDS),
+                        Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), "synthetic-size-test-key");
+                if (oversized) assertStatus(() -> stub.readRevision(request), Status.Code.RESOURCE_EXHAUSTED);
+                else assertThat(stub.readRevision(request)).isEqualTo(expected);
+            } finally {
+                channel.shutdownNow(); server.shutdownNow();
+                assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+            }
+            assertThat(responses.reservedBytes()).isZero();
+        }
+    }
+
     static void verify(HistoricalDocumentRepository history, DocumentPublishedRevision published, boolean typed,
             Runnable maintainReads, java.util.function.Consumer<Boolean> setReadable) throws Exception {
         for (boolean serialized : new boolean[] {false, true}) {

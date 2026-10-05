@@ -2902,8 +2902,9 @@ callers can still exhaust capacity and receive an explicit refusal.
 
 `ManagedDocumentServices` shares the historical facade's reader, ledger and byte
 budget with its publication runtime, which remains the sole lifecycle owner.
-The host accessor is package-private. No historical gRPC endpoint is mounted by
-this change. Real-provider acceptance covers opaque bytes, typed reconstruction,
+The host exposes the shared port through `historicalRepository()`. Transport
+mounting requires explicit access configuration, described below. Real-provider
+acceptance covers opaque bytes, typed reconstruction,
 sequential capacity reuse, revocation after provider reads, and a fresh JVM reading
 a dynamic archived type after policy advancement without a live registry. Missing
 retained definitions remain a data-loss failure, rather than an opaque downgrade.
@@ -2911,7 +2912,7 @@ retained definitions remain a data-loss failure, rather than an opaque downgrade
 #### Historical unary contract and transport obligations
 
 `document_history_service.proto` adds `DocumentHistoryService.ReadRevision` and
-standalone request/result messages. The operation is new and unmounted; existing
+standalone request/result messages. The operation is new and opt-in; existing
 document RPCs, messages, field numbers, imports and Any URLs are unchanged. The
 request selects an exact address, canonical revision UUID and explicit RAW or
 VALIDATED mode. The response repeats captured identity and manifest, with one
@@ -2970,8 +2971,8 @@ No generator changes are part of this slice. Remaining adapter acceptance must
 run the same historical cases locally and over real in-process gRPC, plus a
 serialized transport test for response ownership, cancellation and size limits.
 
-`DocumentHistoryGrpcService` now implements this contract as an opt-in adapter;
-`RepoServices` still does not mount it. Construction requires a trusted caller
+`DocumentHistoryGrpcService` implements this contract as an opt-in adapter;
+default `RepoServices.build` overloads leave it absent. Construction requires a trusted caller
 binding, an application response budget and a concurrent-call limit. The adapter
 refuses absent authentication rather than inheriting operator authority. It uses
 the shared historical SPI, validates request/response shapes, checks raw fragment
@@ -3000,8 +3001,52 @@ call. Releasing the producers must drain the reservations and permit another
 read. The fixture fills response slots sequentially so it does not conflate the
 provider's independent worker limit with the transport's concurrent-call limit.
 The container module's service/transport dependencies are test-only; its published
-runtime does not acquire that reverse dependency. Production caller resolution,
-host mounting and broader transport fault/size-boundary qualification remain open.
+runtime does not acquire that reverse dependency. Deployments must still supply
+authoritative caller resolution; the fixture's synthetic credentials are not a
+production account-membership implementation.
+
+`RepoServices.build(config, bridges, historicalAccess)` mounts the adapter over
+the same managed reader and ledger as `historicalRepository()`. The immutable
+`HistoricalReadAccess` requires trusted bindings, response-budget bytes and a
+concurrent-call limit. Opt-in without qualified managed storage fails before
+database/provider allocation. The adapter is constructed inside the existing
+managed-reader startup cleanup boundary. Both built-in transport starters require
+a nonblank operator token when history is mounted. The credentialed in-process
+overload uses the same `ApiTokenServerInterceptor` and `CallerResolver` as Netty.
+Hosts consuming `services()` directly install their own authenticated context;
+the endpoint itself still refuses missing context. Legacy builds leave the new
+RPC absent and retain their existing startup behavior.
+
+For an embedding host, caller binding and credential resolution are deliberately
+separate inputs. `credentialResolver` authenticates a key; `repositoryBindings`
+looks up that authenticated principal's account memberships and ACL identities
+from the host's authoritative source, without changing principal/process authority.
+Here `shutdownSignal` is the application's shutdown latch:
+
+```java
+var historicalAccess = new HistoricalReadAccess(repositoryBindings, 32L * 1024 * 1024, 16);
+try (var host = RepoServices.build(config, bridges, historicalAccess)) {
+    host.startNetty(port, operatorToken, credentialResolver);
+    shutdownSignal.await();
+}
+```
+
+Use `host.historicalRepository()` for local calls with an explicitly bound
+`RepositoryCaller`, and close every returned result after consumption. The
+standalone environment-driven launcher does not invent an account/ACL resolver
+or enable this option automatically. The service's published Maven/Gradle API
+metadata now exports `repo-spi` and `authz` for these public composition types;
+provider/engine details remain implementation dependencies.
+
+Host acceptance uses actual API-token interception and scoped credential
+resolution on in-process and Netty listeners, rejects absent/blank listener tokens,
+and verifies normal shutdown quiesces both registered readers. Native publication
+tests also open two fresh host compositions over the same stored typed/opaque
+revision and require identical historical responses, without supplying a registry.
+An additional versioned-provider test stores nearly 8 MiB of opaque Any data:
+with a small manifest the serialized response succeeds, while a larger manifest
+crosses the complete 8 MiB envelope bound and is refused even though every
+individual fragment fits. Byte budgets and read pins must drain in both cases.
 
 Acceptance follows one real flow: publish through the shared coordinator, receive
 its revision identity, read that revision locally and through an in-process gRPC

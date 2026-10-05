@@ -136,9 +136,16 @@ public final class RepoServices implements AutoCloseable {
     }
 
     RepoServices(RepoServiceConfig config, BridgeEngine bridges, ai.protomolt.proto.repo.blob.spi.BlobStores providers) {
+        this(config, bridges, providers, null);
+    }
+
+    private RepoServices(RepoServiceConfig config, BridgeEngine bridges,
+            ai.protomolt.proto.repo.blob.spi.BlobStores providers, HistoricalReadAccess historicalAccess) {
         ManagedArchiveServices startingArchive = null;
         try {
             this.config = config;
+            if (historicalAccess != null && !config.managedStorage().retentionQualified())
+                throw new IllegalArgumentException("Historical transport requires qualified managed storage");
             if (config.managedStorage().retentionQualified()
                     && (!config.lifecycleEnabled() || !("s3".equals(config.blobStore()) || "s3-redis-cache".equals(config.blobStore()))))
                 throw new IllegalArgumentException("Managed storage requires an S3 backing store and enabled lifecycle recovery");
@@ -284,7 +291,7 @@ public final class RepoServices implements AutoCloseable {
             // after this component acquires its durable lifecycle identity.
             this.managedDocuments = generation == null ? null : new ManagedDocumentServices(tx, driveLedger,
                     generation, new ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger(tx).find(generation).orElseThrow(),
-                    managedBacking, config.kafkaEnabled());
+                    managedBacking, config.kafkaEnabled(), historicalAccess);
         } catch (RuntimeException | Error failure) {
             if (startingArchive != null) {
                 // Construction has not exposed services or started workers. Preserve
@@ -329,6 +336,24 @@ public final class RepoServices implements AutoCloseable {
         return new RepoServices(config, bridges);
     }
 
+    /**
+     * Opts into historical gRPC with explicit trusted caller bindings and response
+     * limits. Built-in transports require an API token; embedding hosts using
+     * services() must install authentication that sets CallerContexts.CALLER.
+     */
+    public static RepoServices build(RepoServiceConfig config, BridgeEngine bridges, HistoricalReadAccess historicalAccess) {
+        return new RepoServices(config, bridges, ai.protomolt.proto.repo.blob.spi.BlobStores.discover(),
+                java.util.Objects.requireNonNull(historicalAccess));
+    }
+
+    /** Exact native history sharing this composition's storage and cleanup lifetime. */
+    public ai.protomolt.proto.repo.spi.HistoricalDocumentRepository historicalRepository() {
+        requireOpen();
+        if (managedDocuments == null) throw new IllegalStateException("Managed document storage is not configured");
+        startLifecycle();
+        return managedDocuments.history;
+    }
+
     /** Archive operations sharing this composition's storage lifetime. */
     public ArchiveRepository archiveRepository() {
         requireOpen();
@@ -369,7 +394,10 @@ public final class RepoServices implements AutoCloseable {
     public List<BindableService> services() {
         requireOpen();
         if (managedArchive != null) startLifecycle();
-        return services;
+        if (managedDocuments == null || managedDocuments.historyService == null) return services;
+        var mounted = new java.util.ArrayList<BindableService>(services);
+        mounted.add(managedDocuments.historyService);
+        return List.copyOf(mounted);
     }
 
     /**
@@ -380,11 +408,18 @@ public final class RepoServices implements AutoCloseable {
      * @return the started server (also closed by {@link #close()})
      */
     public synchronized Server startInProcess(String name) {
+        return startInProcess(name, null, null);
+    }
+
+    /** Same credential boundary as Netty, including scoped credential resolution. */
+    public synchronized Server startInProcess(String name, String apiToken, CallerResolver resolver) {
         requireOpen();
+        requireTransportAuthentication(apiToken, resolver);
         RemoteRouting.rejectInProcess(config, name);
         try {
-            return registerAndStart(InProcessServerBuilder.forName(name)
-                    .maxInboundMessageSize(10 * 1024 * 1024));
+            var builder = InProcessServerBuilder.forName(name).maxInboundMessageSize(10 * 1024 * 1024);
+            if (apiToken != null) builder.intercept(new ApiTokenServerInterceptor(apiToken, resolver));
+            return registerAndStart(builder);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -427,10 +462,7 @@ public final class RepoServices implements AutoCloseable {
      */
     public synchronized Server startNetty(int port, String apiToken, CallerResolver resolver) {
         requireOpen();
-        if (apiToken == null && resolver != null) {
-            throw new IllegalArgumentException(
-                    "an access-policy resolver requires the operator api token");
-        }
+        requireTransportAuthentication(apiToken, resolver);
         try {
             HealthStatusManager health = new HealthStatusManager();
             var builder = NettyServerBuilder.forPort(port)
@@ -451,6 +483,14 @@ public final class RepoServices implements AutoCloseable {
 
     private Server registerAndStart(io.grpc.ServerBuilder<?> builder) throws IOException {
         return registerAndStart(builder, server -> {});
+    }
+
+    private void requireTransportAuthentication(String apiToken, CallerResolver resolver) {
+        if (managedDocuments != null && managedDocuments.historyService != null
+                && (apiToken == null || apiToken.isBlank()))
+            throw new IllegalArgumentException("Historical transport requires a nonblank operator API token");
+        if (apiToken == null && resolver != null)
+            throw new IllegalArgumentException("an access-policy resolver requires the operator api token");
     }
 
     private Server registerAndStart(io.grpc.ServerBuilder<?> builder,
@@ -769,10 +809,7 @@ public final class RepoServices implements AutoCloseable {
     }
 
     ai.protomolt.proto.repo.spi.HistoricalDocumentRepository documentHistory() {
-        requireOpen();
-        if (managedDocuments == null) throw new IllegalStateException("Managed document storage is not configured");
-        startLifecycle();
-        return managedDocuments.history;
+        return historicalRepository();
     }
 
     DriveLedger driveLedger() {

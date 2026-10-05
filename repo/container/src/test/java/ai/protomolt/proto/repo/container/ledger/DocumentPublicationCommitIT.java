@@ -159,6 +159,12 @@ class DocumentPublicationCommitIT {
                     row.writeSecurity(readable ? publicReadGrant() : DocumentSecurity.newBuilder().addPermissions(
                             AccessRule.newBuilder().setIdentityType("public").setIdentity("public").setAccess(Access.ACCESS_DENY)).build());
                 }));
+                var hostConfig = new ai.protomolt.proto.repo.service.RepoServiceConfig(0,
+                        new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
+                        S3.getEndpoint().toString(), S3.getRegion(), S3.getAccessKey(), S3.getSecretKey(),
+                        NAMESPACE, 0, null, null, null, null, 0, 0L)
+                        .withManagedStorage(new ai.protomolt.proto.repo.service.ManagedStoragePolicy(GENERATION, "native-commit-realm", true));
+                DocumentHistoricalTransportProbe.verifyHost(hostConfig, published, typed);
                 assertThat(runtime.execute(ADMIN, command, Map.of(), Map.of(), Map.of(), Map.of(), java.util.Optional.empty(),
                         (caller, member, occurrence) -> { throw new AssertionError("Terminal replay must not resolve schemas"); },
                         ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isEqualTo(result);
@@ -200,6 +206,33 @@ class DocumentPublicationCommitIT {
             opened.store().headBucket(NAMESPACE);
             assertThat(new DocumentPublicationReplay(tx).observe(ADMIN, command).result()).isPresent();
         }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void historicalTransportBoundsTheWholeEnvelopeWithRealProviderBytes(boolean oversized) throws Exception {
+        var payload = Any.newBuilder().setTypeUrl("archive.test/UnknownLargePayload")
+                .setValue(ByteString.copyFrom(new byte[8 * 1024 * 1024 - 16384])).build();
+        var fixture = fixture(1, oversized ? 128 : 1, publicReadGrant(), "wire-limit-" + UUID.randomUUID(), true, payload);
+        var limits = new DocumentRevisionAssembly.Limits(12L * 1024 * 1024, 1000, 100, 1000, 100_000);
+        var checked = stage(fixture, Map.of(), limits, 128L * 1024 * 1024);
+        var published = publisher().commit(ADMIN, fixture.owner, fixture.prepared, checked.content, checked.selected, () -> {}).getMembers(0);
+        var budget = new PayloadBudget(128L * 1024 * 1024);
+        var ledger = new DocumentReadLedger(tx, UUID.randomUUID());
+        try (var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, selected) -> opened.store(), 4,
+                16L * 1024 * 1024, budget)) {
+            var lifecycle = new DocumentReadLifecycle(ledger, reader, 100);
+            try {
+                var history = new ai.protomolt.proto.repo.engine.DocumentHistoricalOperations(ledger, reader, budget);
+                DocumentHistoricalTransportProbe.verifySize(history, published, oversized);
+            } finally {
+                boolean stopped = false;
+                for (int pass = 0; pass < 10 && !stopped; pass++) stopped = lifecycle.shutdownStep(Duration.ofSeconds(5));
+                assertThat(stopped).isTrue();
+            }
+        }
+        assertThat(budget.reservedBytes()).isZero();
+        assertThat(ledger.outstandingReads()).isZero();
     }
 
     @Test void commitsTwoRealDocumentsWithOpaqueAnyAndReplaysExactOutcome() {
@@ -1281,7 +1314,12 @@ class DocumentPublicationCommitIT {
     }
 
     private static Checked stage(Fixture fixture,Map<DocumentUploadPayloads.Key,ByteString> retainedBytes) {
-        try (var coordinator=new DocumentUploadCoordinator(tx,new DriveLedger(tx),new PayloadBudget(2_000_000),
+        return stage(fixture, retainedBytes, LIMITS, 2_000_000);
+    }
+
+    private static Checked stage(Fixture fixture, Map<DocumentUploadPayloads.Key,ByteString> retainedBytes,
+            DocumentRevisionAssembly.Limits limits, long budgetBytes) {
+        try (var coordinator=new DocumentUploadCoordinator(tx,new DriveLedger(tx),new PayloadBudget(budgetBytes),
                 (generation,retained)->new DocumentUploadCoordinator.Backend(profile.identity(),opened),4,Duration.ofMillis(25),
                 new SqlTimeouts(Duration.ofSeconds(2),Duration.ofSeconds(5)))) {
             return coordinator.stageAndPrepare(ADMIN,fixture.owner,fixture.prepared,fixture.bodies,Map.of(),()->{},(staged,view,active)->{
@@ -1294,7 +1332,7 @@ class DocumentPublicationCommitIT {
                         var key=new DocumentUploadPayloads.Key(member.getMemberId(),i);
                         bytes.put(i,member.getParts(i).hasUpload() ? ByteString.copyFrom(view.bytes(key)) : retainedBytes.get(key));
                     }
-                    try { content.put(member.getMemberId(),DocumentCommandContent.check(fixture.command,member.getMemberId(),bytes,false,LIMITS,active)); }
+                    try { content.put(member.getMemberId(),DocumentCommandContent.check(fixture.command,member.getMemberId(),bytes,false,limits,active)); }
                     catch (com.google.protobuf.InvalidProtocolBufferException failure) { throw new IllegalArgumentException(failure); }
                 }
                 for (var member:staged.members()) selected.put(member.selection().member(),member.selection());

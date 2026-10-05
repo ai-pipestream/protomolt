@@ -18,6 +18,10 @@ configurations.matching { it.name in ['testCompileClasspath', 'testRuntimeClassp
 
 dependencies {
     implementation project(':protomolt-repo-engine')
+    // Public historical composition signatures expose the repository port and
+    // trusted Caller/CallerResolver bindings to embedding hosts.
+    api project(':protomolt-repo-spi')
+    api project(':protomolt-authz')
     implementation project(':protomolt-repo-blob-s3')
     implementation project(':protomolt-repo-blob-redis')
     implementation project(':protomolt-repo-blob-cache')

@@ -15,13 +15,19 @@ import java.time.Duration;
 import java.util.UUID;
 import java.util.Objects;
 
-/** Host-owned native publication resources; no public transport is mounted yet. */
+/** Host-owned native document resources and explicitly configured historical transport. */
 final class ManagedDocumentServices {
     final DocumentPublicationRuntime publication;
     final ai.protomolt.proto.repo.spi.HistoricalDocumentRepository history;
+    final DocumentHistoryGrpcService historyService;
 
     ManagedDocumentServices(Tx tx, DriveLedger drives, String generation,
             ManagedBackendLedger.Profile profile, OpenedBlobStore backing, boolean deliverEvents) {
+        this(tx, drives, generation, profile, backing, deliverEvents, null);
+    }
+
+    ManagedDocumentServices(Tx tx, DriveLedger drives, String generation,
+            ManagedBackendLedger.Profile profile, OpenedBlobStore backing, boolean deliverEvents, HistoricalReadAccess access) {
         Objects.requireNonNull(backing);
         var timeouts = new SqlTimeouts(Duration.ofSeconds(2), Duration.ofSeconds(5));
         var bounded = tx.withTimeouts(timeouts);
@@ -36,6 +42,8 @@ final class ManagedDocumentServices {
         var ledger = new DocumentReadLedger(bounded, UUID.randomUUID(), 32);
         try {
             history = new ai.protomolt.proto.repo.engine.DocumentHistoricalOperations(ledger, reader, budget);
+            historyService = access == null ? null : new DocumentHistoryGrpcService(history, access.bindings(),
+                    new PayloadBudget(access.responseBudgetBytes()), access.maxConcurrentCalls());
             publication = new DocumentPublicationRuntime(bounded, drives, ledger, reader, budget, (original, selected) -> {
                 requireOriginal(generation, profile, original, selected);
                 return new DocumentPublicationRuntime.Backend(profile.identity(), backing);

@@ -10,7 +10,7 @@ import "ai/protomolt/proto/validate/v1/validate.proto";
 option java_multiple_files = true;
 option java_package = "ai.protomolt.proto.repo.v1";
 
-// Exact native revision reads. This contract is not yet mounted by RepoServices.
+// Exact native revision reads. RepoServices mounts this only with HistoricalReadAccess.
 // Current-document and partial-assembly RPCs retain their existing semantics.
 service DocumentHistoryService {
   // Read-only and retryable under current authorization. The request never grants
