@@ -6069,3 +6069,17 @@ after a real read. The combined envelope exceeds the 8 MiB response limit and is
 rejected with RESOURCE_EXHAUSTED before snapshot copying. It is not a claim that
 those injected descriptor bytes form a valid retained schema. Full malformed-output
 conformance, managed-host wiring and remote-client work remain open.
+
+### Shared registry artifact loads
+
+**Extended Java operation:** `RegistrySchemaResolver` now shares concurrent cold
+reads of an exact descriptor digest within its host-bound registry/security context.
+Per-occurrence authorization and complete schema selection still run independently.
+A bounded set of host-owned workers keeps caller interruption separate from provider
+I/O. Abandoned loads retain capacity until completion; failures are not cached.
+
+**New Java lifecycle operation:** `awaitLoads(Duration)` reports whether shared
+reads and their joined callers have drained. Hosts close the resolver, close live
+attempts, and obtain a successful drain before closing the borrowed registry store.
+The store must provide concurrent-safe, bounded reads with host-bound credentials.
+There are no protobuf changes and no managed-host activation in this change.

@@ -8,6 +8,7 @@ import com.google.protobuf.ByteString;
 import java.util.LinkedHashMap;
 import java.util.Objects;
 import java.util.Optional;
+import java.time.Duration;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -15,6 +16,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Host-scoped registry adapter. The borrowed store and owned cache belong to one
  * authenticated registry/security context; this object is not an authorization
  * service. It caches descriptor bytes only, never discovery or admission results.
+ * The store must support concurrent descriptor reads up to maxConcurrentAttempts,
+ * with bounded allocation and I/O timeouts, without caller-thread credentials.
  */
 public final class RegistrySchemaResolver implements AutoCloseable {
     /** Host-owned metadata and optional source bundle, stable through the admission attempt. */
@@ -32,11 +35,12 @@ public final class RegistrySchemaResolver implements AutoCloseable {
     }
 
     public static final class MissingDescriptor extends IllegalStateException {
-        private MissingDescriptor() { super("Selected descriptor is absent from the registry"); }
+        MissingDescriptor() { super("Selected descriptor is absent from the registry"); }
     }
 
     private final SchemaRegistryStore store;
     private final DocumentSchemaArtifactCache cache;
+    private final RegistryDescriptorLoads loads;
     private final Semaphore attempts;
     private final int maxArtifactsPerAttempt;
     private final AtomicBoolean closed = new AtomicBoolean();
@@ -48,6 +52,7 @@ public final class RegistrySchemaResolver implements AutoCloseable {
             throw new IllegalArgumentException("Invalid registry resolution limits");
         if (!store.supportsDescriptorSets()) throw new UnsupportedOperationException("Registry cannot supply descriptor artifacts");
         cache = new DocumentSchemaArtifactCache(cacheLimits);
+        loads = new RegistryDescriptorLoads(store, cache, maxConcurrentAttempts);
         attempts = new Semaphore(maxConcurrentAttempts);
         this.maxArtifactsPerAttempt = maxArtifactsPerAttempt;
     }
@@ -67,14 +72,17 @@ public final class RegistrySchemaResolver implements AutoCloseable {
     private void requireOpen() { if (closed.get()) throw new IllegalStateException("Registry resolver closed"); }
 
     /** Stop new selections; live attempts retain their pins until explicitly closed. Does not close the store. */
-    @Override public void close() { closed.set(true); cache.close(); }
+    @Override public void close() { closed.set(true); loads.close(); cache.close(); }
+
+    /** Drain host-owned reads, including those abandoned by callers. Live attempts must also close. */
+    public boolean awaitLoads(Duration timeout) throws InterruptedException { return loads.awaitIdle(timeout); }
 
     /**
      * Keep open through admission's owned copies. Returned definitions borrow pinned
      * descriptors and host-owned metadata/source; do not retain them after close.
-     * Synchronous store calls check cancellation before and after I/O. The store must
-     * bound its own allocation and I/O timeout; this adapter cannot interrupt an
-     * arbitrary synchronous provider. Use the owning thread for selection and close.
+     * Shared host workers perform store I/O independently of caller cancellation.
+     * The store must bound allocation and I/O timeout; abandoned reads keep their
+     * load slots until completion. Use the owning thread for selection and close.
      */
     public final class Attempt implements DocumentSchemaAdmission.Resolution {
         private final Thread thread = Thread.currentThread();
@@ -102,13 +110,7 @@ public final class RegistrySchemaResolver implements AutoCloseable {
                 if (retained.size() >= maxArtifactsPerAttempt)
                     throw new IllegalStateException("Resolution artifact count exhausted");
                 lease = cache.acquire(digest, control).orElse(null);
-                if (lease == null) {
-                    var bytes = store.descriptorSet(digest).orElseThrow(MissingDescriptor::new);
-                    control.run(); requireOpen();
-                    if (bytes.isEmpty() || bytes.size() > 16 * 1024 * 1024)
-                        throw new IllegalArgumentException("Registry descriptor exceeds admission bounds");
-                    lease = cache.put(digest, bytes, control);
-                }
+                if (lease == null) lease = loads.acquire(digest, control);
                 boolean transferred = false;
                 try {
                     control.run(); requireOpen();

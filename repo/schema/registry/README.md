@@ -33,10 +33,16 @@ after closing their attempt. Cache presence is not archival retention.
 
 Attempt admission and cache capacity fail without waiting. Bounds cover concurrent
 attempts, distinct descriptor artifacts per attempt, cache entries and serialized
-cache bytes. Store input allocation, source/metadata ownership, linked descriptor
+cache bytes. Distinct concurrent loads are bounded by the configured attempt limit;
+canceling callers does not free a still-running load's capacity. Store input allocation, source/metadata ownership, linked descriptor
 heap and provider I/O timeouts remain host/provider responsibilities. The built-in
-Git store bounds descriptor reads to 16 MiB. Synchronous store calls check control
-before and after I/O; this adapter cannot interrupt an arbitrary provider call.
+Git store bounds descriptor reads to 16 MiB. Cold lookups for the same digest share
+one host-owned virtual-thread read within this resolver's security context. Each
+store must support concurrent descriptor reads up to the configured attempt limit
+and use its host-bound credentials rather than caller-thread context. Each
+caller checks its own cancellation while waiting; interrupting a caller does not
+interrupt the provider worker. The adapter cannot forcibly stop arbitrary provider
+I/O. There is no unbounded worker queue or retry on capacity exhaustion.
 
 `MissingDescriptor` means the selected artifact was absent. Unsupported descriptor
 storage fails construction. Registry I/O, access, corruption and cancellation
@@ -45,8 +51,14 @@ already cached immutable artifact needs no further artifact read, but the select
 must still authorize its use. Typed admission checks each candidate independently.
 
 Closing the resolver rejects new work and evicts idle entries. Pinned entries remain
-until their attempts close. The host must drain active attempts before closing the
-borrowed store; resolver close alone does not wait for blocked provider calls.
+until their attempts close. After `close()`, the host must close live attempts and
+successfully `awaitLoads(timeout)` before closing the borrowed store. A false drain
+result means provider I/O or joined callers remain; it does not authorize closing
+the store. Resolver close wakes waiting callers but does not interrupt provider I/O.
+No caller owns the shared worker: an abandoned read keeps its slot until completion.
+Missing artifacts and failures are shared only with callers of that load, then
+discarded so a later lookup can retry. A flight pins successful bytes until every
+joined caller acquires its own lease or abandons the result.
 
 For native publication, `DocumentPublicationRuntime.executeScoped` accepts a
 `SchemaScopes` factory. Return `resolver.open(...)` from that factory, capturing
@@ -58,5 +70,4 @@ its scope must release its own partial allocation.
 
 The production dependency gate excludes Git/JGit, repository server/container,
 SQL, Kafka and object-store SDKs. Git is used only by the adapter's integration
-fixtures. Concurrent registry-load coalescing and managed repository-host mounting
-are not implemented by this module.
+fixtures. Managed repository-host mounting is not implemented by this module.

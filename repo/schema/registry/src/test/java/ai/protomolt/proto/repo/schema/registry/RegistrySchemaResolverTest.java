@@ -95,14 +95,13 @@ class RegistrySchemaResolverTest {
         }
     }
 
-    @Test void cancellationAtEveryColdSelectionCheckpointReleasesAttemptCapacity() throws Exception {
+    @Test void cancellationAcrossColdSelectionCheckpointsReleasesAttemptCapacity() throws Exception {
         var d = definition(StringValue.getDescriptor());
         try (var store = store()) {
             store.putDescriptorSet(d.metadata().getArtifactSha256(), d.descriptors());
-            var count = new AtomicInteger();
-            try (var host = new RegistrySchemaResolver(store, CACHE, 1, 64);
-                 var attempt = host.open(o -> selected(d), count::incrementAndGet)) { attempt.select(occurrence(d)); }
-            for (int point = 1; point <= count.get(); point++) {
+            // A cold selection has at least thirteen caller checks. Waiting can add
+            // checks, so a count measured in another run is not a stable bound.
+            for (int point = 1; point <= 13; point++) {
                 int failAt = point;
                 var calls = new AtomicInteger();
                 var failure = new CancellationException();
@@ -116,7 +115,9 @@ class RegistrySchemaResolverTest {
                         assertThat(retry.select(occurrence(d)).descriptors()).isEqualTo(d.descriptors());
                         assertThatThrownBy(() -> host.open(o -> selected(d), ACTIVE)).isInstanceOf(IllegalStateException.class);
                     }
-                    host.close(); assertThat(host.cachedBytes()).isZero();
+                    host.close();
+                    assertThat(host.awaitLoads(java.time.Duration.ofSeconds(5))).isTrue();
+                    assertThat(host.cachedBytes()).isZero();
                 }
             }
         }

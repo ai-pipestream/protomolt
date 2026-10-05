@@ -32,7 +32,8 @@ features available. Recovery is one workstream, not the whole goal.
    Follow the [bounded cache plan](repository-schema-cache.md); its first slice
    caches exact artifact bytes, not discovery grants or validation verdicts.
    The optional registry adapter and native runtime-owned resolution scopes now
-   exist. Next qualify bounded sharing of concurrent registry loads and select
+   exist. Bounded host-owned sharing now isolates caller cancellation and retains
+   abandoned load capacity through provider completion. Next select
    the authenticated registry context in managed-host composition. Keep provider
    timeout/allocation and shutdown ownership explicit at that boundary.
    Establish tenant/security scope, exact schema identity, bounded ownership,

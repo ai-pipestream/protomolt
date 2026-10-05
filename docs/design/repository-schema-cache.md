@@ -15,8 +15,10 @@ The separate `repo/schema/registry` leaf now connects the existing store to the
 admission resolver. Its host supplies authorized metadata/source selection for
 each occurrence; a bounded attempt pins descriptors through admission's owned
 copies. Real Git fixtures cover missing artifacts, outage recovery, cancellation,
-context isolation and typed admission with a warm cache. This does not mount the
-adapter in managed repository services or coalesce concurrent registry calls.
+context isolation and typed admission with a warm cache. Concurrent cold reads now
+share a bounded host-owned load for an exact descriptor digest. Every occurrence
+still authorizes and selects its own complete definition; only descriptor bytes
+are shared. The adapter is not mounted in managed repository services.
 The native publication runtime now offers `executeScoped` to own per-member
 resolution attempts and include cleanup in shutdown quiescence. The adapter remains
 an optional host choice; repository container production dependencies exclude it.
@@ -73,6 +75,15 @@ the provider supports cancellation; retain its capacity until completion otherwi
 Never hold a cache mutex or SQL transaction across registry I/O or descriptor
 linking. Refuse capacity exhaustion explicitly rather than making an unbounded
 uncached retry. Shutdown rejects new work and drains owned loads and leases.
+
+The registry adapter uses one virtual worker per distinct pending digest, capped
+by its configured attempt limit. Waiting callers retain their independent controls;
+caller interruption never targets the worker. When all callers leave a running
+load, it retains its slot until provider completion. The synchronous store contract
+has no cancellation operation. After resolver close, `awaitLoads(timeout)` reports
+whether loads and joined callers drained; attempt owners must separately close
+their leases before the host closes its borrowed store. A provider timeout remains
+required. No negative result persists beyond its joined callers.
 
 ## Missing definitions and opaque data
 

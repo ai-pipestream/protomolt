@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.schema.registry.RegistrySchemaResolverTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-05T23:41:07.574Z" hostname="krick" time="1.423">
+  <properties/>
+  <testcase name="realAdmissionCopiesRegistryDefinitionsAndRechecksChangedCandidates()" classname="ai.protomolt.proto.repo.schema.registry.RegistrySchemaResolverTest" time="1.189"/>
+  <testcase name="equalTypeUrlsKeepDifferentArtifactsAndSeparateHostsDoNotShareThem()" classname="ai.protomolt.proto.repo.schema.registry.RegistrySchemaResolverTest" time="0.103"/>
+  <testcase name="cancellationAcrossColdSelectionCheckpointsReleasesAttemptCapacity()" classname="ai.protomolt.proto.repo.schema.registry.RegistrySchemaResolverTest" time="0.049"/>
+  <testcase name="warmCacheStillAuthorizesEverySelectionAndOwnsPinsAcrossHostClose()" classname="ai.protomolt.proto.repo.schema.registry.RegistrySchemaResolverTest" time="0.033"/>
+  <testcase name="missingOutageAndRecoveryRemainDifferentAndAreNotNegativeCached()" classname="ai.protomolt.proto.repo.schema.registry.RegistrySchemaResolverTest" time="0.034"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+]]></system-err>
+</testsuite>
