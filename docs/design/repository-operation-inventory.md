@@ -5925,3 +5925,18 @@ acquires an independent pin before the raw batch closes. Real PostgreSQL/LocalSt
 production-JAR qualification covers exact old-version selection, one GET, unknown
 ordinal without I/O, post-GET revocation/cancellation/corruption, and resource drain.
 Public SPI/protobuf exposure and performance qualification remain pending.
+
+### Optional Java historical materialization capability
+
+**New optional Java SPI; unchanged wire contracts:**
+`HistoricalMaterializationRepository.readMaterialized` selects one complete-revision
+ordinal and retained root/path digests with explicit resource limits. The engine
+implements this interface by adapting the existing provider-backed operation;
+raw/validated interfaces and the existing concrete overload remain unchanged.
+The owned result returns borrowed original/decoded content, exact schema and
+occurrence identity, and the original selection for correlation. Each view checks
+current READ; close releases retained resources and refuses further views.
+
+This exposes no admission or container types in the SPI. It does not add an RPC,
+registry lookup, expanded JSON format, or fresh validation verdict. Transport
+framing, registry/cache integration and capacity qualification remain open.

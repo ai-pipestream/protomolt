@@ -4,6 +4,7 @@ import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
 import ai.protomolt.proto.repo.container.ledger.DocumentHistoricalReadPlan;
 import ai.protomolt.proto.repo.container.ledger.DocumentReadLedger;
 import ai.protomolt.proto.repo.spi.HistoricalDocumentRepository;
+import ai.protomolt.proto.repo.spi.HistoricalMaterializationRepository;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryException;
 import ai.protomolt.proto.repo.spi.RepositoryReadControl;
@@ -16,7 +17,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 /** Shared capture/read/delivery behavior. The host owns reader maintenance and shutdown. */
-public final class DocumentHistoricalOperations implements HistoricalDocumentRepository {
+public final class DocumentHistoricalOperations implements HistoricalDocumentRepository, HistoricalMaterializationRepository {
     private final DocumentReadLedger ledger;
     private final DocumentPartReader parts;
     private final DocumentHistoricalReader validated;
@@ -80,7 +81,38 @@ public final class DocumentHistoricalOperations implements HistoricalDocumentRep
         }
     }
 
-    /** Selected typed view; does not confer a fresh validation verdict or change the raw/validated SPI. */
+    @Override public HistoricalMaterializationRepository.Result readMaterialized(
+            RepositoryCaller caller, NodeAddress address, UUID revision,
+            HistoricalMaterializationRepository.Selection selection,
+            HistoricalMaterializationRepository.Limits limits, RepositoryReadControl control) {
+        Objects.requireNonNull(selection); Objects.requireNonNull(limits);
+        var result = readMaterialized(caller, address, revision, selection.revisionOrdinal(),
+                new ai.protomolt.proto.repo.admission.DocumentSchemaMaterialization.Selection(selection.rootSha256(), selection.pathSha256()),
+                new ai.protomolt.proto.repo.admission.DocumentSchemaMaterialization.Limits(limits.maxFragmentBytes(),
+                        limits.maxEvidenceBytes(), limits.maxRetainedBytes(), limits.maxReferences(),
+                        limits.maxDecodedBytes(), limits.maxBoundaries()), control);
+        boolean transferred = false;
+        try {
+            var adapted = new Materialized(selection, result);
+            transferred = true;
+            return adapted;
+        } finally { if (!transferred) result.close(); }
+    }
+
+    private record Materialized(HistoricalMaterializationRepository.Selection selection,
+            ai.protomolt.proto.repo.container.ledger.DocumentHistoricalMaterialization result)
+            implements HistoricalMaterializationRepository.Result {
+        @Override public synchronized HistoricalMaterializationRepository.View view(RepositoryReadControl control) {
+            var view = result.view(control);
+            var occurrence = view.occurrence();
+            return new HistoricalMaterializationRepository.View(selection, view.original(), view.value(), view.schema(),
+                    new HistoricalMaterializationRepository.Occurrence(occurrence.ordinal(), occurrence.root(), occurrence.typeUrl(),
+                            occurrence.prefix(), occurrence.valueSha256(), occurrence.valueSizeBytes()));
+        }
+        @Override public synchronized void close() { result.close(); }
+    }
+
+    /** Selected typed view; does not confer a fresh validation verdict. */
     public ai.protomolt.proto.repo.container.ledger.DocumentHistoricalMaterialization readMaterialized(
             RepositoryCaller caller, NodeAddress address, UUID revision, int ordinal,
             ai.protomolt.proto.repo.admission.DocumentSchemaMaterialization.Selection selection,

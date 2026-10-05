@@ -1,6 +1,5 @@
 package ai.protomolt.proto.repo.container.ledger;
 
-import ai.protomolt.proto.repo.admission.DocumentSchemaMaterialization;
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
 import ai.protomolt.proto.repo.codec.DocumentPartCodec;
@@ -29,8 +28,8 @@ public final class NativeHistoricalMaterializationProbe {
         int ordinal = ((Number) row[0]).intValue();
         var evidence = DocumentRootSchemaEvidence.parseFrom((byte[]) row[2]);
         var path = evidence.getOccurrencesList().stream().filter(value -> value.getStepsCount() == 1).findFirst().orElseThrow();
-        var selection = new DocumentSchemaMaterialization.Selection((String) row[1], DocumentPartCodec.sha256Hex(path.toByteArray()));
-        var limits = new DocumentSchemaMaterialization.Limits(4_000_000, 4_000_000, 16_000_000, 64, 8_000_000, 64);
+        var selection = new HistoricalMaterializationRepository.Selection(ordinal, (String) row[1], DocumentPartCodec.sha256Hex(path.toByteArray()));
+        var limits = new HistoricalMaterializationRepository.Limits(4_000_000, 4_000_000, 16_000_000, 64, 8_000_000, 64);
         try {
             for (int mode = 0; mode < 5; mode++) {
                 security(tx, node, originalSecurity);
@@ -78,22 +77,33 @@ public final class NativeHistoricalMaterializationProbe {
                             "original backend identity lookup");
                     return observed;
                 }, 2, 16_000_000, budget)) {
-                    var operations = new DocumentHistoricalOperations(ledger, reader, budget);
+                    HistoricalMaterializationRepository operations = new DocumentHistoricalOperations(ledger, reader, budget);
                     if (mode == 0) {
-                        try (var result = operations.readMaterialized(caller, address, id, ordinal, selection, limits, control)) {
+                        var result = operations.readMaterialized(caller, address, id, selection, limits, control);
+                        try (result) {
                             var view = result.view(control);
+                            require(view.selection().equals(selection) && view.occurrence().revisionOrdinal() == ordinal,
+                                    "SPI preserves requested occurrence identity");
                             require(view.original().unpack(StringValue.class).getValue().equals("retained payload"), "archived version decoded");
                             require(view.schema().getArtifactSha256().equals(path.getSteps(0).getAnyBoundary().getResolved().getArtifactSha256()),
                                     "recorded schema selected");
                             require(ledger.releaseDrained(1) == 0 && budget.reservedBytes() > 0, "result owns independent pin and bytes");
+                            security(tx, node, "{}");
+                            try { result.view(control); throw new AssertionError("revoked SPI view exposed content"); }
+                            catch (RepositoryException denied) { require(denied.code() == RepositoryException.Code.NOT_FOUND, "SPI view reauthorizes"); }
+                            finally { security(tx, node, originalSecurity); }
                         }
+                        try { result.view(control); throw new AssertionError("closed SPI view exposed content"); }
+                        catch (IllegalStateException closed) { /* Owned content is no longer available. */ }
+                        result.close();
                         require(calls.get() == 1, "only selected fragment was fetched");
-                        try (var unexpected = operations.readMaterialized(caller, address, id, 9999, selection, limits, control)) {
+                        var missingSelection = new HistoricalMaterializationRepository.Selection(9999, selection.rootSha256(), selection.pathSha256());
+                        try (var unexpected = operations.readMaterialized(caller, address, id, missingSelection, limits, control)) {
                             throw new AssertionError("unknown ordinal returned content");
                         } catch (RepositoryException missing) { require(missing.code() == RepositoryException.Code.NOT_FOUND, "unknown ordinal unavailable"); }
                         require(calls.get() == 1, "unknown ordinal does not fetch provider content");
                     } else {
-                        try (var unexpected = operations.readMaterialized(caller, address, id, ordinal, selection, limits, control)) {
+                        try (var unexpected = operations.readMaterialized(caller, address, id, selection, limits, control)) {
                             throw new AssertionError("faulted materialization returned content");
                         } catch (RepositoryException failure) {
                             var code = scenario < 3 ? RepositoryException.Code.NOT_FOUND

@@ -6156,3 +6156,31 @@ The next recovery requirements are recorded in
 execution claim must fence SQL mutations even when replicas share an operation
 nonce. Provider effects across claim loss require an explicit tested policy before
 live transfer is enabled. The other repository goal work remains open there.
+
+#### Optional historical materialization SPI
+
+`HistoricalMaterializationRepository` exposes selected historical decoding as a
+separate Java capability. It leaves raw and validated reads unchanged. Its request
+selects a complete-revision fragment ordinal and canonical retained root/path
+digests, with explicit byte, reference and traversal ceilings. Those ceilings are
+not a total heap or SQL snapshot bound; host concurrency and shared reservations
+remain required.
+
+`DocumentHistoricalOperations` adapts the existing pinned provider-backed path.
+The owned result exposes the original Any, a DynamicMessage, exact resolved schema,
+selected request identity and occurrence identity. Each `view(control)` rechecks
+current READ. Borrowed Java objects cannot be revoked after exposure: consumers
+must retain the result through use and reauthorize at final delivery. Closing the
+result releases its byte reservations and revision pin; further views fail.
+
+The SPI depends only on existing protobuf contracts and Java/protobuf types. It
+does not expose admission, SQL, provider or engine classes. Missing selections,
+corrupt required retained assets, and capacity exhaustion remain distinct failures;
+there is no automatic raw fallback or new validation verdict. The existing concrete
+Java overload remains available. No protobuf service or transport is changed here.
+
+The independent follow-up is the transport contract and framing for this selected
+mode. Registry/cache integration must still distinguish exact artifact lookup from
+authorized discovery; retained historical reads never consult registry latest.
+Restore/pruning, non-S3 durability, RustFS capacity, bounded hydration and optional
+JCR semantics remain separate goal requirements.
