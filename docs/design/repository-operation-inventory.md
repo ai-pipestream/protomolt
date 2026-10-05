@@ -5865,3 +5865,15 @@ required historical asset loss and typed value inconsistency fail explicitly.
 The host still verifies stored evidence, authorization, physical revision ordinal
 and ownership lifetime. Eight file-backed tests and all 193 admission tests pass;
 SQL-host/public transport integration and nested traversal remain pending.
+
+### Retained nested-path decoding
+
+**New internal helper; unchanged repository RPCs:** a recorded path can now traverse
+retained parent definitions to a nested Any using descriptor-checked field/index/
+map-key steps. Exact references, occurrence identities and bounds are enforced;
+required missing assets fail and no partial target escapes. The root and nested
+readers share their retained-boundary decoder. Admission's map-entry shape check
+was moved without changing its rules so both paths reuse it. Twenty-one new path
+cases and all 214 admission tests pass. Host authorization, evidence membership,
+physical ordinal binding and result ownership remain prerequisites, with SQL/public
+integration still pending.

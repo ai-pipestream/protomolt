@@ -409,28 +409,11 @@ final class DocumentPayloadCheck {
                 schemaFields += type.getFields().size();
                 if (schemaFields > limits.maxSchemaFields()) throw new IllegalArgumentException("schema field count exceeds limit");
                 for (var field : type.getFields()) {
-                    if (archival && field.isMapField()) checkMapEntry(field.getMessageType());
+                    if (archival && field.isMapField()) requireMapEntry(field.getMessageType());
                     if (field.getJavaType() == FieldDescriptor.JavaType.MESSAGE) add(field.getMessageType(), pending);
                 }
             }
             validator.prepareSchema(root, limits.maxSchemaTypes(), limits.maxSchemaFields(), () -> active(control));
-        }
-
-        private void checkMapEntry(Descriptor entry) {
-            var key = entry.findFieldByNumber(1);
-            var value = entry.findFieldByNumber(2);
-            if (entry.getFields().size() != 2 || key == null || value == null
-                    || !key.getName().equals("key") || !value.getName().equals("value")
-                    || key.isRepeated() || value.isRepeated() || key.isRequired() || value.isRequired()
-                    || key.getContainingOneof() != null || value.getContainingOneof() != null
-                    || key.hasDefaultValue() || value.hasDefaultValue()) {
-                throw new IllegalArgumentException("invalid map entry descriptor");
-            }
-            switch (key.getType()) {
-                case STRING, BOOL, INT32, SINT32, SFIXED32, UINT32, FIXED32,
-                        INT64, SINT64, SFIXED64, UINT64, FIXED64 -> { }
-                default -> throw new IllegalArgumentException("invalid map entry descriptor key type");
-            }
         }
 
         void add(Descriptor type, ArrayList<Descriptor> pending) {
@@ -440,6 +423,24 @@ final class DocumentPayloadCheck {
             pending.add(type);
         }
     }
+
+    static void requireMapEntry(Descriptor entry) {
+        var key = entry.findFieldByNumber(1);
+        var value = entry.findFieldByNumber(2);
+        if (entry.getFields().size() != 2 || key == null || value == null
+                || !key.getName().equals("key") || !value.getName().equals("value")
+                || key.isRepeated() || value.isRepeated() || key.isRequired() || value.isRequired()
+                || key.getContainingOneof() != null || value.getContainingOneof() != null
+                || key.hasDefaultValue() || value.hasDefaultValue()) {
+            throw new IllegalArgumentException("invalid map entry descriptor");
+        }
+        switch (key.getType()) {
+            case STRING, BOOL, INT32, SINT32, SFIXED32, UINT32, FIXED32,
+                    INT64, SINT64, SFIXED64, UINT64, FIXED64 -> { }
+            default -> throw new IllegalArgumentException("invalid map entry descriptor key type");
+        }
+    }
+
 
     private static void active(Runnable control) {
         if (Thread.currentThread().isInterrupted()) {

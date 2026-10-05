@@ -49,53 +49,11 @@ final class DocumentRetainedRootMaterialization {
         if (selected == null) throw lost("retained root differs from exact fragment inventory");
         var occurrence = new DocumentSchemaAdmission.Selection(ordinal, recordedRoot, recordedBoundary.getTypeUrl(),
                 List.of(), recordedBoundary.getValueSha256(), recordedBoundary.getValueSizeBytes());
-        Runnable guarded = () -> {
-            try { active.run(); }
-            catch (RuntimeException failure) { throw new ControlFailure(failure); }
-        };
-        final DocumentAnyMaterialization.View view;
-        try {
-            view = DocumentAnyMaterialization.read(occurrence, selected.envelope(), mode, limits, ignored -> {
-                if (!reference.typeUrl().equals(recordedBoundary.getTypeUrl())
-                        || !reference.descriptorSha256().equals(recordedBoundary.getResolved().getArtifactSha256()))
-                    throw lost("retained root schema association differs from recorded boundary");
-                // Full association verification includes canonical metadata and any retained source.
-                // Absence/corruption is DataLoss. There is deliberately no discovery resolver.
-                final DocumentSchemaAssetBinding bound;
-                try { bound = retained.resolve(reference.internal(), guarded); }
-                catch (ControlFailure failure) { throw failure; }
-                catch (RuntimeException failure) { throw new ResolutionFailure(failure); }
-                if (!bound.schema().condition().equals(recordedBoundary.getResolved().getSchema()))
-                    throw lost("retained root schema condition differs from recorded boundary");
-                return new DocumentAnyMaterialization.Resolved(bound);
-            }, guarded);
-        } catch (ControlFailure failure) {
-            throw failure.original;
-        } catch (ResolutionFailure failure) {
-            throw failure.original;
-        } catch (DocumentAnyMaterialization.IdentityMismatch failure) {
-            throw new DocumentRetainedSchemaAssets.DataLoss("retained root envelope differs from recorded value identity", failure);
-        }
-        active.run();
-        if (view instanceof DocumentAnyMaterialization.Failed failed
-                && (failed.failure().reason() == DocumentAnyMaterialization.Reason.MALFORMED_PAYLOAD
-                    || failed.failure().reason() == DocumentAnyMaterialization.Reason.CORRUPT_DEFINITION)) {
-            throw new DocumentRetainedSchemaAssets.DataLoss("retained typed root cannot be decoded with its recorded definition",
-                    failed.failure().cause().orElse(null));
-        }
-        // Preserve and resource refusal do not verify/load required schema assets. They confer no verdict.
-        return view;
+        return DocumentRetainedAnyMaterialization.read(occurrence, selected.envelope(), recordedBoundary,
+                mode, reference, retained, limits, active);
     }
 
     private static DocumentRetainedSchemaAssets.DataLoss lost(String message) {
         return new DocumentRetainedSchemaAssets.DataLoss(message);
-    }
-    private static final class ControlFailure extends RuntimeException {
-        private final RuntimeException original;
-        private ControlFailure(RuntimeException original) { this.original = original; }
-    }
-    private static final class ResolutionFailure extends RuntimeException {
-        private final RuntimeException original;
-        private ResolutionFailure(RuntimeException original) { this.original = original; }
     }
 }

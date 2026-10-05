@@ -5943,3 +5943,50 @@ not PostgreSQL ownership, process-restart, public transport or deployment proof.
 See `docs/evidence/repository/2026-10-05-retained-root-materialization/README.md`.
 The SQL read host, owned delivery result, nested traversal and public read contract
 integration remain open. No existing read operation changes behavior in this slice.
+
+#### Retained nested Any path materialization
+
+`DocumentRetainedPathMaterialization` now follows one recorded path from an exact
+inventoried typed root. Each Any boundary uses its own recorded URL, value identity,
+full schema condition and retained association. It decodes parents to locate the
+next envelope; it never selects a child from a URL-only registry or a global name
+map. The retained-boundary decoder is shared with the root adapter, preserving
+its reference verification, data-loss mapping and control/storage exception guards.
+
+The path must pass its stored canonical codec/digest gate in the host. The host
+also authenticates membership in the selected revision's evidence, the fragment
+ordinal and the reference set. This helper rechecks bounded parsed shape, full root
+locator, boundary values and each traversal transition. It does not establish host
+authorization or physical-row membership by accepting those inputs.
+
+Field numbers select present message fields, repeated indices select actual list
+positions, and typed map keys select values directly. The walker inspects repeated
+map-entry messages before map collapse, rejecting duplicate semantic keys even
+when a different key is requested. It reuses admission's exact map-entry descriptor
+shape checks. Unknown fields on a traversed message/envelope, absent fields/values,
+wrong step kinds, invalid indices and unsupported Any envelopes fail explicitly.
+Different boundaries may select different definitions with the same full type URL.
+
+Limits cap reference inputs, decode count and the sum of all decoded boundary value
+byte lengths. Each boundary additionally has wire-value, payload-byte and recursion
+bounds; the aggregate wire upper bound is decode-count times the per-boundary wire
+limit. These are serialized-input bounds, not decoded-heap reservations. The host
+still owns those reservations and all borrowed results. A parent limit failure
+throws a path-level refusal before a target can be returned; no synthetic child or
+partially traversed result escapes. Raw preservation remains a separate operation
+because reaching a nested child requires parent decoding.
+
+Twenty-one file-backed path cases passed with all 214 admission tests and the
+runtime dependency gate. They cover two different child definitions under the
+same URL, singular/repeated/map routes, all twelve key types including unsigned
+high-bit values and explicit default-key duplicates, malformed map descriptors,
+conflicting full references, missing assets, aggregate bounds, cancellation, and
+three boundaries with a missing middle definition. An omitted-key collision with
+an explicit default is characterized by the existing `MapOccurrenceSemanticsTest`;
+a direct retained-path fixture for that spelling remains a follow-up.
+
+Evidence is in `docs/evidence/repository/2026-10-05-retained-path-materialization/`.
+This remains package-private, storage-independent composition. SQL capture and
+current authorization, owned result delivery, public read contracts, registry/cache
+integration, restore/pruning and hydration remain open. These tests do not establish
+process restart, public transport or deployment behavior.
