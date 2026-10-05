@@ -4055,8 +4055,8 @@ Tests must cover lost acknowledgement, restart, moved source pointers, changed
 selection, expired stages, revoked access, terminal outcomes and legacy refusal
 before reconciliation is exposed.
 
-`DocumentAssessmentSlotSnapshot` now supplies the internal encoding primitive;
-persistence and reconciliation remain unfinished. Version 1 uses the `PMAS`
+`DocumentAssessmentSlotSnapshot` supplies the internal encoding primitive.
+Creation now persists it; reconciliation remains unfinished. Version 1 uses the `PMAS`
 magic and big-endian fixed-width numbers, length-prefixed UTF-8 identity strings,
 raw UUIDs/digests, epoch-second/nanosecond deadline and a counted slot sequence.
 Slots are sorted by ASCII member ID and candidate full ordinal. Upload tuples
@@ -4068,3 +4068,23 @@ byte copy and bounded text scratch; downstream JDBC copies require their own
 reservation. Reconciliation will re-encode retained relational rows for exact
 comparison rather than parse untrusted embedded lengths. Unit tests pin the wire
 layout and exercise identity changes, ordering, bounds and cancellation cleanup.
+
+V69 adds `document_assessment_slot_snapshots`, one immutable, checksum-protected
+encoding per assessment. Insert requires the live operation fence and the owner's
+physical seal in the original creation transaction. Recovery removes the snapshot
+inside the same fenced transaction as the other assessment associations; expiry
+alone does not delete it. Migration preserves existing owners without inventing
+snapshots or retroactively accepting late provenance. Snapshot absence explicitly
+marks a stage that the future reconciler must refuse. Presence alone is insufficient:
+SQL checks storage integrity, while the handler must verify codec/version and exact
+canonical equality against the full identity and every retained slot.
+
+The creator encodes the bound slots after inserting root evidence, reserves
+additional nonblocking capacity for its encoding and JDBC copies, and inserts the
+snapshot before deferred constraints and final ownership/context checks. Capacity
+failure rolls back the transaction. The qualified production-JAR/PostgreSQL probe
+compares the persisted encoding with a fresh encoding of the actual relational
+slot rows and original identity. SQL lifecycle tests cover migration, late/pre-seal
+insertion refusal, checksum failure, immutability, explicit expiry recovery and
+rollback of snapshot deletion when a later recovery step fails. Synthetic bytes
+in these SQL-only fixtures prove lifecycle guards, not canonical handler provenance.

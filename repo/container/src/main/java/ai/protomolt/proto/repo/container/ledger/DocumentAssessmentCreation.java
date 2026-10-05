@@ -117,6 +117,18 @@ final class DocumentAssessmentCreation {
                         }
                     }
                 });
+                var identity = new DocumentAssessmentSlotSnapshot.Identity(assessment, owner.key(), owner.generation(),
+                        command.sha256(), manifestSha, retainUntil);
+                try (var snapshot = DocumentAssessmentSlotSnapshot.encode(identity, slots, scratch, control);
+                     var jdbc = scratch.reserve(2L * snapshot.bytes().size())) {
+                    int written = em.createNativeQuery("""
+                            INSERT INTO document_assessment_slot_snapshots(assessment_id,snapshot_codec,snapshot_version,
+                                snapshot_bytes,snapshot_sha256) VALUES(:id,:codec,:version,:bytes,:sha)
+                            """).setParameter("id", assessment).setParameter("codec", DocumentAssessmentSlotSnapshot.CODEC)
+                            .setParameter("version", DocumentAssessmentSlotSnapshot.VERSION).setParameter("bytes", snapshot.bytes().toByteArray())
+                            .setParameter("sha", hex(snapshot.sha256())).executeUpdate();
+                    if (written != 1) throw new IllegalStateException("Assessment slot snapshot insertion was incomplete");
+                }
                 em.createNativeQuery("SET CONSTRAINTS ALL IMMEDIATE").executeUpdate();
                 RepositoryOperationLedger.fenceLiveOwner(em, owner);
                 evidence.check(control);

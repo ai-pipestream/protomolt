@@ -89,6 +89,26 @@ public final class AssessmentCreationProbe {
                     byte[] stored = tx.readOnly(em -> (byte[]) em.createNativeQuery("SELECT manifest_bytes FROM document_assessment_owners WHERE assessment_id=:id")
                             .setParameter("id", id).getSingleResult());
                     require(ByteString.copyFrom(stored).equals(evidence.manifestBytes(() -> {})), "exact observed manifest");
+                    var retainedSlots = tx.readOnly(em -> em.createNativeQuery("""
+                            SELECT member_id,revision_ordinal,selection_revision,object_id,declaration,source_revision,source_ordinal
+                            FROM document_assessment_slots WHERE assessment_id=:id
+                            """).setParameter("id", id).getResultList()).stream().map(value -> {
+                        Object[] row = (Object[]) value;
+                        return new DocumentAssessmentSlots.Slot((String) row[0], ((Number) row[1]).intValue(), ((Number) row[2]).longValue(),
+                                (UUID) row[3], (String) row[4], (UUID) row[5], row[6] == null ? null : ((Number) row[6]).intValue());
+                    }).toList();
+                    try (var snapshot = DocumentAssessmentSlotSnapshot.encode(new DocumentAssessmentSlotSnapshot.Identity(
+                            id, owner.key(), owner.generation(), command.sha256(), evidence.manifestSha256(() -> {}), deadline),
+                            retainedSlots, budget, () -> {})) {
+                        Object[] retained = tx.readOnly(em -> (Object[]) em.createNativeQuery("""
+                                SELECT snapshot_codec,snapshot_version,snapshot_bytes,encode(snapshot_sha256,'hex')
+                                FROM document_assessment_slot_snapshots WHERE assessment_id=:id
+                                """).setParameter("id", id).getSingleResult());
+                        require(retained[0].equals(DocumentAssessmentSlotSnapshot.CODEC)
+                                && ((Number) retained[1]).intValue() == DocumentAssessmentSlotSnapshot.VERSION
+                                && ByteString.copyFrom((byte[]) retained[2]).equals(snapshot.bytes())
+                                && retained[3].equals(snapshot.sha256()), "exact retained slot snapshot");
+                    }
                     // An uncertain acknowledgement must use reconciliation, not a second create.
                     UUID duplicate = UUID.randomUUID();
                     try { writer.create(caller, owner, prepared, selected, evidence, duplicate, deadline, budget, () -> {}); throw new AssertionError("duplicate generation adopted"); }
@@ -133,7 +153,7 @@ public final class AssessmentCreationProbe {
                 require(hasSqlState(expected, "57014") && hasMessage(expected, "injected assessment root cancellation"), "exact SQL cancellation propagated");
             }
             for (String table : List.of("document_assessment_owners", "document_assessment_slots",
-                    "document_assessment_objects", "document_assessment_artifacts", "document_assessment_roots"))
+                    "document_assessment_objects", "document_assessment_artifacts", "document_assessment_roots", "document_assessment_slot_snapshots"))
                 require(count(tx, table, cancelled) == 0, "cancelled transaction rolled back " + table);
             long references = tx.readOnly(em -> ((Number) em.createNativeQuery(
                     "SELECT count(*) FROM repository_object_references WHERE owner_kind='ASSESSMENT' AND owner_id=:id")
