@@ -390,45 +390,6 @@ public final class ArchiveLedger {
 
     static void applyDelta(EntityManager em, String accountId, String archive,
                                    StatsDelta delta) {
-        if (delta.entries() == 0 && delta.versions() == 0
-                && delta.retainedBytes() == 0 && delta.currentBytes() == 0
-                && delta.renditionObjects().isEmpty()) {
-            return;
-        }
-        var statsKey = new ArchiveStatsRecord.Key(accountId, archive);
-        ArchiveStatsRecord stats = em.find(ArchiveStatsRecord.class, statsKey, LockModeType.PESSIMISTIC_WRITE);
-        if (stats == null) {
-            // A row lock cannot protect a missing row. Establish the shared counter
-            // identity atomically before locking it, including concurrent first writes
-            // from different repository hosts. Existing rows need no extra insert.
-            em.createNativeQuery("""
-                    INSERT INTO archive_stats(account_id,archive,entries,versions,retained_bytes,current_bytes)
-                    VALUES (:account,:archive,0,0,0,0)
-                    ON CONFLICT (account_id,archive) DO NOTHING
-                    """).setParameter("account", accountId).setParameter("archive", archive).executeUpdate();
-            stats = em.find(ArchiveStatsRecord.class, statsKey, LockModeType.PESSIMISTIC_WRITE);
-            if (stats == null) throw new IllegalStateException("Archive statistics disappeared after initialization");
-        }
-        stats.entries += delta.entries();
-        stats.versions += delta.versions();
-        stats.retainedBytes += delta.retainedBytes();
-        stats.currentBytes += delta.currentBytes();
-        for (Map.Entry<String, Long> adjustment : delta.renditionObjects().entrySet()) {
-            String name = adjustment.getKey();
-            long objects = adjustment.getValue();
-            long bytes = delta.renditionBytes().getOrDefault(name, 0L);
-            ArchiveRenditionStatsRecord row = em.find(ArchiveRenditionStatsRecord.class,
-                    new ArchiveRenditionStatsRecord.Key(accountId, archive, name),
-                    LockModeType.PESSIMISTIC_WRITE);
-            if (row == null) {
-                row = new ArchiveRenditionStatsRecord();
-                row.accountId = accountId;
-                row.archive = archive;
-                row.renditionName = name;
-                em.persist(row);
-            }
-            row.objectCount += objects;
-            row.totalBytes += bytes;
-        }
+        ArchiveStatistics.apply(em, accountId, archive, delta);
     }
 }

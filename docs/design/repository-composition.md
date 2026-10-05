@@ -1297,6 +1297,16 @@ waiters decreased, but throughput changed in both directions; no repeatable
 speedup or full scaling qualification is claimed. Destructive mutations still
 hold the statistics lock through subsequent target checks and receipt creation.
 
+The [atomic-counter checkpoint](../evidence/repository/2026-10-05-atomic-archive-statistics/README.md)
+replaces counter reads plus ORM writes with additive PostgreSQL UPSERTs in the
+same transaction. Sorted union of rendition object/byte keys prevents lost
+byte-only adjustments; database arithmetic rejects overflow. Real concurrent and
+rollback tests and the RustFS replica diagnostic pass. Sampled waits decreased,
+but per-configuration throughput moved in both directions. Shared serialization
+remains, and longer warmup plus CPU/GC evidence is needed before attributing the
+remaining latency to it. Nonnegative counter invariants are still not enforced
+by the schema; invalid negative deltas require a separate correctness follow-up.
+
 Multiple repository service instances must share one logical repository through
 the durable ledger and configured storage identities. Independent requests must
 benefit from additional service capacity when service CPU or I/O concurrency is
