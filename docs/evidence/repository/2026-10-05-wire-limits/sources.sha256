@@ -1,0 +1,4 @@
+d358b87d2313f6da8094a7fe283d472a626cf4ea3c1ed6abaab513d371f8fd77  core/descriptors/src/main/java/ai/protomolt/proto/descriptors/MessageWireBudget.java
+7c2645a97ed8d84f15f916bad0b9d6f5bf6d3dd60bb07fc7d62c872b4c84f55f  core/descriptors/src/test/java/ai/protomolt/proto/descriptors/MessageWireBudgetTest.java
+d94ec091994db48a103351c620e83ffe3f44e5e9f266bf1e39808f6f1252b72d  repo/codec/src/test/java/ai/protomolt/proto/repo/codec/DocumentWireBudgetTest.java
+535c88f47b88c868032db0c1cde92dd927d477e7ce62d7237429d5b22f8f77fd  repo/codec/src/test/java/ai/protomolt/proto/repo/codec/DocumentRevisionAssemblyTest.java

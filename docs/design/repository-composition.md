@@ -5806,3 +5806,50 @@ write distributions are reported separately. No production behavior changed.
 See `docs/evidence/repository/2026-10-05-native-mixed/README.md` for definitions,
 raw samples, source hashes and environment. Higher-load and larger-payload
 qualification remain open, as do the other repository goal stages.
+
+#### Next optional Any materialization increment
+
+The next pure decoder belongs beside the existing internal schema binders in
+`repo/admission`. Reuse `DocumentSchemaAdmission.Selection` occurrence identity,
+`Reference`, `RepositorySchemaAsset`, `DocumentSchemaAssetBinding` and
+`ClosedDescriptorSet`; do not introduce another descriptor catalog or resolve by
+full message name alone. An authorized host supplies the account/revision context
+and explicitly selected immutable definition. A later container adapter owns READ
+checks, result-delivery authorization and retained-data-loss mapping.
+
+The decoder operates on one Any boundary at a time. Preserve mode keeps the
+parsed Any envelope and exact value bytes without a schema lookup or inner parse.
+It does not reconstruct the original envelope wire slices. Optional decoding
+checks the exact selected type URL, artifact digest and schema condition, then
+performs bounded wire scanning and dynamic parsing. The returned dynamic view is
+not a validation verdict, an admission proof or an expanded ProtoJSON claim.
+A nested Any remains an explicit envelope until its own occurrence is selected;
+different occurrences may bind different definitions under the same URL. No
+shared name-indexed descriptor registry may contaminate those contexts.
+
+Keep explicit outcomes for authoritative absence, ambiguity, denied discovery,
+lookup outage, corrupt definition, malformed payload and resource exhaustion.
+Do not squeeze these into the existing three-value resolution-failure enum or
+reinterpret a resolved-schema observation as successfully decoded content.
+Historical required retained assets have stronger obligations: missing or corrupt
+assets are data loss, with separately authorized preservation still possible.
+They cannot fall through to discovery of the latest schema. Cancellation remains
+cancellation, and programming failures must not become an unknown-type result.
+
+The host must bound original bytes, descriptors, aggregate decoded bytes, wire
+values, nesting, active reads and output ownership. Closing an owned result ends
+its accounting lifetime; callers must release derived references too. Limits
+measure serialized allocation inputs, not exact heap usage. Configure protobuf
+parser recursion/size limits consistently with preflight so a parser limit cannot
+be misreported as malformed bytes. The wire scanner now exposes a dedicated
+`MessageWireBudget.LimitExceededException` for configured depth/value limits;
+malformed protobuf and cancellation retain their distinct exception types.
+
+Acceptance for the decoder must cover real serialized values with identical URLs
+and different occurrence-bound definitions, preserve with a resolver that fails
+if called, all resolution outcomes, malformed known values, each configured bound,
+nested unresolved envelopes, cancellation and result ownership. Historical adapter
+tests additionally need missing/corrupt retained artifacts and access revocation.
+Registry adapter/cache qualification, custom JSON rendering, public read modes,
+restore, pruning, hydration and optional JCR capabilities remain separate open
+work. This reviewed boundary adds no available RPC or registry/cache implementation.

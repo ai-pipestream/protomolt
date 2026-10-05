@@ -5834,3 +5834,13 @@ operation latency and SQL/provider/lock/RSS diagnostics with explicit pool sizes
 The local low-load run passed but showed no speedup from replicas; it does not
 qualify saturation, public transport or large payload performance. Evidence is in
 `docs/evidence/repository/2026-10-05-native-mixed/README.md`.
+
+### Optional decoding failure classification
+
+**Extended internal Java behavior:** `MessageWireBudget` reports configured depth
+and value-count limits with a dedicated exception. Malformed wire data remains a
+protobuf parsing failure; cancellation propagates independently. This supports
+explicit optional-materialization outcomes without matching exception text. No
+protobuf field, operation or validation bypass is added. The occurrence-specific
+decoder and authorized historical adapter are the next implementation boundary,
+recorded in the composition design; they are not yet exposed as read operations.

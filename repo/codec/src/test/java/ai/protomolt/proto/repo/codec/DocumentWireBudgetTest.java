@@ -62,10 +62,10 @@ class DocumentWireBudgetTest {
         assertThat(DynamicMessage.parseFrom(descriptor, packed)).isEqualTo(DynamicMessage.parseFrom(descriptor, unpacked));
         new MessageWireBudget(4, 10, () -> {}).check(packed, descriptor); // one envelope plus three values
         assertThatThrownBy(() -> new MessageWireBudget(3, 10, () -> {}).check(packed, descriptor))
-                .hasMessageContaining("value count");
+                .isInstanceOf(MessageWireBudget.LimitExceededException.class).hasMessageContaining("value count");
         new MessageWireBudget(3, 10, () -> {}).check(unpacked, descriptor);
         assertThatThrownBy(() -> new MessageWireBudget(2, 10, () -> {}).check(unpacked, descriptor))
-                .hasMessageContaining("value count");
+                .isInstanceOf(MessageWireBudget.LimitExceededException.class).hasMessageContaining("value count");
     }
 
     @Test void unknownGroupsAndDuplicateSingularValuesShareTheBudget() throws Exception {
@@ -78,9 +78,9 @@ class DocumentWireBudgetTest {
         assertThat(Document.parseFrom(bytes).getDocId()).isEqualTo("last");
         new MessageWireBudget(5, 1, () -> {}).check(bytes, Document.getDescriptor());
         assertThatThrownBy(() -> new MessageWireBudget(4, 1, () -> {}).check(bytes, Document.getDescriptor()))
-                .hasMessageContaining("value count");
+                .isInstanceOf(MessageWireBudget.LimitExceededException.class).hasMessageContaining("value count");
         assertThatThrownBy(() -> new MessageWireBudget(5, 0, () -> {}).check(bytes, Document.getDescriptor()))
-                .hasMessageContaining("depth");
+                .isInstanceOf(MessageWireBudget.LimitExceededException.class).hasMessageContaining("depth");
     }
 
     @Test void wrongWireKnownFieldsAndOpaqueUnknownBytesMatchParserBehavior() throws Exception {
@@ -127,7 +127,7 @@ class DocumentWireBudgetTest {
         Document.parseFrom(bytes);
         new MessageWireBudget(5, 4, () -> {}).check(bytes, Document.getDescriptor());
         assertThatThrownBy(() -> new MessageWireBudget(4, 4, () -> {}).check(bytes, Document.getDescriptor()))
-                .hasMessageContaining("value count");
+                .isInstanceOf(MessageWireBudget.LimitExceededException.class).hasMessageContaining("value count");
     }
 
     @Test void invalidLengthsInsideKnownMessagesAreRejected() throws Exception {

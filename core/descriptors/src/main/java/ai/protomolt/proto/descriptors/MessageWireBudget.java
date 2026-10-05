@@ -17,6 +17,11 @@ import java.util.concurrent.CancellationException;
  * payload bytes need separate checks with their resolved descriptors.
  */
 public final class MessageWireBudget {
+    /** Configured resource exhaustion, not evidence that protobuf bytes are malformed. */
+    public static final class LimitExceededException extends IllegalArgumentException {
+        public LimitExceededException(String message) { super(message); }
+    }
+
     private final long limit;
     private final int maxDepth;
     private final Runnable control;
@@ -43,7 +48,7 @@ public final class MessageWireBudget {
     }
 
     private void scan(CodedInputStream input, Descriptor descriptor, int depth, int endGroup) throws IOException {
-        if (depth > maxDepth) throw malformed("Message wire depth exceeds bound");
+        if (depth > maxDepth) throw new LimitExceededException("Message wire depth exceeds bound");
         while (true) {
             active();
             int tag = input.readTag();
@@ -107,7 +112,7 @@ public final class MessageWireBudget {
     }
 
     private void charge(long count) {
-        if (count > limit - values) throw new IllegalArgumentException("Message wire value count exceeds bound");
+        if (count > limit - values) throw new LimitExceededException("Message wire value count exceeds bound");
         values += count;
     }
 

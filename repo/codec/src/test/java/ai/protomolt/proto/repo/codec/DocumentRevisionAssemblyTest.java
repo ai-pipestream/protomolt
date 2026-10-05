@@ -61,7 +61,7 @@ class DocumentRevisionAssemblyTest {
     @Test void parsingDepthIsEnforced() {
         var nested = core().toBuilder().setBlobBag(BlobBag.newBuilder().setBlob(Blob.newBuilder().setBlobId("b"))).build();
         assertThatThrownBy(() -> DocumentRevisionAssembly.assemble(split(nested), "doc", new DocumentRevisionAssembly.Limits(1000, 10, 1, 10, 100_000), () -> {}))
-                .isInstanceOf(com.google.protobuf.InvalidProtocolBufferException.class);
+                .isInstanceOf(ai.protomolt.proto.descriptors.MessageWireBudget.LimitExceededException.class);
     }
     @Test void endGroupCannotHideTrailingFragmentFields() {
         var wire = core().toByteString().concat(ByteString.copyFrom(new byte[]{0x0c}))
