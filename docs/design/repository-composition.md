@@ -3401,3 +3401,42 @@ The probe itself is a test fixture and is not part of the production inventory.
 This proves that these validation paths run with the bundled dependencies and
 that a missing adapter cannot use the surrounding test classpath. It does not
 claim all code paths were exercised or that a deployed host uses this loader.
+
+#### Standard classpath qualification
+
+The runtime evidence path will support trusted, immutable, ordinary JAR classpath
+deployments. It will verify the actual loader topology and observed JVM identity;
+it will not infer that an arbitrary classloader, shaded executable, module-path
+launch or caller-supplied version list has the same semantics. This evidence is
+not a sandbox or an attestation against agents/instrumentation inside the host.
+Unsupported layouts must fail explicitly at the runtime evidence boundary.
+
+`DocumentRuntimeClasspath` now qualifies an explicitly enumerated JAR list.
+Every distinct inventory content hash must match exactly one classpath artifact.
+Additional host JARs are allowed, but cannot supply classes also present in the
+inventory. Inventory JARs are scanned first so duplicate class providers cannot
+hide through classpath order. Base and multi-release variants inside one JAR are
+allowed; versioned classes in different JARs are conservatively treated as
+collisions even for releases inactive on the current JVM. Module descriptors are
+excluded from class collision checks.
+
+The scanner permits at most 256 regular JARs and 1 GiB aggregate bytes, 250,000 ZIP
+entries, 16 Mi UTF-16 characters of entry names and 4,096 characters per name.
+Manifest decompression is bounded to 64 KiB. Manifest `Class-Path`, ambiguous
+manifest entries, duplicate ZIP names, links and directories are refused.
+Captured file size/mtime/identity are checked before and after ZIP observation,
+including a tested change between hashing and scanning. These are drift checks
+under an immutable-host assumption, not atomic filesystem snapshots. JDK ZIP
+opening processes central-directory data before the entry counter can run; the
+entry bound limits scanner iteration and maps, not every JDK allocation for a
+hostile archive. Only trusted local build artifacts are accepted in this design,
+not uploaded executable libraries.
+
+The real 38-artifact production bundle passes this qualification. Tests also cover
+missing artifacts, repeated paths/content, unrelated host classes, shadowing in
+either order, multi-release collisions, hidden manifest dependencies, oversized
+manifests, links, cancellation and file drift. The method currently accepts paths
+and returns observed hash/path associations; it does not assert they came from
+the effective classloader. Actual deployment topology checks, fixed production
+anchors, JVM identity and binding the resulting observation to assessment use
+remain required before replacing the internal raw runtime declaration.

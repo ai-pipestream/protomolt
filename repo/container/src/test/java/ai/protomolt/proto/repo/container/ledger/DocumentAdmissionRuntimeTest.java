@@ -47,6 +47,8 @@ class DocumentAdmissionRuntimeTest {
         var root = bundle();
         var inventory = DocumentRuntimeInventory.read(root, () -> {});
         var components = components(root, inventory);
+        assertThat(DocumentRuntimeClasspath.verify(inventory, components.stream().map(Component::jar).toList(), () -> {}))
+                .hasSize(components.size());
         var output = compileProbe(components);
         try (var loader = loader(components, output)) {
             assertThat(invokeProbe(loader)).isEqualTo(5);
