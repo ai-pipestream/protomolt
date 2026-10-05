@@ -70,6 +70,34 @@ class RustFsConditionalBlobStoreIT {
     }
 
     @Test
+    void versionedReadsReturnOriginalBytesAfterSameKeyReplacement() {
+        String bucket = "historical-version-it";
+        client.createBucket(b -> b.bucket(bucket));
+        client.putBucketVersioning(b -> b.bucket(bucket).versioningConfiguration(v -> v.status(
+                software.amazon.awssdk.services.s3.model.BucketVersioningStatus.ENABLED)));
+        assertThat(client.getBucketVersioning(b -> b.bucket(bucket)).status()).isEqualTo(
+                software.amazon.awssdk.services.s3.model.BucketVersioningStatus.ENABLED);
+        var spec = new BlobStore.PutSpec(bucket, "same-key", "application/octet-stream", null, null);
+        byte[] originalBytes = bytes("original archive");
+        byte[] newBytes = bytes("replacement archive with different content");
+        var original = store.put(spec, originalBytes);
+        var replacement = store.put(spec, newBytes);
+        assertThat(original.versionId()).isNotBlank().isNotEqualTo("null");
+        assertThat(replacement.versionId()).isNotBlank().isNotEqualTo("null").isNotEqualTo(original.versionId());
+        var historical = store.getBounded(bucket, spec.key(), original.versionId(), originalBytes.length);
+        assertThat(historical.data()).isEqualTo(originalBytes);
+        assertThat(historical.versionId()).isEqualTo(original.versionId());
+        assertThat(historical.eTag()).isEqualTo(original.eTag());
+        assertThat(historical.contentType()).isEqualTo(spec.contentType());
+        assertThat(store.getBounded(bucket, spec.key(), replacement.versionId(), newBytes.length).data()).isEqualTo(newBytes);
+        assertThat(store.getBounded(bucket, spec.key(), null, newBytes.length).data()).isEqualTo(newBytes);
+        assertThatThrownBy(() -> store.getBounded(bucket, spec.key(), null, originalBytes.length))
+                .isInstanceOf(BlobStore.BlobReadLimitException.class);
+        client.deleteObject(b -> b.bucket(bucket).key(spec.key()).versionId(replacement.versionId()));
+        assertThat(store.getBounded(bucket, spec.key(), original.versionId(), originalBytes.length).data()).isEqualTo(originalBytes);
+    }
+
+    @Test
     void absentAndMatchingWritesFenceStaleSnapshots() {
         var spec = spec("fencing");
         assertThatThrownBy(() -> store.getForUpdate(BUCKET, "no-such-transcript"))
