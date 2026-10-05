@@ -81,6 +81,7 @@ public final class AssessmentCreationProbe {
                     require(count(tx, "document_assessment_owners", id) == 0, "owner rollback");
                     require(count(tx, "document_assessment_objects", id) == 0, "physical rollback");
                     new RepositorySchemaArtifacts(tx).stage(owner, command, List.copyOf(evidence.artifacts(() -> {}).values()), () -> {});
+                    cancelledRootInsert(tx, writer, caller, owner, prepared, selected, evidence, deadline, budget);
                     var result = writer.create(caller, owner, prepared, selected, evidence, id, deadline, budget, () -> {});
                     require(result.assessment().equals(id) && result.retainUntil().equals(deadline), "exact create result");
                     require(count(tx, "document_assessment_roots", id) == evidence.roots(() -> {}).size(), "complete roots");
@@ -109,6 +110,42 @@ public final class AssessmentCreationProbe {
             require(budget.reservedBytes() == 0, "assessment reservations released");
         }
         System.out.println("OBSERVED_ASSESSMENT_CREATION_OK");
+    }
+    /** Cancel real SQL after owner/physical/schema insertion; no successful backend is simulated. */
+    private static void cancelledRootInsert(Tx tx, DocumentAssessmentCreation writer, RepositoryCaller caller,
+            RepositoryOperationLedger.Owner owner, DocumentOperationUploadAdmission.Prepared prepared,
+            Map<String,DocumentSelectedAttemptLedger.Selected> selected, DocumentAssessmentEvidence evidence,
+            Instant deadline, PayloadBudget budget) {
+        UUID cancelled = UUID.randomUUID();
+        long before = budget.reservedBytes();
+        tx.inTransaction(em -> {
+            em.createNativeQuery("""
+                    CREATE FUNCTION test_cancel_assessment_root() RETURNS trigger LANGUAGE plpgsql AS $$
+                    BEGIN RAISE EXCEPTION 'injected assessment root cancellation' USING ERRCODE='57014'; END $$
+                    """).executeUpdate();
+            em.createNativeQuery("CREATE TRIGGER test_cancel_assessment_root BEFORE INSERT ON document_assessment_roots "
+                    + "FOR EACH ROW EXECUTE FUNCTION test_cancel_assessment_root()").executeUpdate();
+        });
+        try {
+            try { writer.create(caller, owner, prepared, selected, evidence, cancelled, deadline, budget, () -> {});
+                throw new AssertionError("cancelled SQL acknowledged creation"); }
+            catch (RuntimeException expected) {
+                require(hasSqlState(expected, "57014") && hasMessage(expected, "injected assessment root cancellation"), "exact SQL cancellation propagated");
+            }
+            for (String table : List.of("document_assessment_owners", "document_assessment_slots",
+                    "document_assessment_objects", "document_assessment_artifacts", "document_assessment_roots"))
+                require(count(tx, table, cancelled) == 0, "cancelled transaction rolled back " + table);
+            long references = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM repository_object_references WHERE owner_kind='ASSESSMENT' AND owner_id=:id")
+                    .setParameter("id", cancelled).getSingleResult()).longValue());
+            require(references == 0, "cancelled physical references rolled back");
+            require(budget.reservedBytes() == before, "cancelled writer scratch released");
+        } finally {
+            tx.inTransaction(em -> {
+                em.createNativeQuery("DROP TRIGGER test_cancel_assessment_root ON document_assessment_roots").executeUpdate();
+                em.createNativeQuery("DROP FUNCTION test_cancel_assessment_root()").executeUpdate();
+            });
+        }
     }
     private static long count(Tx tx, String table, UUID id) {
         return tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM " + table + " WHERE assessment_id=:id")

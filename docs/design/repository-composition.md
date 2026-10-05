@@ -4010,7 +4010,11 @@ evidence. It covers typed/opaque candidates with both passing and failing
 validation, wrong owner generation, deadline precision, rollback after physical
 sealing when schema claims are absent, complete retained schema/root associations,
 exact manifest persistence and duplicate-create conflicts preserving the original
-owner. Neither publication nor a terminal rejection is created. Reservations are
+owner. An injected PostgreSQL `57014` at root insertion proves rollback after
+physical sealing and schema association: all five assessment tables and native
+physical references remain empty for the failed assessment, and writer scratch
+is released. This proves SQL-error rollback, not client interruption timing or
+post-commit cancellation handling. Neither publication nor a terminal rejection is created. Reservations are
 released when the scoped assessment closes. Physical provider observations in this
 probe are explicitly synthetic; provider I/O, whole-writer reuse/race cases and
 lost-acknowledgement reconciliation still need their own qualification.
