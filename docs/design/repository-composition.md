@@ -3708,7 +3708,8 @@ meaning: the future trusted handler must verify the observed manifest against
 the complete canonical command, including every declaration and byte identity,
 and perform policy, source, target and authenticated-caller checks under the
 complete logical lock set before staging. A raw SQL manifest is not runtime
-validation evidence. Schema-artifact ownership remains separate pending work.
+validation evidence. V67 adds normalized artifact ownership below; exact
+manifest-to-artifact equality remains a handler obligation.
 
 Attempt cleanup now excludes assessment references in both its advisory candidate
 scan and its eligibility check after locking the attempt. A SQL BEFORE trigger
@@ -3740,7 +3741,49 @@ expiry without automatic release, partial recovery rollback, and cleanup waiting
 for acquisition commit or rollback. `DocumentAssessmentReuseIT` covers repeated
 physical objects under a zero-upload selection and mismatched source ordinals.
 The affected PostgreSQL run passed 66 cases including existing retention,
-retirement, cleanup, lock-set and operation-bound attempt regressions. Recovery
-versus cleanup races, additional account/source-revocation cases and large-batch
+retirement, cleanup, lock-set and operation-bound attempt regressions. Additional
+account/source-revocation cases and large-batch
 latency qualification remain to be added before the complete assessment path is
 considered finished.
+
+#### Normalized assessment artifact ownership
+
+V67 adds `document_assessment_artifacts`, which references the existing
+account-scoped `repository_schema_artifacts` catalog. An assessment stores digest
+references, not a private copy of every descriptor, metadata record, source file
+or root-evidence blob. The owner declares an artifact count from zero through 64;
+zero preserves existing physical-only staging. The final association set must
+match that count and total no more than 64 MiB. Exact correspondence to the
+canonical manifest, including asset roles and complete import/root coverage,
+remains a mandatory handler check before a terminal decision can use the owner.
+
+Association insertion follows physical sealing in the same creation transaction.
+It requires the live operation fence, matching owner account and an exact
+current-generation staging claim for each catalog digest. An older claim or
+another operation's knowledge of a digest cannot substitute. Physical locks
+precede catalog and claim locks; the caller inserts associations in digest order.
+The association has no foreign key to the temporary claim. Releasing a replaced
+generation's staging claims therefore cannot release an assessment's schema bytes.
+
+Expired recovery now removes artifact references together with physical references
+and the owner. It retains catalog bytes and other assessments' references.
+Catalog pruning is still disabled; its future protocol must inspect assessment
+references as well as staging and revision references. Retention is not authority
+to read the schema or disclose document contents.
+
+The operation inventory extends staging and expired-stage release with normalized
+artifact ownership; it adds no transport or protobuf operation.
+`DocumentAssessmentArtifactsIT` exercises shared catalog bytes, independent
+assessment lifetimes, exact generation/operation/account claims, missing-artifact
+rollback, insertion phase restrictions and partial release refusal. The added
+`DocumentAssessmentRetentionIT` recovery races observe actual PostgreSQL waits:
+cleanup proceeds after release commits and remains refused after release rolls
+back. These fixtures prove storage lifecycle behavior, not descriptor validity,
+registry-offline semantic replay or provider-byte availability.
+
+The affected run passed 104 PostgreSQL cases across assessment, schema catalog,
+revision-artifact, physical-retention and cleanup tests. The final seven-case
+artifact run also passed after tightening the partial-release assertion and
+adding a populated V66-to-V67 migration case. That case preserves the existing
+owner fields and physical references, defaults artifact ownership to zero
+without inventing associations, and exercises release after migration.

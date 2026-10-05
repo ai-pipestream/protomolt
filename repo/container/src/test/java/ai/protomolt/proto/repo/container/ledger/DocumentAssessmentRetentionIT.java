@@ -154,6 +154,44 @@ class DocumentAssessmentRetentionIT {
 
     private static final class DeliberateRollback extends RuntimeException {}
 
+    @ParameterizedTest @ValueSource(booleans = {true, false})
+    void cleanupWaitsForExpiredAssessmentReleaseCommitOrRollback(boolean commit) throws Exception {
+        var c = fixture.candidate(2);
+        fixture.stage(c, 1);
+        fixture.expire("document_assessment_owners", "assessment_id", c.assessment(), "retain_until");
+        fixture.expire("document_part_attempts", "attempt_id", c.attempt(), "lease_until");
+        var released = new CountDownLatch(1);
+        var finish = new CountDownLatch(1);
+        var blocker = new AtomicInteger();
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var releasing = executor.submit(() -> {
+                try {
+                    tx.inTransaction(em -> {
+                        assertThat((Boolean) em.createNativeQuery(
+                                "SELECT release_expired_document_assessment('account','principal',:op,:id)")
+                                .setParameter("op", c.owner().key().operationId()).setParameter("id", c.assessment()).getSingleResult()).isTrue();
+                        blocker.set(((Number) em.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue());
+                        released.countDown();
+                        try { assertThat(finish.await(15, TimeUnit.SECONDS)).isTrue(); }
+                        catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new IllegalStateException(interrupted); }
+                        if (!commit) throw new DeliberateRollback();
+                    });
+                    return true;
+                } catch (DeliberateRollback expected) { return false; }
+            });
+            try {
+                assertThat(released.await(10, TimeUnit.SECONDS)).isTrue();
+                var cleanup = executor.submit(() -> new DocumentAttemptCleanupLedger(tx).claim(c.attempt(), Duration.ofMinutes(1)));
+                awaitBlockedBy(blocker.get());
+                finish.countDown();
+                assertThat(releasing.get(10, TimeUnit.SECONDS)).isEqualTo(commit);
+                assertThat(cleanup.get(10, TimeUnit.SECONDS).isPresent()).isEqualTo(commit);
+                assertThat(references(c.assessment())).isEqualTo(commit ? 0 : 2);
+                assertThat(count("document_assessment_owners", c.assessment())).isEqualTo(commit ? 0 : 1);
+            } finally { finish.countDown(); }
+        }
+    }
+
     private static void awaitBlockedBy(int blocker) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         while (System.nanoTime() < deadline) {

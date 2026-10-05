@@ -34,6 +34,15 @@ final class DocumentAssessmentRetentionFixture {
         var owner = operations.admit(key, new RepositoryOperationLedger.EncodedCommand("document-publication", 1,
                 ByteString.copyFromUtf8("synthetic SQL command; not handler admission")), UUID.randomUUID(), Duration.ofMinutes(2))
                 .owner().orElseThrow();
+        return candidate(owner, leaseSeconds, uploads);
+    }
+
+    Candidate candidate(RepositoryOperationLedger.Owner owner, int leaseSeconds) {
+        return candidate(owner, leaseSeconds, true);
+    }
+
+    private Candidate candidate(RepositoryOperationLedger.Owner owner, int leaseSeconds, boolean uploads) {
+        var key = owner.key();
         var candidate = new Candidate(owner, UUID.randomUUID(), UUID.randomUUID());
         UUID node = UUID.randomUUID();
         var drive = new DriveRecord();
@@ -94,14 +103,19 @@ final class DocumentAssessmentRetentionFixture {
     }
 
     void insertOwner(EntityManager em, Candidate c, int seconds, int expected) {
+        insertOwner(em, c, seconds, expected, 0);
+    }
+
+    void insertOwner(EntityManager em, Candidate c, int seconds, int expected, int artifacts) {
         em.createNativeQuery("""
                 INSERT INTO document_assessment_owners(assessment_id,account_id,principal,operation_id,owner_generation,
-                    command_codec,command_version,command_sha256,manifest_bytes,manifest_sha256,expected_slots,retain_until,creation_xid)
+                    command_codec,command_version,command_sha256,manifest_bytes,manifest_sha256,expected_slots,retain_until,creation_xid,expected_artifacts)
                 SELECT :id,account_id,principal,operation_id,:generation,command_codec,command_version,command_sha256,
-                    decode('01','hex'),sha256(decode('01','hex')),:expected,clock_timestamp()+(:seconds * interval '1 second'),'0'::xid8
+                    decode('01','hex'),sha256(decode('01','hex')),:expected,clock_timestamp()+(:seconds * interval '1 second'),'0'::xid8,:artifacts
                 FROM repository_operations WHERE account_id='account' AND principal='principal' AND operation_id=:op
                 """).setParameter("id", c.assessment).setParameter("generation", c.owner.generation())
-                .setParameter("expected", expected).setParameter("seconds", seconds).setParameter("op", c.owner.key().operationId()).executeUpdate();
+                .setParameter("expected", expected).setParameter("artifacts", artifacts).setParameter("seconds", seconds)
+                .setParameter("op", c.owner.key().operationId()).executeUpdate();
     }
 
     void insertSlots(EntityManager em, Candidate c, String ordinal, long selection) {
