@@ -4054,3 +4054,17 @@ continues to take the operation recovery fence before owner and physical locks.
 Tests must cover lost acknowledgement, restart, moved source pointers, changed
 selection, expired stages, revoked access, terminal outcomes and legacy refusal
 before reconciliation is exposed.
+
+`DocumentAssessmentSlotSnapshot` now supplies the internal encoding primitive;
+persistence and reconciliation remain unfinished. Version 1 uses the `PMAS`
+magic and big-endian fixed-width numbers, length-prefixed UTF-8 identity strings,
+raw UUIDs/digests, epoch-second/nanosecond deadline and a counted slot sequence.
+Slots are sorted by ASCII member ID and candidate full ordinal. Upload tuples
+have no source fields; reused tuples include source UUID and full ordinal.
+Duplicate candidate slots, malformed source alternatives, malformed UTF-16 and
+sub-microsecond deadlines are refused. The encoding accepts 1..10,000 slots and
+at most 4 MiB. Its scoped reservation covers the exact encoding array, immutable
+byte copy and bounded text scratch; downstream JDBC copies require their own
+reservation. Reconciliation will re-encode retained relational rows for exact
+comparison rather than parse untrusted embedded lengths. Unit tests pin the wire
+layout and exercise identity changes, ordering, bounds and cancellation cleanup.
