@@ -5814,3 +5814,13 @@ It requires 14 successful publications and seven rejections; rejected creates
 must have no current document or published revision. The fixture uses trusted
 process authority and does not qualify concurrent mixed traffic, scoped API-key
 bindings, production transport or measured scaling.
+
+### Cross-process revision precondition race
+
+Unchanged native update/rejection operations receive a two-JVM shared-revision
+acceptance case. Both writers reach schema resolution using the same expected
+mutation revision. Exactly one publishes; the losing operation retains an explicit
+precondition rejection and creates no revision. Same-runtime retries and fresh-JVM
+terminal observations must match, and current-head/history checks retain exactly
+the original revision plus the winner. This extends the native process fixture;
+it is not a throughput or transport qualification.

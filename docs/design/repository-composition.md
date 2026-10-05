@@ -5762,3 +5762,26 @@ The final native process qualification passed after Sol review and readiness/
 cleanup fixes. Parent and worker barriers have compatible bounded deadlines;
 cleanup attempts all children and preserves the primary failure. Evidence and
 source hashes are in `docs/evidence/repository/2026-10-05-native-replicas/README.md`.
+
+#### Shared-revision native writer race
+
+The independent native workload now adds two writer JVMs targeting the same
+already-published document and exact expected mutation revision. Each submits a
+different valid payload. A barrier inside schema resolution requires both writers
+to reach that point before either can proceed; a common process-start barrier
+alone would not establish an overlapping publication attempt.
+
+Exactly one writer must commit. The other must return a durable
+`PRECONDITION_NOT_MET` rejection without claiming a schema-assessment failure.
+Both operations retry to their original terminal outcomes without another schema
+lookup. A fresh JVM observes both receipts, validates the original and winning
+historical payloads with retained definitions, and verifies that the current head
+is the winning mutation/immutable revision. The shared document must have exactly
+two commits, with no revision attached to the losing operation. Total workload
+outcomes are now 15 publications and eight rejections across independent creates
+and the competing updates.
+
+This adds a real shared-document concurrency invariant. It does not measure
+sustained hot-document throughput, independently prove every backend's CAS
+semantics or replace mixed read/write and fixed/added SQL-budget measurements.
+No repository or transport contract changes are involved.

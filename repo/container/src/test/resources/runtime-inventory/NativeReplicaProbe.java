@@ -64,6 +64,8 @@ public final class NativeReplicaProbe {
     }
 
     private static void write(Tx tx, Path root, String worker, OpenedBlobStore opened, ManagedBackendLedger.Profile profile) throws Exception {
+        boolean race = worker.startsWith("race-");
+        var baseline = race ? DocumentPublicationResult.parseFrom(Files.readAllBytes(root.resolve("r1-0-0.result"))).getMembers(0) : null;
         var drives = new DriveLedger(tx);
         var drive = drives.findById(UUID.fromString(Files.readString(root.resolve("drive")))).orElseThrow();
         var placement = Map.of(drive.driveId, new DocumentPublicationRuntime.Placement(drive, GENERATION, profile));
@@ -87,16 +89,18 @@ public final class NativeReplicaProbe {
                     if (System.nanoTime() >= deadline) throw new AssertionError("Writer start barrier expired");
                     Thread.sleep(10);
                 }
-                for (int i = 0; i < 3; i++) {
+                for (int i = 0; i < (race ? 1 : 3); i++) {
                     String id = worker + "-" + i;
                     var ownership = OwnershipContext.newBuilder().setAccountId(ACCOUNT).setDatasourceId("source")
                             .setSecurity(DocumentSecurity.getDefaultInstance()).build();
-                    var document = Document.newBuilder().setDocId(id).setOwnership(ownership)
+                    var document = Document.newBuilder().setDocId(race ? baseline.getAddress().getDocId() : id).setOwnership(ownership)
                             .setStructuredData(Any.pack(StringValue.of("payload-" + id), "type.test")).build();
                     var member = DocumentPublicationMember.newBuilder().setMemberId("document").setDriveId(drive.driveId.toString())
                             .setOwnership(ownership).setRowKind(DocumentPublicationRowKind.DOCUMENT_PUBLICATION_ROW_KIND_PIPELINE)
                             .setDestination(DocumentRevisionCondition.newBuilder().setIfAbsent(true).setAddress(NodeAddress.newBuilder()
                                     .setAccountId(ACCOUNT).setDocId(id).setGraphId("native-replica").setGraphAddressId("source")));
+                    if (race) member.setDestination(DocumentRevisionCondition.newBuilder().setAddress(baseline.getAddress())
+                            .setExpectedMutationRevision(baseline.getMutationRevision()));
                     var bodies = new HashMap<DocumentPublicationRuntime.PayloadKey,PartObject>();
                     for (var part : DocumentPartCodec.split(document, PartLayouts.document())) {
                         bodies.put(new DocumentPublicationRuntime.PayloadKey("document", member.getPartsCount()), part);
@@ -112,10 +116,13 @@ public final class NativeReplicaProbe {
                     Object first;
                     long start = System.nanoTime();
                     try { first = runtime.execute(CALLER, command, placement, bodies, Map.of(), modes, container,
-                            (caller, selected, occurrence) -> definition, RepositoryReadControl.NONE); }
+                            (caller, selected, occurrence) -> {
+                                if (race) raceValidationBarrier(root, worker);
+                                return definition;
+                            }, RepositoryReadControl.NONE); }
                     catch (DocumentPublicationRuntime.Rejected failure) { first = failure.receipt(); }
                     long nanos = System.nanoTime() - start;
-                    require(rejected == (first instanceof DocumentPublicationRejection), "expected admission outcome");
+                    if (!race) require(rejected == (first instanceof DocumentPublicationRejection), "expected admission outcome");
                     Object replay;
                     try { replay = runtime.execute(CALLER, command, Map.of(), Map.of(), Map.of(), modes, container,
                             (caller, selected, occurrence) -> { throw new AssertionError("Replay performed schema lookup"); }, RepositoryReadControl.NONE); }
@@ -128,10 +135,14 @@ public final class NativeReplicaProbe {
                         Files.write(root.resolve(id + ".document"), document.toByteArray(), StandardOpenOption.CREATE_NEW);
                     } else {
                         var receipt = (DocumentPublicationRejection) first;
-                        require(receipt.hasAssessment(), "rejection retains assessment identity");
+                        if (race) {
+                            require(receipt.getReason() == DocumentPublicationRejectionReason.DOCUMENT_PUBLICATION_REJECTION_REASON_PRECONDITION_NOT_MET,
+                                    "losing writer has an explicit precondition rejection");
+                            require(!receipt.hasAssessment(), "revision conflict is not a schema rejection");
+                        } else require(receipt.hasAssessment(), "rejection retains assessment identity");
                         Files.write(root.resolve(id + ".rejection"), receipt.toByteArray(), StandardOpenOption.CREATE_NEW);
                     }
-                    Files.writeString(root.resolve(worker + ".csv"), id + "," + (rejected ? "rejected" : "accepted") + "," + nanos + "\n",
+                    Files.writeString(root.resolve(worker + ".csv"), id + "," + (first instanceof DocumentPublicationRejection ? "rejected" : "accepted") + "," + nanos + "\n",
                             StandardOpenOption.CREATE, StandardOpenOption.APPEND);
                 }
             } finally {
@@ -157,6 +168,17 @@ public final class NativeReplicaProbe {
                             Path.of(file.toString().replace(".result", ".intent")))));
                     require(new DocumentPublicationReplay(tx).observe(CALLER, command).result().orElseThrow().equals(result),
                             "fresh-process terminal result observation");
+                    if (file.getFileName().toString().startsWith("race-")) {
+                        var node = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(revision.getAddress());
+                        var current = new DocumentLedger(tx).findByNodeId(node).orElseThrow();
+                        require(current.mutationRevision == revision.getMutationRevision(), "current head is the winning mutation");
+                        require(new DocumentPublicationLedger(tx).findForRead(current).orElseThrow().revisionId()
+                                .equals(UUID.fromString(revision.getRevisionId())), "current head is the winning immutable revision");
+                        long revisions = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                                "SELECT count(*) FROM document_revision_commits WHERE node_id=:node")
+                                .setParameter("node", node).getSingleResult()).longValue());
+                        require(revisions == 2, "exactly original plus one winning revision");
+                    }
                     var expected = Document.parseFrom(Files.readAllBytes(Path.of(file.toString().replace(".result", ".document"))));
                     try (var archived = history.readValidated(CALLER, revision.getAddress(), UUID.fromString(revision.getRevisionId()), RepositoryReadControl.NONE)) {
                         require(archived.document().equals(expected), "cross-process retained historical document");
@@ -176,7 +198,10 @@ public final class NativeReplicaProbe {
                         require(new DocumentPublicationReplay(tx).observe(CALLER, command).rejection().orElseThrow().equals(receipt),
                                 "fresh-process retained rejection observation");
                         var node = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(command.intent().getMembers(0).getDestination().getAddress());
-                        require(new DocumentLedger(tx).findByNodeId(node).isEmpty(), "rejected create has no normal document");
+                        if (command.intent().getMembers(0).getDestination().hasIfAbsent())
+                            require(new DocumentLedger(tx).findByNodeId(node).isEmpty(), "rejected create has no normal document");
+                        else require(receipt.getReason() == DocumentPublicationRejectionReason.DOCUMENT_PUBLICATION_REJECTION_REASON_PRECONDITION_NOT_MET,
+                                "rejected update preserves the winning document");
                         long revisions = tx.readOnly(em -> ((Number) em.createNativeQuery(
                                 "SELECT count(*) FROM document_revision_commits WHERE operation_id=:operation")
                                 .setParameter("operation", command.operationId()).getSingleResult()).longValue());
@@ -191,6 +216,19 @@ public final class NativeReplicaProbe {
             require(ledger.outstandingReads() == 0 && budget.reservedBytes() == 0, "reader releases resources");
         }
     }
+    private static void raceValidationBarrier(Path root, String worker) {
+        try {
+            Files.writeString(root.resolve(worker + ".schema-ready"), "schema-ready", StandardOpenOption.CREATE_NEW);
+            long deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
+            while (!Files.exists(root.resolve("race-0.schema-ready")) || !Files.exists(root.resolve("race-1.schema-ready"))) {
+                if (System.nanoTime() >= deadline) throw new AssertionError("Competing writers did not both reach schema resolution");
+                Thread.sleep(10);
+            }
+        } catch (InterruptedException failure) {
+            Thread.currentThread().interrupt(); throw new AssertionError("Race barrier interrupted", failure);
+        } catch (java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
+    }
+
     private static DocumentPartReader reader(OpenedBlobStore opened, ManagedBackendLedger.Profile profile, PayloadBudget budget) {
         return new DocumentPartReader((generation, actual) -> {
             require(GENERATION.equals(generation) && profile.equals(actual), "exact read profile"); return opened.store();

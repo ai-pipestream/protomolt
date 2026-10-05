@@ -66,27 +66,28 @@ class NativeReplicaRuntimeTest {
             builder.environment().put("PROTOMOLT_TEST_S3_SECRET", storage.getSecretKey());
             String childClasspath = classpath + java.io.File.pathSeparator + probe;
             run(builder, childClasspath, "seed", "seed");
-            for (int replicas : new int[] {1, 2, 4}) {
+            for (String topology : new String[] {"r1", "r2", "r4", "race"}) {
+                int replicas = topology.equals("race") ? 2 : Integer.parseInt(topology.substring(1));
                 var children = new ArrayList<Process>();
                 long deadline = System.nanoTime() + java.time.Duration.ofSeconds(45).toNanos();
                 Throwable primary = null;
                 try {
                     for (int index = 0; index < replicas; index++) {
-                        String worker = "r" + replicas + "-" + index;
+                        String worker = topology + "-" + index;
                         command(builder, childClasspath, "write", worker);
                         children.add(builder.redirectErrorStream(true).redirectOutput(directory.resolve(worker + ".log").toFile()).start());
                     }
                     for (int index = 0; index < children.size(); index++) {
-                        String worker = "r" + replicas + "-" + index;
+                        String worker = topology + "-" + index;
                         while (!Files.exists(directory.resolve(worker + ".ready"))) {
                             if (!children.get(index).isAlive()) finished(children.get(index), worker, "WRITE");
                             assertThat(System.nanoTime() < deadline).as("writer readiness barrier").isTrue();
                             Thread.sleep(10);
                         }
                     }
-                    Files.writeString(directory.resolve("r" + replicas + ".go"), "go", java.nio.file.StandardOpenOption.CREATE_NEW);
+                    Files.writeString(directory.resolve(topology + ".go"), "go", java.nio.file.StandardOpenOption.CREATE_NEW);
                     for (int index = 0; index < children.size(); index++) {
-                        String worker = "r" + replicas + "-" + index;
+                        String worker = topology + "-" + index;
                         finished(children.get(index), worker, "WRITE");
                     }
                 } catch (Exception | Error failure) {
@@ -94,13 +95,19 @@ class NativeReplicaRuntimeTest {
                 } finally {
                     stopChildren(children, primary);
                 }
-                run(builder, childClasspath, "read", "read-" + replicas);
+                run(builder, childClasspath, "read", "read-" + topology);
             }
             try (var files = Files.list(directory)) {
-                assertThat(files.filter(p -> p.toString().endsWith(".result")).count()).isEqualTo(14);
+                assertThat(files.filter(p -> p.getFileName().toString().startsWith("race-") && p.toString().endsWith(".result")).count()).isEqualTo(1);
             }
             try (var files = Files.list(directory)) {
-                assertThat(files.filter(p -> p.toString().endsWith(".rejection")).count()).isEqualTo(7);
+                assertThat(files.filter(p -> p.getFileName().toString().startsWith("race-") && p.toString().endsWith(".rejection")).count()).isEqualTo(1);
+            }
+            try (var files = Files.list(directory)) {
+                assertThat(files.filter(p -> p.toString().endsWith(".result")).count()).isEqualTo(15);
+            }
+            try (var files = Files.list(directory)) {
+                assertThat(files.filter(p -> p.toString().endsWith(".rejection")).count()).isEqualTo(8);
             }
         }
     }
