@@ -56,6 +56,12 @@ features available. Recovery is one workstream, not the whole goal.
    the host ownership protocol; a shared token is not proof
    that its previous process is dead. Keep automatic claim transfer off
    until delayed provider writes and cleanup across claim loss are qualified.
+   An internal process-authority session now registers claim, preparation and
+   modes before admitting a claimed owner, with lost-acknowledgment tests at all
+   four stages. Ordinary runtime creation is still unchanged. Before enabling it,
+   integrate the durable assessment-start marker and preserve scoped request
+   authorization separately from private journal authority. Specify retention and
+   cleanup for registered commands that later fail policy or ACL checks.
 5. **Restore, pruning and backup.** Test retained schema/content reachability,
    active read and pending-operation pins, current ACLs and failure recovery.
    Restore publishes through the same concurrency and validation boundaries;

@@ -23,6 +23,88 @@ class DocumentPublicationSessionIT {
     private static final RepositoryCaller CALLER = new RepositoryCaller("principal", true);
     private static final Duration LEASE = Duration.ofMinutes(5);
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {0, 1, 2, 3})
+    void journaledRegistrationReconcilesEachLostAcknowledgmentWithoutNewIdentities(int stage) {
+        try (var c = context(POSTGRES)) {
+            var input = input(c);
+            var table = java.util.List.of("repository_execution_claims", "repository_publication_preparations",
+                    "repository_publication_modes", "repository_operation_owners").get(stage);
+            var armed = new AtomicBoolean();
+            var source = DocumentJdbcFaults.afterCommit(c.pool(), () -> {
+                if (armed.get() && c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                        "SELECT count(*) FROM " + table + " WHERE operation_id=:id")
+                        .setParameter("id", input.command().operationId()).getSingleResult()).intValue()) == 1
+                        && armed.compareAndSet(true, false))
+                    throw new java.sql.SQLException("Registration acknowledgment lost after commit", "08006");
+            });
+            var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(32L * 1024 * 1024);
+            try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                    Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
+                var session = DocumentPublicationSession.journaled(new Tx(emf), CALLER, input.command(), input.placements(), LEASE, budget);
+                var modes = new java.util.HashMap<String, DocumentPublicationCandidate.Mode>();
+                input.command().intent().getMembersList().forEach(member -> modes.put(member.getMemberId(), DocumentPublicationCandidate.Mode.TYPED));
+                try (var execution = session.begin(CALLER, RepositoryReadControl.NONE)) { execution.bindModes(modes); }
+                armed.set(true);
+                assertThatThrownBy(() -> session.admit(CALLER, RepositoryReadControl.NONE))
+                        .hasStackTraceContaining("Registration acknowledgment lost after commit");
+                assertThat(armed.get()).isFalse();
+                assertThat(budget.reservedBytes()).isZero();
+                assertThat(new RepositoryOperationLedger(c.tx()).find(key(input.command())).isPresent()).isEqualTo(stage == 3);
+                var before = c.tx().readOnly(em -> (Object[]) em.createNativeQuery("""
+                        SELECT claim_token,lease_until FROM repository_execution_claims WHERE operation_id=:id
+                        """).setParameter("id", input.command().operationId()).getSingleResult());
+                var owner = session.admit(CALLER, RepositoryReadControl.NONE).orElseThrow();
+                var claim = owner.executionClaim().orElseThrow();
+                assertThat(claim.token()).isEqualTo(before[0]).isNotEqualTo(owner.token());
+                assertThat(owner.token()).isEqualTo(session.seeds().ownerNonce());
+                var after = c.tx().readOnly(em -> (Object[]) em.createNativeQuery("""
+                        SELECT claim_token,lease_until FROM repository_execution_claims WHERE operation_id=:id
+                        """).setParameter("id", input.command().operationId()).getSingleResult());
+                assertThat(after).containsExactly(before);
+                assertThat(session.admit(CALLER, RepositoryReadControl.NONE).orElseThrow()).isEqualTo(owner);
+                try (var loaded = new DocumentPublicationPreparationJournal(c.tx(), budget)
+                        .load(CALLER, claim, 0, RepositoryReadControl.NONE).orElseThrow()) {
+                    assertThat(loaded.record().seeds().ownerNonce()).isEqualTo(session.seeds().ownerNonce());
+                    assertThat(loaded.record().seeds().attempts()).isEqualTo(session.seeds().attempts());
+                    assertThat(loaded.record().seeds().uploadTokens()).isEqualTo(session.seeds().uploadTokens());
+                    assertThat(loaded.record().command().sha256()).isEqualTo(input.command().sha256());
+                }
+                assertThat(new DocumentPublicationModesJournal(c.tx(), budget).load(CALLER, claim, 0, RepositoryReadControl.NONE))
+                        .contains(Map.copyOf(modes));
+                assertThat(budget.reservedBytes()).isZero();
+            }
+        }
+    }
+
+    @Test void durableRegistrationRequiresActualAuthorityAndFixedModesBeforeAnyClaim() {
+        try (var c = context(POSTGRES)) {
+            var input = input(c);
+            var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(32L * 1024 * 1024);
+            var scoped = new RepositoryCaller(CALLER.principalName(), false,
+                    java.util.Set.of(input.command().intent().getAccountId()), java.util.Set.of());
+            assertThatThrownBy(() -> DocumentPublicationSession.journaled(c.tx(), scoped, input.command(), input.placements(), LEASE, budget))
+                    .isInstanceOfSatisfying(RepositoryException.class,
+                            failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.PERMISSION_DENIED));
+            var session = DocumentPublicationSession.journaled(c.tx(), CALLER, input.command(), input.placements(), LEASE, budget);
+            assertThatThrownBy(() -> session.admit(CALLER, RepositoryReadControl.NONE)).hasMessageContaining("modes must be fixed");
+            long claims = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM repository_execution_claims WHERE operation_id=:id")
+                    .setParameter("id", input.command().operationId()).getSingleResult()).longValue());
+            assertThat(claims).isZero();
+            var modes = new java.util.HashMap<String, DocumentPublicationCandidate.Mode>();
+            input.command().intent().getMembersList().forEach(member -> modes.put(member.getMemberId(), DocumentPublicationCandidate.Mode.TYPED));
+            try (var execution = session.begin(CALLER, RepositoryReadControl.NONE)) {
+                execution.bindModes(modes);
+                modes.replaceAll((member, mode) -> DocumentPublicationCandidate.Mode.OPAQUE);
+                assertThatThrownBy(() -> execution.bindModes(modes)).hasMessageContaining("modes changed");
+            }
+            assertThatThrownBy(() -> session.admit(scoped, RepositoryReadControl.NONE)).hasMessageContaining("actual process authority");
+            assertThat(new RepositoryOperationLedger(c.tx()).find(key(input.command()))).isEmpty();
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
     @Test void assessmentStageUncertaintySurvivesExecutionRetry() {
         try (var c = context(POSTGRES)) {
             var input = input(c);

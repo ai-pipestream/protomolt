@@ -21,6 +21,7 @@ final class DocumentPublicationSession {
     private final Duration lease;
     private final long predecessorGeneration;
     private final DocumentOperationUploadAdmission.Prepared prepared;
+    private final DocumentPublicationRegistration registration;
     private final AtomicBoolean executing = new AtomicBoolean();
     private Map<String, DocumentPublicationCandidate.Mode> modes;
     private boolean assessmentStageStarted;
@@ -28,6 +29,14 @@ final class DocumentPublicationSession {
     DocumentPublicationSession(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
             Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease) {
         this(tx, caller, command, placements, lease, 0);
+    }
+
+    /** Host-private opt-in; automatic runtime registration and successor recovery are not enabled. */
+    static DocumentPublicationSession journaled(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease,
+            ai.protomolt.proto.repo.blob.spi.PayloadBudget budget) {
+        DocumentPublicationRegistration.requireProcess(caller);
+        return new DocumentPublicationSession(tx, caller, command, placements, lease, 0, Objects.requireNonNull(budget));
     }
 
     /** Explicit host recovery; never selected automatically by ordinary admission. */
@@ -43,6 +52,12 @@ final class DocumentPublicationSession {
 
     private DocumentPublicationSession(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
             Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease, long predecessorGeneration) {
+        this(tx, caller, command, placements, lease, predecessorGeneration, null);
+    }
+
+    private DocumentPublicationSession(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease, long predecessorGeneration,
+            ai.protomolt.proto.repo.blob.spi.PayloadBudget journalBudget) {
         this.command = Objects.requireNonNull(command); this.lease = Objects.requireNonNull(lease);
         this.predecessorGeneration = predecessorGeneration;
         if (caller == null) throw new RepositoryException(RepositoryException.Code.UNAUTHENTICATED,
@@ -55,6 +70,8 @@ final class DocumentPublicationSession {
         prepared = DocumentOperationUploadAdmission.prepare(command, placements, seeds.attempts(), lease, seeds.uploadTokens());
         ownerNonce = seeds.ownerNonce();
         operations = new RepositoryOperationLedger(Objects.requireNonNull(tx));
+        registration = journalBudget == null ? null : new DocumentPublicationRegistration(tx, journalBudget,
+                new DocumentPublicationPreparationRecord(key, command, seeds, placements, lease, predecessorGeneration));
     }
 
     /**
@@ -68,7 +85,8 @@ final class DocumentPublicationSession {
     Optional<RepositoryOperationLedger.Owner> admit(RepositoryCaller caller, RepositoryReadControl control) {
         Objects.requireNonNull(control).check();
         DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
-        var owner = predecessorGeneration == 0 ? operations.admit(key, command, ownerNonce, lease).owner()
+        var claim = registration == null ? null : registration.register(caller, modes, control);
+        var owner = predecessorGeneration == 0 ? operations.admit(key, command, ownerNonce, lease, claim).owner()
                 : Optional.of(operations.takeOver(key, command, predecessorGeneration, ownerNonce, lease));
         control.check();
         return owner;
