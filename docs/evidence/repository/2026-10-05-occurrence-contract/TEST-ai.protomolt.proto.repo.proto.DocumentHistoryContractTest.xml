@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.proto.DocumentHistoryContractTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-05T20:13:09.306Z" hostname="krick" time="0.754">
+  <properties/>
+  <testcase name="recordedMetadataBindsToTheResponseAccount()" classname="ai.protomolt.proto.repo.proto.DocumentHistoryContractTest" time="0.297"/>
+  <testcase name="boundsTheRawFragmentCollection()" classname="ai.protomolt.proto.repo.proto.DocumentHistoryContractTest" time="0.119"/>
+  <testcase name="requiresOneRepresentationAndConsistentCapturedIdentity()" classname="ai.protomolt.proto.repo.proto.DocumentHistoryContractTest" time="0.023"/>
+  <testcase name="requiresExactAddressRevisionAndExplicitMode()" classname="ai.protomolt.proto.repo.proto.DocumentHistoryContractTest" time="0.031"/>
+  <testcase name="jsonSchemaRecordsBoundsAndRuntimeOnlyIdentityRules()" classname="ai.protomolt.proto.repo.proto.DocumentHistoryContractTest" time="0.111"/>
+  <testcase name="requiresRetainedValidationIdentityWithoutClaimingSemanticCorrectness()" classname="ai.protomolt.proto.repo.proto.DocumentHistoryContractTest" time="0.013"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+]]></system-err>
+</testsuite>

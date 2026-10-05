@@ -84,6 +84,7 @@ public final class NativeHistoricalMaterializationProbe {
                             var view = result.view(control);
                             require(view.selection().equals(selection) && view.occurrence().revisionOrdinal() == ordinal,
                                     "SPI preserves requested occurrence identity");
+                            require(view.path().equals(path), "SPI retains the complete selected path");
                             require(view.original().unpack(StringValue.class).getValue().equals("retained payload"), "archived version decoded");
                             require(view.schema().getArtifactSha256().equals(path.getSteps(0).getAnyBoundary().getResolved().getArtifactSha256()),
                                     "recorded schema selected");

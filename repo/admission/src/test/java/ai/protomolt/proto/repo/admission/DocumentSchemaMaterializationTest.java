@@ -39,6 +39,7 @@ class DocumentSchemaMaterializationTest {
         assertThat(result.value().getField(result.value().getDescriptorForType().findFieldByNumber(1))).isEqualTo("retained");
         assertThat(result.schema().getArtifactSha256()).isEqualTo(f.child.reference.descriptorSha256());
         assertThat(result.reference()).isEqualTo(f.child.reference.toProto());
+        assertThat(DocumentSchemaOccurrenceCodec.encode(result.path(), () -> {}).sha256()).isEqualTo(f.selection.pathSha256());
         assertThat(result.descriptorArtifact()).isEqualTo(ByteString.copyFrom(Files.readAllBytes(store.resolve(f.child.reference.descriptorSha256()))));
         assertThat(result.metadataArtifact()).isEqualTo(ByteString.copyFrom(Files.readAllBytes(store.resolve(f.child.reference.metadataSha256()))));
         assertThat(result.metadata()).isEqualTo(f.child.binding.metadata());
@@ -58,6 +59,7 @@ class DocumentSchemaMaterializationTest {
         assertThatThrownBy(result::descriptorArtifact).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(result::metadataArtifact).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(result::reference).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(result::path).isInstanceOf(IllegalStateException.class);
         assertThat(budget.bytes).isZero();
         assertThatThrownBy(result::value).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(result::original).isInstanceOf(IllegalStateException.class);

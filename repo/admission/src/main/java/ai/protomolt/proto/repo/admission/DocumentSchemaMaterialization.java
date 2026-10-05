@@ -75,14 +75,16 @@ public final class DocumentSchemaMaterialization {
         private List<ByteString> inputs;
         private RepositorySchemaAssetReference reference;
         private ByteString metadataArtifact;
+        private RepositorySchemaOccurrencePath path;
         private final DocumentAdmissionResources resources;
         private final List<DocumentAdmissionReservations.Lease> decodeLeases;
         private Result(DocumentAnyMaterialization.Decoded decoded, List<ByteString> inputs,
                 DocumentAdmissionResources resources, List<DocumentAdmissionReservations.Lease> decodeLeases,
-                RepositorySchemaAssetReference reference, ByteString metadataArtifact) {
+                RepositorySchemaAssetReference reference, ByteString metadataArtifact, RepositorySchemaOccurrencePath path) {
             this.decoded = decoded; this.inputs = List.copyOf(inputs); this.resources = resources;
             this.decodeLeases = decodeLeases;
             this.reference = reference; this.metadataArtifact = metadataArtifact;
+            this.path = path;
         }
         public Any original() { return open().original(); }
         public DynamicMessage value() { return open().value(); }
@@ -94,6 +96,8 @@ public final class DocumentSchemaMaterialization {
         public RepositorySchemaAssetReference reference() { open(); return reference; }
         /** Original canonical metadata bytes with the independent digest recorded in reference(). */
         public ByteString metadataArtifact() { open(); return metadataArtifact; }
+        /** Complete retained path already checked against the requested canonical digest. */
+        public RepositorySchemaOccurrencePath path() { open(); return path; }
         public DocumentSchemaAdmission.Selection occurrence() { return open().occurrence(); }
         private DocumentAnyMaterialization.Decoded open() {
             if (decoded == null) throw new IllegalStateException("Materialization is closed");
@@ -101,7 +105,7 @@ public final class DocumentSchemaMaterialization {
         }
         @Override public void close() {
             if (decoded == null) return;
-            decoded = null; inputs = null; reference = null; metadataArtifact = null;
+            decoded = null; inputs = null; reference = null; metadataArtifact = null; path = null;
             for (int i = decodeLeases.size() - 1; i >= 0; i--) decodeLeases.get(i).close();
             resources.close();
         }
@@ -223,7 +227,7 @@ public final class DocumentSchemaMaterialization {
             var metadataArtifact = copies.get(selectedReference.metadataSha256());
             if (metadataArtifact == null) throw new DataLoss("selected schema metadata bytes are missing");
             active.run();
-            var result = new Result(decoded, inputs, resources, leases, selectedReference.toProto(), metadataArtifact);
+            var result = new Result(decoded, inputs, resources, leases, selectedReference.toProto(), metadataArtifact, selected);
             transferred = true;
             return result;
         } catch (HostFailure failure) {

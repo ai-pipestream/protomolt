@@ -1,0 +1,108 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v1;
+
+import "ai/protomolt/proto/repo/v1/address.proto";
+import "ai/protomolt/proto/repo/v1/schema_asset_reference.proto";
+import "ai/protomolt/proto/repo/v1/schema_occurrence.proto";
+import "ai/protomolt/proto/repo/v1/schema_root.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/any.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.v1";
+
+// Optional selected historical decoding, separate from RAW/VALIDATED revision reads.
+// A host must explicitly mount the capability with authoritative caller bindings.
+service DocumentHistoryMaterializationService {
+  // Read-only, retryable under current READ authorization. No admission verdict.
+  // Successful serialized responses are at most 8 MiB, including all definitions.
+  // Oversized results fail RESOURCE_EXHAUSTED without truncation or raw fallback.
+  rpc ReadHistoricalOccurrence(ReadHistoricalOccurrenceRequest) returns (ReadHistoricalOccurrenceResponse);
+}
+
+// Select canonical retained evidence, never an arbitrary replacement traversal.
+message HistoricalOccurrenceSelection {
+  // Index in the complete captured revision, including empty/deleted slots.
+  uint32 revision_ordinal = 1 [(ai.protomolt.proto.validate.v1.field).uint32.lt = 10000];
+  // Digest of the exact canonical root locator.
+  string root_sha256 = 2 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$"];
+  // Digest of the complete canonical path, including its final Any boundary.
+  string path_sha256 = 3 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$"];
+}
+
+// Clients may lower host limits, never raise them. These are serialized-byte and
+// traversal ceilings, not total JVM heap or complete SQL snapshot bounds.
+message HistoricalMaterializationLimits {
+  // Maximum selected provider fragment bytes.
+  uint64 max_fragment_bytes = 1 [(ai.protomolt.proto.validate.v1.field).uint64 = {gt: 0, lte: 268435456}];
+  // Maximum retained root evidence bytes.
+  uint64 max_evidence_bytes = 2 [(ai.protomolt.proto.validate.v1.field).uint64 = {gt: 0, lte: 16777216}];
+  // Maximum aggregate retained artifacts loaded during traversal.
+  uint64 max_retained_bytes = 3 [(ai.protomolt.proto.validate.v1.field).uint64 = {gt: 0, lte: 67108864}];
+  // Maximum schema associations, including the containing schema.
+  uint32 max_references = 4 [(ai.protomolt.proto.validate.v1.field).uint32 = {gt: 0, lte: 64}];
+  // Evidence, fragment and each traversed Any value, including parents.
+  uint64 max_decoded_bytes = 5 [(ai.protomolt.proto.validate.v1.field).uint64 = {gt: 0, lte: 268435456}];
+  // Maximum decoded Any boundaries in the selected traversal.
+  uint32 max_boundaries = 6 [(ai.protomolt.proto.validate.v1.field).uint32 = {gt: 0, lte: 101}];
+}
+
+// Exact authorized revision and occurrence; no latest alias or implicit limits.
+message ReadHistoricalOccurrenceRequest {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "occurrence-read-address"
+    message: "all address coordinates must be nonblank and bounded"
+    expression: "[this.address.doc_id, this.address.graph_address_id, this.address.account_id, this.address.graph_id].all(s, s.matches('.*\\\\S.*') && size(s) <= 4096)"
+  };
+  // Document identity; never an authorization grant.
+  NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Immutable revision UUID.
+  string revision_id = 2 [(ai.protomolt.proto.validate.v1.field).string = {uuid: true, pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}];
+  // A member of the revision's retained evidence.
+  HistoricalOccurrenceSelection selection = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Explicit requested work limits, capped independently by the host.
+  HistoricalMaterializationLimits limits = 4 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// Exact retained assets for the selected boundary, not regenerated descriptors.
+message HistoricalRetainedDefinition {
+  // Includes independent descriptor/metadata hashes and metadata codec/version.
+  RepositorySchemaAssetReference reference = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Complete original FileDescriptorSet, including imports. Handler verifies hash.
+  bytes descriptor_artifact = 2 [(ai.protomolt.proto.validate.v1.field).bytes = {min_len: 1, max_len: 8388608}];
+  // Exact canonical metadata encoding, including recorded compiler provenance.
+  // Source digests describe verified retained source; source bytes are not exported.
+  bytes metadata_artifact = 3 [(ai.protomolt.proto.validate.v1.field).bytes = {min_len: 1, max_len: 524288}];
+}
+
+// Shape validation is not authorization or a fresh payload validation verdict.
+// Handler verifies exact request binding, canonical root/path hashes, value hash,
+// full descriptor/metadata binding and aggregate size before current READ delivery.
+message ReadHistoricalOccurrenceResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "occurrence-read-response-address"
+    message: "all captured address coordinates must be nonblank and bounded"
+    expression: "[this.address.doc_id, this.address.graph_address_id, this.address.account_id, this.address.graph_id].all(s, s.matches('.*\\\\S.*') && size(s) <= 4096)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "occurrence-read-response-definition"
+    message: "selected definition must match the final recorded boundary"
+    expression: "size(this.path.steps) > 0 && this.definition.reference.type_url == this.path.steps[size(this.path.steps) - 1].any_boundary.type_url && this.definition.reference.descriptor_sha256 == this.path.steps[size(this.path.steps) - 1].any_boundary.resolved.artifact_sha256"
+  };
+  // Equal to the request address.
+  NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Equal to the request revision.
+  string revision_id = 2 [(ai.protomolt.proto.validate.v1.field).string = {uuid: true, pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}];
+  // Exact selection; ordinal binds to the captured manifest in the handler.
+  HistoricalOccurrenceSelection selection = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Original selected envelope; nested Any values remain opaque. Handler bounds
+  // value bytes and checks URL, size and digest against the final path boundary.
+  google.protobuf.Any original = 4 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Original canonical locator, bound by selection.root_sha256.
+  DocumentSchemaRootLocator root = 5 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Complete path, bound by selection.path_sha256; no caller-supplied replacement.
+  RepositorySchemaOccurrencePath path = 6 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Sufficient to decode the selected value offline, without registry latest.
+  HistoricalRetainedDefinition definition = 7 [(ai.protomolt.proto.validate.v1.field).required = true];
+}

@@ -5954,3 +5954,45 @@ Compiler provenance is preserved; source bytes are not exported by this view.
 The planned selected-read transport will use these assets with the original Any
 bytes for offline decoding. Its contract, validator fixtures and transport lifetime
 tests are still unfinished; no new endpoint is advertised by this checkpoint.
+
+### Selected historical occurrence wire contract
+
+**New contract, not mounted:** `DocumentHistoryMaterializationService.ReadHistoricalOccurrence`
+defines an optional unary selected read. Existing `DocumentHistoryService` and all
+RAW/VALIDATED messages, tags and Any URLs are unchanged. Requests identify the exact
+address/revision, full-manifest ordinal, canonical root/path digests and six explicit
+resource limits. Server limits cap requested work; requests cannot raise them.
+
+Responses reuse `DocumentSchemaRootLocator`, `RepositorySchemaOccurrencePath` and
+`RepositorySchemaAssetReference`, with the original Any and exact retained descriptor
+and metadata bytes. No receipt is minted and no state is mutated. Retry rechecks
+current authorization and can fail after revocation. No idempotency key is needed.
+The owned Java result now exposes the exact already hash-matched complete path.
+
+Annotation rules cover required fields, address/UUID/digest shapes, traversal and
+artifact bounds, and definition identity matching the final path boundary. Generated
+and dynamic fixtures exercise the real runtime, including nested paths. Synthetic
+artifact bytes intentionally pass envelope shape while not claiming semantic validity.
+JSON Schema records CEL extensions and runtime-only byte constraints; aggregate
+serialization, hashes, descriptor imports and retained traversal are handler checks.
+No OpenAPI generator change is included.
+
+Handler implementation remains required before mounting or advertising this RPC:
+
+- Authenticate and bind current account/ACL identity; refuse unknown request fields.
+- Cap client limits by host configuration and call the optional repository SPI.
+- Bind the response to the exact request and independently check canonical root/path
+  hashes, the selected Any URL/value size/digest, asset hashes and metadata/schema
+  association. Never substitute current registry or normalize archived descriptors.
+- Bound the full serialized response to 8 MiB, reserve copies before allocation,
+  reauthorize before delivery, and retain reservations through transport completion.
+- Exercise the same real-provider cases over in-process gRPC; test cancellation,
+  deadlines, capacity, malformed output, revocation and callback/producer races.
+- Define explicit host opt-in and the remote client using these same constraints.
+
+Expected failures: UNAUTHENTICATED for absent identity, INVALID_ARGUMENT for malformed
+requests, NOT_FOUND for unavailable selected history under current READ policy,
+DATA_LOSS for corrupt required retained content, RESOURCE_EXHAUSTED for host/response
+bounds, and CANCELLED/DEADLINE_EXCEEDED for interrupted work. Unsupported capability
+is not mounted (UNIMPLEMENTED), never a successful raw fallback. Internal failures
+must be sanitized; cancellation and uncertainty never imply a successful response.

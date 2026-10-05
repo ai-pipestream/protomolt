@@ -15,7 +15,8 @@ public final class DocumentHistoricalMaterialization implements AutoCloseable {
             ai.protomolt.proto.repo.v1.RepositorySchemaAsset metadata,
             com.google.protobuf.ByteString descriptorArtifact,
             ai.protomolt.proto.repo.v1.RepositorySchemaAssetReference reference,
-            com.google.protobuf.ByteString metadataArtifact) {}
+            com.google.protobuf.ByteString metadataArtifact,
+            ai.protomolt.proto.repo.v1.RepositorySchemaOccurrencePath path) {}
     private DocumentSchemaMaterialization.Result result;
     private final DocumentReadLedger.PinnedHistory history;
     private final DocumentReadLedger.PinnedRead<?>.Use pin;
@@ -30,7 +31,7 @@ public final class DocumentHistoricalMaterialization implements AutoCloseable {
         history.authorizeDelivery(control);
         pin.plan();
         return new View(result.original(), result.value(), result.schema(), result.occurrence(),
-                result.metadata(), result.descriptorArtifact(), result.reference(), result.metadataArtifact());
+                result.metadata(), result.descriptorArtifact(), result.reference(), result.metadataArtifact(), result.path());
     }
     @Override public synchronized void close() {
         if (result == null) return;
