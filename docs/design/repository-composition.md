@@ -5423,6 +5423,50 @@ reviewed the corrected scoped-caller, real-expiry and isolated-source fixture.
 An explicit accepted-or-assessed execution outcome and native rejection integration
 remain unfinished; no application path selects `assess` yet.
 
+#### Native assessment recovery boundary
+
+`DocumentAssessmentDiscovery` is an internal coordinate lookup for the unique
+assessment belonging to an exact account, principal, operation and owner
+generation. It requires the original live owner nonce and canonical command,
+authorizes the complete current destination/source read set, locks the assessment
+row and returns its original UUID, manifest digest, microsecond retention deadline
+and immutable upload selections. It does not look up a latest stage or cross an
+owner generation. Expired, released, unsealed or inconsistent rows fail; absence
+is distinct and grants no permission to recreate after an uncertain write.
+
+Discovery does not verify a candidate or authorize evidence delivery. The caller
+must use the existing exact `captureAssessment` path to verify the stored manifest,
+slot snapshot, physical bindings and selections, then replay through the observed
+runtime and fence the current policy before a decision. The existing
+`observeRetained` API still refuses a different requested identity. Coordinate
+discovery does not require that an old policy is still active; the later decision
+does. It performs no registry/provider calls and creates no stage, read session or
+terminal outcome.
+
+Native routing must record that stage creation has started before invoking SQL.
+After an uncertain acknowledgement, retry discovers and reconciles that original
+stage; it must not invent another UUID, deadline, evaluation time or schema choice.
+An absent row in that state stays unresolved until explicit recovery establishes
+the next permitted action. Private owner identity still needs host retention;
+discovery alone is not process-restart recovery or authority to take over an
+expired owner. The hosted runtime needs an explicit bounded retention duration,
+minimum remaining decision window and trusted observed-runtime configuration.
+
+After successful retention, close the source plan and release its drained read
+session before capturing retained evidence. A one-slot read ledger must work;
+provider work that has not drained retains capacity and requires a later retry,
+not forced release. Session retry state and complete runtime shutdown/restart
+behavior remain integration acceptance work.
+
+The production-JAR gate passes with a real PostgreSQL stage commit followed by an
+injected JDBC acknowledgement failure. Discovery receives only the original owner
+and command, recovers the exact coordinates and selections, and passes full
+retained reconciliation without creating another stage. Additional cases cover
+absence, a closed original assessment scope, wrong nonce/generation, foreign
+principal, scoped source denial, expiry, terminal operations and policy advancement.
+Sol reviewed the lookup and fault fixture. This qualifies the low-level recovery
+primitive; it does not establish hosted-session crash recovery.
+
 The host must explicitly configure evidence retention, the minimum remaining
 decision window and the observed validation runtime. Invalid evidence must be
 sealed and re-read through the retained path before its verified decision commits.

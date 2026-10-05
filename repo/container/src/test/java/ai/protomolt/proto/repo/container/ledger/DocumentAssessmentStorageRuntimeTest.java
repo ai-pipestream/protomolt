@@ -36,7 +36,7 @@ class DocumentAssessmentStorageRuntimeTest {
         String classpath = String.join(java.io.File.pathSeparator, jars.values().stream().map(Path::toString).toList());
         var classes = Files.createDirectory(directory.resolve("classes"));
         var sources = new ArrayList<String>();
-        for (String name : List.of("ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentCaptureFaultProbe", "AssessmentProviderProbe", "AssessmentMixedReuseProbe", "AssessmentReplayInputsProbe", "AssessmentOperationReplayProbe", "AssessmentRejectionProbe", "AssessmentStorageProbe", "AssessmentRestartProbe", "RejectedAssessmentRestartProbe", "RejectedAssessmentExpiryProbe", "RejectedAssessmentSourceProbe", "NativeAssessmentPreparationProbe", "PromotedAssessmentCommitProbe")) {
+        for (String name : List.of("ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentCaptureFaultProbe", "AssessmentProviderProbe", "AssessmentMixedReuseProbe", "AssessmentReplayInputsProbe", "AssessmentOperationReplayProbe", "AssessmentRejectionProbe", "AssessmentStorageProbe", "AssessmentRestartProbe", "RejectedAssessmentRestartProbe", "RejectedAssessmentExpiryProbe", "RejectedAssessmentSourceProbe", "NativeAssessmentPreparationProbe", "PromotedAssessmentCommitProbe", "AssessmentStageFaultProbe")) {
             var source = directory.resolve(name + ".java");
             try (var input = getClass().getResourceAsStream("/runtime-inventory/" + name + ".java")) {
                 assertThat(input).isNotNull(); Files.copy(input, source);
@@ -93,7 +93,7 @@ class DocumentAssessmentStorageRuntimeTest {
                         "ASSESSMENT_REJECTION_CANCEL_AFTER_COMMIT_OK", "ASSESSMENT_REJECTION_STALE_POLICY_OK",
                         "ASSESSMENT_REJECTION_TERMINAL_READ_OK", "REJECTED_ASSESSMENT_CAPTURE_FAULTS_OK",
                         "REJECTED_ASSESSMENT_AUTHORITY_GUARDS_OK", "REJECTED_ASSESSMENT_EXPIRY_WAITS_OK",
-                        "REJECTED_ASSESSMENT_SOURCE_AUTHORIZATION_OK", "NATIVE_ASSESSMENT_PREPARATION_OK", "PROMOTED_ASSESSMENT_COMMIT_OK");
+                        "REJECTED_ASSESSMENT_SOURCE_AUTHORIZATION_OK", "NATIVE_ASSESSMENT_PREPARATION_OK", "PROMOTED_ASSESSMENT_COMMIT_OK", "ASSESSMENT_STAGE_LOST_ACK_DISCOVERY_OK");
             } finally {
                 if (process.isAlive()) {
                     process.destroyForcibly();

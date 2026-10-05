@@ -37,6 +37,7 @@ public final class RejectedAssessmentSourceProbe {
                 var gate = new DocumentAssessmentRejections(tx, Duration.ofSeconds(5));
                 try {
                     policy(tx, source, "ACCESS_DENY");
+                    refused(() -> new DocumentAssessmentDiscovery(tx).discover(caller, candidate.owner(), command, () -> {}));
                     refused(() -> gate.decide(caller, candidate.owner(), command, verified, RepositoryReadControl.NONE));
                     long outcomes = tx.readOnly(em -> ((Number) em.createNativeQuery(
                             "SELECT count(*) FROM repository_operation_rejection WHERE operation_id=:op")

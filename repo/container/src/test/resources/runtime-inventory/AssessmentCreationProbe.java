@@ -114,12 +114,22 @@ public final class AssessmentCreationProbe {
                     }
                     require(count(tx, "document_assessment_owners", id) == 0, "owner rollback");
                     require(count(tx, "document_assessment_objects", id) == 0, "physical rollback");
+                    require(new DocumentAssessmentDiscovery(tx).discover(caller, owner, command, () -> {}).isEmpty(),
+                            "coordinate discovery reports absence without staging");
                     var reconciliation = new DocumentAssessmentReconciliation(tx);
                     require(reconciliation.observe(caller, owner, command, DocumentAssessmentRetainedSlots.uploadSelections(selected), evidence, id, deadline, budget, () -> {}).isEmpty(),
                             "absent stage is not observed");
                     new RepositorySchemaArtifacts(tx).stage(owner, command, List.copyOf(evidence.artifacts(() -> {}).values()), () -> {});
                     cancelledRootInsert(tx, writer, caller, owner, prepared, selected, evidence, deadline, budget);
-                    var result = writer.create(caller, owner, prepared, selected, evidence, id, deadline, budget, () -> {});
+                    var result = afterScope
+                            ? AssessmentStageFaultProbe.create(database, tx, caller, owner, prepared, selected, evidence, id, deadline, budget)
+                            : writer.create(caller, owner, prepared, selected, evidence, id, deadline, budget, () -> {});
+                    var discovered = new DocumentAssessmentDiscovery(tx).discover(caller, owner, command, () -> {}).orElseThrow();
+                    require(discovered.stage().equals(result) && discovered.selections().equals(
+                            DocumentAssessmentRetainedSlots.uploadSelections(selected)), "exact original coordinates discovered");
+                    try { new DocumentAssessmentDiscovery(tx).discover(new RepositoryCaller("other-principal", true), owner, command, () -> {});
+                        throw new AssertionError("Foreign principal discovered stage"); }
+                    catch (RepositoryException expected) { require(expected.code() == RepositoryException.Code.PERMISSION_DENIED, "discovery binds caller principal"); }
                     require(reconciliation.observe(caller, owner, command, DocumentAssessmentRetainedSlots.uploadSelections(selected), evidence, id, deadline, budget, () -> {}).orElseThrow().equals(result),
                             "original committed stage acknowledged");
                     try { reconciliation.observe(new RepositoryCaller("other-principal", true), owner, command, DocumentAssessmentRetainedSlots.uploadSelections(selected),
@@ -183,10 +193,15 @@ public final class AssessmentCreationProbe {
                                 .setLimits(policy.definition().getLimits().toBuilder().setMaxRoots(101)).build(), () -> {});
                         var changedPolicy = new DocumentSchemaPolicies(tx).activate(revised, active.revision(), () -> {});
                         require(changedPolicy.revision() > active.revision(), "policy actually advanced");
+                        require(new DocumentAssessmentDiscovery(tx).discover(caller, owner, command, () -> {}).orElseThrow().stage().equals(result),
+                                "discovery grants no decision under changed policy");
                         require(reconciliation.observe(caller, owner, command, DocumentAssessmentRetainedSlots.uploadSelections(selected), evidence, id, deadline, budget, () -> {})
                                 .orElseThrow().equals(result), "policy advance does not erase original staging acknowledgement");
                         var cancelled = new DocumentPublicationRejections(tx).cancel(caller, owner, command, RepositoryReadControl.NONE);
                         require(cancelled.state() == DocumentPublicationReplay.State.TERMINATED, "explicit cancellation is terminal");
+                        try { new DocumentAssessmentDiscovery(tx).discover(caller, owner, command, () -> {});
+                            throw new AssertionError("Terminal operation discovered as live"); }
+                        catch (RuntimeException expected) { require(hasMessage(expected, "Repository operation is terminal"), "discovery requires live operation"); }
                         try { reconciliation.observe(caller, owner, command, DocumentAssessmentRetainedSlots.uploadSelections(selected), evidence, id, deadline, budget, () -> {});
                             throw new AssertionError("terminal operation acknowledged as active"); }
                         catch (RuntimeException expected) { require(hasMessage(expected, "Repository operation is terminal"), "terminal fence refusal"); }
@@ -196,6 +211,9 @@ public final class AssessmentCreationProbe {
                                 SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM retain_until-clock_timestamp()))+0.02)
                                 FROM document_assessment_owners WHERE assessment_id=:id
                                 """).setParameter("id", id).getSingleResult());
+                        try { new DocumentAssessmentDiscovery(tx).discover(caller, owner, command, () -> {});
+                            throw new AssertionError("Expired stage discovered as usable"); }
+                        catch (IllegalStateException expected) { require(expected.getMessage().contains("unavailable"), "expired discovery refusal"); }
                         try { reconciliation.observe(caller, owner, command, DocumentAssessmentRetainedSlots.uploadSelections(selected), evidence, id, deadline, budget, () -> {});
                             throw new AssertionError("expired stage acknowledged as usable"); }
                         catch (IllegalStateException expected) { require(expected.getMessage().contains("unavailable"), "expired stage refusal"); }
@@ -223,6 +241,9 @@ public final class AssessmentCreationProbe {
                 var recoveryBudget = new PayloadBudget(64_000_000);
                 var recovery = new DocumentAssessmentReconciliation(tx);
                 var selections = DocumentAssessmentRetainedSlots.uploadSelections(selected);
+                var discovered = new DocumentAssessmentDiscovery(tx).discover(caller, recoveredOwner, recoveredCommand, () -> {}).orElseThrow();
+                require(discovered.stage().equals(retained) && discovered.selections().equals(selections),
+                        "closed-scope lookup needs only original owner and canonical command");
                 AssessmentCaptureFaultProbe.run(database, tx, caller, recoveredOwner, recoveredCommand, selections, retained);
                 var assessmentReader = new DocumentReadLedger(tx, UUID.randomUUID(), 1);
                 try {
@@ -233,8 +254,8 @@ public final class AssessmentCreationProbe {
                     require(expected.getMessage().contains("requested original stage"), "capture validates retained manifest");
                 }
                 require(assessmentReader.outstandingReads() == 0, "invalid capture returns capacity");
-                var protectedAssessment = assessmentReader.captureAssessment(caller, recoveredOwner, recoveredCommand, selections,
-                        retained.assessment(), retained.manifestSha256(), retained.retainUntil(), recoveryBudget, () -> {});
+                var protectedAssessment = assessmentReader.captureAssessment(caller, recoveredOwner, recoveredCommand, discovered.selections(),
+                        discovered.stage().assessment(), discovered.stage().manifestSha256(), discovered.stage().retainUntil(), recoveryBudget, () -> {});
                 var retainedUse = protectedAssessment.use();
                 require(retainedUse.plan().stage().equals(retained), "canonical evidence capture matches original stage");
                 var readEntries = retainedUse.plan().entries();
@@ -286,6 +307,14 @@ public final class AssessmentCreationProbe {
                         "00".repeat(32), retained.retainUntil(), recoveryBudget, () -> {}); throw new AssertionError("different manifest adopted"); }
                 catch (IllegalStateException expected) { require(expected.getMessage().contains("requested original stage"), "wrong digest refusal"); }
                 var wrongNonce = new RepositoryOperationLedger.Owner(recoveredOwner.key(), recoveredOwner.generation(), UUID.randomUUID(), recoveredOwner.leaseUntil());
+                try { new DocumentAssessmentDiscovery(tx).discover(caller, wrongNonce, recoveredCommand, () -> {});
+                    throw new AssertionError("Different nonce discovered original coordinates"); }
+                catch (RepositoryOperationLedger.OwnerFencedException expected) { /* Exact live owner required. */ }
+                var wrongGeneration = new RepositoryOperationLedger.Owner(recoveredOwner.key(), recoveredOwner.generation() + 1,
+                        recoveredOwner.token(), recoveredOwner.leaseUntil());
+                try { new DocumentAssessmentDiscovery(tx).discover(caller, wrongGeneration, recoveredCommand, () -> {});
+                    throw new AssertionError("Different generation discovered original coordinates"); }
+                catch (RepositoryOperationLedger.OwnerFencedException expected) { /* Never search another generation. */ }
                 try { recovery.observeRetained(caller, wrongNonce, recoveredCommand, selections, retained.assessment(),
                         retained.manifestSha256(), retained.retainUntil(), recoveryBudget, () -> {}); throw new AssertionError("different owner nonce adopted"); }
                 catch (RepositoryOperationLedger.OwnerFencedException expected) { /* exact live-fence refusal */ }
