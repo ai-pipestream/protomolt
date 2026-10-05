@@ -4018,3 +4018,39 @@ post-commit cancellation handling. Neither publication nor a terminal rejection 
 released when the scoped assessment closes. Physical provider observations in this
 probe are explicitly synthetic; provider I/O, whole-writer reuse/race cases and
 lost-acknowledgement reconciliation still need their own qualification.
+
+#### Reconciliation binding requirement (not yet implemented)
+
+The observed validation manifest does not identify selected physical upload
+objects, selection revisions, or a reused source's revision UUID and full part
+ordinal. Rebuilding these from current source pointers after an uncertain commit
+would describe a different candidate. A receipt returned only after commit also
+cannot cover a lost acknowledgement or process restart.
+
+The reconciliation contract will acknowledge the original committed stage using
+the caller's fixed assessment UUID. Creation must additionally seal a bounded,
+canonical snapshot of every slot tuple in its first transaction: member,
+candidate full ordinal, selection revision, physical object UUID, declaration,
+and optional source revision UUID/full ordinal. Its encoding version and digest
+must bind the complete tuple set to the assessment UUID, operation key/generation,
+canonical command, observed manifest and fixed deadline. This is database-derived
+staging provenance, not another observed validator claim. Legacy owners lacking
+this provenance must be refused rather than implicitly adopted.
+
+Reconciliation must compare the complete snapshot with relational slot rows and
+all command-derived identities, plus the complete retained schema/root evidence.
+Supplied upload attempts and selection revisions must match frozen history;
+REUSE source revision/ordinal come from the original snapshot. It must not consult
+current selection pointers, reacquire physical retention, or require schema
+staging claims to remain present. This verifies the original stage; it does not
+assert that a fresh stage would select the same source revision now.
+
+The lock order is live operation fence, current read authorization for the full
+destination/source set, then retained assessment owner. After waits, recheck live
+ownership, absence of terminal outcomes, sealed/unreleased state, exact fixed
+deadline and unexpired retention using database time. Revoked or unavailable
+sources can prevent disclosure without invalidating the original commit. Recovery
+continues to take the operation recovery fence before owner and physical locks.
+Tests must cover lost acknowledgement, restart, moved source pointers, changed
+selection, expired stages, revoked access, terminal outcomes and legacy refusal
+before reconciliation is exposed.
