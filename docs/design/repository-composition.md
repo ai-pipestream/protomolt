@@ -4014,7 +4014,9 @@ owner. An injected PostgreSQL `57014` at root insertion proves rollback after
 physical sealing and schema association: all five assessment tables and native
 physical references remain empty for the failed assessment, and writer scratch
 is released. This proves SQL-error rollback, not client interruption timing or
-post-commit cancellation handling. Neither publication nor a terminal rejection is created. Reservations are
+post-commit cancellation handling. Creation itself produces neither publication
+nor a terminal rejection. The lifecycle probe separately requests cancellation
+through the existing terminal-decision operation. Reservations are
 released when the scoped assessment closes. Physical provider observations in this
 probe are explicitly synthetic; provider I/O, whole-writer reuse/race cases and
 lost-acknowledgement reconciliation still need their own qualification.
@@ -4108,5 +4110,16 @@ payload-read authority. The current call requires the original scoped observed
 evidence; restart reconstruction and a public entry point are not enabled.
 The production-runtime probe covers successful acknowledgement of valid/invalid
 stages, absence, principal/UUID mismatch, changed selection and deadline, and a
-subsequent policy revision. Moved-source reuse, terminal/revoked access, expiry,
-legacy-snapshot refusal and restart qualification remain required before exposure.
+subsequent policy revision. It waits for the stored deadline using database time
+and confirms expired stages cannot be acknowledged while evidence remains retained.
+An explicitly requested terminal cancellation is recorded by the existing decision
+operation; subsequent reconciliation is refused by the terminal operation fence,
+without deleting the assessment. These are distinct from transport cancellation.
+
+The retained-association SQL test stages reuse-only and mixed candidates, then uses
+a separate operation to publish a new source revision. It verifies that the source
+current pointer actually changes and the original slot snapshot still verifies
+under current read authorization. This uses synthetic manifest/provider evidence;
+full observed-evidence reconciliation after source movement remains unqualified.
+Revoked-access, legacy-snapshot refusal and restart qualification also remain
+required before public exposure.

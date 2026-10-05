@@ -64,7 +64,7 @@ public final class AssessmentCreationProbe {
                     new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), Instant.now(), () -> {})) {
                 require(assessment.failure().isPresent() == invalid, "real semantic result");
                 UUID id = UUID.randomUUID();
-                Instant deadline = Instant.now().plusSeconds(120).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+                Instant deadline = Instant.now().plusSeconds(invalid ? 120 : 8).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
                 long before = budget.reservedBytes();
                 assessment.withRetentionEvidence(owner, observation, () -> {}, evidence -> {
                     var writer = new DocumentAssessmentCreation(tx, drives);
@@ -151,7 +151,23 @@ public final class AssessmentCreationProbe {
                         require(changedPolicy.revision() > active.revision(), "policy actually advanced");
                         require(reconciliation.observe(caller, owner, prepared, selected, evidence, id, deadline, budget, () -> {})
                                 .orElseThrow().equals(result), "policy advance does not erase original staging acknowledgement");
+                        var cancelled = new DocumentPublicationRejections(tx).cancel(caller, owner, command, RepositoryReadControl.NONE);
+                        require(cancelled.state() == DocumentPublicationReplay.State.TERMINATED, "explicit cancellation is terminal");
+                        try { reconciliation.observe(caller, owner, prepared, selected, evidence, id, deadline, budget, () -> {});
+                            throw new AssertionError("terminal operation acknowledged as active"); }
+                        catch (RuntimeException expected) { require(hasMessage(expected, "Repository operation is terminal"), "terminal fence refusal"); }
+                    } else {
+                        // Wait for real database time; never rewrite immutable retention metadata.
+                        tx.readOnly(em -> em.createNativeQuery("""
+                                SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM retain_until-clock_timestamp()))+0.02)
+                                FROM document_assessment_owners WHERE assessment_id=:id
+                                """).setParameter("id", id).getSingleResult());
+                        try { reconciliation.observe(caller, owner, prepared, selected, evidence, id, deadline, budget, () -> {});
+                            throw new AssertionError("expired stage acknowledged as usable"); }
+                        catch (IllegalStateException expected) { require(expected.getMessage().contains("unavailable"), "expired stage refusal"); }
                     }
+                    require(count(tx, "document_assessment_owners", id) == 1 && count(tx, "document_assessment_slot_snapshots", id) == 1,
+                            "expiry or terminal decision does not implicitly delete retained evidence");
                     return result;
                 });
                 require(budget.reservedBytes() == before, "writer and manifest reservations released");
@@ -159,7 +175,8 @@ public final class AssessmentCreationProbe {
                         .setParameter("op", command.operationId()).getSingleResult()).longValue());
                 long decisions = tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM repository_operation_rejection WHERE operation_id=:op")
                         .setParameter("op", command.operationId()).getSingleResult()).longValue());
-                require(published == 0 && decisions == 0, "staging is neither publication nor terminal rejection");
+                require(published == 0 && decisions == (invalid ? 1 : 0),
+                        "no publication; only explicitly requested cancellation creates a terminal decision");
             }
             require(budget.reservedBytes() == 0, "assessment reservations released");
         }

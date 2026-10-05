@@ -22,7 +22,7 @@ class DocumentAssessmentSlotsIT {
         for (boolean mixed : new boolean[]{false, true}) {
             try (var c = DocumentNativePublicationFixture.context(POSTGRES)) {
                 var f = DocumentNativePublicationFixture.prepare(c, 2, mixed, java.time.Duration.ofMinutes(5), true);
-                var slots = stage(c, f, f.command(), false);
+                var slots = stage(c, f, f.command(), false).slots();
                 assertThat(slots).hasSize(4);
                 assertThat(slots.stream().filter(s -> s.declaration().equals("NEW_CONTENT")).count()).isEqualTo(mixed ? 1 : 0);
                 for (var slot : slots) {
@@ -69,7 +69,48 @@ class DocumentAssessmentSlotsIT {
         }
     }
 
-    private static List<DocumentAssessmentSlots.Slot> stage(DocumentNativePublicationFixture.Context c,
+    @Test void retainedAssociationsSurviveSourcePointerAdvance() throws Exception {
+        for (boolean mixed : new boolean[]{false, true}) try (var c = DocumentNativePublicationFixture.context(POSTGRES)) {
+            var f = DocumentNativePublicationFixture.prepare(c, 1, mixed, java.time.Duration.ofMinutes(5), true);
+            var retained = stage(c, f, f.command(), false);
+            UUID originalSource = retained.slots().stream().filter(s -> s.sourceRevision() != null).findFirst().orElseThrow().sourceRevision();
+            var intent = f.command().intent().toBuilder().setOperationId(UUID.randomUUID().toString());
+            var member = intent.getMembersBuilder(0);
+            // A separate operation publishes another revision of the same source.
+            // Reuse its existing bytes, including the slot our candidate replaces.
+            for (int i = 0; i < member.getPartsCount(); i++) if (member.getParts(i).hasUpload()) {
+                var reuse = member.getParts(0).getReuse().toBuilder().setSourceSlot(f.sources().getFirst().slots().get(i))
+                        .setObject(f.sources().getFirst().identities().get(i));
+                member.setParts(i, member.getParts(i).toBuilder().setReuse(reuse));
+            }
+            var command = new DocumentPublicationCommand(intent.build());
+            var owner = new RepositoryOperationLedger(c.tx()).admit(new RepositoryOperationLedger.Key("account", "principal", command.operationId()),
+                    command, UUID.randomUUID(), java.time.Duration.ofMinutes(5)).owner().orElseThrow();
+            var placement = retained.plan().members().getFirst().placement();
+            new DocumentOperationUploadAdmission(c.tx(), new DriveLedger(c.tx())).admit(CALLER, owner,
+                    DocumentOperationUploadAdmission.prepare(command, Map.of(placement.drive().id(), placement), Map.of(), java.time.Duration.ofMinutes(5)));
+            var successor = new DocumentNativePublicationFixture.Prepared(command, owner, f.sources(), Map.of());
+            var published = DocumentNativePublicationFixture.publish(c, successor, DocumentNativePublicationFixture.Fault.NONE, em -> {});
+            assertThat(UUID.fromString(published.getMembers(0).getRevisionId())).isNotEqualTo(originalSource);
+            var current = c.tx().readOnly(em -> (UUID) em.createNativeQuery("SELECT revision_id FROM document_revision_current WHERE node_id=:node")
+                    .setParameter("node", f.sources().getFirst().row().nodeId).getSingleResult());
+            assertThat(current.toString()).isEqualTo(published.getMembers(0).getRevisionId());
+            c.tx().inTransaction(em -> {
+                RepositoryOperationLedger.fenceLiveOwner(em, f.owner());
+                DocumentAdmissionAuthorization.authorizeRejection(em, CALLER, f.command());
+                em.createNativeQuery("SELECT assessment_id FROM document_assessment_owners WHERE assessment_id=:id FOR UPDATE")
+                        .setParameter("id", retained.identity().assessment()).getSingleResult();
+                var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(20_000_000);
+                DocumentAssessmentRetainedSlots.verify(em, retained.identity(), retained.plan(), retained.selected(), budget, () -> {});
+                assertThat(budget.reservedBytes()).isZero();
+            });
+        }
+    }
+
+    private record Staged(List<DocumentAssessmentSlots.Slot> slots, DocumentAssessmentSlotSnapshot.Identity identity,
+                          DocumentUploadPlan.Prepared plan, Map<String,DocumentSelectedAttemptLedger.Selected> selected) {}
+
+    private static Staged stage(DocumentNativePublicationFixture.Context c,
             DocumentNativePublicationFixture.Prepared f, DocumentPublicationCommand projected, boolean omitPhysical) {
         var driveId = UUID.fromString(f.command().intent().getMembers(0).getDriveId());
         var drive = new DriveLedger(c.tx()).findById(driveId).orElseThrow();
@@ -138,7 +179,7 @@ class DocumentAssessmentSlotsIT {
             // verifies retained association identity, not observed admission.
             DocumentAssessmentRetainedSlots.verify(em, identity, plan, selected, budget, () -> {});
             assertThat(budget.reservedBytes()).isZero();
-            return slots;
+            return new Staged(slots, identity, plan, Map.copyOf(selected));
         });
     }
     private static void assertNoOwner(DocumentNativePublicationFixture.Context c, DocumentNativePublicationFixture.Prepared f) {
