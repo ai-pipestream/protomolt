@@ -6,16 +6,20 @@ import ai.protomolt.proto.repo.v1.Document;
 import com.google.protobuf.ByteString;
 
 /** Validated historical document with owned payload reservations and physical read protection. */
-public final class DocumentHistoricalRead implements AutoCloseable {
+public final class DocumentHistoricalRead implements ai.protomolt.proto.repo.spi.HistoricalDocumentRepository.ValidatedRead {
     private DocumentReadBatch bytes;
     private final DocumentHistoricalValidation validation;
     private final PayloadBudget.Lease copies;
     private final java.util.UUID revision;
     private final ai.protomolt.proto.repo.v1.NodeAddress address;
+    private final ai.protomolt.proto.repo.v1.DocumentManifest manifest;
+    private final long publicationRevision;
     DocumentHistoricalRead(DocumentReadBatch bytes, DocumentHistoricalValidation validation, PayloadBudget.Lease copies,
-            java.util.UUID revision, ai.protomolt.proto.repo.v1.NodeAddress address) {
+            java.util.UUID revision, ai.protomolt.proto.repo.v1.NodeAddress address,
+            ai.protomolt.proto.repo.v1.DocumentManifest manifest, long publicationRevision) {
         this.bytes = bytes; this.validation = validation; this.copies = copies;
         this.revision = revision; this.address = address;
+        this.manifest = manifest; this.publicationRevision = publicationRevision;
     }
     private void requireOpen() {
         if (bytes == null) throw new IllegalStateException("Historical read is closed");
@@ -24,6 +28,8 @@ public final class DocumentHistoricalRead implements AutoCloseable {
     public synchronized Document document() { requireOpen(); return validation.document(); }
     public synchronized java.util.UUID revision() { requireOpen(); return revision; }
     public synchronized ai.protomolt.proto.repo.v1.NodeAddress address() { requireOpen(); return address; }
+    public synchronized ai.protomolt.proto.repo.v1.DocumentManifest manifest() { requireOpen(); return manifest; }
+    public synchronized long publicationRevision() { requireOpen(); return publicationRevision; }
     public synchronized String validationProfile() { requireOpen(); return validation.validationProfile(); }
     public synchronized String policySha256() { requireOpen(); return validation.policySha256(); }
     public synchronized ByteString commandSha256() { requireOpen(); return validation.commandSha256(); }

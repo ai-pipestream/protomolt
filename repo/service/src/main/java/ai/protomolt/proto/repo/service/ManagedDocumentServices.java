@@ -18,6 +18,7 @@ import java.util.Objects;
 /** Host-owned native publication resources; no public transport is mounted yet. */
 final class ManagedDocumentServices {
     final DocumentPublicationRuntime publication;
+    final ai.protomolt.proto.repo.spi.HistoricalDocumentRepository history;
 
     ManagedDocumentServices(Tx tx, DriveLedger drives, String generation,
             ManagedBackendLedger.Profile profile, OpenedBlobStore backing, boolean deliverEvents) {
@@ -34,6 +35,7 @@ final class ManagedDocumentServices {
         }, 16, 8L * 1024 * 1024, budget);
         var ledger = new DocumentReadLedger(bounded, UUID.randomUUID(), 32);
         try {
+            history = new ai.protomolt.proto.repo.engine.DocumentHistoricalOperations(ledger, reader, budget);
             publication = new DocumentPublicationRuntime(bounded, drives, ledger, reader, budget, (original, selected) -> {
                 requireOriginal(generation, profile, original, selected);
                 return new DocumentPublicationRuntime.Backend(profile.identity(), backing);

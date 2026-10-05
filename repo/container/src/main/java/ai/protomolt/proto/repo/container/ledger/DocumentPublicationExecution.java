@@ -120,6 +120,8 @@ final class DocumentPublicationExecution {
         var command = prepared.plan().command();
         var policy = policies.read(command.intent().getAccountId(), control::check);
         var settings = new DocumentPublicationPreparation.Admission(policy, modes, container, resolver, opaqueLimits);
+        reads.releaseDrainedAtCapacity(1);
+        control.check();
         var pinned = reads.capture(admission, caller, owner, prepared);
         try (var candidate = preparation.prepare(caller, owner, prepared, bodies, attributes, pinned, settings, control)) {
             control.check();

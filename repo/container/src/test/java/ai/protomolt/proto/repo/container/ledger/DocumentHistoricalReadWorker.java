@@ -3,7 +3,7 @@ package ai.protomolt.proto.repo.container.ledger;
 import ai.protomolt.proto.repo.blob.spi.BlobStores;
 import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
 import ai.protomolt.proto.repo.codec.DocumentPartCodec;
-import ai.protomolt.proto.repo.engine.DocumentHistoricalReader;
+import ai.protomolt.proto.repo.engine.DocumentHistoricalOperations;
 import ai.protomolt.proto.repo.engine.DocumentPartReader;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryException;
@@ -32,15 +32,7 @@ public final class DocumentHistoricalReadWorker {
                     env.get("TEST_ENDPOINT"), env.get("TEST_REGION"), true)))
                 throw new IllegalStateException("Worker storage identity differs from retained backend");
             var ledger = new DocumentReadLedger(tx, incarnation);
-            DocumentReadLedger.PinnedHistory history;
-            try {
-                history = ledger.captureHistorical(new RepositoryCaller("restart-reader", false, Set.of(address.getAccountId()), Set.of()),
-                        address, revision);
-            } catch (RuntimeException failure) {
-                try { ledger.fence(); ledger.attestLocalQuiescence(); }
-                catch (RuntimeException cleanup) { failure.addSuppressed(cleanup); }
-                throw failure;
-            }
+            var caller = new RepositoryCaller("restart-reader", false, Set.of(address.getAccountId()), Set.of());
             var capacity = new PayloadBudget(16_000_000);
             String receipt;
             try (var raw = new DocumentPartReader((selectedGeneration, profile) -> {
@@ -48,17 +40,18 @@ public final class DocumentHistoricalReadWorker {
                     throw new IllegalStateException("Historical backend profile differs");
                 return opened.store();
             }, 4, 1_000_000, capacity)) {
-                try (var validated = new DocumentHistoricalReader(raw, capacity).readValidated(history, RepositoryReadControl.NONE)) {
+                var lifecycle = new DocumentReadLifecycle(ledger, raw, 32);
+                try (var validated = new DocumentHistoricalOperations(ledger, raw, capacity)
+                        .readValidated(caller, address, revision, RepositoryReadControl.NONE)) {
                     receipt = "REPLAY_OK|" + validated.revision() + "|"
                             + DocumentPartCodec.sha256Hex(validated.document().toByteArray()) + "|" + validated.policySha256();
                 } finally {
-                    raw.close();
-                    if (!raw.awaitIdle(Duration.ofSeconds(5))) throw new IllegalStateException("Provider reader did not become idle");
+                    boolean stopped = false;
+                    for (int pass = 0; pass < 3 && !stopped; pass++)
+                        stopped = lifecycle.shutdownStep(Duration.ofSeconds(5));
+                    if (!stopped) throw new IllegalStateException("Historical reader did not drain");
                 }
             } finally {
-                history.close();
-                if (!history.awaitDrained(Duration.ofSeconds(5))) throw new IllegalStateException("Historical reader did not drain");
-                history.release(); ledger.fence(); ledger.attestLocalQuiescence();
                 if (capacity.reservedBytes() != 0) throw new IllegalStateException("Historical reservations leaked");
             }
             System.out.println(receipt);

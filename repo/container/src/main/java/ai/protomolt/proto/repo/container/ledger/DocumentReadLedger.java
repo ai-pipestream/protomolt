@@ -87,6 +87,19 @@ public final class DocumentReadLedger {
         }
     }
 
+    /**
+     * A bounded admission-time maintenance pass. Does no SQL while capacity is
+     * available, and never releases a handle with a live use. Concurrent callers
+     * still compete for capacity; this does not reserve a capture slot.
+     */
+    public int releaseDrainedAtCapacity(int limit) {
+        if (limit < 1) throw new IllegalArgumentException("Release limit must be positive");
+        synchronized (lifetime) {
+            if (admissionClosed || outstandingReads < maxOutstandingReads) return 0;
+        }
+        return releaseDrained(limit);
+    }
+
     private void beginCapture() {
         synchronized (lifetime) {
             if (admissionClosed) throw new IllegalStateException("Reader admission is closed");

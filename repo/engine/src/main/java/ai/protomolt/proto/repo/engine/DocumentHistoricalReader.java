@@ -48,7 +48,8 @@ public final class DocumentHistoricalReader {
                 encoded.put(plan.entries().get(index).revisionOrdinal(), ByteString.copyFrom(fragments.get(index).bytes()));
             }
             validation = history.validateFragments(encoded, budget, control);
-            var result = new DocumentHistoricalRead(raw, validation, copies, plan.revision(), plan.address());
+            var result = new DocumentHistoricalRead(raw, validation, copies, plan.revision(), plan.address(),
+                    plan.manifest(), plan.publicationRevision());
             handedOff = true;
             return result;
         } catch (java.util.concurrent.CancellationException cancelled) {

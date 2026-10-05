@@ -768,6 +768,13 @@ public final class RepoServices implements AutoCloseable {
         return managedDocuments.publication;
     }
 
+    ai.protomolt.proto.repo.spi.HistoricalDocumentRepository documentHistory() {
+        requireOpen();
+        if (managedDocuments == null) throw new IllegalStateException("Managed document storage is not configured");
+        startLifecycle();
+        return managedDocuments.history;
+    }
+
     DriveLedger driveLedger() {
         return driveLedger;
     }

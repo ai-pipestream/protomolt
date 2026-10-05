@@ -103,6 +103,56 @@ class DocumentPublicationCommitIT {
                         }, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
                 assertThat(result.getMembersCount()).isEqualTo(1);
                 assertThat(selectedSchemas.get()).isEqualTo(typed ? 1 : 0);
+                var history = new ai.protomolt.proto.repo.engine.DocumentHistoricalOperations(reads, reader, budget);
+                var published = result.getMembers(0);
+                var revision = UUID.fromString(published.getRevisionId());
+                var control = ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE;
+                // More than the ledger limit, without a maintenance tick between
+                // calls. Closed results must not make sequential use stall.
+                for (int attempt = 0; attempt < 34; attempt++) {
+                    var raw = history.readRaw(ADMIN, published.getAddress(), revision, control);
+                    try (raw) {
+                        assertThat(raw.address()).isEqualTo(published.getAddress());
+                        assertThat(raw.revision()).isEqualTo(revision);
+                        assertThat(raw.publicationRevision()).isPositive();
+                        assertThat(raw.manifest().getPartsCount()).isPositive();
+                        assertThat(raw.fragments()).hasSize(fixture.bodies.size());
+                        for (var fragment : raw.fragments()) {
+                            var expected = fixture.bodies.get(new DocumentUploadPayloads.Key("member-0", fragment.revisionOrdinal()));
+                            assertThat(expected).isNotNull();
+                            var bytes = fragment.bytes();
+                            assertThat(bytes.isReadOnly()).isTrue();
+                            byte[] actual = new byte[bytes.remaining()];
+                            bytes.get(actual);
+                            assertThat(actual).isEqualTo(expected.bytes());
+                            assertThat(fragment.bytes().remaining()).isEqualTo(actual.length);
+                        }
+                        assertThat(budget.reservedBytes()).isPositive();
+                    }
+                    raw.close();
+                    assertThatThrownBy(raw::fragments).isInstanceOf(IllegalStateException.class);
+                    assertThat(budget.reservedBytes()).isZero();
+                }
+                if (typed) {
+                    // No registry callback exists on this API: retained assets
+                    // alone must be sufficient for historical validation.
+                    var validated = history.readValidated(ADMIN, published.getAddress(), revision, control);
+                    try (validated) {
+                        assertThat(validated.address()).isEqualTo(published.getAddress());
+                        assertThat(validated.revision()).isEqualTo(revision);
+                        assertThat(validated.manifest().getPartsCount()).isPositive();
+                        assertThat(validated.document().getStructuredData().unpack(com.google.protobuf.StringValue.class).getValue())
+                                .isNotEmpty();
+                        assertThat(validated.policySha256()).isNotBlank();
+                        assertThat(budget.reservedBytes()).isPositive();
+                    }
+                    assertThatThrownBy(validated::document).isInstanceOf(IllegalStateException.class);
+                } else {
+                    assertThatThrownBy(() -> history.readValidated(ADMIN, published.getAddress(), revision, control))
+                            .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                                    failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION));
+                }
+                assertThat(budget.reservedBytes()).isZero();
                 assertThat(runtime.execute(ADMIN, command, Map.of(), Map.of(), Map.of(), Map.of(), java.util.Optional.empty(),
                         (caller, member, occurrence) -> { throw new AssertionError("Terminal replay must not resolve schemas"); },
                         ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isEqualTo(result);
@@ -418,7 +468,6 @@ class DocumentPublicationCommitIT {
         var node=ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(revision.getAddress());
         var incarnation=UUID.randomUUID();
         var ledger=new DocumentReadLedger(tx,incarnation);
-        var history=ledger.captureHistorical(historyCaller(),revision.getAddress(),UUID.fromString(revision.getRevisionId()));
         var budget=new PayloadBudget(2_000_000);
         var gets=new java.util.concurrent.atomic.AtomicInteger();
         var wrapped=intercept((method,args,call)->{
@@ -435,7 +484,9 @@ class DocumentPublicationCommitIT {
             return result;
         });
         try(var reader=new ai.protomolt.proto.repo.engine.DocumentPartReader((generation,p)->wrapped,4,1_000_000,budget)) {
-            assertThatThrownBy(()->reader.readHistorical(history,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+            var history=new ai.protomolt.proto.repo.engine.DocumentHistoricalOperations(ledger,reader,budget);
+            assertThatThrownBy(()->history.readRaw(historyCaller(),revision.getAddress(),UUID.fromString(revision.getRevisionId()),
+                    ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
                     .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
                             e->assertThat(e.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.NOT_FOUND))
                     .hasNoCause();
@@ -444,9 +495,8 @@ class DocumentPublicationCommitIT {
             assertThat(reader.awaitIdle(Duration.ofSeconds(5))).isTrue();
             assertThat(budget.reservedBytes()).isZero();
             assertThat(documentReadPins(incarnation)).isGreaterThan(0);
-            history.close(); ledger.fence();
-            assertThat(history.awaitDrained(Duration.ofSeconds(5))).isTrue();
-            ledger.attestLocalQuiescence(); history.release();
+            assertThat(ledger.releaseDrained(32)).isEqualTo(1);
+            ledger.fence(); ledger.attestLocalQuiescence();
             assertThat(documentReadPins(incarnation)).isZero();
         }
     }
@@ -1057,6 +1107,10 @@ class DocumentPublicationCommitIT {
                     .findFirst().orElseThrow().descriptorSha256();
         }
         assertThat(snapshotBudget.reservedBytes()).isZero();
+        var advanced = ai.protomolt.proto.repo.admission.DocumentAdmissionPolicy.of(policy.definition().toBuilder()
+                .setLimits(policy.definition().getLimits().toBuilder().setMaxFragmentBytes(3_000_000)).build(), () -> {});
+        assertThat(advanced.sha256()).isNotEqualTo(policy.sha256());
+        new DocumentSchemaPolicies(tx).activate(advanced, selected.revision(), () -> {});
         String success=runHistoricalWorker(published,temp.resolve("fresh-success.log"),0);
         assertThat(success).contains(expected).doesNotContain("REPLAY_FAILURE|");
         // A second fresh JVM cannot use an earlier JVM's resolved descriptors.
@@ -1205,7 +1259,7 @@ class DocumentPublicationCommitIT {
         var process=builder.start();
         try {
             assertThat(process.waitFor(45,java.util.concurrent.TimeUnit.SECONDS)).as("fresh reader exits; log: %s",output).isTrue();
-            assertThat(process.exitValue()).as("fresh reader status; log: %s",output).isEqualTo(expectedExit);
+            assertThat(process.exitValue()).as("fresh reader status; log: %s\n%s",output,java.nio.file.Files.readString(output)).isEqualTo(expectedExit);
         } finally {
             if(process.isAlive()) {
                 process.destroyForcibly();

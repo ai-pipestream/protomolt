@@ -64,6 +64,7 @@ class ManagedDocumentHostIT {
             try (var host = RepoServices.build(config)) {
                 host.startInProcess("document-host-" + UUID.randomUUID());
                 assertThat(host.documentPublication()).isNotNull();
+                assertThat(host.documentHistory()).isSameAs(host.documentHistory());
                 // Managed archive and document readers share the incarnation ledger.
                 assertThat(count("ACTIVE")).isEqualTo(2);
                 assertThat(count("QUIESCED")).isEqualTo(1 + 2 * restart);

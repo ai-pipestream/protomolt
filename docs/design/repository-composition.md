@@ -2879,6 +2879,35 @@ The host must supply authenticated account and ACL bindings. The default
 not infer account membership from request fields or grant broad authority to
 make the historical path work.
 
+The shared Java historical operation is now `HistoricalDocumentRepository` in
+`repo/spi`, implemented by `DocumentHistoricalOperations` in `repo/engine`.
+`readRaw` returns the captured manifest and read-only fragment buffers with full
+revision ordinals. It preserves opaque `Any` bytes without deserializing them or
+claiming schema validity. `readValidated` returns the reconstructed document and
+retained policy/command identity after validation with the current runtime. It
+does not resolve through a live registry or fall back to raw delivery. Both paths
+bind the caller, address and exact revision, and reauthorize delivery before
+returning content or detailed post-capture failures. Cancellation and deadline
+failures remain generic.
+
+Results own payload reservations and pin uses until close. Their content is
+borrowed: the caller must keep the result open through consumption or transport
+serialization. Close releases local resources; it performs no SQL. Host maintenance
+releases drained pins. At full read capacity, historical admission and publication
+preparation attempt one bounded drained-handle release outside the lifetime lock.
+Live uses and uncertain captures remain protected; failed SQL cleanup is visible.
+This prevents promptly closed sequential reads from blocking subsequent reads or
+publication solely while waiting for the periodic maintenance tick. Concurrent
+callers can still exhaust capacity and receive an explicit refusal.
+
+`ManagedDocumentServices` shares the historical facade's reader, ledger and byte
+budget with its publication runtime, which remains the sole lifecycle owner.
+The host accessor is package-private. No historical gRPC endpoint is mounted by
+this change. Real-provider acceptance covers opaque bytes, typed reconstruction,
+sequential capacity reuse, revocation after provider reads, and a fresh JVM reading
+a dynamic archived type after policy advancement without a live registry. Missing
+retained definitions remain a data-loss failure, rather than an opaque downgrade.
+
 Acceptance follows one real flow: publish through the shared coordinator, receive
 its revision identity, read that revision locally and through an in-process gRPC
 server backed by PostgreSQL and a real provider adapter, then gracefully restart
