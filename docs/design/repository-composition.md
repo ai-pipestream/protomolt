@@ -4106,8 +4106,9 @@ ownership, database-time expiry and observed-evidence scope before acknowledgeme
 An absent owner is only a not-observed result, not rollback evidence or permission
 to create a replacement. A different UUID for an existing generation conflicts.
 This internal participant neither publishes bytes nor grants semantic-review or
-payload-read authority. The current call requires the original scoped observed
-evidence; restart reconstruction and a public entry point are not enabled.
+payload-read authority. The same-process call checks the original observed scope;
+the retained-evidence entry described below does not require that scope. Separate-
+process restart qualification and a public entry point are not enabled.
 The production-runtime probe covers successful acknowledgement of valid/invalid
 stages, absence, principal/UUID mismatch, changed selection and deadline, and a
 subsequent policy revision. It waits for the stored deadline using database time
@@ -4129,7 +4130,7 @@ shared read gate and association verifier, not the full observed handler. End-to
 revoked-access, legacy-snapshot and restart qualification remain required before
 public exposure.
 
-#### Restart acknowledgement contract (implementation pending)
+#### Restart acknowledgement contract (separate-process qualification pending)
 
 Acknowledging a committed stage after restart must not require rerunning semantic
 validation or fetching candidate bytes. The coordinator must durably retain the
@@ -4152,7 +4153,7 @@ placement independence, not process-restart support by itself. Current selection
 or source pointers, byte reacquisition and current upload leases/staging claims
 remain outside acknowledgement.
 
-A restart acknowledgement will check the supplied command and authenticated
+The internal `observeRetained` entry checks the supplied command and authenticated
 identity, acquire the live operation fence and current read authorization, then
 lock the retained owner. Decode its bounded canonical manifest as stored identity,
 not as a fresh observed-runtime or validation claim. Match its schema/root reference
@@ -4164,3 +4165,25 @@ precede returning only assessment UUID, manifest digest and deadline. No provide
 read, schema registry lookup, current-policy evaluation or semantic-review authority
 belongs in this acknowledgement. Durable candidate readers and fresh independent
 semantic replay remain separate work with their own retention and revocation gates.
+
+`DocumentAssessmentRetainedEvidence` decodes the persisted canonical manifest
+against the requested digest with the real contract codec. It verifies operation,
+principal, account, generation, command and complete member identity, then projects
+the exact schema and root reference sets. Stored artifact/root bytes are checked
+using fresh SQL digests and bounded aggregate lengths; root fragment identities
+must match the command's original upload or reuse declarations. This checks the
+historical record's integrity, not the truth of a new candidate validation result.
+Manifest reads reserve three maximum-sized payload buffers before SQL for JDBC,
+the returned array and its immutable copy; codec decoding and snapshot comparison
+reserve separately. Interrupted acknowledgement is refused even with a no-op
+caller callback.
+
+The production-runtime probe closes the original assessment and borrowed evidence,
+confirms their payload reservations are released, then acknowledges the retained
+stage from a reconstructed command and owner identity. Wrong manifest digests and
+owner nonces are refused. It also checks interruption on entry and interruption
+raised by the final caller callback; both must refuse acknowledgement and release
+payload reservations. The final-callback regression failed before the second
+interrupt check was added. Upload selection identities in this fixture still come
+from the original process, so this is closed-scope qualification, not a separate-
+process restart test.

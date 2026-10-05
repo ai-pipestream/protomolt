@@ -19,7 +19,9 @@ public final class AssessmentCreationProbe {
                         .setMaxRoots(100).setMaxEvidenceBytes(4_000_000).setMaxBindings(20).setMaxRetainedBytes(16_000_000)
                         .setMaxDecodedBytes(1_000_000)).build(), () -> {});
         var active = new DocumentSchemaPolicies(tx).activate(policy, 0, () -> {});
-        for (boolean invalid : new boolean[]{false, true}) {
+        for (int scenario : new int[]{0, 2, 1}) {
+            boolean invalid = scenario == 1;
+            boolean afterScope = scenario == 2;
             var a = ObservedAssessmentProbe.member("a"); var b = ObservedAssessmentProbe.member("b");
             var command = new DocumentPublicationCommand(DocumentPublicationIntent.newBuilder().setEncodingVersion(1)
                     .setOperationId(UUID.randomUUID().toString()).setAccountId("account").addMembers(a.member()).addMembers(b.member()).build());
@@ -57,6 +59,7 @@ public final class AssessmentCreationProbe {
             }
             var budget = new PayloadBudget(64_000_000);
             var payload = invalid ? ObservedAssessmentProbe.invalidSchema() : ObservedAssessmentProbe.asset(StringValue.getDescriptor());
+            DocumentAssessmentCreation.Created retained;
             try (var assessment = DocumentPublicationAssessment.prepare(command, active,
                     Map.of("a", DocumentPublicationCandidate.Mode.TYPED, "b", DocumentPublicationCandidate.Mode.OPAQUE),
                     Map.of("a", a.fragments(), "b", b.fragments()), Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())),
@@ -64,9 +67,9 @@ public final class AssessmentCreationProbe {
                     new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), Instant.now(), () -> {})) {
                 require(assessment.failure().isPresent() == invalid, "real semantic result");
                 UUID id = UUID.randomUUID();
-                Instant deadline = Instant.now().plusSeconds(invalid ? 120 : 8).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+                Instant deadline = Instant.now().plusSeconds(invalid || afterScope ? 120 : 8).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
                 long before = budget.reservedBytes();
-                assessment.withRetentionEvidence(owner, observation, () -> {}, evidence -> {
+                retained = assessment.withRetentionEvidence(owner, observation, () -> {}, evidence -> {
                     var writer = new DocumentAssessmentCreation(tx, drives);
                     var wrong = new RepositoryOperationLedger.Owner(owner.key(), owner.generation() + 1, owner.token(), owner.leaseUntil());
                     try { writer.create(caller, wrong, prepared, selected, evidence, id, deadline, budget, () -> {}); throw new AssertionError("wrong owner accepted"); }
@@ -111,14 +114,14 @@ public final class AssessmentCreationProbe {
                     try (var snapshot = DocumentAssessmentSlotSnapshot.encode(new DocumentAssessmentSlotSnapshot.Identity(
                             id, owner.key(), owner.generation(), command.sha256(), evidence.manifestSha256(() -> {}), deadline),
                             retainedSlots, budget, () -> {})) {
-                        Object[] retained = tx.readOnly(em -> (Object[]) em.createNativeQuery("""
+                        Object[] snapshotRow = tx.readOnly(em -> (Object[]) em.createNativeQuery("""
                                 SELECT snapshot_codec,snapshot_version,snapshot_bytes,encode(snapshot_sha256,'hex')
                                 FROM document_assessment_slot_snapshots WHERE assessment_id=:id
                                 """).setParameter("id", id).getSingleResult());
-                        require(retained[0].equals(DocumentAssessmentSlotSnapshot.CODEC)
-                                && ((Number) retained[1]).intValue() == DocumentAssessmentSlotSnapshot.VERSION
-                                && ByteString.copyFrom((byte[]) retained[2]).equals(snapshot.bytes())
-                                && retained[3].equals(snapshot.sha256()), "exact retained slot snapshot");
+                        require(snapshotRow[0].equals(DocumentAssessmentSlotSnapshot.CODEC)
+                                && ((Number) snapshotRow[1]).intValue() == DocumentAssessmentSlotSnapshot.VERSION
+                                && ByteString.copyFrom((byte[]) snapshotRow[2]).equals(snapshot.bytes())
+                                && snapshotRow[3].equals(snapshot.sha256()), "exact retained slot snapshot");
                     }
                     var slotIdentity = new DocumentAssessmentSlotSnapshot.Identity(id, owner.key(), owner.generation(),
                             command.sha256(), evidence.manifestSha256(() -> {}), deadline);
@@ -156,7 +159,7 @@ public final class AssessmentCreationProbe {
                         try { reconciliation.observe(caller, owner, command, DocumentAssessmentRetainedSlots.uploadSelections(selected), evidence, id, deadline, budget, () -> {});
                             throw new AssertionError("terminal operation acknowledged as active"); }
                         catch (RuntimeException expected) { require(hasMessage(expected, "Repository operation is terminal"), "terminal fence refusal"); }
-                    } else {
+                    } else if (!afterScope) {
                         // Wait for real database time; never rewrite immutable retention metadata.
                         tx.readOnly(em -> em.createNativeQuery("""
                                 SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM retain_until-clock_timestamp()))+0.02)
@@ -179,6 +182,54 @@ public final class AssessmentCreationProbe {
                         "no publication; only explicitly requested cancellation creates a terminal decision");
             }
             require(budget.reservedBytes() == 0, "assessment reservations released");
+            if (afterScope) {
+                // No DocumentPublicationAssessment, borrowed evidence, upload plan or
+                // registry resolver is passed into this reconstructed request.
+                var recoveredCommand = new DocumentPublicationCommand(DocumentPublicationIntent.parseFrom(command.intent().toByteArray()));
+                var recoveredOwner = new RepositoryOperationLedger.Owner(new RepositoryOperationLedger.Key(owner.key().account(),
+                        owner.key().principal(), UUID.fromString(owner.key().operationId().toString())), owner.generation(),
+                        UUID.fromString(owner.token().toString()), Instant.parse(owner.leaseUntil().toString()));
+                var recoveryBudget = new PayloadBudget(64_000_000);
+                var recovery = new DocumentAssessmentReconciliation(tx);
+                var selections = DocumentAssessmentRetainedSlots.uploadSelections(selected);
+                require(recovery.observeRetained(caller, recoveredOwner, recoveredCommand, selections, retained.assessment(),
+                        retained.manifestSha256(), retained.retainUntil(), recoveryBudget, () -> {}).orElseThrow().equals(retained),
+                        "closed-scope evidence acknowledged from durable identities");
+                try { recovery.observeRetained(caller, recoveredOwner, recoveredCommand, selections, retained.assessment(),
+                        "00".repeat(32), retained.retainUntil(), recoveryBudget, () -> {}); throw new AssertionError("different manifest adopted"); }
+                catch (IllegalStateException expected) { require(expected.getMessage().contains("requested original stage"), "wrong digest refusal"); }
+                var wrongNonce = new RepositoryOperationLedger.Owner(recoveredOwner.key(), recoveredOwner.generation(), UUID.randomUUID(), recoveredOwner.leaseUntil());
+                try { recovery.observeRetained(caller, wrongNonce, recoveredCommand, selections, retained.assessment(),
+                        retained.manifestSha256(), retained.retainUntil(), recoveryBudget, () -> {}); throw new AssertionError("different owner nonce adopted"); }
+                catch (RepositoryOperationLedger.OwnerFencedException expected) { /* exact live-fence refusal */ }
+                Thread.currentThread().interrupt();
+                try {
+                    try { recovery.observeRetained(caller, recoveredOwner, recoveredCommand, selections, retained.assessment(),
+                            retained.manifestSha256(), retained.retainUntil(), recoveryBudget, () -> {});
+                        throw new AssertionError("interrupted acknowledgement succeeded"); }
+                    catch (java.util.concurrent.CancellationException expected) {
+                        require(expected.getMessage().contains("acknowledgement interrupted"), "interrupt refusal before SQL");
+                    }
+                } finally { Thread.interrupted(); }
+                var checkpoints = new java.util.concurrent.atomic.AtomicInteger();
+                recovery.observeRetained(caller, recoveredOwner, recoveredCommand, selections, retained.assessment(),
+                        retained.manifestSha256(), retained.retainUntil(), recoveryBudget, checkpoints::incrementAndGet).orElseThrow();
+                int finalCheckpoint = checkpoints.get();
+                require(finalCheckpoint > 1, "acknowledgement includes a final control checkpoint");
+                checkpoints.set(0);
+                try {
+                    try { recovery.observeRetained(caller, recoveredOwner, recoveredCommand, selections, retained.assessment(),
+                            retained.manifestSha256(), retained.retainUntil(), recoveryBudget, () -> {
+                                if (checkpoints.incrementAndGet() == finalCheckpoint) Thread.currentThread().interrupt();
+                            });
+                        throw new AssertionError("final callback interruption acknowledged success"); }
+                    catch (java.util.concurrent.CancellationException expected) {
+                        require(expected.getMessage().contains("acknowledgement interrupted"), "final callback interrupt refusal");
+                    }
+                } finally { Thread.interrupted(); }
+                require(recoveryBudget.reservedBytes() == 0, "durable acknowledgement reservations released");
+                System.out.println("CLOSED_SCOPE_ASSESSMENT_ACK_OK");
+            }
         }
         System.out.println("OBSERVED_ASSESSMENT_CREATION_OK");
     }

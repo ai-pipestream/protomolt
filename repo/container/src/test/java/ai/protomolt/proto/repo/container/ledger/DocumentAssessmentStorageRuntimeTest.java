@@ -70,7 +70,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 String result = Files.readString(log);
                 assertThat(process.exitValue()).as(result).isZero();
                 assertThat(result).contains("OBSERVED_SQL_HOST_OK");
-                assertThat(result).contains("OBSERVED_ASSESSMENT_CREATION_OK");
+                assertThat(result).contains("OBSERVED_ASSESSMENT_CREATION_OK", "CLOSED_SCOPE_ASSESSMENT_ACK_OK");
             } finally {
                 if (process.isAlive()) {
                     process.destroyForcibly();
