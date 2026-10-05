@@ -37,6 +37,7 @@ class DocumentPublicationPreparationJournalIT {
                 assertThat(budget.reservedBytes()).isEqualTo(DocumentPublicationPreparationCodec.encode(value).size());
                 var restored = loaded.record();
                 assertThat(restored.placements()).isEqualTo(value.placements());
+                bindModes(c, claim, 0);
                 var owner = new RepositoryOperationLedger(c.tx()).admit(restored.key(), restored.command(), restored.seeds().ownerNonce(), LEASE, claim)
                         .owner().orElseThrow();
                 var attempts = new DocumentOperationUploadAdmission(c.tx(), new DriveLedger(c.tx())).admit(CALLER, owner, restored.prepare());
@@ -92,12 +93,14 @@ class DocumentPublicationPreparationJournalIT {
             var value = input(c); var journal = new DocumentPublicationPreparationJournal(c.tx(), budget()); var claim = claim(c, value, LEASE);
             journal.save(CALLER, claim, value, NONE);
             var operations = new RepositoryOperationLedger(c.tx());
+            bindModes(c, claim, 0);
             operations.admit(value.key(), value.command(), value.seeds().ownerNonce(), Duration.ofSeconds(1), claim);
             var next = new DocumentPublicationPreparationRecord(value.key(), value.command(), DocumentPublicationSeeds.mint(value.key(), value.command()),
                     value.placements(), value.lease(), 1);
             assertThatThrownBy(() -> journal.save(CALLER, claim, next, NONE)).hasStackTraceContaining("exact expired predecessor");
             c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(1.1)").getSingleResult());
             journal.save(CALLER, claim, next, NONE);
+            bindModes(c, claim, 1);
             operations.takeOver(value.key(), value.command(), 1, next.seeds().ownerNonce(), LEASE, claim);
             journal.save(CALLER, claim, next, NONE);
             try (var loaded = journal.load(CALLER, claim, 1, NONE).orElseThrow()) {
@@ -195,6 +198,10 @@ class DocumentPublicationPreparationJournalIT {
         };
     }
     private static PayloadBudget budget() { return new PayloadBudget(2L*DocumentPublicationPreparationCodec.MAX_BYTES); }
+    private static void bindModes(Context c, RepositoryExecutionClaimLedger.Claim claim, long predecessor) {
+        new DocumentPublicationModesJournal(c.tx(), budget()).bind(CALLER, claim, predecessor,
+                Map.of("member-0", DocumentPublicationCandidate.Mode.TYPED, "member-1", DocumentPublicationCandidate.Mode.TYPED), NONE);
+    }
     private static RepositoryExecutionClaimLedger.Claim claim(Context c, DocumentPublicationPreparationRecord value, Duration lease) {
         return new RepositoryExecutionClaimLedger(c.tx()).acquire(value.key(), value.command(), UUID.randomUUID(), lease);
     }

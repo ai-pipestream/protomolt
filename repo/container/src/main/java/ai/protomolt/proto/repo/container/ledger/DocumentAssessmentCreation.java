@@ -40,6 +40,28 @@ final class DocumentAssessmentCreation {
         DocumentAdmissionAuthorization.requireCaller(caller, owner, command.intent().getAccountId());
         var selected = Map.copyOf(selections);
         var authorization = DocumentAdmissionAuthorization.prepare(plan);
+        if (owner.executionClaim().isPresent()) {
+            // Do not hold a SQL connection across private journal loading/decoding.
+            Runnable authorize = () -> tx.inTransaction(em -> {
+                control.run();
+                RepositoryOperationLedger.fenceLiveOwner(em, owner);
+                RepositoryOperationLedger.requireCommand(em, owner.key(), command);
+                DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, plan, authorization);
+                return null;
+            });
+            authorize.run();
+            try {
+                new DocumentPublicationModesJournal(tx, scratch).requireObservedModes(caller, owner, command, evidence.modes(control),
+                        new ai.protomolt.proto.repo.spi.RepositoryReadControl() {
+                            @Override public boolean isCancelled() { return false; }
+                            @Override public long remainingNanos() { return Long.MAX_VALUE; }
+                            @Override public void check() { control.run(); }
+                        });
+            } catch (RuntimeException failure) {
+                // Current denial takes precedence over a private journal failure.
+                authorize.run(); throw failure;
+            }
+        }
         var reuse = DocumentReuseAdmission.prepare(plan);
         var slotPlan = DocumentAssessmentSlots.prepare(command, control);
         var placements = plan.members().stream().map(DocumentUploadPlan.Member::placement).distinct()

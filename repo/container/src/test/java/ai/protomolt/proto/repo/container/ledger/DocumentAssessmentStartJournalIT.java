@@ -112,6 +112,21 @@ class DocumentAssessmentStartJournalIT {
         }
     }
 
+    @Test void partialJournalCannotUseLegacyAssessmentPath() {
+        try (var c = context(POSTGRES)) {
+            var state = setup(c);
+            assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+                RepositoryOperationLedger.fenceLiveOwner(em, state.owner());
+                // Controlled missing-state injection after normal journaled admission.
+                em.createNativeQuery("ALTER TABLE repository_publication_modes DISABLE TRIGGER repository_publication_modes_guard").executeUpdate();
+                em.createNativeQuery("DELETE FROM repository_publication_modes").executeUpdate();
+                em.createNativeQuery("ALTER TABLE repository_publication_modes ENABLE TRIGGER repository_publication_modes_guard").executeUpdate();
+                DocumentAssessmentStartJournal.requireCreation(em, state.owner(), state.value().command(), UUID.randomUUID(), Instant.now());
+                return null;
+            })).hasStackTraceContaining("Journaled assessment requires fixed modes");
+        }
+    }
+
     private static void insertAssessment(Context c, State state, UUID id, Instant deadline) {
         c.tx().inTransaction(em -> {
             RepositoryOperationLedger.fenceLiveOwner(em, state.owner());

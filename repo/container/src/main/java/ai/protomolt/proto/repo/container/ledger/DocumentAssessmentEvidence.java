@@ -31,6 +31,7 @@ final class DocumentAssessmentEvidence implements AutoCloseable {
     private List<Root> roots;
     private RepositoryOperationLedger.Key ownerKey;
     private long ownerGeneration;
+    private Map<String, DocumentPublicationCandidate.Mode> modes;
 
     /** Called only while the parent is busy, after its observed replay completed. */
     DocumentAssessmentEvidence(DocumentPublicationAssessment assessment, RepositoryOperationLedger.Owner owner,
@@ -44,7 +45,7 @@ final class DocumentAssessmentEvidence implements AutoCloseable {
         this.ownerGeneration = owner.generation();
         this.artifacts = Collections.unmodifiableMap(new TreeMap<>(assessment.artifacts()));
         var typed = assessment.typed();
-        var modes = assessment.modes();
+        modes = Map.copyOf(assessment.modes());
         var projected = DocumentAssessmentManifestCodec.decode(DocumentAssessmentManifestCodec.CODEC,
                 DocumentAssessmentManifestCodec.VERSION, manifest.bytes(control), manifest.sha256(control), reservations, control);
         var expected = DocumentAssessmentProjection.project(command, policy, assessment.evaluatedAt(), modes, typed,
@@ -129,6 +130,7 @@ final class DocumentAssessmentEvidence implements AutoCloseable {
 
     synchronized DocumentPublicationCommand command(Runnable control) { check(control); return command; }
     synchronized DocumentSchemaPolicies.Selection policy(Runnable control) { check(control); return policy; }
+    synchronized Map<String, DocumentPublicationCandidate.Mode> modes(Runnable control) { check(control); return modes; }
     synchronized Map<String, ByteString> artifacts(Runnable control) { check(control); return artifacts; }
     synchronized List<Root> roots(Runnable control) { check(control); return roots; }
     synchronized void requireOwner(RepositoryOperationLedger.Owner owner, Runnable control) {
@@ -153,5 +155,6 @@ final class DocumentAssessmentEvidence implements AutoCloseable {
         // busy guard. Drop borrowed byte references even if this handle escapes.
         manifest = null; command = null; policy = null; artifacts = Map.of(); roots = List.of();
         ownerKey = null; ownerGeneration = 0;
+        modes = Map.of();
     }
 }

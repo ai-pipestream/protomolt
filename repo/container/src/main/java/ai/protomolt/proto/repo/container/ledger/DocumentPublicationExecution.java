@@ -25,6 +25,7 @@ final class DocumentPublicationExecution {
     private final DocumentPublicationCommit publication;
     private final DocumentRevisionAssembly.Limits opaqueLimits;
     private final DocumentPublicationAssessmentExecution assessments;
+    private final DocumentPublicationModesJournal fixedModes;
 
     DocumentPublicationExecution(Tx tx, DriveLedger drives, DocumentReadLedger reads,
             DocumentUploadCoordinator uploads, DocumentRetainedReader retained, PayloadBudget budget,
@@ -37,6 +38,7 @@ final class DocumentPublicationExecution {
             DocumentRevisionAssembly.Limits opaqueLimits, boolean deliverEvents,
             DocumentPublicationAssessmentExecution assessments) {
         this.assessments = assessments;
+        fixedModes = new DocumentPublicationModesJournal(tx, budget);
         this.reads = Objects.requireNonNull(reads); this.opaqueLimits = Objects.requireNonNull(opaqueLimits);
         replay = new DocumentPublicationReplay(tx); policies = new DocumentSchemaPolicies(tx);
         rejections = new DocumentPublicationRejections(tx);
@@ -142,6 +144,7 @@ final class DocumentPublicationExecution {
         var pinned = reads.capture(admission, caller, owner, prepared);
         try (var assessed = preparation.assess(caller, owner, prepared, bodies, attributes, pinned, settings,
                 java.time.Instant.now(), control)) {
+            fixedModes.requireObservedModes(caller, owner, command, assessed.assessment().modes(), control);
             if (assessed.assessment().failure().isEmpty()) {
                 try (var candidate = assessed.promoteAccepted(control::check)) {
                     candidate.candidate().schemas().stage(artifacts, owner, control::check);
@@ -163,16 +166,20 @@ final class DocumentPublicationExecution {
             Optional<DocumentSchemaAdmission.Definition> container, DocumentPublicationCandidate.Resolver resolver,
             RepositoryReadControl control) throws InvalidProtocolBufferException {
         var command = prepared.plan().command();
+        var selectedModes = Map.copyOf(modes);
         var policy = policies.read(command.intent().getAccountId(), control::check);
-        var settings = new DocumentPublicationPreparation.Admission(policy, modes, container, resolver, opaqueLimits);
+        var settings = new DocumentPublicationPreparation.Admission(policy, selectedModes, container, resolver, opaqueLimits);
         reads.releaseDrainedAtCapacity(1);
         control.check();
         var pinned = reads.capture(admission, caller, owner, prepared);
-        try (var candidate = preparation.prepare(caller, owner, prepared, bodies, attributes, pinned, settings, control)) {
-            control.check();
-            candidate.candidate().schemas().stage(artifacts, owner, control::check);
-            return publication.commit(caller, owner, prepared, candidate.candidate().opaque(), candidate.selections(),
-                    candidate.candidate().schemas(), control::check);
+        try {
+            fixedModes.requireObservedModes(caller, owner, command, selectedModes, control);
+            try (var candidate = preparation.prepare(caller, owner, prepared, bodies, attributes, pinned, settings, control)) {
+                control.check();
+                candidate.candidate().schemas().stage(artifacts, owner, control::check);
+                return publication.commit(caller, owner, prepared, candidate.candidate().opaque(), candidate.selections(),
+                        candidate.candidate().schemas(), control::check);
+            }
         } finally {
             // Local close only. Failed/unfinished provider work still owns its Use;
             // lifecycle cleanup releases SQL pins only after actual drain.

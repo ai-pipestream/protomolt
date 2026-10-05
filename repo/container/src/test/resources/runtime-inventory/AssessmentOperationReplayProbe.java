@@ -20,7 +20,7 @@ public final class AssessmentOperationReplayProbe {
         var valid = ObservedAssessmentProbe.asset(StringValue.getDescriptor());
         var invalid = ObservedAssessmentProbe.invalidSchema();
         var current = policy;
-        for (int scenario = 0; scenario < 5; scenario++) {
+        for (int scenario = 0; scenario < 6; scenario++) {
             var caller = new RepositoryCaller("principal", true);
             var a = ObservedAssessmentProbe.member("a"); var b = ObservedAssessmentProbe.member("b");
             var intent = DocumentPublicationIntent.newBuilder().setEncodingVersion(1).setAccountId("account")
@@ -48,12 +48,14 @@ public final class AssessmentOperationReplayProbe {
             }
             final RepositoryOperationLedger.Owner owner;
             final DocumentOperationUploadAdmission.Prepared prepared;
-            if (scenario == 4) {
+            if (scenario >= 4) {
                 var seeds = DocumentPublicationSeeds.mint(key, command);
                 var saved = new DocumentPublicationPreparationRecord(key, command, seeds, placements, Duration.ofMinutes(5), 0);
                 var claim = new RepositoryExecutionClaimLedger(tx).acquire(key, command, UUID.randomUUID(), Duration.ofMinutes(5));
                 new DocumentPublicationPreparationJournal(tx, budget).save(caller, claim, saved, RepositoryReadControl.NONE);
-                new DocumentPublicationModesJournal(tx, budget).bind(caller, claim, 0, modes, RepositoryReadControl.NONE);
+                new DocumentPublicationModesJournal(tx, budget).bind(caller, claim, 0, scenario == 5
+                        ? Map.of("a", DocumentPublicationCandidate.Mode.TYPED, "b", DocumentPublicationCandidate.Mode.OPAQUE) : modes,
+                        RepositoryReadControl.NONE);
                 owner = new RepositoryOperationLedger(tx).admit(key, command, seeds.ownerNonce(), Duration.ofMinutes(5), claim).owner().orElseThrow();
                 prepared = saved.prepare();
             } else {
@@ -89,6 +91,17 @@ public final class AssessmentOperationReplayProbe {
                 if (mode == 1) require(assessment.typed().values().stream().allMatch(value -> value.failure().isPresent()),
                         "both typed members actually fail");
                 stage = assessment.withRetentionEvidence(owner, observation, () -> {}, evidence -> {
+                    if (mode == 5) {
+                        try {
+                            new DocumentAssessmentCreation(tx, drives).create(caller, owner, prepared, selected, evidence,
+                                    UUID.randomUUID(), Instant.now().plusSeconds(300).truncatedTo(java.time.temporal.ChronoUnit.MICROS), budget, () -> {});
+                            throw new AssertionError("Observed modes bypassed fixed journal choices");
+                        } catch (RepositoryException expected) {
+                            require(expected.code() == RepositoryException.Code.FAILED_PRECONDITION
+                                    && expected.getMessage().equals("Observed publication modes differ from fixed modes"), "exact mode mismatch refusal");
+                        }
+                        return null;
+                    }
                     new RepositorySchemaArtifacts(tx).stage(owner, command, List.copyOf(evidence.artifacts(() -> {}).values()), () -> {});
                     if (mode == 4) return JournaledAssessmentProbe.createWithLostAcknowledgment(tx, database, caller, owner,
                             command, prepared, selected, evidence, budget);
@@ -97,6 +110,13 @@ public final class AssessmentOperationReplayProbe {
                 });
             }
             require(budget.reservedBytes() == 0, "original assessment closed");
+            if (scenario == 5) {
+                long stages = tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM document_assessment_owners WHERE operation_id=:op")
+                        .setParameter("op", command.operationId()).getSingleResult()).longValue());
+                require(stages == 0, "mismatched modes never stage an assessment");
+                System.out.println("JOURNALED_OBSERVED_MODE_MISMATCH_OK");
+                continue;
+            }
             if (scenario == 0) {
                 var stricter = DocumentAdmissionPolicy.of(current.policy().definition().toBuilder()
                         .setMode(DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_TYPED_REQUIRED).build(), () -> {});

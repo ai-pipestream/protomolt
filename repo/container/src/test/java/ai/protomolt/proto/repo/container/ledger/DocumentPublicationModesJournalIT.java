@@ -78,13 +78,23 @@ class DocumentPublicationModesJournalIT {
         }
     }
 
-    @Test void firstBindingAfterOwnerAdmissionIsRefused() {
+    @Test void journaledOwnerAdmissionRequiresFixedModes() {
         try (var c = context(POSTGRES)) {
             var value = input(c); var budget = budget(); var claim = save(c, value, budget, LEASE);
-            new RepositoryOperationLedger(c.tx()).admit(value.key(), value.command(), value.seeds().ownerNonce(), LEASE, claim);
-            assertThatThrownBy(() -> new DocumentPublicationModesJournal(c.tx(), budget).bind(CALLER, claim, 0, MODES, NONE))
-                    .hasStackTraceContaining("must precede owner admission");
+            assertThatThrownBy(() -> new RepositoryOperationLedger(c.tx()).admit(value.key(), value.command(), value.seeds().ownerNonce(), LEASE, claim))
+                    .hasStackTraceContaining("Journaled owner requires fixed modes");
+            new DocumentPublicationModesJournal(c.tx(), budget).bind(CALLER, claim, 0, MODES, NONE);
+            assertThat(new RepositoryOperationLedger(c.tx()).admit(value.key(), value.command(), value.seeds().ownerNonce(), LEASE, claim).owner()).isPresent();
             assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @Test void journaledOwnerAdmissionRequiresSavedNonce() {
+        try (var c = context(POSTGRES)) {
+            var value = input(c); var budget = budget(); var claim = save(c, value, budget, LEASE);
+            new DocumentPublicationModesJournal(c.tx(), budget).bind(CALLER, claim, 0, MODES, NONE);
+            assertThatThrownBy(() -> new RepositoryOperationLedger(c.tx()).admit(value.key(), value.command(), UUID.randomUUID(), LEASE, claim))
+                    .hasStackTraceContaining("Journaled owner differs from preparation");
         }
     }
 
@@ -101,6 +111,45 @@ class DocumentPublicationModesJournalIT {
     }
 
     private static PayloadBudget budget() { return new PayloadBudget(32L * 1024 * 1024); }
+
+    @Test void scopedCallerCanCheckObservedModesWithoutReadingPrivateChoices() {
+        try (var c = context(POSTGRES)) {
+            var value = input(c); var budget = budget(); var claim = save(c, value, budget, LEASE);
+            var journal = new DocumentPublicationModesJournal(c.tx(), budget); journal.bind(CALLER, claim, 0, MODES, NONE);
+            var owner = new RepositoryOperationLedger(c.tx()).admit(value.key(), value.command(), value.seeds().ownerNonce(), LEASE, claim).owner().orElseThrow();
+            var scoped = new RepositoryCaller("principal", false, Set.of(value.key().account()), Set.of());
+            journal.requireObservedModes(scoped, owner, value.command(), MODES, NONE);
+            assertThatThrownBy(() -> journal.load(scoped, claim, 0, NONE)).isInstanceOfSatisfying(RepositoryException.class,
+                    failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.PERMISSION_DENIED));
+            assertThatThrownBy(() -> journal.requireObservedModes(scoped, owner, value.command(),
+                    Map.of("member-0", DocumentPublicationCandidate.Mode.TYPED, "member-1", DocumentPublicationCandidate.Mode.TYPED), NONE))
+                    .isInstanceOfSatisfying(RepositoryException.class, failure -> {
+                        assertThat(failure.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION);
+                        assertThat(failure.getMessage()).isEqualTo("Observed publication modes differ from fixed modes");
+                    });
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @Test void expiredJournaledClaimStillAllowsRecoveryFenceButNotWriteAuthority() {
+        try (var c = context(POSTGRES)) {
+            var value = input(c); var budget = budget(); var claim = save(c, value, budget, Duration.ofSeconds(1));
+            new DocumentPublicationModesJournal(c.tx(), budget).bind(CALLER, claim, 0, MODES, NONE);
+            var owner = new RepositoryOperationLedger(c.tx()).admit(value.key(), value.command(), value.seeds().ownerNonce(), Duration.ofSeconds(1), claim)
+                    .owner().orElseThrow();
+            c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(1.1)").getSingleResult());
+            c.tx().inTransaction(em -> {
+                em.createNativeQuery("SELECT fence_repository_operation_recovery(:a,:p,:o)")
+                        .setParameter("a", value.key().account()).setParameter("p", value.key().principal())
+                        .setParameter("o", value.key().operationId()).getSingleResult();
+                assertThat(em.createNativeQuery("SELECT require_repository_operation_recovery_fence(:a,:p,:o)")
+                        .setParameter("a", value.key().account()).setParameter("p", value.key().principal())
+                        .setParameter("o", value.key().operationId()).getSingleResult()).isEqualTo(true); return null;
+            });
+            assertThatThrownBy(() -> c.tx().inTransaction(em -> { return RepositoryOperationLedger.fenceLiveOwner(em, owner); }))
+                    .isInstanceOf(RepositoryExecutionClaimLedger.Fenced.class);
+        }
+    }
 
     @Test void loadRefusesSyntacticallyValidWrongMembersFromDirectSql() {
         try (var c = context(POSTGRES)) {

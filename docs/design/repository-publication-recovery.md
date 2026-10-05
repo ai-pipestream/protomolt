@@ -354,3 +354,35 @@ journal activation. An exact V81 preparation is the current durable signal: when
 it exists, absent V82 modes must refuse owner admission and assessment CREATE.
 V83 currently uses mode-row presence as the discriminator, allowing that partial
 state to reach the legacy path. Close this gap in SQL and shared Java creation.
+
+## Journal consumption guards (V84)
+
+An exact preparation now requires fixed modes and its saved owner nonce at owner
+admission and ordinary owner updates. Claim-only operations without a preparation
+remain explicit unjournaled primitives. Assessment creation uses preparation
+presence, rather than mode-row presence, to require modes and the committed start;
+a partial journal cannot silently take the legacy path. Recovery-only owner updates
+retain their existing exception so cleanup after claim expiry does not require
+new execution authority. A real red test caught that cleanup regression before
+adding the exception; the final test also refuses ordinary writes after expiry.
+
+The modes journal now has an internal pass/fail comparator for scoped callers.
+It checks operation/claim authority, reads bounded immutable state, and compares
+observed choices without returning private mode or preparation data. Its existing
+public-to-the-package recovery load remains process-authority-only. Shared assessed
+execution compares the owned observation before either accepted promotion or invalid
+artifact staging. Candidate execution freezes the requested map and compares it
+after authorized source capture, before preparation. Low-level assessment CREATE
+checks the observed evidence's already-verified modes after a short full-authorization
+preflight and reauthorizes failures before exposing them. CREATE still rechecks
+full authorization in its own mutation transaction. No SQL connection spans journal
+decoding or provider work.
+
+The new provider fixture deliberately stores one opaque choice but observes both
+members as typed under the typed-required policy. Direct assessment CREATE must
+refuse the mismatch before a stage is inserted. This is not a high-level artifact
+write-count test. The low-level publication commit helper still needs independent
+mode binding for direct callers; these guards do not establish complete enforcement
+of every internal write path. Automatic restored-session activation, process-crash
+recovery and the late-provider-effect policy remain unfinished. No throughput claim
+is made for the additional claimed-operation checks.

@@ -4,6 +4,7 @@ import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryException;
 import ai.protomolt.proto.repo.spi.RepositoryReadControl;
+import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.nio.charset.StandardCharsets;
@@ -29,6 +30,38 @@ final class DocumentPublicationModesJournal {
     Optional<Map<String, DocumentPublicationCandidate.Mode>> load(RepositoryCaller caller,
             RepositoryExecutionClaimLedger.Claim claim, long predecessor, RepositoryReadControl control) {
         requireProcess(caller, claim, control);
+        return loadRetained(caller, claim, predecessor, control);
+    }
+
+    /** Scoped callers receive only a comparison result, never private recovery state. */
+    void requireObservedModes(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentPublicationCommand command, Map<String, DocumentPublicationCandidate.Mode> observed,
+            RepositoryReadControl control) {
+        Objects.requireNonNull(control).check();
+        DocumentAdmissionAuthorization.requireCaller(caller, owner, command.intent().getAccountId());
+        if (!owner.key().operationId().equals(command.operationId())) throw new IllegalArgumentException("Mode command differs from owner");
+        if (owner.executionClaim().isEmpty()) return;
+        var claim = owner.executionClaim().orElseThrow();
+        boolean journaled = tx.inTransaction(em -> {
+            RepositoryOperationLedger.fenceLiveOwner(em, owner);
+            RepositoryOperationLedger.requireCommand(em, owner.key(), command);
+            return ((Number) em.createNativeQuery("""
+                    SELECT count(*) FROM repository_publication_preparations WHERE account_id=:a AND principal=:p
+                      AND operation_id=:o AND predecessor_generation=:g
+                    """).setParameter("a", owner.key().account()).setParameter("p", owner.key().principal())
+                    .setParameter("o", owner.key().operationId()).setParameter("g", owner.generation()-1).getSingleResult()).intValue()==1;
+        });
+        if (!journaled) return; // Explicit claim-only primitive, without a preparation journal.
+        var fixed = loadRetained(caller, claim, owner.generation()-1, control).orElseThrow(() ->
+                new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Fixed publication modes are absent"));
+        if (!fixed.equals(observed)) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                "Observed publication modes differ from fixed modes");
+        tx.inTransaction(em -> { RepositoryOperationLedger.fenceLiveOwner(em, owner); return null; });
+        control.check();
+    }
+
+    private Optional<Map<String, DocumentPublicationCandidate.Mode>> loadRetained(RepositoryCaller caller,
+            RepositoryExecutionClaimLedger.Claim claim, long predecessor, RepositoryReadControl control) {
         try (var reservation = budget.reserve(MAX_BYTES);
              var loaded = preparations.load(caller, claim, predecessor, control).orElseThrow(() ->
                      new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Publication preparation is absent"))) {
