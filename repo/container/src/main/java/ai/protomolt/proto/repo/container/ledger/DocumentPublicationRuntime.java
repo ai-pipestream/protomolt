@@ -76,9 +76,16 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
                 DocumentSchemaAdmission.Selection occurrence);
     }
 
+    @FunctionalInterface public interface SchemaScopes {
+        /** Open under the actual caller; the scope must authorize each occurrence, including cache hits. */
+        DocumentSchemaAdmission.Resolution open(RepositoryCaller caller, DocumentPublicationMember member,
+                RepositoryReadControl control);
+    }
+
     private final DocumentUploadCoordinator uploads;
     private final DocumentPublicationSessions sessions;
     private final DocumentReadLifecycle reads;
+    private final DocumentPublicationScopeCalls scopeCalls = new DocumentPublicationScopeCalls();
     private boolean stopping;
     private boolean stopped;
 
@@ -160,6 +167,22 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
     }
 
     /**
+     * Own lazily opened member resolution scopes until synchronous publication returns.
+     * Replay, opaque members and failures before schema selection open no scopes.
+     * Open/select/close run on the calling thread. The host still owns container schema
+     * inputs and the shared resolver/provider; all proof copies precede scope closure.
+     */
+    public DocumentPublicationResult executeScoped(RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<UUID, Placement> placements, Map<PayloadKey, PartObject> bodies, Map<String, String> attributes,
+            Map<String, Mode> modes, Optional<DocumentSchemaAdmission.Definition> container,
+            SchemaScopes schemas, RepositoryReadControl control) throws InvalidProtocolBufferException {
+        Objects.requireNonNull(command);
+        try (var call = scopeCalls.enter(); var scopes = new DocumentPublicationSchemaScopes(caller, command, schemas, control)) {
+            return execute(caller, command, placements, bodies, attributes, modes, container, scopes, control);
+        }
+    }
+
+    /**
      * Trusted host-authorized takeover; do not expose directly as a client RPC.
      * Empty grants ownership only, not publication or acceptance.
      */
@@ -202,7 +225,7 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
     }
 
     /** Refuse new calls. Accepted work may finish; this does not release borrowed resources. */
-    @Override public void close() { sessions.close(); }
+    @Override public void close() { scopeCalls.close(); sessions.close(); }
 
     /** One bounded maintenance pass; the host schedules and retries failures. */
     public synchronized int tick() {
@@ -219,6 +242,7 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
         stopping = true;
         close();
         if (!sessions.awaitIdle(remaining(budget, start))) return false;
+        if (!scopeCalls.awaitIdle(remaining(budget, start))) return false;
         uploads.close();
         if (!uploads.awaitIdle(remaining(budget, start))) return false;
         stopped = reads.shutdownStep(remaining(budget, start));

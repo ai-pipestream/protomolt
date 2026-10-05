@@ -76,7 +76,7 @@ public final class RegistrySchemaResolver implements AutoCloseable {
      * bound its own allocation and I/O timeout; this adapter cannot interrupt an
      * arbitrary synchronous provider. Use the owning thread for selection and close.
      */
-    public final class Attempt implements DocumentSchemaAdmission.Resolver, AutoCloseable {
+    public final class Attempt implements DocumentSchemaAdmission.Resolution {
         private final Thread thread = Thread.currentThread();
         private final Selector selector;
         private final Runnable control;

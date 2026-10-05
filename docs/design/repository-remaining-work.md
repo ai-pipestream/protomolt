@@ -31,6 +31,10 @@ features available. Recovery is one workstream, not the whole goal.
    abstractions. Separate authorized discovery from immutable artifact lookup.
    Follow the [bounded cache plan](repository-schema-cache.md); its first slice
    caches exact artifact bytes, not discovery grants or validation verdicts.
+   The optional registry adapter and native runtime-owned resolution scopes now
+   exist. Next qualify bounded sharing of concurrent registry loads and select
+   the authenticated registry context in managed-host composition. Keep provider
+   timeout/allocation and shutdown ownership explicit at that boundary.
    Establish tenant/security scope, exact schema identity, bounded ownership,
    eviction, concurrent lookup and cancellation before sharing cached entries.
    Test equal type URLs with different occurrence definitions, registry outage,

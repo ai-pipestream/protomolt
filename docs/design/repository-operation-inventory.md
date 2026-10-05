@@ -2,6 +2,14 @@
 
 ## Registry adapter addition (2026-10-05)
 
+- **New Java runtime entry:** `DocumentPublicationRuntime.executeScoped` owns lazy
+  member resolution scopes through publication and cleanup. Terminal replay and
+  opaque members do not open scopes. Runtime quiescence includes scope cleanup.
+- **Extended initial upload retry:** the coordinator can reuse an exact, live,
+  fully VERIFIED initial selection without provider writes. Partial, expired or
+  displaced selections still require recovery; arbitrary duplicate adoption is
+  not supported. The original low-level admission remains insert-only.
+
 - **New Java composition:** `RegistrySchemaResolver.open` creates a bounded,
   thread-confined attempt implementing the existing admission resolver. Every
   occurrence invokes host-authorized selection before leased descriptor reuse.

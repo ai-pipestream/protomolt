@@ -48,6 +48,14 @@ Closing the resolver rejects new work and evicts idle entries. Pinned entries re
 until their attempts close. The host must drain active attempts before closing the
 borrowed store; resolver close alone does not wait for blocked provider calls.
 
+For native publication, `DocumentPublicationRuntime.executeScoped` accepts a
+`SchemaScopes` factory. Return `resolver.open(...)` from that factory, capturing
+the supplied authenticated caller and member in the selector. The runtime opens
+scopes lazily only when typed selection is needed and closes them after execution.
+Terminal replay and opaque members do not open registry attempts. Runtime shutdown
+also waits through scope cleanup. A factory that allocates and fails before returning
+its scope must release its own partial allocation.
+
 The production dependency gate excludes Git/JGit, repository server/container,
 SQL, Kafka and object-store SDKs. Git is used only by the adapter's integration
 fixtures. Concurrent registry-load coalescing and managed repository-host mounting

@@ -17,6 +17,9 @@ each occurrence; a bounded attempt pins descriptors through admission's owned
 copies. Real Git fixtures cover missing artifacts, outage recovery, cancellation,
 context isolation and typed admission with a warm cache. This does not mount the
 adapter in managed repository services or coalesce concurrent registry calls.
+The native publication runtime now offers `executeScoped` to own per-member
+resolution attempts and include cleanup in shutdown quiescence. The adapter remains
+an optional host choice; repository container production dependencies exclude it.
 
 ## Existing seams
 

@@ -75,7 +75,8 @@ final class DocumentOperationUploadAdmission {
         }
     }
 
-    private record EncodedMember(DocumentUploadPlan.Member member, UUID token, DocumentAttemptPlanEncoding encoded) {}
+    record EncodedMember(DocumentUploadPlan.Member member, UUID token, DocumentAttemptPlanEncoding encoded) {}
+    record Admission(List<DocumentPartAttemptLedger.Attempt> attempts, boolean reusedVerified) {}
     private record UploadMember(DocumentUploadPlan.Member member, UUID token) {}
 
     /** Capture exact retained reads without creating attempts or claiming fresh upload selection. */
@@ -147,7 +148,12 @@ final class DocumentOperationUploadAdmission {
 
     /** All rows commit together; duplicate attempt identity fails without adopting existing bytes. */
     List<DocumentPartAttemptLedger.Attempt> admit(RepositoryCaller caller, RepositoryOperationLedger.Owner owner, Prepared prepared) {
-        return stage(caller, owner, prepared, Map.of());
+        return stage(caller, owner, prepared, Map.of(), false).attempts();
+    }
+
+    /** Exact initial VERIFIED reuse only; unfinished provider work requires separate recovery. */
+    Admission admitOrReuseVerified(RepositoryCaller caller, RepositoryOperationLedger.Owner owner, Prepared prepared) {
+        return stage(caller, owner, prepared, Map.of(), true);
     }
 
     /** Replaces only named uploading members; all command authorization is checked again. */
@@ -161,11 +167,11 @@ final class DocumentOperationUploadAdmission {
             if (upload.member.attempt().orElseThrow().id().equals(selections.get(upload.member.intent().getMemberId()).attempt()))
                 throw new IllegalArgumentException("Retry requires a new attempt identity");
         }
-        return stage(caller, owner, prepared, selections);
+        return stage(caller, owner, prepared, selections, false).attempts();
     }
 
-    private List<DocumentPartAttemptLedger.Attempt> stage(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
-            Prepared prepared, Map<String, DocumentOperationSelection.Expected> replacements) {
+    private Admission stage(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            Prepared prepared, Map<String, DocumentOperationSelection.Expected> replacements, boolean allowVerifiedReuse) {
         Objects.requireNonNull(owner); Objects.requireNonNull(prepared);
         var command = prepared.plan.command();
         DocumentAdmissionAuthorization.requireCaller(caller, owner, command.intent().getAccountId());
@@ -187,6 +193,10 @@ final class DocumentOperationUploadAdmission {
                         .orElseThrow(() -> new IllegalArgumentException("Selected backend generation is not registered"));
                 if (!actual.equals(placement.profile()))
                     throw new IllegalArgumentException("Selected backend profile differs from its immutable registration");
+            }
+            if (allowVerifiedReuse && DocumentUploadAdmissionReplay.hasSelections(em, owner)) {
+                requireInitialSelections(em, owner, prepared);
+                return new Admission(DocumentUploadAdmissionReplay.requireVerified(em, owner, uploads), true);
             }
             var admitted = new ArrayList<DocumentPartAttemptLedger.Attempt>(uploads.size());
             for (var upload : uploads) {
@@ -235,7 +245,7 @@ final class DocumentOperationUploadAdmission {
             em.createNativeQuery("SELECT require_repository_operation_write_fence(:account,:principal,:operation,:generation)")
                     .setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())
                     .setParameter("operation", owner.key().operationId()).setParameter("generation", owner.generation()).getSingleResult();
-            return List.copyOf(admitted);
+            return new Admission(List.copyOf(admitted), false);
         });
     }
 
@@ -247,6 +257,11 @@ final class DocumentOperationUploadAdmission {
         tx.inTransaction(em -> {
             RepositoryOperationLedger.fenceLiveOwner(em, owner);
             RepositoryOperationLedger.requireCommand(em, owner.key(), prepared.plan.command());
+            requireInitialSelections(em, owner, prepared);
+        });
+    }
+
+    private static void requireInitialSelections(EntityManager em, RepositoryOperationLedger.Owner owner, Prepared prepared) {
             boolean matches = (Boolean) em.createNativeQuery("""
                     WITH expected AS (
                       SELECT * FROM jsonb_to_recordset(CAST(:rows AS jsonb)) q(member_id text,node_id uuid,
@@ -263,6 +278,5 @@ final class DocumentOperationUploadAdmission {
                     .setParameter("principal", owner.key().principal()).setParameter("operation", owner.key().operationId())
                     .setParameter("generation", owner.generation()).getSingleResult();
             if (!matches) throw new DocumentPartAttemptLedger.FenceException("Prepared member selections differ from admission");
-        });
     }
 }

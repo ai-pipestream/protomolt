@@ -31,6 +31,8 @@ dependencies {
     assessmentHostRuntime project(':protomolt-repo-blob-s3')
     api project(':protomolt-repo-admission')
     testImplementation project(':protomolt-descriptors')
+    testImplementation project(':protomolt-repo-schema-registry')
+    testImplementation project(':protomolt-schema-registry-git')
     api project(':protomolt-repo-codec')
     api project(':protomolt-repo-blob-spi')
     testImplementation project(':protomolt-repo-blob-s3')

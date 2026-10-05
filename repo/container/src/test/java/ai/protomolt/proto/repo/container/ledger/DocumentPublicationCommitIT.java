@@ -59,7 +59,8 @@ class DocumentPublicationCommitIT {
 
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
-    void hostRuntimePublishesAndReplaysThenDrainsRealProviderResources(boolean typed) throws Exception {
+    void hostRuntimePublishesAndReplaysThenDrainsRealProviderResources(boolean typed,
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path registryDirectory) throws Exception {
         var fixture = fixture(1, 1, publicReadGrant(), "runtime-" + UUID.randomUUID(), typed);
         var command = new DocumentPublicationCommand(fixture.command.intent().toBuilder()
                 .setOperationId(UUID.randomUUID().toString()).build());
@@ -83,24 +84,54 @@ class DocumentPublicationCommitIT {
         var budget = new PayloadBudget(8_000_000);
         var reads = new DocumentReadLedger(tx, UUID.randomUUID());
         var selectedSchemas = new java.util.concurrent.atomic.AtomicInteger();
-        try (var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, selected) -> {
+        var payloadDefinition = DocumentSchemaRetentionFixture.definition(com.google.protobuf.StringValue.getDescriptor());
+        try (var registry = ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore.builder()
+                    .repositoryDir(registryDirectory).build();
+             var schemaCache = new ai.protomolt.proto.repo.schema.registry.RegistrySchemaResolver(registry,
+                    new ai.protomolt.proto.repo.admission.DocumentSchemaArtifactCache.Limits(8_000_000, 32, 4_000_000), 1, 32);
+             var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, selected) -> {
             assertThat(generation).isEqualTo(GENERATION); assertThat(selected).isEqualTo(profile);
             return opened.store();
         }, 4, 1_000_000, budget)) {
+            registry.putDescriptorSet(payloadDefinition.metadata().getArtifactSha256(), payloadDefinition.descriptors());
             var runtime = new DocumentPublicationRuntime(tx, drives, reads, reader, budget, (generation, selected) -> {
                 assertThat(generation).isEqualTo(GENERATION); assertThat(selected).isEqualTo(profile);
                 return new DocumentPublicationRuntime.Backend(profile.identity(), opened);
             }, LIMITS, new SqlTimeouts(Duration.ofSeconds(2), Duration.ofSeconds(5)),
                     4, Duration.ofMillis(25), LEASE, 4, 4_000_000, 100, false);
             try {
-                var result = runtime.execute(ADMIN, command, placements, bodies, Map.of(), modes,
+                if (typed) {
+                    var cancelled = new java.util.concurrent.CancellationException("after real registry resolution");
+                    assertThatThrownBy(() -> runtime.executeScoped(ADMIN, command, placements, bodies, Map.of(), modes,
+                            java.util.Optional.of(DocumentSchemaRetentionFixture.definition(Document.getDescriptor())),
+                            (caller, member, active) -> {
+                                var attempt = schemaCache.open(occurrence -> new ai.protomolt.proto.repo.schema.registry.RegistrySchemaResolver.Selected(
+                                        payloadDefinition.metadata(), payloadDefinition.source()), active::check);
+                                return new ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Resolution() {
+                                    public ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition select(
+                                            ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Selection occurrence) {
+                                        attempt.select(occurrence);
+                                        throw cancelled;
+                                    }
+                                    public void close() { attempt.close(); }
+                                };
+                            }, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isSameAs(cancelled);
+                    // One-attempt capacity must be reusable after cancellation.
+                    try (var available = schemaCache.open(occurrence -> { throw new AssertionError("capacity check only"); }, () -> {})) { }
+                    assertThat(budget.reservedBytes()).isZero();
+                }
+                var result = runtime.executeScoped(ADMIN, command, placements, bodies, Map.of(), modes,
                         typed ? java.util.Optional.of(DocumentSchemaRetentionFixture.definition(Document.getDescriptor())) : java.util.Optional.empty(),
-                        (caller, member, occurrence) -> {
+                        (caller, member, active) -> {
                             assertThat(caller).isSameAs(ADMIN);
                             assertThat(member).isEqualTo(command.intent().getMembers(0));
-                            selectedSchemas.incrementAndGet();
-                            return DocumentSchemaRetentionFixture.definition(com.google.protobuf.StringValue.getDescriptor());
+                            return schemaCache.open(occurrence -> {
+                                selectedSchemas.incrementAndGet();
+                                return new ai.protomolt.proto.repo.schema.registry.RegistrySchemaResolver.Selected(
+                                        payloadDefinition.metadata(), payloadDefinition.source());
+                            }, active::check);
                         }, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+                try (var available = schemaCache.open(occurrence -> { throw new AssertionError("capacity check only"); }, () -> {})) { }
                 assertThat(result.getMembersCount()).isEqualTo(1);
                 assertThat(selectedSchemas.get()).isEqualTo(typed ? 1 : 0);
                 var history = new ai.protomolt.proto.repo.engine.DocumentHistoricalOperations(reads, reader, budget);
@@ -165,7 +196,7 @@ class DocumentPublicationCommitIT {
                         NAMESPACE, 0, null, null, null, null, 0, 0L)
                         .withManagedStorage(new ai.protomolt.proto.repo.service.ManagedStoragePolicy(GENERATION, "native-commit-realm", true));
                 DocumentHistoricalTransportProbe.verifyHost(tx, hostConfig, published, typed);
-                assertThat(runtime.execute(ADMIN, command, Map.of(), Map.of(), Map.of(), Map.of(), java.util.Optional.empty(),
+                assertThat(runtime.executeScoped(ADMIN, command, Map.of(), Map.of(), Map.of(), Map.of(), java.util.Optional.empty(),
                         (caller, member, occurrence) -> { throw new AssertionError("Terminal replay must not resolve schemas"); },
                         ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isEqualTo(result);
                 var conflict = new DocumentPublicationCommand(command.intent().toBuilder()

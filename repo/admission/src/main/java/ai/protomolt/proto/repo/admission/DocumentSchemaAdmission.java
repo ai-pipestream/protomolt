@@ -141,6 +141,15 @@ public final class DocumentSchemaAdmission {
     /** Select an authorized immutable definition for this occurrence; failures propagate without fallback. */
     @FunctionalInterface public interface Resolver { Definition select(Selection occurrence); }
 
+    /**
+     * Owned resolver scope. Keep it open through admission's budgeted copies; the
+     * returned definitions are borrowed. Close releases owned resources, is idempotent
+     * and must not throw. Hosts may impose thread affinity on a scope.
+     */
+    public interface Resolution extends Resolver, AutoCloseable {
+        @Override void close();
+    }
+
     /** Host bounds allocations and keeps collections stable throughout preparation, as for Request. */
     public record Preparation(ByteString commandSha256, String policySha256, boolean requireStructuredRoot,
                               DocumentPublicationMember member, Map<Integer, ByteString> fragments, Definition container) {

@@ -153,9 +153,9 @@ final class DocumentUploadCoordinator implements AutoCloseable {
                 check(control);
                 var backends = resolve(prepared, members);
                 check(control);
-                var admitted = replacements.isEmpty() ? admission.admit(caller, owner, prepared)
-                        : admission.retry(caller, owner, prepared, replacements);
-                var bindings = bind(prepared, admitted, replacements, backends);
+                var admitted = replacements.isEmpty() ? admission.admitOrReuseVerified(caller, owner, prepared)
+                        : new DocumentOperationUploadAdmission.Admission(admission.retry(caller, owner, prepared, replacements), false);
+                var bindings = bind(prepared, admitted.attempts(), replacements, backends, admitted.reusedVerified());
                 var selections = bindings.values().stream().map(Bound::selection).toList();
                 check(control);
                 operations.renew(owner, prepared.lease());
@@ -166,7 +166,7 @@ final class DocumentUploadCoordinator implements AutoCloseable {
                     rethrow(failure.get());
                     check(control);
                 };
-                var flusher = selections.isEmpty() ? null : new DocumentObservationFlusher(selected, owner, selections, flushAge, active,
+                var flusher = selections.isEmpty() || admitted.reusedVerified() ? null : new DocumentObservationFlusher(selected, owner, selections, flushAge, active,
                         cause -> failure.compareAndSet(null, cause));
                 // Both background tasks are drained before Use releases its private bytes.
                 T result;
@@ -256,7 +256,7 @@ final class DocumentUploadCoordinator implements AutoCloseable {
 
     private Map<UUID, Bound> bind(DocumentOperationUploadAdmission.Prepared prepared,
             List<DocumentPartAttemptLedger.Attempt> admitted, Map<String, DocumentOperationSelection.Expected> replacements,
-            Map<String, Backend> backends) {
+            Map<String, Backend> backends, boolean reusedVerified) {
         var attempts = admitted.stream().collect(Collectors.toMap(DocumentPartAttemptLedger.Attempt::id, a -> a));
         var expected = prepared.members().stream().filter(m -> m.attempt().isPresent()
                         && (replacements.isEmpty() || replacements.containsKey(m.intent().getMemberId())))
@@ -272,7 +272,7 @@ final class DocumentUploadCoordinator implements AutoCloseable {
             var backend = backends.get(placement.generation());
             if (!attempt.location().equals(plan.location()) || !attempt.storageRealm().equals(placement.profile().storageRealm())
                     || attempt.plannedCount() != plan.uploads().size() || !attempt.planKind().equals("NEW_CONTENT")
-                    || !attempt.state().equals("STAGING"))
+                    || !attempt.state().equals(reusedVerified ? "VERIFIED" : "STAGING"))
                 throw new IllegalStateException("Committed admission differs from prepared upload");
             String memberId = member.intent().getMemberId();
             long revision = replacements.isEmpty() ? 1 : Math.addExact(replacements.get(memberId).revision(), 1);

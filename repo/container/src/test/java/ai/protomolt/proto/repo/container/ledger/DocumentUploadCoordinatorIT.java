@@ -60,6 +60,67 @@ class DocumentUploadCoordinatorIT {
             DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
             Map<UUID, DocumentUploadPlan.Placement> placements, UUID attempt) {}
 
+    @Test void exactVerifiedInitialRetryDoesNotWriteProviderAgain() throws Exception {
+        var f = fixture(2, LEASE);
+        var puts = new java.util.concurrent.atomic.AtomicInteger();
+        var store = intercept((method, args, call) -> {
+            if (method.equals("put")) puts.incrementAndGet();
+            return call.call();
+        });
+        var budget = new PayloadBudget(1_000_000);
+        try (var coordinator = coordinator(store, budget, Duration.ofMillis(25))) {
+            var original = coordinator.stage(ADMIN, f.owner, f.prepared, f.bodies, Map.of(), () -> {});
+            int before = puts.get(); assertThat(before).isEqualTo(2);
+            var repeated = coordinator.stage(ADMIN, f.owner, f.prepared, f.bodies, Map.of(), () -> {});
+            assertThat(puts.get()).isEqualTo(before);
+            assertThat(repeated.members()).extracting(m -> m.attempt().id())
+                    .containsExactlyElementsOf(original.members().stream().map(m -> m.attempt().id()).toList());
+            assertThat(repeated.members()).allSatisfy(m -> assertThat(m.attempt().state()).isEqualTo("VERIFIED"));
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"staging", "token", "expired", "displaced", "command"})
+    void verifiedReuseRefusesUnfinishedOrChangedAuthority(String kind) throws Exception {
+        var f = fixture(1, kind.equals("expired") ? Duration.ofSeconds(3) : LEASE);
+        if (kind.equals("staging")) admission.admit(ADMIN, f.owner, f.prepared);
+        else try (var coordinator = coordinator(opened.store(), new PayloadBudget(1_000_000), Duration.ofMillis(25))) {
+            coordinator.stage(ADMIN, f.owner, f.prepared, f.bodies, Map.of(), () -> {});
+        }
+        var selected = f.prepared;
+        switch (kind) {
+            case "token" -> selected = DocumentOperationUploadAdmission.prepare(f.command, f.placements,
+                    Map.of("member", f.attempt), LEASE, Map.of("member", UUID.randomUUID()));
+            case "expired" -> {
+                long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+                while (!tx.readOnly(em -> (Boolean) em.createNativeQuery(
+                        "SELECT lease_until<=clock_timestamp() FROM document_part_attempts WHERE attempt_id=:id")
+                        .setParameter("id", f.attempt).getSingleResult())) {
+                    if (System.nanoTime() >= deadline) throw new AssertionError("Upload lease did not expire");
+                    Thread.sleep(25);
+                }
+            }
+            case "displaced" -> admission.retry(ADMIN, f.owner,
+                    DocumentOperationUploadAdmission.prepare(f.command, f.placements, Map.of("member", UUID.randomUUID()), LEASE),
+                    Map.of("member", new DocumentOperationSelection.Expected(1, f.attempt)));
+            case "command" -> {
+                var original = f.command.intent().getMembers(0);
+                var changed = new DocumentPublicationCommand(f.command.intent().toBuilder().setMembers(0,
+                        original.toBuilder().setParts(0, original.getParts(0).toBuilder().setUpload(
+                                original.getParts(0).getUpload().toBuilder().setSha256("a".repeat(64))))).build());
+                selected = DocumentOperationUploadAdmission.prepare(changed, f.placements, Map.of("member", f.attempt), LEASE,
+                        f.prepared.uploadTokens());
+            }
+            default -> { }
+        }
+        var retry = selected;
+        assertThatThrownBy(() -> admission.admitOrReuseVerified(ADMIN, f.owner, retry))
+                .isInstanceOf(kind.equals("command") ? RepositoryOperationLedger.CommandConflictException.class
+                        : DocumentPartAttemptLedger.FenceException.class);
+        assertThat(new DocumentPartAttemptLedger(tx).find(f.attempt)).isPresent();
+    }
+
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
     void preparationKeepsOwnerHeartbeatAndBorrowedBytesUntilCallbackEnds(boolean upload) throws Exception {
