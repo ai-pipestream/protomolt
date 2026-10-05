@@ -392,14 +392,19 @@ public final class ArchiveLedger {
                 && delta.renditionObjects().isEmpty()) {
             return;
         }
-        ArchiveStatsRecord stats = em.find(ArchiveStatsRecord.class,
-                new ArchiveStatsRecord.Key(accountId, archive),
-                LockModeType.PESSIMISTIC_WRITE);
+        var statsKey = new ArchiveStatsRecord.Key(accountId, archive);
+        ArchiveStatsRecord stats = em.find(ArchiveStatsRecord.class, statsKey, LockModeType.PESSIMISTIC_WRITE);
         if (stats == null) {
-            stats = new ArchiveStatsRecord();
-            stats.accountId = accountId;
-            stats.archive = archive;
-            em.persist(stats);
+            // A row lock cannot protect a missing row. Establish the shared counter
+            // identity atomically before locking it, including concurrent first writes
+            // from different repository hosts. Existing rows need no extra insert.
+            em.createNativeQuery("""
+                    INSERT INTO archive_stats(account_id,archive,entries,versions,retained_bytes,current_bytes)
+                    VALUES (:account,:archive,0,0,0,0)
+                    ON CONFLICT (account_id,archive) DO NOTHING
+                    """).setParameter("account", accountId).setParameter("archive", archive).executeUpdate();
+            stats = em.find(ArchiveStatsRecord.class, statsKey, LockModeType.PESSIMISTIC_WRITE);
+            if (stats == null) throw new IllegalStateException("Archive statistics disappeared after initialization");
         }
         stats.entries += delta.entries();
         stats.versions += delta.versions();

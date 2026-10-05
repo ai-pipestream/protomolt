@@ -1298,6 +1298,20 @@ lock lifetime is therefore not itself a defect. Qualification must verify that
 duplicate provider calls remain safe for the selected backend and quantify their
 load, including object replacement and concurrent recovery schedules.
 
+The first two-host regression uses independently assembled RepoServices with
+separate SQL pools, provider clients and TCP listeners in one JVM, sharing real
+PostgreSQL and LocalStack S3. Twelve independent entries alternate write hosts;
+the opposite host repeats each same-content write and creates the next revision,
+then the original host reads the retained first version. Exact aggregate counters
+must remain twelve entries and twenty-four versions. This exposed concurrent
+first creation of archive_stats: a pessimistic lookup could not lock a missing
+row, and competing inserts failed its primary key. Initialization now uses
+INSERT ON CONFLICT DO NOTHING followed by a fresh locked lookup on a miss.
+Existing counter rows keep their prior single locked lookup. The common archive
+counter still serializes the short statistics update; measure its contention in
+the separate-process load experiment. This regression does not prove process
+failure recovery, throughput scaling or the typed document publication path.
+
 ### Upload verification evidence at the provider boundary
 
 S3BlobStore.putRequest already supplies the expected SHA-256 through the S3

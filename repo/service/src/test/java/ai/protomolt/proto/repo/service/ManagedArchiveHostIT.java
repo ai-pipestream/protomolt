@@ -92,4 +92,75 @@ class ManagedArchiveHostIT {
             assertThatThrownBy(host::archiveMutationRepository).isInstanceOf(IllegalStateException.class).hasMessageContaining("closed");
         }
     }
+
+    /** Two independently assembled hosts in one JVM; not a process-failure or throughput benchmark. */
+    @Test void independentHostsShareConcurrentWritesReadsAndRetainedVersions() throws Exception {
+        var config = new RepoServiceConfig(0,
+                new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
+                S3.getEndpoint().toString(), S3.getRegion(), S3.getAccessKey(), S3.getSecretKey(),
+                "replica-host", 0, null, null, null, null, 0, 0L)
+                .withManagedStorage(new ManagedStoragePolicy("replica-original", "replica-realm", true));
+        String account = "replica-" + UUID.randomUUID();
+        String token = UUID.randomUUID().toString();
+        try (var first = RepoServices.build(config); var second = RepoServices.build(config)) {
+            var left = first.startNetty(0, token, null);
+            var right = second.startNetty(0, token, null);
+            var a = NettyChannelBuilder.forAddress("127.0.0.1", left.getPort()).usePlaintext().build();
+            io.grpc.ManagedChannel b = null;
+            try {
+                b = NettyChannelBuilder.forAddress("127.0.0.1", right.getPort()).usePlaintext().build();
+                var headers = new Metadata();
+                headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), token);
+                var credential = MetadataUtils.newAttachHeadersInterceptor(headers);
+                DriveServiceGrpc.newBlockingStub(a).withInterceptors(credential)
+                        .withDeadlineAfter(20, java.util.concurrent.TimeUnit.SECONDS).createDrive(
+                                CreateDriveRequest.newBuilder().setAccountId(account).setName("storage").build());
+                var stubA = ArchiveServiceGrpc.newBlockingStub(a).withInterceptors(credential);
+                var stubB = ArchiveServiceGrpc.newBlockingStub(b).withInterceptors(credential);
+                stubB.withDeadlineAfter(20, java.util.concurrent.TimeUnit.SECONDS).createArchive(
+                        CreateArchiveRequest.newBuilder().setArchive(Archive.newBuilder().setAccountId(account)
+                                .setName("records").setDriveName("storage")
+                                .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED)).build());
+                try (var workers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+                    var tasks = new java.util.ArrayList<java.util.concurrent.Future<?>>();
+                    for (int i = 0; i < 12; i++) {
+                        final int index = i;
+                        tasks.add(workers.submit(() -> {
+                            var writer = index % 2 == 0 ? stubA : stubB;
+                            var reader = index % 2 == 0 ? stubB : stubA;
+                            var address = EntryAddress.newBuilder().setAccountId(account).setArchive("records")
+                                    .setEntryId("entry-" + index).build();
+                            var bytes = ByteString.copyFromUtf8("replica payload " + index);
+                            var request = PutEntryRequest.newBuilder().setAddress(address).addRenditions(
+                                    RenditionContent.newBuilder().setRendition(RenditionDescriptor.newBuilder()
+                                            .setName("original")).setData(bytes)).build();
+                            var saved = writer.withDeadlineAfter(20, java.util.concurrent.TimeUnit.SECONDS).putEntry(request);
+                            var replay = reader.withDeadlineAfter(20, java.util.concurrent.TimeUnit.SECONDS).putEntry(request);
+                            assertThat(replay.getVersion()).isEqualTo(saved.getVersion());
+                            assertThat(replay.getEntryUuid()).isEqualTo(saved.getEntryUuid());
+                            assertThat(replay.getManifest().getRenditions(0).getStorageObjectId())
+                                    .isEqualTo(saved.getManifest().getRenditions(0).getStorageObjectId());
+                            var updated = reader.withDeadlineAfter(20, java.util.concurrent.TimeUnit.SECONDS).putEntry(
+                                    request.toBuilder().setRenditions(0, request.getRenditions(0).toBuilder()
+                                            .setData(ByteString.copyFromUtf8("updated " + index))).build());
+                            assertThat(updated.getVersion()).isEqualTo(saved.getVersion() + 1);
+                            var history = writer.withDeadlineAfter(20, java.util.concurrent.TimeUnit.SECONDS).getEntry(
+                                    GetEntryRequest.newBuilder().setAddress(address).setVersion(saved.getVersion()).build());
+                            assertThat(history.getRenditions(0).getData()).isEqualTo(bytes);
+                        }));
+                    }
+                    for (var task : tasks) task.get(60, java.util.concurrent.TimeUnit.SECONDS);
+                }
+                var stats = stubB.withDeadlineAfter(20, java.util.concurrent.TimeUnit.SECONDS).getArchiveStats(
+                        GetArchiveStatsRequest.newBuilder().setAccountId(account).setArchive("records").build()).getStats();
+                assertThat(stats.getEntries()).isEqualTo(12);
+                assertThat(stats.getVersions()).isEqualTo(24);
+            } finally {
+                a.shutdownNow();
+                if (b != null) b.shutdownNow();
+                a.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS);
+                if (b != null) b.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS);
+            }
+        }
+    }
 }
