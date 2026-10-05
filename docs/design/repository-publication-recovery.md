@@ -18,8 +18,8 @@ A retry of an uncertain write must discover the same record, not mint identities
 
 `DocumentPublicationSeeds` now makes the random identities explicit and validates
 exact uploading-member coverage and distinct capabilities. Structural restoration
-of those seeds grants no execution authority. Durable serialization and session
-restoration remain to be implemented.
+of those seeds grants no execution authority. Durable serialization and shared
+preparation storage are implemented below; session restoration remains unfinished.
 
 Persist the recovery-only stage-started marker before assessment CREATE. If a
 crash leaves that marker but no discoverable assessment, refuse to stage again;
@@ -163,8 +163,9 @@ Use a bounded, versioned deterministic encoding and check exact member/drive
 coverage, duplicate entries and command/key binding before reconstruction. Decoding
 grants no authority. Fixed modes, proposed claim-transfer identity and the sticky
 stage-started marker require their own committed transitions; they must not be
-lost through replacement of an immutable preparation blob. The complete journal
-and its process-crash qualification remain the next implementation work.
+lost through replacement of an immutable preparation blob. V81 implements the
+preparation journal; the remaining transitions and process-crash qualification
+are still required.
 
 ## Implemented preparation encoding
 
@@ -179,8 +180,35 @@ It retains exact seconds/nanos and sampled configuration without provider lookup
 Seven new tests, plus twelve existing seed/session cases, pass. They include real
 SQL admission from decoded identities and malformed/noncanonical/oversized input.
 The existing live preparation coordinator is unchanged. This is an encoding
-prerequisite, not a persisted journal or restored session. The journal must add
+prerequisite, not a restored session. V81 below adds the persisted journal with
 an independently retained full-blob digest and immutable row checks: the command
 digest alone does not bind seeds or placements. Encoded byte caps are not heap
 accounting; journal reads also need bounded concurrency/resources. Evidence is in
 `docs/evidence/repository/2026-10-05-preparation-codec/`.
+
+## Shared preparation journal (V81)
+
+The private SQL journal stores exact command bytes and the bounded preparation
+blob with independent SHA-256 checks. Inserts require a live execution claim.
+Initial preparation precedes operation admission; recovery preparation names an
+exact expired predecessor and a distinct next owner nonce. Existing records are
+immutable. Exact retries remain valid after admission; conflicting records fail.
+
+Command-only bootstrap requires trusted process authority and the recorded
+principal. Account membership alone does not grant recovery access. This private
+host operation is not a public document read or a substitute for current ACL
+checks when the recovered operation runs. Private preparation loads require the
+exact live claim both before fetching and after decoding. Decoding runs outside
+database locks. The returned borrowed record grants no later mutation authority;
+every subsequent mutation must independently fence its claim.
+
+Encoded storage is bounded and covered by the injected shared byte budget before
+allocation. A successful load retains its reservation until close; failure,
+cancellation and claim transfer release it. This is byte accounting, not a bound
+on all parsed heap. SQL immutability and full-blob integrity protect the retained
+identities without consulting current provider configuration.
+
+Automatic session restoration is still disabled. Fixed modes, sticky stage-started
+state, retained assessment coordinates, provider effects across claim transfer,
+and the forced-process-crash test remain required before activation. Preparation
+records cannot yet be pruned because the retention protocol is unfinished.
