@@ -1,0 +1,105 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v1;
+
+import "ai/protomolt/proto/repo/v1/address.proto";
+import "ai/protomolt/proto/repo/v1/document.proto";
+import "ai/protomolt/proto/repo/v1/manifest.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.v1";
+
+// Exact native revision reads. This contract is not yet mounted by RepoServices.
+// Current-document and partial-assembly RPCs retain their existing semantics.
+service DocumentHistoryService {
+  // Read-only and retryable under current authorization. The request never grants
+  // account membership. A successful envelope is at most 8 MiB when serialized;
+  // larger results fail RESOURCE_EXHAUSTED without truncation or mode fallback.
+  rpc ReadRevision(ReadRevisionRequest) returns (ReadRevisionResponse);
+}
+
+// Explicit choice between byte preservation and retained-contract validation.
+enum HistoricalDocumentReadMode {
+  // Unset is invalid; there is no implicit read mode.
+  HISTORICAL_DOCUMENT_READ_MODE_UNSPECIFIED = 0;
+  // Preserve original fragment bytes without decoding Any or claiming validity.
+  HISTORICAL_DOCUMENT_READ_MODE_RAW = 1;
+  // Reconstruct and validate against retained definitions with the current runtime.
+  HISTORICAL_DOCUMENT_READ_MODE_VALIDATED = 2;
+}
+
+// No latest-revision fallback or client-supplied authorization bindings.
+message ReadRevisionRequest {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "history-request-address"
+    message: "all four address coordinates must be nonblank and bounded"
+    expression: "[this.address.doc_id, this.address.graph_address_id, this.address.account_id, this.address.graph_id].all(s, s.matches('.*\\\\S.*') && size(s) <= 4096)"
+  };
+  // Exact four-part document identity.
+  NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Immutable revision UUID from publication, not an upload attempt or latest alias.
+  string revision_id = 2 [(ai.protomolt.proto.validate.v1.field).string = {uuid: true, pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}];
+  // RAW and VALIDATED have different response representations and guarantees.
+  HistoricalDocumentReadMode mode = 3 [(ai.protomolt.proto.validate.v1.field).enum = {defined_only: true, not_in: [0]}];
+}
+
+// One original present part, not an assembled document or a decoded Any payload.
+message HistoricalDocumentFragment {
+  // Index in the complete captured manifest, including empty/deleted slots.
+  // The handler checks unique, increasing ordinals and exact present-slot coverage.
+  uint32 revision_ordinal = 1 [(ai.protomolt.proto.validate.v1.field).uint32.lt = 10000];
+  // Original encoded part bytes. Hash/size must match the indexed manifest entry.
+  // A PRESENT zero-byte object is valid and differs from an EMPTY manifest slot.
+  bytes content = 2 [(ai.protomolt.proto.validate.v1.field).bytes.max_len = 8388608];
+}
+
+// Complete present-fragment set for the captured revision.
+message RawHistoricalDocument {
+  // Ordered by full revision ordinal; no empty/deleted placeholder payloads.
+  repeated HistoricalDocumentFragment fragments = 1 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 10000}];
+}
+
+// Retained-contract replay result, not a new semantic review or publication grant.
+message ValidatedHistoricalDocument {
+  // An envelope shape check is not retained-schema validation of this content.
+  Document document = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Retained admission profile; not a claim that a historical executable was run.
+  string validation_profile = 2 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 256, pattern: ".*\\S.*"}];
+  // Digest of the original retained admission policy, not the current policy.
+  string policy_sha256 = 3 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$"];
+  // Digest of the original canonical publication command, not a new evaluation.
+  bytes command_sha256 = 4 [(ai.protomolt.proto.validate.v1.field).bytes.len = 32];
+}
+
+// Validate this envelope before delivery. The handler also binds it to the exact
+// request address, revision and mode, verifies captured manifest/content identity,
+// enforces the aggregate serialized limit, and rechecks current READ authorization.
+// Shape validity alone proves neither authorization nor retained content validity.
+message ReadRevisionResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "history-response-mode"
+    message: "exactly one explicit historical representation is required"
+    expression: "has(this.raw) || has(this.validated)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "history-response-address"
+    message: "captured manifest and bounded nonblank address must agree"
+    expression: "this.manifest.address == this.address && [this.address.doc_id, this.address.graph_address_id, this.address.account_id, this.address.graph_id].all(s, s.matches('.*\\\\S.*') && size(s) <= 4096)"
+  };
+  // Captured address, equal to the request and manifest address.
+  NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Captured immutable revision UUID, equal to the request.
+  string revision_id = 2 [(ai.protomolt.proto.validate.v1.field).string = {uuid: true, pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}];
+  // Original document mutation revision; not a manifest version or JCR version.
+  int64 mutation_revision = 3 [(ai.protomolt.proto.validate.v1.field).int64.gt = 0];
+  // Complete captured part manifest; never looked up from a mutable latest row.
+  DocumentManifest manifest = 4 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Exactly the representation requested; handlers reject a mode mismatch.
+  oneof representation {
+    // Original bytes with no typed-validity claim.
+    RawHistoricalDocument raw = 5;
+    // Reconstructed content that passed retained-contract validation.
+    ValidatedHistoricalDocument validated = 6;
+  }
+}

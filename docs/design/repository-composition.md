@@ -2908,6 +2908,68 @@ sequential capacity reuse, revocation after provider reads, and a fresh JVM read
 a dynamic archived type after policy advancement without a live registry. Missing
 retained definitions remain a data-loss failure, rather than an opaque downgrade.
 
+#### Historical unary contract and transport obligations
+
+`document_history_service.proto` adds `DocumentHistoryService.ReadRevision` and
+standalone request/result messages. The operation is new and unmounted; existing
+document RPCs, messages, field numbers, imports and Any URLs are unchanged. The
+request selects an exact address, canonical revision UUID and explicit RAW or
+VALIDATED mode. The response repeats captured identity and manifest, with one
+representation. `mutation_revision` equals the native publication's recorded
+`publication_revision`: `DocumentCommitWriter` writes both from the committed
+document row's `mutationRevision`, also returned by `DocumentPublishedRevision`.
+This identity is unrelated to JCR version history or manifest version numbering.
+
+The initial transport is unary with an 8 MiB serialized protobuf response limit.
+The handler refuses larger results with RESOURCE_EXHAUSTED; it must not truncate,
+select latest, drop parts, or switch modes. A future streaming API needs explicit
+framing, completion identity and backpressure; it is not implied by this contract.
+The adapter must reserve application snapshot bytes before copying raw buffers,
+copy while the borrowed historical result is open, and retain the snapshot budget
+through call completion/cancellation and producer completion. An `onNext` return
+does not prove delivery. This budget accounts for the application's response
+snapshot, not all internal gRPC or network buffers. Bound concurrent calls as well
+as response size. Do not hold SQL locks across provider reads or serialization.
+
+Request validation runs before capture. Successful response validation runs before
+delivery, with DATA_LOSS for invalid server output. Runtime annotations enforce
+explicit modes, required alternatives, canonical UUIDs, scalar/count bounds,
+retained identity shape and manifest/address equality. A zero-byte PRESENT
+fragment is permitted, as it is by the publication upload contract; it differs
+from an EMPTY slot, which has no fragment. Native publication requires a present
+CORE declaration, so a raw result has at least one fragment. Handler obligations
+remain exact request/response identity and mode matching, complete ordered unique
+present ordinals, manifest size/hash agreement, total serialized bytes, retained
+schema validation, authorization and resource lifetime. Envelope validity alone
+does not establish valid payload data or semantic correctness.
+
+Authentication must use an explicit `CallerContexts.CALLER` entry and a trusted
+host binding that preserves the authenticated principal and process authority.
+Do not use `CallerContexts.current()`'s absent-context operator default, infer
+memberships from the requested account or scopes, or treat the account service's
+pass-through identity resolver as an authorization source. Missing authentication
+is UNAUTHENTICATED; an invalid host binding is PERMISSION_DENIED. Current repository
+authorization controls scoped visibility and NOT_FOUND behavior. The host does
+not yet supply a production membership/ACL resolver for this endpoint, so no
+public endpoint is enabled merely by generating the service definition.
+
+Read retries reuse the same immutable revision request but reevaluate current
+authorization. They create no publication, mutation receipt, or idempotency key.
+Opaque revisions refuse validated mode with FAILED_PRECONDITION. Missing or corrupt
+retained data produces DATA_LOSS; unsupported validation rules fail explicitly,
+without raw fallback. Cancellation/deadline returns only a generic status and
+retains pins until actual provider work and borrowed uses drain. A disconnected
+client must not cause publication or any semantic-review side effect.
+
+JSON Schema fixtures cover repeated bounds and retain cross-field CEL under
+`x-protomolt-cel`. Byte lengths count decoded bytes and remain runtime-only;
+`fieldValidationSchema` records that gap as `x-protomolt-runtime-rules: [bytes]`.
+Request/response correlation, stored hashes, authorization and the aggregate wire
+limit are handler obligations, not claims of JSON Schema/OpenAPI enforcement.
+No generator changes are part of this slice. Remaining adapter acceptance must
+run the same historical cases locally and over real in-process gRPC, plus a
+serialized transport test for response ownership, cancellation and size limits.
+
 Acceptance follows one real flow: publish through the shared coordinator, receive
 its revision identity, read that revision locally and through an in-process gRPC
 server backed by PostgreSQL and a real provider adapter, then gracefully restart
