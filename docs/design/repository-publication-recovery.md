@@ -263,3 +263,32 @@ in the transition transaction, at exact microsecond precision, and never refresh
 it on retry. Discovery is owner-generation scoped: a new generation must not
 silently adopt a predecessor's assessment. Resolve it under valid original-owner
 authority or classify it as unresolved pending an explicit recovery protocol.
+
+## Private fixed-mode journal (V82)
+
+The first durable transition now persists the member-to-mode map in a separate
+immutable JSONB row tied to the preparation and exact owner nonce. Binding loads
+the retained command and requires exact member coverage. SQL checks mode spellings,
+shape and size, requires a current transaction's live claim proof, and locks the
+preparation. New choices must precede the corresponding owner admission; exact
+retries remain allowed afterward. Same-operation writers serialize on the claim
+row before inserting. Changed choices, UPDATE and DELETE are refused.
+
+Private loading requires trusted process authority, verifies the saved owner and
+revalidates every member against the retained command, then fences the claim again
+before returning. SQL cannot parse protobuf command membership: a trusted direct
+SQL writer can insert a syntactically valid wrong-member map, but the loader rejects
+it as DATA_LOSS. A journal row alone must never be treated as validated authority.
+Equality is JSONB/map equality, not a new canonical protobuf or byte format.
+Serialized modes are capped at 1 MiB with a shared reservation; this does not account
+for all parsed heap. Preparation loading retains its independent byte reservation.
+
+Real PostgreSQL tests cover lost acknowledgment after commit, fresh-loader recovery,
+changed modes, member coverage, process-only access, late first binding, stale
+claims and two first writers contending on the actual claim lock. A deliberate
+wrong-member SQL row proves load-time rejection. The selected mode, preparation and
+claim suites pass; this is neither provider recovery nor a process-crash test.
+
+Session admission has not switched to this journal. Sticky assessment coordinates,
+SQL consumption guards, owner-transition rules and late provider effects still
+precede automatic recovery activation. Existing public contracts are unchanged.

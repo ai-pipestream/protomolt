@@ -1,0 +1,922 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.container.ledger.DocumentPublicationModesJournalIT" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-05T20:44:40.908Z" hostname="krick" time="14.151">
+  <properties/>
+  <testcase name="loadRefusesSyntacticallyValidWrongMembersFromDirectSql()" classname="ai.protomolt.proto.repo.container.ledger.DocumentPublicationModesJournalIT" time="2.917"/>
+  <testcase name="changedModesAndDirectUpdateOrDeleteAreRejected()" classname="ai.protomolt.proto.repo.container.ledger.DocumentPublicationModesJournalIT" time="1.074"/>
+  <testcase name="firstBindingAfterOwnerAdmissionIsRefused()" classname="ai.protomolt.proto.repo.container.ledger.DocumentPublicationModesJournalIT" time="0.842"/>
+  <testcase name="staleClaimCannotBindAndNewClaimCanRetryOriginalChoices()" classname="ai.protomolt.proto.repo.container.ledger.DocumentPublicationModesJournalIT" time="2.009"/>
+  <testcase name="exactRetrySurvivesLostAcknowledgmentAndOwnerAdmission()" classname="ai.protomolt.proto.repo.container.ledger.DocumentPublicationModesJournalIT" time="0.855"/>
+  <testcase name="missingExtraMembersAndAccountOnlyCallerAreRejected()" classname="ai.protomolt.proto.repo.container.ledger.DocumentPublicationModesJournalIT" time="0.792"/>
+  <testcase name="opposingFirstWritersSerializeOnClaimAndLoserRefusesChangedModes()" classname="ai.protomolt.proto.repo.container.ledger.DocumentPublicationModesJournalIT" time="0.844"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO org.testcontainers.images.PullPolicy - Image pull policy will be performed by: DefaultPullPolicy()
+[Test worker] INFO org.testcontainers.utility.ImageNameSubstitutor - Image name substitution will be performed by: DefaultImageNameSubstitutor (composite of 'ConfigurationFileImageNameSubstitutor' and 'PrefixingImageNameSubstitutor')
+[Test worker] INFO org.testcontainers.DockerClientFactory - Testcontainers version: 2.0.5
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Loaded org.testcontainers.dockerclient.UnixSocketClientProviderStrategy from ~/.testcontainers.properties, will try it first
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Found Docker environment with local Unix socket (unix:///var/run/docker.sock)
+[Test worker] INFO org.testcontainers.DockerClientFactory - Docker host IP address is localhost
+[Test worker] INFO org.testcontainers.DockerClientFactory - Connected to docker: 
+  Server Version: 29.8.1
+  API Version: 1.56
+  Operating System: Ubuntu 26.04.1 LTS
+  Total Memory: 124142 MB
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Creating container for image: testcontainers/ryuk:0.14.0
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 is starting: ccd694651f62e5766834c66ca1a95cb42131a6a808893656221e4c50208a5cff
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 started in PT0.489520884S
+[Test worker] INFO org.testcontainers.utility.RyukResourceReaper - Ryuk started - will monitor and terminate Testcontainers containers on JVM exit
+[Test worker] INFO org.testcontainers.DockerClientFactory - Checking the system...
+[Test worker] INFO org.testcontainers.DockerClientFactory - ✔︎ Docker server version should be at least 1.6.0
+[Test worker] INFO tc.postgres:18-alpine - Creating container for image: postgres:18-alpine
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine is starting: b68f638482bbd14f624b15594c86166ff7122bf37fed10d114d3dfde17164e1c
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine started in PT1.320130389S
+[Test worker] INFO tc.postgres:18-alpine - Container is started (JDBC URL: jdbc:postgresql://localhost:49111/test?loggerLevel=OFF)
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] INFO org.flywaydb.core.internal.database.base.Schema - Creating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" ...
+[Test worker] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory - Creating Schema History table "native_7ec49e44abe0455c95e4fbc04dfa74f9"."flyway_schema_history" ...
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "native_7ec49e44abe0455c95e4fbc04dfa74f9": null
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "1 - initial schema"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "2 - drive provider config"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "3 - document purges"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "4 - document events outbox"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "5 - document purges relayed at"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "6 - archive"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "7 - archive classification"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "8 - document mutation revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "9 - purge admission generation"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "10 - managed raw objects"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "11 - managed backend profiles"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "12 - archive mutation revisions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "13 - archive retained set revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "14 - archive object bindings"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "15 - archive upload admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "16 - archive version object references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "17 - provider backend identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "18 - archive object recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "19 - archive mutation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "20 - archive mutation observations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "21 - document part attempt admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "22 - document part publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "23 - document key reservations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "24 - abandoned document attempt cleanup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "25 - repository physical locations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "26 - repository retention bridge"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "27 - repository retirement"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "28 - archive reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "29 - shared archive reader locks"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "30 - archive read calls"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "31 - reader incarnation fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "32 - reader local quiescence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "33 - archive reader recovery order"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "34 - repository operation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "35 - repository operation write fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "36 - operation bound document attempts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "37 - document revision lock batches"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "38 - document revision projection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "39 - document revision retention"
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "40 - document operation selections"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "41 - document admission lock modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "42 - document operation selection history"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "43 - selected document attempt writes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "44 - document reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "45 - document reader batch release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "46 - document reader quiescent recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "47 - document reader recovery discovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "48 - repository schema artifact staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "49 - repository operation recovery fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "50 - repository schema replaced claim release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "51 - document event recording"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "52 - independent document publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "53 - native document coordinates"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "54 - revision physical lookup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "55 - document revision schema references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "56 - document revision schema evidence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "57 - document revision schema assets"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "58 - document schema policy catalog"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "59 - document schema policy publication fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "60 - document schema retention manifest"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "61 - document schema admission binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "62 - document schema container role"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "63 - document historical read pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "64 - repository operation rejection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "65 - repository retention lock set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "66 - document assessment staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "67 - document assessment artifacts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "68 - document assessment roots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "69 - document assessment slot snapshots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "70 - shared repository retention set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "71 - document assessment read sessions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "72 - document assessment read release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "73 - document assessment read identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "74 - reader registration identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "75 - nonnegative archive statistics"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "76 - admission rejection assessment binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "77 - rejected assessment read authority"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "78 - repository execution claims"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "79 - repository claim mutation fences"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "80 - single call execution claim fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "81 - private publication preparations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_7ec49e44abe0455c95e4fbc04dfa74f9" to version "82 - private publication modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Successfully applied 82 migrations to schema "native_7ec49e44abe0455c95e4fbc04dfa74f9", now at version v82 (execution time 00:00.367s)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-1 - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - HikariPool-1 - Added connection org.postgresql.jdbc.PgConnection@59498d94
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-1 - Start completed.
+Oct 05, 2026 4:44:46 PM org.hibernate.jpa.boot.spi.PersistenceXmlParser parsePersistenceXml
+WARN: HHH008518: Encountered multiple persistence-unit stanzas defining same name [document-ledger]; persistence-unit names must be unique
+Oct 05, 2026 4:44:46 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 4:44:46 PM org.hibernate.Version logVersion
+INFO: HHH000001: Hibernate ORM core version 7.4.10.Final
+Oct 05, 2026 4:44:47 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49111/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/native_7ec49e44abe0455c95e4fbc04dfa74f9
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 4:44:47 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-1 - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-1 - Shutdown completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] INFO org.flywaydb.core.internal.database.base.Schema - Creating schema "native_bbdb90ebf5a54958a5c369cb753c228c" ...
+[Test worker] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory - Creating Schema History table "native_bbdb90ebf5a54958a5c369cb753c228c"."flyway_schema_history" ...
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "native_bbdb90ebf5a54958a5c369cb753c228c": null
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "1 - initial schema"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "2 - drive provider config"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "3 - document purges"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "4 - document events outbox"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "5 - document purges relayed at"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "6 - archive"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "7 - archive classification"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "8 - document mutation revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "9 - purge admission generation"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "10 - managed raw objects"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "11 - managed backend profiles"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "12 - archive mutation revisions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "13 - archive retained set revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "14 - archive object bindings"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "15 - archive upload admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "16 - archive version object references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "17 - provider backend identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "18 - archive object recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "19 - archive mutation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "20 - archive mutation observations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "21 - document part attempt admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "22 - document part publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "23 - document key reservations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "24 - abandoned document attempt cleanup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "25 - repository physical locations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "26 - repository retention bridge"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "27 - repository retirement"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "28 - archive reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "29 - shared archive reader locks"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "30 - archive read calls"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "31 - reader incarnation fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "32 - reader local quiescence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "33 - archive reader recovery order"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "34 - repository operation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "35 - repository operation write fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "36 - operation bound document attempts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "37 - document revision lock batches"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "38 - document revision projection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "39 - document revision retention"
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "40 - document operation selections"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "41 - document admission lock modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "42 - document operation selection history"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "43 - selected document attempt writes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "44 - document reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "45 - document reader batch release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "46 - document reader quiescent recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "47 - document reader recovery discovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "48 - repository schema artifact staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "49 - repository operation recovery fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "50 - repository schema replaced claim release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "51 - document event recording"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "52 - independent document publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "53 - native document coordinates"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "54 - revision physical lookup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "55 - document revision schema references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "56 - document revision schema evidence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "57 - document revision schema assets"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "58 - document schema policy catalog"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "59 - document schema policy publication fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "60 - document schema retention manifest"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "61 - document schema admission binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "62 - document schema container role"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "63 - document historical read pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "64 - repository operation rejection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "65 - repository retention lock set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "66 - document assessment staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "67 - document assessment artifacts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "68 - document assessment roots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "69 - document assessment slot snapshots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "70 - shared repository retention set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "71 - document assessment read sessions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "72 - document assessment read release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "73 - document assessment read identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "74 - reader registration identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "75 - nonnegative archive statistics"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "76 - admission rejection assessment binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "77 - rejected assessment read authority"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "78 - repository execution claims"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "79 - repository claim mutation fences"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "80 - single call execution claim fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "81 - private publication preparations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_bbdb90ebf5a54958a5c369cb753c228c" to version "82 - private publication modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Successfully applied 82 migrations to schema "native_bbdb90ebf5a54958a5c369cb753c228c", now at version v82 (execution time 00:00.356s)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-2 - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - HikariPool-2 - Added connection org.postgresql.jdbc.PgConnection@43347199
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-2 - Start completed.
+Oct 05, 2026 4:44:49 PM org.hibernate.jpa.boot.spi.PersistenceXmlParser parsePersistenceXml
+WARN: HHH008518: Encountered multiple persistence-unit stanzas defining same name [document-ledger]; persistence-unit names must be unique
+Oct 05, 2026 4:44:49 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 4:44:49 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49111/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/native_bbdb90ebf5a54958a5c369cb753c228c
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 4:44:49 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 4:44:49 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 4:44:49 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Publication modes changed
+  Where: PL/pgSQL function protect_repository_publication_modes() line 18 at RAISE
+Oct 05, 2026 4:44:49 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 4:44:49 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Publication modes are immutable
+  Where: PL/pgSQL function protect_repository_publication_modes() line 4 at RAISE
+Oct 05, 2026 4:44:49 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 4:44:49 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Publication modes are immutable
+  Where: PL/pgSQL function protect_repository_publication_modes() line 4 at RAISE
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-2 - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-2 - Shutdown completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] INFO org.flywaydb.core.internal.database.base.Schema - Creating schema "native_61c4c03da1a54194a698122c506ee75f" ...
+[Test worker] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory - Creating Schema History table "native_61c4c03da1a54194a698122c506ee75f"."flyway_schema_history" ...
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "native_61c4c03da1a54194a698122c506ee75f": null
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "1 - initial schema"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "2 - drive provider config"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "3 - document purges"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "4 - document events outbox"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "5 - document purges relayed at"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "6 - archive"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "7 - archive classification"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "8 - document mutation revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "9 - purge admission generation"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "10 - managed raw objects"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "11 - managed backend profiles"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "12 - archive mutation revisions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "13 - archive retained set revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "14 - archive object bindings"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "15 - archive upload admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "16 - archive version object references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "17 - provider backend identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "18 - archive object recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "19 - archive mutation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "20 - archive mutation observations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "21 - document part attempt admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "22 - document part publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "23 - document key reservations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "24 - abandoned document attempt cleanup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "25 - repository physical locations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "26 - repository retention bridge"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "27 - repository retirement"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "28 - archive reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "29 - shared archive reader locks"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "30 - archive read calls"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "31 - reader incarnation fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "32 - reader local quiescence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "33 - archive reader recovery order"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "34 - repository operation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "35 - repository operation write fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "36 - operation bound document attempts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "37 - document revision lock batches"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "38 - document revision projection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "39 - document revision retention"
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "40 - document operation selections"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "41 - document admission lock modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "42 - document operation selection history"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "43 - selected document attempt writes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "44 - document reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "45 - document reader batch release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "46 - document reader quiescent recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "47 - document reader recovery discovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "48 - repository schema artifact staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "49 - repository operation recovery fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "50 - repository schema replaced claim release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "51 - document event recording"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "52 - independent document publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "53 - native document coordinates"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "54 - revision physical lookup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "55 - document revision schema references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "56 - document revision schema evidence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "57 - document revision schema assets"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "58 - document schema policy catalog"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "59 - document schema policy publication fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "60 - document schema retention manifest"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "61 - document schema admission binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "62 - document schema container role"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "63 - document historical read pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "64 - repository operation rejection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "65 - repository retention lock set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "66 - document assessment staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "67 - document assessment artifacts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "68 - document assessment roots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "69 - document assessment slot snapshots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "70 - shared repository retention set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "71 - document assessment read sessions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "72 - document assessment read release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "73 - document assessment read identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "74 - reader registration identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "75 - nonnegative archive statistics"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "76 - admission rejection assessment binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "77 - rejected assessment read authority"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "78 - repository execution claims"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "79 - repository claim mutation fences"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "80 - single call execution claim fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "81 - private publication preparations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_61c4c03da1a54194a698122c506ee75f" to version "82 - private publication modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Successfully applied 82 migrations to schema "native_61c4c03da1a54194a698122c506ee75f", now at version v82 (execution time 00:00.284s)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-3 - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - HikariPool-3 - Added connection org.postgresql.jdbc.PgConnection@106277d6
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-3 - Start completed.
+Oct 05, 2026 4:44:50 PM org.hibernate.jpa.boot.spi.PersistenceXmlParser parsePersistenceXml
+WARN: HHH008518: Encountered multiple persistence-unit stanzas defining same name [document-ledger]; persistence-unit names must be unique
+Oct 05, 2026 4:44:50 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 4:44:50 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49111/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/native_61c4c03da1a54194a698122c506ee75f
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 4:44:50 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 4:44:50 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 4:44:50 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Publication modes must precede owner admission
+  Where: PL/pgSQL function protect_repository_publication_modes() line 23 at RAISE
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-3 - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-3 - Shutdown completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] INFO org.flywaydb.core.internal.database.base.Schema - Creating schema "native_b9becdb5481b4def832067c6382695d9" ...
+[Test worker] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory - Creating Schema History table "native_b9becdb5481b4def832067c6382695d9"."flyway_schema_history" ...
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "native_b9becdb5481b4def832067c6382695d9": null
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "1 - initial schema"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "2 - drive provider config"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "3 - document purges"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "4 - document events outbox"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "5 - document purges relayed at"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "6 - archive"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "7 - archive classification"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "8 - document mutation revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "9 - purge admission generation"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "10 - managed raw objects"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "11 - managed backend profiles"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "12 - archive mutation revisions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "13 - archive retained set revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "14 - archive object bindings"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "15 - archive upload admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "16 - archive version object references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "17 - provider backend identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "18 - archive object recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "19 - archive mutation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "20 - archive mutation observations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "21 - document part attempt admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "22 - document part publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "23 - document key reservations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "24 - abandoned document attempt cleanup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "25 - repository physical locations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "26 - repository retention bridge"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "27 - repository retirement"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "28 - archive reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "29 - shared archive reader locks"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "30 - archive read calls"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "31 - reader incarnation fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "32 - reader local quiescence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "33 - archive reader recovery order"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "34 - repository operation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "35 - repository operation write fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "36 - operation bound document attempts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "37 - document revision lock batches"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "38 - document revision projection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "39 - document revision retention"
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "40 - document operation selections"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "41 - document admission lock modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "42 - document operation selection history"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "43 - selected document attempt writes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "44 - document reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "45 - document reader batch release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "46 - document reader quiescent recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "47 - document reader recovery discovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "48 - repository schema artifact staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "49 - repository operation recovery fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "50 - repository schema replaced claim release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "51 - document event recording"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "52 - independent document publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "53 - native document coordinates"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "54 - revision physical lookup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "55 - document revision schema references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "56 - document revision schema evidence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "57 - document revision schema assets"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "58 - document schema policy catalog"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "59 - document schema policy publication fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "60 - document schema retention manifest"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "61 - document schema admission binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "62 - document schema container role"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "63 - document historical read pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "64 - repository operation rejection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "65 - repository retention lock set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "66 - document assessment staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "67 - document assessment artifacts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "68 - document assessment roots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "69 - document assessment slot snapshots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "70 - shared repository retention set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "71 - document assessment read sessions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "72 - document assessment read release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "73 - document assessment read identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "74 - reader registration identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "75 - nonnegative archive statistics"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "76 - admission rejection assessment binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "77 - rejected assessment read authority"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "78 - repository execution claims"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "79 - repository claim mutation fences"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "80 - single call execution claim fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "81 - private publication preparations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_b9becdb5481b4def832067c6382695d9" to version "82 - private publication modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Successfully applied 82 migrations to schema "native_b9becdb5481b4def832067c6382695d9", now at version v82 (execution time 00:00.303s)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-4 - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - HikariPool-4 - Added connection org.postgresql.jdbc.PgConnection@1d38ca2b
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-4 - Start completed.
+Oct 05, 2026 4:44:51 PM org.hibernate.jpa.boot.spi.PersistenceXmlParser parsePersistenceXml
+WARN: HHH008518: Encountered multiple persistence-unit stanzas defining same name [document-ledger]; persistence-unit names must be unique
+Oct 05, 2026 4:44:51 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 4:44:51 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49111/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/native_b9becdb5481b4def832067c6382695d9
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 4:44:51 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-4 - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-4 - Shutdown completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] INFO org.flywaydb.core.internal.database.base.Schema - Creating schema "native_502682c9356b44f2ba37a9804c176cbc" ...
+[Test worker] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory - Creating Schema History table "native_502682c9356b44f2ba37a9804c176cbc"."flyway_schema_history" ...
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "native_502682c9356b44f2ba37a9804c176cbc": null
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "1 - initial schema"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "2 - drive provider config"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "3 - document purges"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "4 - document events outbox"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "5 - document purges relayed at"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "6 - archive"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "7 - archive classification"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "8 - document mutation revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "9 - purge admission generation"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "10 - managed raw objects"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "11 - managed backend profiles"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "12 - archive mutation revisions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "13 - archive retained set revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "14 - archive object bindings"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "15 - archive upload admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "16 - archive version object references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "17 - provider backend identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "18 - archive object recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "19 - archive mutation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "20 - archive mutation observations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "21 - document part attempt admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "22 - document part publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "23 - document key reservations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "24 - abandoned document attempt cleanup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "25 - repository physical locations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "26 - repository retention bridge"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "27 - repository retirement"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "28 - archive reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "29 - shared archive reader locks"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "30 - archive read calls"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "31 - reader incarnation fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "32 - reader local quiescence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "33 - archive reader recovery order"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "34 - repository operation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "35 - repository operation write fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "36 - operation bound document attempts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "37 - document revision lock batches"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "38 - document revision projection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "39 - document revision retention"
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "40 - document operation selections"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "41 - document admission lock modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "42 - document operation selection history"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "43 - selected document attempt writes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "44 - document reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "45 - document reader batch release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "46 - document reader quiescent recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "47 - document reader recovery discovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "48 - repository schema artifact staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "49 - repository operation recovery fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "50 - repository schema replaced claim release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "51 - document event recording"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "52 - independent document publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "53 - native document coordinates"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "54 - revision physical lookup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "55 - document revision schema references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "56 - document revision schema evidence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "57 - document revision schema assets"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "58 - document schema policy catalog"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "59 - document schema policy publication fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "60 - document schema retention manifest"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "61 - document schema admission binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "62 - document schema container role"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "63 - document historical read pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "64 - repository operation rejection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "65 - repository retention lock set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "66 - document assessment staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "67 - document assessment artifacts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "68 - document assessment roots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "69 - document assessment slot snapshots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "70 - shared repository retention set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "71 - document assessment read sessions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "72 - document assessment read release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "73 - document assessment read identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "74 - reader registration identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "75 - nonnegative archive statistics"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "76 - admission rejection assessment binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "77 - rejected assessment read authority"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "78 - repository execution claims"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "79 - repository claim mutation fences"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "80 - single call execution claim fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "81 - private publication preparations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_502682c9356b44f2ba37a9804c176cbc" to version "82 - private publication modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Successfully applied 82 migrations to schema "native_502682c9356b44f2ba37a9804c176cbc", now at version v82 (execution time 00:00.274s)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-5 - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - HikariPool-5 - Added connection org.postgresql.jdbc.PgConnection@74baaba6
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-5 - Start completed.
+Oct 05, 2026 4:44:53 PM org.hibernate.jpa.boot.spi.PersistenceXmlParser parsePersistenceXml
+WARN: HHH008518: Encountered multiple persistence-unit stanzas defining same name [document-ledger]; persistence-unit names must be unique
+Oct 05, 2026 4:44:53 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 4:44:53 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49111/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/native_502682c9356b44f2ba37a9804c176cbc
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 4:44:53 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-5 - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-5 - Shutdown completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] INFO org.flywaydb.core.internal.database.base.Schema - Creating schema "native_29b042dd38944014be1af7280feb1574" ...
+[Test worker] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory - Creating Schema History table "native_29b042dd38944014be1af7280feb1574"."flyway_schema_history" ...
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "native_29b042dd38944014be1af7280feb1574": null
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "1 - initial schema"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "2 - drive provider config"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "3 - document purges"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "4 - document events outbox"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "5 - document purges relayed at"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "6 - archive"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "7 - archive classification"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "8 - document mutation revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "9 - purge admission generation"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "10 - managed raw objects"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "11 - managed backend profiles"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "12 - archive mutation revisions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "13 - archive retained set revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "14 - archive object bindings"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "15 - archive upload admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "16 - archive version object references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "17 - provider backend identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "18 - archive object recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "19 - archive mutation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "20 - archive mutation observations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "21 - document part attempt admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "22 - document part publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "23 - document key reservations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "24 - abandoned document attempt cleanup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "25 - repository physical locations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "26 - repository retention bridge"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "27 - repository retirement"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "28 - archive reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "29 - shared archive reader locks"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "30 - archive read calls"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "31 - reader incarnation fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "32 - reader local quiescence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "33 - archive reader recovery order"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "34 - repository operation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "35 - repository operation write fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "36 - operation bound document attempts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "37 - document revision lock batches"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "38 - document revision projection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "39 - document revision retention"
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "40 - document operation selections"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "41 - document admission lock modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "42 - document operation selection history"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "43 - selected document attempt writes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "44 - document reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "45 - document reader batch release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "46 - document reader quiescent recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "47 - document reader recovery discovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "48 - repository schema artifact staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "49 - repository operation recovery fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "50 - repository schema replaced claim release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "51 - document event recording"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "52 - independent document publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "53 - native document coordinates"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "54 - revision physical lookup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "55 - document revision schema references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "56 - document revision schema evidence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "57 - document revision schema assets"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "58 - document schema policy catalog"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "59 - document schema policy publication fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "60 - document schema retention manifest"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "61 - document schema admission binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "62 - document schema container role"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "63 - document historical read pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "64 - repository operation rejection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "65 - repository retention lock set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "66 - document assessment staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "67 - document assessment artifacts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "68 - document assessment roots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "69 - document assessment slot snapshots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "70 - shared repository retention set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "71 - document assessment read sessions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "72 - document assessment read release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "73 - document assessment read identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "74 - reader registration identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "75 - nonnegative archive statistics"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "76 - admission rejection assessment binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "77 - rejected assessment read authority"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "78 - repository execution claims"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "79 - repository claim mutation fences"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "80 - single call execution claim fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "81 - private publication preparations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_29b042dd38944014be1af7280feb1574" to version "82 - private publication modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Successfully applied 82 migrations to schema "native_29b042dd38944014be1af7280feb1574", now at version v82 (execution time 00:00.259s)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-6 - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - HikariPool-6 - Added connection org.postgresql.jdbc.PgConnection@4140f94c
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-6 - Start completed.
+Oct 05, 2026 4:44:53 PM org.hibernate.jpa.boot.spi.PersistenceXmlParser parsePersistenceXml
+WARN: HHH008518: Encountered multiple persistence-unit stanzas defining same name [document-ledger]; persistence-unit names must be unique
+Oct 05, 2026 4:44:53 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 4:44:53 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49111/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/native_29b042dd38944014be1af7280feb1574
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 4:44:53 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-6 - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-6 - Shutdown completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] INFO org.flywaydb.core.internal.database.base.Schema - Creating schema "native_c773891fd5d24ef38c23e2897034b257" ...
+[Test worker] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory - Creating Schema History table "native_c773891fd5d24ef38c23e2897034b257"."flyway_schema_history" ...
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "native_c773891fd5d24ef38c23e2897034b257": null
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "1 - initial schema"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "2 - drive provider config"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "3 - document purges"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "4 - document events outbox"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "5 - document purges relayed at"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "6 - archive"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "7 - archive classification"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "8 - document mutation revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "9 - purge admission generation"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "10 - managed raw objects"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "11 - managed backend profiles"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "12 - archive mutation revisions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "13 - archive retained set revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "14 - archive object bindings"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "15 - archive upload admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "16 - archive version object references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "17 - provider backend identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "18 - archive object recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "19 - archive mutation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "20 - archive mutation observations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "21 - document part attempt admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "22 - document part publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "23 - document key reservations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "24 - abandoned document attempt cleanup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "25 - repository physical locations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "26 - repository retention bridge"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "27 - repository retirement"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "28 - archive reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "29 - shared archive reader locks"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "30 - archive read calls"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "31 - reader incarnation fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "32 - reader local quiescence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "33 - archive reader recovery order"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "34 - repository operation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "35 - repository operation write fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "36 - operation bound document attempts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "37 - document revision lock batches"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "38 - document revision projection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "39 - document revision retention"
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "40 - document operation selections"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "41 - document admission lock modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "42 - document operation selection history"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "43 - selected document attempt writes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "44 - document reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "45 - document reader batch release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "46 - document reader quiescent recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "47 - document reader recovery discovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "48 - repository schema artifact staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "49 - repository operation recovery fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "50 - repository schema replaced claim release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "51 - document event recording"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "52 - independent document publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "53 - native document coordinates"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "54 - revision physical lookup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "55 - document revision schema references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "56 - document revision schema evidence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "57 - document revision schema assets"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "58 - document schema policy catalog"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "59 - document schema policy publication fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "60 - document schema retention manifest"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "61 - document schema admission binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "62 - document schema container role"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "63 - document historical read pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "64 - repository operation rejection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "65 - repository retention lock set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "66 - document assessment staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "67 - document assessment artifacts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "68 - document assessment roots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "69 - document assessment slot snapshots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "70 - shared repository retention set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "71 - document assessment read sessions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "72 - document assessment read release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "73 - document assessment read identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "74 - reader registration identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "75 - nonnegative archive statistics"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "76 - admission rejection assessment binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "77 - rejected assessment read authority"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "78 - repository execution claims"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "79 - repository claim mutation fences"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "80 - single call execution claim fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "81 - private publication preparations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "native_c773891fd5d24ef38c23e2897034b257" to version "82 - private publication modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Successfully applied 82 migrations to schema "native_c773891fd5d24ef38c23e2897034b257", now at version v82 (execution time 00:00.269s)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-7 - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - HikariPool-7 - Added connection org.postgresql.jdbc.PgConnection@7094f0ae
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-7 - Start completed.
+Oct 05, 2026 4:44:54 PM org.hibernate.jpa.boot.spi.PersistenceXmlParser parsePersistenceXml
+WARN: HHH008518: Encountered multiple persistence-unit stanzas defining same name [document-ledger]; persistence-unit names must be unique
+Oct 05, 2026 4:44:54 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 4:44:54 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49111/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/native_c773891fd5d24ef38c23e2897034b257
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 4:44:54 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 4:44:55 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 4:44:55 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Publication modes changed
+  Where: PL/pgSQL function protect_repository_publication_modes() line 18 at RAISE
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-7 - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - HikariPool-7 - Shutdown completed.
+]]></system-err>
+</testsuite>
