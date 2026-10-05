@@ -4683,5 +4683,58 @@ and prevents both byte delivery and disclosure of an injected provider error.
 The same mixed candidate exercises cancellation and deadline refusal while the
 CORE worker is held, retaining memory and the SQL session until actual drain.
 No candidate publication or semantic-review authority is inferred from these
-checks. Advancing the source's native content revision and replaying historical
-validation without its original registry remain separate required cases.
+checks. The probe now advances the source through a second native commit after
+staging, with different CORE bytes and a new physical key. It verifies the source's
+new current revision and mutation revision before capturing the original assessment
+again. The assessment still returns its original fragments, and current access
+revocation on the advanced source still prevents delivery. The old provider object
+remains available; deleting a historical provider version is a separate corruption
+case. Historical validation without the original registry remains required.
+
+#### Retained assessment replay inputs (next implementation boundary)
+
+DocumentSchemaAssessmentReplay already reproduces a member's value verdict using
+retained schema assets. The next internal repository adapter must reconstruct its
+inputs from stored evidence, not a live DocumentPublicationAssessment or a registry
+resolver. Keep the original manifest's runtime identity as historical provenance;
+replay executes in the currently observed runtime and grants no publication or
+semantic-review authority.
+
+Acquire an existing assessment Use before loading evidence and retain it through
+provider batches, schema decoding and replay completion. Reuse the exact captured
+stage and command identities. Load only artifacts associated with that assessment,
+and select the immutable account policy by the manifest's digest, never the current
+policy pointer. The schema-policy catalog currently forbids deletion; future policy
+pruning must introduce ownership before relaxing that rule.
+
+The loader must reserve declared byte lengths before fetching blobs, enforce the
+existing aggregate/count bounds and check actual sizes and hashes. Manifest,
+policy, root evidence and artifact reservations remain owned until the replay
+scope closes. Parsed descriptor/evidence allocation also needs explicit structural
+bounds. Perform parsing, schema construction, provider I/O and validation outside
+SQL transactions. Reuse the existing whole-assessment session to protect immutable
+rows during these reads; do not add per-artifact pins or a registry fallback.
+
+Reconstruct each typed member's full-ordinal fragment map, root evidence, container
+and payload references and evaluation instant from the retained manifest. Preserve
+opaque members as opaque. The manifest stores only the operation's first failure;
+it does not store a verdict for every later member. Reproduce each typed member's
+failure from its retained inputs, aggregate in canonical member order and compare
+the first failure with the manifest. Do not interpret absence of another member's
+failure in the manifest as proof that it passed. The existing member verifier
+expects a per-member verdict, so this requires a reviewed replay result seam that
+preserves evidence verification without adding wire fields for implementation
+convenience. Check the complete member set, not only a successful individual member.
+Keep the existing strict verifier for callers that do possess each member's
+recorded verdict; both paths must share the same root and artifact checks.
+Before exposing a result or detailed replay error, reauthorize delivery using the
+same capture and still-open Use. Historical policy reproduction is distinct from
+eligibility under the current policy for a future terminal decision.
+
+Acceptance must include accepted and rejected assessments, closed original scopes,
+registry absence, changed current source content and policy, missing/corrupt assets,
+memory refusal, cancellation and permission revocation during replay. Verify all
+reservations and uses drain on failures. Include two failing typed members and a
+failure in a later member after an earlier success, proving canonical first-failure
+selection without inventing verdicts for unrecorded members. This adapter is not implemented or exposed
+as a public API yet.

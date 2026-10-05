@@ -122,6 +122,7 @@ public final class AssessmentMixedReuseProbe {
         require(slot[0].equals(source.object()) && slot[1].equals(source.revision())
                 && ((Number) slot[2]).intValue() == source.sourceOrdinal()
                 && ((Number) slot[3]).intValue() == source.sourceOrdinal() + 1, "exact original source and shifted ordinal");
+        advanceSource(tx, provider, source, active);
         var selections = DocumentAssessmentRetainedSlots.uploadSelections(uploaded.selected());
         provider.verifyReads(tx, owner, command, selections, retained, budget, Map.of("a", source.fragments()), source.node());
         require(budget.reservedBytes() == 0, "mixed capture releases verification memory");
@@ -130,6 +131,45 @@ public final class AssessmentMixedReuseProbe {
                 .setParameter("op", command.operationId()).getSingleResult()).longValue());
         require(publications == 0, "staged mixed candidate is not published");
         System.out.println("ASSESSMENT_MIXED_REUSE_OK");
+    }
+
+    private static void advanceSource(Tx tx, AssessmentProviderProbe provider, Source source,
+            DocumentSchemaPolicies.Selection active) throws Exception {
+        var retainedCore = source.candidate().getPartsList().stream().filter(DocumentPublicationPart::hasReuse)
+                .findFirst().orElseThrow();
+        var member = source.candidate().toBuilder().setDestination(retainedCore.getReuse().getSource());
+        var fragments = new HashMap<>(source.fragments());
+        for (int ordinal = 0; ordinal < member.getPartsCount(); ordinal++) {
+            var part = member.getParts(ordinal);
+            if (part.hasEmpty()) continue;
+            var bytes = fragments.get(ordinal);
+            if (part.getSlot().getPart() == DocumentPart.DOCUMENT_PART_CORE) {
+                bytes = Document.parseFrom(bytes).toBuilder().setStructuredData(
+                        Any.pack(StringValue.of("new source payload"), "type.test")).build().toByteString();
+                require(!bytes.equals(fragments.put(ordinal, bytes)), "new source CORE bytes differ");
+            }
+            member.setParts(ordinal, part.toBuilder().clearReuse().setUpload(PublicationUpload.newBuilder()
+                    .setSizeBytes(bytes.size()).setSha256(DocumentPartCodec.sha256Hex(bytes.toByteArray()))
+                    .setContentType("application/protobuf")));
+        }
+        var command = command(member.build()); var owner = owner(tx, command);
+        var uploaded = upload(tx, provider, command, owner, source.placement(), fragments);
+        // Policy explicitly allows this source's opaque mode; this is not a typed success claim.
+        var schemas = DocumentSchemaBatch.prepare(command, active, Map.of(), () -> {});
+        var content = DocumentCommandContent.check(command, "a", fragments, false, LIMITS, () -> {});
+        new DocumentPublicationCommit(tx, new DriveLedger(tx), false, false).commit(ADMIN, owner, uploaded.prepared(),
+                Map.of("a", content), uploaded.selected(), schemas, () -> {});
+        var current = new DocumentLedger(tx).findByNodeId(source.node()).orElseThrow();
+        var publication = new DocumentPublicationLedger(tx).findForRead(current).orElseThrow();
+        var core = publication.boundParts().stream().filter(part -> part.part().part() == DocumentPart.DOCUMENT_PART_CORE)
+                .findFirst().orElseThrow();
+        require(!publication.revisionId().equals(source.revision())
+                && current.mutationRevision > retainedCore.getReuse().getSource().getExpectedMutationRevision(),
+                "source revision advanced through native commit");
+        require(!core.part().sha256().equals(retainedCore.getReuse().getObject().getSha256())
+                && !core.part().key().equals(retainedCore.getReuse().getObject().getObjectKey()),
+                "current source has new physical CORE content");
+        System.out.println("ASSESSMENT_SOURCE_ADVANCED_OK");
     }
 
     private static Uploads upload(Tx tx, AssessmentProviderProbe provider, DocumentPublicationCommand command,
