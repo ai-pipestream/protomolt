@@ -1247,6 +1247,57 @@ pressure. Record operation latency distributions, SQL transaction counts and wai
 times, provider calls/bytes, throughput, and reservation bounds. The design is not
 production-qualified until these results and failure/recovery tests support it.
 
+### Horizontal service scaling acceptance
+
+Multiple repository service instances must share one logical repository through
+the durable ledger and configured storage identities. Independent requests must
+benefit from additional service capacity when service CPU or I/O concurrency is
+the limiting resource. Adding replicas must not require partitioning clients by
+account or pinning every operation to its original process. Shared database and
+provider capacity still bound total throughput; linear speedup is not assumed.
+
+Qualify these requirements before declaring the repository horizontally scalable:
+
+- Run one, two and four separate service processes against the same real SQL and
+  object-store services. Exercise independent documents, competing revisions,
+  mixed reads/writes and retained historical reads through the actual transport.
+  Record throughput, p50/p95/p99 latency, SQL lock and pool waits, provider time,
+  connection counts and per-process memory. Compare both fixed aggregate resource
+  budgets and added service capacity; do not disguise database saturation by
+  increasing every connection pool.
+- Send retries to a different instance. Completed operations must replay their
+  authorized durable result. In-flight operations need an explicit bounded retry,
+  routing or durable takeover path; a process-local session cannot be the only
+  source of information needed for recovery. No second publication or disclosure
+  to a newly unauthorized caller is permitted.
+- Kill the owning process before and after SQL commit, lose acknowledgements,
+  and delay provider completion. Prove recovery fences stale owners and preserves
+  retention until actual reader termination is established. Lease expiry alone
+  cannot attest provider-worker drain.
+- Run competing lifecycle workers. Verify durable claims or explicitly safe
+  duplicate execution across the complete provider operation. A SELECT with
+  FOR UPDATE SKIP LOCKED protects only its transaction; it does not itself reserve
+  work after that transaction returns. Audit JdbcPurgeQueue.claimBatch and its
+  callers against this requirement before treating queue selection as ownership.
+- Bound aggregate SQL/provider connections, admitted work and buffered bytes.
+  Verify saturation produces explicit backpressure while unrelated operations
+  continue, and that a replica can drain without stopping the remaining service.
+
+Current evidence is partial: LedgerDatabase bounds each process's SQL pool;
+RepositoryOperationLedger supplies durable ownership and fencing for typed
+document operations;
+DocumentPublicationSessions retains bounded process-local retry state; reader
+lifetimes combine local worker tracking with durable incarnation state. These
+facts neither prove a singleton architecture nor establish multi-instance load
+and failover qualification. Preserve the original service behavior as a regression
+baseline and classify each discovered gap before replacing working components.
+
+The legacy PurgeQueue contract explicitly permits duplicate delivery and
+S3Purger conditionally settles terminal state after provider deletion. Selection
+lock lifetime is therefore not itself a defect. Qualification must verify that
+duplicate provider calls remain safe for the selected backend and quantify their
+load, including object replacement and concurrent recovery schedules.
+
 ### Upload verification evidence at the provider boundary
 
 S3BlobStore.putRequest already supplies the expected SHA-256 through the S3
@@ -4393,3 +4444,19 @@ perform no provider I/O, and reconcile through exact identity and an appropriate
 reader fence. A missing row while the original transaction may still commit is
 not rollback evidence. These uncertainty rules and the assessment protection
 implementation remain prerequisites to mounting capture.
+
+V73 adds permanent assessment capture identities. A released identity cannot be
+reused for another capture, and release retries must match its reader and
+assessment. Normal release refuses an unknown capture outcome; only recovery
+after proven incarnation quiescence may conclude that an absent capture cannot
+commit later. Release locks the session before its identity and refuses a capture
+that becomes visible only after the initial session lookup, preserving lock order.
+
+Migration backfills existing live sessions under a table lock. It cannot recover
+identities deleted before V73; assessment capture has not been publicly enabled.
+Eight PostgreSQL integration cases pass, including migration from V72, permanent
+identity enforcement, exact retry binding and an uncommitted capture. The latter
+does not force the narrower commit-between-release-lookups schedule; that exact
+interleaving still needs a deterministic regression test. Permanent identity
+storage also needs growth measurements before production qualification; no
+unproven pruning rule is introduced here.

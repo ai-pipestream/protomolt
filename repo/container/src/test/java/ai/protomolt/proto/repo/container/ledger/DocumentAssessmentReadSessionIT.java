@@ -116,6 +116,83 @@ class DocumentAssessmentReadSessionIT {
         assertThat(references(c.assessment())).isZero();
     }
 
+    @Test void releasedIdentityCannotBeReusedOrAcknowledgedByAnotherTuple() {
+        var c = staged(120, true); UUID reader = reader(), session = UUID.randomUUID();
+        capture(c, session, reader);
+        assertThat(release(session, reader, c.assessment())).isTrue();
+        assertThatThrownBy(() -> capture(c, session, reader)).hasStackTraceContaining("document_assessment_read_identities_pkey");
+        assertThatThrownBy(() -> release(session, UUID.randomUUID(), c.assessment())).hasStackTraceContaining("another reader or assessment");
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            em.createNativeQuery("DELETE FROM document_assessment_read_identities WHERE session_id=:id").setParameter("id", session).executeUpdate();
+        })).hasStackTraceContaining("identities are permanent");
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            em.createNativeQuery("UPDATE document_assessment_read_identities SET released=false WHERE session_id=:id").setParameter("id", session).executeUpdate();
+        })).hasStackTraceContaining("only completed release");
+        fence(reader); quiesce(reader);
+        assertThatThrownBy(() -> recover(session, reader, UUID.randomUUID())).hasStackTraceContaining("another reader or assessment");
+        assertThat(recover(session, reader, c.assessment())).isTrue();
+    }
+
+    @Test void unknownCaptureAbsenceRequiresProvenQuiescence() {
+        UUID reader = reader(), session = UUID.randomUUID(), assessment = UUID.randomUUID();
+        assertThatThrownBy(() -> release(session, reader, assessment)).hasStackTraceContaining("outcome is not established");
+        fence(reader);
+        assertThatThrownBy(() -> release(session, reader, assessment)).hasStackTraceContaining("outcome is not established");
+        assertThatThrownBy(() -> recover(session, reader, assessment)).hasStackTraceContaining("proven reader quiescence");
+        quiesce(reader);
+        assertThat(recover(session, reader, assessment)).isTrue();
+    }
+
+    @Test void migrationBackfillsExistingLiveSessionsWithoutInventingReleasedHistory() {
+        try (var old = DocumentNativePublicationFixture.context(POSTGRES, "72")) {
+            var localFixture = new DocumentAssessmentRetentionFixture(old.tx());
+            var c = staged(old.tx(), localFixture, 120, true);
+            UUID reader = reader(old.tx()), session = UUID.randomUUID();
+            capture(old.tx(), c, session, reader);
+            org.flywaydb.core.Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                    .schemas(old.pool().getSchema()).defaultSchema(old.pool().getSchema())
+                    .locations("classpath:db/migration/repo").load().migrate();
+            Object[] identity = old.tx().readOnly(em -> (Object[]) em.createNativeQuery(
+                    "SELECT reader_incarnation,assessment_id,released FROM document_assessment_read_identities WHERE session_id=:id")
+                    .setParameter("id", session).getSingleResult());
+            assertThat(identity).containsExactly(reader, c.assessment(), false);
+            boolean released = old.tx().inTransaction(em -> (Boolean) em.createNativeQuery(
+                    "SELECT release_document_assessment_read_session(:id,:reader,:assessment)")
+                    .setParameter("id", session).setParameter("reader", reader).setParameter("assessment", c.assessment()).getSingleResult());
+            assertThat(released).isTrue();
+            assertThat(old.tx().<Boolean>readOnly(em -> (Boolean) em.createNativeQuery(
+                    "SELECT released FROM document_assessment_read_identities WHERE session_id=:id")
+                    .setParameter("id", session).getSingleResult())).isTrue();
+        }
+    }
+
+    @Test void uncommittedCaptureCannotBeAcknowledgedAsReleased() throws Exception {
+        var c = staged(120, true); UUID reader = reader(), session = UUID.randomUUID();
+        var inserted = new java.util.concurrent.CountDownLatch(1);
+        var allowCommit = new java.util.concurrent.CountDownLatch(1);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var capture = executor.submit(() -> tx.inTransaction((java.util.function.Consumer<jakarta.persistence.EntityManager>) em -> {
+                em.createNativeQuery("SELECT require_active_repository_reader(:id)").setParameter("id", reader).getSingleResult();
+                RepositoryOperationLedger.fenceLiveOwner(em, c.owner());
+                em.createNativeQuery("INSERT INTO document_assessment_read_sessions(session_id,reader_incarnation,assessment_id) VALUES(:id,:reader,:assessment)")
+                        .setParameter("id", session).setParameter("reader", reader).setParameter("assessment", c.assessment()).executeUpdate();
+                inserted.countDown();
+                try {
+                    if (!allowCommit.await(10, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("Capture commit gate timed out");
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt(); throw new IllegalStateException(interrupted);
+                }
+            }));
+            try {
+                assertThat(inserted.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                assertThatThrownBy(() -> release(session, reader, c.assessment())).hasStackTraceContaining("outcome is not established");
+            } finally { allowCommit.countDown(); }
+            capture.get(10, java.util.concurrent.TimeUnit.SECONDS);
+        }
+        assertThat(references(c.assessment())).isEqualTo(2);
+        assertThat(release(session, reader, c.assessment())).isTrue();
+    }
+
     private static final class DeliberateRollback extends RuntimeException {}
     private static boolean release(UUID session, UUID reader, UUID assessment) {
         return tx.inTransaction(em -> (Boolean) em.createNativeQuery("SELECT release_document_assessment_read_session(:id,:reader,:assessment)")
@@ -123,6 +200,10 @@ class DocumentAssessmentReadSessionIT {
     }
 
     private static DocumentAssessmentRetentionFixture.Candidate staged(int seconds, boolean snapshot) {
+        return staged(tx, fixture, seconds, snapshot);
+    }
+    private static DocumentAssessmentRetentionFixture.Candidate staged(Tx tx, DocumentAssessmentRetentionFixture fixture,
+            int seconds, boolean snapshot) {
         var c = fixture.candidate(120);
         tx.inTransaction(em -> {
             RepositoryOperationLedger.fenceLiveOwner(em, c.owner());
@@ -135,12 +216,18 @@ class DocumentAssessmentReadSessionIT {
         return c;
     }
     private static UUID reader() {
+        return reader(tx);
+    }
+    private static UUID reader(Tx tx) {
         var id = UUID.randomUUID();
         tx.inTransaction(em -> { em.createNativeQuery("INSERT INTO repository_reader_incarnations(incarnation,state) VALUES(:id,'ACTIVE')")
                 .setParameter("id", id).executeUpdate(); });
         return id;
     }
     private static void capture(DocumentAssessmentRetentionFixture.Candidate c, UUID session, UUID reader) {
+        capture(tx, c, session, reader);
+    }
+    private static void capture(Tx tx, DocumentAssessmentRetentionFixture.Candidate c, UUID session, UUID reader) {
         tx.inTransaction(em -> {
             em.createNativeQuery("SELECT require_active_repository_reader(:id)").setParameter("id", reader).getSingleResult();
             RepositoryOperationLedger.fenceLiveOwner(em, c.owner());
