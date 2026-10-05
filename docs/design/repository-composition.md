@@ -23,6 +23,19 @@ workload, provider, machine load and verification policy with results. Separate
 measured outcomes from hypotheses. Preserve mandatory validation and durability;
 reduce unnecessary work instead of removing guarantees.
 
+Use a local RustFS container for desktop-oriented object-store performance
+diagnostics. Keep LocalStack for the existing S3 correctness and compatibility
+fixtures; their timings are not the desktop performance reference. Record the
+RustFS image identity, storage mounts and resource assumptions with measurements.
+Changing the backend does not by itself establish a speedup, provider conformance
+or production capacity. Historical LocalStack evidence retains its original scope.
+The [first RustFS runs](../evidence/repository/2026-10-05-rustfs-performance/README.md)
+cover replica load, archive reads and the copy-based partial-update diagnostic.
+Replica correctness passes but the shared statistics contention remains. The
+partial workload exposed duplicate separators in newly generated attempt keys;
+both new-key construction sites now omit the extra slash. Stored physical keys
+remain unchanged and are never normalized during reads or cleanup.
+
 The operation-count targets below are part of the design contract. Production
 latency targets remain to be established on representative storage. The current
 copy-based partial-save path is an experimental baseline and does not meet the
@@ -1127,8 +1140,9 @@ the same result after an idempotent retry, including a timeout after commit.
 ## Partial-update performance diagnostic
 
 Run `PROTOMOLT_PARTIAL_BENCHMARK=true ./gradlew :protomolt-repo-service:test --tests '*DocumentPartialBenchmarkIT'`.
-This opt-in task disables cached/up-to-date results. PostgreSQL 18 and LocalStack
-3.8 store synthetic protobuf documents with 32 chunks. A single character changes
+This opt-in task disables cached/up-to-date results. PostgreSQL 18 and a pinned
+RustFS container store synthetic protobuf documents with 32 chunks. The October 3
+samples below used LocalStack 3.8. A single character changes
 in one chunk. Full and partial updates start from equivalent fresh documents.
 Setup and complete result verification are outside the timer. Execution order
 alternates, with 2 warmups and 12 samples per case. Full requests contain all

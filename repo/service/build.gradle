@@ -84,8 +84,14 @@ tasks.named('test') {
     doFirst { systemProperty 'protomolt.test.runtimeClasspath', sourceSets.test.runtimeClasspath.asPath }
     def partialBenchmark = providers.environmentVariable('PROTOMOLT_PARTIAL_BENCHMARK').map { it == 'true' }.orElse(false)
     def replicaBenchmark = providers.environmentVariable('PROTOMOLT_REPLICA_BENCHMARK').map { it == 'true' }.orElse(false)
+    def archiveReadBenchmark = providers.environmentVariable('PROTOMOLT_ARCHIVE_READ_BENCHMARK').map { it == 'true' }.orElse(false)
     inputs.property('partialBenchmark', partialBenchmark)
     inputs.property('replicaBenchmark', replicaBenchmark)
-    outputs.upToDateWhen { !partialBenchmark.get() && !replicaBenchmark.get() }
-    outputs.cacheIf { !partialBenchmark.get() && !replicaBenchmark.get() }
+    inputs.property('archiveReadBenchmark', archiveReadBenchmark)
+    doFirst {
+        // Benchmark classes must not compete with each other in separate test forks.
+        if (partialBenchmark.get() || replicaBenchmark.get() || archiveReadBenchmark.get()) maxParallelForks = 1
+    }
+    outputs.upToDateWhen { !partialBenchmark.get() && !replicaBenchmark.get() && !archiveReadBenchmark.get() }
+    outputs.cacheIf { !partialBenchmark.get() && !replicaBenchmark.get() && !archiveReadBenchmark.get() }
 }

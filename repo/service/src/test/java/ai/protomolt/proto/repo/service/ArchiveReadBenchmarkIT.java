@@ -21,9 +21,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.testcontainers.junit.jupiter.*;
-import org.testcontainers.localstack.LocalStackContainer;
 import org.testcontainers.postgresql.PostgreSQLContainer;
-import org.testcontainers.utility.DockerImageName;
 import static org.assertj.core.api.Assertions.*;
 
 /** Real-adapter diagnostic. The unpinned baseline is unsafe during deletion and is test-only. */
@@ -32,8 +30,7 @@ import static org.assertj.core.api.Assertions.*;
 @Timeout(600)
 class ArchiveReadBenchmarkIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
-    @Container static final LocalStackContainer S3 = new LocalStackContainer(
-            DockerImageName.parse("localstack/localstack:3.8")).withServices("s3");
+    @Container static final RustFsBenchmarkStore S3 = new RustFsBenchmarkStore();
     private static final int POOL = 24, WARMUPS = 2, SAMPLES = 6, READS_PER_WORKER = 4;
     private record Fixture(ArchiveEntryRecord entry, long version, RenditionManifestEntry manifest, byte[] expected) {}
     private record Observation(int worker, int read, long elapsed, long provider) {}
@@ -123,10 +120,10 @@ class ArchiveReadBenchmarkIT {
             Files.createDirectories(output);
             Files.writeString(output.resolve("operations.csv"), csv);
             Files.writeString(output.resolve("batches.csv"), batches);
-            Files.writeString(output.resolve("environment.txt"), "java=" + System.getProperty("java.runtime.version")
+            Files.writeString(output.resolve("environment.txt"), S3.environment() + "java=" + System.getProperty("java.runtime.version")
                     + "\nos=" + System.getProperty("os.name") + " " + System.getProperty("os.arch")
                     + "\nprocessors=" + Runtime.getRuntime().availableProcessors() + "\npool=" + POOL
-                    + "\npostgres=postgres:18-alpine\nprovider=localstack/localstack:3.8\ncontainer_limits=none_explicit\n"
+                    + "\npostgres=postgres:18-alpine\ncontainer_limits=none_explicit\n"
                     + "warmup_batches_per_path=" + WARMUPS + "\nmeasured_batches_per_path=" + SAMPLES
                     + "\nreads_per_worker=" + READS_PER_WORKER + "\n");
         }

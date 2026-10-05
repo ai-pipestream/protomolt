@@ -15,9 +15,7 @@ import java.util.concurrent.atomic.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.testcontainers.junit.jupiter.*;
-import org.testcontainers.localstack.LocalStackContainer;
 import org.testcontainers.postgresql.PostgreSQLContainer;
-import org.testcontainers.utility.DockerImageName;
 import static org.assertj.core.api.Assertions.*;
 
 /** Real-adapter diagnostic with synthetic protobuf payloads; not a production latency gate. */
@@ -25,8 +23,7 @@ import static org.assertj.core.api.Assertions.*;
 @EnabledIfEnvironmentVariable(named = "PROTOMOLT_PARTIAL_BENCHMARK", matches = "true")
 class DocumentPartialBenchmarkIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
-    @Container static final LocalStackContainer S3 = new LocalStackContainer(
-            DockerImageName.parse("localstack/localstack:3.8")).withServices("s3");
+    @Container static final RustFsBenchmarkStore S3 = new RustFsBenchmarkStore();
 
     @Test void measureSingleChunkUpdate() throws Exception {
         try (var database = new LedgerDatabase(new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()));
@@ -50,6 +47,8 @@ class DocumentPartialBenchmarkIT {
             BlobStore measured = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
                     new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
                         observedBudget.accumulateAndGet(budget.reservedBytes(), Math::max);
+                        if (method.getName().equals("put"))
+                            assertThat(((BlobStore.PutSpec) args[0]).key()).doesNotContain("//");
                         try {
                             var result = method.invoke(opened.store(), args);
                             if (method.getName().equals("put")) { puts.increment(); written.add(((byte[]) args[1]).length); }
@@ -106,6 +105,7 @@ class DocumentPartialBenchmarkIT {
                 }
                 Path output = Path.of("build/reports/document-partial-benchmark.csv");
                 Files.createDirectories(output.getParent()); Files.writeString(output, csv);
+                Files.writeString(output.resolveSibling("partial-benchmark-environment.txt"), S3.environment());
             } finally {
                 writer.close(); reader.close();
                 assertThat(writer.awaitIdle(Duration.ofSeconds(10))).isTrue();

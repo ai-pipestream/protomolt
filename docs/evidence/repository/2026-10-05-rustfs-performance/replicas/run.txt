@@ -1,0 +1,4 @@
+base_commit=dfdc0a922e9099f346a5e3bdd63aba5ea1550a7b
+raw_directory=repo/service/build/reports/replica-scale/2026-10-05T11-42-20.172792683Z
+production_changes=none
+fixture_changes=RustFS instead of LocalStack, image/mount metadata, serial test forks

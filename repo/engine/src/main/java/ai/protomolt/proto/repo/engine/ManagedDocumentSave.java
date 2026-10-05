@@ -23,7 +23,7 @@ final class ManagedDocumentSave {
             DocumentRecord existing, DocumentSourceSnapshot source, long version,
             ManagedRawBindings.Plan bindings, JdbcEventOutbox events, RepositoryOperationControl control) {
         UUID attempt = UUID.randomUUID();
-        String prefix = basePrefix + "/attempts/" + attempt + "/";
+        String prefix = basePrefix + "/attempts/" + attempt;
         var now = DocumentRequests.timestampNow();
         var written = DocumentManifest.newBuilder().setAddress(resolved.address()).setDocVersion(version);
         record Slot(DocumentPart part, String subKey) {}
@@ -70,7 +70,7 @@ final class ManagedDocumentSave {
             String basePrefix, List<PartObject> payloads, DocumentRecord existing, long version,
             ManagedRawBindings.Plan bindings, JdbcEventOutbox events, RepositoryOperationControl control) {
         UUID attempt = UUID.randomUUID();
-        String prefix = basePrefix + "/attempts/" + attempt + "/";
+        String prefix = basePrefix + "/attempts/" + attempt;
         var planned = payloads.stream().map(p -> new DocumentPartAttemptLedger.PlannedObject(p.part(), p.subKey(),
                 DocumentPartCodec.objectKey(prefix, p.part(), p.subKey()), p.bytes().length, p.sha256(),
                 DocumentOperations.PART_CONTENT_TYPE)).toList();

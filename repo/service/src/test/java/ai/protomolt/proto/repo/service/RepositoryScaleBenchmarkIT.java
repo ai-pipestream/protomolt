@@ -15,18 +15,17 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.testcontainers.junit.jupiter.*;
-import org.testcontainers.localstack.LocalStackContainer;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import static org.assertj.core.api.Assertions.*;
 
-/** Opt-in archive transport diagnostic; LocalStack is not a production capacity model. */
+/** Opt-in archive transport diagnostic against local RustFS; not a production capacity model. */
 @Testcontainers
 @EnabledIfEnvironmentVariable(named = "PROTOMOLT_REPLICA_BENCHMARK", matches = "true")
 @Timeout(600)
 class RepositoryScaleBenchmarkIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine")
             .withCommand("postgres", "-c", "shared_preload_libraries=pg_stat_statements", "-c", "pg_stat_statements.track=top");
-    @Container static final LocalStackContainer S3 = new LocalStackContainer("localstack/localstack:3.8").withServices("s3");
+    @Container static final RustFsBenchmarkStore S3 = new RustFsBenchmarkStore();
     private static final int WORKERS = workers(), SAMPLES = 3, CYCLES = 3;
     private final Path output = Path.of("build/reports/replica-scale", Instant.now().toString().replace(':', '-'));
     private final Queue<String> observations = new ConcurrentLinkedQueue<>();
@@ -36,7 +35,7 @@ class RepositoryScaleBenchmarkIT {
 
     @Test void measureRealTransportAcrossReplicaCounts() throws Exception {
         Files.createDirectories(output);
-        Files.writeString(output.resolve("environment.txt"), "java=" + System.getProperty("java.runtime.version")
+        Files.writeString(output.resolve("environment.txt"), S3.environment() + "java=" + System.getProperty("java.runtime.version")
                 + "\nos=" + System.getProperty("os.name") + "\nprocessors=" + Runtime.getRuntime().availableProcessors()
                 + "\nworkers=" + WORKERS + "\npayload_bytes=4096\nheap_per_child=256MiB\n"
                 + "load_average_begin=" + java.lang.management.ManagementFactory.getOperatingSystemMXBean().getSystemLoadAverage() + "\n"
