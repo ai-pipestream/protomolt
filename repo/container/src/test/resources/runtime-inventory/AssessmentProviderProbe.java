@@ -39,7 +39,7 @@ public final class AssessmentProviderProbe implements AutoCloseable {
             PayloadBudget captureBudget, Map<String,Map<Integer,ByteString>> fragments) throws Exception {
         var caller = new RepositoryCaller("principal", false, java.util.Set.of("account"), java.util.Set.of());
         UUID destination = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(command.intent().getMembers(1).getDestination().getAddress());
-        for (int mode = 0; mode < 4; mode++) {
+        for (int mode = 0; mode < 5; mode++) {
             var reads = new DocumentReadLedger(tx, UUID.randomUUID(), 1);
             var captured = reads.captureAssessment(caller, owner, command, selections, retained.assessment(),
                     retained.manifestSha256(), retained.retainUntil(), captureBudget, () -> {});
@@ -55,7 +55,7 @@ public final class AssessmentProviderProbe implements AutoCloseable {
                         try { result = method.invoke(store, args); }
                         catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
                         if (method.getName().equals("getBounded") && invoked.compareAndSet(false, true)) {
-                            if (scenario == 3) {
+                            if (scenario >= 3) {
                                 entered.countDown();
                                 awaitProviderRelease(releaseProvider);
                             } else policy(tx, destination, "ACCESS_DENY");
@@ -102,22 +102,25 @@ public final class AssessmentProviderProbe implements AutoCloseable {
                     require(invoked.get(), "revocation occurred after a genuine GET");
                 } else {
                     var control = new RepositoryReadControl() {
-                        @Override public boolean isCancelled() { return cancelled.get(); }
-                        @Override public long remainingNanos() { return Long.MAX_VALUE; }
+                        @Override public boolean isCancelled() { return scenario == 3 && cancelled.get(); }
+                        @Override public long remainingNanos() {
+                            return scenario == 4 && cancelled.get() ? 0 : Long.MAX_VALUE;
+                        }
                     };
                     try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
                         var pending = executor.submit(() -> reader.readAssessment(captured, "a", control));
                         require(entered.await(5, java.util.concurrent.TimeUnit.SECONDS), "real GET reached controlled completion gate");
                         cancelled.set(true);
                         try (var unexpected = pending.get(5, java.util.concurrent.TimeUnit.SECONDS)) {
-                            throw new AssertionError("Cancelled provider read was delivered");
+                            throw new AssertionError("Stopped provider read was delivered");
                         } catch (java.util.concurrent.ExecutionException failure) {
                             require(failure.getCause() instanceof RepositoryException rejected
-                                    && rejected.code() == RepositoryException.Code.CANCELLED, "prompt cancellation result");
+                                    && rejected.code() == (scenario == 3 ? RepositoryException.Code.CANCELLED
+                                            : RepositoryException.Code.DEADLINE_EXCEEDED), "prompt cancellation/deadline result");
                         }
                         captured.close();
                         require(reads.releaseDrained(1) == 0 && payload.reservedBytes() > 0,
-                                "cancelled worker retains session and payload until actual completion");
+                                "stopped worker retains session and payload until actual completion");
                     } finally { releaseProvider.countDown(); }
                 }
             } finally {

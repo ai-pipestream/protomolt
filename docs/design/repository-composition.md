@@ -4647,3 +4647,21 @@ A controlled post-GET worker gate proves prompt cancellation while SQL retention
 and payload reservations remain owned until completion; the reader is explicitly
 idle before its borrowed client closes. This qualifies that provider path, not
 all adapters, multi-replica throughput, or semantic review/publication authority.
+
+The same real-provider gate now exercises host deadline expiry as well as
+cancellation. After a genuine GET, the fixture changes the control's remaining
+time to zero while the worker remains held. The caller receives DEADLINE_EXCEEDED
+before worker release; payload reservations and assessment retention remain until
+actual worker completion. This deterministic control transition tests deadline
+handling, not clock accuracy or throughput. The production-JAR admission storage
+test passes with this case.
+
+A focused concurrency review found no provider calls inside the publication,
+assessment capture or delivery transactions. Account policy and selected-drive
+locks are shared between writers; destination locks are exclusive per affected
+document, while reused sources use shared locks. This is not a measured scaling
+result. Remaining measurements must cover lock duration for large multi-member
+commits and retained-evidence verification, plus per-reader capacity rejection
+under concurrent independent reads. Compare one, two and four replicas against
+the same database and provider, recording throughput, latency, lock waits and
+RESOURCE_EXHAUSTED outcomes before changing these boundaries.
