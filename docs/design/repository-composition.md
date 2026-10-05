@@ -5853,3 +5853,48 @@ tests additionally need missing/corrupt retained artifacts and access revocation
 Registry adapter/cache qualification, custom JSON rendering, public read modes,
 restore, pruning, hydration and optional JCR capabilities remain separate open
 work. This reviewed boundary adds no available RPC or registry/cache implementation.
+
+#### Internal optional Any decoder implemented
+
+`DocumentAnyMaterialization` now implements the pure single-boundary decoder in
+`repo/admission`. It remains package-private. Its borrowed result retains the
+original parsed Any and exact value bytes. The host must authenticate the claimed
+root/prefix, retain stable input and descriptor ownership, bound concurrent decoded
+heap, and perform current access checks before delivery. Selection URL, value size
+and digest are checked; identity mismatch is an invalid selection rather than a
+malformed payload. Oversized values return a resource outcome before hashing.
+
+Preserve mode invokes neither the resolver nor an inner parser. Optional decoding
+accepts an occurrence-selected `DocumentSchemaAssetBinding` produced by the
+existing binder; it does not relink artifacts, implement a second catalog or
+choose by URL alone. The resolver explicitly classifies absence, ambiguity, denied
+access, lookup outage, corrupt definition and resource refusal. Arbitrary resolver
+exceptions propagate; null is an error. The decoder checks the binding's exact
+URL and records its descriptor identity with the dynamic view. Host/resolver
+failures remain distinct from payload parse failures.
+
+Wire preflight and parsing share configured depth and value-byte bounds. Wire
+count/depth exhaustion and malformed payloads have separate outcomes; causes remain
+internal diagnostics. Host control exceptions, including ones shaped like wire
+limit exceptions, propagate unchanged. Control is checked after lookup and before
+every returned outcome. Partial protobuf parsing deliberately allows an incomplete
+proto2 message to be viewed without claiming it satisfies required fields or any
+validation rule. Nested Any payloads remain bytes for independent selection; outer
+unknown envelope fields remain in the original. No generated Java code is loaded.
+
+Sixteen real serialized-input unit cases passed, alongside the full admission
+suite and runtime dependency gate. They cover different descriptors under one
+URL at distinct occurrence prefixes, preserve without lookup, explicit resolver
+outcomes, missing proto2 required fields, nested unresolved bytes, malformed data,
+exact resource boundaries through depth 100, identity mismatch and cancellation.
+The resolver fixtures exercise a pure interface, not a storage or registry claim.
+See `docs/evidence/repository/2026-10-05-any-materialization/README.md`.
+
+This helper does not authenticate document coordinates, allocate host read leases,
+verify persisted associations by itself, or expose a new public mode. The next
+adapter must derive the selected occurrence from the authorized retained fragment,
+load the exact reference through existing retained-asset verification, distinguish
+required historical data loss from optional discovery absence, and keep result
+ownership until the last consumer releases it. Preserve must not load retained
+schemas. Registry/cache integration, custom JSON rendering, public read contracts,
+restore and pruning remain open; no implementation status is inferred for them.

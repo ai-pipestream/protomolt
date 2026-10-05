@@ -5844,3 +5844,14 @@ explicit optional-materialization outcomes without matching exception text. No
 protobuf field, operation or validation bypass is added. The occurrence-specific
 decoder and authorized historical adapter are the next implementation boundary,
 recorded in the composition design; they are not yet exposed as read operations.
+
+### Internal optional Any decoder
+
+**New internal helper, unchanged public operations:** `DocumentAnyMaterialization`
+provides preserve and optional single-occurrence decoding over supplied immutable
+bindings. It verifies selected URL/value identity, keeps nested Any bytes opaque,
+and distinguishes resolution, parse and resource failures without an admission
+verdict. The host still authenticates document paths, resolves retained references,
+owns memory/lifetime and enforces access. No RPC, registry adapter, cache or
+historical optional-mode operation is enabled. Sixteen decoder cases and the full
+185-test admission suite passed, with the existing runtime dependency gate.
