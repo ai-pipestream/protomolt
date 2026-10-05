@@ -54,14 +54,31 @@ public final class DocumentSchemaAssessmentReplay {
      */
     public static void verify(Request request, DocumentAdmissionPolicy policy, DocumentSchemaAdmission.Reader reader,
             DocumentAdmissionReservations reservations, Runnable control) throws InvalidProtocolBufferException {
-        Objects.requireNonNull(request); Objects.requireNonNull(policy); Objects.requireNonNull(reader);
+        Objects.requireNonNull(request);
+        var actual = replay(request.candidate(), request.evaluatedAt(), policy, reader, reservations, control);
+        if (!actual.equals(request.expectedFailure()))
+            throw new IllegalArgumentException("reassessed value verdict differs from recorded failure");
+    }
+
+    /**
+     * Reproduce a member's value result when only the operation's first failure was
+     * retained. All roots, occurrences and schema assets are verified before return.
+     * Empty means the value passed; infrastructure and integrity failures still throw.
+     * The caller binds this result to its command and aggregates members in canonical
+     * order. This grants no historical-runtime, authorization or publication claim.
+     * Input ownership and reservation requirements are the same as {@link #verify}.
+     */
+    public static Optional<DocumentSchemaAssessment.Failure> replay(DocumentSchemaAdmission.Request candidate,
+            Instant evaluatedAt, DocumentAdmissionPolicy policy, DocumentSchemaAdmission.Reader reader,
+            DocumentAdmissionReservations reservations, Runnable control) throws InvalidProtocolBufferException {
+        Objects.requireNonNull(candidate); Objects.requireNonNull(evaluatedAt);
+        Objects.requireNonNull(policy); Objects.requireNonNull(reader);
         Objects.requireNonNull(control);
         Runnable active = () -> {
             if (Thread.currentThread().isInterrupted()) throw new CancellationException("assessment replay interrupted");
             control.run();
         };
         active.run();
-        var candidate = request.candidate();
         var limits = policy.limits();
         if (!candidate.policySha256().equals(policy.sha256())
                 || candidate.requireStructuredRoot() != policy.definition().getRequireStructuredRoot()
@@ -72,7 +89,7 @@ public final class DocumentSchemaAssessmentReplay {
                 || candidate.evidence().size() > limits.maxFragments())
             throw new IllegalArgumentException("assessment replay identities or counts exceed limits");
         DocumentSchemaAdmission.checkMember(candidate.member(), candidate.fragments(), candidate.requireStructuredRoot(),
-                limits, request.evaluatedAt(), active);
+                limits, evaluatedAt, active);
         try (var scratch = new DocumentAdmissionResources(reservations)) {
             var bundles = DocumentSchemaAdmission.decodeEvidence(candidate.evidence(), limits, scratch, active);
             var expectedRoots = new HashMap<Root, DocumentSchemaAdmission.EncodedEvidence>();
@@ -157,7 +174,7 @@ public final class DocumentSchemaAssessmentReplay {
                         if (selected == null) throw new IllegalArgumentException("candidate occurrence has no exact retained schema selection");
                         if (!used.add(key)) throw new IllegalArgumentException("replay occurrence selected more than once");
                         return selected;
-                    }, scratch, request.evaluatedAt(), active)) {
+                    }, scratch, evaluatedAt, active)) {
                 var actualRoots = new HashMap<Root, DocumentSchemaAdmission.EncodedEvidence>();
                 for (var root : replayed.roots()) {
                     if (actualRoots.putIfAbsent(new Root(root.ordinal(), root.locator()), root.encoded()) != null)
@@ -168,9 +185,8 @@ public final class DocumentSchemaAssessmentReplay {
                 if (!new HashSet<>(replayed.references()).equals(new HashSet<>(references))
                         || !replayed.artifacts().keySet().equals(expectedArtifacts) || !loaded.keySet().equals(expectedArtifacts))
                     throw new IllegalArgumentException("reassessed schema assets differ from complete retained union");
-                if (!replayed.failure().equals(request.expectedFailure()))
-                    throw new IllegalArgumentException("reassessed value verdict differs from recorded failure");
                 active.run();
+                return replayed.failure();
             }
         } catch (DocumentAdmissionResources.ReservationFailure failed) {
             throw failed.original;

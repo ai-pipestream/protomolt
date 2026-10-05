@@ -88,6 +88,54 @@ class DocumentSchemaAssessmentReplayTest {
         assertThat(budget.live).isZero();
     }
 
+    @Test void reproducesValueResultWithoutInventingAnExpectedMemberVerdict() throws Exception {
+        for (var expression : List.of("true", "false", "now == timestamp('2000-01-01T00:00:00Z')")) {
+            var captured = capture(expression);
+            var budget = new Reservations();
+            var actual = DocumentSchemaAssessmentReplay.replay(captured.request().candidate(), AT, POLICY,
+                    hash -> Optional.ofNullable(captured.assets().get(hash)), budget, () -> {});
+            assertThat(actual).isEqualTo(captured.request().expectedFailure());
+            assertThat(budget.live).isZero();
+            if (expression.startsWith("now")) {
+                var later = DocumentSchemaAssessmentReplay.replay(captured.request().candidate(), AT.plusSeconds(1), POLICY,
+                        hash -> Optional.ofNullable(captured.assets().get(hash)), budget, () -> {});
+                assertThat(later).isPresent();
+                assertThat(budget.live).isZero();
+            }
+        }
+    }
+
+    @Test void resultReplayDoesNotTurnAssetFailureIntoAValueVerdict() throws Exception {
+        var captured = capture("false");
+        for (var hash : captured.assets().keySet()) {
+            var missing = new HashMap<>(captured.assets()); missing.remove(hash);
+            var corrupt = new HashMap<>(captured.assets()); corrupt.put(hash, ByteString.copyFromUtf8("corrupt"));
+            for (var assets : List.of(missing, corrupt)) {
+                var budget = new Reservations();
+                assertThatThrownBy(() -> DocumentSchemaAssessmentReplay.replay(captured.request().candidate(), AT, POLICY,
+                        key -> Optional.ofNullable(assets.get(key)), budget, () -> {})).isInstanceOf(Exception.class);
+                assertThat(budget.live).isZero();
+            }
+        }
+        var budget = new Reservations();
+        var cancelled = new java.util.concurrent.CancellationException("retained input cancelled");
+        assertThatThrownBy(() -> DocumentSchemaAssessmentReplay.replay(captured.request().candidate(), AT, POLICY,
+                hash -> { throw cancelled; }, budget, () -> {})).isSameAs(cancelled);
+        assertThat(budget.live).isZero();
+    }
+
+    @Test void resultReplayControlCancellationReleasesAlreadyReservedMemory() throws Exception {
+        var captured = capture("false");
+        var budget = new Reservations();
+        var cancelled = new java.util.concurrent.CancellationException("replay cancelled after reservation");
+        assertThatThrownBy(() -> DocumentSchemaAssessmentReplay.replay(captured.request().candidate(), AT, POLICY,
+                hash -> Optional.ofNullable(captured.assets().get(hash)), budget, () -> {
+                    if (budget.live > 0) throw cancelled;
+                })).isSameAs(cancelled);
+        assertThat(budget.peak).isPositive();
+        assertThat(budget.live).isZero();
+    }
+
     @Test void payloadCanReuseTheContainingDocumentSchemaWithoutADuplicateReference() throws Exception {
         var base = fixture(false).document().toBuilder().clearStructuredData().clearParserResults().build();
         var f = fixture(false, base.toBuilder().setStructuredData(Any.pack(base, "type.test")).build());

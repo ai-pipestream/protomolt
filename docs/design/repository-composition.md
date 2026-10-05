@@ -4721,12 +4721,14 @@ opaque members as opaque. The manifest stores only the operation's first failure
 it does not store a verdict for every later member. Reproduce each typed member's
 failure from its retained inputs, aggregate in canonical member order and compare
 the first failure with the manifest. Do not interpret absence of another member's
-failure in the manifest as proof that it passed. The existing member verifier
-expects a per-member verdict, so this requires a reviewed replay result seam that
-preserves evidence verification without adding wire fields for implementation
-convenience. Check the complete member set, not only a successful individual member.
-Keep the existing strict verifier for callers that do possess each member's
-recorded verdict; both paths must share the same root and artifact checks.
+failure in the manifest as proof that it passed. DocumentSchemaAssessmentReplay
+now exposes a result-returning replay method with the same complete root,
+occurrence and artifact checks. Its existing strict verifier delegates to that
+method and compares the supplied per-member verdict. No wire fields were added.
+The repository adapter must check the complete member set, not only a successful
+individual member, and verify every typed/opaque mode against the retained policy.
+Missing assets, corruption and unsupported runtime behavior fail replay; they
+must never be converted into recorded value failures.
 Before exposing a result or detailed replay error, reauthorize delivery using the
 same capture and still-open Use. Historical policy reproduction is distinct from
 eligibility under the current policy for a future terminal decision.
@@ -4736,5 +4738,8 @@ registry absence, changed current source content and policy, missing/corrupt ass
 memory refusal, cancellation and permission revocation during replay. Verify all
 reservations and uses drain on failures. Include two failing typed members and a
 failure in a later member after an earlier success, proving canonical first-failure
-selection without inventing verdicts for unrecorded members. This adapter is not implemented or exposed
-as a public API yet.
+selection without inventing verdicts for unrecorded members. The result-returning
+member method has tests for accepted, rejected and time-dependent values, each
+missing/corrupt retained asset and reader cancellation after the original assessment
+closes. The repository loading and operation aggregation adapter is not implemented
+or exposed as a public API yet.
