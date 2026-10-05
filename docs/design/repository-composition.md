@@ -4601,9 +4601,8 @@ The production-JAR capture probe also checks retained backend/profile/namespace,
 provider version, candidate ordinals and payload identity, and identical bindings
 after the owned objects become retiring. The current typed candidate
 path accepts DOCUMENT_PART origins; ARCHIVE origins fail the complete-set check
-until a corresponding supported candidate path exists. Mixed retained-reuse reads,
-reused-source revocation during provider I/O and offline historical revalidation
-remain required before enabling the full assessment reader.
+until a corresponding supported candidate path exists. Offline historical
+revalidation remains required before enabling the full assessment reader.
 
 PinnedAssessment now binds its delivery check to the capture caller, exact operation
 owner/command, stage and session. Delivery uses a shared operation-owner lock,
@@ -4665,3 +4664,24 @@ commits and retained-evidence verification, plus per-reader capacity rejection
 under concurrent independent reads. Compare one, two and four replicas against
 the same database and provider, recording throughput, latency, lock waits and
 RESOURCE_EXHAUSTED outcomes before changing these boundaries.
+
+The production-JAR probe also builds a mixed assessment from a real native source
+publication. It commits a document through DocumentPublicationCommit using measured
+versioned S3 uploads and checked content before enabling the account's admission
+policy. The candidate reuses that publication's CORE object, uploads CHUNKS and
+includes an EMPTY slot that shifts the candidate ordinals. Canonical assessment
+creation runs the actual validator and retains its descriptors and evidence. The
+probe checks the exact source revision, object and original ordinal in the retained
+slot, independently of the shifted candidate ordinal. Its destination is an
+explicit SQL authorization fixture; the source publication and candidate uploads
+use real storage and repository paths.
+
+After the assessment scope closes, the reader retrieves those retained bytes even
+after a different latest provider version is written at the reused CORE key.
+Source revocation is injected specifically after a genuine GET of that CORE key,
+and prevents both byte delivery and disclosure of an injected provider error.
+The same mixed candidate exercises cancellation and deadline refusal while the
+CORE worker is held, retaining memory and the SQL session until actual drain.
+No candidate publication or semantic-review authority is inferred from these
+checks. Advancing the source's native content revision and replaying historical
+validation without its original registry remain separate required cases.

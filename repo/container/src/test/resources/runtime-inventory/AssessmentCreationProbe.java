@@ -14,6 +14,7 @@ import java.util.*;
 public final class AssessmentCreationProbe {
     public static void run(Tx tx, DocumentAssessmentRuntimeObserver.Observation observation, javax.sql.DataSource database,
             AssessmentProviderProbe provider) throws Exception {
+        var mixedSource = AssessmentMixedReuseProbe.publishSource(tx, provider);
         List<DocumentPublicationMember> restartMembers = new ArrayList<>();
         for (String memberId : List.of("a", "b")) {
             var member = ObservedAssessmentProbe.member(memberId).member();
@@ -29,6 +30,7 @@ public final class AssessmentCreationProbe {
                         .setMaxRoots(100).setMaxEvidenceBytes(4_000_000).setMaxBindings(20).setMaxRetainedBytes(16_000_000)
                         .setMaxDecodedBytes(1_000_000)).build(), () -> {});
         var active = new DocumentSchemaPolicies(tx).activate(policy, 0, () -> {});
+        AssessmentMixedReuseProbe.run(tx, provider, mixedSource, active, observation);
         for (int scenario : new int[]{0, 2, 1}) {
             boolean invalid = scenario == 1;
             boolean afterScope = scenario == 2;
