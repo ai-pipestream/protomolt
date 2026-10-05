@@ -58,6 +58,7 @@ final class DocumentAssessmentCreation {
             byte[] manifestBytes = manifest.toByteArray();
             return tx.inTransaction(em -> {
                 evidence.check(control);
+                DocumentAssessmentStartJournal.requireCreation(em, owner, command, assessment, retainUntil);
                 RepositoryOperationLedger.fenceLiveOwner(em, owner);
                 RepositoryOperationLedger.requireCommand(em, owner.key(), command);
                 DocumentSchemaPolicies.lockCurrent(em, policy, control);

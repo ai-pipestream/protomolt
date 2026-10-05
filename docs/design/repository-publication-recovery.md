@@ -292,3 +292,31 @@ claim suites pass; this is neither provider recovery nor a process-crash test.
 Session admission has not switched to this journal. Sticky assessment coordinates,
 SQL consumption guards, owner-transition rules and late provider effects still
 precede automatic recovery activation. Existing public contracts are unchanged.
+
+## Durable assessment-start identity (V83)
+
+The private start journal records an assessment UUID, requested retention interval,
+and a deadline sampled once from the database clock. It binds the exact preparation,
+command digest and live operation-owner nonce/generation. Fixed modes must already
+exist and pass the private loader's command-member checks. Changed identity or
+retention is refused; exact retries return the original deadline without extending
+it. UPDATE and DELETE are forbidden. A fresh journal can load the coordinates from
+shared SQL without remembering the original proposed UUID.
+
+SQL records the first insert's transaction ID and refuses assessment creation in
+that same transaction. Thus the sticky marker must commit before CREATE; an exact
+retry cannot rewrite the transaction ID or refresh the deadline. A real PostgreSQL
+red test demonstrated the missing separate-transaction check before this guard.
+For operations with fixed-mode rows, a new assessment-owner INSERT must match the
+committed marker's ID, command, owner nonce and deadline. Missing or mismatched
+markers fail. Creation checks the marker before taking the owner lock, and SQL
+repeats the binding check for direct INSERT callers. Existing operations without
+fixed-mode rows retain their explicit unjournaled behavior.
+
+A start marker is not a committed assessment. Loading its coordinates does not
+permit another CREATE after an uncertain outcome. Discovery must still verify the
+original committed assessment; absence remains unresolved. The new loader requires
+the original owner to remain live, so it does not adopt a predecessor's assessment
+under a new generation. Automatic session restoration, SQL fixed-mode consumption
+guards, successful retained-evidence integration, late provider effects and the
+forced-process-crash qualification remain open before recovery activation.
