@@ -64,6 +64,12 @@ tasks.register('admissionRuntimeTest', Test) {
     inputs.file(tasks.named('jar').flatMap { it.archiveFile })
     systemProperty 'protomolt.test.admissionRuntimeBundle', admissionInventory.get().asFile.absolutePath
     systemProperty 'protomolt.test.containerJar', tasks.named('jar').get().archiveFile.get().asFile.absolutePath
+    ['protomolt-repo-spi', 'protomolt-repo-blob-spi'].each { module ->
+        def supportJar = project(":" + module).tasks.named('jar')
+        dependsOn supportJar
+        inputs.file(supportJar.flatMap { it.archiveFile })
+        systemProperty 'protomolt.test.' + module, supportJar.get().archiveFile.get().asFile.absolutePath
+    }
     useJUnitPlatform()
 }
 tasks.named('check') { dependsOn tasks.named('admissionRuntimeTest') }

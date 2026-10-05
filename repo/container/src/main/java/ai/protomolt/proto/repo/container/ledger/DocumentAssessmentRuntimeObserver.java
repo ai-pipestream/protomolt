@@ -39,7 +39,8 @@ final class DocumentAssessmentRuntimeObserver {
         DocumentAssessmentRuntime identity(Runnable control) {
             active(control);
             if (!context.equals(context())) throw new IllegalStateException("Admission runtime context differs from its observation");
-            active(control);
+            // No caller callback after the context check: it could invalidate what was just checked.
+            if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException("Runtime observation interrupted");
             return identity;
         }
     }

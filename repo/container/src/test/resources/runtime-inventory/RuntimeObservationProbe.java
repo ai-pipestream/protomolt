@@ -13,6 +13,7 @@ public final class RuntimeObservationProbe {
                 || !identity.getJvm().getVersion().contains(Runtime.version().toString())) throw new AssertionError("Wrong observed identity");
         if (!Class.forName("ai.protomolt.proto.repo.admission.AdmissionProbe").getMethod("run").invoke(null).equals(5))
             throw new AssertionError("Real validator probe failed");
+        ObservedAssessmentProbe.run(observation);
         var thread = Thread.currentThread();
         var previous = thread.getContextClassLoader();
         try {

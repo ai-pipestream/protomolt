@@ -204,7 +204,7 @@ class DocumentPublicationAssessmentTest {
                 Optional.of(f.assets().container().definition()), (member, occurrence) -> {
                     calls.incrementAndGet(); return member.getMemberId().equals("member-a") ? invalid.definition() : f.assets().payload().definition();
                 }, budget, OPAQUE_LIMITS, instant, () -> {});
-        try (result; var encoded = result.encodeManifest(owner("account", f.command().operationId()), runtimeFixture(), () -> {})) {
+        try (result; var encoded = result.encodeDeclaredManifest(owner("account", f.command().operationId()), runtimeFixture(), () -> {})) {
             var decoded = decodeManifest(encoded, budget);
             assertThat(decoded.getCommandSha256()).isEqualTo(f.command().sha256());
             assertThat(decoded.getOperationId()).isEqualTo(f.command().operationId().toString());
@@ -236,7 +236,7 @@ class DocumentPublicationAssessmentTest {
         var modes = Map.of("member-a", DocumentPublicationCandidate.Mode.TYPED, "member-b", DocumentPublicationCandidate.Mode.OPAQUE);
         try (var result = assess(f, modes, selection(policy("account", true, 20)),
                 (member, occurrence) -> f.assets().payload().definition(), budget);
-             var encoded = result.encodeManifest(owner("account", f.command().operationId()), runtimeFixture(), () -> {})) {
+             var encoded = result.encodeDeclaredManifest(owner("account", f.command().operationId()), runtimeFixture(), () -> {})) {
             var decoded = decodeManifest(encoded, budget);
             assertThat(decoded.hasFirstFailure()).isFalse();
             assertThat(decoded.getMembers(0).hasTyped()).isTrue();
@@ -252,7 +252,7 @@ class DocumentPublicationAssessmentTest {
         try (var result = DocumentPublicationAssessment.prepare(f.command(), selection(policy("account", true, 20)), modes,
                 fragments(f), Optional.empty(), (member, occurrence) -> { throw new AssertionError("Opaque operation must not resolve schemas"); },
                 budget, OPAQUE_LIMITS, AT, () -> {});
-             var encoded = result.encodeManifest(owner("account", f.command().operationId()), runtimeFixture(), () -> {})) {
+             var encoded = result.encodeDeclaredManifest(owner("account", f.command().operationId()), runtimeFixture(), () -> {})) {
             var decoded = decodeManifest(encoded, budget);
             assertThat(decoded.hasFirstFailure()).isFalse();
             assertThat(decoded.getMembersList()).allSatisfy(member -> {
@@ -269,28 +269,28 @@ class DocumentPublicationAssessmentTest {
                 (member, occurrence) -> f.assets().payload().definition(), budget)) {
             long owned = budget.reservedBytes();
             for (var owner : List.of(owner("other", f.command().operationId()), owner("account", java.util.UUID.randomUUID()))) {
-                assertThatThrownBy(() -> result.encodeManifest(owner, runtimeFixture(), () -> {})).hasMessageContaining("owner differs");
+                assertThatThrownBy(() -> result.encodeDeclaredManifest(owner, runtimeFixture(), () -> {})).hasMessageContaining("owner differs");
                 assertThat(budget.reservedBytes()).isEqualTo(owned);
             }
             var owner = owner("account", f.command().operationId());
-            assertThatThrownBy(() -> result.encodeManifest(owner, DocumentAssessmentRuntime.getDefaultInstance(), () -> {}))
+            assertThatThrownBy(() -> result.encodeDeclaredManifest(owner, DocumentAssessmentRuntime.getDefaultInstance(), () -> {}))
                     .isInstanceOf(ai.protomolt.proto.validate.ValidationResult.ValidationException.class);
             assertThat(budget.reservedBytes()).isEqualTo(owned);
             var cancelled = new java.util.concurrent.CancellationException("manifest preparation cancelled");
-            assertThatThrownBy(() -> result.encodeManifest(owner, runtimeFixture(), () -> {
+            assertThatThrownBy(() -> result.encodeDeclaredManifest(owner, runtimeFixture(), () -> {
                 if (budget.reservedBytes() > owned) throw cancelled;
             })).isSameAs(cancelled);
             assertThat(budget.reservedBytes()).isEqualTo(owned);
             try (var pressure = budget.reserve(budget.capacity() - owned)) {
-                assertThatThrownBy(() -> result.encodeManifest(owner, runtimeFixture(), () -> {}))
+                assertThatThrownBy(() -> result.encodeDeclaredManifest(owner, runtimeFixture(), () -> {}))
                         .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
                                 failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED));
             }
             var checked = new java.util.concurrent.atomic.AtomicBoolean();
-            try (var encoded = result.encodeManifest(owner, runtimeFixture(), () -> {
+            try (var encoded = result.encodeDeclaredManifest(owner, runtimeFixture(), () -> {
                 if (checked.compareAndSet(false, true)) {
                     assertThatThrownBy(result::close).hasMessageContaining("verification is active");
-                    assertThatThrownBy(() -> result.encodeManifest(owner, runtimeFixture(), () -> {}))
+                    assertThatThrownBy(() -> result.encodeDeclaredManifest(owner, runtimeFixture(), () -> {}))
                             .hasMessageContaining("verification is active");
                 }
             })) {

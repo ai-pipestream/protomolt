@@ -3477,8 +3477,39 @@ allows retry after restoring context. No test framework is on that process's
 classpath. The test disables dynamic attach/agent loading for its process; this
 is test setup, not a claim about deployed hosts.
 
-This observer is not yet the producer consumed by assessment encoding or a host
-startup path. The internal encoder still accepts a raw runtime declaration for
-codec/projection tests. Replacing that boundary with a validated observation,
-retaining candidate/evidence bytes and fencing the durable rejection decision
-remain outstanding. No terminal admission rejection is enabled by this step.
+Host startup has not yet been wired to obtain this observation. Candidate/evidence
+retention and durable rejection fencing remain outstanding. No terminal admission
+rejection is enabled by this step.
+
+#### Encoding with observed runtime identity
+
+`DocumentPublicationAssessment.encodeManifest` now requires an observation and
+returns a privately constructed `ObservedManifest`. Its busy guard spans the
+initial context check, projection, independent replay, encoding and final context
+check. If the final check fails, it closes the encoded output lease before freeing
+the busy state. No provider or SQL work occurs in this method. The observation's
+context check runs after the caller's control callback, with no callback after
+comparison that could invalidate the check before returning.
+
+The wrapper owns only the encoded buffer. Its bytes, digest and explicit check
+accessors require an open owner and a matching live runtime context. Closing
+always releases its reservation, even when the runtime context is no longer
+supported. The original assessment may close independently. Borrowed bytes are
+not self-authenticating and must not outlive the wrapper. A future durable handler
+must accept this live wrapper, recheck it at consumption, retain candidate/schema
+assets separately, and fence current authorization, policy and owner generation.
+
+The lower-level `encodeDeclaredManifest` remains an internal codec/projection
+path for synthetic provenance fixtures. It cannot construct an observed wrapper
+and must never become an alternative durable-decision input. Its package-private
+visibility is not a security boundary; future terminal-handler review must reject
+generic raw-byte/declared-runtime overloads that bypass the observed path.
+
+The fresh-JVM probe now includes repository SPI and byte SPI JARs and exercises a
+real typed rejection together with an explicit opaque member. It verifies the
+observed runtime, exact failure root/occurrence and evaluation instant; replay
+does not call the registry resolver again. It changes the classpath declaration
+after encoding while the output reservation is live and verifies rejection,
+cleanup and retry. It also covers cancellation, reentrant encode/close refusal,
+independent output lifetime, access refusal under a changed context loader, and
+closing the output under that unsupported context without leaking its lease.

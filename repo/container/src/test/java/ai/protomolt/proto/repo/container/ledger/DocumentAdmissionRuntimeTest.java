@@ -101,14 +101,20 @@ class DocumentAdmissionRuntimeTest {
         var container = Path.of(System.getProperty("protomolt.test.containerJar"));
         assertThat(container).isRegularFile();
         components.add(new Component("container-test-host", container));
+        for (String module : List.of("protomolt-repo-spi", "protomolt-repo-blob-spi"))
+            components.add(new Component(module, Path.of(System.getProperty("protomolt.test." + module))));
         var output = compileProbe(components);
         var source = directory.resolve("RuntimeObservationProbe.java");
         try (var input = getClass().getResourceAsStream("/runtime-inventory/RuntimeObservationProbe.java")) {
             assertThat(input).isNotNull(); Files.copy(input, source);
         }
+        var assessmentSource = directory.resolve("ObservedAssessmentProbe.java");
+        try (var input = getClass().getResourceAsStream("/runtime-inventory/ObservedAssessmentProbe.java")) {
+            assertThat(input).isNotNull(); Files.copy(input, assessmentSource);
+        }
         String classpath = String.join(java.io.File.pathSeparator, components.stream().map(c -> c.jar().toString()).toList());
         assertThat(javax.tools.ToolProvider.getSystemJavaCompiler().run(null, null, null,
-                "-proc:none", "-classpath", classpath, "-d", output.toString(), source.toString())).isZero();
+                "-proc:none", "-classpath", classpath, "-d", output.toString(), source.toString(), assessmentSource.toString())).isZero();
         var fixture = directory.resolve("probe.jar");
         try (var jar = new java.util.jar.JarOutputStream(Files.newOutputStream(fixture)); var paths = Files.walk(output)) {
             for (var path : paths.filter(Files::isRegularFile).sorted().toList()) {

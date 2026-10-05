@@ -116,20 +116,70 @@ final class DocumentPublicationAssessment implements AutoCloseable {
 
     /**
      * Encode the exact completed assessment after independent replay. Runtime is
-     * host-supplied provenance, not an attestation established here. Owner identity
+     * declared provenance for codec/projection use, not observed-runtime evidence.
+     * This cannot construct an ObservedManifest and is not a durable-decision input. Owner identity
      * is checked locally, not fenced in SQL. Returned bytes own a separate budget
      * lease; they retain neither candidate bytes nor schema assets after parent close.
      */
-    DocumentAssessmentManifestCodec.Encoded encodeManifest(RepositoryOperationLedger.Owner owner,
+    DocumentAssessmentManifestCodec.Encoded encodeDeclaredManifest(RepositoryOperationLedger.Owner owner,
             ai.protomolt.proto.repo.v1.DocumentAssessmentRuntime runtime, Runnable control)
             throws InvalidProtocolBufferException {
         beginVerification();
         try {
-            var manifest = DocumentAssessmentProjection.project(fragments.command(), policy, evaluatedAt, modes, typed,
-                    failure, owner, runtime, () -> active(control));
-            verifyOwned(control);
-            return DocumentAssessmentManifestCodec.encode(manifest, reservations(budget), () -> active(control));
+            return encodeOwned(owner, runtime, control);
         } finally { finishVerification(); }
+    }
+
+    /**
+     * Replay and encode under an observed runtime. The result owns only encoding bytes;
+     * a durable consumer must separately retain candidate/evidence bytes and fence its decision.
+     */
+    ObservedManifest encodeManifest(RepositoryOperationLedger.Owner owner,
+            DocumentAssessmentRuntimeObserver.Observation observation, Runnable control) throws InvalidProtocolBufferException {
+        Objects.requireNonNull(observation);
+        beginVerification();
+        DocumentAssessmentManifestCodec.Encoded encoded = null;
+        try {
+            var runtime = observation.identity(control);
+            encoded = encodeOwned(owner, runtime, control);
+            observation.identity(control);
+            var result = new ObservedManifest(encoded, observation);
+            encoded = null;
+            return result;
+        } finally {
+            try { if (encoded != null) encoded.close(); }
+            finally { finishVerification(); }
+        }
+    }
+
+    private DocumentAssessmentManifestCodec.Encoded encodeOwned(RepositoryOperationLedger.Owner owner,
+            ai.protomolt.proto.repo.v1.DocumentAssessmentRuntime runtime, Runnable control) throws InvalidProtocolBufferException {
+        var manifest = DocumentAssessmentProjection.project(fragments.command(), policy, evaluatedAt, modes, typed,
+                failure, owner, runtime, () -> active(control));
+        verifyOwned(control);
+        return DocumentAssessmentManifestCodec.encode(manifest, reservations(budget), () -> active(control));
+    }
+
+    /**
+     * Constructible only after observed replay and encoding. Borrowed bytes are not an
+     * independent proof and must not outlive this owner. Close always releases the lease,
+     * even after the runtime context becomes unsupported.
+     */
+    static final class ObservedManifest implements AutoCloseable {
+        private DocumentAssessmentManifestCodec.Encoded encoded;
+        private final DocumentAssessmentRuntimeObserver.Observation observation;
+        private ObservedManifest(DocumentAssessmentManifestCodec.Encoded encoded, DocumentAssessmentRuntimeObserver.Observation observation) {
+            this.encoded = encoded; this.observation = observation;
+        }
+        synchronized ByteString bytes(Runnable control) { check(control); return encoded.bytes(); }
+        synchronized String sha256(Runnable control) { check(control); return encoded.sha256(); }
+        synchronized void check(Runnable control) {
+            requireOpen(); observation.identity(control); requireOpen();
+        }
+        private void requireOpen() { if (encoded == null) throw new IllegalStateException("Observed manifest is closed"); }
+        @Override public synchronized void close() {
+            if (encoded != null) { encoded.close(); encoded = null; }
+        }
     }
 
     private synchronized void beginVerification() {
