@@ -52,7 +52,7 @@ class RepositoryReplicaProcessIT {
                 assertCompetingRevisions(writer, survivor, request.toBuilder().setAddress(
                         address.toBuilder().setEntryId("contended")).build());
                 assertStats(survivor, 2, 3);
-                first.close(); // Forceful exit: no shutdown hooks or shared JVM objects can help the survivor.
+                killWriterBlockedBeforeCommit(first, writer, request, saved);
                 assertThat(first.process().isAlive()).isFalse();
                 var replay = survivor.withDeadlineAfter(20, TimeUnit.SECONDS).putEntry(request);
                 assertThat(replay.getEntryUuid()).isEqualTo(saved.getEntryUuid());
@@ -76,6 +76,68 @@ class RepositoryReplicaProcessIT {
                 a.awaitTermination(10, TimeUnit.SECONDS);
                 if (b != null) b.awaitTermination(10, TimeUnit.SECONDS);
             }
+        }
+    }
+
+    private void killWriterBlockedBeforeCommit(Host host, ArchiveServiceGrpc.ArchiveServiceBlockingStub writer,
+            PutEntryRequest original, PutEntryResponse saved) throws Exception {
+        try (var lock = java.sql.DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+            lock.setAutoCommit(false);
+            try {
+                int blocker;
+                try (var query = lock.createStatement(); var result = query.executeQuery("SELECT pg_backend_pid()")) {
+                    assertThat(result.next()).isTrue();
+                    blocker = result.getInt(1);
+                }
+                // Permit foreign-key checks, but stop commitSave's entry FOR UPDATE.
+                try (var query = lock.prepareStatement("SELECT entry_uuid FROM archive_entries WHERE entry_uuid=? FOR NO KEY UPDATE")) {
+                    query.setObject(1, UUID.fromString(saved.getEntryUuid()));
+                    try (var result = query.executeQuery()) { assertThat(result.next()).isTrue(); }
+                }
+                var candidate = original.toBuilder().setExpectedVersion(saved.getVersion()).setRenditions(0,
+                        original.getRenditions(0).toBuilder().setData(ByteString.copyFromUtf8("must never become visible"))).build();
+                try (var workers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+                    var pending = workers.submit(() -> writer.withDeadlineAfter(30, TimeUnit.SECONDS).putEntry(candidate));
+                    boolean blocked = false;
+                    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+                    try (var observer = java.sql.DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+                            var query = observer.prepareStatement("""
+                                    SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+                                    WHERE ? = ANY(pg_blocking_pids(pid)) AND query ILIKE '%archive_entries%'
+                                    AND query ILIKE '%for%update%')
+                                    """)) {
+                        query.setInt(1, blocker);
+                        while (System.nanoTime() < deadline && !pending.isDone()) {
+                            try (var result = query.executeQuery()) { result.next(); blocked = result.getBoolean(1); }
+                            if (blocked) break;
+                            Thread.sleep(25);
+                        }
+                        assertThat(blocked).as("writer observed waiting on the held entry lock").isTrue();
+                        try (var staged = observer.prepareStatement("""
+                                SELECT count(*) FROM archive_object_uploads u
+                                JOIN archive_object_bindings b USING(object_id)
+                                WHERE b.entry_uuid=? AND u.state='VERIFIED' AND u.sha256=?
+                                AND NOT EXISTS(SELECT 1 FROM archive_version_object_refs r WHERE r.object_id=u.object_id)
+                                """)) {
+                            staged.setObject(1, UUID.fromString(saved.getEntryUuid()));
+                            staged.setString(2, java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                                    .digest(candidate.getRenditions(0).getData().toByteArray())));
+                            try (var result = staged.executeQuery()) {
+                                assertThat(result.next()).isTrue();
+                                assertThat(result.getLong(1)).as("uploaded candidate remains verified but unpublished").isEqualTo(1);
+                            }
+                        }
+                        host.close(); // No graceful hooks: the in-flight transaction loses its client process.
+                        assertThatThrownBy(() -> pending.get(10, TimeUnit.SECONDS))
+                                .isInstanceOf(java.util.concurrent.ExecutionException.class)
+                                .satisfies(failure -> assertThat(io.grpc.Status.fromThrowable(failure.getCause()).getCode())
+                                        .isEqualTo(io.grpc.Status.Code.UNAVAILABLE));
+                    } finally {
+                        // Also terminate on failed observations before awaiting executor shutdown.
+                        host.close();
+                    }
+                }
+            } finally { lock.rollback(); }
         }
     }
 

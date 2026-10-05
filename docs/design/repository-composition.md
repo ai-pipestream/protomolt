@@ -1319,8 +1319,8 @@ writer and waits for process exit. The surviving process repeats the same-conten
 write without changing entry/version/storage identity and reads the retained
 bytes. This verifies completed archive-write persistence independently of the
 writer's heap. It uses the test runtime classpath, not a packaged distribution;
-it does not inject a crash inside a transaction, recover an active provider call,
-test typed publication takeover or measure scale-out throughput.
+it does not recover an active provider call, test typed publication takeover or
+measure scale-out throughput. The controlled database crash is described below.
 
 Before terminating either process, the same test releases two distinct payload
 updates against a separate entry's identical expected version through the two
@@ -1328,8 +1328,18 @@ hosts. Exactly one returns success and the other ABORTED; both hosts must read
 the winner and the original retained revision. Exact archive entry/version totals
 exclude an extra committed revision from the rejected contender or replay.
 The client barrier coordinates request starts, not a deterministic interleaving
-inside SQL. This is transport-level optimistic concurrency coverage; it does not
-replace controlled races at the commit boundary or prove failed-upload cleanup.
+inside SQL. This portion supplies transport-level optimistic concurrency coverage;
+it does not itself prove failed-upload cleanup or a particular SQL race schedule.
+
+The process test also injects an in-flight writer crash before publication. A
+separate JDBC transaction holds the existing entry with FOR NO KEY UPDATE; the
+test observes the writer's entry-lock wait through pg_blocking_pids and confirms
+the candidate has a VERIFIED upload with no version reference. It then forcibly
+terminates the writer, awaits process exit and an UNAVAILABLE RPC result, and
+releases the test lock. The survivor must still replay the old committed content,
+advance from its original version and read its retained bytes with exact version
+totals. This proves unpublished content does not become visible in that schedule.
+Reclamation of the abandoned physical upload remains a separate recovery test.
 
 ### Upload verification evidence at the provider boundary
 
