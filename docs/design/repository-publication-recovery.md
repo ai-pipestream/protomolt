@@ -165,3 +165,22 @@ grants no authority. Fixed modes, proposed claim-transfer identity and the stick
 stage-started marker require their own committed transitions; they must not be
 lost through replacement of an immutable preparation blob. The complete journal
 and its process-crash qualification remain the next implementation work.
+
+## Implemented preparation encoding
+
+`DocumentPublicationPreparationRecord` now binds the private immutable preparation
+and rebuilds it through existing coverage checks. `DocumentPublicationPreparationCodec`
+uses versioned deterministic encoding with a 16 MiB envelope bound, 1 MiB text
+bound, bounded collection counts, strict standard UTF-8 and explicit null fields.
+The decoder checks expected journal key and command digest, reconstructs the full
+intent, and rejects a byte sequence that differs from its canonical re-encoding.
+It retains exact seconds/nanos and sampled configuration without provider lookup.
+
+Seven new tests, plus twelve existing seed/session cases, pass. They include real
+SQL admission from decoded identities and malformed/noncanonical/oversized input.
+The existing live preparation coordinator is unchanged. This is an encoding
+prerequisite, not a persisted journal or restored session. The journal must add
+an independently retained full-blob digest and immutable row checks: the command
+digest alone does not bind seeds or placements. Encoded byte caps are not heap
+accounting; journal reads also need bounded concurrency/resources. Evidence is in
+`docs/evidence/repository/2026-10-05-preparation-codec/`.
