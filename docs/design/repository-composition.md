@@ -3636,3 +3636,45 @@ extension can build on it for JCR semantics. It does not establish JCR sessions,
 workspaces, node identity across moves, node/property types, reference integrity
 or version restoration. Existing account/workspace/version fields remain distinct
 from those capabilities, and base storage gains no JCR dependencies.
+
+#### Assessment retention lock set and association review
+
+V65 adds `lock_repository_retention_set(uuid[])`, an internal exclusive lock
+primitive for acquisition and recovery. It bounds the input at 10,000 identities,
+deduplicates objects, checks complete physical/source/retention rows, and requires
+READ COMMITTED. It locks archive sources in PostgreSQL UUID order, then document
+attempts in that order, then physical retention rows in object UUID order. Empty
+sets are supported by this generic primitive. Invalid or missing
+identities fail; nothing is silently omitted. The function changes no ownership
+or retirement state and intentionally permits already-retired objects so recovery
+can release existing ownership. Acquisition must separately reject those states.
+The returned count proves neither authorization nor selected-candidate validity.
+
+Call it once for the complete set after the operation, policy, authorization and
+native assessment-owner fences. It is not a shared-reader admission path. In
+particular, do not call it for a mixed source set after
+`DocumentPublicationLocks.lockIndependentOrigins`: that method already holds
+document attempt locks and would violate archive-before-document ordering. All
+logical document/source/current-pointer locks must precede physical source locks.
+No provider I/O or schema checking belongs within these locks.
+
+The current `PublicationReuse` contract names document revision conditions;
+`DocumentReuseAdmission` requires a retained current `DOCUMENT_PART` source.
+It cannot express archive reuse. The generic physical lock primitive supports
+both source families without extending that command or claiming archive reuse.
+
+The next native assessment tables must use a globally unique assessment UUID as
+the mirror owner identity. An operation UUID alone is insufficient because the
+operation namespace also includes account and principal, while physical mirrors
+do not. Keep one native retained-object row per `(assessment_id, object_id)` and
+separate sealed bindings for each PRESENT `(member_id, revision_ordinal)`.
+Several candidate parts may legitimately reuse the same physical object.
+NEW_CONTENT bindings must validate the exact selected attempt and selection
+revision, account/principal/operation/generation/member, and full command
+`revision_ordinal`; the upload's dense `ordinal` is a different coordinate.
+Reused bindings must freeze the validated source revision, source slot and exact
+object identity so later replay does not depend on a current pointer.
+
+The helper is implemented; native assessment ownership, cleanup admission,
+terminal promotion and replay remain the next work. No rejected-candidate
+retention API or ADMISSION_REJECTED emitter is enabled by this migration.
