@@ -275,3 +275,21 @@ late-completion test. Qualify successful provider I/O delay below that client ti
 with a shorter embedded drain deadline and a controllable real TCP reply gate.
 Longer delays require separate failure/uncertain-acknowledgment reconciliation tests.
 The existing process SIGTERM test continues to cover delayed SQL commit.
+
+### Real Redis acknowledgment boundary
+
+`BoundedArchiveRedisReplyIT` now places a test-only RESP2 TCP pass-through between
+the production Redis adapter and real Redis. It identifies the conditional-write
+EVAL and holds the actual integer success reply after the server executes it.
+While the acknowledgment is held, the SQL upload must remain STAGING and a separate
+direct Redis read must return the exact payload. A 100 ms embedded host close must
+report an archive-RPC drain timeout, retain byte reservations and the pending call,
+and refuse new calls. Releasing the response below the client's two-second timeout
+must finish the original RPC successfully with that exact physical object identity.
+The upload then becomes LIVE and a later close drains all reservations.
+
+This is real delayed provider I/O with a shorter embedded deadline, not a ten-second
+process-provider stall. The proxy never generates a success reply. Forwarding errors
+fail the test, and teardown closes sockets and joins workers. Only an explicitly
+expected pool shutdown may reset an idle client connection between complete frames.
+Longer uncertain-acknowledgment faults and process crash recovery remain separate.
