@@ -198,6 +198,8 @@ class DocumentSuccessorManagerIT {
                     assertThat(committed.await(10, TimeUnit.SECONDS)).isTrue();
                     assertThat(r.sessions().retainedSessions()).isEqualTo(1);
                     assertThatThrownBy(() -> execute(r.sessions(), plan)).hasMessageContaining("in progress");
+                    assertThatThrownBy(() -> r.sessions().retireClaimFenced(CALLER,plan.next().command(),NONE))
+                            .hasMessageContaining("in use");
                     assertThat(r.sessions().drainRegistrations(Duration.ZERO, key -> CALLER, NONE).registrationsIdle()).isFalse();
                     assertThat(r.sessions().awaitIdle(Duration.ZERO)).isFalse();
                     cancelled.set(cancel);

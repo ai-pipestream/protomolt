@@ -915,3 +915,10 @@ owner-based retirement. Coordinate those owners during host shutdown rather than
 interpreting an empty recovery map as whole-host drain. Terminal/graceful entry
 reconciliation, manager handling after claim-only fencing, active-session composition
 qualification and automatic recovery integration remain open.
+
+Pre-close claim-fenced retirement for journaled session cache entries now shares
+the recovery-owner proof and preserves worker/SQL state. The next shutdown gap is
+fenced identities in an already captured snapshot: foreign takeover after closure
+must be classified separately from successful V90/V91 drain, while local workers
+still drain. Current `beginRetained` can throw on this state. Do not silently remove
+snapshot identities or call an empty cache proof of provider quiescence.

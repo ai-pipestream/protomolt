@@ -197,24 +197,10 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
             DocumentAdmissionAuthorization.requireCaller(caller,key,key.account()); requireCaller(entry,caller);
             if (entry.phase==Phase.RETIRED) return true;
             if (entry.phase==Phase.ACTIVATED) throw conflict("Activated recovery is owned by its session");
-            boolean fenced=tx.inTransaction(em -> {
-                control.check();
-                em.createNativeQuery("SELECT require_repository_read_committed()").getSingleResult();
-                var rows=em.createNativeQuery("""
-                        SELECT command_sha256,claim_epoch,claim_token FROM repository_execution_claims
-                        WHERE account_id=:a AND principal=:p AND operation_id=:o FOR UPDATE
-                        """).setParameter("a",key.account()).setParameter("p",key.principal())
-                        .setParameter("o",key.operationId()).getResultList();
-                if (rows.isEmpty()) return false;
-                var row=(Object[])rows.getFirst();
-                if (!HexFormat.of().formatHex((byte[])row[0]).equals(entry.command.sha256()))
-                    throw conflict("Recovery claim command changed");
-                RepositoryOperationLedger.requireCommand(em,key,entry.command);
-                long epoch=((Number)row[1]).longValue(); var token=(UUID)row[2];
-                return excludes(epoch,token,entry.proposal)
-                        && (entry.pending==null || excludes(epoch,token,entry.pending.proposal()));
-            });
-            control.check();
+            var identities=new ArrayList<RepositoryCoordinatorDrain.Identity>(2);
+            identities.add(successorIdentity(entry.proposal));
+            if (entry.pending!=null) identities.add(successorIdentity(entry.pending.proposal()));
+            boolean fenced=RepositoryClaimRetirement.fenced(tx,entry.command,identities,control);
             if (!fenced) return false;
             entry.phase=Phase.RETIRED; entry.pending=null;
             synchronized (RepositoryRecoveryAttempts.this) { entries.remove(key,entry); }
@@ -234,10 +220,10 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
         }
     }
 
-    /** V78 forbids claim deletion, epoch reversal and token changes within an epoch. */
-    private static boolean excludes(long epoch, UUID token, RepositoryCoordinatorReservation.Proposal proposal) {
-        long proposedEpoch=proposal.predecessor().epoch()+1;
-        return epoch>proposedEpoch || epoch==proposedEpoch && !token.equals(proposal.successorToken());
+    private static RepositoryCoordinatorDrain.Identity successorIdentity(RepositoryCoordinatorReservation.Proposal proposal) {
+        var predecessor=proposal.predecessor();
+        return new RepositoryCoordinatorDrain.Identity(predecessor.key(),predecessor.commandSha256(),predecessor.epoch()+1,
+                proposal.successorToken(),proposal.successorIncarnation());
     }
 
     private static void requireCaller(Entry entry,RepositoryCaller caller) {

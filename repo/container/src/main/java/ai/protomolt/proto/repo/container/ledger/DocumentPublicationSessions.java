@@ -423,16 +423,26 @@ final class DocumentPublicationSessions implements AutoCloseable {
     /** Releases only local capacity after durable ownership has permanently fenced this nonce. */
     boolean retireSuperseded(RepositoryCaller caller, DocumentPublicationCommand command, RepositoryReadControl control) {
         try (var call = beginCall()) {
-            return retireSupersededOpen(caller, command, control);
+            return retireSupersededOpen(caller, command, control, false);
         }
     }
 
-    private boolean retireSupersededOpen(RepositoryCaller caller, DocumentPublicationCommand command, RepositoryReadControl control) {
+    /** Pre-close local cache retirement, not drain attestation or permission to close worker resources. */
+    boolean retireClaimFenced(RepositoryCaller caller, DocumentPublicationCommand command, RepositoryReadControl control) {
+        try (var call = beginCall()) {
+            return retireSupersededOpen(caller, command, control, true);
+        }
+    }
+
+    private boolean retireSupersededOpen(RepositoryCaller caller, DocumentPublicationCommand command,
+            RepositoryReadControl control, boolean claimFence) {
         Objects.requireNonNull(command); Objects.requireNonNull(control).check();
         if (caller == null) throw new RepositoryException(RepositoryException.Code.UNAUTHENTICATED,
                 "Authenticated repository caller is required");
         var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
         DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+        if (claimFence && !caller.processAuthority()) throw new RepositoryException(RepositoryException.Code.PERMISSION_DENIED,
+                "Claim-fenced retirement requires private process authority");
         final Entry entry;
         synchronized (this) {
             entry = entries.get(key);
@@ -445,7 +455,11 @@ final class DocumentPublicationSessions implements AutoCloseable {
         }
         boolean superseded = false;
         try {
-            superseded = entry.session.isSuperseded(caller, control);
+            if (claimFence) {
+                var identity = entry.session.drainIdentity();
+                superseded = identity.isPresent() && RepositoryClaimRetirement.fenced(tx, entry.command,
+                        java.util.List.of(identity.orElseThrow()), control);
+            } else superseded = entry.session.isSuperseded(caller, control);
             return superseded;
         } finally {
             synchronized (this) {

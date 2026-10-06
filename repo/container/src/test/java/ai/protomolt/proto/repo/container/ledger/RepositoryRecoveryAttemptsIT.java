@@ -134,8 +134,7 @@ class RepositoryRecoveryAttemptsIT {
 
     @ParameterizedTest @ValueSource(booleans={false,true})
     void differentCoordinatorWinnerCannotReplaceRetainedIdentity(boolean pending) throws Exception {
-        try (var c=context(POSTGRES);
-             var resources=DocumentJournaledSessionsIT.resources(c.tx().withTimeouts(TIMEOUTS),1,1_000_000,LEASE,new PayloadBudget(128_000_000))) {
+        try (var c=context(POSTGRES)) {
             var source=source(c); var budget=new PayloadBudget(128_000_000); var lease=Duration.ofSeconds(3);
             var failOnce=new AtomicBoolean(pending);
             var cancelReadback=new AtomicBoolean(); var cancelled=new AtomicBoolean();
@@ -152,6 +151,7 @@ class RepositoryRecoveryAttemptsIT {
             });
             try (var emf=jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",Map.of(
                     "hibernate.connection.datasource",datasource,"hibernate.hbm2ddl.auto","validate"));
+                 var resources=DocumentJournaledSessionsIT.resources(new Tx(emf).withTimeouts(TIMEOUTS),1,1_000_000,LEASE,new PayloadBudget(128_000_000));
                  var attempts=new RepositoryRecoveryAttempts(new Tx(emf),budget,resources.sessions(),lease,TIMEOUTS,1)) {
                 try (var attempt=attempts.begin(CALLER,source.command(),source.observation())) {
                     var original=attempt.proposal();
@@ -203,6 +203,21 @@ class RepositoryRecoveryAttemptsIT {
                     assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,NONE)).hasMessageContaining("retired");
                     assertThat(resources.sessions().retainedSessions()).isEqualTo(pending ? 0 : 1);
                     assertThat(resources.sessions().retireSuperseded(CALLER,source.command(),NONE)).isFalse();
+                    var scoped=new RepositoryCaller(CALLER.principalName(),false,Set.of("account"),Set.of());
+                    assertThatThrownBy(() -> resources.sessions().retireClaimFenced(scoped,source.command(),NONE))
+                            .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.PERMISSION_DENIED));
+                    if (!pending) {
+                        cancelled.set(false); cancelReadback.set(true);
+                        assertThatThrownBy(() -> resources.sessions().retireClaimFenced(CALLER,source.command(),control))
+                                .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.CANCELLED));
+                        assertThat(cancelReadback).isFalse();
+                        assertThat(resources.sessions().retainedSessions()).isEqualTo(1);
+                        assertThat(resources.sessions().retainedCommandBytes()).isPositive();
+                    }
+                    assertThat(resources.sessions().retireClaimFenced(CALLER,source.command(),NONE)).isEqualTo(!pending);
+                    assertThat(resources.sessions().retainedSessions()).isZero();
+                    assertThat(resources.sessions().retainedCommandBytes()).isZero();
+                    assertThat(claimAndOwner(c,source.command())).containsExactly(before);
                     attempts.close();
                     assertThat(attempts.drain()).isEqualTo(new RepositoryRecoveryAttempts.Drain(1,0));
                 }

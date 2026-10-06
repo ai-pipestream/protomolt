@@ -1722,3 +1722,30 @@ That manager's existing owner-based retirement correctly remains false. The host
 must still account for that session and its drain identities. Recovery-owner drain
 counts cannot stand in for manager, worker or provider drain. Terminal/graceful
 reconciliation and complete host lifecycle integration remain unfinished.
+
+### Claim-fenced journaled-session cache retirement
+
+`DocumentPublicationSessions.retireClaimFenced` now derives the exact claim tuple
+from the retained registration and invokes the same `RepositoryClaimRetirement`
+proof as the recovery owner. It requires private process authority and exclusive
+local use of the cache entry. Unjournaled or never-submitted registrations supply
+no identity; restoration-only entries are not handled by this method. Existing
+owner-based retirement keeps its previous semantics.
+
+After a foreign claim transfer, this explicit method can free a journaled session's
+local slot even when the owner has not changed. The proof runs outside the manager
+monitor. Cancellation or SQL failure retains the session and command capacity.
+The method does not touch attempts, reader pins, provider tombstones, worker owners,
+or V90/V91 markers. A caller must not treat an empty cache as worker quiescence.
+
+The helper uses the supplied transaction view. Managed service construction supplies
+a bounded view; arbitrary private/test journaled factories are still responsible
+for doing so. No universal timeout guarantee follows from this helper alone.
+
+This method accepts calls only while the manager is open. It cannot change an
+already captured shutdown snapshot. A foreign takeover after closure still needs
+explicit snapshot reconciliation: `beginRetained` can observe a fenced claim without
+an old V90 marker, and the current runtime cannot interpret that as successful drain.
+Add a separate fenced classification without pretending DRAINING or LOCAL_DRAINED,
+and continue draining local uploads, reads and schema workers. Preserve UNKNOWN
+remote state and keep physical reclamation independently fenced.
