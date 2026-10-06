@@ -1,6 +1,8 @@
 package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.repo.archive.v1.*;
+import ai.protomolt.proto.repo.blob.redis.*;
+import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
 import ai.protomolt.proto.repo.v1.*;
 import com.google.protobuf.ByteString;
@@ -134,6 +136,117 @@ class BoundedArchiveProcessIT {
         env.remove("DOCUMENT_PLATFORM_ARCHIVE_MAX_REQUEST_BYTES");
         env.put(RepoServiceConfig.ENV_BLOB_STORE, "s3");
         assertFails(env, "Bounded archive qualification requires managed Redis");
+    }
+
+    @Test void sigkillDuringPublicationPreservesHeadAndRestartReclaimsUnpublishedBytes() throws Exception {
+        var env = environment();
+        env.put(RepoServiceConfig.ENV_SWEEP_INTERVAL_MS, "250");
+        env.put(RepoServiceConfig.ENV_RECONCILE_MIN_AGE_MS, "0");
+        var address = EntryAddress.newBuilder().setAccountId(env.get("DOCUMENT_PLATFORM_ARCHIVE_ACCOUNT"))
+                .setArchive("records").setEntryId("killed").build();
+        var before = ByteString.copyFromUtf8("committed before crash");
+        var after = ByteString.copyFromUtf8("candidate interrupted by crash");
+        var initial = PutEntryRequest.newBuilder().setAddress(address).addRenditions(RenditionContent.newBuilder()
+                .setRendition(RenditionDescriptor.newBuilder().setName("original")).setData(before)).build();
+        var candidate = initial.toBuilder().setExpectedVersion(1).setRenditions(0,
+                initial.getRenditions(0).toBuilder().setData(after)).build();
+        UUID abandoned;
+        String namespace, key;
+        try (var direct = new RedisBlobStore(new RedisBlobStoreConfig(env.get(RepoServiceConfig.ENV_REDIS_URI),
+                0, 1048576, "", RedisWritePolicy.CREATE_ONLY));
+                var sql = DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+            var host = launch(env);
+            try (var lock = DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+                    var workers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+                var stub = host.archive(env);
+                stub.createArchive(CreateArchiveRequest.newBuilder().setArchive(Archive.newBuilder().setAccountId(address.getAccountId())
+                        .setName("records").setDriveName("storage").setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED)).build());
+                var saved = stub.putEntry(initial);
+                lock.setAutoCommit(false);
+                try {
+                    int blocker;
+                    try (var query = lock.createStatement(); var result = query.executeQuery("SELECT pg_backend_pid()")) {
+                        result.next(); blocker = result.getInt(1);
+                    }
+                    try (var query = lock.prepareStatement("SELECT entry_uuid FROM archive_entries WHERE entry_uuid=? FOR NO KEY UPDATE")) {
+                        query.setObject(1, UUID.fromString(saved.getEntryUuid()));
+                        try (var result = query.executeQuery()) { assertThat(result.next()).isTrue(); }
+                    }
+                    var pending = workers.submit(() -> stub.withDeadlineAfter(45, TimeUnit.SECONDS).putEntry(candidate));
+                    try (var query = sql.prepareStatement("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE ? = ANY(pg_blocking_pids(pid)) AND query ILIKE '%archive_entries%' AND query ILIKE '%for%update%')")) {
+                        query.setInt(1, blocker);
+                        boolean blocked = false;
+                        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+                        while (!pending.isDone() && System.nanoTime() < deadline) {
+                            try (var result = query.executeQuery()) { result.next(); blocked = result.getBoolean(1); }
+                            if (blocked) break;
+                            Thread.sleep(25);
+                        }
+                        assertThat(blocked).as("candidate reached actual publication lock after provider write").isTrue();
+                    }
+                    try (var query = sql.prepareStatement("SELECT b.object_id,b.bucket,b.object_key,u.state FROM archive_object_bindings b JOIN archive_object_uploads u USING(object_id) WHERE b.account_id=? AND u.state<>'LIVE'")) {
+                        query.setString(1, address.getAccountId());
+                        try (var result = query.executeQuery()) {
+                            assertThat(result.next()).isTrue();
+                            abandoned = result.getObject(1, UUID.class); namespace = result.getString(2); key = result.getString(3);
+                            assertThat(result.getString(4)).isEqualTo("VERIFIED");
+                            assertThat(direct.get(namespace, key, null).data()).isEqualTo(after.toByteArray());
+                            assertThat(result.next()).isFalse();
+                        }
+                    }
+                    host.process.destroyForcibly();
+                    assertThat(host.process.waitFor(10, TimeUnit.SECONDS)).isTrue();
+                    assertThat(host.process.exitValue()).as("Linux SIGKILL bypasses shutdown hooks").isEqualTo(137);
+                    assertThatThrownBy(() -> pending.get(10, TimeUnit.SECONDS))
+                            .isInstanceOf(java.util.concurrent.ExecutionException.class)
+                            .satisfies(failure -> assertThat(Status.fromThrowable(failure.getCause()).getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+                } finally { lock.rollback(); }
+            } finally {
+                if (host.process.isAlive()) { host.process.destroyForcibly(); host.process.waitFor(10, TimeUnit.SECONDS); }
+                host.channel.shutdownNow(); assertThat(host.channel.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+            }
+            try (var restarted = launch(env)) {
+                var old = restarted.archive(env).getEntry(GetEntryRequest.newBuilder().setAddress(address).build());
+                assertThat(old.getRenditions(0).getData()).isEqualTo(before);
+                var saved = restarted.archive(env).putEntry(candidate);
+                assertThat(saved.getVersion()).isEqualTo(2);
+                assertThat(saved.getManifest().getRenditions(0).getStorageObjectId()).isNotEqualTo(abandoned.toString());
+                assertThatThrownBy(() -> restarted.archive(env).putEntry(candidate))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class,
+                                failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.ABORTED));
+                var current = candidate.toBuilder().setExpectedVersion(2).build();
+                assertThat(restarted.archive(env).putEntry(current)).isEqualTo(saved.toBuilder().setDeduplicated(true).build());
+                awaitKilledUploadCleanup(sql, abandoned);
+                String deletedNamespace = namespace, deletedKey = key;
+                assertThatThrownBy(() -> direct.get(deletedNamespace, deletedKey, null)).isInstanceOf(BlobStore.BlobNotFoundException.class);
+                assertThat(restarted.archive(env).getEntry(GetEntryRequest.newBuilder().setAddress(address).build())
+                        .getRenditions(0).getData()).isEqualTo(after);
+                assertThat(restarted.archive(env).getEntry(GetEntryRequest.newBuilder().setAddress(address).setVersion(1).build())
+                        .getRenditions(0).getData()).isEqualTo(before);
+                assertThat(restarted.archive(env).putEntry(current)).isEqualTo(saved.toBuilder().setDeduplicated(true).build());
+            }
+        }
+    }
+
+    private static void awaitKilledUploadCleanup(java.sql.Connection sql, UUID object) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(6);
+        boolean observedActiveLease = false;
+        try (var query = sql.prepareStatement("SELECT state,lease_until<=clock_timestamp(),(SELECT count(*) FROM archive_version_object_refs WHERE object_id=?) FROM archive_object_uploads WHERE object_id=?")) {
+            query.setObject(1, object); query.setObject(2, object);
+            while (System.nanoTime() < deadline) {
+                try (var result = query.executeQuery()) {
+                    assertThat(result.next()).isTrue();
+                    assertThat(result.getLong(3)).as("killed candidate never becomes a version reference").isZero();
+                    String state = result.getString(1); boolean expired = result.getBoolean(2);
+                    if (!expired) { observedActiveLease = true; assertThat(state).isEqualTo("VERIFIED"); }
+                    if ("DELETED".equals(state)) {
+                        assertThat(observedActiveLease).isTrue(); assertThat(expired).isTrue(); return;
+                    }
+                }
+                Thread.sleep(250);
+            }
+        }
+        throw new AssertionError("Killed upload was not reclaimed after its real five-minute lease");
     }
 
     @Test void concurrentBootstrapUsesOneWinningDriveLocationAcrossProcesses() throws Exception {

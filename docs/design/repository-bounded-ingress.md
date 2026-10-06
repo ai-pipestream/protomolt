@@ -264,8 +264,8 @@ drive INSERTs before release. They must converge on one stored drive location,
 then share archive writes, reads and deduplicated retry through separate listeners.
 The losing bootstrap uses the winner's stored location rather than its own default.
 
-Follow-up qualification still includes delayed provider completion and exhaustive
-unmounted RPC checks. Public deployment,
+The reply-boundary tests below qualify short delayed provider acknowledgments.
+Follow-up qualification still includes exhaustive unmounted RPC checks. Public deployment,
 minimal packaged dependencies and full repository parity remain separate gates.
 
 For delayed Redis replies, keep the production timeout unchanged. The selected
@@ -299,4 +299,26 @@ physical object. The original object stays STAGING throughout its real five-minu
 lease, never gains a version reference, and is eventually reclaimed by the normal
 host loop. Direct Redis absence plus retained retry readability and exact deduplication
 verify that cleanup removed only the abandoned object. This does not establish
-behavior for an indefinitely running remote write or process crash recovery.
+behavior for an indefinitely running remote write. Process crash recovery has the
+separate qualification below.
+
+### Process death before publication
+
+The bounded standalone process suite now holds a real PostgreSQL entry-publication
+lock after a Redis write has completed and its upload is VERIFIED. It confirms the
+exact candidate bytes through an independent Redis read, then sends SIGKILL to the
+service JVM and requires Linux exit 137 and an unavailable pending RPC. PostgreSQL
+and Redis remain running; this is not provider-crash durability qualification.
+
+Restart must still read the previously committed value. Retrying the interrupted
+candidate publishes version 2 with a fresh physical identity. A stale expected
+version remains ABORTED; equal content with the current expected version deduplicates.
+The abandoned upload must stay unreferenced throughout its unchanged five-minute
+lease, then the normal restarted-host recovery loop must reclaim it. The fixture
+shortens only polling/minimum-age configuration and does not rewrite SQL lease
+timestamps. Direct provider absence and continued current and retained-version reads distinguish
+cleanup of abandoned bytes from deletion of committed content.
+
+See [process-crash evidence](../evidence/repository/2026-10-06-bounded-archive-sigkill/README.md).
+This does not enable document publication claim transfer or establish behavior for
+remote provider writes still running after the client process dies.

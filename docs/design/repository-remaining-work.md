@@ -376,7 +376,10 @@ the local port before opening its archive-only listener. Child-process tests cov
 startup, restart without relocation, failed bootstrap, and SIGTERM during a real SQL
 commit wait. Real Redis reply-gate tests cover short delayed acknowledgments and a
 lost acknowledgment after provider write, followed by retry and normal lease-expiry
-recovery. Forced-kill host recovery and deployment durability remain separate gates; see
+recovery. A separate standalone SIGKILL test now covers service death after a verified
+Redis write but before SQL publication, restart, retry, and normal lease-expiry cleanup.
+Provider-crash durability, delayed writes surviving process death, and deployment
+qualification remain separate gates; see
 the [bounded-ingress plan](repository-bounded-ingress.md).
 
 The default `RepoServices` managed profile still requires streaming, non-expiring
