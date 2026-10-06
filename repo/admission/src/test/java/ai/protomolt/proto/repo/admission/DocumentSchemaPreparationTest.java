@@ -311,6 +311,39 @@ class DocumentSchemaPreparationTest {
         assertThat(proof.references().stream().filter(r -> r.typeUrl().equals(oldValue.getTypeUrl())))
                 .extracting(DocumentSchemaAdmission.Reference::descriptorSha256)
                 .containsExactlyInAnyOrder(oldAsset.reference.descriptorSha256(), newAsset.reference.descriptorSha256());
+        // Reassess the exact retained per-occurrence definitions at a new ordinal.
+        // A mutable registry alias cannot collapse the two definitions into one.
+        var sourceEvidence = new HashMap<Integer, List<DocumentSchemaAdmission.EncodedEvidence>>();
+        for (var root : proof.roots()) sourceEvidence.computeIfAbsent(root.ordinal(), ignored -> new ArrayList<>()).add(root.encoded());
+        var sourceRequest = new DocumentSchemaAdmission.Request(proof.commandSha256(), proof.policySha256(), true,
+                f.member, f.fragments, sourceEvidence, proof.containerReference(),
+                proof.references().stream().filter(r -> !r.equals(proof.containerReference())).toList());
+        var policy = DocumentAdmissionPolicy.of(DocumentAdmissionPolicyTest.policy(), () -> {});
+        var target = f.member.toBuilder().clearParts().addParts(DocumentPublicationPart.newBuilder()
+                .setSlot(DocumentPublicationSlot.newBuilder().setPart(DocumentPart.DOCUMENT_PART_BLOBS)).setEmpty(true))
+                .addAllParts(f.member.getPartsList()).build();
+        var shifted = new HashMap<Integer, ByteString>(); var ordinalMap = new HashMap<Integer, Integer>();
+        f.fragments.forEach((ordinal, bytes) -> { shifted.put(ordinal + 1, bytes); ordinalMap.put(ordinal + 1, ordinal); });
+        var budget = new Reservations();
+        try (var retained = DocumentRetainedSchemaResolution.open(sourceRequest, ordinalMap,
+                hash -> Optional.ofNullable(proof.artifacts().get(hash)), policy.limits(), budget, () -> {});
+                var assessed = policy.assess(ByteString.copyFromUtf8("r".repeat(32)), target, shifted,
+                        retained.container(), retained, budget, java.time.Instant.now(), () -> {})) {
+            retained.requireComplete(assessed.view());
+            assertThat(assessed.failure()).isEmpty();
+            assertThat(assessed.view().references().stream().filter(r -> r.typeUrl().equals(oldValue.getTypeUrl())))
+                    .extracting(DocumentSchemaAdmission.Reference::descriptorSha256)
+                    .containsExactlyInAnyOrder(oldAsset.reference.descriptorSha256(), newAsset.reference.descriptorSha256());
+        }
+        assertThat(budget.live).isZero();
+        try (var retained = DocumentRetainedSchemaResolution.open(sourceRequest, ordinalMap,
+                hash -> Optional.ofNullable(proof.artifacts().get(hash)), policy.limits(), budget, () -> {})) {
+            var firstChild = children.getFirst();
+            assertThatThrownBy(() -> retained.select(new DocumentSchemaAdmission.Selection(firstChild.ordinal() + 1,
+                    firstChild.root(), firstChild.typeUrl(), children.getLast().prefix(), firstChild.valueSha256(), firstChild.valueSizeBytes())))
+                    .hasMessageContaining("no exact retained schema selection");
+        }
+        assertThat(budget.live).isZero();
         var encoded = proof.roots().getFirst().encoded();
         var bundle = DocumentRootSchemaEvidenceCodec.decode(encoded.codec(), encoded.version(), encoded.bytes(), encoded.sha256(), () -> {});
         assertThat(bundle.getOccurrencesList()).hasSize(3);

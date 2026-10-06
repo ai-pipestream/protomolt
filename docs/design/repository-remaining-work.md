@@ -258,3 +258,33 @@ checks. Five PostgreSQL cases plus 34 journal regressions pass. It does not rest
 execution or establish coordinator quiescence. Continue both the recovery ownership
 protocol and the independent restore contract assessment above; this checkpoint
 closes neither workstream. See [inspection evidence](../evidence/repository/2026-10-05-registration-inspection/README.md).
+
+## Next recovery slice: pre-owner abandonment
+
+Sol's recovery review proposes an explicit durable abandonment marker for exact
+registrations with preparation or modes but no admitted owner. This is design,
+not implemented cleanup. Bind it to the original claim and preparation identity;
+serialize marking against owner admission with the existing claim-first lock order.
+If owner admission wins, abandonment must refuse. If the marker wins, preparation
+retry, mode binding and owner admission must refuse. Only a confirmed durable marker
+may release retained session-manager capacity. Inspection, expiry and lost
+acknowledgment alone cannot establish abandonment.
+
+Acceptance requires real PostgreSQL races, lost preparation/modes acknowledgments,
+stale or transferred claims, and capacity release only after confirmed marking.
+Owner-admitted or assessment-started registrations remain outside this slice:
+qualify coordinator quiescence and delayed real provider writes before takeover or
+abandonment. Continue restore admission independently of that recovery protocol.
+
+## Next non-S3 slice: explicit bounded ingestion
+
+`RepoServices` currently couples managed construction to streaming, non-expiring
+writes and reclamation. `ArchiveObjectWriter` already distinguishes byte-array
+staging from streaming staging; `RawIngestionOperations` requires streaming.
+An explicit bounded profile should preserve those operation distinctions, shared
+provider identity and cleanup, rather than remove capability checks globally.
+Before activation, specify aggregate reservations before ingress allocation,
+per-request size limits, capacity retention through delayed provider completion,
+and which streaming operations report unsupported. Real Redis lifecycle evidence
+does not yet establish that managed profile. This remains independent of restore
+and of the RustFS saturation measurements.

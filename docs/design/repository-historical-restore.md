@@ -160,3 +160,20 @@ historical references and reader pins remain the retention mechanism. Current-po
 schema admission, pending schema liveness and final historical reference checks are
 still required before enabling restore execution. The command guard remains.
 [SQL evidence and limits](../evidence/repository/2026-10-05-historical-selection/README.md).
+
+## Retained-definition assessment checkpoint
+
+`DocumentRetainedSchemaResolution` supplies exact occurrence-bound definitions to
+a new assessment without consulting a registry or inheriting historical acceptance.
+It supports selecting a subset and remapping ordinals while preserving root slots,
+paths and value identities, including different definitions under one type URL.
+Source-loading bounds are separate from the current destination policy. Source
+ordinals cannot repeat; destination ordinals retain the protocol ceiling. The host
+must authenticate the source, own artifact buffers and hold its Use, and verify
+destination slot and physical identity. This resolver grants no read or write access.
+
+Existing historical replay additionally requires the complete source asset union;
+new assessment checks the selected union. Current-time CEL and current policy run
+again. The library recognizes historical content size and hash, but command execution
+still refuses historical reuse. SQL/host composition, current authorization at commit,
+pending schema retention and publication recovery remain required before activation.

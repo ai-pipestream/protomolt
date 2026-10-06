@@ -1,14 +1,9 @@
 package ai.protomolt.proto.repo.admission;
 
-import ai.protomolt.proto.descriptors.ClosedDescriptorSet;
-import ai.protomolt.proto.repo.v1.DocumentSchemaRootLocator;
-import ai.protomolt.proto.repo.v1.RepositorySchemaOccurrenceStep;
-import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -33,16 +28,6 @@ public final class DocumentSchemaAssessmentReplay {
             return new Request(new DocumentSchemaAdmission.Request(input.commandSha256(), input.policySha256(),
                     input.requireStructuredRoot(), input.member(), input.fragments(), Map.copyOf(evidence),
                     references.getFirst(), List.copyOf(references.subList(1, references.size()))), view.evaluatedAt(), view.failure());
-        }
-    }
-
-    private record Root(int ordinal, DocumentSchemaRootLocator locator) {}
-    private record Selection(int ordinal, DocumentSchemaRootLocator root, String url,
-                             List<RepositorySchemaOccurrenceStep> prefix, String hash, long size) {
-        Selection { prefix = List.copyOf(prefix); }
-        static Selection from(DocumentSchemaAdmission.Selection occurrence) {
-            return new Selection(occurrence.ordinal(), occurrence.root(), occurrence.typeUrl(), occurrence.prefix(),
-                    occurrence.valueSha256(), occurrence.valueSizeBytes());
         }
     }
 
@@ -90,104 +75,15 @@ public final class DocumentSchemaAssessmentReplay {
             throw new IllegalArgumentException("assessment replay identities or counts exceed limits");
         DocumentSchemaAdmission.checkMember(candidate.member(), candidate.fragments(), candidate.requireStructuredRoot(),
                 limits, evaluatedAt, active);
-        try (var scratch = new DocumentAdmissionResources(reservations)) {
-            var bundles = DocumentSchemaAdmission.decodeEvidence(candidate.evidence(), limits, scratch, active);
-            var expectedRoots = new HashMap<Root, DocumentSchemaAdmission.EncodedEvidence>();
-            var selections = new HashSet<Selection>();
-            for (var entry : bundles.entrySet()) {
-                int ordinal = entry.getKey();
-                if (ordinal < 0 || ordinal >= candidate.member().getPartsCount())
-                    throw new IllegalArgumentException("replay evidence ordinal outside member");
-                for (int i = 0; i < entry.getValue().size(); i++) {
-                    active.run();
-                    var bundle = entry.getValue().get(i);
-                    if (candidate.member().getParts(ordinal).hasEmpty())
-                        throw new IllegalArgumentException("replay evidence attached to empty slot");
-                    if (!bundle.getRoot().getSlot().equals(candidate.member().getParts(ordinal).getSlot()))
-                        throw new IllegalArgumentException("replay evidence slot differs from member part");
-                    if (expectedRoots.putIfAbsent(new Root(ordinal, bundle.getRoot()), candidate.evidence().get(ordinal).get(i)) != null)
-                        throw new IllegalArgumentException("duplicate replay evidence root");
-                    for (var path : bundle.getOccurrencesList()) {
-                        active.run();
-                        var boundary = path.getSteps(path.getStepsCount() - 1).getAnyBoundary();
-                        if (!selections.add(new Selection(ordinal, bundle.getRoot(), boundary.getTypeUrl(),
-                                path.getStepsList().subList(0, path.getStepsCount() - 1), boundary.getValueSha256(), boundary.getValueSizeBytes())))
-                            throw new IllegalArgumentException("conflicting replay occurrence selection");
-                    }
-                }
-            }
-            var references = new ArrayList<DocumentSchemaAdmission.Reference>();
-            references.add(candidate.container()); references.addAll(candidate.references());
-            var expectedArtifacts = new HashSet<String>();
-            var byKey = new HashMap<DocumentPayloadCheck.SchemaKey, DocumentSchemaAdmission.Reference>();
-            for (var reference : references) {
-                active.run();
-                var key = new DocumentPayloadCheck.SchemaKey(reference.typeUrl(), reference.descriptorSha256());
-                if (byKey.putIfAbsent(key, reference) != null) throw new IllegalArgumentException("duplicate replay schema association");
-                expectedArtifacts.add(reference.descriptorSha256()); expectedArtifacts.add(reference.metadataSha256());
-                reference.sourceSha256().ifPresent(expectedArtifacts::add);
-            }
-            if (expectedArtifacts.size() > 64) throw new IllegalArgumentException("retained artifact count exceeds limit");
-            var loaded = new HashMap<String, ByteString>();
-            var retained = new DocumentRetainedSchemaAssets(hash -> {
-                var cached = loaded.get(hash);
-                if (cached != null) return Optional.of(cached);
-                var bytes = Objects.requireNonNull(reader.read(hash));
-                bytes.ifPresent(value -> loaded.put(hash, value));
-                return bytes;
-            }, new DocumentRetainedSchemaAssets.Limits(limits.maxBindings(), limits.maxRetainedBytes(),
-                    new ClosedDescriptorSet.Limits(16 * 1024 * 1024, 256, 4096, 64)), scratch);
-            var definitions = new HashMap<DocumentPayloadCheck.SchemaKey, DocumentSchemaAdmission.Definition>();
-            for (var reference : references) {
-                active.run();
-                var asset = retained.resolve(reference.internal(), active);
-                definitions.put(new DocumentPayloadCheck.SchemaKey(reference.typeUrl(), reference.descriptorSha256()),
-                        new DocumentSchemaAdmission.Definition(asset.metadata(), loaded.get(reference.descriptorSha256()),
-                                reference.sourceSha256().map(loaded::get)));
-            }
-            var index = new HashMap<Selection, DocumentSchemaAdmission.Definition>();
-            for (var entry : bundles.entrySet()) {
-                int ordinal = entry.getKey();
-                for (int i = 0; i < entry.getValue().size(); i++) {
-                    active.run();
-                    var bundle = entry.getValue().get(i);
-                    for (var path : bundle.getOccurrencesList()) {
-                        active.run();
-                        var boundary = path.getSteps(path.getStepsCount() - 1).getAnyBoundary();
-                        var key = new DocumentPayloadCheck.SchemaKey(boundary.getTypeUrl(), boundary.getResolved().getArtifactSha256());
-                        var definition = definitions.get(key);
-                        if (definition == null || !definition.metadata().getSchema().equals(boundary.getResolved().getSchema()))
-                            throw new IllegalArgumentException("replay occurrence differs from retained schema association");
-                        var selection = new Selection(ordinal, bundle.getRoot(), boundary.getTypeUrl(),
-                                path.getStepsList().subList(0, path.getStepsCount() - 1), boundary.getValueSha256(), boundary.getValueSizeBytes());
-                        if (index.putIfAbsent(selection, definition) != null)
-                            throw new IllegalArgumentException("conflicting replay occurrence selection");
-                    }
-                }
-            }
-            var used = new HashSet<Selection>();
-            var container = definitions.get(new DocumentPayloadCheck.SchemaKey(candidate.container().typeUrl(), candidate.container().descriptorSha256()));
-            try (var replayed = policy.assess(candidate.commandSha256(), candidate.member(), candidate.fragments(), container,
-                    occurrence -> {
-                        var key = Selection.from(occurrence);
-                        var selected = index.get(key);
-                        if (selected == null) throw new IllegalArgumentException("candidate occurrence has no exact retained schema selection");
-                        if (!used.add(key)) throw new IllegalArgumentException("replay occurrence selected more than once");
-                        return selected;
-                    }, scratch, evaluatedAt, active)) {
-                var actualRoots = new HashMap<Root, DocumentSchemaAdmission.EncodedEvidence>();
-                for (var root : replayed.roots()) {
-                    if (actualRoots.putIfAbsent(new Root(root.ordinal(), root.locator()), root.encoded()) != null)
-                        throw new IllegalArgumentException("duplicate reassessed evidence root");
-                }
-                if (!used.equals(index.keySet()) || !actualRoots.equals(expectedRoots))
-                    throw new IllegalArgumentException("reassessed roots or occurrences differ from retained evidence");
-                if (!new HashSet<>(replayed.references()).equals(new HashSet<>(references))
-                        || !replayed.artifacts().keySet().equals(expectedArtifacts) || !loaded.keySet().equals(expectedArtifacts))
-                    throw new IllegalArgumentException("reassessed schema assets differ from complete retained union");
-                active.run();
-                return replayed.failure();
-            }
+        var ordinals = new HashMap<Integer, Integer>();
+        for (int i = 0; i < candidate.member().getPartsCount(); i++)
+            if (!candidate.member().getParts(i).hasEmpty()) ordinals.put(i, i);
+        try (var retained = DocumentRetainedSchemaResolution.open(candidate, ordinals, reader, limits, reservations, active);
+                var replayed = policy.assess(candidate.commandSha256(), candidate.member(), candidate.fragments(),
+                        retained.container(), retained, reservations, evaluatedAt, active)) {
+            retained.requireFullUnion(replayed.view());
+            active.run();
+            return replayed.failure();
         } catch (DocumentAdmissionResources.ReservationFailure failed) {
             throw failed.original;
         }

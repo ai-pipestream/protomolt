@@ -3,6 +3,7 @@ package ai.protomolt.proto.repo.admission;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.DynamicMessage;
+import ai.protomolt.proto.repo.v1.*;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
@@ -263,6 +264,111 @@ class DocumentSchemaAssessmentReplayTest {
         assertThatThrownBy(() -> DocumentSchemaAssessmentReplay.verify(duplicateRequest, POLICY, noReads, budget, () -> {}))
                 .hasMessageContaining("duplicate replay schema association");
         assertThat(budget.live).isZero();
+    }
+
+    @Test void reassessesHistoricalDeclarationsWithNewCommandPolicyAndRemappedOrdinals() throws Exception {
+        var captured = capture("true"); var source = captured.request().candidate();
+        assertThat(source.member().getPartsCount()).isEqualTo(2);
+        var current = DocumentAdmissionPolicy.of(POLICY.definition().toBuilder()
+                .setLimits(POLICY.definition().getLimits().toBuilder().setMaxFragments(24)).build(), () -> {});
+        var member = historical(source.member(), List.of(1, 0));
+        var fragments = Map.of(0, source.fragments().get(1), 1, source.fragments().get(0));
+        var command = ByteString.copyFrom(new byte[32]).substring(0, 31).concat(ByteString.copyFromUtf8("x"));
+        var budget = new Reservations();
+        try (var retained = DocumentRetainedSchemaResolution.open(source, Map.of(0, 1, 1, 0),
+                hash -> Optional.ofNullable(captured.assets().get(hash)), current.limits(), budget, () -> {});
+                var assessed = current.assess(command, member, fragments, retained.container(), retained, budget, AT.plusSeconds(1), () -> {})) {
+            retained.requireComplete(assessed.view());
+            assertThat(assessed.failure()).isEmpty();
+            assertThat(assessed.view().request().commandSha256()).isEqualTo(command).isNotEqualTo(source.commandSha256());
+            assertThat(assessed.view().request().policySha256()).isEqualTo(current.sha256()).isNotEqualTo(source.policySha256());
+            assertThat(assessed.view().evaluatedAt()).isEqualTo(AT.plusSeconds(1));
+            assertThat(assessed.view().request().member()).isEqualTo(member);
+        }
+        assertThat(budget.live).isZero();
+        try (var retained = DocumentRetainedSchemaResolution.open(source, Map.of(0, 0, 1, 1),
+                hash -> Optional.ofNullable(captured.assets().get(hash)), current.limits(), budget, () -> {})) {
+            assertThatThrownBy(() -> current.assess(command, member, fragments, retained.container(), retained, budget, AT, () -> {}))
+                    .hasMessageContaining("no exact retained schema selection");
+        }
+        assertThat(budget.live).isZero();
+    }
+
+    @Test void selectedSubsetDoesNotRequireUnselectedHistoricalDefinitionsInNewAssessment() throws Exception {
+        var captured = capture("true"); var source = captured.request().candidate(); var budget = new Reservations();
+        var current = DocumentAdmissionPolicy.of(POLICY.definition().toBuilder()
+                .setLimits(POLICY.definition().getLimits().toBuilder().setMaxFragments(1)).build(), () -> {});
+        try (var retained = DocumentRetainedSchemaResolution.open(source, Map.of(0, 0),
+                hash -> Optional.ofNullable(captured.assets().get(hash)), POLICY.limits(), budget, () -> {});
+                var assessed = current.assess(ByteString.copyFromUtf8("x".repeat(32)), historical(source.member(), List.of(0)),
+                        Map.of(0, source.fragments().get(0)), retained.container(), retained, budget, AT, () -> {})) {
+            retained.requireComplete(assessed.view());
+            assertThat(assessed.failure()).isEmpty();
+            assertThat(assessed.view().references()).noneMatch(r -> r.typeUrl().endsWith("Timestamp"));
+            assertThatThrownBy(() -> retained.requireFullUnion(assessed.view())).hasMessageContaining("complete retained union");
+        }
+        assertThat(budget.live).isZero();
+    }
+
+    @Test void destinationOrdinalIsIndependentOfSourceLoadingLimit() throws Exception {
+        var captured = capture("true"); var budget = new Reservations();
+        var sourcePolicy = DocumentAdmissionPolicy.of(POLICY.definition().toBuilder()
+                .setLimits(POLICY.definition().getLimits().toBuilder().setMaxFragments(2)).build(), () -> {});
+        try (var retained = DocumentRetainedSchemaResolution.open(captured.request().candidate(), Map.of(3, 0),
+                hash -> Optional.ofNullable(captured.assets().get(hash)), sourcePolicy.limits(), budget, () -> {})) {
+            assertThat(retained.container()).isNotNull();
+        }
+        assertThatThrownBy(() -> DocumentRetainedSchemaResolution.open(captured.request().candidate(), Map.of(10_000, 0),
+                hash -> { throw new AssertionError("mapping must be checked before asset reads"); },
+                sourcePolicy.limits(), budget, () -> {})).hasMessageContaining("ordinal mapping");
+        assertThat(budget.live).isZero();
+    }
+
+    @Test void duplicateSourceOrdinalsFailBeforeReadingAssets() throws Exception {
+        var captured = capture("true"); var budget = new Reservations();
+        assertThatThrownBy(() -> DocumentRetainedSchemaResolution.open(captured.request().candidate(), Map.of(0, 0, 1, 0),
+                hash -> { throw new AssertionError("mapping must be checked before asset reads"); },
+                POLICY.limits(), budget, () -> {})).hasMessageContaining("ordinal mapping");
+        assertThat(budget.live).isZero();
+    }
+
+    @Test void oldAcceptanceCannotOverrideFreshTimeOrCurrentSchemaPolicy() throws Exception {
+        var captured = capture("now == timestamp('2000-01-01T00:00:00Z')");
+        assertThat(captured.request().expectedFailure()).isEmpty();
+        var source = captured.request().candidate(); var budget = new Reservations();
+        try (var retained = DocumentRetainedSchemaResolution.open(source, Map.of(0, 0, 1, 1),
+                hash -> Optional.ofNullable(captured.assets().get(hash)), POLICY.limits(), budget, () -> {});
+                var assessed = POLICY.assess(ByteString.copyFromUtf8("n".repeat(32)), historical(source.member(), List.of(0, 1)),
+                        source.fragments(), retained.container(), retained, budget, AT.plusSeconds(1), () -> {})) {
+            retained.requireComplete(assessed.view());
+            assertThat(assessed.failure()).isPresent();
+        }
+        assertThat(budget.live).isZero();
+        var timestamp = fixture(false).timestamp().metadata();
+        var restrictive = DocumentAdmissionPolicy.of(POLICY.definition().toBuilder().setAllowedSchemas(
+                DocumentSchemaPolicyAllowList.newBuilder().addBindings(DocumentSchemaPolicyBinding.newBuilder()
+                        .setTypeUrl(timestamp.getTypeUrl()).setSchema(timestamp.getSchema()))).build(), () -> {});
+        try (var retained = DocumentRetainedSchemaResolution.open(source, Map.of(0, 0, 1, 1),
+                hash -> Optional.ofNullable(captured.assets().get(hash)), restrictive.limits(), budget, () -> {})) {
+            assertThatThrownBy(() -> restrictive.assess(ByteString.copyFromUtf8("n".repeat(32)),
+                    historical(source.member(), List.of(0, 1)), source.fragments(), retained.container(), retained, budget, AT, () -> {}))
+                    .hasMessageContaining("not eligible");
+        }
+        assertThat(budget.live).isZero();
+    }
+
+    private static DocumentPublicationMember historical(DocumentPublicationMember member, List<Integer> ordinals) {
+        var target = member.toBuilder().clearParts().setDestination(member.getDestination().toBuilder().setExpectedMutationRevision(3));
+        for (int ordinal : ordinals) {
+            var part = member.getParts(ordinal); var upload = part.getUpload();
+            target.addParts(part.toBuilder().setHistoricalReuse(PublicationHistoricalReuse.newBuilder()
+                    .setSource(member.getDestination().getAddress()).setRevisionId("10000000-0000-4000-8000-000000000001")
+                    .setRevisionOrdinal(ordinal).setSourceSlot(part.getSlot()).setObject(PublicationObjectIdentity.newBuilder()
+                            .setObjectId(new java.util.UUID(0, ordinal + 1).toString()).setBackendGeneration("fixture")
+                            .setStorageRealm("fixture").setNamespace("fixture").setObjectKey("part-" + ordinal)
+                            .setSizeBytes(upload.getSizeBytes()).setSha256(upload.getSha256()).setContentType(upload.getContentType()))));
+        }
+        return target.build();
     }
 
     @Test void corruptedEvidenceAndReaderCancellationReleaseScratch() throws Exception {

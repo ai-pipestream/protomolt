@@ -456,8 +456,17 @@ public final class DocumentSchemaAdmission {
             if (value == null || value.size() > limits.maxFragmentBytes() - total)
                 throw new IllegalArgumentException("member fragments missing or exceed byte limit");
             total += value.size();
-            long size = part.hasUpload() ? part.getUpload().getSizeBytes() : part.getReuse().getObject().getSizeBytes();
-            String hash = part.hasUpload() ? part.getUpload().getSha256() : part.getReuse().getObject().getSha256();
+            long size;
+            String hash;
+            switch (part.getContentCase()) {
+                case UPLOAD -> { size = part.getUpload().getSizeBytes(); hash = part.getUpload().getSha256(); }
+                case REUSE -> { size = part.getReuse().getObject().getSizeBytes(); hash = part.getReuse().getObject().getSha256(); }
+                case HISTORICAL_REUSE -> {
+                    size = part.getHistoricalReuse().getObject().getSizeBytes();
+                    hash = part.getHistoricalReuse().getObject().getSha256();
+                }
+                default -> throw new IllegalArgumentException("Unsupported publication content declaration");
+            }
             if (value.size() != size || !DocumentSchemaOccurrences.sha256(value, () -> active(control)).equals(hash))
                 throw new IllegalArgumentException("fragment differs from publication declaration");
             fragments.add(new DocumentRevisionAssembly.Fragment(part.getSlot().getPart(), part.getSlot().getSubKey(), value));
