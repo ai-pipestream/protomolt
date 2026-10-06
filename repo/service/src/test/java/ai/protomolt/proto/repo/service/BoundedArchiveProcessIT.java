@@ -136,6 +136,75 @@ class BoundedArchiveProcessIT {
         assertFails(env, "Bounded archive qualification requires managed Redis");
     }
 
+    @Test void concurrentBootstrapUsesOneWinningDriveLocationAcrossProcesses() throws Exception {
+        // Initialize migrations before installing the real INSERT barrier.
+        try (var seed = launch(environment())) { assertThat(seed.process.isAlive()).isTrue(); }
+        var firstEnv = environment();
+        var secondEnv = new HashMap<>(firstEnv);
+        firstEnv.put(RepoServiceConfig.ENV_DEFAULT_BUCKET_BASE, "first-default");
+        secondEnv.put(RepoServiceConfig.ENV_DEFAULT_BUCKET_BASE, "second-default");
+        String account = firstEnv.get("DOCUMENT_PLATFORM_ARCHIVE_ACCOUNT");
+        Path firstLog = directory.resolve("bootstrap-first.log"), secondLog = directory.resolve("bootstrap-second.log");
+        Process first = null, second = null;
+        try (var lock = DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+            try (var sql = lock.createStatement()) {
+                // The fixture account is a generated UUID, never caller-controlled SQL.
+                sql.execute("CREATE FUNCTION hold_archive_bootstrap() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN "
+                        + "IF NEW.account_id='" + account + "' THEN PERFORM pg_advisory_xact_lock(6840319); END IF; RETURN NEW; END $$");
+                sql.execute("CREATE TRIGGER hold_archive_bootstrap BEFORE INSERT ON drives FOR EACH ROW EXECUTE FUNCTION hold_archive_bootstrap()");
+            }
+            lock.setAutoCommit(false);
+            try {
+                int blocker;
+                try (var sql = lock.createStatement(); var result = sql.executeQuery("SELECT pg_backend_pid(),pg_advisory_xact_lock(6840319)")) {
+                    result.next(); blocker = result.getInt(1);
+                }
+                first = start(firstEnv, firstLog); second = start(secondEnv, secondLog);
+                try (var observer = DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+                        var query = observer.prepareStatement("SELECT count(*) FROM pg_stat_activity WHERE ? = ANY(pg_blocking_pids(pid)) AND query ILIKE '%insert%drives%'")) {
+                    query.setInt(1, blocker);
+                    long waiting = 0, deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+                    while (first.isAlive() && second.isAlive() && System.nanoTime() < deadline) {
+                        try (var result = query.executeQuery()) { result.next(); waiting = result.getLong(1); }
+                        if (waiting == 2) break;
+                        Thread.sleep(25);
+                    }
+                    assertThat(waiting).as("both production bootstraps must reach the competing INSERT").isEqualTo(2);
+                }
+            } finally {
+                lock.rollback(); lock.setAutoCommit(true);
+            }
+            try (var a = awaitReady(first, firstLog); var b = awaitReady(second, secondLog)) {
+                String location = driveLocation(account);
+                assertThat(location).matches("(first|second)-default-.+");
+                try (var sql = lock.prepareStatement("SELECT count(*) FROM drives WHERE account_id=? AND name='storage'")) {
+                    sql.setString(1, account);
+                    try (var result = sql.executeQuery()) { result.next(); assertThat(result.getLong(1)).isEqualTo(1); }
+                }
+                var writer = a.archive(firstEnv); var reader = b.archive(secondEnv);
+                writer.createArchive(CreateArchiveRequest.newBuilder().setArchive(Archive.newBuilder().setAccountId(account)
+                        .setName("records").setDriveName("storage").setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED)).build());
+                var address = EntryAddress.newBuilder().setAccountId(account).setArchive("records").setEntryId("shared").build();
+                var payload = ByteString.copyFromUtf8("shared winning bootstrap");
+                var request = PutEntryRequest.newBuilder().setAddress(address).addRenditions(RenditionContent.newBuilder()
+                        .setRendition(RenditionDescriptor.newBuilder().setName("original")).setData(payload)).build();
+                var saved = writer.putEntry(request);
+                assertThat(reader.getEntry(GetEntryRequest.newBuilder().setAddress(address).build()).getRenditions(0).getData()).isEqualTo(payload);
+                assertThat(reader.putEntry(request)).isEqualTo(saved.toBuilder().setDeduplicated(true).build());
+                assertThat(driveLocation(account)).isEqualTo(location);
+            }
+        } finally {
+            for (var process : new Process[]{first, second}) {
+                if (process != null && process.isAlive()) { process.destroyForcibly(); process.waitFor(10, TimeUnit.SECONDS); }
+            }
+            try (var connection = DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+                    var sql = connection.createStatement()) {
+                sql.execute("DROP TRIGGER IF EXISTS hold_archive_bootstrap ON drives");
+                sql.execute("DROP FUNCTION IF EXISTS hold_archive_bootstrap()");
+            }
+        }
+    }
+
     private Map<String, String> environment() {
         var env = RepoBoundedArchiveMainTest.environment();
         env.put("DOCUMENT_PLATFORM_ARCHIVE_ACCOUNT", "process-" + UUID.randomUUID());
@@ -160,6 +229,10 @@ class BoundedArchiveProcessIT {
     private Host launch(Map<String, String> env) throws Exception {
         Path log = directory.resolve(UUID.randomUUID() + ".log");
         var process = start(env, log);
+        return awaitReady(process, log);
+    }
+
+    private Host awaitReady(Process process, Path log) throws Exception {
         try {
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(45);
             while (process.isAlive() && System.nanoTime() < deadline) {

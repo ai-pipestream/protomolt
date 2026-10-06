@@ -258,6 +258,20 @@ a separate failure; arbitrary repeated interruption is not an unconditional grac
 shutdown guarantee. Non-timeout cleanup errors are attached to the original error.
 Startup failures before listener activation retain the separate cleanup path.
 
-Follow-up qualification still includes delayed provider completion, concurrent
-drive-bootstrap winners, and exhaustive unmounted RPC checks. Public deployment,
+Concurrent drive bootstrap now has a real SQL barrier test: two production
+processes with different namespace defaults both wait inside their competing
+drive INSERTs before release. They must converge on one stored drive location,
+then share archive writes, reads and deduplicated retry through separate listeners.
+The losing bootstrap uses the winner's stored location rather than its own default.
+
+Follow-up qualification still includes delayed provider completion and exhaustive
+unmounted RPC checks. Public deployment,
 minimal packaged dependencies and full repository parity remain separate gates.
+
+For delayed Redis replies, keep the production timeout unchanged. The selected
+Jedis 8.0.1 `JedisPool(URI)` constructor supplies a two-second timeout. A reply held
+beyond the launcher's ten-second drain deadline cannot be used as a successful
+late-completion test. Qualify successful provider I/O delay below that client timeout
+with a shorter embedded drain deadline and a controllable real TCP reply gate.
+Longer delays require separate failure/uncertain-acknowledgment reconciliation tests.
+The existing process SIGTERM test continues to cover delayed SQL commit.
