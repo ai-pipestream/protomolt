@@ -693,3 +693,25 @@ not authorize only an alternative command supplied by the caller. Public runtime
 execution reports FAILED_PRECONDITION and does not open storage or schema scopes.
 A fresh authorized observation also permits eviction when an execution failure races
 abandonment. Failed confirmation preserves the original failure and retained entry.
+
+## Private coordinator registration identity (V89)
+
+Each opt-in journaled manager mints an incarnation UUID. Initial claim insertion,
+its immutable epoch-one coordinator binding, and preparation commit together.
+The private journal API uses the actual claim INSERT result to forbid attaching a
+manager to a pre-existing unbound claim. Exact retry checks the original token and
+incarnation without renewing the lease. The legacy registration overload refuses
+bound operations, including retries with the correct claim token.
+
+Original-owner resume checks any binding for the operation, so an epoch transfer
+cannot make a previously bound operation appear legacy-unbound. A different manager
+cannot resume that live operation. Authorized terminal replay remains available to
+a fresh manager because it does not issue provider writes or resolve schemas.
+
+The SQL trigger independently enforces a live claim fence, matching epoch/token,
+immutability, and insertion before preparation/operation admission. Creation-only
+adoption is enforced by the private Java acquisition API; the trigger alone does
+not prove a privileged SQL caller created the claim in the same transaction.
+This is registration identity, not proof of process liveness, local drain or remote
+provider quiescence. Durable drain, successor execution, late-provider cleanup and
+ordinary runtime activation remain unfinished.

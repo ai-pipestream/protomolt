@@ -14,6 +14,7 @@ final class DocumentPublicationRegistration {
     private final PayloadBudget budget;
     private final DocumentPublicationPreparationRecord preparation;
     private final UUID claimToken = UUID.randomUUID();
+    private final UUID coordinator;
     private final JournalAccess access;
     private final DocumentUploadPlan.Prepared plan;
     private final DocumentAdmissionAuthorization.Prepared authorization;
@@ -23,11 +24,12 @@ final class DocumentPublicationRegistration {
     private volatile boolean mayHaveCommitted;
 
     DocumentPublicationRegistration(Tx tx, PayloadBudget budget, DocumentPublicationPreparationRecord preparation,
-            DocumentUploadPlan.Prepared plan) {
+            DocumentUploadPlan.Prepared plan, UUID coordinator) {
         this.tx = Objects.requireNonNull(tx);
         this.budget = Objects.requireNonNull(budget);
         this.preparation = Objects.requireNonNull(preparation);
         this.plan = Objects.requireNonNull(plan);
+        this.coordinator = Objects.requireNonNull(coordinator);
         if (!plan.command().sha256().equals(preparation.command().sha256())
                 || !plan.command().operationId().equals(preparation.command().operationId()))
             throw new IllegalArgumentException("Registration plan differs from preparation");
@@ -58,7 +60,7 @@ final class DocumentPublicationRegistration {
         preflight(caller, control);
         // Set before entering code that can commit; never infer absence from its exception.
         mayHaveCommitted = true;
-        var claim = preparations.acquireInitial(caller, preparation, claimToken, control);
+        var claim = preparations.acquireInitial(caller, preparation, claimToken, coordinator, control);
         modes.bindOwned(access, caller, claim, 0, fixedModes, control);
         control.check();
         return claim;

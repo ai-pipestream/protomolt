@@ -25,6 +25,65 @@ class DocumentPublicationPreparationJournalIT {
 
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(ints = {1, 2, 3, 4, 5})
+    void coordinatorBindingCommitsWithClaimAndPreparation(int checkpoint) {
+        try (var c = context(POSTGRES)) {
+            var value = input(c); var token = UUID.randomUUID(); var coordinator = UUID.randomUUID();
+            var budget = budget(); var journal = new DocumentPublicationPreparationJournal(c.tx(), budget);
+            assertThatThrownBy(() -> journal.acquireInitial(CALLER, value, token, coordinator, cancelAt(checkpoint)))
+                    .isInstanceOf(RepositoryException.class);
+            for (String table : java.util.List.of("repository_execution_claims", "repository_publication_preparations", "repository_coordinator_bindings")) {
+                long count = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                        "SELECT count(*) FROM " + table + " WHERE operation_id=:id")
+                        .setParameter("id", value.key().operationId()).getSingleResult()).longValue());
+                assertThat(count).as("%s checkpoint %s", table, checkpoint).isEqualTo(checkpoint == 5 ? 1 : 0);
+            }
+            var original = journal.acquireInitial(CALLER, value, token, coordinator, NONE);
+            assertThat(journal.acquireInitial(CALLER, value, token, coordinator, NONE)).isEqualTo(original);
+            assertThatThrownBy(() -> journal.acquireInitial(CALLER, value, token, NONE))
+                    .hasMessageContaining("cannot use unbound registration");
+            assertThat(journal.acquireInitial(CALLER, value, token, coordinator, NONE)).isEqualTo(original);
+            assertThatThrownBy(() -> journal.acquireInitial(CALLER, value, token, UUID.randomUUID(), NONE))
+                    .hasMessageContaining("Coordinator binding differs");
+            assertThat(budget.reservedBytes()).isZero();
+            for (String statement : java.util.List.of("UPDATE repository_coordinator_bindings SET incarnation=incarnation",
+                    "DELETE FROM repository_coordinator_bindings"))
+                assertThatThrownBy(() -> c.tx().inTransaction(em -> { return em.createNativeQuery(statement).executeUpdate(); }))
+                        .hasStackTraceContaining("Coordinator binding is immutable");
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void boundRegistrationCannotAdoptAnExistingUnboundClaim(boolean preparationPresent) {
+        try (var c = context(POSTGRES)) {
+            var value = input(c); var token = UUID.randomUUID(); var journal = new DocumentPublicationPreparationJournal(c.tx(), budget());
+            if (preparationPresent) journal.acquireInitial(CALLER, value, token, NONE);
+            else new RepositoryExecutionClaimLedger(c.tx()).acquire(value.key(), value.command(), token, LEASE);
+            assertThatThrownBy(() -> journal.acquireInitial(CALLER, value, token, UUID.randomUUID(), NONE))
+                    .hasMessageContaining("no coordinator binding");
+            long count = c.tx().readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM repository_coordinator_bindings")
+                    .getSingleResult()).longValue());
+            assertThat(count).isZero();
+        }
+    }
+
+    @Test void transferredBoundClaimCannotBecomeLegacyUnboundRestoration() {
+        try (var c = context(POSTGRES)) {
+            var source = input(c);
+            var value = new DocumentPublicationPreparationRecord(source.key(), source.command(), source.seeds(),
+                    source.placements(), Duration.ofSeconds(1), 0);
+            var journal = new DocumentPublicationPreparationJournal(c.tx(), budget());
+            journal.acquireInitial(CALLER, value, UUID.randomUUID(), UUID.randomUUID(), NONE);
+            c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(1.1)").getSingleResult());
+            var next = new RepositoryExecutionClaimLedger(c.tx()).takeOver(value.key(), value.command(), 1, UUID.randomUUID(), LEASE);
+            assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+                RepositoryCoordinatorBinding.requireResume(em, next, null); return null;
+            })).hasMessageContaining("restoring incarnation");
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {1, 2, 3, 4, 5})
     void initialRegistrationCancellationNeverSeparatesClaimFromPreparation(int checkpoint) {
         try (var c = context(POSTGRES)) {
             var budget = budget(); var journal = new DocumentPublicationPreparationJournal(c.tx(), budget);

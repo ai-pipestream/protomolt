@@ -97,7 +97,7 @@ public final class NativeAssessmentExecutionProbe {
                         require(manager.retainedSessions() == 0 && manager.retainedCommandBytes() == 0,
                                 "denied pre-registration request releases capacity");
                         require(backendCalls.get() == 0 && resolverCalls.get() == 0, "denial precedes provider and schema work");
-                        for (String table : List.of("repository_execution_claims", "repository_publication_preparations", "repository_publication_modes",
+                        for (String table : List.of("repository_execution_claims", "repository_coordinator_bindings", "repository_publication_preparations", "repository_publication_modes",
                                 "repository_operation_owners", "repository_publication_assessment_starts")) {
                             long rows = observer.readOnly(em -> ((Number) em.createNativeQuery(
                                     "SELECT count(*) FROM " + table + " WHERE operation_id=:op")
@@ -143,6 +143,28 @@ public final class NativeAssessmentExecutionProbe {
                         }
                         if (first instanceof DocumentPublicationReplay.Terminated terminal)
                             require(terminal.receipt().equals(receipt), "exact rejection replay");
+                    }
+                    if (managed && mode != 3) {
+                        int uploadsBeforeReplay = backendCalls.get();
+                        try (var successor = DocumentPublicationSessions.journaled(
+                                tx, execution, Duration.ofMinutes(5), 1, 4_000_000, budget)) {
+                            Object replay;
+                            try { replay = successor.execute(caller, command, Map.of(), Map.of(), Map.of(),
+                                    modes, container, resolver, RepositoryReadControl.NONE); }
+                            catch (RuntimeException failure) { replay = failure; }
+                            if (mode == 0) require(repeated.equals(replay), "new coordinator replays original committed result");
+                            else {
+                                require(replay instanceof DocumentPublicationReplay.Terminated,
+                                        "new coordinator replays terminal rejection");
+                                require(((DocumentPublicationReplay.Terminated) repeated).receipt().equals(
+                                        ((DocumentPublicationReplay.Terminated) replay).receipt()),
+                                        "new coordinator preserves terminal receipt");
+                            }
+                            require(successor.retainedSessions() == 0 && successor.retainedCommandBytes() == 0,
+                                    "terminal replay in new coordinator retains no session");
+                        }
+                        require(backendCalls.get() == uploadsBeforeReplay && resolverCalls.get() == 1,
+                                "new coordinator terminal replay performs no upload or schema resolution");
                     }
                     long stages = observer.readOnly(em -> ((Number) em.createNativeQuery(
                             "SELECT count(*) FROM document_assessment_owners WHERE operation_id=:op")

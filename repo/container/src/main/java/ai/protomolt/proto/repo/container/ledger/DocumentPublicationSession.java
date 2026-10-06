@@ -35,7 +35,14 @@ final class DocumentPublicationSession {
     static DocumentPublicationSession journaled(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
             Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease,
             ai.protomolt.proto.repo.blob.spi.PayloadBudget budget) {
-        return new DocumentPublicationSession(tx, caller, command, placements, lease, 0, Objects.requireNonNull(budget));
+        return journaled(tx, caller, command, placements, lease, budget, UUID.randomUUID());
+    }
+
+    static DocumentPublicationSession journaled(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease,
+            ai.protomolt.proto.repo.blob.spi.PayloadBudget budget, UUID coordinator) {
+        return new DocumentPublicationSession(tx, caller, command, placements, lease, 0,
+                Objects.requireNonNull(budget), Objects.requireNonNull(coordinator));
     }
 
     /** Explicit host recovery; never selected automatically by ordinary admission. */
@@ -51,12 +58,12 @@ final class DocumentPublicationSession {
 
     private DocumentPublicationSession(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
             Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease, long predecessorGeneration) {
-        this(tx, caller, command, placements, lease, predecessorGeneration, null);
+        this(tx, caller, command, placements, lease, predecessorGeneration, null, null);
     }
 
     private DocumentPublicationSession(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
             Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease, long predecessorGeneration,
-            ai.protomolt.proto.repo.blob.spi.PayloadBudget journalBudget) {
+            ai.protomolt.proto.repo.blob.spi.PayloadBudget journalBudget, UUID coordinator) {
         this.command = Objects.requireNonNull(command); this.lease = Objects.requireNonNull(lease);
         this.predecessorGeneration = predecessorGeneration;
         if (caller == null) throw new RepositoryException(RepositoryException.Code.UNAUTHENTICATED,
@@ -70,7 +77,7 @@ final class DocumentPublicationSession {
         ownerNonce = seeds.ownerNonce();
         operations = new RepositoryOperationLedger(Objects.requireNonNull(tx));
         registration = journalBudget == null ? null : new DocumentPublicationRegistration(tx, journalBudget,
-                new DocumentPublicationPreparationRecord(key, command, seeds, placements, lease, predecessorGeneration), prepared.plan());
+                new DocumentPublicationPreparationRecord(key, command, seeds, placements, lease, predecessorGeneration), prepared.plan(), coordinator);
     }
 
     /**

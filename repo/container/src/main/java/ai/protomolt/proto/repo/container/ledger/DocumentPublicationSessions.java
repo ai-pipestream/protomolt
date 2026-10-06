@@ -24,6 +24,7 @@ final class DocumentPublicationSessions implements AutoCloseable {
     private final int capacity;
     private final long maxCommandBytes;
     private final ai.protomolt.proto.repo.blob.spi.PayloadBudget journalBudget;
+    private final UUID coordinator;
     private long commandBytes;
     private boolean closed;
     private int activeCalls;
@@ -57,6 +58,7 @@ final class DocumentPublicationSessions implements AutoCloseable {
     private DocumentPublicationSessions(Tx tx, DocumentPublicationExecution execution, Duration lease, int capacity,
             long maxCommandBytes, ai.protomolt.proto.repo.blob.spi.PayloadBudget journalBudget) {
         this.journalBudget = journalBudget;
+        coordinator = journalBudget == null ? null : UUID.randomUUID();
         this.tx = Objects.requireNonNull(tx); this.execution = Objects.requireNonNull(execution);
         this.lease = Objects.requireNonNull(lease);
         if (capacity < 1) throw new IllegalArgumentException("Publication session capacity must be positive");
@@ -197,7 +199,7 @@ final class DocumentPublicationSessions implements AutoCloseable {
         try {
             // Bounded preparation can still be substantial; keep it outside the shared lock.
             var session = journalBudget == null ? new DocumentPublicationSession(tx, caller, command, placements, lease)
-                    : DocumentPublicationSession.journaled(tx, caller, command, placements, lease, journalBudget);
+                    : DocumentPublicationSession.journaled(tx, caller, command, placements, lease, journalBudget, coordinator);
             synchronized (this) { reserved.session = session; }
             return reserved;
         } catch (RuntimeException | Error failure) {
@@ -241,6 +243,10 @@ final class DocumentPublicationSessions implements AutoCloseable {
                 observed.requireNotTerminated();
                 return observed.result().orElseThrow();
             }
+            tx.inTransaction(em -> {
+                RepositoryCoordinatorBinding.requireResume(em, owner.executionClaim().orElseThrow(), coordinator);
+                return null;
+            });
             var entry = reserveRestoration(owner, command);
             boolean terminal = false;
             try {

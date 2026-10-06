@@ -28,6 +28,12 @@ final class DocumentPublicationPreparationJournal {
     /** Claim and immutable initial seeds become visible together, including uncertain commit responses. */
     RepositoryExecutionClaimLedger.Claim acquireInitial(RepositoryCaller caller,
             DocumentPublicationPreparationRecord record, UUID token, RepositoryReadControl control) {
+        return acquireInitial(caller, record, token, null, control);
+    }
+
+    /** Optional manager identity binds only a newly created claim or its exact bound retry. */
+    RepositoryExecutionClaimLedger.Claim acquireInitial(RepositoryCaller caller,
+            DocumentPublicationPreparationRecord record, UUID token, UUID coordinator, RepositoryReadControl control) {
         Objects.requireNonNull(record); Objects.requireNonNull(token); require(caller, record.key(), control);
         if (record.predecessorGeneration() != 0)
             throw new IllegalArgumentException("Initial registration requires no predecessor");
@@ -36,8 +42,11 @@ final class DocumentPublicationPreparationJournal {
             var encoded = DocumentPublicationPreparationCodec.encode(record); var digest = digest(encoded);
             control.check();
             var claim = tx.inTransaction(em -> {
-                var acquired = RepositoryExecutionClaimLedger.acquireInTransaction(
+                var acquisition = RepositoryExecutionClaimLedger.acquireInitialInTransaction(
                         em, record.key(), record.command(), token, record.lease());
+                var acquired = acquisition.claim();
+                if (coordinator != null) RepositoryCoordinatorBinding.bindInitial(em, acquisition, coordinator);
+                else RepositoryCoordinatorBinding.requireUnbound(em, acquired);
                 control.check();
                 insert(em, acquired, record, encoded, digest);
                 control.check();

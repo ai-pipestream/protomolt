@@ -26,6 +26,28 @@ class DocumentJournaledSessionsIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
     private static final RepositoryCaller CALLER = new RepositoryCaller("principal", true);
     private static final Duration LEASE = Duration.ofMinutes(5);
+
+    @Test void differentManagerCannotResumeAnotherIncarnationsNonterminalOwner() throws Exception {
+        try (var c = context(POSTGRES)) {
+            var input = input(c);
+            try (var original = resources(c.tx(), 1, input.bytes()); var foreign = resources(c.tx(), 1, input.bytes())) {
+                pending(original.sessions(), input);
+                var identity = identity(c, input);
+                var key = new RepositoryOperationLedger.Key(input.command().intent().getAccountId(), "principal", input.command().operationId());
+                var claim = new RepositoryExecutionClaimLedger.Claim(key, input.command().sha256(), 1,
+                        (UUID) identity[0], (java.time.Instant) identity[1]);
+                var lease = c.tx().readOnly(em -> (java.time.Instant) em.createNativeQuery(
+                        "SELECT lease_until FROM repository_operation_owners WHERE operation_id=:id")
+                        .setParameter("id", key.operationId()).getSingleResult());
+                var owner = new RepositoryOperationLedger.Owner(key, 1, (UUID) identity[2], lease, Optional.of(claim));
+                assertThatThrownBy(() -> foreign.sessions().resumeStarted(CALLER, input.command(), owner, NONE))
+                        .hasMessageContaining("restoring incarnation");
+                assertThat(foreign.sessions().retainedSessions()).isZero();
+                assertIdentity(c, input, identity);
+                assertThat(count(c, "document_part_attempts", input)).isZero();
+            }
+        }
+    }
     private static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
 
     @ParameterizedTest
@@ -298,8 +320,9 @@ class DocumentJournaledSessionsIT {
     }
     private static Object[] identity(Context c, Input input) {
         return c.tx().readOnly(em -> (Object[]) em.createNativeQuery("""
-                SELECT c.claim_token,c.lease_until,p.owner_nonce,p.preparation_bytes
+                SELECT c.claim_token,c.lease_until,p.owner_nonce,p.preparation_bytes,b.incarnation
                 FROM repository_execution_claims c JOIN repository_publication_preparations p USING(account_id,principal,operation_id)
+                JOIN repository_coordinator_bindings b USING(account_id,principal,operation_id)
                 WHERE operation_id=:id AND predecessor_generation=0
                 """).setParameter("id", input.command().operationId()).getSingleResult());
     }
@@ -307,6 +330,7 @@ class DocumentJournaledSessionsIT {
         var current = identity(c, input);
         for (int i = 0; i < 3; i++) assertThat(current[i]).isEqualTo(original[i]);
         assertThat((byte[]) current[3]).isEqualTo((byte[]) original[3]);
+        assertThat(current[4]).isEqualTo(original[4]);
     }
     private record Input(DocumentPublicationCommand command, Map<UUID, DocumentUploadPlan.Placement> placements,
             Map<String, DocumentPublicationCandidate.Mode> modes) {

@@ -463,3 +463,18 @@ decoding and per-request limits, retains capacity through delayed provider compl
 and leaves streaming unavailable. This transport evidence does not establish general
 repository parity, response/read-memory bounds or deployment durability. This remains independent of restore
 and of the RustFS saturation measurements.
+
+## Coordinator identity and cache observability checkpoint
+
+The private journaled manager now binds its initial claim and preparation to one
+incarnation in the same transaction. Other managers cannot resume its live owner;
+authorized terminal replay remains available across managers. Legacy registration
+cannot retry a bound claim. This prerequisite does not activate ordinary journaled
+runtime execution, prove drain, or permit automatic takeover. See the
+[identity boundary](repository-publication-recovery.md#private-coordinator-registration-identity-v89).
+
+Independently, the registry adapter exposes bounded, read-only statistics for cache
+reuse, actual reads, joined loads and owned bytes. The counters distinguish cold and
+warm behavior without weakening per-occurrence authorization. They do not replace
+RustFS scaling measurements, provider durability, retention/pruning or the optional
+JCR assessment. Continue those slices alongside the local-drain protocol.
