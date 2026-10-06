@@ -668,5 +668,12 @@ and payload. Private SQL discovery, natural expiry and V97/V93/V94 lead to norma
 publication. Old bytes remain unverified and unselected, old reader incarnations
 remain ACTIVE, and receipt replay performs no BlobStore calls. This removes the
 specific missing process-death proof for the admin/opaque post-owner case. It does
-not remove the production discovery/hosting, scoped typed, pre-owner,
+not remove the production hosting, scoped typed, pre-owner,
 replacement-before-activation, pin reclamation or performance requirements above.
+
+Private exact-operation discovery now lives in
+`RepositoryCoordinatorRecoveryDiscovery` and is used by the fresh-process test.
+It reads bounded metadata with SQL timeouts, classifies structural recovery gaps,
+and returns expired identities without changing ownership. V97 still rechecks
+under locks. Host orchestration, fleet discovery if required by that host, and
+automatic retry scheduling remain unfinished; no endpoint is advertised.

@@ -62,16 +62,6 @@ public final class DocumentPublicationProcessWorker {
     private static void recover(Tx tx, Host host, Input input, OpenedBlobStore backend) throws Exception {
         var command = input.command();
         var key = new RepositoryOperationLedger.Key("account", "principal", command.operationId());
-        // Private identities come only from durable SQL, never the writer's memory or input files.
-        var row = tx.readOnly(em -> (Object[]) em.createNativeQuery("""
-                SELECT c.claim_epoch,c.claim_token,b.incarnation,o.owner_generation,o.owner_token
-                FROM repository_execution_claims c
-                JOIN repository_coordinator_bindings b USING(account_id,principal,operation_id,claim_epoch,claim_token)
-                JOIN repository_operation_owners o USING(account_id,principal,operation_id)
-                WHERE c.account_id='account' AND c.principal='principal' AND c.operation_id=:id
-                """).setParameter("id", command.operationId()).getSingleResult());
-        var epoch = ((Number) row[0]).longValue();
-        assertThat(epoch).isEqualTo(1);
         var oldAttempt = tx.readOnly(em -> (UUID) em.createNativeQuery("""
                 SELECT attempt_id FROM document_part_attempts WHERE operation_id=:id
                 """).setParameter("id", command.operationId()).getSingleResult());
@@ -85,10 +75,15 @@ public final class DocumentPublicationProcessWorker {
                 FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
                 WHERE c.operation_id=:id
                 """).setParameter("id", key.operationId()).getSingleResult());
-        var identity = new RepositoryCoordinatorDrain.Identity(key, command.sha256(), epoch, (UUID) row[1], (UUID) row[2]);
-        var proposal = new RepositoryCoordinatorReservation.ExpiredUnquiesced(identity, UUID.randomUUID(),
-                host.sessions.coordinatorIdentity(), Duration.ofMinutes(5),
-                new RepositoryCoordinatorReservation.OwnerIdentity(((Number) row[3]).longValue(), (UUID) row[4]));
+        // Production discovery returns private identities without adopting or renewing them.
+        var observed = new RepositoryCoordinatorRecoveryDiscovery(tx, new SqlTimeouts(Duration.ofSeconds(1),Duration.ofSeconds(5)))
+                .inspect(ADMIN,key,command.sha256(),NONE);
+        assertThat(observed.status()).isEqualTo(RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND);
+        var found = observed.candidate().orElseThrow();
+        long epoch = found.predecessor().epoch();
+        assertThat(epoch).isEqualTo(1);
+        var proposal = new RepositoryCoordinatorReservation.ExpiredUnquiesced(found.predecessor(), UUID.randomUUID(),
+                host.sessions.coordinatorIdentity(), Duration.ofMinutes(5), found.owner());
         RepositoryCoordinatorExpiration.reserve(tx, ADMIN, proposal, NONE);
         var claim = tx.inTransaction(em -> { return RepositoryExecutionClaimLedger.lockLive(em, key, command.sha256(), epoch+1, proposal.successorToken()); });
         var budget = new PayloadBudget(64_000_000);

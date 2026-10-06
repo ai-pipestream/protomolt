@@ -1372,7 +1372,31 @@ no old V90/V91 markers, and unchanged ACTIVE predecessor reader incarnations.
 This is client resubmission after a completed provider write, using admin authority
 and opaque CORE data. It is not automatic recovery, payload reconstruction from
 orphan objects, a late remote PUT, a scoped typed case, or proof that old pins can
-be released. The SQL discovery in the worker is test-only; production still needs
-a bounded, process-authorized discovery API and host lifecycle integration. The
+be released. The worker now uses the private production discovery API below;
+host lifecycle integration remains unfinished. The
 separate late-PUT test qualifies delayed effects and tombstone cleanup. Neither
 LocalStack test establishes RustFS throughput or horizontal scaling.
+
+#### Exact-operation recovery discovery
+
+`RepositoryCoordinatorRecoveryDiscovery` reads one operation key and expected
+command digest under private process authority for that operation's principal.
+Its single fixed-size query uses existing keyed indexes and explicit SQL lock and
+statement timeouts. It reads identity and journal metadata, not command bytes,
+payloads or receipts. Cancellation and database errors remain visible.
+
+The result distinguishes absent/unclaimed, terminal/abandoned, unbound, pre-owner,
+unactivated reservation/install, local drain, missing journal, exhausted generation,
+and live states. Structural states take precedence over lease liveness. A bound
+coordinator with matching preparation/modes and both expired claim and owner
+returns an `EXPIRED_BOUND` observation containing exact private identities with
+redacted diagnostic strings.
+All expiry comparisons use one database statement timestamp. An admission drain
+(V90) alone does not imply the local-drain evidence required by V91.
+
+Discovery neither locks ownership nor renews it. Observations can immediately
+become stale; V97 must recheck the exact tuple under claim-before-owner locks.
+An observation never authorizes execution or pin release. The process recovery
+test uses this API instead of a test-only private-identity query. This is an
+internal exact-operation building block, not a public endpoint, fleet scanner,
+automatic retry scheduler, or a solution to unactivated replacement recovery.

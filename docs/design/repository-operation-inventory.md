@@ -6537,7 +6537,10 @@ SQL. The real LocalStack PUT completes before termination, and the fresh JVM
 publishes fresh attempts while preserving the predecessor's unverified object and
 ACTIVE reader state. Receipt replay makes no BlobStore calls.
 
-**Still new implementation work:** bounded process-authorized discovery and host
-recovery orchestration. Test-only SQL discovery is not an available recovery API.
+**New private implementation:** `RepositoryCoordinatorRecoveryDiscovery` performs
+a bounded exact-operation metadata read under process authority and reports an
+explicit state plus private candidate identity only for expired bound operations.
+The fresh-JVM qualification now uses it. Host recovery orchestration remains new
+implementation work; this is not a public or automatic recovery API.
 Replacement death before activation, scoped typed recovery, old pin lifecycle and
 RustFS scaling remain separate acceptance work.
