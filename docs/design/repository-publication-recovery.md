@@ -2157,3 +2157,27 @@ The existing live-owner mode check is not suitable after lease expiry. Validatin
 terminal delivery must not renew an owner or reserve another execution. This
 comparison is a prerequisite for mounting the staged service. Sol reviewed the
 unmounted contract and identified this implementation requirement.
+
+### Terminal mode binding implementation
+
+The opt-in `DocumentPublicationReplay.observe(caller, command, modes, control)`
+compares terminal modes after authorized receipt observation in the same SQL
+transaction. It binds the journal to the receipt generation, current owner token,
+preparation nonce and canonical command. Missing or invalid journal bindings
+produce DATA_LOSS; a valid different mode map produces FAILED_PRECONDITION.
+Pending and unobserved operations remain observations, with no execution authority.
+The check needs no live lease, provider call or full preparation decode. Its SQL
+parameters include a bounded copy of the canonical command, at most 1 MiB;
+concurrent request admission remains a host obligation.
+
+Regression tests exposed an existing credential gap: observation of an operation
+without a creation grant skipped credential validation. The shared authorization
+path now checks any supplied credential in that branch. Missing authority records,
+revoked keys and rotated old keys fail with UNAUTHENTICATED. Process callers and
+keyless legacy trusted callers keep their existing behavior; the eventual public
+host must authenticate its callers. This fixes both legacy and mode-aware replay.
+
+This is an internal prerequisite. The new publication service is still unmounted,
+and its shared facade must call this check after validating the complete input.
+The tests cover real PostgreSQL receipts and journals with synthetic native
+revision observations; they do not qualify provider or transport execution.

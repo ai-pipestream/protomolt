@@ -6,6 +6,7 @@ import ai.protomolt.proto.repo.spi.DocumentPublicationResultCodec;
 import ai.protomolt.proto.repo.spi.DocumentPublicationRejectionCodec;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryException;
+import ai.protomolt.proto.repo.spi.RepositoryReadControl;
 import ai.protomolt.proto.repo.v1.DocumentPublicationResult;
 import ai.protomolt.proto.repo.v1.DocumentPublicationRejection;
 import com.google.protobuf.ByteString;
@@ -13,6 +14,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
 import java.util.Objects;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -60,6 +62,31 @@ final class DocumentPublicationReplay {
         var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
         DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
         return tx.inTransaction(em -> { return observe(em, caller, command, key); });
+    }
+
+    /** Managed publication replay additionally binds the submitted modes to the terminal journal. */
+    Observation observe(RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<String, DocumentPublicationCandidate.Mode> modes, RepositoryReadControl control) {
+        Objects.requireNonNull(control).check();
+        Objects.requireNonNull(command);
+        if (caller == null) throw new RepositoryException(RepositoryException.Code.UNAUTHENTICATED,
+                "Authenticated repository caller is required");
+        var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
+        DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+        String encoded = DocumentPublicationModesJournal.encode(command, modes);
+        var observed = tx.inTransaction(em -> {
+            control.check();
+            var result = observe(em, caller, command, key);
+            if (result.state() == State.COMMITTED || result.state() == State.TERMINATED) {
+                long generation = result.result().map(DocumentPublicationResult::getOwnerGeneration)
+                        .orElseGet(() -> result.rejection().orElseThrow().getOwnerGeneration());
+                DocumentPublicationModesJournal.requireTerminalModes(em, key, command, generation, encoded);
+            }
+            control.check();
+            return result;
+        });
+        control.check();
+        return observed;
     }
 
     static Observation observe(EntityManager em, RepositoryCaller caller, DocumentPublicationCommand command,

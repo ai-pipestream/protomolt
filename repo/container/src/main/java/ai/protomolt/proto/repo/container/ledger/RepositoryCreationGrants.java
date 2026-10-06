@@ -131,6 +131,9 @@ final class RepositoryCreationGrants {
                 """), key).getResultList();
         if (rows.isEmpty()) {
             if (requireGrant) throw unavailable();
+            // Existing-document operations need no creation grant, but a supplied
+            // credential still must be current before delivering their outcome.
+            if (caller.credentialBinding().isPresent()) RepositoryCredentialAuthorities.requireLive(em, caller);
             return;
         }
         var binding = caller.credentialBinding().orElseThrow(RepositoryCreationGrants::unavailable);

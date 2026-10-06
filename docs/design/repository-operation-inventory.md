@@ -6736,3 +6736,13 @@ size. Content remains immutable protobuf bytes; execution and concurrent admissi
 are separate. All 39 SPI tests and the dependency gate passed. See the
 [input evidence](../evidence/repository/2026-10-06-publication-input/README.md).
 The service remains unmounted; this value is not an authorization or execution API.
+
+**Extended internal replay:** terminal mode comparison now binds requested modes
+and the canonical command to the stored receipt generation and immutable journal
+under current authorization. It does not renew an owner or start provider work.
+Legacy replay retains its interface. Both paths now validate supplied credentials
+for existing-document operations without a creation grant, closing a gap found
+by revoke/rotate regression tests. The managed publication facade and mounted
+transport remain unfinished.
+The [terminal replay evidence](../evidence/repository/2026-10-06-terminal-mode-replay/README.md)
+records 68 passing PostgreSQL tests and the credential red/green regression.

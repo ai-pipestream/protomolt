@@ -87,6 +87,36 @@ final class DocumentPublicationModesJournal {
 
     private record Captured(Object[] preparation, Object[] modes) {}
 
+    /** Called only after authorized terminal observation, with its owner row locked in the same transaction. */
+    static void requireTerminalModes(jakarta.persistence.EntityManager em, RepositoryOperationLedger.Key key,
+            DocumentPublicationCommand command, long generation, String encoded) {
+        var rows = em.createNativeQuery("""
+                SELECT p.owner_nonce=m.owner_nonce AND p.owner_nonce=o.owner_token
+                    AND o.owner_generation=:generation AND p.command_codec=:codec AND p.command_version=:version
+                    AND encode(p.command_sha256,'hex')=:digest AND p.command_bytes=:command,
+                  (SELECT array_agg(key ORDER BY key) FROM jsonb_each(m.modes)) =
+                    (SELECT array_agg(key ORDER BY key) FROM jsonb_each(CAST(:modes AS jsonb)))
+                    AND NOT EXISTS (SELECT 1 FROM jsonb_each(m.modes) e
+                      WHERE e.value NOT IN ('"TYPED"'::jsonb,'"OPAQUE"'::jsonb)),
+                  m.modes=CAST(:modes AS jsonb)
+                FROM repository_publication_preparations p JOIN repository_publication_modes m
+                  USING(account_id,principal,operation_id,predecessor_generation)
+                JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                WHERE p.account_id=:account AND p.principal=:principal AND p.operation_id=:operation
+                  AND p.predecessor_generation=:predecessor
+                """).setParameter("generation", generation).setParameter("predecessor", generation-1)
+                .setParameter("codec", DocumentPublicationCommand.CODEC)
+                .setParameter("version", DocumentPublicationCommand.ENCODING_VERSION)
+                .setParameter("digest", command.sha256()).setParameter("command", command.canonical().toByteArray())
+                .setParameter("modes", encoded).setParameter("account", key.account())
+                .setParameter("principal", key.principal()).setParameter("operation", key.operationId()).getResultList();
+        if (rows.size()!=1 || !Boolean.TRUE.equals(((Object[]) rows.getFirst())[0])
+                || !Boolean.TRUE.equals(((Object[]) rows.getFirst())[1]))
+            throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Terminal publication mode binding is invalid");
+        if (!Boolean.TRUE.equals(((Object[]) rows.getFirst())[2]))
+            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Publication modes differ from fixed modes");
+    }
+
     /** Compare immutable predecessor choices before V98; its SQL still arbitrates the current claim. */
     void requireSupersessionModes(RepositoryCaller authority, RepositoryCaller caller,
             DocumentPublicationCommand command, RepositoryCoordinatorReservation.SupersededUnactivated proposal,
