@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.blob.redis.RedisPersistenceIT" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-06T00:19:28.688Z" hostname="krick" time="2.648">
+  <properties/>
+  <testcase name="nonExpiringCapabilityDoesNotPromisePersistence()" classname="ai.protomolt.proto.repo.blob.redis.RedisPersistenceIT" time="1.344"/>
+  <testcase name="acknowledgedWritesCopiesAndReclamationSurviveProcessKillWithAlwaysSyncedAof()" classname="ai.protomolt.proto.repo.blob.redis.RedisPersistenceIT" time="1.291"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO tc.redis:7-alpine - Creating container for image: redis:7-alpine
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine is starting: 9cb390f1c5dd0f41fa86e544d162445daef10b267370f0278e4fac423a7aae19
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine started in PT0.369382253S
+[Test worker] WARN redis.clients.jedis.Jedis - Jedis does not support RESP3 protocol auto-negotiation. Auto-negotiation will be disabled and the connection will assume RESP2. Set .autoNegotiateProtocol(false) (or use .serverDefaultProtocol()) in your config builder to silence this warning, or upgrade to RedisClient for RESP3 support.
+[Test worker] INFO tc.redis:7-alpine - Creating container for image: redis:7-alpine
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine is starting: 294101214aa9b660aac3e3b2a967e6effed558ce95a1ede4c878d1d594bf7691
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine started in PT0.284639918S
+[Test worker] WARN redis.clients.jedis.Jedis - Jedis does not support RESP3 protocol auto-negotiation. Auto-negotiation will be disabled and the connection will assume RESP2. Set .autoNegotiateProtocol(false) (or use .serverDefaultProtocol()) in your config builder to silence this warning, or upgrade to RedisClient for RESP3 support.
+[Test worker] WARN redis.clients.jedis.Jedis - Jedis does not support RESP3 protocol auto-negotiation. Auto-negotiation will be disabled and the connection will assume RESP2. Set .autoNegotiateProtocol(false) (or use .serverDefaultProtocol()) in your config builder to silence this warning, or upgrade to RedisClient for RESP3 support.
+]]></system-err>
+</testsuite>

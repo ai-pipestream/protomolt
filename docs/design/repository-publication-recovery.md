@@ -3,6 +3,28 @@
 Status: design requirements; automatic cross-host session recovery is not enabled.
 This extends the repository composition goal without changing public contracts.
 
+## Initial registration activation requirements
+
+The private registration path currently commits claim acquisition and preparation
+storage separately. Retained same-process retries preserve the token and seeds;
+a process crash between those commits can instead leave a claim with no durable
+preparation. Ordinary runtime registration remains disabled. Before enabling it,
+commit the initial claim and preparation in one transaction or prove an equivalent
+durable seed protocol. Cover rollback before preparation insertion, lost commit
+acknowledgment and fresh-process recovery. A claim-only row must never authorize
+inventing new seeds or a new owner identity.
+
+Scoped journal access also requires a host-private capability bound to account,
+authenticated principal, operation ID, command digest, owner nonce and claim token.
+Keep the actual caller separate for authorization. The capability permits exact
+V82/V83 journal operations, not document creation or cross-process bootstrap;
+private bootstrap remains process-only. Check current source READ and destination
+WRITE access before first registration, and repeat authoritative checks at mutation.
+Scoped creation of an absent destination needs its own explicit grant policy.
+Retain exact session identity from immediately before the first potentially
+committing SQL call through every ambiguous error, cancellation or lost response.
+Registered-command expiry and cleanup still require qualification before activation.
+
 ## Original-owner restoration handle
 
 `DocumentPublicationRestoration` is an internal stage-only handle. A trusted

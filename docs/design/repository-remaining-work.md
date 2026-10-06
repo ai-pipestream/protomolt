@@ -68,6 +68,13 @@ features available. Recovery is one workstream, not the whole goal.
    reconciliation now also reserves actual length after locked metadata checks,
    with a second size-gated SQL read. Qualification must include that extra round
    trip; no memory optimization alone establishes a latency improvement.
+   Redis now has real SIGKILL/restart coverage for AOF with `appendfsync always`
+   and `noeviction`: exact bytes/metadata and copies survive, and a second crash
+   preserves reclamation of an object already recovered from the first crash.
+   A persistence-disabled control loses non-expiring objects as expected. This
+   establishes process-crash behavior only. Managed archival activation remains
+   gated on immutable identity/key policy, shared lifecycle/recovery qualification,
+   and explicit deployment durability requirements; it is not enabled by this test.
 
 ## Work gated by publication and retention guarantees
 
@@ -100,6 +107,13 @@ features available. Recovery is one workstream, not the whole goal.
    Scoped creation of a truly absent destination is currently rejected by replay
    authorization; resolve that policy explicitly, without widening journal access
    into a document-creation grant.
+   Review also found that initial claim acquisition commits before preparation
+   seeds are saved. Same-process retry retains those seeds, but a process crash
+   between commits can strand a claim without recoverable preparation. Commit
+   claim and initial preparation atomically (or prove an equivalent seed recovery
+   protocol) before ordinary durable registration is enabled. Test rollback before
+   preparation insertion, lost commit acknowledgment and fresh-process recovery;
+   never turn a claim-only row into permission to invent replacement seeds.
 5. **Restore, pruning and backup.** Test retained schema/content reachability,
    active read and pending-operation pins, current ACLs and failure recovery.
    Restore publishes through the same concurrency and validation boundaries;

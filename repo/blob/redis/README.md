@@ -24,6 +24,21 @@ Reclamation observes exact-key absence; a late write requires another cleanup
 pass. Capability flags do not establish archival durability. Persistence, eviction,
 administrative mutation and repository key reuse policy require separate review.
 
+## Process-crash coverage
+
+`RedisPersistenceIT` kills the real Redis process with SIGKILL and starts the same
+container again. With AOF enabled, `appendfsync always`, disabled snapshotting and
+`maxmemory-policy noeviction`, acknowledged writes and copies retain their bytes,
+content type, ETag, custom metadata and non-expiring TTL. The test first recovers
+an object, reclaims it, then repeats the crash to verify that deletion persists.
+With both AOF and snapshotting disabled, the same non-expiring adapter loses its
+objects on restart. Configuration is asserted against the running server.
+
+This covers process failure while the Docker host and storage remain running.
+It does not qualify host power loss, replication/failover, backup restoration,
+external eviction/configuration changes, or managed archival publication. The
+service's managed-storage qualification guard remains unchanged.
+
 ## Layout change
 
 The v2 physical key encodes the configured prefix, namespace and logical key as
