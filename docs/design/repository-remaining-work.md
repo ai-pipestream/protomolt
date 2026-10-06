@@ -806,8 +806,16 @@ Real SQL tests now cover scoped successor activation, live attachment and genera
 upload admission, plus refusal after grant revocation, key substitution or host backend
 rejection. Exact immutable activation confirmation after revocation does not allow live
 attachment. See [evidence](../evidence/repository/2026-10-06-scoped-successor/README.md).
-Manager-level recovered provider publication remains open;
-this does not qualify automatic recovery discovery or scheduling.
+At that checkpoint manager-level recovered provider publication remained open;
+activation tests alone do not qualify automatic recovery discovery or scheduling.
+
+The later [scoped process-recovery qualification](../evidence/repository/2026-10-06-scoped-process-recovery/README.md)
+now covers successful opaque publication through the real manager after killing
+and reaping the writer JVM. A separate JVM uses the original scoped binding and
+durable grant for preparation delivery, activation, publication and receipt replay.
+This closes the positive scoped opaque manager path; typed recovery, revocation
+during recovery and host policy refusal in this composed path remain open. The
+deterministic fixture identity does not qualify network API-key authentication.
 
 ## Publication-first revocation race
 

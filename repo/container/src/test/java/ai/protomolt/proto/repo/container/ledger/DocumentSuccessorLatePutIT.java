@@ -225,10 +225,13 @@ class DocumentSuccessorLatePutIT {
     }
     record Input(DocumentPublicationCommand command, Map<UUID, DocumentUploadPlan.Placement> placements, PartObject body) {}
     static Input input(Tx tx, ManagedBackendLedger.Profile profile) {
+        return input(tx, profile, DocumentSecurity.getDefaultInstance());
+    }
+    static Input input(Tx tx, ManagedBackendLedger.Profile profile, DocumentSecurity security) {
         var drive = new DriveRecord(); drive.driveId = UUID.randomUUID(); drive.accountId = "account";
         drive.name = "late"; drive.bucket = BUCKET; drive.prefix = "root"; drive.provider = "s3"; drive.driveType = "CUSTOM"; drive.status = "ACTIVE";
         new DriveLedger(tx).insert(drive);
-        var ownership = OwnershipContext.newBuilder().setAccountId("account").setDatasourceId("source").setSecurity(DocumentSecurity.getDefaultInstance()).build();
+        var ownership = OwnershipContext.newBuilder().setAccountId("account").setDatasourceId("source").setSecurity(security).build();
         var parts = DocumentPartCodec.split(Document.newBuilder().setDocId("late-document").setOwnership(ownership).build(), PartLayouts.document());
         assertThat(parts).hasSize(1);
         var body = parts.getFirst();

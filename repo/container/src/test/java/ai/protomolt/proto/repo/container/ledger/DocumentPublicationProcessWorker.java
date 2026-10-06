@@ -25,9 +25,12 @@ public final class DocumentPublicationProcessWorker {
     static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
     public static void main(String[] args) throws Exception {
         assertThat(args).hasSize(3);
-        assertThat(args[0]).isIn("write", "recover", "reserve", "install", "initial-before", "initial-after", "publish", "recover-initial");
+        boolean scoped = args[0].startsWith("scoped-");
+        String mode = scoped ? args[0].substring(7) : args[0];
+        assertThat(mode).isIn("write", "recover", "reserve", "install", "initial-before", "initial-after", "publish", "recover-initial");
         var command = new DocumentPublicationCommand(DocumentPublicationIntent.parseFrom(Files.readAllBytes(Path.of(args[1]))));
         assertThat(command.intent().getMembersList()).hasSize(1);
+        var caller = scoped ? scopedCaller(command) : ADMIN;
         var declared = command.intent().getMembers(0).getPartsList();
         assertThat(declared).hasSize(1);
         assertThat(declared.getFirst().hasUpload()).isTrue();
@@ -42,30 +45,42 @@ public final class DocumentPublicationProcessWorker {
         config.setPassword(env.get("TEST_DB_PASSWORD")); config.setSchema(env.get("TEST_DB_SCHEMA")); config.setMaximumPoolSize(6);
         try (var pool = new HikariDataSource(config);
              var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
-                     Map.of("hibernate.connection.datasource", admissionGate(pool,args[0],command.operationId()), "hibernate.hbm2ddl.auto", "validate"));
-             var sdk = client(); var opened = opened(sdk, args[0].equals("write"))) {
+                     Map.of("hibernate.connection.datasource", admissionGate(pool,mode,command.operationId()), "hibernate.hbm2ddl.auto", "validate"));
+             var sdk = client(); var opened = opened(sdk, mode.equals("write"))) {
             var tx = new Tx(emf);
             var profile = new ManagedBackendLedger(tx).find(GENERATION).orElseThrow();
             var drive = new DriveLedger(tx).findById(UUID.fromString(command.intent().getMembers(0).getDriveId())).orElseThrow();
             var input = new Input(command, Map.of(drive.driveId, DocumentUploadPlan.Placement.sample(drive, GENERATION, profile)), body);
             try (var host = new Host(tx, profile, new AtomicReference<>(opened), Duration.ofSeconds(10))) {
-                if (args[0].equals("write") || args[0].startsWith("initial-")) {
-                    execute(host, input, NONE);
+                if (mode.equals("write") || mode.startsWith("initial-")) {
+                    execute(host, input, caller);
                     throw new AssertionError("Writer must be killed while the real PUT is held");
                 }
-                if (args[0].equals("publish")) {
-                    var result=execute(host,input,NONE);
+                if (mode.equals("publish")) {
+                    var result=execute(host,input,caller);
                     int calls=((ObservedStore)opened.store()).calls().get();
-                    assertThat(host.sessions.execute(ADMIN,command,Map.of(),Map.of(),Map.of(),Map.of(),Optional.empty(),
+                    assertThat(host.sessions.execute(caller,command,Map.of(),Map.of(),Map.of(),Map.of(),Optional.empty(),
                             (member,occurrence) -> {throw new AssertionError("Replay cannot resolve schema");},NONE)).isEqualTo(result);
                     assertThat(((ObservedStore)opened.store()).calls().get()).isEqualTo(calls);
-                } else recover(tx, host, input, opened, args[0]);
+                } else recover(tx, host, input, opened, mode, caller);
             }
         }
         System.out.println("PROCESS_RECOVERY_OK");
     }
 
-    private static void recover(Tx tx, Host host, Input input, OpenedBlobStore backend, String mode) throws Exception {
+    static RepositoryCaller scopedCaller(DocumentPublicationCommand command) {
+        return new RepositoryCaller("principal", false, Set.of(command.intent().getAccountId()), Set.of(),
+                Optional.of(new RepositoryCredentialBinding("process-recovery-test", command.operationId(), 1)));
+    }
+
+    private static DocumentPublicationResult execute(Host host, Input input, RepositoryCaller caller) throws Exception {
+        return host.sessions.execute(caller, input.command(), input.placements(),
+                Map.of(new DocumentUploadPayloads.Key("a", 0), input.body()), Map.of(),
+                Map.of("a", DocumentPublicationCandidate.Mode.OPAQUE), Optional.empty(),
+                (member, occurrence) -> { throw new AssertionError("Opaque fixture cannot resolve schemas"); }, NONE);
+    }
+
+    private static void recover(Tx tx, Host host, Input input, OpenedBlobStore backend, String mode, RepositoryCaller caller) throws Exception {
         var command = input.command();
         var key = new RepositoryOperationLedger.Key("account", "principal", command.operationId());
         boolean initial=mode.equals("recover-initial");
@@ -112,13 +127,13 @@ public final class DocumentPublicationProcessWorker {
         var budget = new PayloadBudget(64_000_000);
         try (var loaded = new RepositoryReservedPreparation(tx, budget,
                 new SqlTimeouts(Duration.ofSeconds(1), Duration.ofSeconds(5)))
-                .load(ADMIN, ADMIN, proposal, RepositoryCoordinatorReservation.owner(proposal).orElseThrow(), NONE)) {
+                .load(ADMIN, caller, proposal, RepositoryCoordinatorReservation.owner(proposal).orElseThrow(), NONE)) {
             var plan = RepositorySuccessorInstall.prepare(proposal, loaded.record(), Duration.ofSeconds(10),
                     Map.of("a", DocumentPublicationCandidate.Mode.OPAQUE));
             RepositorySuccessorInstall.install(tx, host.budget, ADMIN, plan, NONE);
             if (mode.equals("install")) holdReplacement();
-            host.sessions.activateSuccessor(ADMIN, ADMIN, plan, NONE);
-            var result = execute(host, input, NONE);
+            host.sessions.activateSuccessor(ADMIN, caller, plan, NONE);
+            var result = execute(host, input, caller);
             var nextAttempt = plan.next().seeds().attempts().get("a");
             assertThat(nextAttempt).isNotEqualTo(loaded.record().seeds().attempts().get("a"));
             assertThat(plan.next().seeds().uploadTokens().get("a")).isNotEqualTo(loaded.record().seeds().uploadTokens().get("a"));
@@ -139,7 +154,7 @@ public final class DocumentPublicationProcessWorker {
                     WHERE o.attempt_id=:attempt
                     """).setParameter("attempt", oldAttempt).getSingleResult()).intValue())).isZero();
             int calls = ((ObservedStore) backend.store()).calls().get();
-            assertThat(host.sessions.execute(ADMIN, command, Map.of(), Map.of(), Map.of(), Map.of(), Optional.empty(),
+            assertThat(host.sessions.execute(caller, command, Map.of(), Map.of(), Map.of(), Map.of(), Optional.empty(),
                     (member, occurrence) -> { throw new AssertionError("Receipt replay cannot resolve schemas"); }, NONE)).isEqualTo(result);
             assertThat(((ObservedStore) backend.store()).calls().get()).isEqualTo(calls);
         }

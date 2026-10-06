@@ -99,8 +99,9 @@ class DocumentPublicationProcessRecoveryIT {
                 """).setParameter("id",operation).getSingleResult());
     }
 
-    @ParameterizedTest @ValueSource(strings = {"none", "reserve", "install"})
+    @ParameterizedTest @ValueSource(strings = {"none", "reserve", "install", "scoped"})
     void killedWriterIsRecoveredByFreshJvm(String replacementStage, @TempDir Path temp) throws Exception {
+        boolean scoped = replacementStage.equals("scoped");
         try (var c = context(POSTGRES); var sdk = S3Client.builder().endpointOverride(S3.getEndpoint())
                 .region(Region.of(S3.getRegion())).forcePathStyle(true)
                 .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(S3.getAccessKey(), S3.getSecretKey()))).build()) {
@@ -108,11 +109,22 @@ class DocumentPublicationProcessRecoveryIT {
             sdk.putBucketVersioning(b -> b.bucket(BUCKET).versioningConfiguration(v -> v.status("Enabled")));
             var profile = new ManagedBackendLedger.Profile(S3BackendIdentity.of(S3.getEndpoint().toString(), S3.getRegion(), true), "late-realm");
             new ManagedBackendLedger(c.tx()).bind(GENERATION, profile);
-            var input = input(c.tx(), profile);
+            var security = ai.protomolt.proto.repo.v1.DocumentSecurity.newBuilder().addPermissions(
+                    ai.protomolt.proto.repo.v1.AccessRule.newBuilder().setIdentityType("public").setIdentity("public")
+                            .setAccess(ai.protomolt.proto.repo.v1.Access.ACCESS_READ)).build();
+            var input = scoped ? input(c.tx(), profile, security) : input(c.tx(), profile);
+            if (scoped) {
+                var caller = DocumentPublicationProcessWorker.scopedCaller(input.command());
+                new RepositoryCredentialAuthorities(c.tx()).register(DocumentPublicationProcessWorker.ADMIN,
+                        caller.credentialBinding().orElseThrow(), caller.principalName());
+                var grant = RepositoryCreationGrants.prepare(caller, input.command(), input.placements(),
+                        (System.currentTimeMillis()+300_000)*1000);
+                new RepositoryCreationGrants(c.tx(), new DriveLedger(c.tx())).install(DocumentPublicationProcessWorker.ADMIN, grant);
+            }
             var command = temp.resolve("public-command.pb"); var payload = temp.resolve("public-payload.pb");
             Files.write(command, input.command().intent().toByteArray()); Files.write(payload, input.body().bytes());
             var writerLog = temp.resolve("writer.log");
-            var writer = start(c, writerLog, "write", command, payload);
+            var writer = start(c, writerLog, scoped ? "scoped-write" : "write", command, payload);
             try {
                 long deadline = System.nanoTime() + Duration.ofSeconds(45).toNanos();
                 boolean held = false;
@@ -135,7 +147,7 @@ class DocumentPublicationProcessRecoveryIT {
                 assertThat(writer.waitFor(10, TimeUnit.SECONDS)).isTrue();
                 assertThat(writer.exitValue()).isEqualTo(137);
                 assertThat(writer.isAlive()).isFalse();
-                if (!replacementStage.equals("none")) {
+                if (!scoped && !replacementStage.equals("none")) {
                     var replacementLog = temp.resolve("replacement.log");
                     var replacement = start(c, replacementLog, replacementStage, command, payload);
                     try {
@@ -153,12 +165,12 @@ class DocumentPublicationProcessRecoveryIT {
                 }
                 // No capability files or writer output are passed to this separate process.
                 var readerLog = temp.resolve("reader.log");
-                var reader = start(c, readerLog, "recover", command, payload);
+                var reader = start(c, readerLog, scoped ? "scoped-recover" : "recover", command, payload);
                 try {
                     assertThat(reader.waitFor(60, TimeUnit.SECONDS)).as("fresh reader completes: %s", readerLog).isTrue();
                     assertThat(reader.exitValue()).as(log(readerLog)).isZero();
                     assertThat(log(readerLog)).contains("PROCESS_RECOVERY_OK");
-                    if (!replacementStage.equals("none")) {
+                    if (!scoped && !replacementStage.equals("none")) {
                         var supersession = c.tx().readOnly(em -> (Object[]) em.createNativeQuery("""
                                 SELECT s.predecessor_epoch,s.phase,c.claim_epoch,b.claim_epoch
                                 FROM repository_coordinator_supersessions s
