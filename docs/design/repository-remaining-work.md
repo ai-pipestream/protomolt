@@ -799,3 +799,12 @@ and expiry between execution phases. Internal provisioning still needs bounded
 retention/lifecycle rules before an external endpoint can be exposed. These checks
 do not close recovery discovery, pin reclamation, pruning, provider conformance,
 performance or progressive hydration requirements elsewhere in this inventory.
+
+## Scoped successor activation qualification
+
+Real SQL tests now cover scoped successor activation, live attachment and generation-two
+upload admission, plus refusal after grant revocation, key substitution or host backend
+rejection. Exact immutable activation confirmation after revocation does not allow live
+attachment. See [evidence](../evidence/repository/2026-10-06-scoped-successor/README.md).
+Manager-level recovered provider publication and commit/revocation races remain open;
+this does not qualify automatic recovery discovery or scheduling.
