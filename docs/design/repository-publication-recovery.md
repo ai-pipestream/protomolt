@@ -1579,10 +1579,10 @@ Installation alone is not an execution grant.
 Closing admission blocks new handles but permits accepted handles to finish.
 Drain reports active calls separately from unresolved identities; it is neither
 provider-quiescence evidence nor durable completion. Unresolved entries retain
-their budget leases. There is no transition yet for an expired retained proposal,
-explicit supersession, or reconciled discard. Those lifecycle transitions and
-trusted host authority integration are required before factory exposure. Closing
-this private owner must not be reported as resource-complete shutdown.
+their budget leases until an explicit transition settles them. Retained unactivated
+supersession and claim-fenced owner retirement are described below. Terminal and
+graceful reconciliation, plus trusted host lifecycle integration, remain required
+before factory exposure. Closing this private owner is not resource-complete shutdown.
 
 ### Next lifecycle requirement: reconcile both local owners
 
@@ -1649,10 +1649,10 @@ a separate target-bound restoration API would require explicit lifecycle review.
 This addresses incarnation selection for same-manager successor preparation, not
 complete automatic recovery. A superseded session still requires durable owner
 replacement and explicit retirement before a new target can occupy its operation
-slot. The recovery-attempt owner still needs reconciliation and replacement of its
-old retained entry; scheduler, cleanup and resource-complete shutdown remain open.
+slot. Per-entry replacement and claim-fenced retirement are described below;
+terminal reconciliation, scheduler, cleanup and resource-complete shutdown remain open.
 
-### Reviewed next transition: retained unactivated supersession
+### Retained unactivated supersession invariants
 
 An explicit recovery-attempt supersession step must first recheck process authority
 and the retained execution-caller identity. Fresh bounded discovery must identify
@@ -1674,7 +1674,7 @@ the existing activation fingerprint check must continue to reject a mismatched
 retained session. Never interpret committed V94 with a lost reply as unactivated
 V98 work. Host retry policy needs a finite attempt limit or deadline; a single
 pending proposal bounds concurrent state, not the total number of generations.
-This transition has been reviewed but is not implemented yet.
+The implementation and its verification boundaries are described below.
 
 ### Retained unactivated supersession implementation
 
@@ -1697,3 +1697,28 @@ Automatic host orchestration, graceful and terminal reconciliation, removal of
 entries fenced by a foreign winner, shutdown coordination and retry policy remain
 unfinished. Local closure may therefore still report unresolved entries with
 retained byte leases. No reader pin or provider object is reclaimed by this step.
+
+### Claim-fenced recovery-owner retirement
+
+`Attempt.retireFenced` releases only this recovery owner's local identity and byte
+leases. A bounded READ COMMITTED transaction locks the exact claim, checks its
+digest and stored command, and requires the current claim to exclude both the
+retained proposal and any pending replacement. Each proposed successor must be
+at an earlier epoch, or at the current epoch with a different token. The latter
+covers a proposed token that never committed because another coordinator won.
+V78 prohibits reversing epochs, changing an existing token within its epoch, or
+deleting a claim, so a successful fencing observation remains true after unlock.
+
+An absent claim, earlier epoch, matching token or lease expiry alone is insufficient.
+Cancellation or failure of the readback preserves the entry and its leases. After
+a successful readback, the method marks RETIRED, removes the owner entry and releases
+its borrowed bytes. Accepted handles still count as active until closed, including
+when admission has already closed. Retried retirement is idempotent; advancing a
+retired handle is an error.
+
+A separately retained session is not removed. In particular, foreign V98 can fence
+this claim before V93 changes the owner, leaving the old manager session retained.
+That manager's existing owner-based retirement correctly remains false. The host
+must still account for that session and its drain identities. Recovery-owner drain
+counts cannot stand in for manager, worker or provider drain. Terminal/graceful
+reconciliation and complete host lifecycle integration remain unfinished.

@@ -907,3 +907,11 @@ Still qualify the full owner path with an active old local execution during
 retirement; shared session exclusion already has separate tests. Add foreign and
 terminal entry reconciliation, graceful recovery and coordinated shutdown before
 exposing automatic recovery.
+
+Claim-fenced recovery-owner retirement now releases its own retained bytes after
+SQL excludes every current/pending proposed token. It keeps separately retained
+manager sessions intact; V98 claim transfer alone still cannot satisfy their
+owner-based retirement. Coordinate those owners during host shutdown rather than
+interpreting an empty recovery map as whole-host drain. Terminal/graceful entry
+reconciliation, manager handling after claim-only fencing, active-session composition
+qualification and automatic recovery integration remain open.

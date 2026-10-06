@@ -7,7 +7,7 @@ import java.util.*;
 
 /** Private host retry ownership before session activation. Closing admission never discards uncertain work. */
 final class RepositoryRecoveryAttempts implements AutoCloseable {
-    enum Phase { PROPOSED, RESERVED, INSTALLED, ACTIVATED }
+    enum Phase { PROPOSED, RESERVED, INSTALLED, ACTIVATED, RETIRED }
     record Drain(int active, int unresolved) {}
     private final Tx tx;
     private final PayloadBudget budget;
@@ -153,6 +153,7 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
                     entry.release();
                 }
                 case ACTIVATED -> { }
+                case RETIRED -> throw conflict("Recovery attempt is retired");
             }
             return entry.phase;
         }
@@ -164,7 +165,8 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
             Objects.requireNonNull(control).check();
             RepositoryCoordinatorReservation.require(authority,entry.proposal,control);
             DocumentAdmissionAuthorization.requireCaller(caller,key,key.account()); requireCaller(entry,caller);
-            if (entry.phase==Phase.ACTIVATED) throw conflict("Activated recovery requires its session reconciliation path");
+            if (entry.phase==Phase.ACTIVATED || entry.phase==Phase.RETIRED)
+                throw conflict("Completed local recovery requires its session reconciliation path");
             if (entry.pending==null) {
                 var observed=new RepositoryCoordinatorRecoveryDiscovery(tx,timeouts)
                         .inspect(authority,key,entry.command.sha256(),control);
@@ -187,6 +189,39 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
             return entry.phase;
         }
 
+        /** Releases this owner's memory only; separately retained sessions and provider work remain owned. */
+        synchronized boolean retireFenced(RepositoryCaller authority, RepositoryCaller caller, RepositoryReadControl control) {
+            if (ended) throw new IllegalStateException("Recovery attempt call is closed");
+            Objects.requireNonNull(control).check();
+            RepositoryCoordinatorReservation.require(authority,entry.proposal,control);
+            DocumentAdmissionAuthorization.requireCaller(caller,key,key.account()); requireCaller(entry,caller);
+            if (entry.phase==Phase.RETIRED) return true;
+            if (entry.phase==Phase.ACTIVATED) throw conflict("Activated recovery is owned by its session");
+            boolean fenced=tx.inTransaction(em -> {
+                control.check();
+                em.createNativeQuery("SELECT require_repository_read_committed()").getSingleResult();
+                var rows=em.createNativeQuery("""
+                        SELECT command_sha256,claim_epoch,claim_token FROM repository_execution_claims
+                        WHERE account_id=:a AND principal=:p AND operation_id=:o FOR UPDATE
+                        """).setParameter("a",key.account()).setParameter("p",key.principal())
+                        .setParameter("o",key.operationId()).getResultList();
+                if (rows.isEmpty()) return false;
+                var row=(Object[])rows.getFirst();
+                if (!HexFormat.of().formatHex((byte[])row[0]).equals(entry.command.sha256()))
+                    throw conflict("Recovery claim command changed");
+                RepositoryOperationLedger.requireCommand(em,key,entry.command);
+                long epoch=((Number)row[1]).longValue(); var token=(UUID)row[2];
+                return excludes(epoch,token,entry.proposal)
+                        && (entry.pending==null || excludes(epoch,token,entry.pending.proposal()));
+            });
+            control.check();
+            if (!fenced) return false;
+            entry.phase=Phase.RETIRED; entry.pending=null;
+            synchronized (RepositoryRecoveryAttempts.this) { entries.remove(key,entry); }
+            entry.release();
+            return true;
+        }
+
         synchronized RepositoryCoordinatorReservation.Proposal proposal() {
             if (ended) throw new IllegalStateException("Recovery attempt call is closed");
             return entry.proposal;
@@ -197,6 +232,12 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
             ended=true;
             synchronized (RepositoryRecoveryAttempts.this) { entry.active=false; activeCalls--; }
         }
+    }
+
+    /** V78 forbids claim deletion, epoch reversal and token changes within an epoch. */
+    private static boolean excludes(long epoch, UUID token, RepositoryCoordinatorReservation.Proposal proposal) {
+        long proposedEpoch=proposal.predecessor().epoch()+1;
+        return epoch>proposedEpoch || epoch==proposedEpoch && !token.equals(proposal.successorToken());
     }
 
     private static void requireCaller(Entry entry,RepositoryCaller caller) {

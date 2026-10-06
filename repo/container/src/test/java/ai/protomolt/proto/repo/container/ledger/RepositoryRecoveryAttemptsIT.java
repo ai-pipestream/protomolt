@@ -138,7 +138,8 @@ class RepositoryRecoveryAttemptsIT {
              var resources=DocumentJournaledSessionsIT.resources(c.tx().withTimeouts(TIMEOUTS),1,1_000_000,LEASE,new PayloadBudget(128_000_000))) {
             var source=source(c); var budget=new PayloadBudget(128_000_000); var lease=Duration.ofSeconds(3);
             var failOnce=new AtomicBoolean(pending);
-            var datasource=DocumentJdbcFaults.beforeCommit(c.pool(), connection -> {
+            var cancelReadback=new AtomicBoolean(); var cancelled=new AtomicBoolean();
+            var failingCommit=DocumentJdbcFaults.beforeCommit(c.pool(), connection -> {
                 if (!failOnce.get()) return;
                 try (var query=connection.createStatement(); var rows=query.executeQuery("SELECT count(*) FROM repository_coordinator_supersessions")) {
                     rows.next();
@@ -146,13 +147,18 @@ class RepositoryRecoveryAttemptsIT {
                         throw new java.sql.SQLException("Supersession commit refused by test", "08006");
                 }
             });
+            var datasource=DocumentJdbcFaults.afterCommit(failingCommit,() -> {
+                if (cancelReadback.compareAndSet(true,false)) cancelled.set(true);
+            });
             try (var emf=jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",Map.of(
                     "hibernate.connection.datasource",datasource,"hibernate.hbm2ddl.auto","validate"));
                  var attempts=new RepositoryRecoveryAttempts(new Tx(emf),budget,resources.sessions(),lease,TIMEOUTS,1)) {
                 try (var attempt=attempts.begin(CALLER,source.command(),source.observation())) {
                     var original=attempt.proposal();
+                    assertThat(attempt.retireFenced(CALLER,CALLER,NONE)).isFalse();
                     attempt.advance(CALLER,CALLER,NONE); attempt.advance(CALLER,CALLER,NONE);
                     expire(c,source.command());
+                    assertThat(attempt.retireFenced(CALLER,CALLER,NONE)).isFalse();
                     if (pending) {
                         assertThatThrownBy(() -> attempt.supersedeExpired(CALLER,CALLER,NONE))
                                 .hasStackTraceContaining("Supersession commit refused by test");
@@ -177,6 +183,59 @@ class RepositoryRecoveryAttemptsIT {
                     assertThat(count(c,"repository_coordinator_supersessions")).isEqualTo(1);
                     assertThat(c.tx().<Object>readOnly(em -> em.createNativeQuery("SELECT successor_token FROM repository_coordinator_supersessions").getSingleResult()))
                             .isEqualTo(winner.successorToken());
+                    var before=claimAndOwner(c,source.command());
+                    var control=new RepositoryReadControl() {
+                        public boolean isCancelled() { return cancelled.get(); }
+                        public long remainingNanos() { return Long.MAX_VALUE; }
+                    };
+                    cancelReadback.set(true);
+                    assertThatThrownBy(() -> attempt.retireFenced(CALLER,CALLER,control))
+                            .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.CANCELLED));
+                    assertThat(cancelReadback).isFalse();
+                    assertThat(attempt.proposal()).isSameAs(original);
+                    assertThat(budget.reservedBytes()).isEqualTo(held);
+                    attempts.close();
+                    assertThat(attempts.drain()).isEqualTo(new RepositoryRecoveryAttempts.Drain(1,1));
+                    assertThat(attempt.retireFenced(CALLER,CALLER,NONE)).isTrue();
+                    assertThat(attempt.retireFenced(CALLER,CALLER,NONE)).isTrue();
+                    assertThat(budget.reservedBytes()).isZero();
+                    assertThat(claimAndOwner(c,source.command())).containsExactly(before);
+                    assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,NONE)).hasMessageContaining("retired");
+                    assertThat(resources.sessions().retainedSessions()).isEqualTo(pending ? 0 : 1);
+                    assertThat(resources.sessions().retireSuperseded(CALLER,source.command(),NONE)).isFalse();
+                    attempts.close();
+                    assertThat(attempts.drain()).isEqualTo(new RepositoryRecoveryAttempts.Drain(1,0));
+                }
+                assertThat(attempts.drain()).isEqualTo(new RepositoryRecoveryAttempts.Drain(0,0));
+            }
+        }
+    }
+
+    private static Object[] claimAndOwner(Context c, DocumentPublicationCommand command) {
+        return c.tx().readOnly(em -> (Object[])em.createNativeQuery("""
+                SELECT c.claim_epoch,c.claim_token,c.lease_until,o.owner_generation,o.owner_token,o.lease_until
+                FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                WHERE c.operation_id=:id
+                """).setParameter("id",command.operationId()).getSingleResult());
+    }
+
+    @Test void absentClaimIsNotRetirementProof() throws Exception {
+        try (var c=context(POSTGRES);
+             var resources=DocumentJournaledSessionsIT.resources(c.tx().withTimeouts(TIMEOUTS),1,1_000_000,LEASE,new PayloadBudget(128_000_000))) {
+            var command=input(c).command();
+            var key=new RepositoryOperationLedger.Key(command.intent().getAccountId(),CALLER.principalName(),command.operationId());
+            // A supplied observation is not authoritative; no claim has been created in SQL.
+            var observed=new RepositoryCoordinatorRecoveryDiscovery.Observation(RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND,
+                    Optional.of(new RepositoryCoordinatorRecoveryDiscovery.Candidate(
+                            new RepositoryCoordinatorDrain.Identity(key,command.sha256(),1,UUID.randomUUID(),UUID.randomUUID()),
+                            new RepositoryCoordinatorReservation.OwnerIdentity(1,UUID.randomUUID()))),Optional.empty());
+            var budget=new PayloadBudget(128_000_000);
+            try (var attempts=new RepositoryRecoveryAttempts(c.tx(),budget,resources.sessions(),LEASE,TIMEOUTS,1)) {
+                try (var attempt=attempts.begin(CALLER,command,observed)) {
+                    long held=budget.reservedBytes();
+                    assertThat(count(c,"repository_execution_claims")).isZero();
+                    assertThat(attempt.retireFenced(CALLER,CALLER,NONE)).isFalse();
+                    assertThat(budget.reservedBytes()).isEqualTo(held).isPositive();
                     attempts.close();
                 }
                 assertThat(attempts.drain()).isEqualTo(new RepositoryRecoveryAttempts.Drain(0,1));
