@@ -43,6 +43,17 @@ class DocumentHistoricalSelectionIT {
                 assertThat(selected.getFirst().objectId().toString()).isEqualTo(selector.getObject().getObjectId());
                 assertThat(use.plan().revision().toString()).isEqualTo(original.getMembers(0).getRevisionId());
                 assertThat(use.plan().publicationRevision()).isLessThan(third.getMembers(0).getMutationRevision());
+                var references = DocumentHistoricalReferenceAdmission.prepare(history, use,
+                        List.of(selector, selector(f, original, 1, 1)), NONE);
+                var objects = selected.stream().map(DocumentHistoricalReadPlan.Entry::objectId)
+                        .collect(java.util.stream.Collectors.toSet());
+                c.tx().inTransaction(em -> {
+                    DocumentAdmissionAuthorization.authorizeHistory(em, ADMIN, selector.getSource());
+                    var locks = DocumentPublicationLocks.lockIndependentOrigins(em,
+                            Set.of(DocumentIds.nodeId(selector.getSource())), objects, Set.of());
+                    DocumentPublicationLocks.lockIndependentRetention(em, locks);
+                    DocumentHistoricalReferenceAdmission.requireBoundSources(em, references, locks, NONE);
+                });
                 assertThat(c.tx().readOnly(em -> (UUID) em.createNativeQuery(
                         "SELECT revision_id FROM document_revision_current WHERE node_id=:node")
                         .setParameter("node", f.sources().getFirst().row().nodeId).getSingleResult()).toString())
@@ -54,6 +65,38 @@ class DocumentHistoricalSelectionIT {
             }
             release(ledger, history);
             assertThat(count(c, "document_read_pins")).isZero();
+        }
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"unlocked", "omitted", "previous-transaction", "closed-use"})
+    void historicalReferenceCheckRequiresLiveUseAndCompleteTransactionLocks(String fault) throws Exception {
+        try (var c = context(POSTGRES)) {
+            var f = prepare(c, 1); var published = publish(c, f, Fault.NONE, em -> {});
+            var selection = selector(f, published, 0, 0);
+            var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var history = ledger.captureHistorical(ADMIN, selection.getSource(), UUID.fromString(selection.getRevisionId()));
+            try (var use = history.use()) {
+                var prepared = DocumentHistoricalReferenceAdmission.prepare(history, use, List.of(selection), NONE);
+                var nodes = Set.of(DocumentIds.nodeId(selection.getSource()));
+                var objects = Set.of(UUID.fromString(selection.getObject().getObjectId()));
+                DocumentPublicationLocks.IndependentOrigins previous = fault.equals("previous-transaction")
+                        ? c.tx().inTransaction(em -> {
+                            DocumentAdmissionAuthorization.authorizeHistory(em, ADMIN, selection.getSource());
+                            var locks = DocumentPublicationLocks.lockIndependentOrigins(em, nodes, objects, Set.of());
+                            DocumentPublicationLocks.lockIndependentRetention(em, locks);
+                            return locks;
+                        }) : null;
+                if (fault.equals("closed-use")) use.close();
+                assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+                    DocumentAdmissionAuthorization.authorizeHistory(em, ADMIN, selection.getSource());
+                    var locks = previous != null ? previous : DocumentPublicationLocks.lockIndependentOrigins(em, nodes,
+                            fault.equals("omitted") ? Set.of() : objects, Set.of());
+                    if (previous == null && !fault.equals("unlocked"))
+                        DocumentPublicationLocks.lockIndependentRetention(em, locks);
+                    DocumentHistoricalReferenceAdmission.requireBoundSources(em, prepared, locks, NONE);
+                })).isInstanceOf(IllegalStateException.class);
+            }
+            release(ledger, history);
         }
     }
 

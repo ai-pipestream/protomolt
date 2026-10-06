@@ -46,6 +46,11 @@ final class DocumentPublicationLocks {
             if (manager != em || !transaction.equals(em.createNativeQuery("SELECT pg_current_xact_id()::text").getSingleResult()))
                 throw new IllegalStateException("Independent origin locks belong to another transaction");
         }
+        void requireObjects(EntityManager em, Set<UUID> objects) {
+            requireScope(em);
+            if (!retentionLocked || !proposed.containsAll(objects))
+                throw new IllegalStateException("Historical sources are outside the locked proposed object set");
+        }
     }
 
     /**

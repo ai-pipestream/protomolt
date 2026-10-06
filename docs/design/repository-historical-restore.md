@@ -204,3 +204,21 @@ or fence the active policy. Opaque and multi-source/mixed-content preparation re
 outside this helper. Full command integration and atomic reference publication are
 still required; the historical command guard remains enabled.
 [SQL assessment evidence](../evidence/repository/2026-10-05-restore-assessment/README.md).
+
+## Historical reference transaction checkpoint
+
+`DocumentHistoricalReferenceAdmission` prepares exact, bounded source claims from
+the live pinned selection before write locks. Inside the write transaction it
+requires transaction-local origin/retention locks covering all selected objects,
+then verifies sealed successful native revision membership, exact original physical
+coordinates and DOCUMENT_HISTORY reference ownership. Historical r1 remains usable
+after r3 becomes current. The helper neither requires nor grants a current-source
+revision condition. Its failures mark the transaction rollback-only.
+
+Before wiring it into the native writer, add historical source addresses to the
+complete deterministic current-authorization lock set. Fence the operation and
+active policy, authorize source READ and destination WRITE before exposing binding
+failures, then acquire drive/origin/retention locks and publish all new references
+atomically while the source Use remains held. Command analysis, assessment retention
+and replay must recognize the historical alternative consistently before removing
+the public command guard. [Transaction evidence](../evidence/repository/2026-10-05-historical-reference/README.md).
