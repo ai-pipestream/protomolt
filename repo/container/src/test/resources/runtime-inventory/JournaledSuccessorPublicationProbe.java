@@ -21,6 +21,11 @@ public final class JournaledSuccessorPublicationProbe {
     /** Real expired recovery, cancelled activation reply, terminal cache eviction and owner disposal. */
     static void runOwned(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
             DocumentAssessmentRuntimeObserver.Observation observation) throws Exception {
+        runOwned(tx,provider,source,observation,false);
+    }
+
+    static void runOwned(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentAssessmentRuntimeObserver.Observation observation, boolean openRetry) throws Exception {
         var destination=source.candidate().getPartsList().stream().filter(DocumentPublicationPart::hasReuse)
                 .findFirst().orElseThrow().getReuse().getSource();
         var command=AssessmentMixedReuseProbe.command(source.candidate().toBuilder().setDestination(destination).build());
@@ -70,23 +75,43 @@ public final class JournaledSuccessorPublicationProbe {
                     }
                 }
                 require(second.sessions.retainedSessions()==1,"possible activation retained by manager");
+                if (openRetry) {
+                    try (var attempt=recovery.resume(CALLER,command).orElseThrow()) {
+                        long retained=budget.reservedBytes();
+                        require(attempt.retireTerminal(ADMIN,CALLER,NONE)==RepositoryRecoveryAttempts.TerminalDisposal.NOT_TERMINAL,"pending activation is not terminal");
+                        require(budget.reservedBytes()==retained,"pending recovery keeps preparation");
+                    }
+                }
                 var definition=ObservedAssessmentProbe.asset(StringValue.getDescriptor());
                 var result=second.sessions.execute(CALLER,command,Map.of(),bodies,Map.of(),MODES,
                         Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())),(member,occurrence) -> definition,NONE);
                 require(result.getMembersCount()==1 && second.uploadCalls.get()>0 && second.readCalls.get()>0,
                         "recovered successor published through real provider writes and reads");
                 require(second.sessions.retainedSessions()==0,"terminal session evicted before owner disposal");
-                recovery.close();
-                require(recovery.drain().unresolved()==1 && budget.reservedBytes()>0,"owner still retains uncertain activation");
+                if (!openRetry) recovery.close();
+                require(budget.reservedBytes()>0,"owner still retains uncertain activation");
+                if (!openRetry) require(recovery.drain().unresolved()==1,"closed owner retains uncertain activation");
                 try (var pressure=budget.reserve(budget.capacity()-budget.reservedBytes())) {
-                    require(recovery.detachClosed(Duration.ZERO,ignored -> ADMIN,NONE),"exact terminal outcome allows owner disposal");
+                    if (openRetry) {
+                        try (var attempt=recovery.resume(CALLER,command).orElseThrow()) {
+                            require(attempt.retireTerminal(ADMIN,CALLER,NONE)==RepositoryRecoveryAttempts.TerminalDisposal.RETIRED,"open retry disposes exact terminal outcome");
+                            require(attempt.retireTerminal(ADMIN,CALLER,NONE)==RepositoryRecoveryAttempts.TerminalDisposal.RETIRED,"terminal disposal is idempotent");
+                            try {
+                                attempt.advance(ADMIN,CALLER,MODES,NONE);
+                                throw new AssertionError("Terminal recovery resumed mutation");
+                            } catch (RepositoryException expected) {
+                                require(expected.code()==RepositoryException.Code.CONFLICT,"terminal mutation rejected");
+                            }
+                        }
+                    } else require(recovery.detachClosed(Duration.ZERO,ignored -> ADMIN,NONE),"exact terminal outcome allows owner disposal");
                     require(budget.reservedBytes()==pressure.bytes(),"owner released bytes under full initial capacity pressure");
                 }
+                recovery.close();
                 require(budget.reservedBytes()==0 && recovery.drain().unresolved()==0,"owner disposal completed");
                 require(recovery.detachClosed(Duration.ZERO,ignored -> ADMIN,NONE),"owner disposal is idempotent");
             }
         }
-        System.out.println("RECOVERY_OWNER_TERMINAL_DISPOSAL_OK");
+        System.out.println(openRetry ? "RECOVERY_OPEN_TERMINAL_DISPOSAL_OK" : "RECOVERY_OWNER_TERMINAL_DISPOSAL_OK");
     }
 
     static void run(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,

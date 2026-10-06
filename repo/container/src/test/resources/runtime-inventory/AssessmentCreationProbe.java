@@ -22,6 +22,7 @@ public final class AssessmentCreationProbe {
         var schemaRevisionSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "schema-revision");
         var successorSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "successor", true);
         var ownedSuccessorSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "owned-successor", true);
+        var openSuccessorSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "open-successor", true);
         var fencedWorkerSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "fenced-worker", true);
         List<DocumentPublicationMember> restartMembers = new ArrayList<>();
         for (String memberId : List.of("a", "b")) {
@@ -48,6 +49,7 @@ public final class AssessmentCreationProbe {
         initial = PromotedAssessmentCommitProbe.run(tx, provider, promotedSource, initial);
         JournaledSuccessorPublicationProbe.run(tx, provider, successorSource, observation);
         JournaledSuccessorPublicationProbe.runOwned(tx, provider, ownedSuccessorSource, observation);
+        JournaledSuccessorPublicationProbe.runOwned(tx, provider, openSuccessorSource, observation, true);
         FencedSchemaWorkerProbe.run(tx, provider, fencedWorkerSource);
         NativeAssessmentExecutionProbe.run(tx, database, provider, executionSource, observation);
         NativeAssessmentExecutionProbe.runScoped(tx, database, provider, scopedExecutionSource, observation);

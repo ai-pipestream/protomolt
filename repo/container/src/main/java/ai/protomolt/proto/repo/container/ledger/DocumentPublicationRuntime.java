@@ -87,12 +87,18 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
     private final DocumentReadLifecycle reads;
     private final java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> drainAuthority;
     private final ExternalWorkers externalWorkers;
+    private final RepositoryManagedRecovery recovery;
     private final DocumentPublicationScopeCalls scopeCalls = new DocumentPublicationScopeCalls();
     private boolean stopping;
     private boolean stopped;
 
     /** Trusted host lookup. Request ownership fields cannot grant process authority. */
     @FunctionalInterface public interface DrainAuthority {
+        RepositoryCaller forOperation(String account, String principal, UUID operationId);
+    }
+
+    /** Separate trusted host opt-in for exact-key recovery, never inferred from drain or request authority. */
+    @FunctionalInterface public interface RecoveryAuthority {
         RepositoryCaller forOperation(String account, String principal, UUID operationId);
     }
 
@@ -182,11 +188,24 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
             int parallelism, Duration flushAge, Duration lease, int maxSessions, long maxCommandBytes,
             int cleanupBatchSize, boolean deliverEvents, Assessments assessments,
             DrainAuthority authority, ExternalWorkers externalWorkers) throws IOException {
+        return managedJournaled(tx,drives,ledger,reader,budget,backends,assemblyLimits,sqlTimeouts,
+                parallelism,flushAge,lease,maxSessions,maxCommandBytes,cleanupBatchSize,deliverEvents,
+                assessments,authority,externalWorkers,null);
+    }
+
+    /** Explicit recovery opt-in; accepted calls retain one scope through recovery and publication. */
+    public static <R extends DocumentRetainedReader & DocumentAssessmentReader & DocumentReadLifecycle.Reader>
+            DocumentPublicationRuntime managedJournaled(
+            Tx tx, DriveLedger drives, DocumentReadLedger ledger, R reader, PayloadBudget budget,
+            Backends backends, DocumentRevisionAssembly.Limits assemblyLimits, SqlTimeouts sqlTimeouts,
+            int parallelism, Duration flushAge, Duration lease, int maxSessions, long maxCommandBytes,
+            int cleanupBatchSize, boolean deliverEvents, Assessments assessments,
+            DrainAuthority authority, ExternalWorkers externalWorkers, RecoveryAuthority recoveryAuthority) throws IOException {
         Objects.requireNonNull(authority); Objects.requireNonNull(externalWorkers);
         return new DocumentPublicationRuntime(tx, drives, ledger, reader, budget, backends, assemblyLimits, sqlTimeouts,
                 parallelism, flushAge, lease, maxSessions, maxCommandBytes, cleanupBatchSize, deliverEvents,
                 observeAssessments(tx, drives, ledger, reader, budget, assemblyLimits, assessments),
-                key -> authority.forOperation(key.account(), key.principal(), key.operationId()), externalWorkers);
+                key -> authority.forOperation(key.account(), key.principal(), key.operationId()), externalWorkers,recoveryAuthority);
     }
 
     private <R extends DocumentRetainedReader & DocumentReadLifecycle.Reader> DocumentPublicationRuntime(
@@ -206,6 +225,17 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
             int cleanupBatchSize, boolean deliverEvents, DocumentPublicationAssessmentExecution assessments,
             java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> drainAuthority,
             ExternalWorkers externalWorkers) {
+        this(tx,drives,ledger,reader,budget,backends,assemblyLimits,sqlTimeouts,parallelism,flushAge,lease,
+                maxSessions,maxCommandBytes,cleanupBatchSize,deliverEvents,assessments,drainAuthority,externalWorkers,null);
+    }
+
+    private <R extends DocumentRetainedReader & DocumentReadLifecycle.Reader> DocumentPublicationRuntime(
+            Tx tx, DriveLedger drives, DocumentReadLedger ledger, R reader, PayloadBudget budget,
+            Backends backends, DocumentRevisionAssembly.Limits assemblyLimits, SqlTimeouts sqlTimeouts,
+            int parallelism, Duration flushAge, Duration lease, int maxSessions, long maxCommandBytes,
+            int cleanupBatchSize, boolean deliverEvents, DocumentPublicationAssessmentExecution assessments,
+            java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> drainAuthority,
+            ExternalWorkers externalWorkers, RecoveryAuthority recoveryAuthority) {
         Objects.requireNonNull(backends);
         this.drainAuthority = drainAuthority;
         this.externalWorkers = externalWorkers;
@@ -219,10 +249,21 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
         sessions = drainAuthority == null
                 ? new DocumentPublicationSessions(tx, execution, lease, maxSessions, maxCommandBytes)
                 : DocumentPublicationSessions.journaled(tx, execution, lease, maxSessions, maxCommandBytes, budget);
+        recovery=recoveryAuthority==null ? null
+                : new RepositoryManagedRecovery(tx,budget,sessions,lease,sqlTimeouts,maxSessions,recoveryAuthority);
     }
 
     /** Borrowed payloads must remain stable until return, including after caller cancellation. */
     public DocumentPublicationResult execute(RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<UUID, Placement> placements, Map<PayloadKey, PartObject> bodies, Map<String, String> attributes,
+            Map<String, Mode> modes, Optional<DocumentSchemaAdmission.Definition> container,
+            Schemas schemas, RepositoryReadControl control) throws InvalidProtocolBufferException {
+        try (var call=scopeCalls.enter(); var operation=operationCall(caller,command)) {
+            return executeAccepted(caller,command,placements,bodies,attributes,modes,container,schemas,control);
+        }
+    }
+
+    private DocumentPublicationResult executeAccepted(RepositoryCaller caller, DocumentPublicationCommand command,
             Map<UUID, Placement> placements, Map<PayloadKey, PartObject> bodies, Map<String, String> attributes,
             Map<String, Mode> modes, Optional<DocumentSchemaAdmission.Definition> container,
             Schemas schemas, RepositoryReadControl control) throws InvalidProtocolBufferException {
@@ -235,6 +276,7 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
         var payloads = new HashMap<DocumentUploadPayloads.Key, PartObject>();
         bodies.forEach((key, body) -> payloads.put(new DocumentUploadPayloads.Key(key.member(), key.revisionOrdinal()), body));
         try {
+            if (recovery!=null) recovery.prepare(caller,command,payloads,modes(modes),control);
             return sessions.execute(caller, command, placements(placements), payloads, attributes, modes(modes), container,
                     (member, occurrence) -> schemas.resolve(caller, member, occurrence), control);
         } catch (DocumentPublicationReplay.Terminated rejected) {
@@ -253,8 +295,9 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
             Map<String, Mode> modes, Optional<DocumentSchemaAdmission.Definition> container,
             SchemaScopes schemas, RepositoryReadControl control) throws InvalidProtocolBufferException {
         Objects.requireNonNull(command);
-        try (var call = scopeCalls.enter(); var scopes = new DocumentPublicationSchemaScopes(caller, command, schemas, control)) {
-            return execute(caller, command, placements, bodies, attributes, modes, container, scopes, control);
+        try (var call = scopeCalls.enter(); var operation=operationCall(caller,command);
+             var scopes = new DocumentPublicationSchemaScopes(caller, command, schemas, control)) {
+            return executeAccepted(caller, command, placements, bodies, attributes, modes, container, scopes, control);
         }
     }
 
@@ -267,7 +310,7 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
             RepositoryReadControl control) {
         if (placements.size() > command.intent().getMembersCount() || modes.size() > command.intent().getMembersCount())
             throw new IllegalArgumentException("Recovery inputs exceed command bounds");
-        try {
+        try (var call=scopeCalls.enter(); var operation=operationCall(caller,command)) {
             return sessions.recover(caller, command, placements(placements), predecessorGeneration, modes(modes), control);
         } catch (DocumentPublicationReplay.Terminated rejected) {
             throw new Rejected(rejected.receipt());
@@ -275,13 +318,17 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
     }
 
     public boolean retireSuperseded(RepositoryCaller caller, DocumentPublicationCommand command, RepositoryReadControl control) {
-        return sessions.retireSuperseded(caller, command, control);
+        try (var call=scopeCalls.enter(); var operation=operationCall(caller,command)) {
+            return sessions.retireSuperseded(caller, command, control);
+        }
     }
 
     /** Package-private until the host's coordinator ownership protocol is qualified. */
     DocumentPublicationResult resumeStarted(RepositoryCaller caller, DocumentPublicationCommand command,
             RepositoryOperationLedger.Owner owner, RepositoryReadControl control) {
-        try { return sessions.resumeStarted(caller, command, owner, control); }
+        try (var call=scopeCalls.enter(); var operation=operationCall(caller,command)) {
+            return sessions.resumeStarted(caller, command, owner, control);
+        }
         catch (DocumentPublicationReplay.Terminated rejected) { throw new Rejected(rejected.receipt()); }
     }
 
@@ -289,6 +336,10 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
         var result = new HashMap<UUID, DocumentUploadPlan.Placement>();
         selected.forEach((id, placement) -> result.put(id, placement.selected));
         return result;
+    }
+
+    private RepositoryPublicationCalls.Call operationCall(RepositoryCaller caller, DocumentPublicationCommand command) {
+        return recovery==null ? null : recovery.calls.enter(caller,command);
     }
 
     private static Map<String, DocumentPublicationCandidate.Mode> modes(Map<String, Mode> selected) {
@@ -302,7 +353,14 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
 
     /** Refuse new calls and provider starts. Permitted transfers may settle; resources remain borrowed. */
     @Override public void close() {
-        uploads.stopProviderStarts(); scopeCalls.close();
+        scopeCalls.close();
+        // Recovery callers may still need activation, lazy schema resolution and provider starts.
+        // Their complete scope is drained before closing those nested resources.
+        if (recovery==null) closeNestedAdmission();
+    }
+
+    private void closeNestedAdmission() {
+        uploads.stopProviderStarts();
         try { sessions.close(); }
         catch (RuntimeException | Error failure) {
             try { if (externalWorkers != null) externalWorkers.closeAdmission(); }
@@ -332,6 +390,12 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
         if (stopped) return true;
         stopping = true;
         close();
+        if (recovery!=null) {
+            if (!scopeCalls.awaitIdle(remaining(budget,start))) return false;
+            control.check();
+            if (!recovery.detach(remaining(budget,start),control)) return false;
+            closeNestedAdmission();
+        }
         if (drainAuthority != null) {
             var progress = sessions.drainRegistrations(remaining(budget, start), drainAuthority, control);
             if (!progress.registrationsIdle() || progress.unresolved() != 0) return false;

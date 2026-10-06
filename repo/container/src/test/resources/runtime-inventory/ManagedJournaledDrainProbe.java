@@ -22,6 +22,15 @@ import java.util.concurrent.*;
 public final class ManagedJournaledDrainProbe {
     private static final RepositoryCaller ADMIN = new RepositoryCaller("schema-owner", true);
     public static void run(Path bundle) throws Exception {
+        run(bundle,0);
+        run(bundle,1);
+        run(bundle,2);
+    }
+
+    private static void run(Path bundle, int scenario) throws Exception {
+        boolean recoveryEnabled=scenario!=0;
+        var recoveryOperation=new java.util.concurrent.atomic.AtomicReference<DocumentPublicationCommand>();
+        var recoveryCalls=new java.util.concurrent.atomic.AtomicInteger();
         String generation = "journaled-schema-" + UUID.randomUUID();
         var config = new RepoServiceConfig(0, new LedgerConfig(System.getenv("PROTOMOLT_TEST_JDBC"),
                 System.getenv("PROTOMOLT_TEST_USER"), System.getenv("PROTOMOLT_TEST_PASSWORD")),
@@ -62,7 +71,15 @@ public final class ManagedJournaledDrainProbe {
                     (account, principal, operation) -> {
                         require(principal.equals(ADMIN.principalName()), "exact drain principal");
                         return ADMIN;
-                    });
+                    }, recoveryEnabled ? (account,principal,operation) -> {
+                        var expected=recoveryOperation.get();
+                        if (expected!=null && operation.equals(expected.operationId())
+                                && account.equals(expected.intent().getAccountId()) && principal.equals(ADMIN.principalName())) {
+                            recoveryCalls.incrementAndGet();
+                            return ADMIN;
+                        }
+                        throw new AssertionError("Fresh publication or terminal replay requested recovery authority");
+                    } : null);
             var host = new RepoServices(config, BridgeEngine.standard(), BlobStores.discover(), null, access, null, journaled);
             var tx = new Tx(database.entityManagerFactory());
             try {
@@ -73,6 +90,44 @@ public final class ManagedJournaledDrainProbe {
                         Optional.empty(), RepositoryReadControl.NONE).equals(completed), "terminal receipt replay");
                 require(entered.getCount() == 1, "opaque terminal control did not resolve a schema");
                 var work = prepare(host, tx, generation, true);
+                if (scenario==2) {
+                    recoveryOperation.set(work.command);
+                    release.countDown();
+                    recoverExpired(host,tx,generation,bundle,work);
+                    require(recoveryCalls.get()>0,"managed recovery requested exact process authority");
+                    host.close(Duration.ofSeconds(5));
+                    require(resolver.cachedBytes()==0,"recovery host released schema cache");
+                    System.out.println("MANAGED_EXPIRED_PUBLICATION_RECOVERY_OK");
+                    return;
+                }
+                if (recoveryEnabled) {
+                    var accepted=executor.submit(() -> execute(host,ADMIN,work));
+                    require(entered.await(10,TimeUnit.SECONDS),"enabled host entered real schema lookup");
+                    try { host.close(Duration.ofMillis(100)); throw new AssertionError("accepted publication was not retained"); }
+                    catch (IllegalStateException expected) {
+                        require(expected.getMessage().equals("Native publication resources still active; shared resources retained"),
+                                "shutdown waits for accepted call");
+                    }
+                    require(!accepted.isDone() && !access.awaitIdle(Duration.ZERO),"schema worker remains accepted after close");
+                    release.countDown();
+                    var result=accepted.get(15,TimeUnit.SECONDS);
+                    require(result.getMembersCount()==1,"accepted typed publication finished after close");
+                    require(count(tx,"repository_operation_success",work.command.operationId())==1,"one durable publication outcome");
+                    long versions=tx.readOnly(em -> ((Number)em.createNativeQuery("""
+                            SELECT count(*) FROM document_operation_selections s
+                            JOIN document_part_attempt_objects o ON o.attempt_id=s.attempt_id
+                            WHERE s.operation_id=:id AND o.verified AND o.provider_version IS NOT NULL
+                            """).setParameter("id",work.command.operationId()).getSingleResult()).longValue());
+                    require(versions>0,"published revision selected verified provider versions");
+                    host.close(Duration.ofSeconds(5));
+                    require(count(tx,"repository_coordinator_local_drains",work.command.operationId())==0,
+                            "terminal operation requires no drain marker");
+                    require(resolver.cachedBytes()==0,"enabled host released schema cache");
+                    try { host.ledgerDataSource().getConnection(); throw new AssertionError("closed enabled host still lends SQL"); }
+                    catch (java.sql.SQLException expected) { /* Final drain releases the service-owned pool. */ }
+                    System.out.println("MANAGED_RECOVERY_ACCEPTED_PUBLICATION_DRAIN_OK");
+                    return;
+                }
                 var second = prepare(host, tx, generation, true);
                 var cancelled = new java.util.concurrent.atomic.AtomicBoolean();
                 var control = new RepositoryReadControl() {
@@ -160,6 +215,78 @@ public final class ManagedJournaledDrainProbe {
         }
         System.out.println("MANAGED_JOURNALED_SCHEMA_DRAIN_OK");
     }
+    private static void recoverExpired(RepoServices host, Tx tx, String generation, Path bundle, Work work) throws Exception {
+        var profile=new ManagedBackendLedger(tx).find(generation).orElseThrow();
+        var budget=new ai.protomolt.proto.repo.blob.spi.PayloadBudget(64_000_000);
+        var timeouts=new SqlTimeouts(Duration.ofSeconds(2),Duration.ofSeconds(5));
+        var ledger=new DocumentReadLedger(tx,UUID.randomUUID());
+        var opened=BlobStores.discover().open("s3",Map.of("endpoint",System.getenv("PROTOMOLT_TEST_S3_ENDPOINT"),
+                "region",System.getenv("PROTOMOLT_TEST_S3_REGION"),"path-style","true","conditional-writes","true",
+                "access-key",System.getenv("PROTOMOLT_TEST_S3_ACCESS"),"secret-key",System.getenv("PROTOMOLT_TEST_S3_SECRET")));
+        var reader=new ai.protomolt.proto.repo.engine.DocumentPartReader((original,selected) -> {
+            require(original.equals(generation) && selected.equals(profile),"predecessor exact read backend");
+            return opened.store();
+        },2,8_000_000,budget);
+        var predecessor=DocumentPublicationRuntime.managedJournaled(tx,new DriveLedger(tx),ledger,reader,budget,
+                (original,selected) -> {
+                    require(original.equals(generation) && selected.equals(profile),"predecessor exact upload backend");
+                    return new DocumentPublicationRuntime.Backend(profile.identity(),opened);
+                },new DocumentRevisionAssembly.Limits(8_000_000,100,100,10000,1_000_000),timeouts,
+                2,Duration.ofMillis(25),Duration.ofSeconds(10),2,4_000_000,10,false,
+                new DocumentPublicationRuntime.Assessments(bundle,Duration.ofMinutes(5),Duration.ofSeconds(5)),
+                (account,principal,operation) -> ADMIN,new DocumentPublicationRuntime.ExternalWorkers() {
+                    public void closeAdmission() { }
+                    public boolean awaitIdle(Duration timeout) { return true; }
+                });
+        Throwable primaryFailure=null;
+        try {
+            var interrupted=new IllegalStateException("predecessor descriptor selection interrupted");
+            try {
+                predecessor.execute(ADMIN,work.command,work.placements,work.bodies,Map.of(),work.modes,
+                        Optional.of(definition(Document.getDescriptor())),(caller,member,occurrence) -> { throw interrupted; },
+                        RepositoryReadControl.NONE);
+                throw new AssertionError("predecessor unexpectedly published");
+            } catch (IllegalStateException expected) { require(expected==interrupted,"original schema failure preserved"); }
+            require(count(tx,"repository_publication_assessment_starts",work.command.operationId())==0,
+                    "schema failure preceded assessment creation");
+            require(count(tx,"repository_operation_success",work.command.operationId())==0,"predecessor did not publish");
+            require(count(tx,"repository_coordinator_drains",work.command.operationId())==0,"predecessor not gracefully drained");
+            long verified=tx.readOnly(em -> ((Number)em.createNativeQuery("""
+                    SELECT count(*) FROM document_operation_selections s JOIN document_part_attempt_objects o ON o.attempt_id=s.attempt_id
+                    WHERE s.operation_id=:id AND o.verified AND o.provider_version IS NOT NULL
+                    """).setParameter("id",work.command.operationId()).getSingleResult()).longValue());
+            require(verified>0,"predecessor performed real versioned uploads");
+            tx.readOnly(em -> em.createNativeQuery("""
+                    SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM
+                     (GREATEST(c.lease_until,o.lease_until)-clock_timestamp())))+0.1)
+                    FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                    WHERE c.operation_id=:id
+                    """).setParameter("id",work.command.operationId()).getSingleResult());
+            var result=execute(host,ADMIN,work);
+            require(result.getMembersCount()==1,"managed successor published");
+            for (String table : List.of("repository_coordinator_reservations","repository_successor_installs",
+                    "repository_successor_executions","repository_operation_success"))
+                require(count(tx,table,work.command.operationId())==1,"exact single recovery transition: "+table);
+            require(host.publishDocument(ADMIN,work.command,Map.of(),Map.of(),Map.of(),Map.of(),Optional.empty(),
+                    RepositoryReadControl.NONE).equals(result),"managed successor receipt replay");
+        } catch (Exception | Error failure) {
+            primaryFailure=failure;
+            throw failure;
+        } finally {
+            // Keep the independently opened client alive until the old owner proves its own drain.
+            try {
+                require(predecessor.shutdownStep(Duration.ofSeconds(5)),"predecessor drains through reviewed recovery chain");
+                opened.close();
+                require(count(tx,"repository_coordinator_drains",work.command.operationId())==0
+                        && count(tx,"repository_coordinator_local_drains",work.command.operationId())==0,
+                        "fenced predecessor did not assert graceful quiescence");
+            } catch (Exception | Error cleanup) {
+                if (primaryFailure==null) throw cleanup;
+                if (cleanup!=primaryFailure) primaryFailure.addSuppressed(cleanup);
+            }
+        }
+    }
+
     private static long count(Tx tx, String table, UUID operation) {
         return tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM " + table + " WHERE operation_id=:id")
                 .setParameter("id", operation).getSingleResult()).longValue());
@@ -180,6 +307,17 @@ public final class ManagedJournaledDrainProbe {
         try (var backing = BlobStores.discover().open("s3", Map.of("endpoint", System.getenv("PROTOMOLT_TEST_S3_ENDPOINT"),
                 "region", System.getenv("PROTOMOLT_TEST_S3_REGION"), "path-style", "true", "conditional-writes", "true",
                 "access-key", System.getenv("PROTOMOLT_TEST_S3_ACCESS"), "secret-key", System.getenv("PROTOMOLT_TEST_S3_SECRET")))) { backing.ensureNamespace(namespace); }
+        try (var client=software.amazon.awssdk.services.s3.S3Client.builder()
+                .endpointOverride(java.net.URI.create(System.getenv("PROTOMOLT_TEST_S3_ENDPOINT")))
+                .region(software.amazon.awssdk.regions.Region.of(System.getenv("PROTOMOLT_TEST_S3_REGION")))
+                .forcePathStyle(true)
+                .httpClientBuilder(software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient.builder())
+                .credentialsProvider(software.amazon.awssdk.auth.credentials.StaticCredentialsProvider.create(
+                        software.amazon.awssdk.auth.credentials.AwsBasicCredentials.create(
+                                System.getenv("PROTOMOLT_TEST_S3_ACCESS"),System.getenv("PROTOMOLT_TEST_S3_SECRET")))).build()) {
+            client.putBucketVersioning(request -> request.bucket(namespace).versioningConfiguration(
+                    configuration -> configuration.status(software.amazon.awssdk.services.s3.model.BucketVersioningStatus.ENABLED)));
+        }
         var drive = new DriveRecord();
         drive.driveId = UUID.randomUUID(); drive.accountId = account; drive.name = "schema"; drive.driveType = "PIPELINE"; drive.bucket = namespace;
         host.driveLedger().insert(drive);

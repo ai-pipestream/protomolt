@@ -24,8 +24,12 @@ final class ManagedDocumentServices {
     final ManagedSchemaAccess schemas;
     private final boolean managedDrain;
 
-    record Journaled(DocumentPublicationRuntime.Assessments assessments, DocumentPublicationRuntime.DrainAuthority authority) {
+    record Journaled(DocumentPublicationRuntime.Assessments assessments, DocumentPublicationRuntime.DrainAuthority authority,
+            DocumentPublicationRuntime.RecoveryAuthority recovery) {
         Journaled { Objects.requireNonNull(assessments); Objects.requireNonNull(authority); }
+        Journaled(DocumentPublicationRuntime.Assessments assessments, DocumentPublicationRuntime.DrainAuthority authority) {
+            this(assessments,authority,null);
+        }
     }
 
     ManagedDocumentServices(Tx tx, DriveLedger drives, String generation,
@@ -84,7 +88,7 @@ final class ManagedDocumentServices {
                             deliverEvents, journaled.assessments(), journaled.authority(), new DocumentPublicationRuntime.ExternalWorkers() {
                                 public void closeAdmission() { schemas.close(); }
                                 public boolean awaitIdle(Duration timeout) throws InterruptedException { return schemas.awaitIdle(timeout); }
-                            });
+                            },journaled.recovery());
                 } catch (java.io.IOException failure) { throw new java.io.UncheckedIOException("Cannot observe managed publication runtime", failure); }
             }
         } catch (RuntimeException | Error failure) {

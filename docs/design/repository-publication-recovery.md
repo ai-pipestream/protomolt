@@ -1920,3 +1920,44 @@ detachment, continue the existing session, upload, read and external-worker
 barriers; owner-byte release does not establish their completion. Acceptance
 must cover active handles, uncertain reservation/install acknowledgments,
 attempted activation, terminal eviction, pending supersession and held workers.
+
+#### Managed retry integration in progress
+
+The optional `RecoveryAuthority` supplies private process authority independently
+of request credentials. Managed publication holds a bounded per-operation call
+guard through routing and execution. Caller-authorized replay observation precedes
+local recovery lookup and private discovery; unsupported partial states produce a
+generic request error. Existing local proposals are resumed before interpreting
+new discovery results. Recovery requires complete resubmitted upload declarations
+and immutable validation modes. Actual payload hashing remains at the existing
+private upload-copy boundary, after succession; earlier immutable payload
+preflight remains an integration task.
+
+An authorized terminal observation makes a retained recovery entry permanently
+ineligible for execution or supersession. It releases duplicate preparation and
+plan buffers before attempting exact terminal/fence disposal proof. The result
+distinguishes a nonterminal operation, a terminal operation still retaining proof
+identity, and a retired entry. Both terminal states return to ordinary authorized
+receipt replay, never to activation. Later retries reauthorize; shutdown can use
+private disposal proof without disclosing a receipt. Cancellation after the
+transition preserves the reconciliation-only state.
+
+For recovery-enabled hosts, closing first rejects new outer publication calls.
+Shutdown waits for already accepted calls before detaching recovery owners and
+closing nested session/provider/schema admission. The legacy non-recovery closure
+sequence is unchanged. Packaged tests exercise in-process managed publication,
+terminal replay, accepted calls across outer close, and recovery from a naturally
+expired predecessor that failed schema selection before assessment creation.
+Cancellation after terminal observation, subsequent credential/read revocation,
+and managed recovery of an unactivated successor still require acceptance evidence.
+Publication RPC parity and transport shutdown are not established by these tests.
+
+Normal request availability does not depend on private recovery authority.
+Already authorized terminal observations go directly to ordinary receipt replay;
+any locally retained recovery entry on that path remains owned until shutdown
+disposal. For a non-observed operation, an exact caller-key absence query checks
+claims, operations and preparation journals before returning to initial admission.
+A concurrent insert is still arbitrated by atomic admission; absence observation
+never authorizes an unfenced mutation. Ownerless partial state does not take this
+shortcut. PostgreSQL routing tests and the real managed-service fixture verify
+fresh publication and terminal replay with an unusable recovery authority callback.

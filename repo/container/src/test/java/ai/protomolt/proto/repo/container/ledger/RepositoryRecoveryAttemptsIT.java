@@ -33,6 +33,81 @@ class RepositoryRecoveryAttemptsIT {
     }
 
     @ParameterizedTest @ValueSource(booleans={false,true})
+    void freshAndTerminalRoutingDoNotRequireRecoveryAuthority(boolean terminal) throws Exception {
+        try (var c=context(POSTGRES)) {
+            var input=input(c);
+            var budget=new PayloadBudget(64_000_000);
+            if (terminal) {
+                var claim=new DocumentPublicationPreparationJournal(c.tx(),budget)
+                        .acquireInitial(CALLER,input,UUID.randomUUID(),NONE);
+                new DocumentPublicationModesJournal(c.tx(),budget).bind(CALLER,claim,0,MODES,NONE);
+                var owner=new RepositoryOperationLedger(c.tx()).admit(input.key(),input.command(),
+                        input.seeds().ownerNonce(),LEASE,claim).owner().orElseThrow();
+                new DocumentPublicationRejections(c.tx()).cancel(CALLER,owner,input.command(),NONE);
+            }
+            try (var resources=DocumentJournaledSessionsIT.resources(c.tx(),2,1_000_000,LEASE,budget)) {
+                var recovery=new RepositoryManagedRecovery(c.tx(),budget,resources.sessions(),LEASE,TIMEOUTS,2,
+                        (account,principal,operation) -> { throw new AssertionError("Normal routing requested recovery authority"); });
+                try (var call=recovery.calls.enter(CALLER,input.command())) {
+                    recovery.prepare(CALLER,input.command(),Map.of(),Map.of(),NONE);
+                }
+                assertThat(count(c,"repository_coordinator_reservations")).isZero();
+                assertThat(recovery.detach(Duration.ZERO,NONE)).isTrue();
+            }
+        }
+    }
+
+    @Test void managedRetryDoesNotExposeOwnerlessDiscoveryState() throws Exception {
+        try (var c=context(POSTGRES)) {
+            var input=input(c);
+            new RepositoryExecutionClaimLedger(c.tx()).acquire(input.key(),input.command(),UUID.randomUUID(),Duration.ofSeconds(1));
+            c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(1.1)").getSingleResult());
+            var budget=new PayloadBudget(64_000_000);
+            try (var resources=DocumentJournaledSessionsIT.resources(c.tx(),2,1_000_000,LEASE,budget)) {
+                var recovery=new RepositoryManagedRecovery(c.tx(),budget,resources.sessions(),LEASE,TIMEOUTS,2,
+                        (account,principal,operation) -> CALLER);
+                var scoped=new RepositoryCaller(CALLER.principalName(),false,Set.of("account"),Set.of());
+                try (var call=recovery.calls.enter(scoped,input.command())) {
+                    assertThatThrownBy(() -> recovery.prepare(scoped,input.command(),Map.of(),MODES,NONE))
+                            .isInstanceOfSatisfying(RepositoryException.class,e -> {
+                                assertThat(e.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION);
+                                assertThat(e.getMessage()).isEqualTo("Operation is not eligible for managed retry");
+                            });
+                }
+                assertThat(count(c,"repository_coordinator_reservations")).isZero();
+                assertThat(recovery.detach(Duration.ZERO,NONE)).isTrue();
+            }
+        }
+    }
+
+    @Test void publicationRoutingGuardIsBoundedPerKeyAndDoesNotQueueDuplicates() throws Exception {
+        try (var c=context(POSTGRES); var executor=java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var command=source(c).command();
+            var calls=new RepositoryPublicationCalls(2);
+            try (var first=calls.enter(CALLER,command)) {
+                var duplicate=executor.submit(() -> {
+                    assertThatThrownBy(() -> calls.enter(CALLER,command)).isInstanceOfSatisfying(RepositoryException.class,
+                            e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.CONFLICT));
+                });
+                duplicate.get(2,java.util.concurrent.TimeUnit.SECONDS);
+                try (var independent=calls.enter(new RepositoryCaller("other",true),command)) {
+                    assertThatThrownBy(() -> calls.enter(new RepositoryCaller("third",true),command))
+                            .isInstanceOfSatisfying(RepositoryException.class,
+                                    e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.RESOURCE_EXHAUSTED));
+                    first.close();
+                    try (var replacement=calls.enter(CALLER,command)) {
+                        first.close();
+                        assertThatThrownBy(() -> calls.enter(CALLER,command)).isInstanceOfSatisfying(RepositoryException.class,
+                                e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.CONFLICT));
+                    }
+                }
+            }
+            assertThatThrownBy(() -> calls.enter(null,command)).isInstanceOfSatisfying(RepositoryException.class,
+                    e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.UNAUTHENTICATED));
+        }
+    }
+
+    @ParameterizedTest @ValueSource(booleans={false,true})
     void partialDisposalCanRetryAfterLaterAuthorityFailureOrCancellation(boolean cancellation) throws Exception {
         try (var c=context(POSTGRES)) {
             var input=input(c);

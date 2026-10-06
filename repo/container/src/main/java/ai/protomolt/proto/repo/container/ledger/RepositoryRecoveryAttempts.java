@@ -8,6 +8,7 @@ import java.util.*;
 /** Private host retry ownership before session activation. Closing admission never discards uncertain work. */
 final class RepositoryRecoveryAttempts implements AutoCloseable {
     enum Phase { PROPOSED, RESERVED, INSTALLED, ACTIVATED, RETIRED }
+    enum TerminalDisposal { NOT_TERMINAL, RETAINED, RETIRED }
     record Drain(int active, int unresolved) {}
     private final Tx tx;
     private final PayloadBudget budget;
@@ -29,6 +30,7 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
         Pending pending;
         final PayloadBudget.Lease commandBytes;
         boolean active;
+        boolean terminalObserved;
         Phase phase=Phase.PROPOSED;
         RepositoryReservedPreparation.Loaded loaded;
         PayloadBudget.Lease nextBytes;
@@ -135,6 +137,7 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
             Objects.requireNonNull(control).check();
             RepositoryCoordinatorReservation.require(authority,entry.proposal,control);
             DocumentAdmissionAuthorization.requireCaller(caller,key,key.account()); requireCaller(entry,caller);
+            if (entry.terminalObserved) throw conflict("Terminal recovery requires outcome reconciliation");
             if (entry.pending!=null) throw conflict("Pending supersession must be confirmed before advancing");
             Objects.requireNonNull(expectedModes);
             if (expectedModes.size()>10000) throw new IllegalArgumentException("Invalid publication mode count");
@@ -191,6 +194,7 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
             DocumentAdmissionAuthorization.requireCaller(caller,key,key.account()); requireCaller(entry,caller);
             if (entry.phase==Phase.ACTIVATED || entry.phase==Phase.RETIRED)
                 throw conflict("Completed local recovery requires its session reconciliation path");
+            if (entry.terminalObserved) throw conflict("Terminal recovery requires outcome reconciliation");
             if (entry.pending==null) {
                 var observed=new RepositoryCoordinatorRecoveryDiscovery(tx,timeouts)
                         .inspect(authority,key,entry.command.sha256(),control);
@@ -230,6 +234,36 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
             synchronized (RepositoryRecoveryAttempts.this) { entries.remove(key,entry); }
             entry.release();
             return true;
+        }
+
+        /** Reconcile a caller-visible terminal outcome without retaining a completed retry until host shutdown. */
+        synchronized TerminalDisposal retireTerminal(RepositoryCaller authority, RepositoryCaller caller, RepositoryReadControl control) {
+            if (ended) throw new IllegalStateException("Recovery attempt call is closed");
+            Objects.requireNonNull(control).check();
+            RepositoryCoordinatorReservation.require(authority,entry.proposal,control);
+            DocumentAdmissionAuthorization.requireCaller(caller,key,key.account()); requireCaller(entry,caller);
+            if (entry.phase==Phase.RETIRED) return TerminalDisposal.RETIRED;
+            if (entry.phase==Phase.ACTIVATED) throw conflict("Activated recovery is owned by its session");
+            var observed=new DocumentPublicationReplay(tx).observe(caller,entry.command);
+            control.check();
+            if (observed.state()!=DocumentPublicationReplay.State.COMMITTED
+                    && observed.state()!=DocumentPublicationReplay.State.TERMINATED
+                    && observed.state()!=DocumentPublicationReplay.State.ABANDONED)
+                return entry.terminalObserved ? TerminalDisposal.RETAINED : TerminalDisposal.NOT_TERMINAL;
+            // A durable terminal observation permanently disables mutation for this
+            // entry, including when cancellation or capacity delays disposal proof.
+            entry.terminalObserved=true;
+            entry.releasePreparation();
+            if (entry.submitted!=null
+                    && !RepositoryClaimRetirement.fenced(tx,entry.command,List.of(successorIdentity(entry.submitted.reservation())),control)
+                    && !RepositorySuccessorShutdown.terminal(tx,budget,authority,entry.submitted,control)) return TerminalDisposal.RETAINED;
+            control.check();
+            entry.phase=Phase.RETIRED;
+            entry.pending=null;
+            entry.submitted=null;
+            synchronized (RepositoryRecoveryAttempts.this) { entries.remove(key,entry); }
+            entry.release();
+            return TerminalDisposal.RETIRED;
         }
 
         synchronized RepositoryCoordinatorReservation.Proposal proposal() {

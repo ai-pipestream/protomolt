@@ -335,6 +335,17 @@ final class DocumentPublicationSessions implements AutoCloseable {
         return entry;
     }
 
+    /** The runtime holds same-key exclusion across this check, discovery and publication. */
+    synchronized void requireIdleForRouting(RepositoryCaller caller, DocumentPublicationCommand command) {
+        var key=new RepositoryOperationLedger.Key(command.intent().getAccountId(),caller.principalName(),command.operationId());
+        DocumentAdmissionAuthorization.requireCaller(caller,key,key.account());
+        var entry=entries.get(key);
+        if (entry==null) return;
+        requireCommand(entry,command);
+        if (entry.users!=0 || entry.recovering || entry.session==null)
+            throw new RepositoryException(RepositoryException.Code.CONFLICT,"Publication session is busy during retry routing");
+    }
+
     private Entry create(RepositoryOperationLedger.Key key, RepositoryCaller caller,
             DocumentPublicationCommand command, Map<UUID, DocumentUploadPlan.Placement> placements) {
         final Entry reserved;
