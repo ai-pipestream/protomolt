@@ -6197,3 +6197,20 @@ receipts, repository operation idempotency and the managed-host qualification gu
 An operator must not relabel retained backend generations or expect v2 objects to
 appear in v3. This adapter policy does not prevent post-delete resurrection.
 Shared archive integration and late-write recovery qualification are unfinished.
+
+### Shared archive lifecycle on create-only Redis
+
+**Unchanged operations, new provider evidence:** bounded unary archive publication,
+content reuse, retained historical reads, upload verification, logical deletion,
+read-pin lifetime and tombstone cleanup run through their existing shared Java
+implementations with real PostgreSQL/Redis. Unary publication and reads also pass
+through the existing in-process gRPC service. A delayed actual PUT that finishes
+after cleanup cannot verify or publish; completed cleanup tombstones remain
+candidates and reclaim its later bytes. Failed cleanup acknowledgments remain
+retryable, and held reads protect bytes after logical deletion.
+
+No new protobuf, receipt, idempotency or schema fields. The fixture uses process
+authority and does not prove tenant authorization or API-key authentication.
+It manually composes shared libraries; ordinary managed host activation stays
+disabled for Redis. Streaming upload, restart durability and fleet scheduling
+remain separate qualification requirements.

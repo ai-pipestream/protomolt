@@ -97,6 +97,20 @@ features available. Recovery is one workstream, not the whole goal.
    identity binding, delayed-write fencing and activation qualification remain open.
    Deleting a create-only key still permits late recreation, explicitly tested; this
    policy must not be treated as a tombstone or proof of writer quiescence.
+   `RedisArchiveLifecycleIT` now composes the existing archive writer, reader,
+   operations and recovery with real PostgreSQL and create-only Redis. Unary
+   publication/reuse/historical reads pass locally and through in-process gRPC;
+   real delayed PUT completion after reclamation fails SQL verification and a
+   later tombstone cleanup removes its bytes. Read pins prevent cleanup across
+   logical deletion, and lost reclamation acknowledgment remains retryable.
+   This is library composition, not `RepoServices` managed activation, streaming
+   support, scoped authorization qualification or Redis durability qualification.
+   The host currently requires `STREAMING_WRITE` for managed ingestion as a whole.
+   Before changing that gate, design an explicit bounded-ingress profile with
+   per-operation availability, aggregate allocation bounds and unsupported streaming
+   behavior. Do not grant Redis a streaming capability or silently buffer an otherwise
+   unbounded upload. Keep provider identity and lifecycle selection common to both
+   profiles, and qualify restart/cleanup behavior before publishing deployment examples.
 
 ## Work gated by publication and retention guarantees
 
