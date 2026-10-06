@@ -61,6 +61,7 @@ final class DocumentAssessmentStartJournal {
 
     private Started startRetained(RepositoryCaller caller, RepositoryOperationLedger.Owner owner, DocumentPublicationCommand command,
             UUID proposedId, Duration retention, RepositoryReadControl control, DocumentPublicationRegistration.JournalAccess access) {
+        command.requireExecutionSupported();
         Objects.requireNonNull(proposedId); Objects.requireNonNull(retention); Objects.requireNonNull(control).check();
         if (retention.isNegative() || retention.isZero() || retention.compareTo(Duration.ofDays(1))>0 || retention.getNano()%1000!=0)
             throw new IllegalArgumentException("Retention requires exact microseconds within one day");

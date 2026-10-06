@@ -31,6 +31,7 @@ final class DocumentPublicationFragments implements AutoCloseable {
     static DocumentPublicationFragments capture(DocumentPublicationCommand command,
             Map<String, Map<Integer, ByteString>> supplied, PayloadBudget budget, Runnable control) {
         Objects.requireNonNull(command); Objects.requireNonNull(supplied); Objects.requireNonNull(budget);
+        command.requireExecutionSupported();
         active(control);
         var members = command.intent().getMembersList();
         if (supplied.size() != members.size()) throw new IllegalArgumentException("Fragment members differ from command");

@@ -105,10 +105,11 @@ final class RepositoryOperationLedger {
     Admission admit(Key key, DocumentPublicationCommand command, UUID ownerNonce, Duration lease,
             RepositoryExecutionClaimLedger.Claim claim) {
         Objects.requireNonNull(key); Objects.requireNonNull(command);
+        command.requireExecutionSupported();
         if (!key.account.equals(command.intent().getAccountId()) || !key.operationId.equals(command.operationId()))
             throw new IllegalArgumentException("Publication command differs from operation scope");
         return admit(key, new EncodedCommand(DocumentPublicationCommand.CODEC,
-                DocumentPublicationCommand.ENCODING_VERSION, command.canonical()), ownerNonce, lease, claim);
+                DocumentPublicationCommand.ENCODING_VERSION, command.canonical()), ownerNonce, lease, claim, true);
     }
 
     /**
@@ -116,12 +117,16 @@ final class RepositoryOperationLedger {
      * across a lost acknowledgement. Exact retries never renew or take ownership.
      */
     Admission admit(Key key, EncodedCommand command, UUID ownerNonce, Duration lease) {
-        return admit(key, command, ownerNonce, lease, null);
+        if (DocumentPublicationCommand.CODEC.equals(command.codec()))
+            throw new IllegalArgumentException("Publication codec requires typed command admission");
+        return admit(key, command, ownerNonce, lease, null, false);
     }
 
     private Admission admit(Key key, EncodedCommand command, UUID ownerNonce, Duration lease,
-            RepositoryExecutionClaimLedger.Claim claim) {
+            RepositoryExecutionClaimLedger.Claim claim, boolean typed) {
         Objects.requireNonNull(key); Objects.requireNonNull(command); Objects.requireNonNull(ownerNonce);
+        if (DocumentPublicationCommand.CODEC.equals(command.codec()) && !typed)
+            throw new IllegalArgumentException("Publication codec requires typed command admission");
         long millis = leaseMillis(lease);
         byte[] bytes = command.bytes.toByteArray();
         byte[] digest = digest(bytes);
@@ -283,6 +288,7 @@ final class RepositoryOperationLedger {
     Owner takeOver(Key key, DocumentPublicationCommand command, long expectedGeneration, UUID nextNonce, Duration lease,
             RepositoryExecutionClaimLedger.Claim claim) {
         Objects.requireNonNull(key); Objects.requireNonNull(command);
+        command.requireExecutionSupported();
         if (!key.account.equals(command.intent().getAccountId()) || !key.operationId.equals(command.operationId()))
             throw new IllegalArgumentException("Publication command differs from operation scope");
         if (claim != null && (!key.equals(claim.key()) || !command.sha256().equals(claim.commandSha256())))

@@ -46,6 +46,7 @@ final class DocumentCommandContent {
             Map<Integer, ByteString> materialized, boolean schemaRequired, DocumentRevisionAssembly.Limits limits,
             Runnable control) throws InvalidProtocolBufferException {
         Objects.requireNonNull(command); Objects.requireNonNull(materialized); Objects.requireNonNull(control);
+        command.requireExecutionSupported();
         Objects.requireNonNull(limits);
         control.run();
         var member = command.intent().getMembersList().stream().filter(m -> m.getMemberId().equals(memberId))

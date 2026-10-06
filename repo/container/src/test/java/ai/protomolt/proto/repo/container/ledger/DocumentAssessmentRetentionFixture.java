@@ -36,11 +36,29 @@ final class DocumentAssessmentRetentionFixture {
     }
 
     private Candidate candidate(int leaseSeconds, boolean uploads) {
+        return candidate(admitOperation(Duration.ofMinutes(2)), leaseSeconds, uploads);
+    }
+
+    /** A real canonical envelope; candidate SQL declarations below remain deliberately synthetic. */
+    RepositoryOperationLedger.Owner admitOperation(Duration lease) {
         var key = new RepositoryOperationLedger.Key("account", "principal", UUID.randomUUID());
-        var owner = operations.admit(key, new RepositoryOperationLedger.EncodedCommand("document-publication", 1,
-                ByteString.copyFromUtf8("synthetic SQL command; not handler admission")), UUID.randomUUID(), Duration.ofMinutes(2))
-                .owner().orElseThrow();
-        return candidate(owner, leaseSeconds, uploads);
+        var member = ai.protomolt.proto.repo.v1.DocumentPublicationMember.newBuilder()
+                .setMemberId("sql-fixture").setDriveId(UUID.randomUUID().toString())
+                .setRowKind(ai.protomolt.proto.repo.v1.DocumentPublicationRowKind.DOCUMENT_PUBLICATION_ROW_KIND_PIPELINE)
+                .setDestination(ai.protomolt.proto.repo.v1.DocumentRevisionCondition.newBuilder().setIfAbsent(true)
+                        .setAddress(ai.protomolt.proto.repo.v1.NodeAddress.newBuilder().setAccountId("account")
+                                .setDocId("sql-fixture").setGraphId("graph").setGraphAddressId("node")))
+                .setOwnership(ai.protomolt.proto.repo.v1.OwnershipContext.newBuilder().setAccountId("account")
+                        .setDatasourceId("fixture").setSecurity(ai.protomolt.proto.repo.v1.DocumentSecurity.getDefaultInstance()))
+                .addParts(ai.protomolt.proto.repo.v1.DocumentPublicationPart.newBuilder()
+                        .setSlot(ai.protomolt.proto.repo.v1.DocumentPublicationSlot.newBuilder()
+                                .setPart(ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CORE))
+                        .setUpload(ai.protomolt.proto.repo.v1.PublicationUpload.newBuilder().setSizeBytes(fragmentSize)
+                                .setSha256("a".repeat(64)).setContentType("application/protobuf")));
+        var command = new ai.protomolt.proto.repo.spi.DocumentPublicationCommand(
+                ai.protomolt.proto.repo.v1.DocumentPublicationIntent.newBuilder().setEncodingVersion(1)
+                        .setAccountId("account").setOperationId(key.operationId().toString()).addMembers(member).build());
+        return operations.admit(key, command, UUID.randomUUID(), lease).owner().orElseThrow();
     }
 
     Candidate candidate(RepositoryOperationLedger.Owner owner, int leaseSeconds) {

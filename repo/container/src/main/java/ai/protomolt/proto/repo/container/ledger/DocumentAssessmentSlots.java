@@ -35,6 +35,7 @@ final class DocumentAssessmentSlots {
 
     /** Encode only bounded identities before any database locks; no fragment bytes or manifests. */
     static Prepared prepare(DocumentPublicationCommand command, Runnable control) {
+        command.requireExecutionSupported();
         var expected = new LinkedHashMap<Source, UUID>();
         for (var member : command.intent().getMembersList()) for (var part : member.getPartsList()) {
             control.run();

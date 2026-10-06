@@ -133,7 +133,22 @@ final class DocumentAdmissionAuthorization {
             }
             nodes.addAll(sources.keySet());
         }
+        var historical = new java.util.TreeMap<UUID, NodeAddress>();
+        for (var member : command.intent().getMembersList()) for (var part : member.getPartsList()) {
+            if (!part.hasHistoricalReuse()) continue;
+            var address = part.getHistoricalReuse().getSource();
+            var previous = historical.putIfAbsent(DocumentIds.nodeId(address), address);
+            if (previous != null && !previous.equals(address))
+                throw new IllegalArgumentException("Conflicting historical source addresses");
+        }
+        nodes.addAll(historical.keySet());
         var locked = DocumentRevisionLocks.lockForObservation(em, nodes);
+        for (var source : historical.entrySet()) {
+            var row = locked.get(source.getKey());
+            requireIdentity(row, source.getValue());
+            requireSourceAccess(caller, row);
+            if (!DocumentStatus.AVAILABLE.equals(row.status()) || row.pendingPurgeId() != null) throw unavailable();
+        }
         for (var member : command.intent().getMembersList()) {
             var address = member.getDestination().getAddress();
             var row = locked.get(DocumentIds.nodeId(address));

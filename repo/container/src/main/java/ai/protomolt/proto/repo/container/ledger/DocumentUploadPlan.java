@@ -71,6 +71,7 @@ final class DocumentUploadPlan {
     static Prepared prepare(DocumentPublicationCommand command, Map<UUID, Placement> selected,
             Map<String, UUID> attempts) {
         Objects.requireNonNull(command);
+        command.requireExecutionSupported();
         Objects.requireNonNull(selected); Objects.requireNonNull(attempts);
         int memberCount = command.intent().getMembersCount();
         if (selected.size() > memberCount || attempts.size() > memberCount)

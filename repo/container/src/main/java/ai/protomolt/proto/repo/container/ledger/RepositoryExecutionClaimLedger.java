@@ -33,6 +33,7 @@ final class RepositoryExecutionClaimLedger {
 
     /** Exact admission retry observes the original lease; it never renews it. */
     Claim acquire(RepositoryOperationLedger.Key key, DocumentPublicationCommand command, UUID token, Duration lease) {
+        command.requireExecutionSupported();
         return tx.inTransaction(em -> { return acquireInTransaction(em, key, command, token, lease); });
     }
 
@@ -142,6 +143,7 @@ final class RepositoryExecutionClaimLedger {
     }
     private static void scope(RepositoryOperationLedger.Key key, DocumentPublicationCommand command) {
         Objects.requireNonNull(key); Objects.requireNonNull(command);
+        command.requireExecutionSupported();
         if (!key.account().equals(command.intent().getAccountId()) || !key.operationId().equals(command.operationId()))
             throw new IllegalArgumentException("Execution claim differs from command scope");
     }

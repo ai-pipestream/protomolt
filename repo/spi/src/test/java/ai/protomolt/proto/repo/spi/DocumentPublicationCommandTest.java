@@ -256,7 +256,18 @@ class DocumentPublicationCommandTest {
                 .setDestination(m.getDestination().toBuilder().setExpectedMutationRevision(3))
                 .setParts(0, m.getParts(0).toBuilder().setHistoricalReuse(selected))).build();
         assertThat(ai.protomolt.proto.validate.ProtoValidator.create().validate(supplied).valid()).isTrue();
-        assertThatThrownBy(() -> command(supplied)).isInstanceOf(UnsupportedOperationException.class)
+        var canonical = command(supplied);
+        assertThat(canonical.canonical()).isNotEmpty();
+        assertThat(command(supplied.toBuilder().setOperationId(ID).build()).sha256()).isEqualTo(canonical.sha256());
+        var changed = supplied.toBuilder().setMembers(0, supplied.getMembers(0).toBuilder().setParts(0,
+                supplied.getMembers(0).getParts(0).toBuilder().setHistoricalReuse(selected.clone().setRevisionId(ID)))).build();
+        assertThat(command(changed).sha256()).isNotEqualTo(canonical.sha256());
+        var overflow = supplied.toBuilder().setMembers(0, supplied.getMembers(0).toBuilder().setParts(0,
+                supplied.getMembers(0).getParts(0).toBuilder().setHistoricalReuse(selected.clone()
+                        .setObject(selected.getObject().toBuilder().setSizeBytes(Long.MAX_VALUE))))
+                .addParts(part(DocumentPart.DOCUMENT_PART_CHUNKS, "extra"))).build();
+        refuses(overflow, "overflows");
+        assertThatThrownBy(canonical::requireExecutionSupported).isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("Historical reuse execution is not implemented");
         // Unknown fields must still be refused before an unsupported arm can hide them.
         var unknown = selected.clone().setUnknownFields(UnknownFieldSet.newBuilder().addField(99,

@@ -87,9 +87,7 @@ class DocumentAssessmentArtifactsIT {
     }
 
     @Test void laterGenerationMustRestageBeforeAcquisitionAndOldAssessmentSurvivesClaimCleanup() {
-        var owner = fixture.operations.admit(new RepositoryOperationLedger.Key("account", "principal", UUID.randomUUID()),
-                new RepositoryOperationLedger.EncodedCommand("document-publication", 1, ByteString.copyFromUtf8("SQL fixture")),
-                UUID.randomUUID(), Duration.ofSeconds(2)).owner().orElseThrow();
+        var owner = fixture.admitOperation(Duration.ofSeconds(2));
         var first = fixture.candidate(owner, 120);
         var bytes = ByteString.copyFromUtf8("generation retention " + UUID.randomUUID());
         String sha = artifacts.stage(owner, List.of(bytes), () -> {}).getFirst();

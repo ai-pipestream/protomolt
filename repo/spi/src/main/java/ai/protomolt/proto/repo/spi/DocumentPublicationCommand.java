@@ -36,6 +36,7 @@ public final class DocumentPublicationCommand {
     private final DocumentPublicationIntent intent;
     private final ByteString canonical;
     private final String sha256;
+    private final boolean historicalReuse;
 
     public DocumentPublicationCommand(DocumentPublicationIntent supplied) {
         Objects.requireNonNull(supplied, "intent");
@@ -47,6 +48,8 @@ public final class DocumentPublicationCommand {
         var validation = VALIDATOR.validate(supplied);
         if (!validation.valid()) throw new IllegalArgumentException("Invalid publication intent");
         validateAggregate(supplied);
+        historicalReuse = supplied.getMembersList().stream()
+                .anyMatch(member -> member.getPartsList().stream().anyMatch(DocumentPublicationPart::hasHistoricalReuse));
         operationId = UUID.fromString(supplied.getOperationId());
         intent = supplied.toBuilder().setOperationId(operationId.toString()).clearMembers()
                 .addAllMembers(supplied.getMembersList().stream()
@@ -73,6 +76,11 @@ public final class DocumentPublicationCommand {
     public DocumentPublicationIntent intent() { return intent; }
     public ByteString canonical() { return canonical; }
     public String sha256() { return sha256; }
+
+    /** Canonical identity is available before the corresponding execution capability is implemented. */
+    public void requireExecutionSupported() {
+        if (historicalReuse) throw new UnsupportedOperationException("Historical reuse execution is not implemented");
+    }
 
     /**
      * Validate a success result against this exact command and the authenticated
@@ -146,10 +154,6 @@ public final class DocumentPublicationCommand {
             }
             var slots = new HashSet<DocumentPublicationSlot>();
             for (var part : member.getPartsList()) {
-                // Contract staging must not route a new content arm through existing
-                // upload/reuse assumptions before historical admission and commit exist.
-                if (part.hasHistoricalReuse())
-                    throw new UnsupportedOperationException("Historical reuse execution is not implemented");
                 if (!slots.add(part.getSlot())) throw new IllegalArgumentException("Duplicate publication slot");
                 long size = 0;
                 if (part.hasUpload()) size = part.getUpload().getSizeBytes();
@@ -160,6 +164,15 @@ public final class DocumentPublicationCommand {
                     requireCanonicalUuid(reuse.getObject().getObjectId());
                     if (!part.getSlot().equals(reuse.getSourceSlot()))
                         throw new IllegalArgumentException("Reuse must preserve the source slot");
+                    size = reuse.getObject().getSizeBytes();
+                }
+                if (part.hasHistoricalReuse()) {
+                    sources++;
+                    var reuse = part.getHistoricalReuse();
+                    requireCanonicalUuid(reuse.getRevisionId());
+                    requireCanonicalUuid(reuse.getObject().getObjectId());
+                    if (!part.getSlot().equals(reuse.getSourceSlot()))
+                        throw new IllegalArgumentException("Historical reuse must preserve the source slot");
                     size = reuse.getObject().getSizeBytes();
                 }
                 try { bytes = Math.addExact(bytes, size); }

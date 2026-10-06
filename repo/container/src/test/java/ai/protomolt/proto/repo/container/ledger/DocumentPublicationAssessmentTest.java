@@ -24,6 +24,36 @@ class DocumentPublicationAssessmentTest {
     private static final Map<String, DocumentPublicationCandidate.Mode> TYPED = Map.of(
             "member-a", DocumentPublicationCandidate.Mode.TYPED, "member-b", DocumentPublicationCandidate.Mode.TYPED);
 
+    @Test void historicalExecutionRefusesBeforeReadingFragmentsOrResolvingSchemas() throws Exception {
+        var f = twoMembers();
+        var member = f.command().intent().getMembers(0);
+        var part = member.getParts(0);
+        var historical = PublicationHistoricalReuse.newBuilder().setSource(member.getDestination().getAddress())
+                .setRevisionId(java.util.UUID.randomUUID().toString()).setSourceSlot(part.getSlot())
+                .setObject(PublicationObjectIdentity.newBuilder().setObjectId(java.util.UUID.randomUUID().toString())
+                        .setBackendGeneration("generation").setStorageRealm("realm").setNamespace("ns")
+                        .setObjectKey("historical").setSizeBytes(part.getUpload().getSizeBytes())
+                        .setSha256(part.getUpload().getSha256()).setContentType(part.getUpload().getContentType()));
+        var command = new ai.protomolt.proto.repo.spi.DocumentPublicationCommand(f.command().intent().toBuilder()
+                .setMembers(0, member.toBuilder().setParts(0, part.toBuilder().setHistoricalReuse(historical))).build());
+        Map<String, Map<Integer, ByteString>> unread = new java.util.AbstractMap<>() {
+            @Override public java.util.Set<Entry<String, Map<Integer, ByteString>>> entrySet() {
+                throw new AssertionError("Historical execution read supplied fragments");
+            }
+        };
+        var budget = new PayloadBudget(32_000_000);
+        var selectedPolicy = selection(policy("account", false, 20));
+        assertThatThrownBy(() -> DocumentPublicationCandidate.prepare(command, selectedPolicy, TYPED, unread,
+                Optional.of(f.assets().container().definition()), (m, occurrence) -> {
+                    throw new AssertionError("Historical execution resolved a schema");
+                }, budget, OPAQUE_LIMITS, () -> {})).isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> DocumentPublicationAssessment.prepare(command, selectedPolicy, TYPED, unread,
+                Optional.of(f.assets().container().definition()), (m, occurrence) -> {
+                    throw new AssertionError("Historical execution resolved a schema");
+                }, budget, OPAQUE_LIMITS, AT, () -> {})).isInstanceOf(UnsupportedOperationException.class);
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
     @Test void completesLaterMembersAndOwnsPrivateFragmentsUntilClose() throws Exception {
         var f = twoMembers();
         var invalid = invalidSchema("invalid");

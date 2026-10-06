@@ -4,6 +4,14 @@ This is the working order for the additions to the repository composition goal.
 It does not replace the [design](repository-composition.md) or declare unfinished
 features available. Recovery is one workstream, not the whole goal.
 
+Latest restore checkpoint: canonical historical commands and current-READ replay
+authorization are implemented, with execution explicitly gated before preparation
+or persistence. See [qualification](../evidence/repository/2026-10-05-historical-canonical/README.md).
+Next restore integration must add distinct historical assessment-slot provenance,
+retained-schema handling and atomic reference binding before enabling execution.
+The independent provider, remote parity, recovery, pruning and hydration work below
+remains part of the goal.
+
 ## Independent work that can advance now
 
 1. **Selected historical reads.** The optional Java SPI, wire contract, response

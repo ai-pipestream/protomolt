@@ -135,6 +135,10 @@ base storage gains no JCR dependency or compliance claim.
 
 ## Contract staging checkpoint
 
+The checkpoints below record their original boundaries. The later canonical-command
+checkpoint moves refusal from construction to execution entry points; references
+below to the command-construction guard describe the earlier checkpoints.
+
 `PublicationHistoricalReuse` and the `historical_reuse` content arm (tag 5) now
 exist. Real runtime validation covers generated and dynamic messages; JSON Schema
 exposes ordinal bounds and required message fields, while CEL remains runtime-only.
@@ -236,3 +240,23 @@ The positive SQL tests exercise this internal lockset directly; the public histo
 command guard still prevents an executable restore. Full prepared-command acceptance,
 input/assessment/commit integration and receipt replay authorization remain required.
 [Authorization evidence](../evidence/repository/2026-10-05-historical-authorization/README.md).
+
+## Canonical historical command and replay checkpoint
+
+Canonical commands now accept validated historical selectors, count their sources
+and bytes against aggregate bounds, and require stable UUIDs and preserved slots.
+Historical revisions remain separate from current-source revision preconditions.
+Changing the selected revision changes command identity; changing only the operation
+ID does not. Existing command golden fixtures remain unchanged.
+
+Execution remains unsupported. Candidate/assessment preparation, fragment capture,
+upload planning, schema preparation, staging and claim/operation admission explicitly
+refuse before consuming historical content or persisting an execution. The generic
+encoded operation API reserves the publication codec for typed admission, preventing
+that lower-level route from bypassing this gate.
+
+Successful replay, rejection replay and precondition checks lock historical source
+addresses and authorize current READ before destination checks. They do not compare
+the selected historical revision with the current head. Revocation is tested using
+real SQL state and canonical commands. Full staging, retained-schema provenance,
+commit reference binding and recovery integration remain activation prerequisites.

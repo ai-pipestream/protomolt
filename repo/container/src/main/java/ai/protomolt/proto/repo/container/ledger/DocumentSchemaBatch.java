@@ -42,6 +42,7 @@ final class DocumentSchemaBatch {
             ai.protomolt.proto.repo.admission.DocumentAdmissionReservations reservations, Runnable control)
             throws InvalidProtocolBufferException {
         Objects.requireNonNull(command); Objects.requireNonNull(policy); Objects.requireNonNull(supplied); active(control);
+        command.requireExecutionSupported();
         if (!policy.account().equals(command.intent().getAccountId())) throw new IllegalArgumentException("Policy account differs from command");
         if (supplied.size() > command.intent().getMembersCount()) throw new IllegalArgumentException("Too many member schema proofs");
         var remaining = new HashMap<>(supplied);

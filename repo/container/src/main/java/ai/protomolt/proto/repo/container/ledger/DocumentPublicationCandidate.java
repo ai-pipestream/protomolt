@@ -51,6 +51,7 @@ final class DocumentPublicationCandidate implements AutoCloseable {
             Optional<DocumentSchemaAdmission.Definition> container, Resolver resolver, PayloadBudget budget,
             DocumentRevisionAssembly.Limits opaqueLimits, Runnable control) throws InvalidProtocolBufferException {
         Objects.requireNonNull(command); Objects.requireNonNull(policy); Objects.requireNonNull(modes);
+        command.requireExecutionSupported();
         Objects.requireNonNull(container); Objects.requireNonNull(resolver); Objects.requireNonNull(budget);
         Objects.requireNonNull(opaqueLimits); active(control);
         var selectedModes = requireModes(command, policy, modes, container, control);
