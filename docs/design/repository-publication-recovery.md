@@ -829,3 +829,32 @@ attest drain. A direct synchronous `Schemas` resolver must not leave untracked w
 Remote effects surviving an SDK timeout, cleanup tombstones, durable attestation,
 successor identity and public activation remain separate required work.
 See [runtime qualification](../evidence/repository/2026-10-06-journaled-runtime/README.md).
+
+## Durable local-drain primitive (V91)
+
+The private ledger can record an immutable local-drain attestation only after an
+exact V90 admission-closure marker. It locks the current claim first and compares
+the original operation, digest, epoch, token and coordinator incarnation against
+the V89/V90 bindings. An expired but unchanged claim may record completed drain:
+this path neither renews the lease nor stamps execution authority. A transferred
+claim cannot create a new attestation for its predecessor. Exact confirmation of
+an already committed attestation remains available after transfer and lost replies.
+
+Once recorded, execution is closed across every claim epoch of that operation.
+Both the shared mutation-fence check and same-epoch claim updates reject further
+work. This also rejects a write fence stamped earlier in the attestation transaction.
+A low-level epoch change does not implement the future successor protocol and
+does not reopen execution. V90 still independently refuses new admissions.
+
+V49 recovery-only ownership updates retain their separate purpose. They cannot
+renew an owner or publish a result; schema/assessment cleanup still needs its own
+retention proof. Local drain does not delete retained definitions, read pins,
+historical references or provider tombstones. Pre-owner abandonment currently
+requires execution authority and is consequently refused after local drain.
+
+No runtime or managed service calls this attestation primitive yet. SQL can enforce
+identity and mutation closure, but cannot observe local workers. The trusted host
+must establish complete runtime and service-owned schema-worker drain before that
+integration is enabled. Tests of this ledger are SQL protocol qualification, not
+proof that a host or a remote storage provider is quiescent.
+See [SQL qualification](../evidence/repository/2026-10-06-local-drain/README.md).

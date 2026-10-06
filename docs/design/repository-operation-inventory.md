@@ -6150,6 +6150,21 @@ remain unfinished. No protobuf names/tags, receipt identity, schema references,
 public idempotency contract or mounted RPC changes. See the
 [scoped registration checks](../evidence/repository/2026-10-05-scoped-registration/README.md).
 
+### Private durable local-drain attestation
+
+**New internal SQL operation:** V91 and `RepositoryCoordinatorLocalDrain` record
+and confirm immutable exact-identity local-drain attestations. The insert locks the
+current claim without renewing/stamping it, requires the V90 marker, and refuses
+transferred authority. Lost replies are resolved by exact read-only confirmation.
+
+**Extended internal mutation fences:** any local-drain marker closes execution for
+the whole operation across claim epochs. Same-epoch claim renewal/restamping is
+refused. V49 recovery-only cleanup retains its separate bounded retention checks.
+
+**Unchanged:** wire contracts and public/service activation. No current runtime
+calls the primitive; whole-host worker drain must be proven before that wiring.
+No automatic successor or remote-effect quiescence grant is introduced.
+
 ### Private journaled runtime lifecycle
 
 **New internal Java composition:** `DocumentPublicationRuntime.journaled` uses the

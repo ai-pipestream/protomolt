@@ -7,13 +7,20 @@ features available. Recovery is one workstream, not the whole goal.
 The opt-in journaled manager now closes provider starts and its shared registration
 barrier before marking retained nonterminal operation identities in SQL. Missing
 claims remain unresolved, and uncertain replies require exact marker confirmation.
-This does not enable ordinary journaled runtime execution, record LOCAL_DRAINED,
-or authorize successor execution. A private journaled runtime now stores the trusted
+This does not enable ordinary journaled runtime execution, invoke the V91 local-drain
+primitive, or authorize successor execution. A private journaled runtime now stores the trusted
 drain-authority resolver and performs this marking before its existing session,
 scope, upload and reader shutdown. The managed service's schema-worker lifecycle
 still needs separate host composition before durable LOCAL_DRAINED. Public
 constructors remain unchanged. Continue historical client lifecycle qualification
 alongside that recovery integration; the independent work below remains required.
+
+V91 adds the private durable local-drain ledger and operation-wide mutation closure.
+Exact attestation can survive expiry of an unchanged claim without renewing it;
+transferred authority cannot create the predecessor's attestation. Read-only exact
+confirmation survives transfer. Runtime/service invocation remains disabled until
+all owned workers, including abandoned schema loads, are proven drained. Preserve
+the independent recovery-only cleanup fence and all retention guards.
 
 Current restore checkpoint: canonical historical commands, current-READ replay,
 V86 historical provenance, snapshot v2 with v1 replay, and shared physical/slot
