@@ -139,7 +139,7 @@ public final class DocumentPublicationProcessWorker {
                 new SqlTimeouts(Duration.ofSeconds(1), Duration.ofSeconds(5)))
                 .load(ADMIN, caller, proposal, RepositoryCoordinatorReservation.owner(proposal).orElseThrow(), NONE)) {
             var plan = RepositorySuccessorInstall.prepare(proposal, loaded.record(), Duration.ofSeconds(10),
-                    Map.of("a", typed ? DocumentPublicationCandidate.Mode.TYPED : DocumentPublicationCandidate.Mode.OPAQUE));
+                    loaded.modes());
             RepositorySuccessorInstall.install(tx, host.budget, ADMIN, plan, NONE);
             if (mode.equals("install")) holdReplacement();
             host.sessions.activateSuccessor(ADMIN, caller, plan, NONE);

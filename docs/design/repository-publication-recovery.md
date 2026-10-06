@@ -1508,3 +1508,41 @@ replacement deaths, V93/V94 rollback races, competing proposals, uncertain
 acknowledgments, immutable evidence and atomic parent-insertion failure. No
 coordinator binding or local-drain evidence is fabricated. Automatic orchestration
 and recovery of reader pins remain separate work.
+
+## Managed recovery integration prerequisites
+
+The first managed integration should recover an exact retried operation using the
+authenticated caller, canonical command and complete resubmitted upload payloads.
+It must not infer credentials from command ownership or infer missing payloads
+from unverified predecessor objects. Fleet discovery and recovery without a client
+retry require an explicit durable payload source and authenticated execution
+identity source; neither is supplied by the preparation journal.
+
+Recovery authority is a separate trusted host input from shutdown `DrainAuthority`.
+Private discovery classifies the exact command, but only eligible expired bound
+or unactivated states can enter V97/V98. Live, terminal, absent, missing-journal,
+pre-owner and gracefully drained states need explicit handling through their own
+protocols, never a general takeover fallback. Current host drive/backend gates and
+the current caller's rights apply through loading, activation and execution.
+
+The reserved loader must return both preparation and fixed modes. Capture both
+under the exact reservation and owner, reserve their bounded bytes before reading,
+decode outside SQL, then recheck identity and current authorization before delivery.
+Missing, malformed, oversized or owner-mismatched modes cannot default to OPAQUE
+or be reconstructed from the payload. A retried caller's modes must agree with
+the retained modes before successor installation.
+
+Before any reservation mutation, a bounded host entry must retain the proposed
+successor token/incarnation. Before installation it must retain the complete plan,
+including its fresh owner, attempt and upload identities. An uncertain reply
+retries those exact identities; it does not mint another proposal. Current session
+retention begins at activation, so it does not yet cover these earlier phases.
+Capacity and shutdown must cover that entry and its bytes from creation through
+transfer to the session manager or confirmed terminal cleanup. Process death uses
+the explicit expired unactivated supersession protocol instead of local guesses.
+
+After activation, use the ordinary scoped execution path and its existing schema
+worker lifecycle. Neither lease expiry nor successor publication proves old
+readers or remote provider effects have stopped. Pin reclamation and physical
+cleanup remain independently fenced. This integration plan does not advertise an
+automatic recovery scheduler or a new public publication RPC.

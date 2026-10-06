@@ -118,7 +118,7 @@ final class DocumentPublicationModesJournal {
         return rows.isEmpty() ? null : (Object[]) rows.getFirst();
     }
 
-    private static Map<String, DocumentPublicationCandidate.Mode> decodeModes(DocumentPublicationPreparationRecord preparation, Object[] row) {
+    static Map<String, DocumentPublicationCandidate.Mode> decodeModes(DocumentPublicationPreparationRecord preparation, Object[] row) {
         try {
             if (!preparation.seeds().ownerNonce().equals(row[0]) || row[1] == null)
                 throw new IllegalArgumentException("Stored mode binding differs");

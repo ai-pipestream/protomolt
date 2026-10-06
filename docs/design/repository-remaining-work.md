@@ -839,6 +839,15 @@ admission after a post-upload crash. Recovery of an already-started typed
 assessment, live registry transport, host policy refusal, automatic scheduling
 and predecessor-resource reclamation still require qualification.
 
+The private reserved loader now returns fixed publication modes with the borrowed
+preparation, under the same reservation and current-caller checks. Missing or
+malformed modes fail before successor installation; recovery does not infer them
+from payloads. The fresh-process driver now installs the stored modes. See
+[fixed-mode evidence](../evidence/repository/2026-10-06-reserved-fixed-modes/README.md).
+The next managed-host prerequisite is bounded retention of exact proposal and plan
+identities before reservation/installation, including uncertain acknowledgments and
+shutdown. That begins earlier than the existing session activation retention.
+
 ## Publication-first revocation race
 
 Typed and opaque real-provider tests now pause the actual final success-writing

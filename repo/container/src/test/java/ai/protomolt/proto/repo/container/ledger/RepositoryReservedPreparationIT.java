@@ -59,17 +59,45 @@ class RepositoryReservedPreparationIT {
             var loader = new RepositoryReservedPreparation(c.tx(),budget,TIMEOUTS);
             try (var loaded = loader.load(CALLER,CALLER,plan.reservation(),owner(plan),NONE)) {
                 assertThat(DocumentPublicationPreparationCodec.encode(loaded.record())).isEqualTo(DocumentPublicationPreparationCodec.encode(plan.previous()));
+                assertThat(loaded.modes()).isEqualTo(MODES);
                 assertThat(budget.reservedBytes()).isPositive();
                 assertThat(state(c,plan)).containsExactly(before);
                 assertThatThrownBy(() -> c.tx().inTransaction(em -> { return em.createNativeQuery("SELECT require_repository_execution_claim(:a,:p,:o)")
                         .setParameter("a",plan.previous().key().account()).setParameter("p","principal").setParameter("o",plan.previous().key().operationId()).getSingleResult(); }))
                         .hasStackTraceContaining(graceful ? "locally drained" : "successor requires exact activation");
-                var fresh = RepositorySuccessorInstall.prepare(plan.reservation(),loaded.record(),LEASE,MODES);
+                var fresh = RepositorySuccessorInstall.prepare(plan.reservation(),loaded.record(),LEASE,loaded.modes());
                 RepositorySuccessorInstall.install(c.tx(),budget,CALLER,fresh,NONE);
                 assertThatThrownBy(() -> loader.load(CALLER,CALLER,plan.reservation(),owner(plan),NONE))
                         .isInstanceOf(RepositoryExecutionClaimLedger.Fenced.class);
             }
             assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @ParameterizedTest @ValueSource(strings={"missing","unknown","member","owner","oversized"})
+    void corruptModesCannotBeDelivered(String corruption) {
+        try (var c=context(POSTGRES)) {
+            var plan=plan(c,true); var budget=new PayloadBudget(64_000_000);
+            c.tx().inTransaction(em -> {
+                // Simulate retained database corruption; normal SQL guards forbid these changes.
+            em.createNativeQuery("SET LOCAL session_replication_role = replica").executeUpdate();
+            if (corruption.equals("oversized")) em.createNativeQuery(
+                    "ALTER TABLE repository_publication_modes DROP CONSTRAINT repository_publication_modes_modes_check").executeUpdate();
+                String sql=switch(corruption) {
+                    case "missing" -> "DELETE FROM repository_publication_modes";
+                    case "unknown" -> "UPDATE repository_publication_modes SET modes='{\"a\":\"UNKNOWN\"}'::jsonb";
+                    case "member" -> "UPDATE repository_publication_modes SET modes='{\"wrong\":\"OPAQUE\"}'::jsonb";
+                    case "owner" -> "UPDATE repository_publication_modes SET owner_nonce=gen_random_uuid()";
+                    default -> "UPDATE repository_publication_modes SET modes=jsonb_build_object('a',repeat('X',1048577))";
+                };
+                em.createNativeQuery(sql).executeUpdate();
+            });
+            assertThatThrownBy(() -> new RepositoryReservedPreparation(c.tx(),budget,TIMEOUTS)
+                    .load(CALLER,CALLER,plan.reservation(),owner(plan),NONE))
+                    .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code()).isEqualTo(
+                            corruption.equals("missing") ? RepositoryException.Code.FAILED_PRECONDITION : RepositoryException.Code.DATA_LOSS));
+            assertThat(budget.reservedBytes()).isZero();
+            assertThat(count(c,"repository_successor_installs")).isZero();
         }
     }
 
