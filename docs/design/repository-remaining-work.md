@@ -583,3 +583,15 @@ recovery alongside those paths. No public API advertises successor execution.
 Exact readback after revocation confirms a past commit only; execution must check
 current rights again. Conservative maximum-size byte reservations still need load
 and fairness measurements before capacity claims.
+
+## Successor manager integration
+
+Private successor sessions now attach to the installed owner and restore durable
+assessment-start state. The manager still needs an entry point to reserve capacity
+and retain the exact incarnation before activation can become uncertain. It must
+keep that entry and drain identity after failure, compare exact retry identities,
+and prevent ordinary initial-session creation from replacing the successor. Qualify
+this with cancellation/shutdown races and full recovered publication using real
+providers before enabling automatic recovery. Admission from an expired owner,
+revoked policy or closed registration scope must never be inferred from an earlier
+activation confirmation.

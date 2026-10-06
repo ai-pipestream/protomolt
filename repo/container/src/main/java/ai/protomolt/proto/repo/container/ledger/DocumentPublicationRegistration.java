@@ -8,12 +8,14 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
-/** Fixed initial-session registration; no replacement claim, provider work or authority escalation. */
+/** Retained session journal identity for initial admission or installed successor attachment. */
 final class DocumentPublicationRegistration {
     private final Tx tx;
     private final PayloadBudget budget;
     private final DocumentPublicationPreparationRecord preparation;
-    private final UUID claimToken = UUID.randomUUID();
+    private final UUID claimToken;
+    private final long claimEpoch;
+    private final RepositorySuccessorInstall.Plan successor;
     private final UUID coordinator;
     private final DocumentPublicationScopeCalls registrations;
     private final JournalAccess access;
@@ -26,6 +28,15 @@ final class DocumentPublicationRegistration {
 
     DocumentPublicationRegistration(Tx tx, PayloadBudget budget, DocumentPublicationPreparationRecord preparation,
             DocumentUploadPlan.Prepared plan, UUID coordinator, DocumentPublicationScopeCalls registrations) {
+        this(tx, budget, preparation, plan, coordinator, registrations, null);
+    }
+
+    private DocumentPublicationRegistration(Tx tx, PayloadBudget budget, DocumentPublicationPreparationRecord preparation,
+            DocumentUploadPlan.Prepared plan, UUID coordinator, DocumentPublicationScopeCalls registrations,
+            RepositorySuccessorInstall.Plan successor) {
+        this.successor = successor;
+        claimToken = successor == null ? UUID.randomUUID() : successor.handoff().successorToken();
+        claimEpoch = successor == null ? 1 : successor.handoff().predecessor().epoch()+1;
         this.tx = Objects.requireNonNull(tx);
         this.budget = Objects.requireNonNull(budget);
         this.preparation = Objects.requireNonNull(preparation);
@@ -36,11 +47,33 @@ final class DocumentPublicationRegistration {
                 || !plan.command().operationId().equals(preparation.command().operationId()))
             throw new IllegalArgumentException("Registration plan differs from preparation");
         authorization = DocumentAdmissionAuthorization.prepare(plan);
-        if (preparation.predecessorGeneration() != 0) throw new IllegalArgumentException("Initial registration requires no predecessor");
-        access = new JournalAccess(preparation, claimToken);
+        if (successor == null && preparation.predecessorGeneration() != 0) throw new IllegalArgumentException("Initial registration requires no predecessor");
+        access = new JournalAccess(preparation, claimToken, claimEpoch);
+        mayHaveCommitted = successor != null;
         preparations = new DocumentPublicationPreparationJournal(tx, budget);
         modes = new DocumentPublicationModesJournal(tx, budget);
         starts = new DocumentAssessmentStartJournal(tx, budget);
+    }
+
+    static DocumentPublicationRegistration successor(Tx tx, PayloadBudget budget, RepositorySuccessorInstall.Plan successor,
+            UUID coordinator, DocumentPublicationScopeCalls registrations) {
+        if (!successor.handoff().successorIncarnation().equals(coordinator))
+            throw new IllegalArgumentException("Successor coordinator differs from installed incarnation");
+        return new DocumentPublicationRegistration(tx, budget, successor.next(), successor.next().prepare().plan(), coordinator, registrations, successor);
+    }
+
+    RepositorySuccessorExecution.Attached attach(RepositoryCaller caller,
+            Map<String, DocumentPublicationCandidate.Mode> fixedModes, RepositoryReadControl control) {
+        if (successor == null) throw new IllegalStateException("Initial registration cannot attach successor");
+        try (var scope = registrations.enter()) {
+            if (!successor.modes().equals(fixedModes)) throw new IllegalArgumentException("Successor admission modes changed");
+            var attached = RepositorySuccessorExecution.attach(tx, budget, caller, successor, control);
+            var claim = attached.owner().executionClaim().orElseThrow();
+            var stored = modes.loadOwned(access, caller, claim, preparation.predecessorGeneration(), control).orElseThrow(() ->
+                    new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Successor modes are absent"));
+            if (!stored.equals(fixedModes)) throw new IllegalArgumentException("Successor stored modes differ");
+            return attached;
+        }
     }
 
     DocumentAssessmentStartJournal.Started start(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
@@ -55,6 +88,7 @@ final class DocumentPublicationRegistration {
 
     RepositoryExecutionClaimLedger.Claim register(RepositoryCaller caller,
             Map<String, DocumentPublicationCandidate.Mode> fixedModes, RepositoryReadControl control) {
+        if (successor != null) throw new IllegalStateException("Successor must attach installed owner");
         try (var scope = registrations.enter()) {
             return registerOpen(caller, fixedModes, control);
         }
@@ -78,10 +112,12 @@ final class DocumentPublicationRegistration {
     boolean mayHaveCommitted() { return mayHaveCommitted; }
 
     RepositoryCoordinatorDrain.Identity drainIdentity() {
-        return new RepositoryCoordinatorDrain.Identity(preparation.key(), preparation.command().sha256(), 1, claimToken, coordinator);
+        return new RepositoryCoordinatorDrain.Identity(preparation.key(), preparation.command().sha256(), claimEpoch, claimToken, coordinator);
     }
 
     void abandon(RepositoryCaller caller, RepositoryReadControl control) {
+        if (successor != null) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                "Installed successor requires owner cancellation");
         DocumentPublicationAbandonment.abandonRetained(tx, budget, caller, claimToken, preparation, control);
     }
 
@@ -101,8 +137,11 @@ final class DocumentPublicationRegistration {
         private final String digest;
         private final UUID claimToken;
         private final UUID ownerNonce;
+        private final long epoch;
+        private final long predecessor;
 
-        private JournalAccess(DocumentPublicationPreparationRecord preparation, UUID claimToken) {
+        private JournalAccess(DocumentPublicationPreparationRecord preparation, UUID claimToken, long epoch) {
+            this.epoch = epoch; predecessor = preparation.predecessorGeneration();
             key = preparation.key(); digest = preparation.command().sha256();
             ownerNonce = preparation.seeds().ownerNonce(); this.claimToken = claimToken;
         }
@@ -111,14 +150,14 @@ final class DocumentPublicationRegistration {
                 RepositoryReadControl control) {
             Objects.requireNonNull(control).check();
             DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
-            if (predecessor != 0 || !key.equals(claim.key()) || !digest.equals(claim.commandSha256())
-                    || claim.epoch() != 1 || !claimToken.equals(claim.token()))
+            if (predecessor != this.predecessor || !key.equals(claim.key()) || !digest.equals(claim.commandSha256())
+                    || claim.epoch() != epoch || !claimToken.equals(claim.token()))
                 throw new IllegalArgumentException("Assessment claim differs from registered session");
         }
 
         void requirePreparation(DocumentPublicationPreparationRecord preparation) {
             if (!key.equals(preparation.key()) || !digest.equals(preparation.command().sha256())
-                    || preparation.predecessorGeneration() != 0 || !ownerNonce.equals(preparation.seeds().ownerNonce()))
+                    || preparation.predecessorGeneration() != predecessor || !ownerNonce.equals(preparation.seeds().ownerNonce()))
                 throw new IllegalArgumentException("Journal preparation differs from registered session");
         }
 

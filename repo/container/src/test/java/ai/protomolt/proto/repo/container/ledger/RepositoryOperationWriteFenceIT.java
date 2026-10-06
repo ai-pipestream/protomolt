@@ -114,10 +114,24 @@ class RepositoryOperationWriteFenceIT {
                 field.equals("account") ? "other" : key.account(), field.equals("principal") ? "other" : key.principal(),
                 field.equals("operation") ? UUID.randomUUID() : key.operationId()),
                 field.equals("generation") ? owner.generation() + 1 : owner.generation(), owner.token(), owner.leaseUntil());
+        if (!field.equals("generation")) {
+            assertThatThrownBy(() -> tx.inTransaction(em -> {
+                RepositoryOperationLedger.fenceLiveOwner(em, owner);
+                probe(em, wrong);
+            })).hasStackTraceContaining("Repository execution scope is absent");
+            // Populate the other scope so the next assertion reaches the owner fence.
+            // Its owner was admitted in another transaction and has no proof in ours.
+            ledger.admit(wrong.key(), ledger.find(owner.key()).orElseThrow().command(), UUID.randomUUID(), Duration.ofMinutes(1));
+        }
         assertThatThrownBy(() -> tx.inTransaction(em -> {
             RepositoryOperationLedger.fenceLiveOwner(em, owner);
             probe(em, wrong);
         })).hasStackTraceContaining("requires a live owner write fence");
+        long inserted = tx.readOnly(em -> ((Number) em.createNativeQuery("""
+                SELECT count(*) FROM operation_fence_probe WHERE account_id=:a AND principal=:p AND operation_id=:o
+                """).setParameter("a", wrong.key().account()).setParameter("p", wrong.key().principal())
+                .setParameter("o", wrong.key().operationId()).getSingleResult()).longValue());
+        assertThat(inserted).isZero();
     }
 
     @Test void competingProbeFailsWithoutWaitingAndIndependentOwnerStillProgresses() throws Exception {

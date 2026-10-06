@@ -77,6 +77,39 @@ final class RepositorySuccessorExecution {
         }
     }
 
+    record Attached(RepositoryOperationLedger.Owner owner, boolean assessmentStarted) {}
+
+    /** Current execution attachment, distinct from immutable activation readback. Never renews. */
+    static Attached attach(Tx tx, PayloadBudget budget, RepositoryCaller caller,
+            RepositorySuccessorInstall.Plan plan, RepositoryReadControl control) {
+        Objects.requireNonNull(control).check();
+        var next = plan.next(); var key = next.key();
+        DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+        try (var reserved = budget.reserve(DocumentPublicationPreparationCodec.MAX_BYTES + 1024L * 1024)) {
+            var sha = DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(next));
+            var modes = RepositorySuccessorInstall.encodeModes(plan);
+            var prepared = next.prepare().plan();
+            var authorization = DocumentAdmissionAuthorization.prepare(prepared, prepared.historical());
+            var attached = tx.inTransaction(em -> {
+                var claim = RepositoryExecutionClaimLedger.lockLive(em, key, next.command().sha256(),
+                        plan.handoff().predecessor().epoch()+1, plan.handoff().successorToken());
+                if (!read(em, plan, sha, modes)) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                        "Successor activation is not committed");
+                var owner = RepositoryOperationLedger.lockLiveOwner(em, key, next.predecessorGeneration()+1,
+                        next.seeds().ownerNonce(), java.util.Optional.of(claim));
+                RepositoryOperationLedger.requireCommand(em, key, next.command());
+                DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, prepared, authorization);
+                boolean started = (Boolean) scope(em.createNativeQuery("""
+                        SELECT EXISTS(SELECT 1 FROM repository_publication_assessment_starts
+                         WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=:g)
+                        """), plan).setParameter("g", next.predecessorGeneration()).getSingleResult();
+                control.check();
+                return new Attached(owner, started);
+            });
+            control.check(); return attached;
+        }
+    }
+
     /** Exact immutable readback; never stamps an execution fence or extends a lease. */
     private static boolean confirm(Tx tx, RepositorySuccessorInstall.Plan plan, byte[] sha,
             String modes, RepositoryReadControl control) {

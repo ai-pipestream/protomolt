@@ -1078,3 +1078,24 @@ its existing admission/drain barriers. Registration and journal access currently
 assume epoch one and predecessor zero; extend those identity checks together with
 the session admission path. Keep successful activation readback separate from live
 claim/owner acquisition so expired or revoked work cannot resume from a receipt.
+
+### Private successor session attachment
+
+`DocumentPublicationSession.successor` now retains the installed preparation,
+owner nonce, attempt and upload IDs, modes, claim epoch/token and coordinator
+incarnation. It never mints replacement identities or calls initial acquisition,
+mode insertion or owner takeover. Its registration is marked potentially committed
+from construction, so a failed attachment cannot make the session discardable.
+
+`RepositorySuccessorExecution.attach` verifies the exact activation, acquires the
+current claim and terminal-aware owner, and checks current document permissions
+and revisions. It does not renew either lease. Registration then loads the saved
+modes through journal access bound to the exact epoch and predecessor generation.
+An existing durable assessment start sets the session's sticky started state;
+execution uses the existing assessment resume path rather than fresh CREATE.
+
+Attachment uses the registration barrier and exposes the exact successor drain
+identity, including after a failure. Pre-owner registration abandonment is not valid
+for an installed successor; callers must use owner cancellation instead. Manager
+retention and automatic provider recovery remain unfinished. No public host factory
+selects this successor session automatically.

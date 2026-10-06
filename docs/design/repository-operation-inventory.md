@@ -6405,3 +6405,20 @@ performed. V93 and activation share the modes encoder.
 **Unchanged:** public contracts and host startup/session factories. No public API
 or automatic recovery flow calls this helper yet. Claimed historical preparation,
 scoped creation, fresh successor sessions and late provider effects remain open.
+
+### Private successor sessions
+
+**New:** `DocumentPublicationSession.successor` and live attachment through
+`RepositorySuccessorExecution.attach`. They use V93 identities and V94 authority,
+recheck current access, and return the actual current owner without renewal or
+another takeover. Durable assessment starts select the existing resume behavior.
+
+**Extended:** journal access carries exact epoch and predecessor generation;
+initial registration retains epoch one/predecessor zero. Successor registration
+loads committed modes and participates in the existing registration barrier.
+Its drain identity survives failed attachment. Owner locking now accepts an exact
+identity tuple without inventing an observed lease timestamp.
+
+**Unchanged:** public contracts, default host startup, provider I/O and cleanup.
+Manager retention before uncertain activation and end-to-end successor publication
+remain open. Installed successors use owner cancellation, not pre-owner abandonment.

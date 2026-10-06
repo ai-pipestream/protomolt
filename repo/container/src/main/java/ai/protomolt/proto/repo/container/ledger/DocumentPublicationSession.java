@@ -51,6 +51,22 @@ final class DocumentPublicationSession {
                 Objects.requireNonNull(budget), Objects.requireNonNull(coordinator), Objects.requireNonNull(registrations));
     }
 
+    /** Attach only an exact activated successor; no fresh identities or owner takeover. */
+    static DocumentPublicationSession successor(Tx tx, RepositoryCaller caller, RepositorySuccessorInstall.Plan plan,
+            ai.protomolt.proto.repo.blob.spi.PayloadBudget budget, UUID coordinator, DocumentPublicationScopeCalls registrations) {
+        return new DocumentPublicationSession(tx, caller, plan, budget, coordinator, registrations);
+    }
+
+    private DocumentPublicationSession(Tx tx, RepositoryCaller caller, RepositorySuccessorInstall.Plan successor,
+            ai.protomolt.proto.repo.blob.spi.PayloadBudget budget, UUID coordinator, DocumentPublicationScopeCalls registrations) {
+        var next = successor.next(); key = next.key(); command = next.command(); lease = next.lease();
+        DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+        predecessorGeneration = next.predecessorGeneration(); seeds = next.seeds(); ownerNonce = seeds.ownerNonce();
+        prepared = next.prepare(); operations = new RepositoryOperationLedger(tx);
+        registration = DocumentPublicationRegistration.successor(tx, budget, successor, coordinator, registrations);
+        modes = checkedModes(successor.modes());
+    }
+
     /** Explicit host recovery; never selected automatically by ordinary admission. */
     static DocumentPublicationSession recovering(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
             Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease, long predecessorGeneration,
@@ -97,6 +113,11 @@ final class DocumentPublicationSession {
     Optional<RepositoryOperationLedger.Owner> admit(RepositoryCaller caller, RepositoryReadControl control) {
         Objects.requireNonNull(control).check();
         DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+        if (registration != null && predecessorGeneration > 0) {
+            var attached = registration.attach(caller, modes, control);
+            assessmentStageStarted |= attached.assessmentStarted();
+            return Optional.of(attached.owner());
+        }
         var claim = registration == null ? null : registration.register(caller, modes, control);
         var owner = predecessorGeneration == 0 ? operations.admit(key, command, ownerNonce, lease, claim).owner()
                 : Optional.of(operations.takeOver(key, command, predecessorGeneration, ownerNonce, lease));

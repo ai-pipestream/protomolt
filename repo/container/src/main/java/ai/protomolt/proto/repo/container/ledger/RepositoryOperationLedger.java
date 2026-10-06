@@ -191,16 +191,24 @@ final class RepositoryOperationLedger {
      */
     static Owner lockLiveOwner(EntityManager em, Owner expected) {
         Objects.requireNonNull(expected);
+        return lockLiveOwner(em, expected.key, expected.generation, expected.token, expected.executionClaim);
+    }
+
+    static Owner lockLiveOwner(EntityManager em, Key key, long generation, UUID token,
+            Optional<RepositoryExecutionClaimLedger.Claim> claim) {
+        Objects.requireNonNull(key); Objects.requireNonNull(token); Objects.requireNonNull(claim);
+        if (generation < 1 || claim.isPresent() && !claim.orElseThrow().key().equals(key))
+            throw new IllegalArgumentException("Owner identity differs from execution claim scope");
         if (!em.getTransaction().isActive() || em.getTransaction().getRollbackOnly())
             throw new IllegalStateException("Operation fence requires an active writable transaction");
         try {
-            if (expected.executionClaim.isPresent())
-                RepositoryExecutionClaimLedger.lockLive(em, expected.executionClaim.orElseThrow());
-            var current = readOwner(em, expected.key, true).orElseThrow(OwnerFencedException::new);
-            boolean live = live(em, expected.key);
-            if (current.generation != expected.generation || !current.token.equals(expected.token) || !live)
+            if (claim.isPresent())
+                RepositoryExecutionClaimLedger.lockLive(em, claim.orElseThrow());
+            var current = readOwner(em, key, true).orElseThrow(OwnerFencedException::new);
+            boolean live = live(em, key);
+            if (current.generation != generation || !current.token.equals(token) || !live)
                 throw new OwnerFencedException();
-            return new Owner(current.key, current.generation, current.token, current.leaseUntil, expected.executionClaim);
+            return new Owner(current.key, current.generation, current.token, current.leaseUntil, claim);
         } catch (RuntimeException | Error failure) {
             // A caller catching a fence failure cannot commit later domain work.
             try { em.getTransaction().setRollbackOnly(); }
