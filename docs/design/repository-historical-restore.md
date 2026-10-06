@@ -177,3 +177,17 @@ new assessment checks the selected union. Current-time CEL and current policy ru
 again. The library recognizes historical content size and hash, but command execution
 still refuses historical reuse. SQL/host composition, current authorization at commit,
 pending schema retention and publication recovery remain required before activation.
+
+Selected decoding now also recognizes historical-reuse payload declarations and
+checks their exact size and hash against retained evidence. This is a decoding
+prerequisite, not source authorization or a restore operation.
+[Materialization evidence](../evidence/repository/2026-10-05-historical-materialization/README.md).
+
+The next integration must carry an owned historical source selection, keyed by
+destination member and full ordinal, through preparation and commit. Reuse the
+source `PinnedHistory.Use` and exact selector checks; keep historical sources out
+of the current-source revision map. `DocumentUploadPlan`, publication input and
+fragment capture, assessment slots/replay, and commit reference binding currently
+assume upload/current reuse. Extend those together before removing the command
+guard. Final publication must recheck current source READ, destination WRITE,
+physical identity and retained references while the source Use remains held.

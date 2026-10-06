@@ -140,12 +140,20 @@ public final class DocumentSchemaMaterialization {
                     || input.ordinal() < 0 || input.ordinal() >= member.getPartsCount())
                 throw new IllegalArgumentException("selected member ordinal or member shape exceeds bounds");
             var part = member.getParts(input.ordinal());
-            if (!part.hasUpload() && !part.hasReuse()) throw new DataLoss("selected part has no payload");
+            long size;
+            String sha;
+            switch (part.getContentCase()) {
+                case UPLOAD -> { size = part.getUpload().getSizeBytes(); sha = part.getUpload().getSha256(); }
+                case REUSE -> { size = part.getReuse().getObject().getSizeBytes(); sha = part.getReuse().getObject().getSha256(); }
+                case HISTORICAL_REUSE -> {
+                    size = part.getHistoricalReuse().getObject().getSizeBytes();
+                    sha = part.getHistoricalReuse().getObject().getSha256();
+                }
+                default -> throw new DataLoss("selected part has no supported payload");
+            }
             if (!input.root().locatorSha256().equals(selection.rootSha256()))
                 throw new DataLoss("selected root differs from retained row");
             var fragment = resources.copy(input.fragment(), active);
-            long size = part.hasUpload() ? part.getUpload().getSizeBytes() : part.getReuse().getObject().getSizeBytes();
-            String sha = part.hasUpload() ? part.getUpload().getSha256() : part.getReuse().getObject().getSha256();
             if (fragment.size() != size || size != input.root().fragmentSize()
                     || !sha.equals(input.root().fragmentSha256()) || !sha.equals(DocumentSchemaOccurrences.sha256(fragment, active)))
                 throw new DataLoss("selected fragment differs from command or retained row");

@@ -21,6 +21,37 @@ class DocumentSchemaMaterializationTest {
             new DocumentSchemaMaterialization.Limits(1_000_000, 1_000_000, 16_000_000, 8, 1_000_000, 8);
     @TempDir Path store;
 
+    @Test void historicalPayloadUsesItsExactRecordedIdentityForSelectedDecoding() throws Exception {
+        var f = fixture();
+        var part = f.input.member().getParts(0);
+        var identity = PublicationObjectIdentity.newBuilder()
+                .setSizeBytes(f.input.fragment().size()).setSha256(sha(f.input.fragment())).build();
+        var historical = PublicationHistoricalReuse.newBuilder().setSourceSlot(part.getSlot())
+                .setObject(identity).build();
+        var member = f.input.member().toBuilder().setParts(0,
+                part.toBuilder().setHistoricalReuse(historical)).build();
+        var input = new DocumentSchemaMaterialization.Input(member, 0, f.input.fragment(),
+                f.input.root(), f.input.container(), f.input.references());
+        var budget = new Budget();
+        try (var result = read(new Fixture(input, f.selection, f.child, f.unused), LIMITS, budget, () -> {})) {
+            assertThat(result.original().unpack(StringValue.class)).isEqualTo(StringValue.of("retained"));
+            assertThat(result.schema().getArtifactSha256()).isEqualTo(f.child.reference.descriptorSha256());
+        }
+        assertThat(budget.bytes).isZero();
+        for (var altered : List.of(identity.toBuilder().setSha256("0".repeat(64)).build(),
+                identity.toBuilder().setSizeBytes(identity.getSizeBytes() + 1).build())) {
+            var wrong = member.toBuilder().setParts(0, member.getParts(0).toBuilder()
+                    .setHistoricalReuse(historical.toBuilder().setObject(altered))).build();
+            var invalid = new DocumentSchemaMaterialization.Input(wrong, 0, input.fragment(),
+                    input.root(), input.container(), input.references());
+            assertThatThrownBy(() -> DocumentSchemaMaterialization.read(invalid, f.selection,
+                    hash -> { throw new AssertionError("identity must fail before schema reads"); },
+                    LIMITS, budget, () -> {})).isInstanceOf(DocumentSchemaMaterialization.DataLoss.class)
+                    .hasMessageContaining("fragment differs");
+            assertThat(budget.bytes).isZero();
+        }
+    }
+
     @Test void ownsNestedResultUntilCloseAndDoesNotResolveUnselectedAssociations() throws Exception {
         var f = fixture(); var budget = new Budget();
         var reads = new ArrayList<String>(); var borrowed = new ArrayList<byte[]>();
