@@ -284,6 +284,13 @@ abandonment. Continue restore admission independently of that recovery protocol.
 
 ## Next non-S3 slice: explicit bounded ingestion
 
+Follow the [bounded ingress design](repository-bounded-ingress.md). The reusable
+`ArchivePutAdmission` gate now bounds already-decoded unary save admission before
+engine copies and storage work. Real Redis library/in-process tests cover capacity,
+oversize refusal, delayed-write drain, reuse and historical reads. The optional
+composition refuses streaming and bridge generation. Managed-host activation,
+pre-decode transport allocation and provider shutdown integration remain unfinished.
+
 `RepoServices` currently couples managed construction to streaming, non-expiring
 writes and reclamation. `ArchiveObjectWriter` already distinguishes byte-array
 staging from streaming staging; `RawIngestionOperations` requires streaming.

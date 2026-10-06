@@ -125,6 +125,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     private final BridgeEngine bridgeEngine;
     private final ArchiveObjectReader objectReader;
     private final ArchiveObjectWriter objectWriter;
+    private final ArchivePutAdmission putAdmission;
 
     public ArchiveOperations(ArchiveLedger ledger, DriveLedger drives, BlobStore blobStore) {
         this(ledger, drives, blobStore, BridgeEngine.standard());
@@ -142,6 +143,13 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
 
     public ArchiveOperations(ArchiveLedger ledger, DriveLedger drives, BlobStore blobStore,
                       BridgeEngine bridgeEngine, ArchiveObjectReader objectReader, ArchiveObjectWriter objectWriter) {
+        this(ledger, drives, blobStore, bridgeEngine, objectReader, objectWriter, null);
+    }
+
+    /** Bounded unary composition. The host owns and drains admission before closing storage. */
+    public ArchiveOperations(ArchiveLedger ledger, DriveLedger drives, BlobStore blobStore,
+                      BridgeEngine bridgeEngine, ArchiveObjectReader objectReader, ArchiveObjectWriter objectWriter,
+                      ArchivePutAdmission putAdmission) {
         if (objectWriter != null && objectReader == null)
             throw new IllegalArgumentException("Managed archive writes require original-backend reads");
         this.ledger = ledger;
@@ -150,6 +158,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
         this.bridgeEngine = bridgeEngine;
         this.objectReader = objectReader;
         this.objectWriter = objectWriter;
+        this.putAdmission = putAdmission;
     }
 
     // ------------------------------------------------------------------
@@ -282,7 +291,9 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     @Override
     public PutEntryResponse putEntry(ai.protomolt.proto.repo.spi.RepositoryCaller caller, PutEntryRequest request) {
         RepositoryErrors.requireProcessAuthority(caller);
-        return RepositoryErrors.call(() -> putEntryImpl(request));
+        try (var admission = putAdmission == null ? null : putAdmission.admit(request)) {
+            return RepositoryErrors.call(() -> putEntryImpl(request));
+        }
     }
 
     private PutEntryResponse putEntryImpl(PutEntryRequest request) {
@@ -425,6 +436,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             WriteAttribution attribution, String filename, FormatFact declared,
             ObjectStoreOrigin origin, InputStream body) throws IOException {
         RepositoryErrors.requireProcessAuthority(caller);
+        requireIngressEnabled("Streaming archive uploads");
         try {
             return RepositoryErrors.call(() -> {
                 try {
@@ -800,7 +812,14 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     @Override
     public BridgeEntryResponse bridgeEntry(ai.protomolt.proto.repo.spi.RepositoryCaller caller, BridgeEntryRequest request) {
         RepositoryErrors.requireProcessAuthority(caller);
+        requireIngressEnabled("Archive bridge generation");
         return RepositoryErrors.call(() -> bridgeEntryImpl(request));
+    }
+
+    private void requireIngressEnabled(String operation) {
+        if (putAdmission != null) throw new ai.protomolt.proto.repo.spi.RepositoryException(
+                ai.protomolt.proto.repo.spi.RepositoryException.Code.UNSUPPORTED,
+                operation + " is not enabled in bounded unary composition");
     }
 
     private BridgeEntryResponse bridgeEntryImpl(BridgeEntryRequest request) {
