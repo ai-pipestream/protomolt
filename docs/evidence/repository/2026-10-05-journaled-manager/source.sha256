@@ -1,0 +1,5 @@
+a6c08a026a3876159beec83e6d138e85a3bbb3cd9e50947a21a683df6bcc11bf  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationRegistration.java
+cf0fb84fe27fff79179dc9142bf23ea5e4158a2b6d993ab11dd29bad51dc4972  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationSession.java
+313621c1837807055bfb37f5d06f1310899e56ed7073f4a2dce236dba548eed0  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationSessions.java
+3c8fc1d47072e74505045fed9da0709fa258dfc9d09db479d9e87428a376fad5  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentJournaledSessionsIT.java
+448ff39fa5caa4d359b8a9132091d9a6a21a19ed72934527bc87b88576085e2c  repo/container/src/test/resources/runtime-inventory/NativeAssessmentExecutionProbe.java

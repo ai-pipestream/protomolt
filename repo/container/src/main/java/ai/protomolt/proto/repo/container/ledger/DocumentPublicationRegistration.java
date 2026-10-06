@@ -19,6 +19,7 @@ final class DocumentPublicationRegistration {
     private final DocumentPublicationPreparationJournal preparations;
     private final DocumentPublicationModesJournal modes;
     private final DocumentAssessmentStartJournal starts;
+    private volatile boolean mayHaveCommitted;
 
     DocumentPublicationRegistration(Tx tx, PayloadBudget budget, DocumentPublicationPreparationRecord preparation,
             DocumentUploadPlan.Prepared plan) {
@@ -53,11 +54,15 @@ final class DocumentPublicationRegistration {
         if (fixedModes == null) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
                 "Publication modes must be fixed before durable registration");
         preflight(caller, control);
+        // Set before entering code that can commit; never infer absence from its exception.
+        mayHaveCommitted = true;
         var claim = preparations.acquireInitial(caller, preparation, claimToken, control);
         modes.bindOwned(access, caller, claim, 0, fixedModes, control);
         control.check();
         return claim;
     }
+
+    boolean mayHaveCommitted() { return mayHaveCommitted; }
 
     private void preflight(RepositoryCaller caller, RepositoryReadControl control) {
         control.check();

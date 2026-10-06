@@ -6149,3 +6149,23 @@ Ordinary session-manager activation, interrupted-registration recovery and clean
 remain unfinished. No protobuf names/tags, receipt identity, schema references,
 public idempotency contract or mounted RPC changes. See the
 [scoped registration checks](../evidence/repository/2026-10-05-scoped-registration/README.md).
+
+### Opt-in journaled session retention
+
+**New internal composition:** `DocumentPublicationSessions.journaled` creates
+journaled sessions under the existing count/command-byte limits. Default manager
+construction and host wiring remain unchanged.
+
+**Extended lifecycle:** a monotonic local marker records that registration may
+have committed before entering the initial journal call. Failures and cancellation
+after that marker retain exact claim and preparation identities. Proven pre-journal
+failures release capacity only after all users leave and recovery is not active.
+Authorized terminal replay still permits eviction; a concurrent same-key failure
+cannot evict an active registration.
+
+**Explicitly unsupported in this opt-in:** the older `recover()` path cannot replace
+the journaled entry with an unjournaled recovery session. It refuses before changing
+the entry. Existing explicit started-stage restoration remains separate, as do
+fresh-process partial registration and abandonment/cleanup qualification.
+No protobuf or public RPC, receipt, schema identity, or public idempotency changes.
+See the [manager checks](../evidence/repository/2026-10-05-journaled-manager/README.md).

@@ -113,6 +113,12 @@ features available. Recovery is one workstream, not the whole goal.
    Scoped creation of a truly absent destination is currently rejected by replay
    authorization; resolve that policy explicitly, without widening journal access
    into a document-creation grant.
+   A private opt-in session manager now retains exact identity after registration
+   may have committed and releases proven pre-registration failures when idle.
+   It refuses the older unjournaled recovery replacement path; default host/runtime
+   construction remains unchanged. Qualify explicit abandonment and cleanup of
+   retained registrations, including conservatively retained pre-SQL capacity
+   failures, before host activation. Shutdown/drain does not prove restart recovery.
    Initial claim and preparation now commit atomically. Real SQL regression tests
    cover rollback, lost acknowledgment, cancellation before/after insertion and
    commit, exact retry identity and unchanged lease. The earlier claim-without-seeds

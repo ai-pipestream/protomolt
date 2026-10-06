@@ -23,6 +23,7 @@ final class DocumentPublicationSessions implements AutoCloseable {
     private final Duration lease;
     private final int capacity;
     private final long maxCommandBytes;
+    private final ai.protomolt.proto.repo.blob.spi.PayloadBudget journalBudget;
     private long commandBytes;
     private boolean closed;
     private int activeCalls;
@@ -44,6 +45,18 @@ final class DocumentPublicationSessions implements AutoCloseable {
     }
 
     DocumentPublicationSessions(Tx tx, DocumentPublicationExecution execution, Duration lease, int capacity, long maxCommandBytes) {
+        this(tx, execution, lease, capacity, maxCommandBytes, null);
+    }
+
+    /** Explicit private opt-in; no host selects durable registration by default. */
+    static DocumentPublicationSessions journaled(Tx tx, DocumentPublicationExecution execution, Duration lease,
+            int capacity, long maxCommandBytes, ai.protomolt.proto.repo.blob.spi.PayloadBudget budget) {
+        return new DocumentPublicationSessions(tx, execution, lease, capacity, maxCommandBytes, Objects.requireNonNull(budget));
+    }
+
+    private DocumentPublicationSessions(Tx tx, DocumentPublicationExecution execution, Duration lease, int capacity,
+            long maxCommandBytes, ai.protomolt.proto.repo.blob.spi.PayloadBudget journalBudget) {
+        this.journalBudget = journalBudget;
         this.tx = Objects.requireNonNull(tx); this.execution = Objects.requireNonNull(execution);
         this.lease = Objects.requireNonNull(lease);
         if (capacity < 1) throw new IllegalArgumentException("Publication session capacity must be positive");
@@ -127,7 +140,8 @@ final class DocumentPublicationSessions implements AutoCloseable {
         }
         try {
             // Bounded preparation can still be substantial; keep it outside the shared lock.
-            var session = new DocumentPublicationSession(tx, caller, command, placements, lease);
+            var session = journalBudget == null ? new DocumentPublicationSession(tx, caller, command, placements, lease)
+                    : DocumentPublicationSession.journaled(tx, caller, command, placements, lease, journalBudget);
             synchronized (this) { reserved.session = session; }
             return reserved;
         } catch (RuntimeException | Error failure) {
@@ -140,7 +154,8 @@ final class DocumentPublicationSessions implements AutoCloseable {
     private synchronized void release(RepositoryOperationLedger.Key key, Entry entry, boolean terminal) {
         entry.terminal |= terminal;
         entry.users--;
-        if (entry.terminal && entry.users == 0) remove(key, entry);
+        if (entry.users == 0 && !entry.recovering && (entry.terminal
+                || entry.session != null && entry.session.discardableBeforeRegistration())) remove(key, entry);
     }
 
     private void remove(RepositoryOperationLedger.Key key, Entry entry) {
@@ -264,6 +279,8 @@ final class DocumentPublicationSessions implements AutoCloseable {
             Map<UUID, DocumentUploadPlan.Placement> placements, long predecessorGeneration,
             Map<String, DocumentPublicationCandidate.Mode> modes, RepositoryReadControl control) {
         try (var call = beginCall()) {
+            if (journalBudget != null) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Journaled registration requires explicit claim recovery; unjournaled replacement is disabled");
             return recoverOpen(caller, command, placements, predecessorGeneration, modes, control);
         }
     }

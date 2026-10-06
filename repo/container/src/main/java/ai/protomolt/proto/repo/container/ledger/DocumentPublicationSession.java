@@ -95,6 +95,9 @@ final class DocumentPublicationSession {
     DocumentPublicationSeeds seeds() { return seeds; }
     long predecessorGeneration() { return predecessorGeneration; }
 
+    /** Only the manager with no remaining users may release this proven pre-journal identity. */
+    boolean discardableBeforeRegistration() { return registration != null && !registration.mayHaveCommitted(); }
+
     boolean isSuperseded(RepositoryCaller caller, RepositoryReadControl control) {
         Objects.requireNonNull(control).check();
         DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());

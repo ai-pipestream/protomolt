@@ -18,8 +18,9 @@ import javax.sql.DataSource;
 public final class NativeAssessmentExecutionProbe {
     static void run(Tx observer, DataSource database, AssessmentProviderProbe provider,
             AssessmentMixedReuseProbe.Source source, DocumentAssessmentRuntimeObserver.Observation observation) throws Exception {
-        for (int scenario : new int[]{1, 2, 3, 4, 5, 11, 12, 13, 14, 10}) {
+        for (int scenario : new int[]{1, 2, 3, 4, 5, 11, 12, 13, 14, 21, 22, 23, 24, 20}) {
             boolean journaled = scenario >= 10;
+            boolean managed = scenario >= 20;
             int mode = scenario % 10; // accepted, invalid, stage lost ACK, stage rollback, decision lost ACK, fresh-process recovery
             var member = source.candidate();
             if (mode == 0) {
@@ -40,7 +41,8 @@ public final class NativeAssessmentExecutionProbe {
                 var limits = new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000);
                 var reads = new DocumentReadLedger(tx, UUID.randomUUID(), 1);
                 var placements = Map.of(source.placement().drive().id(), source.placement());
-                var session = journaled ? DocumentPublicationSession.journaled(tx, caller, command, placements, Duration.ofMinutes(5), budget)
+                var session = managed ? null : journaled
+                        ? DocumentPublicationSession.journaled(tx, caller, command, placements, Duration.ofMinutes(5), budget)
                         : new DocumentPublicationSession(tx, caller, command, placements, Duration.ofMinutes(5));
                 var bodies = new HashMap<DocumentUploadPayloads.Key, PartObject>();
                 for (int ordinal = 0; ordinal < source.candidate().getPartsCount(); ordinal++) {
@@ -67,6 +69,8 @@ public final class NativeAssessmentExecutionProbe {
                     var assessments = new DocumentPublicationAssessmentExecution(tx, drives, reads, reader, budget, limits,
                             observation, Duration.ofMinutes(2), Duration.ofSeconds(1));
                     var execution = new DocumentPublicationExecution(tx, drives, reads, uploads, reader, budget, limits, false, assessments);
+                    try (var manager = managed ? DocumentPublicationSessions.journaled(
+                            tx, execution, Duration.ofMinutes(5), 1, 4_000_000, budget) : null) {
                     var modes = Map.of("a", DocumentPublicationCandidate.Mode.TYPED);
                     var container = Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor()));
                     var definition = mode == 0 ? ObservedAssessmentProbe.asset(StringValue.getDescriptor()) : ObservedAssessmentProbe.invalidSchema();
@@ -75,7 +79,8 @@ public final class NativeAssessmentExecutionProbe {
                         return definition;
                     };
                     Object first;
-                    try { first = execution.execute(caller, session, bodies, Map.of(), modes, container, resolver, RepositoryReadControl.NONE); }
+                    try { first = managed ? manager.execute(caller, command, placements, bodies, Map.of(), modes, container, resolver, RepositoryReadControl.NONE)
+                            : execution.execute(caller, session, bodies, Map.of(), modes, container, resolver, RepositoryReadControl.NONE); }
                     catch (RuntimeException failure) { first = failure; }
                     require(resolverCalls.get() == 1 && backendCalls.get() > 0, "first attempt used real schema and upload paths");
                     if (mode == 0) {
@@ -88,7 +93,8 @@ public final class NativeAssessmentExecutionProbe {
                             session.admit(caller, RepositoryReadControl.NONE).orElseThrow());
                     retry.set(true);
                     Object repeated;
-                    try { repeated = execution.execute(caller, session, Map.of(), Map.of(), modes, container, resolver, RepositoryReadControl.NONE); }
+                    try { repeated = managed ? manager.execute(caller, command, Map.of(), Map.of(), Map.of(), modes, container, resolver, RepositoryReadControl.NONE)
+                            : execution.execute(caller, session, Map.of(), Map.of(), modes, container, resolver, RepositoryReadControl.NONE); }
                     catch (RuntimeException failure) { repeated = failure; }
                     if (mode == 0) require(first.equals(repeated), "accepted exact replay");
                     else if (mode == 3) {
@@ -126,10 +132,15 @@ public final class NativeAssessmentExecutionProbe {
                         require(starts == (mode == 0 ? 0 : 1), "journal marker is sticky even when CREATE rolls back");
                     }
                     require(resolverCalls.get() == 1, "no second schema resolution");
+                    if (managed) {
+                        require(manager.retainedSessions() == (mode == 3 ? 1 : 0), "manager retains only uncertain nonterminal stage");
+                        require((manager.retainedCommandBytes() > 0) == (mode == 3), "manager terminal eviction releases command capacity");
+                    }
                     reader.close(); require(reader.awaitIdle(Duration.ofSeconds(5)), "reader drained");
                     reads.releaseDrained(1);
                     require(reads.outstandingReads() == 0 && budget.reservedBytes() == 0 && payload.reservedBytes() == 0,
                             "one-slot ledger and both budgets drain");
+                    }
                 }
             }
         }

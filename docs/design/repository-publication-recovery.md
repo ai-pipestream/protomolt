@@ -35,20 +35,28 @@ revocation after preflight can still precede a marker write. Authoritative check
 at upload, CREATE/decision and publication remain necessary. Known revocation
 before preflight refuses the marker without setting the sticky flag.
 
-The ordinary manager still does not use journaled sessions. Before activation it
-must retain exact session identity from immediately before the first potentially
-committing journal call through ambiguous errors, cancellation and lost responses.
-Registered-command expiry and cleanup still require qualification. See the
+Default manager construction still uses unjournaled sessions. An explicit private
+opt-in now retains exact session identity from immediately before the first
+potentially committing journal call through ambiguous errors, cancellation and lost
+responses. Registered-command expiry and cleanup still require qualification. See the
 [scoped journal evidence](../evidence/repository/2026-10-05-scoped-registration/README.md).
 
-The next manager integration must keep its existing reserve-before-construction
-ordering and expose journaled construction only as an explicit opt-in. Mark the
-session locally as potentially committed immediately before initial registration
-SQL. After that point, errors and cancellation retain the exact session, claim
-token, modes and seeds; no replacement construction or ordinary-admission fallback
-is permitted. A proven pre-journal denial may release capacity once no users remain.
-Test same-key concurrency, command-byte accounting and lost acknowledgment at the
-initial pair, modes and owner commits before enabling that opt-in in a host.
+The opt-in `DocumentPublicationSessions.journaled` keeps reserve-before-construction
+ordering. The registration marks itself as potentially committed immediately before
+calling initial registration; the marker never resets after an exception. Errors
+and cancellation retain the exact session, claim token, modes and seeds. A proven
+pre-journal failure releases capacity only when no users or recovery call remain.
+Concurrent same-key calls cannot evict an executing entry. This mode refuses the
+older unjournaled `recover()` replacement path before changing a manager entry.
+SQL-proven supersession and authorized terminal replay retain their existing roles.
+
+Marking before the journal call is conservative: encoding or byte-budget failure
+can retain an entry even without a SQL commit. That entry is still bounded by count
+and command-byte capacity, but no exception-based eviction or timeout cleanup is
+implied. Qualify explicit abandonment/cleanup before enabling this opt-in in a host.
+Shutdown drains calls while preserving uncertain local entries; that is not proof
+of restart recovery. See the
+[manager retention evidence](../evidence/repository/2026-10-05-journaled-manager/README.md).
 
 Fresh-process interrupted registration is separate from same-process retention.
 The existing restoration handle covers V83-started stages only. A future protocol
