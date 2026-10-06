@@ -40,6 +40,7 @@ final class DocumentPublicationSessions implements AutoCloseable {
         DocumentPublicationSession session;
         DocumentPublicationRestoration restoration;
         RepositoryOperationLedger.Owner restorationOwner;
+        DocumentSuccessorFingerprint successor;
         int users = 1;
         boolean terminal;
         boolean recovering;
@@ -70,6 +71,75 @@ final class DocumentPublicationSessions implements AutoCloseable {
         if (lease.compareTo(Duration.ofSeconds(1)) < 0 || lease.compareTo(Duration.ofDays(1)) > 0)
             throw new IllegalArgumentException("Operation lease requires one second to one day");
         this.capacity = capacity; this.maxCommandBytes = maxCommandBytes; replay = new DocumentPublicationReplay(tx);
+    }
+
+    /** Trusted host identity for preparing a handoff to this manager. */
+    UUID coordinatorIdentity() {
+        if (coordinator == null) throw new IllegalStateException("Session manager does not own journaled registrations");
+        return coordinator;
+    }
+
+    /**
+     * Retain the exact successor before activation can commit. A failed or cancelled
+     * attachment leaves that identity available for retry and shutdown reconciliation.
+     * Both callers come from the trusted host; coordinator rights never replace the
+     * execution caller's current authorization. This method performs no provider I/O.
+     */
+    void activateSuccessor(RepositoryCaller coordinatorCaller, RepositoryCaller executionCaller,
+            RepositorySuccessorInstall.Plan plan, RepositoryReadControl control) {
+        try (var call = beginCall(); var registration = registrations.enter()) {
+            Objects.requireNonNull(plan); Objects.requireNonNull(control).check();
+            if (!coordinatorIdentity().equals(plan.handoff().successorIncarnation()))
+                throw new IllegalArgumentException("Successor incarnation differs from session manager");
+            var key = plan.next().key();
+            DocumentAdmissionAuthorization.requireCaller(coordinatorCaller, key, key.account());
+            DocumentAdmissionAuthorization.requireCaller(executionCaller, key, key.account());
+            if (!coordinatorCaller.processAuthority()) throw new RepositoryException(RepositoryException.Code.PERMISSION_DENIED,
+                    "Successor activation requires private process authority");
+            final Entry entry;
+            // All preparation is side-effect free and outside the shared monitor.
+            // Reserving encoded bytes does not account for the complete parsed heap.
+            try (var encoded = journalBudget.reserve(2L * DocumentPublicationPreparationCodec.MAX_BYTES + 1024 * 1024)) {
+                var fingerprint = DocumentSuccessorFingerprint.of(plan);
+                var session = DocumentPublicationSession.successor(tx, executionCaller, plan, journalBudget, coordinator, registrations);
+                control.check();
+                entry = reserveSuccessor(plan.next().command(), key, fingerprint, session);
+            }
+            try {
+                RepositorySuccessorExecution.activate(tx, journalBudget, coordinatorCaller, executionCaller, plan, control);
+                entry.session.admit(executionCaller, control).orElseThrow(() -> new IllegalStateException("Successor returned no owner"));
+            } finally {
+                synchronized (this) {
+                    entry.recovering = false;
+                    release(key, entry, false);
+                }
+            }
+        }
+    }
+
+    private synchronized Entry reserveSuccessor(DocumentPublicationCommand command, RepositoryOperationLedger.Key key,
+            DocumentSuccessorFingerprint fingerprint, DocumentPublicationSession session) {
+        var entry = entries.get(key);
+        if (entry == null) {
+            entry = new Entry(command);
+            if (entries.size() >= capacity || entry.commandBytes > maxCommandBytes - commandBytes)
+                throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED, "Publication session capacity exhausted");
+            // Publish the fully constructed session and its drain identity together,
+            // before any activation SQL. No observable successor placeholder exists.
+            entry.successor = fingerprint;
+            entry.session = session;
+            entries.put(key, entry);
+            commandBytes += entry.commandBytes;
+        } else {
+            requireCommand(entry, command);
+            if (!fingerprint.equals(entry.successor)) throw new RepositoryException(RepositoryException.Code.CONFLICT,
+                    "Retained successor proposal changed");
+            if (entry.users != 0 || entry.recovering) throw new RepositoryException(RepositoryException.Code.CONFLICT,
+                    "Publication session is in use");
+            entry.users = 1;
+        }
+        entry.recovering = true;
+        return entry;
     }
 
     /**

@@ -1035,11 +1035,11 @@ the separate installation protocol. A low-level transfer to another claim epoch
 cannot inherit an earlier grant. Resume now selects the exact epoch binding and
 cannot treat an operation with older bindings as an unbound operation.
 
-This is a private SQL boundary. No host or public API activates successors yet.
-The next implementation must authorize current WRITE and source access, confirm
-exact activation after uncertain commit acknowledgments without lease renewal,
-and integrate fresh session identities. It must recheck schema/policy/placement
-at the existing execution boundaries. Delayed predecessor provider effects and
+This is a private SQL boundary. The private activation/session path below checks
+current WRITE and source access and confirms exact activation after uncertain
+commit acknowledgments without lease renewal. Public hosts do not activate
+successors automatically. Schema/policy/placement rechecks remain at the existing
+execution boundaries. Delayed predecessor provider effects and
 cleanup isolation require separate qualification before automatic recovery.
 
 ### Private activation transaction
@@ -1065,19 +1065,16 @@ current policy, schema and placement. On a lost commit reply, only the exact sav
 activation and binding resolve the failure; cancellation that prevents readback
 preserves the original exception.
 
-The host is not wired to activate or resume successors yet. Fresh session identity,
-late provider effects and cleanup isolation remain required. The byte reservation
+Public hosts are not wired to activate or resume successors yet. Late provider
+effects and cleanup isolation remain required. The byte reservation
 currently uses the maximum encoded preparation bounds (33 MiB per call), not exact
 payload size; it is a conservative admission bound, not measured heap consumption.
 
-The next session integration must attach to the already installed owner and claim.
-It must not call the ordinary recovery session's owner-takeover method, which would
-request another generation. The session manager must retain the exact successor
-incarnation before activation, validate that binding on resume, and include it in
-its existing admission/drain barriers. Registration and journal access currently
-assume epoch one and predecessor zero; extend those identity checks together with
-the session admission path. Keep successful activation readback separate from live
-claim/owner acquisition so expired or revoked work cannot resume from a receipt.
+Session integration attaches to the already installed owner and claim. It does not
+call the ordinary recovery session's owner-takeover method, which would request
+another generation. Registration and journal access check the exact claim epoch
+and predecessor generation. Successful activation readback stays separate from
+live claim/owner acquisition so expired or revoked work cannot resume from a receipt.
 
 ### Private successor session attachment
 
@@ -1096,6 +1093,28 @@ execution uses the existing assessment resume path rather than fresh CREATE.
 
 Attachment uses the registration barrier and exposes the exact successor drain
 identity, including after a failure. Pre-owner registration abandonment is not valid
-for an installed successor; callers must use owner cancellation instead. Manager
-retention and automatic provider recovery remain unfinished. No public host factory
+for an installed successor; callers must use owner cancellation instead. Automatic
+provider recovery remains unfinished. No public host factory
 selects this successor session automatically.
+
+### Manager-owned successor activation
+
+The private `DocumentPublicationSessions.activateSuccessor` holds an active call
+and the registration barrier across preparation, reservation, activation and live
+attachment. It constructs the side-effect-free session outside the manager lock,
+then publishes it with its exact drain identity under that lock before V94 SQL.
+There is no observable successor placeholder without a session. Capacity refusal
+therefore precedes activation; preparation failure cannot leave a new V94 grant.
+
+Retries compare the full handoff proposal and fixed-size digests of both encoded
+preparations and modes. Ordinary initial sessions cannot be substituted. During
+activation the retained entry is unavailable to ordinary execution. After an
+uncertain failure it remains retained for exact retry and shutdown reconciliation.
+
+Shutdown can close the inner attachment admission after accepting the outer call.
+The activation may have committed even though attachment returns cancellation or
+UNAVAILABLE. The outer barrier prevents a premature drain snapshot, and the retained
+session supplies the exact successor identity for V90/V91 reconciliation. This is
+not a promise that accepted activation always completes, or proof of provider
+quiescence. Full recovered provider publication and late predecessor effects remain
+separate qualification requirements.

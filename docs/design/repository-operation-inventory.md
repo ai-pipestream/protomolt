@@ -6390,8 +6390,8 @@ binding prevents unbound adoption.
 
 **Unchanged:** protobuf contracts, provider calls, business authorization, schema
 checks, terminal outcomes and cleanup. The public session factories do not invoke
-activation. Host activation, uncertain-commit confirmation and automatic successor
-execution remain unfinished; see repository-publication-recovery.md.
+activation. Private activation and uncertain-commit confirmation are described
+below; automatic successor execution remains unfinished.
 
 ### Private successor activation
 
@@ -6404,7 +6404,7 @@ performed. V93 and activation share the modes encoder.
 
 **Unchanged:** public contracts and host startup/session factories. No public API
 or automatic recovery flow calls this helper yet. Claimed historical preparation,
-scoped creation, fresh successor sessions and late provider effects remain open.
+scoped creation and late provider effects remain open.
 
 ### Private successor sessions
 
@@ -6420,5 +6420,20 @@ Its drain identity survives failed attachment. Owner locking now accepts an exac
 identity tuple without inventing an observed lease timestamp.
 
 **Unchanged:** public contracts, default host startup, provider I/O and cleanup.
-Manager retention before uncertain activation and end-to-end successor publication
-remain open. Installed successors use owner cancellation, not pre-owner abandonment.
+End-to-end successor publication remains open. Installed successors use owner
+cancellation, not pre-owner abandonment.
+
+### Manager-owned successor activation
+
+**New:** private `DocumentPublicationSessions.activateSuccessor` reserves a bounded
+entry and retains its complete successor session before activation SQL. Exact retry
+compares the full handoff and both preparation/modes digests. Current execution
+authority is checked separately from the coordinator's process authority.
+
+**Extended:** manager registration/drain barriers cover successor reservation through
+attachment. An uncertain or cancelled attachment retains the exact drain identity;
+ordinary execution cannot replace it with an initial session.
+
+**Unchanged:** protobuf definitions, default host factories, provider I/O and cleanup.
+This private entry point does not enable automatic recovery or qualify recovered
+provider publication, abrupt-death recovery or late predecessor effects.

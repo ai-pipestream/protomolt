@@ -26,6 +26,11 @@ class RepositorySuccessorInstallIT {
     }
 
     static RepositorySuccessorInstall.Plan plan(Context c, DocumentPublicationPreparationRecord input, Duration successorLease) {
+        return plan(c, input, successorLease, UUID.randomUUID());
+    }
+
+    static RepositorySuccessorInstall.Plan plan(Context c, DocumentPublicationPreparationRecord input, Duration successorLease,
+            UUID successorIncarnation) {
         var incarnation = UUID.randomUUID();
         var previous = new DocumentPublicationPreparationRecord(input.key(), input.command(), input.seeds(),
                 input.placements(), Duration.ofSeconds(1), 0);
@@ -38,7 +43,7 @@ class RepositorySuccessorInstallIT {
         var identity = new RepositoryCoordinatorDrain.Identity(claim.key(),claim.commandSha256(),1,claim.token(),incarnation);
         RepositoryCoordinatorLocalDrain.record(c.tx(),CALLER,identity,NONE);
         c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(1.1)").getSingleResult());
-        var handoff = new RepositoryCoordinatorHandoff.Proposal(identity,UUID.randomUUID(),UUID.randomUUID(),successorLease);
+        var handoff = new RepositoryCoordinatorHandoff.Proposal(identity,UUID.randomUUID(),successorIncarnation,successorLease);
         RepositoryCoordinatorHandoff.reserve(c.tx(),CALLER,handoff,NONE);
         return RepositorySuccessorInstall.prepare(handoff,previous,LEASE,MODES);
     }

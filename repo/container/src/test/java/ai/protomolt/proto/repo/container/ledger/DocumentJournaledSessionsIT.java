@@ -611,7 +611,7 @@ class DocumentJournaledSessionsIT {
                 new ManagedBackendLedger(c.tx()).find("native-test").orElseThrow())),
                 Map.of("member-0", DocumentPublicationCandidate.Mode.OPAQUE, "member-1", DocumentPublicationCandidate.Mode.OPAQUE));
     }
-    private record Resources(DocumentUploadCoordinator uploads, DocumentPublicationSessions sessions,
+    record Resources(DocumentUploadCoordinator uploads, DocumentPublicationSessions sessions,
             DocumentReadLedger reads, PayloadBudget budget) implements AutoCloseable {
         public void close() throws Exception {
             sessions.close(); uploads.close(); reads.closeForShutdown();
@@ -623,7 +623,10 @@ class DocumentJournaledSessionsIT {
         return resources(tx, capacity, commandBytes, LEASE);
     }
     private static Resources resources(Tx tx, int capacity, long commandBytes, Duration lease) {
-        var drives = new DriveLedger(tx); var budget = new PayloadBudget(32L * 1024 * 1024);
+        return resources(tx, capacity, commandBytes, lease, new PayloadBudget(32L * 1024 * 1024));
+    }
+    static Resources resources(Tx tx, int capacity, long commandBytes, Duration lease, PayloadBudget budget) {
+        var drives = new DriveLedger(tx);
         var reads = new DocumentReadLedger(tx, UUID.randomUUID());
         var uploads = new DocumentUploadCoordinator(tx, drives, budget,
                 (generation, profile) -> { throw new AssertionError("Registration must not open a byte provider"); },

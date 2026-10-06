@@ -577,8 +577,8 @@ paths. The provider, historical, pruning, RustFS and JCR work remains in scope.
 V94 adds an exact SQL execution identity and successor binding. This is an internal
 boundary, not completed automatic recovery. The private Java activation operation
 now separates coordinator authority from the execution caller and supports exact
-readback without renewal. Next integrate fresh successor sessions and the provider
-effect checks above. Qualify terminal states, claim/owner expiry and end-to-end
+readback without renewal. Private successor sessions and manager retention now
+exist; next qualify the provider effect checks above and end-to-end
 recovery alongside those paths. No public API advertises successor execution.
 Exact readback after revocation confirms a past commit only; execution must check
 current rights again. Conservative maximum-size byte reservations still need load
@@ -586,12 +586,25 @@ and fairness measurements before capacity claims.
 
 ## Successor manager integration
 
-Private successor sessions now attach to the installed owner and restore durable
-assessment-start state. The manager still needs an entry point to reserve capacity
-and retain the exact incarnation before activation can become uncertain. It must
-keep that entry and drain identity after failure, compare exact retry identities,
-and prevent ordinary initial-session creation from replacing the successor. Qualify
-this with cancellation/shutdown races and full recovered publication using real
-providers before enabling automatic recovery. Admission from an expired owner,
+Private successor sessions attach to the installed owner and restore durable
+assessment-start state. The manager now reserves capacity and retains the exact
+session before activation can commit. Its registration barrier covers reservation,
+activation and attachment. Failed attachment keeps the session and drain identity;
+changed handoff/preparation/modes cannot replace it on retry. Closing admission may
+refuse attachment after activation commits, so shutdown must reconcile the retained
+identity. Full recovered publication using real providers and late-effect cleanup
+remain required before enabling automatic recovery. Admission from an expired owner,
 revoked policy or closed registration scope must never be inferred from an earlier
 activation confirmation.
+
+The next provider qualification should use the existing production-JAR ledger
+probe and real versioned object-store fixtures. Stop generation one after a real
+upload but before publication; retain its exact preparation, attempts and physical
+object version. Complete local admission/provider/read drain and V90/V91, then wait
+for the actual database claim and owner leases to expire. A fresh manager supplies
+the V92 successor incarnation, installs V93 and activates V94, then publishes the
+same command through the real provider. Assert generation-two selection and receipt
+replay, distinct attempt/object identities, unchanged predecessor evidence and
+released local resources. Do not manually edit lease timestamps. A remote PUT
+finishing after local drain needs a separate controlled late-effect test; the
+positive recovery probe alone cannot establish that property.
