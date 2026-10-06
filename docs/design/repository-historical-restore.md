@@ -260,3 +260,25 @@ addresses and authorize current READ before destination checks. They do not comp
 the selected historical revision with the current head. Revocation is tested using
 real SQL state and canonical commands. Full staging, retained-schema provenance,
 commit reference binding and recovery integration remain activation prerequisites.
+
+## Next staging integration
+
+Sol's review identified two separately reviewable steps. Neither enables restore:
+
+1. Add the SQL declaration `HISTORICAL_REUSE` and immutable source-node identity.
+   Historical rows require source node, revision and full ordinal; existing
+   NEW_CONTENT/REUSE rows retain their shape and current-reuse checks. Validate
+   exact source account, sealed successful native revision, part/slot/object,
+   non-retiring retention and DOCUMENT_HISTORY reference. Do not join the current
+   revision pointer for historical reuse. Prove r1 can stage after r3 is current,
+   malformed/cross-account identities refuse, and rollback leaves no references.
+   Exercise migration with existing rows. All Java execution gates remain enabled.
+2. Integrate slot preparation/binding, creation inserts, retained-slot verification
+   and replay snapshot encoding together. Snapshot v1 records only whether a source
+   exists; it cannot identify historical declaration or source node. Introduce an
+   explicit v2 encoding with version-dispatched reads of retained v1 snapshots.
+   Update retained evidence and replay input size/hash handling before permitting
+   historical CREATE. Keep authorization and owned source Uses through publication.
+
+Then integrate immutable physical references, active-policy fencing and failure
+recovery. A schema migration alone is not a restore execution implementation.
