@@ -17,7 +17,7 @@ import java.util.UUID;
 /** Canonical storage provenance, not observed validation evidence or authorization. */
 final class DocumentAssessmentSlotSnapshot {
     static final String CODEC = "document-assessment-slots";
-    static final int VERSION = 1;
+    static final int VERSION = 2;
     static final int MAX_BYTES = 4 * 1024 * 1024;
     private static final int MAGIC = 0x504d4153; // PMAS
 
@@ -49,6 +49,12 @@ final class DocumentAssessmentSlotSnapshot {
 
     /** Exact re-encoding of retained rows permits comparison without parsing untrusted lengths. */
     static Encoded encode(Identity identity, List<DocumentAssessmentSlots.Slot> input, PayloadBudget budget, Runnable control) {
+        return encode(VERSION, identity, input, budget, control);
+    }
+
+    /** Version comes from immutable snapshot metadata, never from a caller's preferred interpretation. */
+    static Encoded encode(int version, Identity identity, List<DocumentAssessmentSlots.Slot> input, PayloadBudget budget, Runnable control) {
+        if (version != 1 && version != VERSION) throw new IllegalArgumentException("Unsupported slot snapshot version");
         Objects.requireNonNull(identity); Objects.requireNonNull(budget); Objects.requireNonNull(control);
         check(control);
         if (input.isEmpty() || input.size() > 10000) throw new IllegalArgumentException("Snapshot slot count must be 1..10000");
@@ -60,9 +66,12 @@ final class DocumentAssessmentSlotSnapshot {
         DocumentAssessmentSlots.Slot previous = null;
         for (var slot : slots) {
             check(control); validate(slot);
+            if (version == 1 && slot.sourceNode() != null)
+                throw new IllegalArgumentException("Historical source requires slot snapshot version 2");
             if (previous != null && previous.member().equals(slot.member()) && previous.ordinal() == slot.ordinal())
                 throw new IllegalArgumentException("Duplicate snapshot candidate slot");
-            size += 4 + slot.member().length() + 4 + 8 + 16 + 1 + (slot.sourceRevision() == null ? 0 : 20);
+            size += 4 + slot.member().length() + 4 + 8 + 16 + 1 + (slot.sourceRevision() == null ? 0 : 20)
+                    + (slot.sourceNode() == null ? 0 : 16);
             previous = slot;
         }
         if (size > MAX_BYTES) throw new IllegalArgumentException("Snapshot exceeds byte bound");
@@ -70,15 +79,18 @@ final class DocumentAssessmentSlotSnapshot {
         var lease = budget.reserve(2L * size + 800);
         try {
             var out = ByteBuffer.allocate(size);
-            out.putInt(MAGIC).putInt(VERSION); uuid(out, identity.assessment());
+            out.putInt(MAGIC).putInt(version); uuid(out, identity.assessment());
             text(out, identity.key().account()); text(out, identity.key().principal()); uuid(out, identity.key().operationId());
             out.putLong(identity.generation()); out.put(HexFormat.of().parseHex(identity.commandSha256()));
             out.put(HexFormat.of().parseHex(identity.manifestSha256()));
             out.putLong(identity.retainUntil().getEpochSecond()).putInt(identity.retainUntil().getNano()).putInt(slots.size());
             for (var slot : slots) {
                 check(control); text(out, slot.member()); out.putInt(slot.ordinal()).putLong(slot.selection()); uuid(out, slot.object());
-                out.put((byte) (slot.sourceRevision() == null ? 0 : 1));
+                // v1: 0=upload, 1=current reuse. v2 preserves these tags and adds
+                // 2=historical reuse, followed by its exact source node.
+                out.put((byte) (slot.sourceNode() != null ? 2 : slot.sourceRevision() == null ? 0 : 1));
                 if (slot.sourceRevision() != null) { uuid(out, slot.sourceRevision()); out.putInt(slot.sourceOrdinal()); }
+                if (slot.sourceNode() != null) uuid(out, slot.sourceNode());
             }
             if (out.hasRemaining()) throw new IllegalStateException("Snapshot size differs from encoding");
             var bytes = ByteString.copyFrom(out.array());
@@ -94,10 +106,14 @@ final class DocumentAssessmentSlotSnapshot {
         if (slot.member() == null || !slot.member().matches("[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
                 || slot.ordinal() < 0 || slot.ordinal() >= 10000 || slot.selection() < 1 || slot.object() == null)
             throw new IllegalArgumentException("Invalid snapshot candidate slot");
-        boolean upload = "NEW_CONTENT".equals(slot.declaration()) && slot.sourceRevision() == null && slot.sourceOrdinal() == null;
+        boolean upload = "NEW_CONTENT".equals(slot.declaration()) && slot.sourceNode() == null
+                && slot.sourceRevision() == null && slot.sourceOrdinal() == null;
         boolean reuse = "REUSE".equals(slot.declaration()) && slot.sourceRevision() != null
-                && slot.sourceOrdinal() != null && slot.sourceOrdinal() >= 0;
-        if (!upload && !reuse) throw new IllegalArgumentException("Invalid snapshot source binding");
+                && slot.sourceNode() == null && slot.sourceOrdinal() != null && slot.sourceOrdinal() >= 0;
+        boolean historical = "HISTORICAL_REUSE".equals(slot.declaration()) && slot.sourceNode() != null
+                && slot.sourceRevision() != null && slot.sourceOrdinal() != null
+                && slot.sourceOrdinal() >= 0 && slot.sourceOrdinal() < 10000;
+        if (!upload && !reuse && !historical) throw new IllegalArgumentException("Invalid snapshot source binding");
     }
     private static int textSize(String text) {
         if (text == null || text.isEmpty() || text.length() > 200) throw new IllegalArgumentException("Invalid snapshot text");

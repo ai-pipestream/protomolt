@@ -51,6 +51,8 @@ final class DocumentAssessmentRetainedEvidence {
                 Fragment fragment;
                 if (part.hasUpload()) fragment = new Fragment(part.getUpload().getSizeBytes(), part.getUpload().getSha256());
                 else if (part.hasReuse()) fragment = new Fragment(part.getReuse().getObject().getSizeBytes(), part.getReuse().getObject().getSha256());
+                else if (part.hasHistoricalReuse()) fragment = new Fragment(part.getHistoricalReuse().getObject().getSizeBytes(),
+                        part.getHistoricalReuse().getObject().getSha256());
                 else throw conflict();
                 if (roots.put(new Root(member.getMemberId(), root.getOrdinal(), root.getCodec(), root.getVersion(), root.getSha256()), fragment) != null)
                     throw conflict();

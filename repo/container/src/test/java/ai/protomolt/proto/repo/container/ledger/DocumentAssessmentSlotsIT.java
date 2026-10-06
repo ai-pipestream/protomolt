@@ -18,6 +18,20 @@ class DocumentAssessmentSlotsIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
     private static final RepositoryCaller CALLER = new RepositoryCaller("principal", true);
 
+    @Test void replaysVersionOneSnapshotAfterVersionTwoMigration() throws Exception {
+        try (var c = DocumentNativePublicationFixture.context(POSTGRES, "86")) {
+            var f = DocumentNativePublicationFixture.prepare(c, 1);
+            var staged = stage(c, f, f.command(), false, true, 1);
+            String schema = c.tx().readOnly(em -> (String) em.createNativeQuery("SELECT current_schema()").getSingleResult());
+            org.flywaydb.core.Flyway.configure().dataSource(c.pool().getJdbcUrl(), c.pool().getUsername(), c.pool().getPassword())
+                    .schemas(schema).defaultSchema(schema).locations("classpath:db/migration/repo").target("87").load().migrate();
+            verifyAuthorized(c, f, staged, CALLER);
+            assertThat(c.tx().<Integer>readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT snapshot_version FROM document_assessment_slot_snapshots WHERE assessment_id=:id")
+                    .setParameter("id", staged.identity().assessment()).getSingleResult()).intValue())).isEqualTo(1);
+        }
+    }
+
     @Test void retainsExactCurrentSourceRevisionsForReuseOnlyAndMixedCandidates() throws Exception {
         for (boolean mixed : new boolean[]{false, true}) {
             try (var c = DocumentNativePublicationFixture.context(POSTGRES)) {
@@ -223,6 +237,12 @@ class DocumentAssessmentSlotsIT {
 
     private static Staged stage(DocumentNativePublicationFixture.Context c,
             DocumentNativePublicationFixture.Prepared f, DocumentPublicationCommand projected, boolean omitPhysical, boolean snapshotPresent) {
+        return stage(c, f, projected, omitPhysical, snapshotPresent, DocumentAssessmentSlotSnapshot.VERSION);
+    }
+
+    private static Staged stage(DocumentNativePublicationFixture.Context c,
+            DocumentNativePublicationFixture.Prepared f, DocumentPublicationCommand projected, boolean omitPhysical,
+            boolean snapshotPresent, int snapshotVersion) {
         var driveId = UUID.fromString(f.command().intent().getMembers(0).getDriveId());
         var drive = new DriveLedger(c.tx()).findById(driveId).orElseThrow();
         var profile = new ManagedBackendLedger(c.tx()).find("native-test").orElseThrow();
@@ -279,11 +299,11 @@ class DocumentAssessmentSlotsIT {
             var identity = new DocumentAssessmentSlotSnapshot.Identity(assessment, f.owner().key(), f.owner().generation(),
                     f.command().sha256(), (String) header[0], java.time.Instant.ofEpochSecond(micros / 1000000, micros % 1000000 * 1000));
             var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(20_000_000);
-            if (snapshotPresent) try (var snapshot = DocumentAssessmentSlotSnapshot.encode(identity, slots, budget, () -> {})) {
+            if (snapshotPresent) try (var snapshot = DocumentAssessmentSlotSnapshot.encode(snapshotVersion, identity, slots, budget, () -> {})) {
                 em.createNativeQuery("""
                         INSERT INTO document_assessment_slot_snapshots VALUES(:id,:codec,:version,:bytes,decode(:sha,'hex'))
                         """).setParameter("id", assessment).setParameter("codec", DocumentAssessmentSlotSnapshot.CODEC)
-                        .setParameter("version", DocumentAssessmentSlotSnapshot.VERSION).setParameter("bytes", snapshot.bytes().toByteArray())
+                        .setParameter("version", snapshotVersion).setParameter("bytes", snapshot.bytes().toByteArray())
                         .setParameter("sha", snapshot.sha256()).executeUpdate();
             }
             // Synthetic manifest, genuine frozen selection/physical history: this

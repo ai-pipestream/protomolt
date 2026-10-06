@@ -24,7 +24,7 @@ class DocumentAssessmentSlotSnapshotTest {
         try (first; var second = DocumentAssessmentSlotSnapshot.encode(IDENTITY, List.of(UPLOAD, REUSE), budget, () -> {})) {
             assertThat(first.bytes()).isEqualTo(second.bytes());
             assertThat(first.sha256()).isEqualTo(second.sha256());
-            assertThat(first.bytes().substring(0, 8).toByteArray()).containsExactly(0x50, 0x4d, 0x41, 0x53, 0, 0, 0, 1);
+            assertThat(first.bytes().substring(0, 8).toByteArray()).containsExactly(0x50, 0x4d, 0x41, 0x53, 0, 0, 0, 2);
             assertThat(budget.reservedBytes()).isGreaterThan(first.bytes().size() * 2L);
         }
         assertThat(budget.reservedBytes()).isZero();
@@ -48,7 +48,7 @@ class DocumentAssessmentSlotSnapshotTest {
 
     @Test void versionOneWireLayoutHasExplicitLengthsAndFullSourceOrdinal() {
         var budget = new PayloadBudget(100000);
-        try (var encoded = DocumentAssessmentSlotSnapshot.encode(IDENTITY, List.of(REUSE), budget, () -> {})) {
+        try (var encoded = DocumentAssessmentSlotSnapshot.encode(1, IDENTITY, List.of(REUSE), budget, () -> {})) {
             var wire = encoded.bytes().asReadOnlyByteBuffer();
             assertThat(wire.getInt()).isEqualTo(0x504d4153);
             assertThat(wire.getInt()).isEqualTo(1);
@@ -80,6 +80,32 @@ class DocumentAssessmentSlotSnapshotTest {
                 new DocumentAssessmentSlots.Slot("b", 5, 2, REUSE.object(), "REUSE", REUSE.sourceRevision(), 32),
                 new DocumentAssessmentSlots.Slot("b", 5, 2, REUSE.object(), "NEW_CONTENT", null, null));
         for (var variant : variants) assertThat(digest(IDENTITY, List.of(variant))).isNotEqualTo(original);
+    }
+
+    @Test void historicalVersionBindsSourceNodeAndCannotBeEncodedAsLegacyReuse() {
+        var historical = new DocumentAssessmentSlots.Slot("b", 5, 2, REUSE.object(), "HISTORICAL_REUSE",
+                REUSE.sourceRevision(), 31, ID);
+        var otherNode = new DocumentAssessmentSlots.Slot("b", 5, 2, REUSE.object(), "HISTORICAL_REUSE",
+                REUSE.sourceRevision(), 31, new UUID(20, 21));
+        assertThat(digest(IDENTITY, List.of(historical))).isNotEqualTo(digest(IDENTITY, List.of(otherNode)))
+                .isNotEqualTo(digest(IDENTITY, List.of(REUSE)));
+        var budget = new PayloadBudget(100000);
+        assertThatThrownBy(() -> DocumentAssessmentSlotSnapshot.encode(1, IDENTITY, List.of(historical), budget, () -> {}))
+                .hasMessageContaining("version 2");
+        assertThatThrownBy(() -> DocumentAssessmentSlotSnapshot.encode(3, IDENTITY, List.of(REUSE), budget, () -> {}))
+                .hasMessageContaining("Unsupported");
+        try (var encoded = DocumentAssessmentSlotSnapshot.encode(IDENTITY, List.of(historical), budget, () -> {})) {
+            var wire = encoded.bytes().asReadOnlyByteBuffer();
+            wire.position(wire.limit() - 37);
+            assertThat(wire.get()).isEqualTo((byte) 2);
+            assertThat(wire.getLong()).isEqualTo(REUSE.sourceRevision().getMostSignificantBits());
+            assertThat(wire.getLong()).isEqualTo(REUSE.sourceRevision().getLeastSignificantBits());
+            assertThat(wire.getInt()).isEqualTo(31);
+            assertThat(wire.getLong()).isEqualTo(ID.getMostSignificantBits());
+            assertThat(wire.getLong()).isEqualTo(ID.getLeastSignificantBits());
+            assertThat(wire.hasRemaining()).isFalse();
+        }
+        assertThat(budget.reservedBytes()).isZero();
     }
 
     @Test void rejectsDuplicatesMalformedAlternativesAndPrecision() {

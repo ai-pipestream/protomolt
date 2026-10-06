@@ -152,8 +152,18 @@ final class DocumentAssessmentReplayInputs implements AutoCloseable {
                 if (!decoded.locatorSha256().equals(root.locatorSha()) || !decoded.locator().getSlot().equals(part.getSlot()))
                     throw invalid("Assessment root locator differs from retained slot");
             } catch (InvalidProtocolBufferException invalid) { throw invalid("Assessment root cannot be decoded", invalid); }
-            String sha = part.hasUpload() ? part.getUpload().getSha256() : part.hasReuse() ? part.getReuse().getObject().getSha256() : "";
-            long size = part.hasUpload() ? part.getUpload().getSizeBytes() : part.hasReuse() ? part.getReuse().getObject().getSizeBytes() : -1;
+            String sha = switch (part.getContentCase()) {
+                case UPLOAD -> part.getUpload().getSha256();
+                case REUSE -> part.getReuse().getObject().getSha256();
+                case HISTORICAL_REUSE -> part.getHistoricalReuse().getObject().getSha256();
+                default -> throw invalid("Retained root has no payload declaration");
+            };
+            long size = switch (part.getContentCase()) {
+                case UPLOAD -> part.getUpload().getSizeBytes();
+                case REUSE -> part.getReuse().getObject().getSizeBytes();
+                case HISTORICAL_REUSE -> part.getHistoricalReuse().getObject().getSizeBytes();
+                default -> throw invalid("Retained root has no payload declaration");
+            };
             if (!root.fragmentSha().equals(sha) || root.fragmentSize() != size) throw invalid("Assessment root fragment differs");
         }
         if (!expectedRoots.isEmpty()) throw invalid("Assessment retained root is missing");

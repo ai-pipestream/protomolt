@@ -14,7 +14,9 @@ remains part of the goal.
 
 Historical staging now has a distinct SQL declaration and source-node binding in
 V86; existing V85 rows and current-reuse behavior pass upgrade tests. Java slot
-binding and snapshot v2 with v1 replay support are next. Execution is still gated;
+binding remains next. Snapshot v2 with v1 replay support is now implemented and
+[qualified](../evidence/repository/2026-10-05-assessment-snapshot-v2/README.md).
+Execution is still gated;
 [staging evidence](../evidence/repository/2026-10-05-historical-staging/README.md)
 records the narrower SQL proof and remaining negative cases.
 

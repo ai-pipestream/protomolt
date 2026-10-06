@@ -288,3 +288,21 @@ Sol's review identified two separately reviewable steps. Neither enables restore
 
 Then integrate immutable physical references, active-policy fencing and failure
 recovery. A schema migration alone is not a restore execution implementation.
+
+## Versioned staged provenance
+
+V87 accepts immutable slot snapshot versions 1 and 2. New writes use v2: tags
+distinguish upload, current reuse and historical reuse; historical records include
+the exact source node in addition to revision and full ordinal. Version 1 retains
+its original encoding and cannot represent a historical source. Replay reads the
+stored version before reserving and reading snapshot bytes, then compares exact
+re-encoding and digest under the retained-owner lock. Existing snapshots are not
+rewritten or interpreted using the newest codec by default.
+
+Retained slot verification now understands historical selector and physical
+identity, and retained root evidence/input checks use the historical payload hash
+and size. The historical creation binder remains gated: this does not prove an
+end-to-end historical stage. Next, bind a live pinned source selection to each
+destination member/full ordinal before allowing historical preparation. Add the
+SQL negative case for a historical slot paired with a v1 snapshot, including
+budget release on refusal, alongside command-to-stage correspondence tests.

@@ -22,7 +22,12 @@ final class DocumentAssessmentSlots {
     private record Origin(UUID revision, int ordinal) {}
     private record Batch(String json, int count) {}
     record Slot(String member, int ordinal, long selection, UUID object, String declaration,
-                UUID sourceRevision, Integer sourceOrdinal) {}
+                UUID sourceRevision, Integer sourceOrdinal, UUID sourceNode) {
+        Slot(String member, int ordinal, long selection, UUID object, String declaration,
+                UUID sourceRevision, Integer sourceOrdinal) {
+            this(member, ordinal, selection, object, declaration, sourceRevision, sourceOrdinal, null);
+        }
+    }
     static final class Prepared {
         private final DocumentPublicationCommand command;
         private final Map<Source, UUID> expected;

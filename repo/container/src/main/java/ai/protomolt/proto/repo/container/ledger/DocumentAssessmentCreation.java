@@ -98,14 +98,15 @@ final class DocumentAssessmentCreation {
                 em.unwrap(org.hibernate.Session.class).doWork(connection -> {
                     try (var statement = connection.prepareStatement("""
                             INSERT INTO document_assessment_slots(assessment_id,member_id,revision_ordinal,selection_revision,
-                                object_id,declaration,source_revision,source_ordinal) VALUES(?,?,?,?,?,?,?,?)
+                                object_id,declaration,source_revision,source_ordinal,source_node) VALUES(?,?,?,?,?,?,?,?,?)
                             """)) {
                         int pending = 0;
                         for (var slot : slots) {
                             evidence.check(control);
                             statement.setObject(1, assessment); statement.setString(2, slot.member()); statement.setInt(3, slot.ordinal());
                             statement.setLong(4, slot.selection()); statement.setObject(5, slot.object()); statement.setString(6, slot.declaration());
-                            statement.setObject(7, slot.sourceRevision()); statement.setObject(8, slot.sourceOrdinal()); statement.addBatch();
+                            statement.setObject(7, slot.sourceRevision()); statement.setObject(8, slot.sourceOrdinal());
+                            statement.setObject(9, slot.sourceNode()); statement.addBatch();
                             if (++pending == 256) { requireBatch(statement.executeBatch(), pending); statement.clearBatch(); pending = 0; }
                         }
                         if (pending > 0) requireBatch(statement.executeBatch(), pending);

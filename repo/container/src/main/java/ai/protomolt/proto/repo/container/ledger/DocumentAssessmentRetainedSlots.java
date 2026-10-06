@@ -79,7 +79,7 @@ final class DocumentAssessmentRetainedSlots {
                         AND a.member_id=s.member_id AND a.plan_kind='NEW_CONTENT'
                         AND a.backend_generation=anchor.backend_generation AND a.storage_realm=anchor.storage_realm
                         AND a.storage_namespace=anchor.storage_namespace,
-                    anchor.drive_id,anchor.node_id,anchor.sampled_revision,anchor.upload_count
+                    anchor.drive_id,anchor.node_id,anchor.sampled_revision,anchor.upload_count,s.source_node
                 FROM document_assessment_slots s
                 JOIN document_operation_selection_attempts h ON h.account_id=:account AND h.principal=:principal
                     AND h.operation_id=:operation AND h.owner_generation=:generation
@@ -125,13 +125,22 @@ final class DocumentAssessmentRetainedSlots {
             } else if (row[7] != null) throw conflict();
             if (part.hasUpload()) {
                 var upload = part.getUpload();
-                if (!"NEW_CONTENT".equals(row[4]) || row[5] != null || row[6] != null || !row[7].equals(row[8])
+                if (!"NEW_CONTENT".equals(row[4]) || row[5] != null || row[6] != null || row[28] != null || !row[7].equals(row[8])
                         || ordinal != ((Number) row[9]).intValue() || !Boolean.TRUE.equals(row[23])
                         || upload.getSizeBytes() != ((Number) row[12]).longValue() || !upload.getSha256().equals(row[13])
                         || !upload.getContentType().equals(row[14])) throw conflict();
-            } else if (part.hasReuse()) {
-                var object = part.getReuse().getObject();
-                if (!"REUSE".equals(row[4]) || row[5] == null || row[6] == null
+            } else if (part.hasReuse() || part.hasHistoricalReuse()) {
+                var object = part.hasReuse() ? part.getReuse().getObject() : part.getHistoricalReuse().getObject();
+                if (part.hasReuse()) {
+                    if (!"REUSE".equals(row[4]) || row[28] != null) throw conflict();
+                } else {
+                    var historical = part.getHistoricalReuse();
+                    if (!"HISTORICAL_REUSE".equals(row[4])
+                            || !DocumentIds.nodeId(historical.getSource()).equals(row[28])
+                            || !UUID.fromString(historical.getRevisionId()).equals(row[5])
+                            || row[6] == null || historical.getRevisionOrdinal() != ((Number) row[6]).intValue()) throw conflict();
+                }
+                if (row[5] == null || row[6] == null
                         || !UUID.fromString(object.getObjectId()).equals(row[3])
                         || object.getSizeBytes() != ((Number) row[12]).longValue() || !object.getSha256().equals(row[13])
                         || !object.getContentType().equals(row[14]) || !object.getObjectKey().equals(row[15])
@@ -141,7 +150,7 @@ final class DocumentAssessmentRetainedSlots {
             } else throw conflict();
             objects.add((UUID) row[3]);
             slots.add(new DocumentAssessmentSlots.Slot(memberId, ordinal, revision, (UUID) row[3], (String) row[4],
-                    (UUID) row[5], row[6] == null ? null : ((Number) row[6]).intValue()));
+                    (UUID) row[5], row[6] == null ? null : ((Number) row[6]).intValue(), (UUID) row[28]));
         }
         var expectedKeys = new HashSet<DocumentCommitParts.Slot>();
         for (var member : command.intent().getMembersList()) for (int i = 0; i < member.getPartsCount(); i++) {
@@ -159,7 +168,14 @@ final class DocumentAssessmentRetainedSlots {
                 || ((Number) counts[2]).longValue() != objects.size()) throw conflict();
         // Reserve the exact expected payload before JDBC materializes it. The SQL
         // projection refuses any other length, including a corrupt oversized row.
-        try (var expected = DocumentAssessmentSlotSnapshot.encode(identity, slots, budget, control);
+        var metadata = em.createNativeQuery("""
+                SELECT snapshot_codec,snapshot_version FROM document_assessment_slot_snapshots WHERE assessment_id=:id
+                """).setParameter("id", identity.assessment()).getResultList();
+        if (metadata.size() != 1) throw conflict();
+        var format = (Object[]) metadata.getFirst();
+        int version = ((Number) format[1]).intValue();
+        if (!DocumentAssessmentSlotSnapshot.CODEC.equals(format[0]) || (version != 1 && version != 2)) throw conflict();
+        try (var expected = DocumentAssessmentSlotSnapshot.encode(version, identity, slots, budget, control);
              var readBudget = budget.reserve(2L * expected.bytes().size())) {
             var snapshots = em.createNativeQuery("""
                     SELECT snapshot_codec,snapshot_version,
@@ -168,7 +184,7 @@ final class DocumentAssessmentRetainedSlots {
                     """).setParameter("id", identity.assessment()).setParameter("expectedLength", expected.bytes().size()).getResultList();
             if (snapshots.size() != 1) throw conflict();
             var row = (Object[]) snapshots.getFirst();
-            if (!DocumentAssessmentSlotSnapshot.CODEC.equals(row[0]) || ((Number) row[1]).intValue() != DocumentAssessmentSlotSnapshot.VERSION
+            if (!DocumentAssessmentSlotSnapshot.CODEC.equals(row[0]) || ((Number) row[1]).intValue() != version
                     || !(row[2] instanceof byte[] stored) || !expected.bytes().asReadOnlyByteBuffer().equals(ByteBuffer.wrap(stored))
                     || !expected.sha256().equals(row[3])) throw conflict();
             control.run();
