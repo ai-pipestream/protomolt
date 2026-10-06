@@ -33,7 +33,8 @@ public final class DocumentRetainedSchemaResolution implements DocumentSchemaAdm
     private final Set<Key> used = new HashSet<>();
     private final Set<String> artifactHashes = new HashSet<>();
     private final Set<DocumentSchemaAdmission.Reference> selectedReferences = new HashSet<>();
-    private final Set<String> selectedArtifacts = new HashSet<>();
+    private final Map<String, ByteString> selectedArtifacts = new HashMap<>();
+    private final Set<Integer> targetOrdinals = new HashSet<>();
     private List<DocumentSchemaAdmission.Reference> references = List.of();
     private DocumentSchemaAdmission.Definition container;
     private boolean closed;
@@ -164,6 +165,7 @@ public final class DocumentRetainedSchemaResolution implements DocumentSchemaAdm
         selectedReferences.add(source.container());
         for (var ordinal : mapping.entrySet()) {
             active();
+            targetOrdinals.add(ordinal.getKey());
             for (var root : rootsByOrdinal.getOrDefault(ordinal.getValue(), List.of()))
                 roots.put(new Root(ordinal.getKey(), root.locator()), sourceRoots.get(root));
             for (var key : keysByOrdinal.getOrDefault(ordinal.getValue(), List.of())) {
@@ -174,14 +176,24 @@ public final class DocumentRetainedSchemaResolution implements DocumentSchemaAdm
             }
         }
         for (var reference : selectedReferences) {
-            selectedArtifacts.add(reference.descriptorSha256()); selectedArtifacts.add(reference.metadataSha256());
-            reference.sourceSha256().ifPresent(selectedArtifacts::add);
+            selectedArtifacts.put(reference.descriptorSha256(), loaded.get(reference.descriptorSha256()));
+            selectedArtifacts.put(reference.metadataSha256(), loaded.get(reference.metadataSha256()));
+            reference.sourceSha256().ifPresent(hash -> selectedArtifacts.put(hash, loaded.get(hash)));
         }
         container = definitions.get(new DocumentPayloadCheck.SchemaKey(source.container().typeUrl(), source.container().descriptorSha256()));
     }
 
     /** Borrowed exact container definition; keep this scope and its artifact owner open. */
     public DocumentSchemaAdmission.Definition container() { active(); return container; }
+
+    /** Borrowed source closure for exact composite-union checking, not independent retention ownership. */
+    public Set<DocumentSchemaAdmission.Reference> selectedReferences() { active(); return Set.copyOf(selectedReferences); }
+
+    /** Borrowed source bytes; keep the source artifact owner and this scope alive while comparing. */
+    public Map<String, ByteString> selectedArtifacts() { active(); return Map.copyOf(selectedArtifacts); }
+
+    /** All selected destination ordinals, including parts with no Any occurrences. */
+    public Set<Integer> targetOrdinals() { active(); return Set.copyOf(targetOrdinals); }
 
     @Override public DocumentSchemaAdmission.Definition select(DocumentSchemaAdmission.Selection occurrence) {
         active();
@@ -194,18 +206,50 @@ public final class DocumentRetainedSchemaResolution implements DocumentSchemaAdm
 
     /** Verify that the new assessment used every selected occurrence and reproduced its exact evidence. */
     public void requireComplete(DocumentSchemaAssessment.View assessment) {
+        requireSelectedComplete(assessment);
+        if (assessment.roots().size() != roots.size())
+            throw new IllegalArgumentException("reassessed roots or occurrences differ from retained evidence");
+        if (!new HashSet<>(assessment.references()).equals(selectedReferences)
+                || !assessment.artifacts().equals(selectedArtifacts))
+            throw new IllegalArgumentException("reassessed schema assets differ from selected retained union");
+    }
+
+    /**
+     * Check this source's mapped ordinals within a composite member assessment.
+     * All mapped ordinals are checked, including those with no recorded Any roots.
+     * Other sources' ordinals/assets are not checked here: the caller must separately
+     * prove disjoint complete routing, exact container agreement and global asset union.
+     */
+    public void requireSelectedComplete(DocumentSchemaAssessment.View assessment) {
         active();
         var actual = new HashMap<Root, DocumentSchemaAdmission.EncodedEvidence>();
         for (var root : assessment.roots()) {
             active();
+            if (!targetOrdinals.contains(root.ordinal())) continue;
             if (actual.putIfAbsent(new Root(root.ordinal(), root.locator()), root.encoded()) != null)
                 throw new IllegalArgumentException("duplicate reassessed evidence root");
         }
         if (!used.equals(index.keySet()) || !actual.equals(roots))
             throw new IllegalArgumentException("reassessed roots or occurrences differ from retained evidence");
-        if (!new HashSet<>(assessment.references()).equals(selectedReferences)
-                || !assessment.artifacts().keySet().equals(selectedArtifacts))
-            throw new IllegalArgumentException("reassessed schema assets differ from selected retained union");
+        var actualReferences = new HashSet<>(assessment.references());
+        if (!actualReferences.containsAll(selectedReferences))
+            throw new IllegalArgumentException("reassessed schema assets omit selected retained references");
+        var selectedByIdentity = new HashMap<DocumentPayloadCheck.SchemaKey, DocumentSchemaAdmission.Reference>();
+        for (var reference : selectedReferences)
+            selectedByIdentity.put(new DocumentPayloadCheck.SchemaKey(reference.typeUrl(), reference.descriptorSha256()), reference);
+        for (var actualReference : actualReferences) {
+            active();
+            var expected = selectedByIdentity.get(new DocumentPayloadCheck.SchemaKey(
+                    actualReference.typeUrl(), actualReference.descriptorSha256()));
+            if (expected != null && !actualReference.equals(expected))
+                throw new IllegalArgumentException("reassessed schema association conflicts with retained reference");
+        }
+        for (var entry : selectedArtifacts.entrySet()) {
+            active();
+            if (!entry.getValue().equals(assessment.artifacts().get(entry.getKey())))
+                throw new IllegalArgumentException("reassessed artifact bytes differ from selected retained assets");
+        }
+        active();
     }
 
     /** Historical replay additionally requires the whole source artifact/reference union. */
@@ -224,6 +268,6 @@ public final class DocumentRetainedSchemaResolution implements DocumentSchemaAdm
     @Override public void close() {
         if (closed) return;
         closed = true; index.clear(); roots.clear(); used.clear(); references = List.of(); container = null;
-        artifactHashes.clear(); selectedReferences.clear(); selectedArtifacts.clear(); resources.close();
+        artifactHashes.clear(); selectedReferences.clear(); selectedArtifacts.clear(); targetOrdinals.clear(); resources.close();
     }
 }

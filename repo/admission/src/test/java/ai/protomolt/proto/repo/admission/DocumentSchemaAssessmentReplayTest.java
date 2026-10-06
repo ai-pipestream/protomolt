@@ -310,6 +310,164 @@ class DocumentSchemaAssessmentReplayTest {
         assertThat(budget.live).isZero();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"true", "false"})
+    void separateRetainedScopesAccountForOneCompositeAssessment(String expression) throws Exception {
+        var captured = capture(expression); var source = captured.request().candidate(); var budget = new Reservations();
+        DocumentSchemaAdmission.Reader reader = hash -> Optional.ofNullable(captured.assets().get(hash));
+        try (var first = DocumentRetainedSchemaResolution.open(source, Map.of(0, 0), reader, POLICY.limits(), budget, () -> {});
+                var second = DocumentRetainedSchemaResolution.open(source, Map.of(1, 1), reader, POLICY.limits(), budget, () -> {});
+                var unused = DocumentRetainedSchemaResolution.open(source, Map.of(0, 0), reader, POLICY.limits(), budget, () -> {});
+                var composite = DocumentCompositeSchemaResolution.open(historical(source.member(), List.of(0, 1)),
+                        List.of(first, second), Optional.empty(), occurrence -> { throw new AssertionError("Retained part reached current resolver"); },
+                        POLICY.limits(), budget, () -> {});
+                var assessed = POLICY.assess(ByteString.copyFromUtf8("n".repeat(32)), historical(source.member(), List.of(0, 1)),
+                        source.fragments(), composite.container(), composite, budget, AT.plusSeconds(1), () -> {})) {
+            assertThat(first.container()).isEqualTo(second.container());
+            first.requireSelectedComplete(assessed.view()); second.requireSelectedComplete(assessed.view());
+            composite.requireComplete(assessed.view());
+            assertThat(assessed.failure().isPresent()).isEqualTo(expression.equals("false"));
+            assertThatThrownBy(() -> first.requireComplete(assessed.view())).hasMessageContaining("roots or occurrences differ");
+            assertThatThrownBy(() -> second.requireComplete(assessed.view())).hasMessageContaining("roots or occurrences differ");
+            assertThatThrownBy(() -> unused.requireSelectedComplete(assessed.view())).hasMessageContaining("roots or occurrences differ");
+            var references = new java.util.HashSet<>(first.selectedReferences()); references.addAll(second.selectedReferences());
+            var artifacts = new HashMap<>(first.selectedArtifacts());
+            second.selectedArtifacts().forEach((hash, bytes) -> {
+                var previous = artifacts.putIfAbsent(hash, bytes);
+                if (previous != null) assertThat(previous).isEqualTo(bytes);
+            });
+            assertThat(assessed.references()).containsExactlyInAnyOrderElementsOf(references);
+            assertThat(assessed.artifacts()).isEqualTo(artifacts);
+        }
+        assertThat(budget.live).isZero();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void mixedRetainedAndCurrentPartsRequireExactAccountedUnion(boolean bypassOrdinaryRoute) throws Exception {
+        var captured = capture("true"); var source = captured.request().candidate(); var budget = new Reservations();
+        var ordinary = fixture(true);
+        var member = historical(source.member(), List.of(0, 1)).toBuilder().setParts(1, source.member().getParts(1)).build();
+        var currentCalls = new AtomicInteger();
+        try (var retained = DocumentRetainedSchemaResolution.open(source, Map.of(0, 0),
+                hash -> Optional.ofNullable(captured.assets().get(hash)), POLICY.limits(), budget, () -> {});
+                var composite = DocumentCompositeSchemaResolution.open(member, List.of(retained), Optional.of(ordinary.container().definition()),
+                        occurrence -> {
+                            assertThat(occurrence.ordinal()).isEqualTo(1); currentCalls.incrementAndGet();
+                            return ordinary.timestamp().definition();
+                        }, POLICY.limits(), budget, () -> {});
+                var assessed = POLICY.assess(ByteString.copyFromUtf8("m".repeat(32)), member, source.fragments(), composite.container(),
+                        occurrence -> bypassOrdinaryRoute && occurrence.ordinal() == 1
+                                ? ordinary.timestamp().definition() : composite.select(occurrence), budget, AT, () -> {})) {
+            if (bypassOrdinaryRoute) {
+                assertThat(currentCalls).hasValue(0);
+                assertThatThrownBy(() -> composite.requireComplete(assessed.view())).hasMessageContaining("ordinary occurrences");
+            } else {
+                composite.requireComplete(assessed.view());
+                assertThat(currentCalls).hasValue(1);
+                assertThat(assessed.failure()).isEmpty();
+            }
+            composite.close();
+            assertThat(retained.container()).isNotNull();
+            assertThatThrownBy(composite::container).isInstanceOf(IllegalStateException.class);
+        }
+        assertThat(budget.live).isZero();
+    }
+
+    @Test void sharedAssetsCannotHideBypassedOrdinaryOccurrence() throws Exception {
+        var normal = fixture(true);
+        var f = fixture(true, normal.document().toBuilder().setStructuredData(
+                Any.pack(com.google.protobuf.Timestamp.newBuilder().setSeconds(3).build(), "type.test")).build());
+        var budget = new Reservations();
+        try (var original = POLICY.assess(ByteString.copyFrom(new byte[32]), f.member(), f.fragments(), f.container().definition(),
+                occurrence -> f.timestamp().definition(), budget, AT, () -> {});
+                var retained = DocumentRetainedSchemaResolution.open(DocumentSchemaAssessmentReplay.Request.from(original.view()).candidate(),
+                        Map.of(0, 0), hash -> Optional.ofNullable(original.artifacts().get(hash)), POLICY.limits(), budget, () -> {})) {
+            var member = historical(f.member(), List.of(0, 1)).toBuilder().setParts(1, f.member().getParts(1)).build();
+            try (var composite = DocumentCompositeSchemaResolution.open(member, List.of(retained), Optional.of(f.container().definition()),
+                    occurrence -> { throw new AssertionError("Test deliberately bypasses ordinary route"); }, POLICY.limits(), budget, () -> {});
+                    var assessed = POLICY.assess(ByteString.copyFrom(new byte[32]), member, f.fragments(), composite.container(),
+                            occurrence -> occurrence.ordinal() == 0 ? composite.select(occurrence) : f.timestamp().definition(),
+                            budget, AT, () -> {})) {
+                assertThat(assessed.artifacts()).isEqualTo(retained.selectedArtifacts());
+                assertThatThrownBy(() -> composite.requireComplete(assessed.view())).hasMessageContaining("ordinary occurrences");
+            }
+        }
+        assertThat(budget.live).isZero();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void sameTypeUrlDefinitionsStayBoundToTheirExactOrdinaryOccurrence(boolean swap) throws Exception {
+        var firstType = DocumentPayloadCheckTest.choice("true"); var secondType = DocumentPayloadCheckTest.choice("false");
+        var first = asset(firstType, true); var second = asset(secondType, true);
+        var normal = fixture(true);
+        var document = normal.document().toBuilder().setStructuredData(Any.pack(DynamicMessage.newBuilder(firstType).build(), "type.test"))
+                .putParserResults("parsed", ParserResult.newBuilder().setDocument(ParserDocument.newBuilder()
+                        .setShape(Any.pack(DynamicMessage.newBuilder(secondType).build(), "type.test"))).build()).build();
+        var f = fixture(true, document); var budget = new Reservations();
+        try (var composite = DocumentCompositeSchemaResolution.open(f.member(), List.of(), Optional.of(f.container().definition()),
+                occurrence -> occurrence.ordinal() == 0 ? first.definition() : second.definition(), POLICY.limits(), budget, () -> {});
+                var assessed = POLICY.assess(ByteString.copyFrom(new byte[32]), f.member(), f.fragments(), composite.container(), occurrence -> {
+                    var selected = composite.select(occurrence);
+                    return swap ? (occurrence.ordinal() == 0 ? second.definition() : first.definition()) : selected;
+                }, budget, AT, () -> {})) {
+            assertThat(assessed.references().stream().filter(ref -> ref.typeUrl().equals(first.metadata().getTypeUrl())).count()).isEqualTo(2);
+            if (swap) assertThatThrownBy(() -> composite.requireComplete(assessed.view())).hasMessageContaining("different definition");
+            else composite.requireComplete(assessed.view());
+            assertThat(assessed.failure()).isPresent();
+        }
+        assertThat(budget.live).isZero();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"missing", "overlap", "ordinary-route", "container", "capacity", "cancel"})
+    void compositeRefusesInvalidRoutesContainersAndLimitsWithoutClosingSources(String fault) throws Exception {
+        var captured = capture("true"); var source = captured.request().candidate(); var budget = new Reservations();
+        var ordinary = fixture(true);
+        try (var first = DocumentRetainedSchemaResolution.open(source, Map.of(0, 0),
+                hash -> Optional.ofNullable(captured.assets().get(hash)), POLICY.limits(), budget, () -> {});
+                var second = DocumentRetainedSchemaResolution.open(source, Map.of(1, 1),
+                        hash -> Optional.ofNullable(captured.assets().get(hash)), POLICY.limits(), budget, () -> {})) {
+            long before = budget.live;
+            var member = fault.equals("ordinary-route") ? source.member() : historical(source.member(), List.of(0, 1));
+            var scopes = fault.equals("missing") ? List.of(first) : fault.equals("overlap") ? List.of(first, first) : List.of(first, second);
+            var container = fault.equals("container") ? Optional.of(ordinary.string().definition()) : Optional.<DocumentSchemaAdmission.Definition>empty();
+            var limits = fault.equals("capacity") ? DocumentAdmissionPolicy.of(POLICY.definition().toBuilder()
+                    .setLimits(POLICY.definition().getLimits().toBuilder().setMaxRetainedBytes(1)).build(), () -> {}).limits() : POLICY.limits();
+            assertThatThrownBy(() -> DocumentCompositeSchemaResolution.open(member, scopes, container,
+                    occurrence -> { throw new AssertionError("No resolver call during preflight"); }, limits, budget, () -> {
+                        if (fault.equals("cancel")) throw new java.util.concurrent.CancellationException("cancelled composite");
+                    })).isInstanceOfAny(IllegalArgumentException.class, java.util.concurrent.CancellationException.class);
+            assertThat(budget.live).isEqualTo(before);
+            assertThat(first.container()).isNotNull(); assertThat(second.container()).isNotNull();
+        }
+        assertThat(budget.live).isZero();
+    }
+
+    @Test void selectedRootlessOrdinalCannotGainAnUnaccountedRoot() throws Exception {
+        var normal = fixture(true);
+        var rootless = fixture(true, normal.document().toBuilder().clearStructuredData().build());
+        var budget = new Reservations();
+        var sourcePolicy = DocumentAdmissionPolicy.of(POLICY.definition().toBuilder().setRequireStructuredRoot(false).build(), () -> {});
+        try (var source = sourcePolicy.assess(ByteString.copyFrom(new byte[32]), rootless.member().toBuilder().clearStructuredSchema().build(), rootless.fragments(),
+                rootless.container().definition(), occurrence -> rootless.timestamp().definition(), budget, AT, () -> {});
+                var retained = DocumentRetainedSchemaResolution.open(DocumentSchemaAssessmentReplay.Request.from(source.view()).candidate(),
+                        Map.of(0, 0), hash -> Optional.ofNullable(source.artifacts().get(hash)), POLICY.limits(), budget, () -> {});
+                var changed = POLICY.assess(ByteString.copyFrom(new byte[32]), normal.member(), normal.fragments(),
+                        normal.container().definition(), occurrence -> occurrence.ordinal() == 0
+                                ? normal.string().definition() : normal.timestamp().definition(), budget, AT, () -> {})) {
+            assertThat(source.roots()).noneMatch(root -> root.ordinal() == 0);
+            assertThat(changed.roots()).anyMatch(root -> root.ordinal() == 0);
+            assertThatThrownBy(() -> retained.requireSelectedComplete(changed.view()))
+                    .hasMessageContaining("roots or occurrences differ");
+            retained.close();
+            assertThatThrownBy(retained::selectedReferences).isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(retained::selectedArtifacts).isInstanceOf(IllegalStateException.class);
+        }
+        assertThat(budget.live).isZero();
+    }
+
     @Test void destinationOrdinalIsIndependentOfSourceLoadingLimit() throws Exception {
         var captured = capture("true"); var budget = new Reservations();
         var sourcePolicy = DocumentAdmissionPolicy.of(POLICY.definition().toBuilder()

@@ -404,8 +404,23 @@ Extend retained completeness checking to verify each source's mapped target root
 consume every selected occurrence exactly once, and check exact selected reference
 and artifact bytes. Keep the existing whole-member completeness check. The completed
 assessment must equal the union of all retained and ordinary selections; subset
-checks alone must not permit unaccounted schema assets. These composite checks are
-not implemented by the content helpers above.
+checks alone must not permit unaccounted schema assets.
+
+These library checks now exist in `DocumentCompositeSchemaResolution`. Retained
+scopes expose their selected ordinals, references and exact borrowed artifact bytes.
+The composite resolver verifies complete disjoint historical routes, exact container
+agreement and the final reference/artifact union. Ordinary occurrences are tracked
+with the definition returned for each occurrence, then compared against canonical
+assessment evidence. Shared assets cannot hide a skipped resolver call, and swapping
+two definitions under the same type URL is refused even when the union is unchanged.
+Source scopes and input bytes remain host-owned; the composite owns its metadata
+scratch and does not close the sources. See [composite evidence](../evidence/repository/2026-10-06-composite-schema-resolution/README.md).
+
+Next, integrate these checks with whole-command assessment and its current policy
+and evaluation time. The host must derive each mapping from authenticated pinned
+selectors, bind the exact command/member identity and reauthorize delivery. The
+library resolver does not provide SQL authorization, source retention, or publication
+authority. Observed-runtime CREATE and atomic reference publication remain gated.
 
 Opaque restore needs explicit source classification and current-policy mode selection
 before raw assembly. A failed typed load or assessment must never trigger raw mode.
