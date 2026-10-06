@@ -23,6 +23,7 @@ final class DelayedS3PutGateway implements AutoCloseable {
     private final AtomicInteger requests = new AtomicInteger();
     private final AtomicBoolean forwarded = new AtomicBoolean();
     private final String target;
+    private final URI origin;
     private boolean disconnected;
 
     private record Request(String target, Map<String, List<String>> headers, byte[] body) {
@@ -30,7 +31,9 @@ final class DelayedS3PutGateway implements AutoCloseable {
     }
     record Result(int status, String version) {}
 
-    DelayedS3PutGateway(String target) throws IOException {
+    DelayedS3PutGateway(URI origin, String target) throws IOException {
+        requireUpstream(origin);
+        this.origin = origin;
         this.target = Objects.requireNonNull(target);
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 1);
         server.setExecutor(workers);
@@ -45,7 +48,10 @@ final class DelayedS3PutGateway implements AutoCloseable {
         Throwable problem = null;
         try {
             if (requests.incrementAndGet() != 1) throw new IllegalStateException("Unexpected SDK retry or concurrent request");
-            if (!exchange.getRequestMethod().equals("PUT") || !exchange.getRequestURI().toASCIIString().equals(target))
+            // An HTTP proxy changes transport routing, not the SDK endpoint or its signature.
+            var requested = exchange.getRequestURI();
+            if (!exchange.getRequestMethod().equals("PUT") || !requested.isAbsolute()
+                    || !requested.equals(origin.resolve(target)))
                 throw new IllegalArgumentException("Gateway accepts only its exact PUT target");
             var headers = new TreeMap<String, List<String>>(String.CASE_INSENSITIVE_ORDER);
             int headerBytes = 0;
@@ -61,11 +67,12 @@ final class DelayedS3PutGateway implements AutoCloseable {
                     || !authorization.contains("Signature=")) throw new IllegalArgumentException("Expected signed AWS request");
             var signed = authorization.substring(authorization.indexOf("SignedHeaders=") + "SignedHeaders=".length()).split(",", 2)[0];
             var signedNames = Set.copyOf(Arrays.asList(signed.split(";")));
-            if (signedNames.contains("connection") || !signedNames.contains("host")
+            if (signedNames.contains("connection") || signedNames.contains("proxy-connection") || !signedNames.contains("host")
                     || !signedNames.contains("x-amz-checksum-sha256"))
                 throw new IllegalArgumentException("Signed headers cannot be altered or omit the checksum/host");
             for (var name : signedNames) single(headers, name);
-            single(headers, "Host");
+            if (!single(headers, "Host").equals(origin.getRawAuthority()))
+                throw new IllegalArgumentException("Proxy request changed original Host authority");
             long length = Long.parseLong(single(headers, "Content-Length"));
             if (length < 0 || length > MAX_BODY) throw new IllegalArgumentException("Request body exceeds gateway bound");
             byte[] body = exchange.getRequestBody().readNBytes(MAX_BODY + 1);
@@ -101,16 +108,15 @@ final class DelayedS3PutGateway implements AutoCloseable {
 
     /** Delivers the original signed bytes after the client and inbound gateway handler have stopped. */
     Result forwardTo(URI upstream) throws Exception {
-        if (!"http".equals(upstream.getScheme()) || upstream.getHost() == null || upstream.getUserInfo() != null
-                || (upstream.getPath() != null && !upstream.getPath().isEmpty()) || upstream.getQuery() != null)
-            throw new IllegalArgumentException("Gateway requires a plain HTTP test upstream without a path");
+        requireUpstream(upstream);
+        if (!origin.equals(upstream)) throw new IllegalArgumentException("Delayed PUT cannot change its original upstream");
         if (!disconnected || !handlerDone.isDone())
             throw new IllegalStateException("Delayed PUT requires one drained inbound request");
         var request = captured.get(5, TimeUnit.SECONDS);
         if (!forwarded.compareAndSet(false, true)) throw new IllegalStateException("Delayed PUT permits only one forwarding attempt");
         var header = new StringBuilder("PUT ").append(request.target()).append(" HTTP/1.1\r\n");
         request.headers().forEach((name, values) -> {
-            if (!name.equalsIgnoreCase("Connection"))
+            if (!name.equalsIgnoreCase("Connection") && !name.equalsIgnoreCase("Proxy-Connection"))
                 values.forEach(value -> header.append(name).append(": ").append(value).append("\r\n"));
         });
         header.append("Connection: close\r\n\r\n");
@@ -143,6 +149,13 @@ final class DelayedS3PutGateway implements AutoCloseable {
         if (values == null || values.size() != 1 || values.getFirst().isBlank())
             throw new IllegalArgumentException("Expected one " + name + " header");
         return values.getFirst();
+    }
+
+    private static void requireUpstream(URI upstream) {
+        if (!"http".equals(upstream.getScheme()) || upstream.getHost() == null || upstream.getUserInfo() != null
+                || (upstream.getPath() != null && !upstream.getPath().isEmpty()) || upstream.getQuery() != null
+                || upstream.getFragment() != null)
+            throw new IllegalArgumentException("Gateway requires a plain HTTP test upstream without a path");
     }
 
     @Override public void close() throws Exception {

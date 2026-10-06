@@ -6439,5 +6439,19 @@ ordinary execution cannot replace it with an initial session.
 This private entry point does not enable automatic recovery. The production-JAR
 graceful successor probe now qualifies an existing-destination update through a
 real versioned provider, with scoped execution, new attempt/object identities and
-retained schema evidence. Abrupt-death recovery and late predecessor effects remain
-unqualified. No protobuf or externally served operation changed in this test slice.
+retained schema evidence. Abrupt-death recovery remains unqualified. No protobuf or
+externally served operation changed in this test slice.
+
+### Delayed predecessor PUT after graceful successor publication
+
+**New qualification:** `DocumentSuccessorLatePutIT` combines real SDK timeout,
+V90/V91 local drain, natural lease expiry, V92/V93/V94 successor publication and
+SQL-driven tombstone cleanup. The original signed PUT reaches LocalStack only
+after the successor publishes and the first cleanup observes absence. A second
+cleanup removes that late version; the old object remains unverified/unreferenced,
+and the successor's bytes and receipt survive. HTTP proxy configuration preserves
+the original endpoint and registered backend identity across both managers.
+
+**Unchanged:** production code, protobuf contracts and public recovery exposure.
+This admin/opaque fixture adds no scoped/typed admission claim. Abrupt death,
+automatic recovery and sustained RustFS performance remain unqualified.

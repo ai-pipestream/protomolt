@@ -1158,3 +1158,20 @@ automatic retry policy, arbitrary SDK framing, or successor isolation. The fixtu
 explicitly uses one SDK attempt, a bounded non-streaming signed body and HTTP.
 Production provider configuration is unchanged. Repository composition must retain
 one exact registered backend identity across the original and successor paths.
+
+### Graceful successor with a delayed predecessor PUT
+
+`DocumentSuccessorLatePutIT` composes the transport seam with real PostgreSQL and
+LocalStack. The proxy leaves the SDK endpoint and registered backend identity
+unchanged. It captures the original signed request, observes an actual SDK timeout,
+and waits for both local drain records and closure of the old client. After natural
+lease expiry, a second manager publishes through V92/V93/V94. SQL-driven recovery
+first records ABSENT; forwarding then creates a real provider version. A second
+recovery pass deletes it while retaining the tombstone. The predecessor object has
+no verification, provider-version binding or revision reference. The successor's
+exact bytes and receipt remain readable.
+
+The fixture uses admin authority and opaque admission. It does not establish
+abrupt-death recovery, automatic public-host recovery, additional scoped/typed
+coverage, arbitrary request framing or retries, or performance. Existing scoped
+typed publication evidence is recorded separately.

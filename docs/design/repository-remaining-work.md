@@ -606,8 +606,8 @@ successor incarnation, installs V93 and activates V94, then publishes the same
 command through the real provider. Assertions cover generation-two selection and
 receipt replay, distinct attempt/object identities, unchanged predecessor evidence,
 retained Any schema binding and released local resources. No lease timestamps are
-manually edited. A remote PUT finishing after local drain still needs a separate
-controlled late-effect test; positive recovery alone cannot establish that property.
+manually edited. A separate controlled late-effect test now covers a remote PUT
+finishing after local drain, as described below.
 
 For that late-effect qualification, the existing transfer tests that pause before
 calling the provider are insufficient: their local worker is still active and cannot
@@ -623,7 +623,13 @@ its exact object versions while the successor stays readable. The test-only
 exact-key reclamation against LocalStack. The SDK times out and its inbound handler
 drains before an independently buffered request is delivered. The first cleanup
 pass observes absence; a second removes the late version while preserving a
-prefix-sharing neighbor. This does not exercise SQL tombstones or successor
-publication. The composed case is still required, and its original and replacement
-hosts must resolve the same registered backend identity; do not substitute a direct
-upstream client for a proxy identity merely because both reach the same test store.
+prefix-sharing neighbor. `DocumentSuccessorLatePutIT` composes that seam with SQL
+tombstones and successor publication. The SDK uses an HTTP proxy while keeping
+the original endpoint and registered backend identity. Both V90/V91 drain records
+exist and the old SDK is closed before forwarding. After natural lease expiry, a
+second manager installs and executes the successor. Recovery observes absence,
+the old request reaches LocalStack, and another recovery pass removes its version.
+The old object stays unverified and unreferenced; the successor's bytes and receipt
+survive. This is an admin/opaque fixture, not additional scoped or typed coverage.
+Abrupt death, automatic host recovery, arbitrary SDK framing/retries and sustained
+RustFS scaling remain separate unfinished work.

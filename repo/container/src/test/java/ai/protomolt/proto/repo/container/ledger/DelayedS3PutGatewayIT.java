@@ -7,6 +7,7 @@ import ai.protomolt.proto.repo.codec.DocumentPartCodec;
 import java.net.URI;
 import java.time.Duration;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.*;
 import org.junit.jupiter.api.Test;
@@ -32,8 +33,8 @@ class DelayedS3PutGatewayIT {
         String bucket = "delayed-put", key = "documents/" + UUID.randomUUID();
         byte[] body = "actual delayed provider bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8);
         try (var direct = client(S3.getEndpoint(), Duration.ofSeconds(10));
-             var gateway = new DelayedS3PutGateway("/" + bucket + "/" + key);
-             var delayed = client(gateway.endpoint(), Duration.ofSeconds(1));
+             var gateway = new DelayedS3PutGateway(S3.getEndpoint(), "/" + bucket + "/" + key);
+             var delayed = client(S3.getEndpoint(), Duration.ofSeconds(1), gateway.endpoint());
              var worker = Executors.newVirtualThreadPerTaskExecutor()) {
             direct.createBucket(b -> b.bucket(bucket));
             direct.putBucketVersioning(b -> b.bucket(bucket).versioningConfiguration(v -> v.status("Enabled")));
@@ -75,11 +76,17 @@ class DelayedS3PutGatewayIT {
     }
 
     static S3Client client(URI endpoint, Duration timeout) {
+        return client(endpoint, timeout, null);
+    }
+    static S3Client client(URI endpoint, Duration timeout, URI proxy) {
+        var http = UrlConnectionHttpClient.builder().connectionTimeout(Duration.ofSeconds(1)).socketTimeout(Duration.ofSeconds(5));
+        if (proxy != null) http.proxyConfiguration(c -> c.endpoint(proxy).nonProxyHosts(Set.of())
+                .useSystemPropertyValues(false).useEnvironmentVariablesValues(false));
         return S3Client.builder().endpointOverride(endpoint).region(Region.of(S3.getRegion())).forcePathStyle(true)
                 .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(S3.getAccessKey(), S3.getSecretKey())))
                 .serviceConfiguration(c -> c.chunkedEncodingEnabled(false).expectContinueEnabled(false))
                 .requestChecksumCalculation(RequestChecksumCalculation.WHEN_REQUIRED)
-                .httpClientBuilder(UrlConnectionHttpClient.builder().connectionTimeout(Duration.ofSeconds(1)).socketTimeout(Duration.ofSeconds(5)))
+                .httpClientBuilder(http)
                 .overrideConfiguration(c -> c.apiCallTimeout(timeout).retryStrategy(r -> r.maxAttempts(1))).build();
     }
 }
