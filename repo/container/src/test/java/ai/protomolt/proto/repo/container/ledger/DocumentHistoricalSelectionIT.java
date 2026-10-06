@@ -27,6 +27,50 @@ class DocumentHistoricalSelectionIT {
     private static final RepositoryCaller ADMIN = new RepositoryCaller("reader", true);
     private static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
 
+    @ParameterizedTest @ValueSource(strings = {"valid", "current-reuse", "non-native", "node", "revision", "ordinal", "object", "missing-node", "oversize-ordinal"})
+    void stagingBindsExactHistoricalProvenanceWithoutRequiringCurrentRevision(String fault) throws Exception {
+        try (var c = context(POSTGRES)) {
+            var f = prepare(c, 1);
+            var original = publish(c, f, Fault.NONE, em -> {});
+            advance(c, f, advance(c, f, original));
+            var selected = selector(f, original, 0, 0);
+            var fixture = new DocumentAssessmentRetentionFixture(c.tx());
+            var candidate = fixture.reuseCandidate();
+            UUID sourceNode = fault.equals("missing-node") || fault.equals("current-reuse") ? null
+                    : fault.equals("node") ? UUID.randomUUID() : DocumentIds.nodeId(selected.getSource());
+            UUID revision = fault.equals("revision") ? UUID.randomUUID()
+                    : fault.equals("non-native") ? f.sources().getFirst().attempt() : UUID.fromString(selected.getRevisionId());
+            UUID object = UUID.fromString(f.sources().getFirst().identities().get(fault.equals("object") ? 1 : 0).getObjectId());
+            int ordinal = fault.equals("oversize-ordinal") ? 10000 : fault.equals("ordinal") ? 1 : 0;
+            // Real SQL staging guard, not command-to-slot admission: the ordinary
+            // envelope is intentionally independent while historical execution is gated.
+            org.assertj.core.api.ThrowableAssert.ThrowingCallable stage = () -> c.tx().inTransaction(em -> {
+                RepositoryOperationLedger.fenceLiveOwner(em, candidate.owner());
+                fixture.insertOwner(em, candidate, 120, 1);
+                em.createNativeQuery("""
+                        INSERT INTO document_assessment_slots(assessment_id,member_id,revision_ordinal,
+                            selection_revision,object_id,declaration,source_node,source_revision,source_ordinal)
+                        VALUES(:assessment,'member',0,1,:object,:declaration,:node,:revision,:ordinal)
+                        """).setParameter("assessment", candidate.assessment()).setParameter("object", object)
+                        .setParameter("declaration", fault.equals("current-reuse") ? "REUSE" : "HISTORICAL_REUSE")
+                        .setParameter("node", sourceNode).setParameter("revision", revision).setParameter("ordinal", ordinal)
+                        .executeUpdate();
+                fixture.seal(em, candidate);
+            });
+            if (fault.equals("valid")) assertThatCode(stage).doesNotThrowAnyException();
+            else assertThatThrownBy(stage).hasStackTraceContaining(
+                    fault.equals("missing-node") || fault.equals("oversize-ordinal")
+                            ? "document_assessment_slots_source_check" : "Assessment candidate differs");
+            long expected = fault.equals("valid") ? 1 : 0;
+            assertThat(c.tx().<Long>readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM document_assessment_owners WHERE assessment_id=:id")
+                    .setParameter("id", candidate.assessment()).getSingleResult()).longValue())).isEqualTo(expected);
+            assertThat(c.tx().<Long>readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM repository_object_references WHERE owner_kind='ASSESSMENT' AND owner_id=:id")
+                    .setParameter("id", candidate.assessment()).getSingleResult()).longValue())).isEqualTo(expected);
+        }
+    }
+
     @Test void selectsOriginalRevisionAfterTwoMorePublicationsAndPreservesTransferredPin() throws Exception {
         try (var c = context(POSTGRES)) {
             var f = prepare(c, 1);

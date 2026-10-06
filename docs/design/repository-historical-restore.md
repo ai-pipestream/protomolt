@@ -263,6 +263,12 @@ commit reference binding and recovery integration remain activation prerequisite
 
 ## Next staging integration
 
+Step 1 below is implemented by V86, with a V85 upgrade fixture and real SQL
+historical/current-source tests. See [staging evidence](../evidence/repository/2026-10-05-historical-staging/README.md).
+The direct SQL tests do not establish canonical command-to-slot correspondence.
+Cross-account, missing-history-reference and retiring-object isolation cases remain
+required before execution activation. Step 2 and final publication remain open.
+
 Sol's review identified two separately reviewable steps. Neither enables restore:
 
 1. Add the SQL declaration `HISTORICAL_REUSE` and immutable source-node identity.

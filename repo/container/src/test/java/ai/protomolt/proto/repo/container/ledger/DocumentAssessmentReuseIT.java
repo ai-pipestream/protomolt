@@ -13,6 +13,38 @@ import static org.assertj.core.api.Assertions.*;
 class DocumentAssessmentReuseIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
+    @Test void historicalMigrationPreservesExistingUploadAndCurrentReuseAssociations() throws Exception {
+        try (var c = context(POSTGRES, "85")) {
+            var source = retainedSource(c);
+            var fixture = new DocumentAssessmentRetentionFixture(c.tx());
+            var uploads = fixture.candidate(120);
+            fixture.stage(uploads, 120);
+            var reuse = fixture.reuseCandidate();
+            var object = sourceObject(c, source.revision());
+            stageReuse(c, fixture, reuse, source.revision(), object, object.sourceOrdinal());
+            String before = slotSnapshot(c, false);
+            long references = count(c, "SELECT count(*) FROM repository_object_references WHERE owner_id=:id", reuse.assessment());
+            String schema = c.tx().readOnly(em -> (String) em.createNativeQuery("SELECT current_schema()").getSingleResult());
+            org.flywaydb.core.Flyway.configure().dataSource(c.pool().getJdbcUrl(), c.pool().getUsername(), c.pool().getPassword())
+                    .schemas(schema).defaultSchema(schema).locations("classpath:db/migration/repo").target("86").load().migrate();
+            assertThat(slotSnapshot(c, true)).isEqualTo(before);
+            assertThat(c.tx().<Long>readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM document_assessment_slots WHERE source_node IS NOT NULL").getSingleResult()).longValue())).isZero();
+            assertThat(count(c, "SELECT count(*) FROM repository_object_references WHERE owner_id=:id", reuse.assessment()))
+                    .isEqualTo(references).isEqualTo(1);
+            // Existing insert shapes still work after migration, not only old rows.
+            var after = fixture.reuseCandidate();
+            stageReuse(c, fixture, after, source.revision(), object, object.sourceOrdinal());
+        }
+    }
+
+    private static String slotSnapshot(Context c, boolean historicalColumn) {
+        return c.tx().readOnly(em -> (String) em.createNativeQuery(
+                "SELECT jsonb_agg(" + (historicalColumn ? "to_jsonb(s)-'source_node'" : "to_jsonb(s)")
+                        + " ORDER BY assessment_id,member_id,revision_ordinal)::text FROM document_assessment_slots s")
+                .getSingleResult());
+    }
+
     @Test void retainsOneAssessmentReferenceForTwoReuseSlotsBoundToTheSamePhysicalObject() throws Exception {
         try (var c = context(POSTGRES)) {
             var source = retainedSource(c);
