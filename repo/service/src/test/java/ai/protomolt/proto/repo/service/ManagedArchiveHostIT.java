@@ -85,7 +85,7 @@ class ManagedArchiveHostIT {
                 "managed-host", 0, null, null, null, null, 0, 0L)
                 .withManagedStorage(new ManagedStoragePolicy("host-original", "host-realm", true));
         try (var occupied = new java.net.ServerSocket(0); var host = RepoServices.build(config)) {
-            var failure = catchThrowable(() -> host.startNetty(occupied.getLocalPort()));
+            var failure = catchThrowable(() -> host.startNetty(occupied.getLocalPort(), "synthetic-operator-key", null));
             assertThat(failure).isInstanceOf(java.io.UncheckedIOException.class);
             assertThat(failure.getCause().getSuppressed()).isEmpty();
             assertThatThrownBy(host::services).isInstanceOf(IllegalStateException.class).hasMessageContaining("closed");

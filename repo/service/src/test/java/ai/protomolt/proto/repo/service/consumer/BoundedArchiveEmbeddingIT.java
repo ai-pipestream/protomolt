@@ -60,7 +60,7 @@ class BoundedArchiveEmbeddingIT {
                 channel.shutdownNow(); assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
             }
             assertThatThrownBy(host::services).isInstanceOf(UnsupportedOperationException.class);
-            assertThatThrownBy(() -> host.startHttp(0)).isInstanceOf(UnsupportedOperationException.class);
+            assertThatThrownBy(() -> host.startHttp(0, "synthetic-operator-key")).isInstanceOf(UnsupportedOperationException.class);
         }
         try (var restarted = RepoServices.buildBoundedArchive(config, limits)) {
             assertThat(restarted.archiveRepository().getEntry(caller,

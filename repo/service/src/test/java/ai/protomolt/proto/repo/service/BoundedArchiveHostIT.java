@@ -76,7 +76,7 @@ class BoundedArchiveHostIT {
             assertThat(budget.reservedBytes()).isZero();
             assertThatThrownBy(host::services).isInstanceOf(UnsupportedOperationException.class);
             assertThatThrownBy(host::repository).isInstanceOf(UnsupportedOperationException.class);
-            assertThatThrownBy(() -> host.startHttp(0)).isInstanceOf(UnsupportedOperationException.class);
+            assertThatThrownBy(() -> host.startHttp(0, "synthetic-operator-key")).isInstanceOf(UnsupportedOperationException.class);
             assertThatThrownBy(host::historicalRepository).isInstanceOf(IllegalStateException.class);
             assertThatThrownBy(() -> archive.bridgeEntry(CALLER, BridgeEntryRequest.getDefaultInstance()))
                     .isInstanceOfSatisfying(RepositoryException.class, e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.UNSUPPORTED));
@@ -169,7 +169,7 @@ class BoundedArchiveHostIT {
             var profile = new BoundedArchiveProfile(new ArchivePutAdmission.Limits(16, 2048, 4), new PayloadBudget(8192), 1);
             try (var host = new RepoServices(config(), BridgeEngine.standard(), providers(), profile)) {
                 assertThatThrownBy(() -> {
-                    if (network) host.startNetty(0);
+                    if (network) host.startNetty(0, "synthetic-operator-key", null);
                     else host.startInProcess("bounded-disabled-" + UUID.randomUUID());
                 }).isInstanceOf(UnsupportedOperationException.class).hasMessageContaining("transport admission");
                 assertThatThrownBy(host::archiveRepository).isInstanceOf(IllegalStateException.class).hasMessageContaining("closed");

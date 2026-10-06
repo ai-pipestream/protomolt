@@ -124,7 +124,7 @@ class ArchiveServiceIT {
         mutations = ArchiveMutationServiceGrpc.newBlockingStub(channel);
         archivesAsync = ArchiveServiceGrpc.newStub(channel);
         drives = DriveServiceGrpc.newBlockingStub(channel);
-        http = services.startHttp(0);
+        http = services.startHttp(0, "synthetic-http-operator-key");
     }
 
     private static ArchiveMutationReceipt mutate(ArchiveMutationRequest.Builder command) {
@@ -532,12 +532,28 @@ class ArchiveServiceIT {
                 .getBytes(StandardCharsets.UTF_8);
 
         HttpClient client = HttpClient.newHttpClient();
+        for (String rejectedToken : new String[] {null, "wrong-key"}) {
+            var request = HttpRequest.newBuilder(URI.create(
+                    "http://127.0.0.1:" + http.port() + UploadHttpServer.ARCHIVE_UPLOAD_PATH
+                            + "?account_id=" + account + "&archive=uploads"
+                            + "&entry_id=curl-doc&rendition=original&filename=doc.txt"))
+                    .header("Content-Type", "text/plain")
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(body));
+            if (rejectedToken != null) request.header("api_token", rejectedToken);
+            assertThat(client.send(request.build(), HttpResponse.BodyHandlers.ofString()).statusCode())
+                    .isEqualTo(401);
+            assertThatThrownBy(() -> archives.getEntry(GetEntryRequest.newBuilder()
+                    .setAddress(address(account, "uploads", "curl-doc")).build()))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class,
+                            failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.NOT_FOUND));
+        }
         HttpResponse<String> response = client.send(HttpRequest.newBuilder(URI.create(
                         "http://127.0.0.1:" + http.port() + UploadHttpServer.ARCHIVE_UPLOAD_PATH
                                 + "?account_id=" + account + "&archive=uploads"
                                 + "&entry_id=curl-doc&rendition=original&filename=doc.txt"))
                         .header("Content-Type", "text/plain")
                         .header("X-Content-Sha256", sha256(body))
+                        .header("api_token", "synthetic-http-operator-key")
                         .POST(HttpRequest.BodyPublishers.ofByteArray(body))
                         .build(),
                 HttpResponse.BodyHandlers.ofString());

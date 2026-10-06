@@ -43,6 +43,7 @@ public final class RepoServiceModule implements ServiceModule {
 
     @Override
     public ServiceMount wire(NodeContext context) {
+        String credential = RepositoryNetworkAuthentication.requireOperatorToken(context.environment().get("PROTOMOLT_API_TOKEN"));
         services = RepoServices.build(config);
         String name = ROLE + "-" + context.nodeId();
         services.startInProcess(name);
@@ -50,8 +51,6 @@ public final class RepoServiceModule implements ServiceModule {
         // The in-process transport needs no credential: it has no socket, and a caller
         // already inside the JVM is past every boundary a credential could draw. The TCP
         // listener is the one reachable from elsewhere, so that is the one guarded.
-        String apiToken = context.environment().get("PROTOMOLT_API_TOKEN");
-        String credential = apiToken == null || apiToken.isBlank() ? null : apiToken;
         // With a co-mounted registry, register the bridge-entry workflow so
         // operators can submit bridging as a durable run by name; without one
         // the two RPCs still answer, there is just no declared envelope.

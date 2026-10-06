@@ -4,6 +4,12 @@ This is the working order for the additions to the repository composition goal.
 It does not replace the [design](repository-composition.md) or declare unfinished
 features available. Recovery is one workstream, not the whole goal.
 
+Repository network startup now requires explicit operator authentication, and TCP
+repo-backed storage requires its own upstream credential. This closes the open
+operator-listener prerequisite. It does not provide key-specific absent-destination
+creation authority; that grant still needs design, shared admission checks, and
+replay/revocation/race tests. See [authentication evidence](../evidence/repository/2026-10-06-required-network-authentication/README.md).
+
 Initial journaled session admission now composes claim, binding, preparation,
 modes, operation and first owner in one SQL transaction. Shared standalone helpers
 retain legacy partial-journal behavior; existing partial rows are not retroactively
@@ -703,3 +709,36 @@ the public command and payload, discovers private recovery state, and completes
 publication while preserving old unselected bytes and ACTIVE reader pins. This
 closes those admin/opaque process windows; automatic hosting, scoped typed process
 recovery, pre-owner recovery and safe pin reclamation remain unfinished.
+
+## Scoped creation authority: review before implementation (2026-10-06)
+
+A caller's account membership and a command's proposed ACL do not authorize a new
+object. A grant copied into `RepositoryCaller` also cannot prove live revocation.
+The candidate design is a host-issued, durable grant for an exact authenticated
+binding, account, operation UUID and canonical command digest. Its target set,
+ownership/security, datasource and placement commitments must be exact. The grant
+only supplies absent-target creation authority: it grants no source READ,
+existing-target WRITE, policy mutation or process authority.
+
+Review the following before implementing the grant:
+
+- Decide how credential identity and generation survive transport binding. Principal
+  name alone cannot distinguish two keys for the same principal. The present
+  `RepositoryCaller` has no key identity; do not silently treat it as one.
+- Check grant liveness under the same transaction and destination revision locks as
+  admission/commit. Revocation must serialize with that decision; do not call an
+  external policy service while holding those locks. Document lock ordering.
+- Apply the shared rule to registration, upload, assessment, final CREATE and
+  successor activation. Rejection, stale-condition inspection and PENDING replay
+  must not expose absent-target outcomes after revocation. Successful replay uses
+  current target READ policy, rather than requiring historical creation authority.
+- Define provisioning, expiry, cancellation, bounded retention and recovery behavior.
+  An already-started provider effect remains owned by recovery after revocation.
+- Prove exact-grant success and wrong account/target/digest/ownership/placement
+  rejection; race revocation against admission, upload and commit; race another
+  creator; test pending, rejection and successful replay separately.
+
+A private SQL-backed grant is a candidate for making the decision atomic with the
+existing ledger. This is design work, not an implemented endpoint or a decision to
+put SQL in the byte SPI. Publication transport and host key/account bindings remain
+separate unfinished boundaries.

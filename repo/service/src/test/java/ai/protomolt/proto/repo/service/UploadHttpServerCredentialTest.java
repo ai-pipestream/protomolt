@@ -11,12 +11,12 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The upload route writes documents into any account's drive, so a configured credential
- * has to be enforced before anything else the request asks for. Every assertion here
- * short-circuits ahead of the drive ledger, the blob store, and the intake save, so the
- * collaborators are {@code null}: a request that reached them would fail differently.
+ * Real HTTP boundary checks with ingestion deliberately disabled. These requests
+ * stop at credential, route, or parameter validation. Successful ingestion is
+ * covered against real storage in {@code UploadHttpServerIT}.
  */
 class UploadHttpServerCredentialTest {
 
@@ -28,7 +28,7 @@ class UploadHttpServerCredentialTest {
 
     @BeforeEach
     void start() {
-        server = new UploadHttpServer(new DocumentGrpcService(null, null, null, null, null, null), null, null, TOKEN);
+        server = new UploadHttpServer(null, TOKEN, null);
         base = "http://127.0.0.1:" + server.start(0);
         client = HttpClient.newHttpClient();
     }
@@ -80,25 +80,20 @@ class UploadHttpServerCredentialTest {
 
     @Test
     void bearerAuthorizationIsAccepted() throws Exception {
-        // Past the credential check, so this reaches the null collaborators and fails
-        // there. Anything other than 401 proves the credential was accepted.
+        // Authenticated requests reach identity validation before ingestion.
         HttpResponse<String> response =
                 post(UploadHttpServer.UPLOAD_PATH, "Authorization", "Bearer " + TOKEN);
 
-        assertThat(response.statusCode()).isNotEqualTo(401);
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(response.body()).contains("account_id is required");
     }
 
     @Test
-    void anOpenServerServesWithoutACredential() throws Exception {
-        try (UploadHttpServer open = new UploadHttpServer(new DocumentGrpcService(null, null, null, null, null, null), null, null)) {
-            String url = "http://127.0.0.1:" + open.start(0)
-                    + UploadHttpServer.UPLOAD_PATH + "/probe";
-            HttpResponse<String> response = client.send(
-                    HttpRequest.newBuilder(URI.create(url))
-                            .POST(HttpRequest.BodyPublishers.noBody()).build(),
-                    HttpResponse.BodyHandlers.ofString());
-
-            assertThat(response.statusCode()).isEqualTo(404);
+    void missingOrBlankOperatorCredentialCannotOpenAListener() {
+        for (String token : new String[]{null, "", "  "}) {
+            assertThatThrownBy(() -> {
+                try (var open = new UploadHttpServer(null, token, null)) { open.start(0); }
+            }).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("API token");
         }
     }
 }

@@ -203,23 +203,23 @@ console demands a browser login bound to a policy principal holding
 `search-query` (the operator token never logs in), and hands the
 session's own credential to the operations panel's registry proxy —
 see [the console](../search/service.md#the-console). Both variables
-unset is the open, trusted-network node.
-If `PROTOMOLT_API_TOKEN` is set, it must be nonblank. An empty secret fails
-startup; remove the variable to select an open node. Tokens are used exactly
-as supplied, without trimming whitespace.
+unset can select an open node only when it does not mount the repository role.
+The repository role requires a nonblank `PROTOMOLT_API_TOKEN` before constructing
+repository resources. Tokens are used exactly as supplied, without trimming whitespace.
 
-Repo-service is worth stating separately because of what it holds: every
-account's documents and every claim-check blob. On a guarded node its TCP
-listener requires the token on every call, reflection included, since
-reflection enumerates the very RPCs being guarded; so does the streaming
-upload route, which writes into any account's drive. Its in-process
-transport stays open by design, because it has no socket and a caller
-already inside the JVM is past every boundary a credential could draw. A
-repository reachable from outside the node's own network should always
-run guarded, whatever the rest of the node does. Running it standalone
-without the token logs a warning at boot rather than failing, so an
-existing trusted-network deployment keeps working while saying plainly
-what it is.
+Repo-service requires authentication on every TCP call, including health and
+reflection, and on its HTTP upload routes. Missing or blank operator credentials
+refuse startup. Trusted in-process library access has no socket; its caller
+binding is supplied by the embedding host. The operator token grants process
+authority. Scoped ownership grants remain a separate authorization boundary.
+
+For `DOCUMENT_PLATFORM_BLOB_STORE=repo`, configure
+`DOCUMENT_PLATFORM_REPO_API_TOKEN` with the upstream repository's credential.
+This is independent of the local listener's `PROTOMOLT_API_TOKEN`; neither is
+inferred from the other. A missing upstream credential refuses TCP repository
+storage startup. The existing TCP client uses plaintext transport, so deployments
+must provide a protected transport boundary. The `repo-inprocess` mode does not
+require an upstream credential.
 
 A policy principal's `metric_access` section drives the metric role's
 compile-time rewrite on the same guarded node — denied members and

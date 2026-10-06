@@ -60,7 +60,7 @@ import java.util.concurrent.TimeUnit;
  * keeping full gRPC semantics (interceptors, deadlines, status codes), which
  * is how a host server mounts the repository alongside its own services and
  * how the integration tests boot the stack. Standalone deployment uses
- * {@link #startNetty(int)}: TCP via Netty, plus the gRPC health-status and
+ * {@link #startNetty(int, String, CallerResolver)}: TCP via Netty, plus the gRPC health-status and
  * reflection services; {@link RepoServiceMain} is exactly that path driven
  * from the environment.
  *
@@ -83,7 +83,7 @@ import java.util.concurrent.TimeUnit;
  * opts in after building, and embedded hosts ({@link #startInProcess(String)})
  * call the method themselves when they want it. Unset/blank = no seeding.
  *
- * <p>Bulk uploads are served by {@link #startHttp(int)}: the streaming HTTP
+ * <p>Bulk uploads are served by {@link #startHttp(int, String)}: the streaming HTTP
  * route whose body flows to object storage without buffering, next to the
  * unary gRPC API.
  */
@@ -191,6 +191,8 @@ public final class RepoServices implements AutoCloseable {
                     || RepoServiceConfig.BLOB_STORE_REPO_INPROCESS.equals(config.blobStore()))
                     && config.repoBucketBindings().isEmpty())
                 throw new IllegalArgumentException(RepoServiceConfig.ENV_REPO_BUCKET_BINDINGS + " is required for remote storage");
+            if (RepoServiceConfig.BLOB_STORE_REPO.equals(config.blobStore()) && config.repoCredential() == null)
+                throw new IllegalArgumentException(RepoServiceConfig.ENV_REPO_API_TOKEN + " is required for TCP repository storage");
             this.database = owned.add(new LedgerDatabase(config.ledger()));
             this.tx = new Tx(database.entityManagerFactory());
             this.documentLedger = new DocumentLedger(tx);
@@ -254,7 +256,10 @@ public final class RepoServices implements AutoCloseable {
                         if (!remoteChannel.awaitTermination(10, TimeUnit.SECONDS))
                             throw new IllegalStateException("Repository client channel did not terminate");
                     });
-                    this.blobStore = new RemoteBlobStore(DocumentServiceGrpc.newBlockingStub(remoteChannel),
+                    var remoteStub = DocumentServiceGrpc.newBlockingStub(remoteChannel);
+                    if (config.repoCredential() != null)
+                        remoteStub = remoteStub.withInterceptors(config.repoCredential().interceptor());
+                    this.blobStore = new RemoteBlobStore(remoteStub,
                             config.repoBucketBindings(), java.time.Duration.ofSeconds(30));
                     namespaces = blobStore::headBucket;
                 }
@@ -508,21 +513,7 @@ public final class RepoServices implements AutoCloseable {
     }
 
     /**
-     * Starts all services on a Netty TCP server (standalone deployment), plus
-     * the gRPC health-status and reflection services. Health reports SERVING
-     * for the overall server once it is listening; reflection is enabled for
-     * grpcurl-style tooling.
-     *
-     * @param port the listen port (0 = ephemeral)
-     * @return the started server (also closed by {@link #close()})
-     */
-    public Server startNetty(int port) {
-        return startNetty(port, null, null);
-    }
-
-    /**
-     * Starts all services on a Netty TCP server, requiring a call credential when
-     * {@code apiToken} is set.
+     * Starts all services on a Netty TCP server with a required operator credential.
      *
      * <p>The repository holds every account's documents and every claim-check blob, so an
      * unauthenticated listener is a read and write path to all of them. With a token, every
@@ -531,19 +522,14 @@ public final class RepoServices implements AutoCloseable {
      * being guarded. With a {@link CallerResolver}, a credential the mounted access policy
      * names runs as its principal instead of with process authority.
      *
-     * <p>Without a token the listener stays open, which is the trusted-network deployment
-     * this service has always supported: a repository reachable only from inside the node's
-     * network, with authentication enforced at the surfaces in front of it. That default is
-     * unchanged so an existing deployment does not break, but a repository reachable from
-     * anywhere else should set a token.
-     *
      * @param port the listen port (0 = ephemeral)
-     * @param apiToken the operator credential every call must present, or null to serve open
+     * @param apiToken nonblank operator credential; policy-resolved credentials may also authenticate
      * @param resolver resolves a policy-named credential to its principal; requires a token
      * @return the started server (also closed by {@link #close()})
      */
     public synchronized Server startNetty(int port, String apiToken, CallerResolver resolver) {
         requireOpen();
+        RepositoryNetworkAuthentication.requireOperatorToken(apiToken);
         requireTransportAuthentication(apiToken, resolver);
         try {
             HealthStatusManager health = new HealthStatusManager();
@@ -551,9 +537,7 @@ public final class RepoServices implements AutoCloseable {
                     .maxInboundMessageSize(10 * 1024 * 1024)
                     .addService(health.getHealthService())
                     .addService(ProtoReflectionService.newInstance());
-            if (apiToken != null) {
-                builder.intercept(new ApiTokenServerInterceptor(apiToken, resolver));
-            }
+            builder.intercept(new ApiTokenServerInterceptor(apiToken, resolver));
             Server server = registerAndStart(builder, started -> RemoteRouting.rejectTcp(config, started.getPort()));
             health.setStatus("", HealthCheckResponse.ServingStatus.SERVING);
             LOG.info("repo-service listening on port {}", server.getPort());
@@ -620,34 +604,19 @@ public final class RepoServices implements AutoCloseable {
     }
 
     /**
-     * Starts the streaming HTTP upload server ({@code POST
-     * /v1/documents:upload}, see {@link UploadHttpServer}) alongside the gRPC
-     * transports. This is where bulk bytes belong: the body streams to object
-     * storage without ever being buffered in memory, unlike the unary blob
-     * RPCs.
+     * Starts the streaming HTTP upload server with a required operator credential.
+     * This administrative route writes into any account's drive. Scoped upload
+     * authorization is a separate capability.
      *
      * @param port the listen port (0 = ephemeral; read the bound port back
      *        from the returned server)
-     * @return the started HTTP server (also closed by {@link #close()})
-     */
-    public UploadHttpServer startHttp(int port) {
-        return startHttp(port, null);
-    }
-
-    /**
-     * Starts the streaming HTTP upload server, requiring a credential when
-     * {@code apiToken} is set. The route writes into any account's drive, so it takes the
-     * same credential as the gRPC surface rather than a second one; without a token it
-     * serves open, the trusted-network default this server has always had.
-     *
-     * @param port the listen port (0 = ephemeral; read the bound port back
-     *        from the returned server)
-     * @param apiToken the credential every request must present, or null to serve open
+     * @param apiToken nonblank operator credential every request must present
      * @return the started HTTP server (also closed by {@link #close()})
      */
     public synchronized UploadHttpServer startHttp(int port, String apiToken) {
         requireOpen();
         requireFullProfile();
+        RepositoryNetworkAuthentication.requireOperatorToken(apiToken);
         if (rawIngestion != null) startLifecycle();
         UploadHttpServer http = new UploadHttpServer(rawIngestion, apiToken, archiveOperations);
         httpServers.add(http);

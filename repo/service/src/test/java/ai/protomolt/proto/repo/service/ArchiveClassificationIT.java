@@ -103,7 +103,7 @@ class ArchiveClassificationIT {
                         .setDriveName("classify-drive")
                         .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED))
                 .build());
-        http = services.startHttp(0);
+        http = services.startHttp(0, "synthetic-http-operator-key");
     }
 
     @AfterAll
@@ -220,6 +220,7 @@ class ArchiveClassificationIT {
                                 + "?account_id=" + ACCOUNT + "&archive=classified"
                                 + "&entry_id=scan&rendition=original&filename=scan.pdf"))
                         .header("Content-Type", "application/pdf")
+                        .header("api_token", "synthetic-http-operator-key")
                         .POST(HttpRequest.BodyPublishers.ofByteArray(pdf))
                         .build(),
                 HttpResponse.BodyHandlers.ofString());
@@ -279,6 +280,7 @@ class ArchiveClassificationIT {
                                         + "?account_id=" + ACCOUNT + "&archive=classified"
                                         + "&entry_id=" + entryId
                                         + "&rendition=original&filename=" + filename))
+                        .header("api_token", "synthetic-http-operator-key")
                         .POST(HttpRequest.BodyPublishers.ofByteArray(body))
                         .build(),
                 HttpResponse.BodyHandlers.ofString());

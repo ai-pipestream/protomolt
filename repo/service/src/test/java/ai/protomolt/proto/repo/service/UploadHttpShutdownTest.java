@@ -25,10 +25,11 @@ class UploadHttpShutdownTest {
                 catch (InterruptedException ignored) { /* Deliberately uncooperative handler. */ }
             }
             throw new IllegalStateException("Injected ingestion failure");
-        }, null, null);
+        }, "synthetic-http-operator-key", null);
         var client = HttpClient.newHttpClient();
         var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + server.start(0)
                 + UploadHttpServer.UPLOAD_PATH + "?account_id=a&datasource_id=d&drive=d&filename=x"))
+                .header("api_token", "synthetic-http-operator-key")
                 .POST(HttpRequest.BodyPublishers.ofString("x")).build();
         var response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
         try {

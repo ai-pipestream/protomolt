@@ -720,6 +720,15 @@ class RepoServiceIT {
 
     // --------------------------------------------------------- authentication
 
+    @Test void networkListenersRequireExplicitOperatorCredential() {
+        for (String token : new String[]{null, "", "  "}) {
+            assertThatThrownBy(() -> services.startNetty(0, token, null))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("API token");
+            assertThatThrownBy(() -> services.startHttp(0, token))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("API token");
+        }
+    }
+
     /**
      * The TCP listener holds every account's documents and every claim-check blob, so with
      * a credential configured it must refuse a call that does not present one. The
@@ -754,6 +763,28 @@ class RepoServiceIT {
             assertThat(authenticated.listDrives(
                     ListDrivesRequest.newBuilder().setAccountId("acct-auth").build()))
                     .isNotNull();
+            var authorized = io.grpc.ClientInterceptors.intercept(plain, MetadataUtils.newAttachHeadersInterceptor(credential));
+            assertThat(io.grpc.health.v1.HealthGrpc.newBlockingStub(authorized)
+                    .check(io.grpc.health.v1.HealthCheckRequest.getDefaultInstance()).getStatus())
+                    .isEqualTo(io.grpc.health.v1.HealthCheckResponse.ServingStatus.SERVING);
+            assertThat(reflection(authorized).get(5, java.util.concurrent.TimeUnit.SECONDS)
+                    .getListServicesResponse().getServiceList().stream().map(service -> service.getName()))
+                    .contains(DocumentServiceGrpc.SERVICE_NAME);
+            for (String invalid : new String[]{null, "wrong-synthetic-token"}) {
+                Metadata headers = new Metadata();
+                if (invalid != null) headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), invalid);
+                var denied = io.grpc.ClientInterceptors.intercept(plain, MetadataUtils.newAttachHeadersInterceptor(headers));
+                assertThatThrownBy(() -> io.grpc.health.v1.HealthGrpc.newBlockingStub(denied)
+                        .check(io.grpc.health.v1.HealthCheckRequest.getDefaultInstance()))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class,
+                                failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED));
+                assertThatThrownBy(() -> DocumentServiceGrpc.newBlockingStub(denied).getDocument(GetDocumentRequest.getDefaultInstance()))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class,
+                                failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED));
+                assertThatThrownBy(() -> reflection(denied).get(5, java.util.concurrent.TimeUnit.SECONDS))
+                        .isInstanceOfSatisfying(java.util.concurrent.ExecutionException.class, failure ->
+                                assertThat(Status.fromThrowable(failure.getCause()).getCode()).isEqualTo(Status.Code.UNAUTHENTICATED));
+            }
         } finally {
             plain.shutdownNow();
             guarded.shutdownNow();
@@ -765,7 +796,22 @@ class RepoServiceIT {
     void anAccessPolicyResolverWithoutACredentialIsRefusedAtStartup() {
         assertThatThrownBy(() -> services.startNetty(0, null, caller -> java.util.Optional.empty()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("api token");
+                .hasMessageContaining("API token");
+    }
+
+    private static java.util.concurrent.CompletableFuture<io.grpc.reflection.v1alpha.ServerReflectionResponse> reflection(io.grpc.Channel channel) {
+        var result = new java.util.concurrent.CompletableFuture<io.grpc.reflection.v1alpha.ServerReflectionResponse>();
+        var requests = io.grpc.reflection.v1alpha.ServerReflectionGrpc.newStub(channel).serverReflectionInfo(
+                new io.grpc.stub.StreamObserver<io.grpc.reflection.v1alpha.ServerReflectionResponse>() {
+                    @Override public void onNext(io.grpc.reflection.v1alpha.ServerReflectionResponse response) { result.complete(response); }
+                    @Override public void onError(Throwable failure) { result.completeExceptionally(failure); }
+                    @Override public void onCompleted() {
+                        if (!result.isDone()) result.completeExceptionally(new AssertionError("Reflection completed without a response"));
+                    }
+                });
+        requests.onNext(io.grpc.reflection.v1alpha.ServerReflectionRequest.newBuilder().setListServices("").build());
+        requests.onCompleted();
+        return result;
     }
 
     private static io.grpc.Server policyServer(String endpoint,

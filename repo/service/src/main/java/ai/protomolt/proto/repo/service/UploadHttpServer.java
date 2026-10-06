@@ -55,12 +55,6 @@ public final class UploadHttpServer implements AutoCloseable {
 
     /** Compatibility constructor: document uploads return 503 until a qualified ingestion port is supplied. */
     public UploadHttpServer(DocumentGrpcService documentService, DriveLedger drives,
-            BlobStore blobStore) {
-        this(documentService, drives, blobStore, null);
-    }
-
-    /** Compatibility constructor: document uploads return 503 until a qualified ingestion port is supplied. */
-    public UploadHttpServer(DocumentGrpcService documentService, DriveLedger drives,
             BlobStore blobStore, String apiToken) {
         this(documentService, drives, blobStore, apiToken, null);
     }
@@ -86,8 +80,7 @@ public final class UploadHttpServer implements AutoCloseable {
     public UploadHttpServer(ai.protomolt.proto.repo.spi.RawIngestionRepository ingestion,
             String apiToken, ArchiveRepository archiveOperations) {
         this.ingestion = ingestion;
-        this.expectedToken = apiToken == null
-                ? null : apiToken.getBytes(StandardCharsets.UTF_8);
+        this.expectedToken = RepositoryNetworkAuthentication.requireOperatorToken(apiToken).getBytes(StandardCharsets.UTF_8);
         this.archiveOperations = archiveOperations;
     }
 
@@ -98,9 +91,6 @@ public final class UploadHttpServer implements AutoCloseable {
      * missing header and never echoes what was presented.
      */
     private void requireCredential(HttpExchange exchange) throws HttpError {
-        if (expectedToken == null) {
-            return;
-        }
         String presented = exchange.getRequestHeaders().getFirst("api_token");
         if (presented == null) {
             String authorization = exchange.getRequestHeaders().getFirst("Authorization");

@@ -230,9 +230,10 @@ class RemoteBlobStoreIT {
         var config = new RepoServiceConfig(0,
                 new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
                 null, null, null, null, "local-base", 0, "repo", "localhost:" + port, DRIVE,
-                null, 0, 0).withRepoBucketBindings(java.util.Map.of("local", DRIVE));
+                null, 0, 0).withRepoBucketBindings(java.util.Map.of("local", DRIVE))
+                .withRepoCredential(new RemoteRepositoryCredential("synthetic-upstream-key"));
         try (var downstream = RepoServices.build(config)) {
-            assertThatThrownBy(() -> downstream.startNetty(port))
+            assertThatThrownBy(() -> downstream.startNetty(port, "synthetic-operator-key", null))
                     .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("this TCP listener");
             try (var rebound = new java.net.ServerSocket(port)) {
                 assertThat(rebound.isBound()).isTrue();
@@ -281,6 +282,42 @@ class RemoteBlobStoreIT {
                             failure -> assertThat(failure.getStatus().getCode()).isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED));
             assertThatThrownBy(() -> store.get(DRIVE, "denied")).isInstanceOf(BlobStore.BlobNotFoundException.class);
         } finally { authenticatedChannel.shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS); }
+    }
+
+    @Test
+    void tcpRepositoryAssemblyUsesItsExplicitUpstreamCredential() throws Exception {
+        var ledger = new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+        var upstreamConfig = new RepoServiceConfig(0, ledger, LOCALSTACK.getEndpoint().toString(),
+                LOCALSTACK.getRegion(), LOCALSTACK.getAccessKey(), LOCALSTACK.getSecretKey(),
+                "it-remote-docs", 0, null, null, null, null, 0, 0);
+        try (var upstream = RepoServices.build(upstreamConfig)) {
+            var listener = upstream.startNetty(0, "synthetic-upstream-key", null);
+            var remote = new RepoServiceConfig(0, ledger, null, null, null, null, "local", 0,
+                    "repo", "localhost:" + listener.getPort(), DRIVE, null, 0, 0)
+                    .withRepoBucketBindings(java.util.Map.of("local", DRIVE));
+            assertThatThrownBy(() -> RepoServices.build(remote))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining(RepoServiceConfig.ENV_REPO_API_TOKEN);
+            for (String token : new String[] {"wrong-key", "synthetic-upstream-key"}) {
+                var configured = remote.withRepoCredential(new RemoteRepositoryCredential(token));
+                assertThat(configured.toString()).doesNotContain(token);
+                try (var downstream = RepoServices.build(configured)) {
+                    var spec = new BlobStore.PutSpec("local", "authenticated-roundtrip", "text/plain", null, null);
+                    if (token.equals("wrong-key")) {
+                        assertThatThrownBy(() -> downstream.blobStore().put(spec, new byte[] {7}))
+                                .isInstanceOfSatisfying(ai.protomolt.proto.repo.blob.spi.BlobStoreException.class,
+                                        failure -> assertThat(failure.code())
+                                                .isEqualTo(ai.protomolt.proto.repo.blob.spi.BlobStoreException.Code.UNAUTHENTICATED));
+                        assertThatThrownBy(() -> store.get(DRIVE, spec.key()))
+                                .isInstanceOf(BlobStore.BlobNotFoundException.class);
+                    } else {
+                        downstream.blobStore().put(spec, new byte[] {7});
+                        assertThat(downstream.blobStore().get("local", spec.key()).data()).containsExactly((byte) 7);
+                        assertThat(downstream.blobStore().delete("local", spec.key())).isTrue();
+                    }
+                }
+            }
+        }
     }
 
     @Test

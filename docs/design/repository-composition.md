@@ -398,10 +398,12 @@ Before client-key exposure, wire a host-controlled credential binding through th
 actual gRPC/HTTP entry points and test two keys with different account grants,
 missing/revoked credentials, forged account IDs and attempted authority escalation.
 Require an authenticated operator credential for externally exposed raw HTTP
-upload until a scoped upload boundary is implemented. The current tokenless
-listener grants operator authority without authenticating an operator. Missing
-authentication on externally exposed endpoints must fail
-closed; trusted in-process library calls receive their caller from the host.
+upload until a scoped upload boundary is implemented. Network listeners now refuse
+missing or blank operator credentials before startup, including the standalone
+and node-module entry points. TCP repo-backed storage requires its own explicit
+upstream credential. This closes tokenless operator access; it does not implement
+key-specific account or creation grants. Trusted in-process library calls receive
+their caller from the host.
 Delegated agents retain the initiating caller's effective scope instead of gaining
 coordinator authority. Feed and connector credentials likewise need explicit
 datasource/account grants. All adapters must use the shared repository checks;

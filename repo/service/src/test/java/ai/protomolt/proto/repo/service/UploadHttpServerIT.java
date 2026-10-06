@@ -87,7 +87,7 @@ class UploadHttpServerIT {
                 0, null, null, null, null, 0, 0L);
         services = RepoServices.build(config.withManagedStorage(new ManagedStoragePolicy("http-test-v1", "test-realm", true)));
         services.startInProcess("it-http");
-        http = services.startHttp(0); // ephemeral port
+        http = services.startHttp(0, "synthetic-http-operator-key"); // ephemeral port
         channel = InProcessChannelBuilder.forName("it-http").build();
         documents = DocumentServiceGrpc.newBlockingStub(channel);
         DriveServiceGrpc.DriveServiceBlockingStub drives = DriveServiceGrpc.newBlockingStub(channel);
@@ -113,10 +113,11 @@ class UploadHttpServerIT {
 
     @Test void disabledManagedStorageRefusesUploadsWithoutLegacyFallback() throws Exception {
         try (var disabled = RepoServices.build(config)) {
-            var endpoint = disabled.startHttp(0);
+            var endpoint = disabled.startHttp(0, "synthetic-http-operator-key");
             var request = HttpRequest.newBuilder(URI.create("http://localhost:" + endpoint.port()
                     + UploadHttpServer.UPLOAD_PATH + "?account_id=" + ACCOUNT + "&datasource_id=" + DATASOURCE
                     + "&drive=" + DRIVE + "&filename=disabled.bin&doc_id=disabled-upload"))
+                    .header("api_token", "synthetic-http-operator-key")
                     .POST(HttpRequest.BodyPublishers.ofByteArray(new byte[] {1})).build();
             var response = client.send(request, HttpResponse.BodyHandlers.ofString());
             assertThat(response.statusCode()).isEqualTo(503);
@@ -210,6 +211,7 @@ class UploadHttpServerIT {
         HttpRequest.Builder template = HttpRequest.newBuilder(URI.create(uploadUrl
                         + "?account_id=" + ACCOUNT + "&datasource_id=" + DATASOURCE
                         + "&drive=" + DRIVE + "&filename=derived.bin"))
+                .header("api_token", "synthetic-http-operator-key")
                 .POST(patternPublisher(size));
         JsonNode first = MAPPER.readTree(client.send(template.build(),
                 HttpResponse.BodyHandlers.ofString()).body());
@@ -232,6 +234,7 @@ class UploadHttpServerIT {
         HttpRequest request = HttpRequest.newBuilder(URI.create(uploadUrl
                         + "?account_id=" + ACCOUNT + "&datasource_id=" + DATASOURCE
                         + "&drive=" + DRIVE + "&filename=x.bin"))
+                .header("api_token", "synthetic-http-operator-key")
                 .POST(HttpRequest.BodyPublishers.ofInputStream(
                         () -> patternStream(4096)))
                 .build();
@@ -243,6 +246,7 @@ class UploadHttpServerIT {
     void missingAccountIdIs400NamingTheParam() throws Exception {
         HttpResponse<String> response = client.send(HttpRequest.newBuilder(URI.create(uploadUrl
                         + "?datasource_id=" + DATASOURCE + "&drive=" + DRIVE + "&filename=x.bin"))
+                .header("api_token", "synthetic-http-operator-key")
                 .POST(patternPublisher(128))
                 .build(), HttpResponse.BodyHandlers.ofString());
         assertThat(response.statusCode()).isEqualTo(400);
@@ -254,6 +258,7 @@ class UploadHttpServerIT {
         HttpResponse<String> response = client.send(HttpRequest.newBuilder(URI.create(uploadUrl
                         + "?account_id=" + ACCOUNT + "&datasource_id=" + DATASOURCE
                         + "&drive=no-such-drive&filename=x.bin"))
+                .header("api_token", "synthetic-http-operator-key")
                 .POST(patternPublisher(128))
                 .build(), HttpResponse.BodyHandlers.ofString());
         assertThat(response.statusCode()).isEqualTo(404);
@@ -345,6 +350,7 @@ class UploadHttpServerIT {
                         + "&drive=" + DRIVE + "&filename=big.bin&doc_id=" + docId
                         + "&connector_id=conn-http&crawl_id=crawl-1"))
                 .header("Content-Type", "application/octet-stream")
+                .header("api_token", "synthetic-http-operator-key")
                 .POST(body);
         if (declaredSha != null) {
             builder.header("X-Content-Sha256", declaredSha);

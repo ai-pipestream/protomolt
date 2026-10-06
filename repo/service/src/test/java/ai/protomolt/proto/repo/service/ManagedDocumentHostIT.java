@@ -96,7 +96,7 @@ class ManagedDocumentHostIT {
                 assertThat(host.services()).filteredOn(service -> service instanceof DocumentHistoryMaterializationGrpcService).hasSize(1);
                 assertThat(host.historicalRepository()).isSameAs(host.documentHistory());
                 assertThat(host.historicalMaterializationRepository()).isSameAs(host.historicalRepository());
-                assertThatThrownBy(() -> host.startNetty(0)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("API token");
+                assertThatThrownBy(() -> host.startNetty(0, null, null)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("API token");
                 assertThatThrownBy(() -> host.startNetty(0, " ", null)).isInstanceOf(IllegalArgumentException.class);
                 assertThatThrownBy(() -> host.startInProcess("missing-token")).isInstanceOf(IllegalArgumentException.class);
                 String name = "authenticated-history-" + UUID.randomUUID();

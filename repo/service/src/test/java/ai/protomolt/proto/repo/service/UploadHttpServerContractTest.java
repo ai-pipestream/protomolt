@@ -15,13 +15,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Self-contained tests of the {@link UploadHttpServer} request contract that
- * is decided BEFORE any collaborator is touched: route matching, method
- * enforcement, required-identity validation, and the Content-Length rule.
- * Every assertion here short-circuits ahead of the drive ledger, the blob
- * store, and the intake save, so the collaborators are {@code null} — the
- * paths that genuinely reach them run against real storage in
- * {@code UploadHttpServerIT}.
+ * Real HTTP boundary checks with ingestion deliberately disabled. These requests
+ * stop at credential, route, or parameter validation. Successful ingestion is
+ * covered against real storage in {@code UploadHttpServerIT}.
  */
 class UploadHttpServerContractTest {
 
@@ -31,7 +27,7 @@ class UploadHttpServerContractTest {
 
     @BeforeEach
     void start() {
-        server = new UploadHttpServer(new DocumentGrpcService(null, null, null, null, null, null), null, null);
+        server = new UploadHttpServer(null, "synthetic-http-operator-key", null);
         url = "http://127.0.0.1:" + server.start(0) + UploadHttpServer.UPLOAD_PATH;
         client = HttpClient.newHttpClient();
     }
@@ -46,7 +42,7 @@ class UploadHttpServerContractTest {
 
     @Test
     void portBeforeStartAndDoubleStartAreIllegalState() {
-        UploadHttpServer fresh = new UploadHttpServer(new DocumentGrpcService(null, null, null, null, null, null), null, null);
+        UploadHttpServer fresh = new UploadHttpServer(null, "synthetic-http-operator-key", null);
         assertThatThrownBy(fresh::port)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("not started");
@@ -140,6 +136,7 @@ class UploadHttpServerContractTest {
     }
 
     private HttpResponse<String> send(HttpRequest request) throws Exception {
-        return client.send(request, HttpResponse.BodyHandlers.ofString());
+        return client.send(HttpRequest.newBuilder(request, (name, value) -> true)
+                .header("api_token", "synthetic-http-operator-key").build(), HttpResponse.BodyHandlers.ofString());
     }
 }

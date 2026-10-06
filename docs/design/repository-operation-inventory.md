@@ -1,5 +1,19 @@
 # Repository operation inventory
 
+## Required network authentication (2026-10-06)
+
+- **Extended:** repository TCP and HTTP startup require a nonblank operator token.
+  Standalone and node-module startup validate it before building repository resources.
+  Health and reflection use the same TCP authentication interceptor.
+- **Extended:** TCP repo-backed byte storage requires a separate upstream credential
+  (`DOCUMENT_PLATFORM_REPO_API_TOKEN`). Inbound credentials are not reused implicitly.
+- **Changed Java entry points:** removed tokenless `startNetty(int)`, `startHttp(int)`
+  and the tokenless legacy HTTP constructor. Trusted in-process embedding remains.
+- **Unchanged:** protobuf definitions, receipt identities, idempotency and persistence.
+- **Still required:** key-specific ownership/creation grants; this operator credential
+  gate does not implement them. TCP client transport remains plaintext.
+- [Validation evidence](../evidence/repository/2026-10-06-required-network-authentication/README.md).
+
 ## Registry adapter addition (2026-10-05)
 
 - **New Java runtime entry:** `DocumentPublicationRuntime.executeScoped` owns lazy
