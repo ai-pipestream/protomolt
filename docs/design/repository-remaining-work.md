@@ -20,13 +20,17 @@ mixed upload/current/historical identities, aggregate copy reservations and hash
 checks before schema loading. The raw assembly helper has an explicit historical
 path, with no policy-mode selection or typed validation grant. The admission library
 now supports composite per-source schema routing, exact container agreement, per-source
-evidence checking and exact global asset/ordinary-occurrence accounting. Whole-command
-host integration remains next; preserve the full mixed-part and opaque-source
-requirements rather than treating library coverage as executable restore.
+evidence checking and exact global asset/ordinary-occurrence accounting. The internal
+whole-command assessment owner now retains source Uses, binds the exact caller,
+assesses members under one supplied policy and time, and rechecks current source
+READ during inspection and replay. Its callback-scoped inspection provides immutable
+summaries plus the caller-supplied command and policy values; it exposes no borrowed
+payload or publication capability. Historical opaque-source classification and
+durable publication integration remain unfinished.
 
-Next, carry retained schema definitions into whole-command assessment under one
-current policy and evaluation time, then through observed-runtime CREATE and atomic
-reference publication. Preserve each member's container and occurrence definitions,
+Next, carry the whole-command assessment through observed-runtime CREATE and atomic
+reference publication, with authoritative current-policy and destination fences.
+Preserve each member's container and occurrence definitions,
 source-to-target ordinals, shared byte accounting and source pins. A prior historical
 verdict cannot substitute for a new assessment. Claims, sessions and public
 historical execution remain disabled until their own integration tests pass.

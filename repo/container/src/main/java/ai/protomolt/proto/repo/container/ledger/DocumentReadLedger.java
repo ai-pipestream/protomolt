@@ -356,6 +356,14 @@ public final class DocumentReadLedger {
             this.revision = captured.plan().revision();
         }
 
+        /** A captured principal or process grant cannot be lent to a different assessment actor. */
+        void requireCaller(RepositoryCaller expected) {
+            if (!caller.equals(Objects.requireNonNull(expected)))
+                throw new ai.protomolt.proto.repo.spi.RepositoryException(
+                        ai.protomolt.proto.repo.spi.RepositoryException.Code.PERMISSION_DENIED,
+                        "Historical capture caller differs from assessment caller");
+        }
+
         /**
          * Selects an exact retained binding under current READ authorization. The
          * caller keeps its existing Use through provider work and reference commit.

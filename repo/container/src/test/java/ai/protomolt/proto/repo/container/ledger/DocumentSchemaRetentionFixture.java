@@ -233,7 +233,7 @@ final class DocumentSchemaRetentionFixture {
         return definition(type, false);
     }
 
-    private static DocumentSchemaAdmission.Definition definition(com.google.protobuf.Descriptors.Descriptor type, boolean withSource) {
+    static DocumentSchemaAdmission.Definition definition(com.google.protobuf.Descriptors.Descriptor type, boolean withSource) {
         var closure = DescriptorFingerprints.closure(type); var bytes = closure.toByteString();
         var source = withSource ? ByteString.copyFromUtf8("synthetic retained source bundle fixture; integrity only") : null;
         var compilation = SchemaCompilationProvenance.newBuilder()

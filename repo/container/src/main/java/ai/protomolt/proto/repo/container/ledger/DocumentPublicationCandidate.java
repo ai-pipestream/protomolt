@@ -108,6 +108,11 @@ final class DocumentPublicationCandidate implements AutoCloseable {
 
     static Map<String, Mode> requireModes(DocumentPublicationCommand command, DocumentSchemaPolicies.Selection policy,
             Map<String, Mode> modes, Optional<DocumentSchemaAdmission.Definition> container, Runnable control) {
+        return requireModes(command, policy, modes, member -> container.isPresent(), control);
+    }
+
+    static Map<String, Mode> requireModes(DocumentPublicationCommand command, DocumentSchemaPolicies.Selection policy,
+            Map<String, Mode> modes, java.util.function.Predicate<DocumentPublicationMember> hasContainer, Runnable control) {
         if (!policy.account().equals(command.intent().getAccountId()))
             throw new IllegalArgumentException("Policy account differs from command");
         if (modes.size() != command.intent().getMembersCount())
@@ -121,7 +126,7 @@ final class DocumentPublicationCandidate implements AutoCloseable {
             if (mode == null) throw new IllegalArgumentException("Admission mode is missing for member");
             if (mode == Mode.OPAQUE && policy.policy().requiresTyped(member))
                 throw new IllegalArgumentException("Policy requires typed admission for member");
-            if (mode == Mode.TYPED && container.isEmpty())
+            if (mode == Mode.TYPED && !hasContainer.test(member))
                 throw new IllegalArgumentException("Typed admission requires a container definition");
         }
         if (!expected.equals(selectedModes.keySet())) throw new IllegalArgumentException("Unknown admission mode member");

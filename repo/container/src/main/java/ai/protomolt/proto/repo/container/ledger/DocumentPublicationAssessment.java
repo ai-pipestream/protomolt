@@ -63,13 +63,127 @@ final class DocumentPublicationAssessment implements AutoCloseable {
             throws InvalidProtocolBufferException {
         Objects.requireNonNull(command); Objects.requireNonNull(policy); Objects.requireNonNull(modes);
         command.requireExecutionSupported();
+        return prepareInternal(command, policy, modes, supplied, container, resolver, budget, opaqueLimits,
+                evaluatedAt, control, null, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+    }
+
+    static Historical prepareHistorical(DocumentPublicationCommand command, DocumentSchemaPolicies.Selection policy,
+            Map<String, DocumentPublicationCandidate.Mode> modes, Map<String, Map<Integer, ByteString>> supplied,
+            Optional<DocumentSchemaAdmission.Definition> container, DocumentPublicationCandidate.Resolver resolver,
+            PayloadBudget budget, DocumentRevisionAssembly.Limits opaqueLimits, Instant evaluatedAt,
+            ai.protomolt.proto.repo.spi.RepositoryCaller caller, List<DocumentReadLedger.PinnedHistory> histories,
+            ai.protomolt.proto.repo.spi.RepositoryReadControl control) throws InvalidProtocolBufferException {
+        var sources = DocumentHistoricalAssessmentSources.open(command, caller, histories, control);
+        DocumentPublicationAssessment assessment = null;
+        boolean delivered = false;
+        try {
+            assessment = prepareInternal(command, policy, modes, supplied, container, resolver, budget, opaqueLimits,
+                    evaluatedAt, control::check, sources, control);
+            sources.authorize(control);
+            var result = new Historical(assessment, sources); delivered = true;
+            return result;
+        } catch (RuntimeException | InvalidProtocolBufferException failure) {
+            sources.authorize(control);
+            throw failure;
+        } finally {
+            if (!delivered) {
+                if (assessment != null) assessment.close();
+                sources.close();
+            }
+        }
+    }
+
+    /** Historical callers receive only this owner, never a candidate or terminal-publication capability. */
+    static final class Historical implements AutoCloseable {
+        record MemberInspection(ByteString commandSha256, String policySha256, Instant evaluatedAt,
+                int rootCount, Optional<DocumentSchemaAssessment.Failure> failure) {}
+        /**
+         * Authorized-once summaries plus the caller-supplied immutable command and policy.
+         * Contains no live view, payload, descriptor or retention capability. Internal only:
+         * failure paths and rule identities may contain user-authored schema text.
+         */
+        record Snapshot(DocumentPublicationCommand command, DocumentSchemaPolicies.Selection policy, Instant evaluatedAt,
+                Map<String, MemberInspection> typed, java.util.Set<String> opaque, Optional<MemberFailure> failure) {}
+        final class Inspection {
+            private final ai.protomolt.proto.repo.spi.RepositoryReadControl control;
+            private boolean active = true;
+            private Inspection(ai.protomolt.proto.repo.spi.RepositoryReadControl control) { this.control = control; }
+            Snapshot snapshot() {
+                synchronized (Historical.this) {
+                    if (!active) throw new IllegalStateException("Historical inspection callback has ended");
+                    requireOpen(); sources.authorize(control);
+                    var members = new LinkedHashMap<String, MemberInspection>();
+                    assessment.typed().forEach((id, view) -> members.put(id, new MemberInspection(view.request().commandSha256(),
+                            view.request().policySha256(), view.evaluatedAt(), view.roots().size(), view.failure())));
+                    return new Snapshot(assessment.command(), assessment.policy(), assessment.evaluatedAt(),
+                            Map.copyOf(members), java.util.Set.copyOf(assessment.opaque().keySet()), assessment.failure());
+                }
+            }
+        }
+        private DocumentPublicationAssessment assessment;
+        private final DocumentHistoricalAssessmentSources sources;
+        private boolean inspecting;
+        private Historical(DocumentPublicationAssessment assessment, DocumentHistoricalAssessmentSources sources) {
+            this.assessment = assessment; this.sources = sources;
+        }
+        /** The inspection facade expires at callback exit; its summaries are values authorized at snapshot time. */
+        synchronized void inspect(java.util.function.Consumer<Inspection> consumer,
+                ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
+            requireOpen();
+            if (inspecting) throw new IllegalStateException("Historical assessment inspection is active");
+            inspecting = true;
+            var inspection = new Inspection(control);
+            try {
+                sources.authorize(control);
+                consumer.accept(inspection);
+            } finally {
+                inspection.active = false;
+                try { sources.authorize(control); }
+                finally { inspecting = false; }
+            }
+        }
+        synchronized void verifySchemas(ai.protomolt.proto.repo.spi.RepositoryReadControl control) throws InvalidProtocolBufferException {
+            requireOpen();
+            if (inspecting) throw new IllegalStateException("Historical assessment inspection is active");
+            inspecting = true;
+            try { sources.authorize(control); assessment.verifySchemas(control::check); }
+            finally {
+                try { sources.authorize(control); }
+                finally { inspecting = false; }
+            }
+        }
+        private void requireOpen() { if (assessment == null) throw new IllegalStateException("Historical assessment is closed"); }
+        @Override public synchronized void close() {
+            if (inspecting) throw new IllegalStateException("Historical assessment inspection is active");
+            if (assessment == null) return;
+            try { assessment.close(); }
+            finally { assessment = null; sources.close(); }
+        }
+    }
+
+    private static DocumentPublicationAssessment prepareInternal(DocumentPublicationCommand command, DocumentSchemaPolicies.Selection policy,
+            Map<String, DocumentPublicationCandidate.Mode> modes, Map<String, Map<Integer, ByteString>> supplied,
+            Optional<DocumentSchemaAdmission.Definition> container, DocumentPublicationCandidate.Resolver resolver,
+            PayloadBudget budget, DocumentRevisionAssembly.Limits opaqueLimits, Instant evaluatedAt, Runnable control,
+            DocumentHistoricalAssessmentSources historical, ai.protomolt.proto.repo.spi.RepositoryReadControl readControl)
+            throws InvalidProtocolBufferException {
+        Objects.requireNonNull(command); Objects.requireNonNull(policy); Objects.requireNonNull(modes);
         Objects.requireNonNull(container); Objects.requireNonNull(resolver); Objects.requireNonNull(budget);
         Objects.requireNonNull(opaqueLimits); Objects.requireNonNull(evaluatedAt); active(control);
-        var selectedModes = DocumentPublicationCandidate.requireModes(command, policy, modes, container, control);
+        var selectedModes = DocumentPublicationCandidate.requireModes(command, policy, modes,
+                member -> container.isPresent() || (historical != null
+                        && member.getPartsList().stream().anyMatch(part -> part.hasHistoricalReuse())
+                        && member.getPartsList().stream().allMatch(part -> part.hasHistoricalReuse() || part.hasEmpty())), control);
+        if (historical != null) for (var member : command.intent().getMembersList()) {
+            if (selectedModes.get(member.getMemberId()) == DocumentPublicationCandidate.Mode.OPAQUE
+                    && member.getPartsList().stream().anyMatch(part -> part.hasHistoricalReuse()))
+                throw new UnsupportedOperationException("Historical opaque assessment requires explicit source classification");
+        }
         var reservations = reservations(budget);
         var typed = new LinkedHashMap<String, DocumentSchemaAssessment>();
         var owners = new ArrayList<DocumentSchemaAssessment>();
-        var snapshot = DocumentPublicationFragments.capture(command, supplied, budget, control);
+        var snapshot = historical == null ? DocumentPublicationFragments.capture(command, supplied, budget, control)
+                : DocumentPublicationFragments.captureHistorical(command, supplied, historical.references(command, control), budget, control);
         boolean transferred = false;
         try {
             var opaque = new LinkedHashMap<String, DocumentCommandContent>();
@@ -81,15 +195,31 @@ final class DocumentPublicationAssessment implements AutoCloseable {
                 var id = member.getMemberId();
                 var bytes = snapshot.fragments().get(id);
                 if (selectedModes.get(id) == DocumentPublicationCandidate.Mode.TYPED) {
-                    var assessment = policy.policy().assess(digest, member, bytes, container.orElseThrow(),
-                            occurrence -> resolver.select(member, occurrence), reservations, evaluatedAt, () -> active(control));
+                    DocumentSchemaAssessment assessment;
+                    if (historical == null) {
+                        assessment = policy.policy().assess(digest, member, bytes, container.orElseThrow(),
+                                occurrence -> resolver.select(member, occurrence), reservations, evaluatedAt, () -> active(control));
+                    } else {
+                        try (var source = historical.resolve(member, container, resolver, policy.policy().limits(), budget, readControl)) {
+                            var composite = source.resolver();
+                            assessment = policy.policy().assess(digest, member, bytes, composite.container(), composite,
+                                    reservations, evaluatedAt, () -> active(control));
+                            try { composite.requireComplete(assessment.view()); }
+                            catch (RuntimeException | Error | InvalidProtocolBufferException failureDuringCheck) {
+                                assessment.close(); throw failureDuringCheck;
+                            }
+                        }
+                    }
                     try { owners.add(assessment); }
                     catch (RuntimeException | Error failed) { assessment.close(); throw failed; }
                     typed.put(id, assessment);
                     union.add(assessment.roots(), assessment.artifacts(), () -> active(control));
                     if (failure == null && assessment.failure().isPresent())
                         failure = new MemberFailure(id, assessment.failure().orElseThrow());
-                } else opaque.put(id, DocumentCommandContent.check(command, id, bytes, false, opaqueLimits, () -> active(control)));
+                } else opaque.put(id, historical == null
+                        ? DocumentCommandContent.check(command, id, bytes, false, opaqueLimits, () -> active(control))
+                        : DocumentCommandContent.checkHistorical(command, id, bytes, false, opaqueLimits,
+                                historical.references(command, control), () -> active(control)));
             }
             active(control);
             var result = new DocumentPublicationAssessment(snapshot, policy, evaluatedAt, selectedModes, typed, opaque,

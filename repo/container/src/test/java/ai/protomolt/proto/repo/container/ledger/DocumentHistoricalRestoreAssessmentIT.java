@@ -26,6 +26,191 @@ class DocumentHistoricalRestoreAssessmentIT {
     private static final Instant AT = Instant.parse("2026-10-05T00:00:00Z");
 
     @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void wholeCommandAssessmentKeepsOnePolicyTimeAndOwnedSources(boolean ordinaryOpaque) throws Exception {
+        try (var c = context(POSTGRES)) {
+            var f = fixture(c); var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var history = ledger.captureHistorical(ADMIN, f.address(), f.revision());
+            var historical = member(f, history);
+            var second = historical.toBuilder().setMemberId("second").setDestination(historical.getDestination().toBuilder()
+                    .setAddress(historical.getDestination().getAddress().toBuilder().setGraphAddressId("second"))).build();
+            var ordinary = f.original().command().intent().getMembers(0).toBuilder().setMemberId("ordinary");
+            ordinary.setDestination(ordinary.getDestination().toBuilder().setAddress(
+                    ordinary.getDestination().getAddress().toBuilder().setGraphAddressId("ordinary")));
+            var command = new DocumentPublicationCommand(f.original().command().intent().toBuilder().setOperationId(UUID.randomUUID().toString())
+                    .clearMembers().addMembers(historical).addMembers(second).addMembers(ordinary).build());
+            var selectedPolicy = f.original().batch().policy();
+            if (ordinaryOpaque) selectedPolicy = new DocumentSchemaPolicies(c.tx()).activate(DocumentAdmissionPolicy.of(
+                    selectedPolicy.policy().definition().toBuilder().setMode(DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_OPAQUE_ALLOWED)
+                            .build(), () -> {}), 1, () -> {});
+            var expectedPolicy = selectedPolicy;
+            var budget = new PayloadBudget(64L * 1024 * 1024);
+            var resolverCalls = new java.util.concurrent.atomic.AtomicInteger();
+            var baseContainer = DocumentSchemaRetentionFixture.definition(Document.getDescriptor());
+            var currentContainer = new ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition(
+                    baseContainer.metadata().toBuilder().setCompilation(baseContainer.metadata().getCompilation().toBuilder()
+                            .setAdmissionRuntime(baseContainer.metadata().getCompilation().getAdmissionRuntime().toBuilder().setVersion("2"))).build(),
+                    baseContainer.descriptors(), baseContainer.source());
+            try (var assessment = DocumentPublicationAssessment.prepareHistorical(command, selectedPolicy,
+                    Map.of("member", DocumentPublicationCandidate.Mode.TYPED, "second", DocumentPublicationCandidate.Mode.TYPED,
+                            "ordinary", ordinaryOpaque ? DocumentPublicationCandidate.Mode.OPAQUE : DocumentPublicationCandidate.Mode.TYPED),
+                    Map.of("member", f.fragments(), "second", f.fragments(), "ordinary", f.fragments()),
+                    ordinaryOpaque ? Optional.empty() : Optional.of(currentContainer),
+                    (selectedMember, occurrence) -> {
+                        assertThat(selectedMember.getMemberId()).isEqualTo("ordinary"); resolverCalls.incrementAndGet();
+                        return DocumentSchemaRetentionFixture.definition(com.google.protobuf.StringValue.getDescriptor(), true);
+                    }, budget, new ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits(4_000_000, 32, 100, 100, 100_000),
+                    AT, ADMIN, List.of(history), RepositoryReadControl.NONE)) {
+                history.close(); assertThat(history.isDrained()).isFalse();
+                var captured = new java.util.concurrent.atomic.AtomicReference<DocumentPublicationAssessment.Historical.Inspection>();
+                assessment.inspect(access -> {
+                    captured.set(access);
+                    var view = access.snapshot();
+                    assertThat(view.command()).isSameAs(command);
+                    assertThat(view.policy()).isEqualTo(expectedPolicy); assertThat(view.evaluatedAt()).isEqualTo(AT);
+                    assertThat(view.failure()).isEmpty();
+                    assertThat(view.typed()).hasSize(ordinaryOpaque ? 2 : 3);
+                    assertThat(view.opaque()).hasSize(ordinaryOpaque ? 1 : 0);
+                    view.typed().values().forEach(memberView -> {
+                        assertThat(memberView.commandSha256()).isEqualTo(ByteString.copyFrom(HexFormat.of().parseHex(command.sha256())));
+                        assertThat(memberView.policySha256()).isEqualTo(expectedPolicy.policy().sha256());
+                        assertThat(memberView.evaluatedAt()).isEqualTo(AT);
+                    });
+                    assertThatThrownBy(assessment::close).isInstanceOf(IllegalStateException.class);
+                }, RepositoryReadControl.NONE);
+                assertThatThrownBy(() -> captured.get().snapshot()).isInstanceOf(IllegalStateException.class).hasMessageContaining("callback has ended");
+                var checkedClose = new java.util.concurrent.atomic.AtomicBoolean();
+                assessment.verifySchemas(new RepositoryReadControl() {
+                    public boolean isCancelled() {
+                        if (checkedClose.compareAndSet(false, true))
+                            assertThatThrownBy(assessment::close).isInstanceOf(IllegalStateException.class);
+                        return false;
+                    }
+                    public long remainingNanos() { return Long.MAX_VALUE; }
+                });
+                assertThat(checkedClose).isTrue();
+                assertThat(resolverCalls).hasValue(ordinaryOpaque ? 0 : 1);
+                assertThat(budget.reservedBytes()).isPositive();
+            } finally { assertThat(budget.reservedBytes()).isZero(); release(ledger, history); }
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"valid", "missing-container", "different-container"})
+    void mixedHistoricalAndUploadedPartsUseTheirOwnResolversAndOneContainer(String variant) throws Exception {
+        try (var c = context(POSTGRES)) {
+            var f = fixture(c); var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var history = ledger.captureHistorical(ADMIN, f.address(), f.revision());
+            var historical = member(f, history);
+            var parsed = Document.newBuilder().setDocId(f.address().getDocId()).putParserResults("parsed",
+                    ParserResult.newBuilder().setDocument(ParserDocument.newBuilder().setShape(
+                            com.google.protobuf.Any.pack(com.google.protobuf.StringValue.of("new parser value"), "type.test"))).build())
+                    .build().toByteString();
+            int parsedOrdinal = historical.getPartsCount();
+            var mixed = historical.toBuilder().addParts(DocumentPublicationPart.newBuilder()
+                    .setSlot(DocumentPublicationSlot.newBuilder().setPart(DocumentPart.DOCUMENT_PART_PARSED))
+                    .setUpload(PublicationUpload.newBuilder().setSizeBytes(parsed.size())
+                            .setSha256(ai.protomolt.proto.repo.codec.DocumentPartCodec.sha256Hex(parsed.toByteArray()))
+                            .setContentType("application/protobuf"))).build();
+            var command = new DocumentPublicationCommand(f.original().command().intent().toBuilder()
+                    .setOperationId(UUID.randomUUID().toString()).setMembers(0, mixed).build());
+            var fragments = new HashMap<>(f.fragments()); fragments.put(parsedOrdinal, parsed);
+            var container = DocumentSchemaRetentionFixture.definition(Document.getDescriptor());
+            if (variant.equals("different-container")) container = new ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition(
+                    container.metadata().toBuilder().setCompilation(container.metadata().getCompilation().toBuilder()
+                            .setAdmissionRuntime(container.metadata().getCompilation().getAdmissionRuntime().toBuilder().setVersion("different"))).build(),
+                    container.descriptors(), container.source());
+            var suppliedContainer = variant.equals("missing-container") ? Optional.<ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition>empty()
+                    : Optional.of(container);
+            var budget = new PayloadBudget(64L * 1024 * 1024);
+            var lookups = new java.util.concurrent.atomic.AtomicInteger();
+            DocumentPublicationCandidate.Resolver resolver = (m, occurrence) -> {
+                assertThat(occurrence.ordinal()).isEqualTo(parsedOrdinal); lookups.incrementAndGet();
+                return DocumentSchemaRetentionFixture.definition(com.google.protobuf.StringValue.getDescriptor(), true);
+            };
+            try {
+                if (variant.equals("valid")) {
+                    try (var assessment = DocumentPublicationAssessment.prepareHistorical(command, f.original().batch().policy(),
+                            Map.of("member", DocumentPublicationCandidate.Mode.TYPED), Map.of("member", fragments), suppliedContainer,
+                            resolver, budget, new ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits(4_000_000, 32, 100, 100, 100_000),
+                            AT, ADMIN, List.of(history), RepositoryReadControl.NONE)) {
+                        assessment.inspect(access -> {
+                            var view = access.snapshot(); assertThat(view.failure()).isEmpty();
+                            assertThat(view.typed().get("member").rootCount()).isEqualTo(2);
+                        }, RepositoryReadControl.NONE);
+                        assessment.verifySchemas(RepositoryReadControl.NONE);
+                        assertThat(lookups).hasValue(1);
+                    }
+                } else {
+                    assertThatThrownBy(() -> DocumentPublicationAssessment.prepareHistorical(command, f.original().batch().policy(),
+                            Map.of("member", DocumentPublicationCandidate.Mode.TYPED), Map.of("member", fragments), suppliedContainer,
+                            resolver, budget, new ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits(4_000_000, 32, 100, 100, 100_000),
+                            AT, ADMIN, List.of(history), RepositoryReadControl.NONE)).isInstanceOf(IllegalArgumentException.class);
+                    assertThat(lookups).hasValue(0);
+                }
+            } finally { assertThat(budget.reservedBytes()).isZero(); release(ledger, history); }
+        }
+    }
+
+    @Test void wholeCommandInspectionRechecksReadAndExpiredFacadeCannotExposeLiveData() throws Exception {
+        try (var c = context(POSTGRES)) {
+            var f = fixture(c); grant(c, f.address(), true);
+            var caller = new RepositoryCaller("scoped", false, Set.of("account"), Set.of());
+            var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var history = ledger.captureHistorical(caller, f.address(), f.revision());
+            var command = new DocumentPublicationCommand(f.original().command().intent().toBuilder()
+                    .setOperationId(UUID.randomUUID().toString()).setMembers(0, member(f, history)).build());
+            var budget = new PayloadBudget(32L * 1024 * 1024);
+            try (var assessment = DocumentPublicationAssessment.prepareHistorical(command, f.original().batch().policy(),
+                    Map.of("member", DocumentPublicationCandidate.Mode.TYPED), Map.of("member", f.fragments()), Optional.empty(),
+                    (m, occurrence) -> { throw new AssertionError("No registry lookup for retained source"); }, budget,
+                    new ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits(4_000_000, 32, 100, 100, 100_000),
+                    AT, caller, List.of(history), RepositoryReadControl.NONE)) {
+                var captured = new java.util.concurrent.atomic.AtomicReference<DocumentPublicationAssessment.Historical.Inspection>();
+                assertThatThrownBy(() -> assessment.inspect(access -> {
+                    captured.set(access); assertThat(access.snapshot().typed()).hasSize(1);
+                    grant(c, f.address(), false);
+                    assertThatThrownBy(access::snapshot).isInstanceOf(RepositoryException.class);
+                }, RepositoryReadControl.NONE)).isInstanceOf(RepositoryException.class);
+                assertThatThrownBy(() -> captured.get().snapshot()).isInstanceOf(IllegalStateException.class);
+                assertThatThrownBy(() -> assessment.inspect(access -> { throw new AssertionError("Revoked source reached callback"); },
+                        RepositoryReadControl.NONE)).isInstanceOf(RepositoryException.class);
+            } finally { assertThat(budget.reservedBytes()).isZero(); release(ledger, history); }
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"caller", "missing", "duplicate", "capacity", "cancel", "revoked"})
+    void wholeCommandAssessmentFailureReleasesOwnedUsesAndDoesNotLendCallerAuthority(String fault) throws Exception {
+        try (var c = context(POSTGRES)) {
+            var f = fixture(c); grant(c, f.address(), true);
+            var caller = new RepositoryCaller("scoped", false, Set.of("account"), Set.of());
+            var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var history = ledger.captureHistorical(caller, f.address(), f.revision());
+            var member = member(f, history);
+            var command = new DocumentPublicationCommand(f.original().command().intent().toBuilder()
+                    .setOperationId(UUID.randomUUID().toString()).setMembers(0, member).build());
+            var budget = new PayloadBudget(fault.equals("capacity") ? 1 : 32L * 1024 * 1024);
+            if (fault.equals("revoked")) grant(c, f.address(), false);
+            var control = new RepositoryReadControl() {
+                public boolean isCancelled() { return fault.equals("cancel") && budget.reservedBytes() > 0; }
+                public long remainingNanos() { return Long.MAX_VALUE; }
+            };
+            try {
+                assertThatThrownBy(() -> DocumentPublicationAssessment.prepareHistorical(command, f.original().batch().policy(),
+                        Map.of("member", DocumentPublicationCandidate.Mode.TYPED), Map.of("member", f.fragments()), Optional.empty(),
+                        (m, occurrence) -> { throw new AssertionError("Retained member must not use registry"); }, budget,
+                        new ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits(4_000_000, 32, 100, 100, 100_000), AT,
+                        fault.equals("caller") ? ADMIN : caller, fault.equals("missing") ? List.of()
+                                : fault.equals("duplicate") ? List.of(history, history) : List.of(history), control))
+                        .isInstanceOfAny(RepositoryException.class, IllegalArgumentException.class);
+                assertThat(budget.reservedBytes()).isZero();
+                history.close(); assertThat(history.isDrained()).isTrue();
+            } finally { release(ledger, history); }
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(strings = {"valid", "missing-source", "closed-source", "close-during-copy",
             "later-hash", "later-size", "missing-member", "capacity", "cancel-during-copy"})
     void wholeCommandFragmentCaptureChecksHistoricalPinsAndEveryMemberBeforeResolution(String fault) throws Exception {
