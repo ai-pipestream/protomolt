@@ -282,6 +282,15 @@ Owner-admitted or assessment-started registrations remain outside this slice:
 qualify coordinator quiescence and delayed real provider writes before takeover or
 abandonment. Continue restore admission independently of that recovery protocol.
 
+## Restore assessment checkpoint
+
+Restore has also advanced independently: private SQL-backed typed assessment now
+owns fragment copies and a source pin, checks exact source/evidence identities,
+and applies the supplied current policy. Source revocation is checked during
+delivery, including on errors. See the [assessment checkpoint](repository-historical-restore.md#sql-backed-current-policy-assessment-checkpoint).
+This does not close the restore task: destination authorization, active-policy
+fencing, command integration and atomic historical reference publication remain.
+
 ## Next non-S3 slice: explicit bounded ingestion
 
 Follow the [bounded ingress design](repository-bounded-ingress.md). The reusable

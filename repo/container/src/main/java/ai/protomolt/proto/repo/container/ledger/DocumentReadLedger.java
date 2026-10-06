@@ -337,6 +337,17 @@ public final class DocumentReadLedger {
         private final DocumentHistoricalReadPlan plan;
         private final ai.protomolt.proto.repo.v1.NodeAddress address;
         private final UUID revision;
+
+        DocumentHistoricalRestoreAssessment assessRestore(
+                ai.protomolt.proto.repo.v1.DocumentPublicationMember member,
+                ai.protomolt.proto.repo.admission.DocumentAdmissionPolicy policy,
+                com.google.protobuf.ByteString commandSha256,
+                java.util.Map<Integer, com.google.protobuf.ByteString> fragments, java.time.Instant evaluatedAt,
+                ai.protomolt.proto.repo.blob.spi.PayloadBudget budget,
+                ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
+            return DocumentHistoricalRestoreAssessment.assess(tx, caller, this, member, policy,
+                    commandSha256, fragments, evaluatedAt, budget, control);
+        }
         private PinnedHistory(DocumentReadPins.Captured<DocumentHistoricalReadPlan> captured, RepositoryCaller caller) {
             super(captured);
             this.plan = captured.plan();

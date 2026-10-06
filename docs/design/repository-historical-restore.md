@@ -191,3 +191,16 @@ fragment capture, assessment slots/replay, and commit reference binding currentl
 assume upload/current reuse. Extend those together before removing the command
 guard. Final publication must recheck current source READ, destination WRITE,
 physical identity and retained references while the source Use remains held.
+
+## SQL-backed current-policy assessment checkpoint
+
+The private `PinnedHistory.assessRestore` now performs exact historical selection,
+owns fragment copies and a source Use, captures retained schema assets under current
+READ, and assesses one historical/empty-only member against a supplied current
+policy. Stored root identity columns are checked independently of encoded evidence.
+Every new result view reauthorizes the source; close releases assessment resources,
+fragment reservations and the Use. This result does not authorize the destination
+or fence the active policy. Opaque and multi-source/mixed-content preparation remain
+outside this helper. Full command integration and atomic reference publication are
+still required; the historical command guard remains enabled.
+[SQL assessment evidence](../evidence/repository/2026-10-05-restore-assessment/README.md).
