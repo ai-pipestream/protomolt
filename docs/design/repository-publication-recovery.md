@@ -2055,3 +2055,12 @@ not adopted after expiry; rejection and local cleanup leave its exact claim,
 owner and leases unchanged. Retry metadata and session retirement are separately
 asserted. See [competing-owner evidence](../evidence/repository/2026-10-06-foreign-bound-winner/README.md).
 This does not qualify real provider-worker drain or revoked-caller retries.
+
+Scoped ACL tests now cover access removal before bound reservation and before
+confirmation of a committed reservation with a lost reply. Recovery returns
+NOT_FOUND without changing durable identity or discarding retained state. Restored
+access permits confirmation but does not erase the command's stale mutation
+revision: later activation rejects it. See the
+[scoped recovery evidence](../evidence/repository/2026-10-06-bound-retry-acl/README.md).
+Credential and creation-grant revocation remain distinct unqualified cases for
+this composed path; these tests use a scoped caller without a credential binding.

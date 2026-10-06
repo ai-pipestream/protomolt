@@ -561,6 +561,125 @@ class RepositoryRecoveryAttemptsIT {
     }
 
     @ParameterizedTest @ValueSource(booleans={false,true})
+    void expiredBoundRetryRechecksRevokedReadAccess(boolean lostReservationReply) throws Exception {
+        try (var c=context(POSTGRES)) {
+            var input=input(c);
+            var security=ai.protomolt.proto.repo.v1.DocumentSecurity.newBuilder()
+                    .addPermissions(ai.protomolt.proto.repo.v1.AccessRule.newBuilder().setIdentityType("public")
+                            .setIdentity("public").setAccess(ai.protomolt.proto.repo.v1.Access.ACCESS_READ))
+                    .addPermissions(ai.protomolt.proto.repo.v1.AccessRule.newBuilder().setIdentityType("public")
+                            .setIdentity("public").setAccess(ai.protomolt.proto.repo.v1.Access.ACCESS_WRITE)).build();
+            var intent=input.command().intent().toBuilder();
+            intent.getMembersBuilder(0).getOwnershipBuilder().setSecurity(security);
+            var initialCommand=new DocumentPublicationCommand(intent.build());
+            var node=ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(
+                    initialCommand.intent().getMembers(0).getDestination().getAddress());
+            String policy=com.google.protobuf.util.JsonFormat.printer().print(security);
+            setRetryPolicy(c,node,policy);
+            long revision=c.tx().readOnly(em -> ((Number)em.createNativeQuery(
+                    "SELECT mutation_revision FROM documents WHERE node_id=:node").setParameter("node",node).getSingleResult()).longValue());
+            intent.getMembersBuilder(0).getDestinationBuilder().setExpectedMutationRevision(revision);
+            for (var part:intent.getMembersBuilder(0).getPartsBuilderList())
+                if (part.hasReuse()) part.getReuseBuilder().getSourceBuilder().setExpectedMutationRevision(revision);
+            var command=new DocumentPublicationCommand(intent.build());
+
+            var prepared=new DocumentPublicationPreparationRecord(input.key(),command,
+                    DocumentPublicationSeeds.mint(input.key(),command),input.placements(),input.lease(),input.predecessorGeneration());
+            var source=source(c,prepared);
+            var scoped=new RepositoryCaller("principal",false,Set.of("account"),Set.of());
+            var cancelled=new AtomicBoolean(); var reservationReply=new AtomicBoolean();
+
+            var datasource=DocumentJdbcFaults.afterCommit(c.pool(),() -> {
+                if ((!reservationReply.get() && count(c,"repository_successor_executions")==1)
+                        || (reservationReply.get() && count(c,"repository_coordinator_expirations")==2)) cancelled.set(true);
+            });
+            var control=new RepositoryReadControl() {
+                public boolean isCancelled() { return cancelled.get(); }
+                public long remainingNanos() { return Long.MAX_VALUE; }
+            };
+            var attemptBudget=new PayloadBudget(128_000_000); var lease=Duration.ofSeconds(3);
+            try (var emf=jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",Map.of(
+                    "hibernate.connection.datasource",datasource,"hibernate.hbm2ddl.auto","validate"));
+                 var resources=DocumentJournaledSessionsIT.resources(new Tx(emf).withTimeouts(TIMEOUTS),1,1_000_000,lease,new PayloadBudget(128_000_000));
+                 var attempts=new RepositoryRecoveryAttempts(new Tx(emf),attemptBudget,resources.sessions(),lease,TIMEOUTS,1)) {
+                try (var attempt=attempts.begin(scoped,source.command(),source.observation())) {
+                    var original=attempt.proposal();
+                    attempt.advance(CALLER,scoped,MODES,NONE); attempt.advance(CALLER,scoped,MODES,NONE);
+                    assertThatThrownBy(() -> attempt.advance(CALLER,scoped,MODES,control))
+                            .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.CANCELLED));
+                    assertThat(count(c,"repository_successor_executions")).isEqualTo(1);
+                    expire(c,source.command());
+                    assertThat(new RepositoryCoordinatorRecoveryDiscovery(c.tx(),TIMEOUTS)
+                            .inspect(CALLER,original.predecessor().key(),source.command().sha256(),NONE).status())
+                            .isEqualTo(RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND);
+                    var wrong=Map.of("target",DocumentPublicationCandidate.Mode.OPAQUE);
+                    assertThatThrownBy(() -> attempt.reconcileExpiredBound(CALLER,scoped,wrong,NONE))
+                            .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code())
+                                    .isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+                    assertThat(attempt.proposal()).isSameAs(original);
+                    assertThat(count(c,"repository_coordinator_expirations")).isEqualTo(1);
+                    Object[] pendingIdentity=null;
+                    if (lostReservationReply) {
+                        reservationReply.set(true); cancelled.set(false);
+                        assertThatThrownBy(() -> attempt.reconcileExpiredBound(CALLER,scoped,MODES,control))
+                                .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code())
+                                        .isEqualTo(RepositoryException.Code.CANCELLED));
+                        assertThat(count(c,"repository_coordinator_expirations")).isEqualTo(2);
+                        assertThat(attempt.proposal()).isSameAs(original);
+                        pendingIdentity=claimAndOwner(c,source.command());
+                        assertThat(attempt.retireFenced(CALLER,scoped,NONE)).isFalse();
+                        assertThatThrownBy(() -> attempt.advance(CALLER,scoped,MODES,NONE))
+                                .hasMessageContaining("Pending supersession");
+                        assertThatThrownBy(() -> attempt.reconcileUnactivated(CALLER,scoped,MODES,NONE))
+                                .hasMessageContaining("Pending bound reservation");
+                        assertThatThrownBy(() -> attempt.supersedeExpired(CALLER,scoped,NONE))
+                                .hasMessageContaining("Pending bound reservation");
+                        assertThatThrownBy(() -> attempt.reconcileExpiredBound(CALLER,scoped,wrong,NONE))
+                                .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code())
+                                        .isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+                    }
+                    var beforeRevocation=claimAndOwner(c,source.command());
+                    long held=attemptBudget.reservedBytes();
+                    setRetryPolicy(c,node,"{}");
+                    assertThatThrownBy(() -> attempt.reconcileExpiredBound(CALLER,scoped,MODES,NONE))
+                            .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code())
+                                    .isEqualTo(RepositoryException.Code.NOT_FOUND));
+                    assertThat(attempt.proposal()).isSameAs(original);
+                    assertThat(claimAndOwner(c,source.command())).containsExactly(beforeRevocation);
+                    assertThat(attemptBudget.reservedBytes()).isEqualTo(held).isPositive();
+                    assertThat(count(c,"repository_coordinator_expirations")).isEqualTo(lostReservationReply ? 2 : 1);
+                    setRetryPolicy(c,node,policy);
+                    assertThat(attempt.reconcileExpiredBound(CALLER,scoped,MODES,NONE)).isTrue();
+
+                    if (pendingIdentity!=null)
+                        assertThat(claimAndOwner(c,source.command())).containsExactly(pendingIdentity);
+
+                    assertThat(attempt.proposal().predecessor().epoch()).isEqualTo(original.predecessor().epoch()+1);
+                    assertThat(attempt.advance(CALLER,scoped,MODES,NONE)).isEqualTo(RepositoryRecoveryAttempts.Phase.INSTALLED);
+                    assertThatThrownBy(() -> attempt.advance(CALLER,scoped,MODES,NONE))
+                            .isInstanceOf(DocumentLedger.RevisionConflictException.class);
+                    assertThat(count(c,"repository_coordinator_expirations")).isEqualTo(2);
+                    assertThat(count(c,"repository_successor_executions")).isEqualTo(1);
+                    assertThat(count(c,"repository_coordinator_supersessions")).isZero();
+                    assertThat(resources.sessions().retainedSessions()).isEqualTo(1);
+                    assertThat(attemptBudget.reservedBytes()).isPositive();
+                }
+                attempts.close();
+                assertThat(attempts.detachClosed(Duration.ofSeconds(5),ignored -> CALLER,NONE)).isTrue();
+                assertThat(attemptBudget.reservedBytes()).isZero();
+                assertThat(attempts.drain()).isEqualTo(new RepositoryRecoveryAttempts.Drain(0,0));
+            }
+        }
+    }
+
+    private static void setRetryPolicy(Context c, UUID node, String json) {
+        c.tx().inTransaction(em -> {
+            assertThat(em.createNativeQuery("UPDATE documents SET security=CAST(:policy AS jsonb) WHERE node_id=:node")
+                    .setParameter("policy",json).setParameter("node",node).executeUpdate()).isEqualTo(1);
+        });
+    }
+
+    @ParameterizedTest @ValueSource(booleans={false,true})
     void foreignBoundWinnerCannotReplaceRetainedAttempt(boolean pending) throws Exception {
         try (var c=context(POSTGRES)) {
             var source=source(c); var cancelled=new AtomicBoolean(); var rejectReservation=new AtomicBoolean();
