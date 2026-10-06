@@ -633,3 +633,12 @@ The old object stays unverified and unreferenced; the successor's bytes and rece
 survive. This is an admin/opaque fixture, not additional scoped or typed coverage.
 Abrupt death, automatic host recovery, arbitrary SDK framing/retries and sustained
 RustFS scaling remain separate unfinished work.
+
+Before adding abrupt recovery, V95 closes a reproduced gap where transferring an
+expired, bound but undrained coordinator claim could pass the general SQL mutation
+guard without successor activation. Bound operations now require the exact initial
+binding or a live successor execution grant. Crash recovery still needs a separate
+reservation reason/protocol, retained predecessor read pins and tombstones, a
+pre-owner transition, paused-host fencing tests and process-kill/restart evidence.
+See the crash boundary in `repository-publication-recovery.md`. Lease expiry is
+neither reader quiescence nor permission to prune retained sources.

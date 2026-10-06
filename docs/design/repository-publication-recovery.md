@@ -1175,3 +1175,44 @@ The fixture uses admin authority and opaque admission. It does not establish
 abrupt-death recovery, automatic public-host recovery, additional scoped/typed
 coverage, arbitrary request framing or retries, or performance. Existing scoped
 typed publication evidence is recorded separately.
+
+### Undrained coordinator and crash recovery boundary
+
+The V94 mutation guard required successor activation only when a local-drain record
+existed. Inspection and a PostgreSQL regression found that a bound coordinator
+without V90/V91 records could transfer an expired claim through the low-level
+primitive and pass the general mutation fence. V95 closes that path: once any
+coordinator binding exists, general mutation requires the exact original epoch-one
+binding or a live exact successor execution grant. A new claim token alone cannot
+authorize work. Initial registration and explicitly unbound legacy operations keep
+their existing behavior; V93's atomic installation exceptions remain narrow.
+
+This correction is a prerequisite, not abrupt-death recovery. The next protocol
+must distinguish transfer of publication authority from proof that remote work has
+stopped. A suspected-dead host may be partitioned or paused and later resume.
+
+- A crash reservation must record its own reason and exact predecessor identity;
+  it must never fabricate V90/V91 local-drain evidence. Serialize expiry, terminal
+  outcome and replacement decisions under the claim-before-owner lock order.
+- Preserve V93/V94's fresh owner nonce, attempt identities, preparation/mode binding,
+  current caller authorization and exact-retry behavior. A recovery path must not
+  activate through an ordinary low-level claim takeover.
+- Late external writes can remain possible. Immutable attempt-specific keys,
+  stale SQL rejection and retained cleanup tombstones must isolate them from the
+  replacement. Test a paused old host resuming as well as a terminated process.
+- Reader lifetime is separate. `DocumentReadRecovery` and
+  `DocumentAssessmentReadRecovery` require QUIESCED; V32 permits only LOCAL_DRAIN
+  evidence. Claim expiry cannot release these pins. Recovery must retain and report
+  unresolved pins until a separately specified, authenticated mechanism proves
+  the exact reader incarnation cannot resume. Coordinator and reader incarnations
+  must not be assumed to be interchangeable.
+- Pre-owner generation-zero preparations need their own transition. V93 requires
+  an existing expired owner and cannot overwrite or reuse the occupied initial
+  preparation and seeds. Preserve this gap explicitly.
+
+Required crash tests include competing replacements, rollback and lost commit
+acknowledgment, stale owner renewal/verification/publication, current permission
+revocation, delayed provider effects, retained read/schema evidence, and a real
+process termination followed by restart. A paused-but-live predecessor is required
+to establish fencing independently of operating-system termination. Automatic host
+recovery remains unavailable until the protocol and those cases are implemented.

@@ -19,6 +19,33 @@ import static org.assertj.core.api.Assertions.*;
 class RepositoryCoordinatorDrainIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
+    @Test void undrainedCoordinatorTransferCannotOpenMutationFenceWithoutActivation() {
+        try (var c = context(POSTGRES)) {
+            var original = input(c); var budget = new PayloadBudget(64_000_000);
+            var value = new DocumentPublicationPreparationRecord(original.key(), original.command(), original.seeds(),
+                    original.placements(), java.time.Duration.ofSeconds(1), 0);
+            new DocumentPublicationPreparationJournal(c.tx(), budget)
+                    .acquireInitial(CALLER, value, UUID.randomUUID(), UUID.randomUUID(), NONE);
+            c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(1.1)").getSingleResult());
+            var transferred = new RepositoryExecutionClaimLedger(c.tx())
+                    .takeOver(value.key(), value.command(), 1, UUID.randomUUID(), LEASE);
+            assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+                RepositoryExecutionClaimLedger.lockLive(em, transferred);
+                return em.createNativeQuery("SELECT require_repository_execution_claim(:a,:p,:o)")
+                        .setParameter("a", value.key().account()).setParameter("p", value.key().principal())
+                        .setParameter("o", value.key().operationId()).getSingleResult();
+            })).hasStackTraceContaining("Coordinator successor requires exact activation");
+            assertThatThrownBy(() -> new DocumentPublicationModesJournal(c.tx(), budget)
+                    .bind(CALLER, transferred, 0, MODES, NONE))
+                    .hasStackTraceContaining("Coordinator successor requires exact activation");
+            int modes = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM repository_publication_modes WHERE operation_id=:id")
+                    .setParameter("id", value.key().operationId()).getSingleResult()).intValue());
+            assertThat(modes).isZero();
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
     @ParameterizedTest @ValueSource(booleans = {false, true})
     void claimTransferAfterInitialConfirmationRequiresAnExactCommittedMarker(boolean marked) {
         try (var c = context(POSTGRES)) {
@@ -144,7 +171,7 @@ class RepositoryCoordinatorDrainIT {
             var successor = new RepositoryExecutionClaimLedger(c.tx()).takeOver(value.key(), value.command(), 1, UUID.randomUUID(), LEASE);
             assertThat(RepositoryCoordinatorDrain.confirm(c.tx(), CALLER, claim, incarnation, NONE)).contains(saved);
             assertThatThrownBy(() -> new DocumentPublicationModesJournal(c.tx(), budget).bind(CALLER, successor, 0, MODES, NONE))
-                    .hasStackTraceContaining("new admission is closed");
+                    .hasStackTraceContaining("Coordinator successor requires exact activation");
             assertThatThrownBy(() -> RepositoryCoordinatorDrain.confirm(c.tx(), CALLER, claim, UUID.randomUUID(), NONE))
                     .hasMessageContaining("differs from original binding");
             var wrongCommand = new RepositoryExecutionClaimLedger.Claim(claim.key(), "0".repeat(64), claim.epoch(), claim.token(), claim.leaseUntil());

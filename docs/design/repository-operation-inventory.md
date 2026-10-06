@@ -6455,3 +6455,16 @@ the original endpoint and registered backend identity across both managers.
 **Unchanged:** production code, protobuf contracts and public recovery exposure.
 This admin/opaque fixture adds no scoped/typed admission claim. Abrupt death,
 automatic recovery and sustained RustFS performance remain unqualified.
+
+### Undrained coordinator mutation fence
+
+**Extended:** V95 `require_repository_execution_claim` requires an exact initial
+coordinator binding or active successor execution identity whenever a coordinator
+binding exists, even without drain records. Previously a low-level transfer of an
+expired claim could pass this central guard if no local-drain record existed.
+The regression reproduces that acceptance before V95 and checks rejection of the
+mutation fence and mode registration afterward, with no mode row committed.
+
+**Unchanged:** protobuf contracts, unbound operation behavior and V93's restricted
+atomic install path. This does not implement abrupt-death recovery. Raw claim
+transfer may still strand a bound operation; it cannot grant mutation authority.
