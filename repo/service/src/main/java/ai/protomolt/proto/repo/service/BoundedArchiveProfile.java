@@ -5,10 +5,16 @@ import ai.protomolt.proto.repo.engine.ArchivePutAdmission;
 import java.util.Objects;
 
 /** Shared internal state for local and authenticated Netty archive admission. */
-record BoundedArchiveProfile(ArchivePutAdmission.Limits limits, PayloadBudget budget, int maxActive) {
+record BoundedArchiveProfile(ArchivePutAdmission.Limits limits, PayloadBudget budget, int maxActive,
+        ai.protomolt.proto.repo.engine.ArchiveGetAdmission.Limits readLimits) {
+    BoundedArchiveProfile(ArchivePutAdmission.Limits limits, PayloadBudget budget, int maxActive) {
+        this(limits, budget, maxActive, new ai.protomolt.proto.repo.engine.ArchiveGetAdmission.Limits(
+                limits.maxObjectBytes(), limits.maxRequestBytes(), limits.maxRenditions()));
+    }
     BoundedArchiveProfile {
         Objects.requireNonNull(limits);
         Objects.requireNonNull(budget);
+        Objects.requireNonNull(readLimits);
         if (maxActive < 1 || maxActive > 1024)
             throw new IllegalArgumentException("Archive put concurrency must be between 1 and 1024");
     }

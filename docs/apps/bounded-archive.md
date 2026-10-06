@@ -34,15 +34,19 @@ an inactive drive or one belonging to a different selected provider prevents
 startup. Clients can then create an archive on that drive through ArchiveService.
 The credential has the process-level access described below, not per-account scope.
 
-The standalone limits default to a 1 MiB object, 2 MiB request, 16 renditions,
+The standalone limits default to a 1 MiB object, 2 MiB request and read response, 16 renditions,
 14 MiB payload budget and four concurrent requests. Override them with
 `DOCUMENT_PLATFORM_ARCHIVE_MAX_OBJECT_BYTES`,
 `DOCUMENT_PLATFORM_ARCHIVE_MAX_REQUEST_BYTES`,
+`DOCUMENT_PLATFORM_ARCHIVE_MAX_RESPONSE_BYTES`,
 `DOCUMENT_PLATFORM_ARCHIVE_MAX_RENDITIONS`,
 `DOCUMENT_PLATFORM_ARCHIVE_PAYLOAD_BUDGET_BYTES`, and
 `DOCUMENT_PLATFORM_ARCHIVE_MAX_CONCURRENT_REQUESTS`. Invalid configured values
 fail startup. Redis's configured object cap must cover the archive object limit;
 its TTL must explicitly be zero.
+When omitted, the response limit follows the configured request limit. It includes
+the complete GetEntry metadata, manifest, selected bytes and protobuf framing;
+select fewer renditions when a whole entry exceeds that limit.
 
 SIGTERM closes admission and waits for accepted work. A drain timeout keeps the
 shutdown hook alive and retries; other shutdown errors are reported as failures.
@@ -130,12 +134,17 @@ and HTTP startup remain unavailable for this profile.
 ## What the limits cover
 
 All bounded listeners on a host share an ingress gate. Local and remote archive
-writes use the same write gate, and both gates reserve from one byte budget.
-Cancellation does not release reservations while a provider write is still running.
+writes and read construction use shared gates, all reserving from one byte budget.
+GetEntry reserves an additional response allowance at RPC admission, held through
+the terminal callback. Cancellation does not release reservations while synchronous
+provider work is still running.
 Retrying after a cancelled successful publication reuses the committed version.
 
-The budget must be at least seven times the request limit, enough for one maximum
-transport write. Concurrent work can still receive RESOURCE_EXHAUSTED when either
-slots or bytes are exhausted. These are serialized-input and copy allowances;
-they do not measure decoded object heap, read responses or earlier network buffers.
+The budget must cover both seven times the request limit (one maximum write) and
+two times the request limit plus four times the response limit (one maximum read).
+Concurrent work can still receive RESOURCE_EXHAUSTED when slots or bytes are exhausted.
+These are payload/copy and serialized-response allowances; they do not measure
+decoded object heap, network buffers or protobufs retained by local callers after
+return. Metadata/list response bounds remain separate. Bounded reads refuse legacy
+renditions without published storage identities before provider access.
 Redis objects also remain subject to the provider's 9 MiB create-only ceiling.

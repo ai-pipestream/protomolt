@@ -1,0 +1,630 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.service.BoundedArchiveTransportIT" tests="12" skipped="0" failures="0" errors="0" timestamp="2026-10-06T07:33:07.666Z" hostname="krick" time="21.196">
+  <properties/>
+  <testcase name="[1] false" classname="ai.protomolt.proto.repo.service.BoundedArchiveTransportIT" time="3.038"/>
+  <testcase name="[2] true" classname="ai.protomolt.proto.repo.service.BoundedArchiveTransportIT" time="0.249"/>
+  <testcase name="hostShutdownWaitsForCancelledTransportAndProviderToDrain()" classname="ai.protomolt.proto.repo.service.BoundedArchiveTransportIT" time="0.215"/>
+  <testcase name="managedLocalAndRemoteReadsRefuseOversizedEnvelopeBeforeProviderIo()" classname="ai.protomolt.proto.repo.service.BoundedArchiveTransportIT" time="0.25"/>
+  <testcase name="twoListenersShareOneHostIngressLimit()" classname="ai.protomolt.proto.repo.service.BoundedArchiveTransportIT" time="0.254"/>
+  <testcase name="cancelledRemoteReadRetainsConstructionAndTransportAllowancesUntilProviderReturns()" classname="ai.protomolt.proto.repo.service.BoundedArchiveTransportIT" time="0.214"/>
+  <testcase name="shutdownTimeoutRetainsCancelledReadResourcesUntilRealProviderReturns()" classname="ai.protomolt.proto.repo.service.BoundedArchiveTransportIT" time="0.311"/>
+  <testcase name="authenticatedRemoteAndLocalArchiveOperationsShareHistoryAndRetries()" classname="ai.protomolt.proto.repo.service.BoundedArchiveTransportIT" time="0.284"/>
+  <testcase name="mountedArchiveMethodsAreExplicitlyReviewedAndStreamingIsRejectedAtHeaders()" classname="ai.protomolt.proto.repo.service.BoundedArchiveTransportIT" time="0.143"/>
+  <testcase name="drainTimeoutKeepsAcceptedRpcAliveUntilRedisCompletion()" classname="ai.protomolt.proto.repo.service.BoundedArchiveTransportIT" time="11.319"/>
+  <testcase name="malformedArchiveRequestDrainsWithoutWriting()" classname="ai.protomolt.proto.repo.service.BoundedArchiveTransportIT" time="0.178"/>
+  <testcase name="cancelledRemotePutRetainsBothReservationsUntilActualRedisWorkReturns()" classname="ai.protomolt.proto.repo.service.BoundedArchiveTransportIT" time="0.211"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO org.testcontainers.images.PullPolicy - Image pull policy will be performed by: DefaultPullPolicy()
+[Test worker] INFO org.testcontainers.utility.ImageNameSubstitutor - Image name substitution will be performed by: DefaultImageNameSubstitutor (composite of 'ConfigurationFileImageNameSubstitutor' and 'PrefixingImageNameSubstitutor')
+[Test worker] INFO org.testcontainers.DockerClientFactory - Testcontainers version: 2.0.5
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Loaded org.testcontainers.dockerclient.UnixSocketClientProviderStrategy from ~/.testcontainers.properties, will try it first
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Found Docker environment with local Unix socket (unix:///var/run/docker.sock)
+[Test worker] INFO org.testcontainers.DockerClientFactory - Docker host IP address is localhost
+[Test worker] INFO org.testcontainers.DockerClientFactory - Connected to docker: 
+  Server Version: 29.8.1
+  API Version: 1.56
+  Operating System: Ubuntu 26.04.1 LTS
+  Total Memory: 124142 MB
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Creating container for image: testcontainers/ryuk:0.14.0
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 is starting: e65160bef0955f56ea3e58867f6a7b1fb76fb07fd42df6e206739fbd121cd61d
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 started in PT0.409146057S
+[Test worker] INFO org.testcontainers.utility.RyukResourceReaper - Ryuk started - will monitor and terminate Testcontainers containers on JVM exit
+[Test worker] INFO org.testcontainers.DockerClientFactory - Checking the system...
+[Test worker] INFO org.testcontainers.DockerClientFactory - ✔︎ Docker server version should be at least 1.6.0
+[Test worker] INFO tc.redis:7-alpine - Creating container for image: redis:7-alpine
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine is starting: b29e660d2b3d223efc79a05cb2f220bdaa307861486a35eb5cfe75d18cc8cd06
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine started in PT0.366735044S
+[Test worker] INFO tc.postgres:18-alpine - Creating container for image: postgres:18-alpine
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine is starting: 4746089f2bf2095f4b37da5f9b648cc5dcaad5fe37f2bed39b716a8a692ea677
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine started in PT1.117924805S
+[Test worker] INFO tc.postgres:18-alpine - Container is started (JDBC URL: jdbc:postgresql://localhost:50293/test?loggerLevel=OFF)
+[Test worker] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@671ea6ff
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory - Schema history table "public"."flyway_schema_history" does not exist yet
+[Test worker] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 88 migrations (execution time 00:00.042s)
+[Test worker] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory - Creating Schema History table "public"."flyway_schema_history" ...
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": << Empty Schema >>
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "1 - initial schema"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "2 - drive provider config"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "3 - document purges"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "4 - document events outbox"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "5 - document purges relayed at"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "6 - archive"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "7 - archive classification"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "8 - document mutation revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "9 - purge admission generation"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "10 - managed raw objects"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "11 - managed backend profiles"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "12 - archive mutation revisions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "13 - archive retained set revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "14 - archive object bindings"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "15 - archive upload admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "16 - archive version object references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "17 - provider backend identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "18 - archive object recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "19 - archive mutation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "20 - archive mutation observations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "21 - document part attempt admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "22 - document part publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "23 - document key reservations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "24 - abandoned document attempt cleanup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "25 - repository physical locations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "26 - repository retention bridge"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "27 - repository retirement"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "28 - archive reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "29 - shared archive reader locks"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "30 - archive read calls"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "31 - reader incarnation fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "32 - reader local quiescence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "33 - archive reader recovery order"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "34 - repository operation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "35 - repository operation write fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "36 - operation bound document attempts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "37 - document revision lock batches"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "38 - document revision projection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "39 - document revision retention"
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "40 - document operation selections"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "41 - document admission lock modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "42 - document operation selection history"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "43 - selected document attempt writes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "44 - document reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "45 - document reader batch release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "46 - document reader quiescent recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "47 - document reader recovery discovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "48 - repository schema artifact staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "49 - repository operation recovery fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "50 - repository schema replaced claim release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "51 - document event recording"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "52 - independent document publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "53 - native document coordinates"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "54 - revision physical lookup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "55 - document revision schema references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "56 - document revision schema evidence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "57 - document revision schema assets"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "58 - document schema policy catalog"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "59 - document schema policy publication fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "60 - document schema retention manifest"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "61 - document schema admission binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "62 - document schema container role"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "63 - document historical read pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "64 - repository operation rejection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "65 - repository retention lock set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "66 - document assessment staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "67 - document assessment artifacts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "68 - document assessment roots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "69 - document assessment slot snapshots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "70 - shared repository retention set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "71 - document assessment read sessions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "72 - document assessment read release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "73 - document assessment read identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "74 - reader registration identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "75 - nonnegative archive statistics"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "76 - admission rejection assessment binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "77 - rejected assessment read authority"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "78 - repository execution claims"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "79 - repository claim mutation fences"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "80 - single call execution claim fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "81 - private publication preparations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "82 - private publication modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "83 - private assessment start"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "84 - journaled owner mode guards"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "85 - pre owner registration abandonment"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "86 - historical assessment provenance"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "87 - historical assessment snapshot version"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "88 - revision retention inventory indexes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Successfully applied 88 migrations to schema "public", now at version v88 (execution time 00:00.345s)
+Oct 06, 2026 3:33:13 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 06, 2026 3:33:13 AM org.hibernate.Version logVersion
+INFO: HHH000001: Hibernate ORM core version 7.4.10.Final
+Oct 06, 2026 3:33:13 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 06, 2026 3:33:13 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:50293/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 06, 2026 3:33:14 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[Test worker] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive remote-09a5aa73-d47a-4d6b-805f-f44b7d59ca37/storage (id=9000e122-3f3c-34a4-8524-62640a3ae280, bucket=bounded-transport-remote-09a5aa73-d47a-4d6b-805f-f44b7d59ca37-s, prefix='storage')
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 5000 ms, sweep interval 60000 ms, reconcile disabled)
+Oct 06, 2026 3:33:14 AM io.grpc.netty.shaded.io.grpc.netty.NettyServerStream$TransportState deframeFailed
+WARNING: Exception processing message
+io.grpc.StatusRuntimeException: RESOURCE_EXHAUSTED: gRPC message exceeds maximum size 2048: 4177
+	at io.grpc.Status.asRuntimeException(Status.java:524)
+	at io.grpc.internal.MessageDeframer.processHeader(MessageDeframer.java:398)
+	at io.grpc.internal.MessageDeframer.deliver(MessageDeframer.java:272)
+	at io.grpc.internal.MessageDeframer.request(MessageDeframer.java:162)
+	at io.grpc.internal.AbstractStream$TransportState$1RequestRunnable.run(AbstractStream.java:269)
+	at io.grpc.netty.shaded.io.grpc.netty.NettyServerStream$TransportState$1.run(NettyServerStream.java:174)
+	at io.grpc.netty.shaded.io.netty.util.concurrent.AbstractEventExecutor.runTask(AbstractEventExecutor.java:148)
+	at io.grpc.netty.shaded.io.netty.util.concurrent.AbstractEventExecutor.safeExecute(AbstractEventExecutor.java:141)
+	at io.grpc.netty.shaded.io.netty.util.concurrent.SingleThreadEventExecutor.runAllTasks(SingleThreadEventExecutor.java:535)
+	at io.grpc.netty.shaded.io.netty.channel.SingleThreadIoEventLoop.run(SingleThreadIoEventLoop.java:201)
+	at io.grpc.netty.shaded.io.netty.util.concurrent.SingleThreadEventExecutor$5.run(SingleThreadEventExecutor.java:1204)
+	at io.grpc.netty.shaded.io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74)
+	at io.grpc.netty.shaded.io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)
+	at java.base/java.lang.Thread.run(Thread.java:1474)
+
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+[Test worker] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@75f4c44c
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 88 migrations (execution time 00:00.022s)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 88
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 06, 2026 3:33:15 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 06, 2026 3:33:15 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 06, 2026 3:33:15 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:50293/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 06, 2026 3:33:15 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[Test worker] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive remote-c8d4fe32-69b9-4c3b-a31e-212bcd75ec1f/storage (id=eca3f17a-8812-36bc-8a7d-860ed854da32, bucket=bounded-transport-remote-c8d4fe32-69b9-4c3b-a31e-212bcd75ec1f-s, prefix='storage')
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 5000 ms, sweep interval 60000 ms, reconcile disabled)
+Oct 06, 2026 3:33:15 AM io.grpc.internal.SerializingExecutor run
+SEVERE: Exception while executing runnable io.grpc.internal.ServerImpl$JumpToApplicationThreadServerStreamListener$1MessagesAvailable@11ec50e7
+io.grpc.StatusRuntimeException: RESOURCE_EXHAUSTED: Decompressed gRPC message exceeds maximum size 2048
+	at io.grpc.Status.asRuntimeException(Status.java:524)
+	at io.grpc.internal.MessageDeframer$SizeEnforcingInputStream.verifySize(MessageDeframer.java:530)
+	at io.grpc.internal.MessageDeframer$SizeEnforcingInputStream.read(MessageDeframer.java:485)
+	at com.google.protobuf.CodedInputStream$StreamDecoder.read(CodedInputStream.java:1657)
+	at com.google.protobuf.CodedInputStream$StreamDecoder.tryRefillBuffer(CodedInputStream.java:2417)
+	at com.google.protobuf.CodedInputStream$StreamDecoder.isAtEnd(CodedInputStream.java:2339)
+	at com.google.protobuf.CodedInputStream$StreamDecoder.readTag(CodedInputStream.java:1684)
+	at ai.protomolt.proto.repo.archive.v1.PutEntryRequest$Builder.mergeFrom(PutEntryRequest.java:1289)
+	at ai.protomolt.proto.repo.archive.v1.PutEntryRequest$1.parsePartialFrom(PutEntryRequest.java:3177)
+	at ai.protomolt.proto.repo.archive.v1.PutEntryRequest$1.parsePartialFrom(PutEntryRequest.java:3169)
+	at com.google.protobuf.AbstractParser.parseFrom(AbstractParser.java:63)
+	at com.google.protobuf.AbstractParser.parseFrom(AbstractParser.java:25)
+	at io.grpc.protobuf.lite.ProtoLiteUtils$MessageMarshaller.parseFrom(ProtoLiteUtils.java:244)
+	at io.grpc.protobuf.lite.ProtoLiteUtils$MessageMarshaller.parse(ProtoLiteUtils.java:236)
+	at io.grpc.protobuf.lite.ProtoLiteUtils$MessageMarshaller.parse(ProtoLiteUtils.java:133)
+	at io.grpc.MethodDescriptor.parseRequest(MethodDescriptor.java:307)
+	at io.grpc.internal.ServerCallImpl$ServerStreamListenerImpl.messagesAvailableInternal(ServerCallImpl.java:334)
+	at io.grpc.internal.ServerCallImpl$ServerStreamListenerImpl.messagesAvailable(ServerCallImpl.java:319)
+	at io.grpc.internal.ServerImpl$JumpToApplicationThreadServerStreamListener$1MessagesAvailable.runInContext(ServerImpl.java:852)
+	at io.grpc.internal.ContextRunnable.run(ContextRunnable.java:37)
+	at io.grpc.internal.SerializingExecutor.run(SerializingExecutor.java:133)
+	at java.base/java.util.concurrent.ThreadPerTaskExecutor$TaskRunner.run(ThreadPerTaskExecutor.java:291)
+	at java.base/java.lang.VirtualThread.run(VirtualThread.java:460)
+
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+[Test worker] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@2e61695b
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 88 migrations (execution time 00:00.011s)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 88
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 06, 2026 3:33:15 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 06, 2026 3:33:15 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 06, 2026 3:33:15 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:50293/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 06, 2026 3:33:15 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[Test worker] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive remote-ea892312-a8c0-44e2-aabd-626c0d281529/storage (id=4a18c78c-18d8-3d62-8280-3ec58d6f98ae, bucket=bounded-transport-remote-ea892312-a8c0-44e2-aabd-626c0d281529-s, prefix='storage')
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 5000 ms, sweep interval 60000 ms, reconcile disabled)
+[pool-3-thread-1] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[pool-3-thread-1] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[pool-3-thread-1] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+[Test worker] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@73ccc475
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 88 migrations (execution time 00:00.012s)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 88
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 06, 2026 3:33:15 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 06, 2026 3:33:15 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 06, 2026 3:33:15 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:50293/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 06, 2026 3:33:15 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[Test worker] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive remote-3f1095e0-05f9-4885-9590-13520ad14aae/storage (id=99052b75-ec4f-301d-9ad7-17dbfc345a9c, bucket=bounded-transport-remote-3f1095e0-05f9-4885-9590-13520ad14aae-s, prefix='storage')
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 5000 ms, sweep interval 60000 ms, reconcile disabled)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+[Test worker] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@3abe3f9a
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 88 migrations (execution time 00:00.012s)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 88
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 06, 2026 3:33:16 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 06, 2026 3:33:16 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 06, 2026 3:33:16 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:50293/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 06, 2026 3:33:16 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[Test worker] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive remote-dfd6d4b2-3425-48b1-bc2b-df11167e7210/storage (id=ca982c19-aa87-3fea-9e50-4af128c0dfa4, bucket=bounded-transport-remote-dfd6d4b2-3425-48b1-bc2b-df11167e7210-s, prefix='storage')
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 5000 ms, sweep interval 60000 ms, reconcile disabled)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+[Test worker] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@13a34a70
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 88 migrations (execution time 00:00.010s)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 88
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 06, 2026 3:33:16 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 06, 2026 3:33:16 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 06, 2026 3:33:16 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:50293/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 06, 2026 3:33:16 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[Test worker] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive remote-78293ea5-6b64-4f5d-b583-fdc69760ed80/storage (id=5203168b-cf04-33f2-b71c-e4791d88efb0, bucket=bounded-transport-remote-78293ea5-6b64-4f5d-b583-fdc69760ed80-s, prefix='storage')
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 5000 ms, sweep interval 60000 ms, reconcile disabled)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+[Test worker] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@70a416c
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 88 migrations (execution time 00:00.009s)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 88
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 06, 2026 3:33:16 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 06, 2026 3:33:16 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 06, 2026 3:33:16 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:50293/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 06, 2026 3:33:16 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[Test worker] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive remote-0fe9b980-41d3-4bab-9f8c-fcbbac3d2258/storage (id=fdc8d5fa-6fff-30e5-b0ee-f8aa5d986804, bucket=bounded-transport-remote-0fe9b980-41d3-4bab-9f8c-fcbbac3d2258-s, prefix='storage')
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 5000 ms, sweep interval 60000 ms, reconcile disabled)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+[Test worker] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@a51ee41
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 88 migrations (execution time 00:00.007s)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 88
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 06, 2026 3:33:16 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 06, 2026 3:33:16 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 06, 2026 3:33:16 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:50293/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 06, 2026 3:33:16 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[Test worker] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive remote-16880d89-ad59-4d62-9626-787719227835/storage (id=9d028d67-0b6a-3f52-987e-2ec174405955, bucket=bounded-transport-remote-16880d89-ad59-4d62-9626-787719227835-s, prefix='storage')
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 5000 ms, sweep interval 60000 ms, reconcile disabled)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+[Test worker] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@20ecbeda
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 88 migrations (execution time 00:00.009s)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 88
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 06, 2026 3:33:17 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 06, 2026 3:33:17 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 06, 2026 3:33:17 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:50293/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 06, 2026 3:33:17 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[Test worker] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive remote-8ba9cc3d-1c3b-49cb-9917-795d5deb1e72/storage (id=b355aa6d-292b-3a5d-a940-6efcc672fae2, bucket=bounded-transport-remote-8ba9cc3d-1c3b-49cb-9917-795d5deb1e72-s, prefix='storage')
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 5000 ms, sweep interval 60000 ms, reconcile disabled)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+[Test worker] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@2e15a0d7
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 88 migrations (execution time 00:00.011s)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 88
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 06, 2026 3:33:17 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 06, 2026 3:33:17 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 06, 2026 3:33:17 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:50293/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 06, 2026 3:33:17 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[Test worker] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive remote-b5daeb93-55a4-4ed9-b691-00c1f5cade33/storage (id=88ee81f3-9b40-3a4b-89c2-5c7145ba4195, bucket=bounded-transport-remote-b5daeb93-55a4-4ed9-b691-00c1f5cade33-s, prefix='storage')
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 5000 ms, sweep interval 60000 ms, reconcile disabled)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+[Test worker] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@49038769
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 88 migrations (execution time 00:00.010s)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 88
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 06, 2026 3:33:28 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 06, 2026 3:33:28 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 06, 2026 3:33:28 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:50293/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 06, 2026 3:33:28 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[Test worker] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive remote-653436d4-65e9-49ab-9b92-9ded4756ec87/storage (id=02780cae-b30e-30ab-8c75-fef8f521cc5a, bucket=bounded-transport-remote-653436d4-65e9-49ab-9b92-9ded4756ec87-s, prefix='storage')
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 5000 ms, sweep interval 60000 ms, reconcile disabled)
+Oct 06, 2026 3:33:28 AM io.grpc.internal.SerializingExecutor run
+SEVERE: Exception while executing runnable io.grpc.internal.ServerImpl$JumpToApplicationThreadServerStreamListener$1MessagesAvailable@1979c93
+io.grpc.StatusRuntimeException: INTERNAL: Invalid protobuf byte sequence
+	at io.grpc.Status.asRuntimeException(Status.java:524)
+	at io.grpc.protobuf.lite.ProtoLiteUtils$MessageMarshaller.parse(ProtoLiteUtils.java:239)
+	at io.grpc.protobuf.lite.ProtoLiteUtils$MessageMarshaller.parse(ProtoLiteUtils.java:133)
+	at io.grpc.MethodDescriptor.parseRequest(MethodDescriptor.java:307)
+	at io.grpc.internal.ServerCallImpl$ServerStreamListenerImpl.messagesAvailableInternal(ServerCallImpl.java:334)
+	at io.grpc.internal.ServerCallImpl$ServerStreamListenerImpl.messagesAvailable(ServerCallImpl.java:319)
+	at io.grpc.internal.ServerImpl$JumpToApplicationThreadServerStreamListener$1MessagesAvailable.runInContext(ServerImpl.java:852)
+	at io.grpc.internal.ContextRunnable.run(ContextRunnable.java:37)
+	at io.grpc.internal.SerializingExecutor.run(SerializingExecutor.java:133)
+	at java.base/java.util.concurrent.ThreadPerTaskExecutor$TaskRunner.run(ThreadPerTaskExecutor.java:291)
+	at java.base/java.lang.VirtualThread.run(VirtualThread.java:460)
+Caused by: com.google.protobuf.InvalidProtocolBufferException: While parsing a protocol message, the input ended unexpectedly in the middle of a field.  This could mean either that the input has been truncated or that an embedded message misreported its own length.
+	at com.google.protobuf.InvalidProtocolBufferException.truncatedMessage(InvalidProtocolBufferException.java:93)
+	at com.google.protobuf.CodedInputStream$ArrayDecoder.pushLimit(CodedInputStream.java:1501)
+	at com.google.protobuf.CodedInputStream$ArrayDecoder.pushLimitBeforeMessage(CodedInputStream.java:1098)
+	at com.google.protobuf.CodedInputStream$ArrayDecoder.readMessage(CodedInputStream.java:1081)
+	at ai.protomolt.proto.repo.archive.v1.PutEntryRequest$Builder.mergeFrom(PutEntryRequest.java:1295)
+	at ai.protomolt.proto.repo.archive.v1.PutEntryRequest$1.parsePartialFrom(PutEntryRequest.java:3177)
+	at ai.protomolt.proto.repo.archive.v1.PutEntryRequest$1.parsePartialFrom(PutEntryRequest.java:3169)
+	at com.google.protobuf.AbstractParser.parseFrom(AbstractParser.java:63)
+	at com.google.protobuf.AbstractParser.parseFrom(AbstractParser.java:25)
+	at io.grpc.protobuf.lite.ProtoLiteUtils$MessageMarshaller.parseFrom(ProtoLiteUtils.java:244)
+	at io.grpc.protobuf.lite.ProtoLiteUtils$MessageMarshaller.parse(ProtoLiteUtils.java:236)
+	... 9 more
+
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+[Test worker] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@66009368
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 88 migrations (execution time 00:00.008s)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 88
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 06, 2026 3:33:28 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 06, 2026 3:33:28 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 06, 2026 3:33:28 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:50293/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 06, 2026 3:33:28 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[Test worker] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive remote-047811af-5814-4aeb-87d2-1254f768f5ff/storage (id=34e4870e-7739-32ae-8ca5-42ae5f035a43, bucket=bounded-transport-remote-047811af-5814-4aeb-87d2-1254f768f5ff-s, prefix='storage')
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 5000 ms, sweep interval 60000 ms, reconcile disabled)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+]]></system-err>
+</testsuite>

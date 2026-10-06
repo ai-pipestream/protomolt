@@ -33,14 +33,20 @@ class UnaryRequestAdmissionTest {
         final CountDownLatch parsed = new CountDownLatch(1);
         final CountDownLatch entered = new CountDownLatch(1);
         final CountDownLatch release = new CountDownLatch(1);
-        final PayloadBudget budget = new PayloadBudget(2048);
-        final UnaryRequestAdmission admission = new UnaryRequestAdmission(budget, 1024, 1, Set.of(ECHO));
+        final PayloadBudget budget;
+        final UnaryRequestAdmission admission;
         final MethodDescriptor<BytesValue, BytesValue> method;
         final MethodDescriptor<BytesValue, BytesValue> stream;
         final GrpcServerLifetime server;
         final ManagedChannel channel;
 
         Fixture(boolean block) throws Exception {
+            this(block, 0);
+        }
+        Fixture(boolean block, int responseLimit) throws Exception {
+            budget = new PayloadBudget(2048 + responseLimit);
+            admission = new UnaryRequestAdmission(budget, 1024, 1, Set.of(ECHO),
+                    responseLimit == 0 ? java.util.Map.of() : java.util.Map.of(ECHO, responseLimit));
             var proto = ProtoUtils.marshaller(BytesValue.getDefaultInstance());
             var observed = new MethodDescriptor.Marshaller<BytesValue>() {
                 public InputStream stream(BytesValue value) { return proto.stream(value); }
@@ -81,11 +87,12 @@ class UnaryRequestAdmissionTest {
         }
     }
 
-    @Test void cancellationCannotReleaseAllowanceWhileSynchronousHandlerStillUsesRequest() throws Exception {
-        try (var f = new Fixture(true)) {
+    @ParameterizedTest @ValueSource(ints = {0, 256})
+    void cancellationCannotReleaseAllowanceWhileSynchronousHandlerStillUsesRequest(int responseLimit) throws Exception {
+        try (var f = new Fixture(true, responseLimit)) {
             var pending = ClientCalls.futureUnaryCall(f.channel.newCall(f.method, CallOptions.DEFAULT), VALUE);
             assertThat(f.entered.await(5, TimeUnit.SECONDS)).isTrue();
-            assertThat(f.budget.reservedBytes()).isEqualTo(2048);
+            assertThat(f.budget.reservedBytes()).isEqualTo(2048 + responseLimit);
             assertThat(pending.cancel(true)).isTrue();
             assertThatThrownBy(() -> f.call(VALUE, CallOptions.DEFAULT))
                     .isInstanceOfSatisfying(StatusRuntimeException.class,
@@ -95,6 +102,17 @@ class UnaryRequestAdmissionTest {
             f.release.countDown();
             assertThat(f.admission.awaitIdle(Duration.ofSeconds(5))).isTrue();
             assertThat(f.budget.reservedBytes()).isZero();
+        }
+    }
+
+    @Test void oversizedResponseIsNeverDeliveredAndCapacityCanBeReused() throws Exception {
+        try (var f = new Fixture(false, VALUE.getSerializedSize() - 1)) {
+            assertThatThrownBy(() -> f.call(VALUE, CallOptions.DEFAULT))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class,
+                            e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+            assertThat(f.admission.awaitIdle(Duration.ofSeconds(5))).isTrue();
+            assertThat(f.budget.reservedBytes()).isZero();
+            assertThat(f.call(BytesValue.getDefaultInstance(), CallOptions.DEFAULT)).isEqualTo(BytesValue.getDefaultInstance());
         }
     }
 

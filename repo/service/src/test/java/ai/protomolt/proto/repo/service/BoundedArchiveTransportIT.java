@@ -34,6 +34,8 @@ class BoundedArchiveTransportIT {
     static final class Fixture implements AutoCloseable {
         final CountDownLatch entered = new CountDownLatch(1);
         final CountDownLatch release = new CountDownLatch(1);
+        final CountDownLatch readEntered = new CountDownLatch(1);
+        final AtomicInteger reads = new AtomicInteger();
         final AtomicInteger writes = new AtomicInteger();
         final AtomicInteger closes = new AtomicInteger();
         final PayloadBudget budget = new PayloadBudget(8192);
@@ -46,6 +48,9 @@ class BoundedArchiveTransportIT {
         final PutEntryRequest request;
 
         Fixture(boolean hold) {
+            this(hold, false, 2048);
+        }
+        Fixture(boolean hold, boolean holdRead, int responseLimit) {
             var provider = new RedisBlobStoreProvider();
             var observed = new BlobStoreProvider() {
                 public String id() { return "redis"; }
@@ -61,6 +66,10 @@ class BoundedArchiveTransportIT {
                                     writes.incrementAndGet(); entered.countDown();
                                     if (hold && !release.await(20, TimeUnit.SECONDS)) throw new AssertionError("Provider not released");
                                 }
+                                if (method.getName().equals("getBounded")) {
+                                    reads.incrementAndGet(); readEntered.countDown();
+                                    if (holdRead && !release.await(20, TimeUnit.SECONDS)) throw new AssertionError("Read not released");
+                                }
                                 return result;
                             });
                     return new OpenedBlobStore(store, () -> { closes.incrementAndGet(); actual.close(); },
@@ -72,7 +81,8 @@ class BoundedArchiveTransportIT {
                     "http://127.0.0.1:1", "us-east-1", "unused", "unused", "bounded-transport", 0,
                     "redis", null, null, "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379), 0, 1024)
                     .withManagedStorage(new ManagedStoragePolicy("bounded-transport", "bounded-realm", true));
-            var profile = new BoundedArchiveProfile(new ArchivePutAdmission.Limits(16, 2048, 4), budget, 1);
+            var profile = new BoundedArchiveProfile(new ArchivePutAdmission.Limits(16, 2048, 4), budget, 1,
+                    new ai.protomolt.proto.repo.engine.ArchiveGetAdmission.Limits(16, responseLimit, 4));
             host = new RepoServices(config, BridgeEngine.standard(), BlobStores.of(List.of(observed)), profile);
             String account = "remote-" + UUID.randomUUID();
             host.driveRepository().createDrive(CALLER, CreateDriveRequest.newBuilder().setAccountId(account).setName("storage").build());
@@ -130,6 +140,58 @@ class BoundedArchiveTransportIT {
                     .isInstanceOfSatisfying(StatusRuntimeException.class,
                             e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
             f.awaitBudget(0);
+        }
+    }
+
+    @Test void cancelledRemoteReadRetainsConstructionAndTransportAllowancesUntilProviderReturns() throws Exception {
+        try (var f = new Fixture(false, true, 2048)) {
+            f.archive.putEntry(f.request); f.awaitBudget(0);
+            var request = GetEntryRequest.newBuilder().setAddress(f.request.getAddress()).build();
+            var pending = f.future.getEntry(request);
+            assertThat(f.readEntered.await(5, TimeUnit.SECONDS)).isTrue();
+            long held = f.budget.reservedBytes();
+            assertThat(held).isGreaterThan(4096 + 2048);
+            assertThat(pending.cancel(true)).isTrue();
+            assertThatThrownBy(() -> f.archive.getEntry(request)).isInstanceOfSatisfying(StatusRuntimeException.class,
+                    e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+            assertThat(f.budget.reservedBytes()).isEqualTo(held);
+            assertThat(f.closes.get()).isZero();
+            f.release.countDown(); f.awaitBudget(0);
+            assertThat(f.archive.getEntry(request).getRenditions(0).getData()).isEqualTo(f.request.getRenditions(0).getData());
+            f.awaitBudget(0);
+        }
+    }
+
+    @Test void managedLocalAndRemoteReadsRefuseOversizedEnvelopeBeforeProviderIo() throws Exception {
+        try (var f = new Fixture(false, false, 64)) {
+            f.archive.putEntry(f.request); f.awaitBudget(0);
+            var request = GetEntryRequest.newBuilder().setAddress(f.request.getAddress()).build();
+            assertThatThrownBy(() -> f.archive.getEntry(request)).isInstanceOfSatisfying(StatusRuntimeException.class,
+                    e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+            f.awaitBudget(0);
+            assertThatThrownBy(() -> f.host.archiveRepository().getEntry(CALLER, request))
+                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            e -> assertThat(e.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED));
+            assertThat(f.reads.get()).isZero();
+            assertThat(f.budget.reservedBytes()).isZero();
+        }
+    }
+
+    @Test void shutdownTimeoutRetainsCancelledReadResourcesUntilRealProviderReturns() throws Exception {
+        try (var f = new Fixture(false, true, 2048)) {
+            f.archive.putEntry(f.request); f.awaitBudget(0);
+            var pending = f.future.getEntry(GetEntryRequest.newBuilder().setAddress(f.request.getAddress()).build());
+            assertThat(f.readEntered.await(5, TimeUnit.SECONDS)).isTrue();
+            long held = f.budget.reservedBytes();
+            pending.cancel(true);
+            assertThatThrownBy(() -> f.host.close(java.time.Duration.ofMillis(100)))
+                    .isInstanceOfSatisfying(RepositoryDrainTimeoutException.class,
+                            e -> assertThat(e.phase()).isEqualTo(RepositoryDrainTimeoutException.Phase.ARCHIVE_RPC));
+            assertThat(f.closes.get()).isZero();
+            assertThat(f.budget.reservedBytes()).isEqualTo(held);
+            f.release.countDown(); f.awaitBudget(0);
+            f.host.close();
+            assertThat(f.closes.get()).isEqualTo(1);
         }
     }
 

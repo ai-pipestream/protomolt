@@ -2,12 +2,12 @@
 
 ## Next slice: aggregate archive read responses
 
-Design reviewed; the optional library construction gate is implemented. Managed
-host activation and transport response reservations remain unfinished. The current
+Design reviewed; library construction, managed-host activation and GetEntry
+transport response reservations are implemented. The current
 `ArchiveObjectReader` checks each object's published size before its bounded
 provider read. `ArchiveOperations.getEntryImpl` can nevertheless combine multiple
 allowed objects into one response, copying each payload into a protobuf ByteString.
-The default bounded write profile does not yet activate the new read gate.
+The bounded archive profile now activates the read gate alongside write admission.
 
 Add an engine-owned `ArchiveGetAdmission` shared by local and transport calls.
 After authorization and exact version selection, freeze the selected PRESENT
@@ -66,10 +66,25 @@ uses an unbounded GET. Existing constructors retain that legacy behavior.
 
 Real PostgreSQL/Redis tests cover local/in-process aggregate refusal with zero GETs,
 selected historical success, and delayed real GET completion retaining both budget
-and SQL pin until success or checksum failure. This does not activate the gate in
-`RepoServices`, establish scoped-user authorization, or retain transport responses
-past the library return. Header-time response admission, explicit host options,
-transport cancellation and metadata/list bounds remain open.
+and SQL pin until success or checksum failure. The library itself does not establish
+scoped-user authorization or retain transport responses past its return.
+
+### Managed read-response checkpoint
+
+The bounded `RepoServices` profile now shares its payload budget with read
+construction and a fixed GetEntry response reservation at RPC headers. The transport
+lease ends only at the serialized terminal listener callback, after synchronous
+provider work returns even when the client cancels. Oversized protobuf responses
+are refused before transmission. Close stops all gates; drain waits for RPC, write
+and read-construction lifetimes before provider release.
+
+`BoundedArchiveOptions` adds `maxResponseBytes`; the existing five-argument
+constructor defaults it to the request cap. The launcher exposes
+`DOCUMENT_PLATFORM_ARCHIVE_MAX_RESPONSE_BYTES` with the same default. Public options
+require a budget covering both seven request allowances and two request plus four
+response allowances. Metadata/list response limits, local caller retention and
+network-buffer accounting remain outside this guarantee. Process-level transport
+authentication is unchanged; no scoped-user claim is added.
 
 Status: library admission, explicit public Java embedding options and a dedicated
 authenticated archive-only Netty mount and standalone environment entry point are

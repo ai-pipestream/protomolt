@@ -78,12 +78,14 @@ public final class RepoBoundedArchiveMain {
             String token = required(env, "PROTOMOLT_API_TOKEN");
             String account = required(env, "DOCUMENT_PLATFORM_ARCHIVE_ACCOUNT");
             String drive = required(env, "DOCUMENT_PLATFORM_ARCHIVE_DRIVE");
+            int requestLimit = (int) env.number("DOCUMENT_PLATFORM_ARCHIVE_MAX_REQUEST_BYTES", 2_097_152, 1, Integer.MAX_VALUE);
             var limits = new BoundedArchiveOptions(
                     (int) env.number("DOCUMENT_PLATFORM_ARCHIVE_MAX_OBJECT_BYTES", 1_048_576, 1, 9 * 1024 * 1024),
-                    (int) env.number("DOCUMENT_PLATFORM_ARCHIVE_MAX_REQUEST_BYTES", 2_097_152, 1, Integer.MAX_VALUE),
+                    requestLimit,
                     (int) env.number("DOCUMENT_PLATFORM_ARCHIVE_MAX_RENDITIONS", 16, 1, Integer.MAX_VALUE),
                     env.number("DOCUMENT_PLATFORM_ARCHIVE_PAYLOAD_BUDGET_BYTES", 14_680_064, 1, Long.MAX_VALUE),
-                    (int) env.number("DOCUMENT_PLATFORM_ARCHIVE_MAX_CONCURRENT_REQUESTS", 4, 1, 1024));
+                    (int) env.number("DOCUMENT_PLATFORM_ARCHIVE_MAX_CONCURRENT_REQUESTS", 4, 1, 1024),
+                    (int) env.number("DOCUMENT_PLATFORM_ARCHIVE_MAX_RESPONSE_BYTES", requestLimit, 1, Integer.MAX_VALUE));
             var config = RepoServiceConfig.fromEnvironment(snapshot);
             // Pure qualification before SQL, provider discovery or client construction.
             limits.profile().openAdmission(config).close();

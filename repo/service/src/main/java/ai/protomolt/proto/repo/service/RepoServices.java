@@ -108,6 +108,7 @@ public final class RepoServices implements AutoCloseable {
     private boolean lifecycleStarted;
     private final UnaryRequestAdmission archiveIngress;
     private final ai.protomolt.proto.repo.engine.ArchivePutAdmission archiveAdmission;
+    private final ai.protomolt.proto.repo.engine.ArchiveGetAdmission archiveReadAdmission;
     private final ArchiveOperations archiveOperations;
     private final ManagedArchiveServices managedArchive;
     private final ManagedDocumentServices managedDocuments;
@@ -163,8 +164,12 @@ public final class RepoServices implements AutoCloseable {
             ManagedSchemaAccess schemaAccess, BoundedArchiveProfile bounded) {
         ManagedArchiveServices startingArchive = null;
         this.archiveAdmission = bounded == null ? null : bounded.openAdmission(config);
+        this.archiveReadAdmission = bounded == null ? null : new ai.protomolt.proto.repo.engine.ArchiveGetAdmission(
+                bounded.readLimits(), bounded.budget(), bounded.maxActive());
         this.archiveIngress = bounded == null ? null : new UnaryRequestAdmission(bounded.budget(),
-                bounded.limits().maxRequestBytes(), bounded.maxActive(), BoundedArchiveMethods.UNARY);
+                bounded.limits().maxRequestBytes(), bounded.maxActive(), BoundedArchiveMethods.UNARY,
+                java.util.Map.of(ai.protomolt.proto.repo.archive.v1.ArchiveServiceGrpc.getGetEntryMethod().getFullMethodName(),
+                        bounded.readLimits().maxResponseBytes()));
         try {
             this.config = config;
             if (schemaAccess != null && !config.managedStorage().retentionQualified())
@@ -300,7 +305,7 @@ public final class RepoServices implements AutoCloseable {
             this.archiveOperations = new ArchiveOperations(
                     archiveLedger, driveLedger, blobStore, bridges,
                     managedArchive == null ? null : managedArchive.reader,
-                    managedArchive == null ? null : managedArchive.writer, archiveAdmission);
+                    managedArchive == null ? null : managedArchive.writer, archiveAdmission, archiveReadAdmission);
             this.driveOperations = new ai.protomolt.proto.repo.engine.DriveOperations(driveLedger, driveProvisioner);
             var configuredServices = new java.util.ArrayList<BindableService>(List.of(
                     documentService,
@@ -323,6 +328,7 @@ public final class RepoServices implements AutoCloseable {
         } catch (RuntimeException | Error failure) {
             if (archiveIngress != null) archiveIngress.close();
             if (archiveAdmission != null) archiveAdmission.close();
+            if (archiveReadAdmission != null) archiveReadAdmission.close();
             if (startingArchive != null) {
                 // Construction has not exposed services or started workers. Preserve
                 // its registered reader identity before releasing the borrowed ledger.
@@ -553,8 +559,8 @@ public final class RepoServices implements AutoCloseable {
      * Starts the bounded archive-only Netty listener. Requires a nonblank operator
      * token granting process-level access across accounts. The listener is plaintext;
      * use a trusted network or terminate TLS before remote access. Every listener
-     * shares this host's input budget. Read responses and decoded heap are separate
-     * from those allowances. No document, drive, bridge or streaming RPC is exposed.
+     * shares this host's input and GetEntry response budget. Decoded heap and network
+     * buffers are separate. No document, drive, bridge or streaming RPC is exposed.
      */
     public synchronized Server startBoundedArchiveNetty(int port, String apiToken) {
         requireOpen();
@@ -842,6 +848,7 @@ public final class RepoServices implements AutoCloseable {
         lifecycleClosed = true;
         if (archiveIngress != null) archiveIngress.close();
         if (archiveAdmission != null) archiveAdmission.close();
+        if (archiveReadAdmission != null) archiveReadAdmission.close();
         if (managedDocuments != null) managedDocuments.closeAdmission();
         if (managedArchive != null) managedArchive.reader.close();
         LifecycleShutdown.stopBeforeRelease(lifecycleThreads, timeout, () -> releaseAfterWorkersStop(timeout));
@@ -878,6 +885,9 @@ public final class RepoServices implements AutoCloseable {
                 throw new RepositoryDrainTimeoutException(RepositoryDrainTimeoutException.Phase.ARCHIVE_PUT,
                         "Archive puts still active; shared resources retained");
             phase = "Archive reader";
+            if (archiveReadAdmission != null && !archiveReadAdmission.awaitIdle(timeout))
+                throw new RepositoryDrainTimeoutException(RepositoryDrainTimeoutException.Phase.ARCHIVE_READ,
+                        "Archive response construction still active; shared resources retained");
             if (managedArchive != null && !managedArchive.reader.awaitIdle(timeout))
                 throw new RepositoryDrainTimeoutException(RepositoryDrainTimeoutException.Phase.ARCHIVE_READ,
                         "Managed archive reads still active; shared resources retained");

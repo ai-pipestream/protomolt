@@ -64,11 +64,12 @@ The current independent implementation slice is aggregate archive GetEntry admis
 specified in [the read-response plan](repository-bounded-ingress.md#next-slice-aggregate-archive-read-responses).
 Per-object limits currently do not bound a response assembled from many renditions.
 The reviewed plan separates engine construction lifetime from transport response
-lifetime and includes real-provider local/remote acceptance cases. It remains
-partially implemented as an optional library construction gate. Real Redis/SQL
+lifetime and includes real-provider local/remote acceptance cases. GetEntry now
+has library construction and bounded managed Netty response admission. Real Redis/SQL
 tests cover aggregate refusal, historical subset reads and held provider completion.
-Managed-host options and transport response lifetime remain next. Continue them
-alongside claimed-session recovery and retention work;
+Managed-host options and transport reservations share the host budget. Metadata/list
+response limits, manifest parsing and local caller retention remain separate. Continue
+claimed-session recovery and retention work alongside these remaining limits;
 performance qualification must not displace these requirements.
 
 ## Independent work that can advance now

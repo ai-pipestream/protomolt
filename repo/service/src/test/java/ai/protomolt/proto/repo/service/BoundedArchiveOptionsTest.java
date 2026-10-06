@@ -5,6 +5,12 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 
 class BoundedArchiveOptionsTest {
+    @Test void explicitResponseLimitRequiresConstructionAndTransportBudget() {
+        assertThat(new BoundedArchiveOptions(16, 1024, 4, 8192, 2).maxResponseBytes()).isEqualTo(1024);
+        assertThatThrownBy(() -> new BoundedArchiveOptions(16, 1024, 4, 10239, 2, 2048))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("transport response allowances");
+        assertThat(new BoundedArchiveOptions(16, 1024, 4, 10240, 2, 2048).maxResponseBytes()).isEqualTo(2048);
+    }
     @Test void budgetMustAdmitAtLeastOneMaximumTransportPutWithoutIntegerOverflow() {
         int maximum = 256 * 1024 * 1024;
         long minimum = 7L * maximum;

@@ -25,6 +25,7 @@ class RepoBoundedArchiveMainTest {
         var parsed = RepoBoundedArchiveMain.Settings.parse(environment());
         assertThat(parsed.config.blobStore()).isEqualTo("redis");
         assertThat(parsed.limits.maxObjectBytes()).isEqualTo(1048576);
+        assertThat(parsed.limits.maxResponseBytes()).isEqualTo(parsed.limits.maxRequestBytes());
         assertThat(parsed.account).isEqualTo("account");
     }
 
@@ -35,7 +36,7 @@ class RepoBoundedArchiveMainTest {
         }
         for (String name : new String[]{"DOCUMENT_PLATFORM_ARCHIVE_MAX_OBJECT_BYTES", "DOCUMENT_PLATFORM_ARCHIVE_MAX_REQUEST_BYTES",
                 "DOCUMENT_PLATFORM_ARCHIVE_MAX_RENDITIONS", "DOCUMENT_PLATFORM_ARCHIVE_PAYLOAD_BUDGET_BYTES",
-                "DOCUMENT_PLATFORM_ARCHIVE_MAX_CONCURRENT_REQUESTS"}) {
+                "DOCUMENT_PLATFORM_ARCHIVE_MAX_CONCURRENT_REQUESTS", "DOCUMENT_PLATFORM_ARCHIVE_MAX_RESPONSE_BYTES"}) {
             var env = environment(); env.put(name, "bad-limit");
             assertThatThrownBy(() -> RepoBoundedArchiveMain.Settings.parse(env)).hasMessageContaining(name);
         }
