@@ -6746,3 +6746,12 @@ by revoke/rotate regression tests. The managed publication facade and mounted
 transport remain unfinished.
 The [terminal replay evidence](../evidence/repository/2026-10-06-terminal-mode-replay/README.md)
 records 68 passing PostgreSQL tests and the credential red/green regression.
+
+**New shared publication SPI and runtime facade:** `DocumentPublicationRepository`
+uses the staged protobuf request and response. Journaled runtimes supply complete
+input checks, shared call/byte limits, terminal mode comparison, trusted host
+selection, existing execution and exact final receipt verification. The packaged
+storage test passed, along with 39 SPI tests and the dependency check. See
+[facade evidence](../evidence/repository/2026-10-06-publication-facade/README.md).
+Production service selection and gRPC adapters remain unfinished; no endpoint was
+mounted by this change.

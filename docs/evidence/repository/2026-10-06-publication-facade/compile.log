@@ -1,0 +1,80 @@
+> Task :protomolt-protobuf-quality:protobufDummy UP-TO-DATE
+> Task :protomolt-repo-proto:protobufDummy UP-TO-DATE
+> Task :protomolt-asset-proto:protobufDummy UP-TO-DATE
+> Task :protomolt-kafka-serde:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-validation:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-metadata:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-validation-protovalidate:protobufDummy UP-TO-DATE
+> Task :protomolt-mapper-cel:processResources NO-SOURCE
+> Task :protomolt-compat:processResources NO-SOURCE
+> Task :protomolt-cel:processResources NO-SOURCE
+> Task :protomolt-sources:processResources NO-SOURCE
+> Task :protomolt-kafka-wire:processResources NO-SOURCE
+> Task :protomolt-protobuf-validation-protovalidate:extractProto UP-TO-DATE
+> Task :protomolt-protobuf-validation:extractProto UP-TO-DATE
+> Task :protomolt-repo-proto:extractProto UP-TO-DATE
+> Task :protomolt-protobuf-metadata:extractProto UP-TO-DATE
+> Task :protomolt-kafka-serde:extractProto UP-TO-DATE
+> Task :protomolt-protobuf-quality:extractProto UP-TO-DATE
+> Task :protomolt-repo-blob-spi:compileJava UP-TO-DATE
+> Task :protomolt-asset-proto:extractProto UP-TO-DATE
+> Task :protomolt-protobuf-quality:processProtoResources UP-TO-DATE
+> Task :protomolt-protobuf-validation:processProtoResources UP-TO-DATE
+> Task :protomolt-protobuf-metadata:processProtoResources UP-TO-DATE
+> Task :protomolt-protobuf-validation:processResources UP-TO-DATE
+> Task :protomolt-protobuf-metadata:processResources UP-TO-DATE
+> Task :protomolt-protobuf-quality:processResources UP-TO-DATE
+> Task :protomolt-asset-proto:processProtoResources UP-TO-DATE
+> Task :protomolt-asset-proto:processResources UP-TO-DATE
+> Task :protomolt-kafka-wire:compileJava UP-TO-DATE
+> Task :protomolt-descriptors:compileJava UP-TO-DATE
+> Task :protomolt-protobuf-metadata:extractIncludeProto UP-TO-DATE
+> Task :protomolt-descriptors:processResources NO-SOURCE
+> Task :protomolt-schema-confluent:processResources NO-SOURCE
+> Task :protomolt-helpers:processResources NO-SOURCE
+> Task :protomolt-formats:processResources NO-SOURCE
+> Task :protomolt-mapper:processResources NO-SOURCE
+> Task :protomolt-protobuf-metadata:generateProto UP-TO-DATE
+> Task :protomolt-formats:compileJava UP-TO-DATE
+> Task :protomolt-protobuf-metadata:compileJava UP-TO-DATE
+> Task :protomolt-protobuf-validation:extractIncludeProto UP-TO-DATE
+> Task :protomolt-protobuf-quality:extractIncludeProto UP-TO-DATE
+> Task :protomolt-asset-proto:extractIncludeProto UP-TO-DATE
+> Task :protomolt-protobuf-validation-protovalidate:extractIncludeProto UP-TO-DATE
+> Task :protomolt-cel:compileJava UP-TO-DATE
+> Task :protomolt-protobuf-validation:generateProto UP-TO-DATE
+> Task :protomolt-protobuf-quality:generateProto UP-TO-DATE
+> Task :protomolt-asset-proto:generateProto UP-TO-DATE
+> Task :protomolt-protobuf-validation-protovalidate:generateProto UP-TO-DATE
+> Task :protomolt-repo-spi:checkRuntimeBoundaries
+> Task :protomolt-helpers:compileJava UP-TO-DATE
+> Task :protomolt-repo-proto:extractIncludeProto UP-TO-DATE
+> Task :protomolt-protobuf-quality:compileJava UP-TO-DATE
+> Task :protomolt-protobuf-validation:compileJava UP-TO-DATE
+> Task :protomolt-repo-proto:generateProto UP-TO-DATE
+> Task :protomolt-mapper:compileJava UP-TO-DATE
+> Task :protomolt-protobuf-validation-protovalidate:compileJava UP-TO-DATE
+> Task :protomolt-sources:compileJava UP-TO-DATE
+> Task :protomolt-asset-proto:compileJava UP-TO-DATE
+> Task :protomolt-mapper-cel:compileJava UP-TO-DATE
+> Task :protomolt-kafka-serde:extractIncludeProto UP-TO-DATE
+> Task :protomolt-kafka-serde:generateProto NO-SOURCE
+> Task :protomolt-compat:compileJava UP-TO-DATE
+> Task :protomolt-schema-confluent:compileJava UP-TO-DATE
+> Task :protomolt-kafka-serde:compileJava UP-TO-DATE
+> Task :protomolt-repo-proto:compileJava UP-TO-DATE
+> Task :protomolt-repo-codec:compileJava UP-TO-DATE
+> Task :protomolt-repo-admission:compileJava UP-TO-DATE
+> Task :protomolt-repo-spi:compileJava
+> Task :protomolt-repo-container:compileJava
+
+[Incubating] Problems report is available at: file:///work/worktrees/protomolt/delegation-boundaries/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.6.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 1s
+51 actionable tasks: 3 executed, 48 up-to-date

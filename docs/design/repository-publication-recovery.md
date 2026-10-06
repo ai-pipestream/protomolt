@@ -2181,3 +2181,28 @@ This is an internal prerequisite. The new publication service is still unmounted
 and its shared facade must call this check after validating the complete input.
 The tests cover real PostgreSQL receipts and journals with synthetic native
 revision observations; they do not qualify provider or transport execution.
+
+### Shared publication facade
+
+`DocumentPublicationRepository` defines the common request/response boundary.
+Journaled runtimes can create it with a trusted `PublicationSelector`. One runtime
+call barrier spans input validation, byte reservations, replay, host selection,
+execution and final receipt verification. A shared permit limit bounds facade
+calls across all wrappers created from the same runtime. The facade reserves
+retained input, canonical command allowance and upload conversion bytes before
+allocation; these reservations remain held until synchronous execution returns.
+Transport parsing and callback-delivery budgets remain separate host obligations.
+
+The first authorized mode-aware receipt check precedes host selection. For a
+nonterminal operation, the selector supplies immutable drive/profile snapshots,
+fixed attributes, a container definition and a lazy Any schema-scope factory.
+It must not return open resources without a separate lifecycle owner and must
+clean up partial acquisition on failure. The existing execution path checks
+placements and authority again under its normal admission locks. Final delivery
+requires an exact match between the execution outcome and a fresh authorized
+mode-aware durable receipt, covering a concurrent commit after the first check.
+
+V1 can use a precomputed definition of the built-in Document descriptor for its
+container. Any occurrence resolution remains caller-authorized registry work.
+The service-owned drive/profile selector, RPC handler and client are still to be
+connected and qualified. This factory alone does not mount a publication API.

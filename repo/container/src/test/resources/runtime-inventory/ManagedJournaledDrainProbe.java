@@ -90,8 +90,25 @@ public final class ManagedJournaledDrainProbe {
             var tx = new Tx(database.entityManagerFactory());
             try {
                 var terminal = prepare(host, tx, generation, false);
-                var completed = execute(host, ADMIN, terminal);
+                var completed = executeFacade(host, ADMIN, terminal, access);
                 require(completed.getMembersCount() == 1, "terminal control published");
+                var receiptOnly=host.documentPublication().repository((caller,command,control) -> {
+                    throw new AssertionError("Terminal receipt selected host storage or schemas");
+                });
+                require(receiptOnly.publishDocument(ADMIN,request(terminal),RepositoryReadControl.NONE).getCommitted().equals(completed),
+                        "shared facade returns exact terminal receipt without host selection");
+                try {
+                    receiptOnly.publishDocument(ADMIN,request(terminal).toBuilder().clearPayloads().build(),RepositoryReadControl.NONE);
+                    throw new AssertionError("Terminal replay accepted incomplete uploads");
+                } catch (IllegalArgumentException expected) { /* Shared input validation precedes receipt lookup. */ }
+                try {
+                    receiptOnly.publishDocument(ADMIN,request(terminal).toBuilder().setModes(0,
+                            request(terminal).getModes(0).toBuilder().setMode(DocumentPublicationMode.DOCUMENT_PUBLICATION_MODE_TYPED)).build(),
+                            RepositoryReadControl.NONE);
+                    throw new AssertionError("Terminal replay accepted different modes");
+                } catch (RepositoryException expected) {
+                    require(expected.code()==RepositoryException.Code.FAILED_PRECONDITION,"terminal mode conflict");
+                }
                 require(host.publishDocument(ADMIN, terminal.command, Map.of(), Map.of(), Map.of(), Map.of(),
                         Optional.empty(), RepositoryReadControl.NONE).equals(completed), "terminal receipt replay");
                 require(entered.getCount() == 1, "opaque terminal control did not resolve a schema");
@@ -109,7 +126,7 @@ public final class ManagedJournaledDrainProbe {
                     return;
                 }
                 if (recoveryEnabled) {
-                    var accepted=executor.submit(() -> execute(host,ADMIN,work));
+                    var accepted=executor.submit(() -> executeFacade(host,ADMIN,work,access));
                     require(entered.await(10,TimeUnit.SECONDS),"enabled host entered real schema lookup");
                     try { host.close(Duration.ofMillis(100)); throw new AssertionError("accepted publication was not retained"); }
                     catch (IllegalStateException expected) {
@@ -327,6 +344,29 @@ public final class ManagedJournaledDrainProbe {
         return host.publishDocument(caller, work.command, work.placements, work.bodies, Map.of(), work.modes,
                 work.modes.get("document") == DocumentPublicationRuntime.Mode.TYPED ? Optional.of(definition(Document.getDescriptor())) : Optional.empty(),
                 RepositoryReadControl.NONE);
+    }
+
+    private static DocumentPublicationResult executeFacade(RepoServices host, RepositoryCaller caller, Work work,
+            ManagedSchemaAccess access) {
+        var repository=host.documentPublication().repository((actual,command,control) -> {
+            require(actual.equals(caller) && command.sha256().equals(work.command.sha256()),"trusted fixture host selection identity");
+            return new DocumentPublicationRuntime.PublicationSelection(work.placements,Map.of(),
+                    work.modes.get("document")==DocumentPublicationRuntime.Mode.TYPED
+                            ? Optional.of(definition(Document.getDescriptor())) : Optional.empty(),access::open);
+        });
+        var response=repository.publishDocument(caller,request(work),RepositoryReadControl.NONE);
+        require(response.hasCommitted(),"facade published a committed receipt");
+        return response.getCommitted();
+    }
+
+    private static PublishDocumentRequest request(Work work) {
+        var request=PublishDocumentRequest.newBuilder().setIntent(work.command.intent());
+        work.modes.forEach((member,mode) -> request.addModes(DocumentPublicationMemberMode.newBuilder().setMemberId(member)
+                .setMode(mode==DocumentPublicationRuntime.Mode.TYPED ? DocumentPublicationMode.DOCUMENT_PUBLICATION_MODE_TYPED
+                        : DocumentPublicationMode.DOCUMENT_PUBLICATION_MODE_OPAQUE)));
+        work.bodies.forEach((key,body) -> request.addPayloads(DocumentPublicationPayload.newBuilder().setMemberId(key.member())
+                .setRevisionOrdinal(key.revisionOrdinal()).setContent(ByteString.copyFrom(body.bytes()))));
+        return request.build();
     }
 
     private static Work prepare(RepoServices host, Tx tx, String generation, boolean typed) throws Exception {

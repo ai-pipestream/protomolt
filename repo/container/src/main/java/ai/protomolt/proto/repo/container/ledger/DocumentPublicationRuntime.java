@@ -7,6 +7,10 @@ import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
 import ai.protomolt.proto.repo.codec.DocumentRevisionAssembly;
 import ai.protomolt.proto.repo.codec.PartObject;
 import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
+import ai.protomolt.proto.repo.spi.DocumentPublicationInput;
+import ai.protomolt.proto.repo.spi.DocumentPublicationRepository;
+import ai.protomolt.proto.repo.spi.RepositoryException;
+import ai.protomolt.proto.repo.v1.PublishDocumentResponse;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryReadControl;
 import ai.protomolt.proto.repo.v1.DocumentPublicationMember;
@@ -82,12 +86,33 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
                 RepositoryReadControl control);
     }
 
+    /** Server-owned selection; request fields never supply storage credentials or descriptors. */
+    public record PublicationSelection(Map<UUID, Placement> placements, Map<String,String> attributes,
+            Optional<DocumentSchemaAdmission.Definition> container, SchemaScopes schemas) {
+        public PublicationSelection {
+            placements=Map.copyOf(placements); attributes=Map.copyOf(attributes);
+            Objects.requireNonNull(container); Objects.requireNonNull(schemas);
+        }
+    }
+    @FunctionalInterface public interface PublicationSelector {
+        /**
+         * Invoked after input validation and replay, never for a terminal receipt.
+         * Return immutable host snapshots and a lazy schema-scope factory, not unowned
+         * open resources. Clean up partial acquisition on failure. Calls may overlap.
+         */
+        PublicationSelection select(RepositoryCaller caller, DocumentPublicationCommand command, RepositoryReadControl control);
+    }
+
     private final DocumentUploadCoordinator uploads;
     private final DocumentPublicationSessions sessions;
     private final DocumentReadLifecycle reads;
     private final java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> drainAuthority;
     private final ExternalWorkers externalWorkers;
     private final RepositoryManagedRecovery recovery;
+    private final DocumentPublicationReplay publicationReplay;
+    private final PayloadBudget publicationBudget;
+    private final java.util.concurrent.Semaphore publicationPermits;
+    private final boolean journaledPublication;
     private final DocumentPublicationScopeCalls scopeCalls = new DocumentPublicationScopeCalls();
     private boolean stopping;
     private boolean stopped;
@@ -239,6 +264,10 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
         Objects.requireNonNull(backends);
         this.drainAuthority = drainAuthority;
         this.externalWorkers = externalWorkers;
+        publicationReplay=new DocumentPublicationReplay(tx.withTimeouts(sqlTimeouts));
+        publicationBudget=Objects.requireNonNull(budget);
+        publicationPermits=new java.util.concurrent.Semaphore(maxSessions);
+        journaledPublication=drainAuthority!=null;
         reads = new DocumentReadLifecycle(ledger, reader, cleanupBatchSize);
         uploads = new DocumentUploadCoordinator(tx, drives, budget, (generation, profile) -> {
             var selected = Objects.requireNonNull(backends.resolve(generation, profile));
@@ -261,6 +290,65 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
         try (var call=scopeCalls.enter(); var operation=operationCall(caller,command)) {
             return executeAccepted(caller,command,placements,bodies,attributes,modes,container,schemas,control);
         }
+    }
+
+    /** Creates a shared library/transport boundary; it borrows this runtime and closes with it. */
+    public DocumentPublicationRepository repository(PublicationSelector selector) {
+        Objects.requireNonNull(selector);
+        if (!journaledPublication) throw new IllegalStateException("Managed publication requires durable mode journals");
+        return new DocumentPublicationFacade(scopeCalls,publicationBudget,publicationPermits,
+                (caller,input,control) -> publishValidated(caller,input,selector,control));
+    }
+
+    private PublishDocumentResponse publishValidated(RepositoryCaller caller, DocumentPublicationInput input,
+            PublicationSelector selector, RepositoryReadControl control) {
+        var command=input.command();
+        var selectedModes=new HashMap<String,Mode>();
+        input.modes().forEach((member,mode) -> selectedModes.put(member,switch(mode) {
+            case DOCUMENT_PUBLICATION_MODE_TYPED -> Mode.TYPED;
+            case DOCUMENT_PUBLICATION_MODE_OPAQUE -> Mode.OPAQUE;
+            default -> throw new IllegalArgumentException("Invalid publication mode");
+        }));
+        var fixedModes=modes(selectedModes);
+        try (var operation=operationCall(caller,command)) {
+            var observed=publicationReplay.observe(caller,command,fixedModes,control);
+            if (observed.result().isPresent() || observed.rejection().isPresent()) return response(observed);
+            observed.requireNotTerminated();
+            var selected=Objects.requireNonNull(selector.select(caller,command,control));
+            control.check();
+            var bodies=new HashMap<PayloadKey,PartObject>();
+            for (var member:command.intent().getMembersList()) for (int ordinal=0;ordinal<member.getPartsCount();ordinal++) {
+                var part=member.getParts(ordinal);
+                if (!part.hasUpload()) continue;
+                control.check();
+                var bytes=input.payloads().get(new DocumentPublicationInput.PayloadKey(member.getMemberId(),ordinal));
+                bodies.put(new PayloadKey(member.getMemberId(),ordinal),new PartObject(part.getSlot().getPart(),
+                        part.getSlot().getSubKey(),bytes.toByteArray(),part.getUpload().getSha256()));
+            }
+            PublishDocumentResponse expected;
+            try (var scopes=new DocumentPublicationSchemaScopes(caller,command,selected.schemas(),control)) {
+                try {
+                    var result=executeAccepted(caller,command,selected.placements(),bodies,selected.attributes(),selectedModes,
+                            selected.container(),scopes,control);
+                    expected=PublishDocumentResponse.newBuilder().setCommitted(result).build();
+                } catch (Rejected rejected) {
+                    expected=PublishDocumentResponse.newBuilder().setRejected(rejected.receipt()).build();
+                }
+            } catch (InvalidProtocolBufferException malformed) {
+                throw new RepositoryException(RepositoryException.Code.INVALID_ARGUMENT,"Publication content is not valid protobuf",malformed);
+            }
+            // Another owner may finish between the initial observation and execution replay.
+            var confirmed=response(publicationReplay.observe(caller,command,fixedModes,control));
+            if (!confirmed.equals(expected)) throw new RepositoryException(RepositoryException.Code.DATA_LOSS,
+                    "Publication execution differs from its durable receipt");
+            return confirmed;
+        }
+    }
+
+    private static PublishDocumentResponse response(DocumentPublicationReplay.Observation observed) {
+        if (observed.result().isPresent()) return PublishDocumentResponse.newBuilder().setCommitted(observed.result().orElseThrow()).build();
+        if (observed.rejection().isPresent()) return PublishDocumentResponse.newBuilder().setRejected(observed.rejection().orElseThrow()).build();
+        throw new RepositoryException(RepositoryException.Code.DATA_LOSS,"Publication returned without a durable terminal receipt");
     }
 
     private DocumentPublicationResult executeAccepted(RepositoryCaller caller, DocumentPublicationCommand command,
