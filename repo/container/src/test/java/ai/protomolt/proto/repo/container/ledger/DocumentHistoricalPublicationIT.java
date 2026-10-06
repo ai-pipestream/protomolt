@@ -119,6 +119,17 @@ class DocumentHistoricalPublicationIT {
                         var row = new DocumentLedger(c.tx()).findByNodeId(initial.nodeId).orElseThrow();
                         assertThat(row.readManifest().getDocVersion()).isEqualTo(current + 1);
                         assertThat(row.readManifest().getParts(0)).isEqualTo(originalEntry);
+                        var retained = new DocumentRevisionRetentionInventory(c.tx()).inspect(CALLER, fixture.address(),
+                                firstRevision, RepositoryReadControl.NONE);
+                        assertThat(retained.current()).isFalse();
+                        long revisionCount = current + 1;
+                        assertThat(retained.objects()).allSatisfy(object -> {
+                            assertThat(object.historicalRevisions()).isEqualTo(revisionCount);
+                            assertThat(object.currentRevisions()).isEqualTo(1);
+                            assertThat(object.documentReaders()).isEqualTo(1);
+                            assertThat(object.mirrors()).isEqualTo(revisionCount + 2);
+                        });
+                        assertThat(retained.artifacts()).allSatisfy(artifact -> assertThat(artifact.revisions()).isEqualTo(revisionCount));
                         c.tx().inTransaction(em -> {
                             var revisions = em.createNativeQuery("""
                                     SELECT p.revision_id,p.object_id,a.decision

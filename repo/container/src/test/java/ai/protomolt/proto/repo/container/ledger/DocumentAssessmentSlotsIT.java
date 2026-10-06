@@ -45,6 +45,13 @@ class DocumentAssessmentSlotsIT {
                     if (slot.declaration().equals("NEW_CONTENT")) {
                         assertThat(slot.sourceRevision()).isNull(); assertThat(slot.sourceOrdinal()).isNull();
                     } else {
+                        var inventory = new DocumentRevisionRetentionInventory(c.tx()).inspect(CALLER,
+                                f.command().intent().getMembers(Integer.parseInt(slot.member().substring("member-".length())))
+                                        .getDestination().getAddress(), slot.sourceRevision(), ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+                        assertThat(inventory.sourceAssessmentSlots()).isEqualTo(slots.stream()
+                                .filter(other -> slot.sourceRevision().equals(other.sourceRevision())).count());
+                        assertThat(inventory.objects()).filteredOn(object -> object.object().equals(slot.object()))
+                                .singleElement().satisfies(object -> assertThat(object.assessments()).isEqualTo(1));
                         Object[] row = c.tx().readOnly(em -> (Object[]) em.createNativeQuery("""
                                 SELECT p.revision_id,p.revision_ordinal,p.object_id FROM document_revision_current r
                                 JOIN document_revision_parts p USING(revision_id)

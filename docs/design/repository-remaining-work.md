@@ -259,6 +259,21 @@ foundation boundaries without adding JCR dependencies or asserting compliance.
    Do not relax either guard merely to make a cleanup test pass. Before enabling deletion,
    account for committed revisions, staged operation claims, assessments, active reads,
    restore operations and future JCR references under one reviewed liveness decision.
+   The internal `DocumentRevisionRetentionInventory` now supplies a bounded,
+   single-statement metadata snapshot for an exact sealed revision. It counts native
+   object references alongside retention mirrors; normalized schema revision,
+   operation-claim and assessment references; source-revision assessment slots and
+   physical read-pin rows. It includes retiring/reclaiming state. V88 adds indexes
+   for the source-revision lookups. Positive counts, shared revisions, pin release,
+   assessment release and migration over an existing revision have real PostgreSQL
+   coverage. See [inventory evidence](../evidence/repository/2026-10-06-revision-retention-inventory/README.md).
+   This process-authority-only helper is observational: it neither locks a future
+   deletion decision nor grants deletion. It always reports unindexed preparation
+   journal selectors and future content-repository references as unresolved.
+   Expired or terminal claims are counted until explicitly released. V48/V55 and
+   revision immutability remain unchanged. Next, resolve pending command references
+   and design atomic pruning with the same lock order used by reference acquisition;
+   do not derive a deletable flag from an earlier inventory snapshot.
    Required restore acceptance cases include registry absence, policy change, revoked
    access, stale destination revision, shared-byte reuse, failed finalization, and a
    pruning race with a held restore read. Backup qualification must restore the matching
