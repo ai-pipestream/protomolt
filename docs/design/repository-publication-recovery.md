@@ -41,6 +41,15 @@ potentially committing journal call through ambiguous errors, cancellation and l
 responses. Registered-command expiry and cleanup still require qualification. See the
 [scoped journal evidence](../evidence/repository/2026-10-05-scoped-registration/README.md).
 
+The production-JAR PostgreSQL/LocalStack matrix also exercises this opt-in with an
+actual scoped caller: accepted existing-source update, typed rejection, uncertain
+CREATE, CREATE rollback, decision acknowledgment loss and exact retries. Account
+binding denial creates no journal/owner/start rows and releases manager capacity;
+cross-account replay is refused as NOT_FOUND. No upload-backend or schema resolution
+occurs before that initial denial. Source setup still uses process authority, and
+no scoped creation or public authentication protocol is qualified by this fixture.
+See [scoped provider evidence](../evidence/repository/2026-10-05-scoped-provider/README.md).
+
 The opt-in `DocumentPublicationSessions.journaled` keeps reserve-before-construction
 ordering. The registration marks itself as potentially committed immediately before
 calling initial registration; the marker never resets after an exception. Errors

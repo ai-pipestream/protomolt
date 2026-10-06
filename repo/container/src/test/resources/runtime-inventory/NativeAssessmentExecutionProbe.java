@@ -18,12 +18,23 @@ import javax.sql.DataSource;
 public final class NativeAssessmentExecutionProbe {
     static void run(Tx observer, DataSource database, AssessmentProviderProbe provider,
             AssessmentMixedReuseProbe.Source source, DocumentAssessmentRuntimeObserver.Observation observation) throws Exception {
-        for (int scenario : new int[]{1, 2, 3, 4, 5, 11, 12, 13, 14, 21, 22, 23, 24, 20}) {
+        run(observer, database, provider, source, observation, false);
+    }
+
+    static void runScoped(Tx observer, DataSource database, AssessmentProviderProbe provider,
+            AssessmentMixedReuseProbe.Source source, DocumentAssessmentRuntimeObserver.Observation observation) throws Exception {
+        run(observer, database, provider, source, observation, true);
+    }
+
+    private static void run(Tx observer, DataSource database, AssessmentProviderProbe provider,
+            AssessmentMixedReuseProbe.Source source, DocumentAssessmentRuntimeObserver.Observation observation, boolean scoped) throws Exception {
+        int[] scenarios = scoped ? new int[]{21, 22, 23, 24, 20} : new int[]{1, 2, 3, 4, 5, 11, 12, 13, 14, 21, 22, 23, 24, 20};
+        for (int scenario : scenarios) {
             boolean journaled = scenario >= 10;
             boolean managed = scenario >= 20;
             int mode = scenario % 10; // accepted, invalid, stage lost ACK, stage rollback, decision lost ACK, fresh-process recovery
             var member = source.candidate();
-            if (mode == 0) {
+            if (mode == 0 || scoped) {
                 // Update an actual versioned publication, not the legacy authorization-only seed row.
                 var original = member.getPartsList().stream().filter(part -> part.hasReuse()).findFirst().orElseThrow()
                         .getReuse().getSource();
@@ -36,7 +47,8 @@ public final class NativeAssessmentExecutionProbe {
             try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
                     Map.of("hibernate.connection.datasource", datasource, "hibernate.hbm2ddl.auto", "validate"))) {
                 var tx = new Tx(emf); var drives = new DriveLedger(tx);
-                var caller = new RepositoryCaller("principal", true);
+                var caller = scoped ? new RepositoryCaller("principal", false, Set.of("account"), Set.of())
+                        : new RepositoryCaller("principal", true);
                 var budget = new PayloadBudget(128_000_000); var payload = new PayloadBudget(16_000_000);
                 var limits = new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000);
                 var reads = new DocumentReadLedger(tx, UUID.randomUUID(), 1);
@@ -78,6 +90,21 @@ public final class NativeAssessmentExecutionProbe {
                         require(!retry.get(), "retry must not resolve schemas"); resolverCalls.incrementAndGet();
                         return definition;
                     };
+                    var wrongAccount = new RepositoryCaller("principal", false, Set.of("other-account"), Set.of());
+                    if (scoped) {
+                        require(!caller.processAuthority(), "real execution caller has no process authority");
+                        denied(() -> manager.execute(wrongAccount, command, placements, bodies, Map.of(), modes, container, resolver, RepositoryReadControl.NONE));
+                        require(manager.retainedSessions() == 0 && manager.retainedCommandBytes() == 0,
+                                "denied pre-registration request releases capacity");
+                        require(backendCalls.get() == 0 && resolverCalls.get() == 0, "denial precedes provider and schema work");
+                        for (String table : List.of("repository_execution_claims", "repository_publication_preparations", "repository_publication_modes",
+                                "repository_operation_owners", "repository_publication_assessment_starts")) {
+                            long rows = observer.readOnly(em -> ((Number) em.createNativeQuery(
+                                    "SELECT count(*) FROM " + table + " WHERE operation_id=:op")
+                                    .setParameter("op", command.operationId()).getSingleResult()).longValue());
+                            require(rows == 0, "denied request cannot journal " + table);
+                        }
+                    }
                     Object first;
                     try { first = managed ? manager.execute(caller, command, placements, bodies, Map.of(), modes, container, resolver, RepositoryReadControl.NONE)
                             : execution.execute(caller, session, bodies, Map.of(), modes, container, resolver, RepositoryReadControl.NONE); }
@@ -92,6 +119,8 @@ public final class NativeAssessmentExecutionProbe {
                     if (mode == 5) NativeAssessmentRestartProbe.run(command,
                             session.admit(caller, RepositoryReadControl.NONE).orElseThrow());
                     retry.set(true);
+                    if (scoped) denied(() -> manager.execute(wrongAccount, command, Map.of(), Map.of(), Map.of(),
+                            modes, container, resolver, RepositoryReadControl.NONE));
                     Object repeated;
                     try { repeated = managed ? manager.execute(caller, command, Map.of(), Map.of(), Map.of(), modes, container, resolver, RepositoryReadControl.NONE)
                             : execution.execute(caller, session, Map.of(), Map.of(), modes, container, resolver, RepositoryReadControl.NONE); }
@@ -144,7 +173,17 @@ public final class NativeAssessmentExecutionProbe {
                 }
             }
         }
-        System.out.println("NATIVE_ASSESSMENT_EXECUTION_OK");
+        System.out.println(scoped ? "SCOPED_NATIVE_ASSESSMENT_EXECUTION_OK" : "NATIVE_ASSESSMENT_EXECUTION_OK");
+    }
+
+    @FunctionalInterface private interface CheckedAction { void run() throws Exception; }
+    private static void denied(CheckedAction action) throws Exception {
+        try { action.run(); }
+        catch (RepositoryException failure) {
+            require(failure.code() == RepositoryException.Code.NOT_FOUND, "cross-account access hides the target");
+            return;
+        }
+        throw new AssertionError("Scoped request unexpectedly authorized");
     }
 
     static DataSource faultSource(DataSource database, UUID operation, int mode, AtomicBoolean armed, AtomicBoolean faulted) {

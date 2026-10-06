@@ -6214,3 +6214,20 @@ authority and does not prove tenant authorization or API-key authentication.
 It manually composes shared libraries; ordinary managed host activation stays
 disabled for Redis. Streaming upload, restart durability and fleet scheduling
 remain separate qualification requirements.
+
+### Scoped journaled provider execution
+
+**Unchanged contracts and implementation, extended acceptance evidence:** the private
+journaled manager executes five additional production-JAR PostgreSQL/LocalStack
+scenarios with an account-bound caller whose process authority is false. These cover
+an accepted update, typed rejection, lost CREATE acknowledgment, CREATE rollback,
+lost decision acknowledgment and retry of the original command/assessment identity.
+An independent writable source is published during fixture setup; acceptance runs
+last because it advances that source revision.
+
+Cross-account execution and replay return NOT_FOUND. Initial denial creates no
+claim, preparation, modes, owner or start rows, releases manager capacity, and
+precedes upload-backend/schema resolution. The S3 client itself is already open;
+the counters do not establish zero client construction or all possible provider I/O.
+Ordinary host registration, partial-registration restart, abandonment cleanup,
+scoped absent-destination creation and API-key transport remain separate requirements.

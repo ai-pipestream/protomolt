@@ -130,9 +130,13 @@ features available. Recovery is one workstream, not the whole goal.
    four stages. Ordinary runtime creation is still unchanged. Before enabling it,
    qualify retained registration lifetime and cleanup. Scoped request authorization
    is now separate from the private journal capability. The
-   scoped SQL fixture passes, while the production-JAR journaled provider variants
-   still use process authority; add scoped end-to-end provider qualification before
-   ordinary activation. The
+   scoped SQL fixture and production-JAR journaled provider matrix now pass with
+   the actual account-bound caller lacking process authority. Existing-source update,
+   typed rejection, CREATE rollback/lost acknowledgment, decision acknowledgment loss
+   and exact retry are covered; cross-account calls are denied before journal rows or
+   upload-backend/schema resolution and again on replay. Setup publishes the writable
+   source with process authority. This does not establish scoped absent-destination
+   creation or public transport authentication. The
    execution stage now uses the durable assessment-start marker for journaled
    sessions and commits it before CREATE; ambiguous marker acknowledgment leaves
    local staging sticky. Specify retention and

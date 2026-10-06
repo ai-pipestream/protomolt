@@ -88,6 +88,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 assertThat(result).contains("ASSESSMENT_CAPTURE_FAULTS_OK");
                 assertThat(result).contains("ASSESSMENT_PROVIDER_READS_OK");
                 assertThat(result).contains("ASSESSMENT_MIXED_REUSE_OK");
+                assertThat(result).contains("SCOPED_NATIVE_ASSESSMENT_EXECUTION_OK");
                 assertThat(result).contains("ASSESSMENT_SOURCE_ADVANCED_OK");
                 assertThat(result).contains("ASSESSMENT_REPLAY_INPUTS_OK");
                 assertThat(result).contains("ASSESSMENT_OPERATION_REPLAY_OK");
