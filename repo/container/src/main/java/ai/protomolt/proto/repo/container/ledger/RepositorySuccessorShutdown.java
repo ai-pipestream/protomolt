@@ -15,7 +15,7 @@ import java.util.TreeMap;
 final class RepositorySuccessorShutdown {
     private RepositorySuccessorShutdown() {}
 
-    enum State { UNRESOLVED, CAPACITY_UNAVAILABLE, UNACTIVATED, ACTIVATED }
+    enum State { UNRESOLVED, CAPACITY_UNAVAILABLE, UNACTIVATED, ACTIVATED, TERMINAL }
 
     /**
      * Observes one exact retained successor under the claim lock. Lease expiry is irrelevant:
@@ -24,6 +24,17 @@ final class RepositorySuccessorShutdown {
      */
     static State inspect(Tx tx, PayloadBudget budget, RepositoryCaller caller,
             DocumentSuccessorFingerprint fingerprint, RepositoryReadControl control) {
+        return inspect(tx,budget,caller,fingerprint,control,false);
+    }
+
+    /** Private exact-generation terminal evidence; no receipt decoding or current document disclosure. */
+    static boolean terminal(Tx tx, PayloadBudget budget, RepositoryCaller caller,
+            DocumentSuccessorFingerprint fingerprint, RepositoryReadControl control) {
+        return inspect(tx,budget,caller,fingerprint,control,true)==State.TERMINAL;
+    }
+
+    private static State inspect(Tx tx, PayloadBudget budget, RepositoryCaller caller,
+            DocumentSuccessorFingerprint fingerprint, RepositoryReadControl control, boolean terminalOnly) {
         Objects.requireNonNull(control).check();
         var proposal = fingerprint.reservation();
         var predecessor = proposal.predecessor();
@@ -62,7 +73,11 @@ final class RepositorySuccessorShutdown {
                           AND e.owner_generation=i.predecessor_generation+1 AND e.owner_nonce=i.owner_nonce
                           AND e.command_sha256=i.command_sha256 AND e.preparation_sha256=i.preparation_sha256
                           AND e.modes_sha256=i.modes_sha256 AND b.claim_token=i.successor_token
-                          AND b.incarnation=i.successor_incarnation,FALSE)
+                          AND b.incarnation=i.successor_incarnation,FALSE),
+                         (s.operation_id IS NOT NULL AND r.operation_id IS NULL
+                          AND s.owner_generation=i.predecessor_generation+1 AND s.command_sha256=i.command_sha256)
+                         OR (r.operation_id IS NOT NULL AND s.operation_id IS NULL
+                          AND r.owner_generation=i.predecessor_generation+1 AND r.command_sha256=i.command_sha256)
                         FROM repository_successor_installs i
                         JOIN repository_operation_owners o USING(account_id,principal,operation_id)
                         JOIN repository_publication_modes m ON m.account_id=i.account_id AND m.principal=i.principal
@@ -71,6 +86,10 @@ final class RepositorySuccessorShutdown {
                          AND e.operation_id=i.operation_id AND e.claim_epoch=i.successor_epoch
                         LEFT JOIN repository_coordinator_bindings b ON b.account_id=i.account_id AND b.principal=i.principal
                          AND b.operation_id=i.operation_id AND b.claim_epoch=i.successor_epoch
+                        LEFT JOIN repository_operation_success s ON s.account_id=i.account_id AND s.principal=i.principal
+                         AND s.operation_id=i.operation_id
+                        LEFT JOIN repository_operation_rejection r ON r.account_id=i.account_id AND r.principal=i.principal
+                         AND r.operation_id=i.operation_id
                         WHERE i.account_id=:a AND i.principal=:p AND i.operation_id=:o
                          AND i.predecessor_epoch=:previousEpoch AND i.successor_epoch=:epoch
                          AND i.successor_token=:token AND i.successor_incarnation=:incarnation
@@ -95,6 +114,8 @@ final class RepositorySuccessorShutdown {
             // PostgreSQL jsonb::text is not the compact, sorted Java fingerprint encoding.
             if (!modeDigest((String) captured[0]).equals(fingerprint.modes())) return State.UNRESOLVED;
             control.check();
+            if (terminalOnly) return Boolean.TRUE.equals(captured[2]) && Boolean.TRUE.equals(captured[3])
+                    ? State.TERMINAL : State.UNRESOLVED;
             if (Boolean.TRUE.equals(captured[1])) return State.UNACTIVATED;
             return Boolean.TRUE.equals(captured[2]) ? State.ACTIVATED : State.UNRESOLVED;
         }

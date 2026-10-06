@@ -1836,8 +1836,8 @@ successor whose V94 transaction rolled back can remain current and unbound. It
 cannot create V90, and waiting for an external V98 is not a usable local shutdown
 protocol. The real-database regression is recorded in
 [unactivated shutdown evidence](../evidence/repository/2026-10-06-unactivated-shutdown/README.md).
-The manager classification and revalidation described below are implemented.
-Recovery-owner disposal and managed-host integration remain outstanding.
+The manager classification, revalidation and private recovery-owner disposal
+described below are implemented. Managed-host integration remains outstanding.
 
 Close recovery admission first, then wait for every accepted recovery handle.
 Close publication and registration admission and complete the registration barrier.
@@ -1882,23 +1882,40 @@ held schema/provider work, changed fingerprint and an incomplete successor chain
 Keep the existing initial-registration absent-claim behavior separate until its
 own durable handoff proof is designed.
 
-#### Next integration step: recovery-owner disposal
+#### Recovery-owner disposal
 
-This step remains planned. Close recovery admission and add a bounded wait for
-accepted `Attempt` handles, notified by handle closure. Capture the manager's
-immutable registration snapshot before disposing of owner entries. Separate that
-snapshot barrier from SQL drain classification so owner-held preparation leases
-cannot prevent the classification's bounded mode capture from obtaining capacity.
+Close recovery admission, then use its bounded wait for accepted `Attempt`
+handles, notified by handle closure. `detachClosed` captures the manager's immutable
+registration snapshot before disposing of owner entries. That snapshot barrier
+performs no SQL or additional byte reservation, so owner-held preparation leases
+cannot prevent it from recording manager ownership.
 
-For each possibly submitted V94, require an exact retained manager fingerprint or
-exact durable terminal/abandonment or claim-fenced evidence. Preserve the last
-submitted activation identity across pending supersession until a confirmed
-replacement accounts for it. A missing cache entry or an `INSTALLED` phase alone
-cannot prove that activation was never submitted. Earlier metadata-only phases
-can release local bytes after accepted calls end: committed V97/V98/V93 state is
-recoverable and uncommitted state started no local provider work.
+An internal callback records the exact submitted fingerprint after the manager
+retains the complete successor and before any V94 SQL. It runs outside the manager
+monitor and inside the activation cleanup block. Preserve that fingerprint across
+pending supersession; a later retained activation may replace it only after the
+old claim was fenced by the confirmed supersession.
 
-Do not hold the recovery-owner monitor while consulting Sessions or SQL. After
+For each possibly submitted V94, require an exact snapshot-owned fingerprint,
+permanent claim-fence evidence, or exact durable successor terminal evidence.
+The terminal check binds the current claim, reservation, install, activation,
+coordinator binding, owner generation/nonce, preparation hashes and fixed modes
+to exactly one success or rejection at that generation. It is a private metadata
+check, with no client receipt decoding or current document disclosure policy.
+An abandoned pre-owner registration is not a substitute for a successor's V94.
+A missing cache entry or an `INSTALLED` phase alone is never disposal proof.
+
+Earlier metadata-only phases can release local bytes after accepted calls end:
+committed V97/V98/V93 state is recoverable and uncommitted state started no local
+provider work. For a submitted entry absent from the snapshot, disposal can first
+release duplicate preparation graphs while retaining command, proposal and fixed
+fingerprint evidence. Closed, idle owners cannot retry, and this frees their large
+preparation reservations before bounded terminal inspection. Shared capacity
+pressure may still leave disposal incomplete; it grants no substitute proof.
+
+The owner serializes disposal but does not hold its monitor while consulting
+Sessions or SQL. Confirmed earlier entries may be released before a later failure;
+the remaining entries stay retryable through `detachClosed`, not execution. After
 detachment, continue the existing session, upload, read and external-worker
 barriers; owner-byte release does not establish their completion. Acceptance
 must cover active handles, uncertain reservation/install acknowledgments,

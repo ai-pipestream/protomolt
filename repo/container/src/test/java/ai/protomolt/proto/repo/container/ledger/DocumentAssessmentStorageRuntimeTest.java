@@ -87,6 +87,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 assertThat(process.exitValue()).as(result).isZero();
                 assertThat(result).contains("OBSERVED_SQL_HOST_OK");
                 assertThat(result).contains("JOURNALED_SUCCESSOR_PUBLICATION_OK", "FENCED_SCHEMA_WORKER_DRAIN_OK");
+                assertThat(result).contains("RECOVERY_OWNER_TERMINAL_DISPOSAL_OK");
                 assertThat(result).contains("OBSERVED_ASSESSMENT_CREATION_OK", "CLOSED_SCOPE_ASSESSMENT_ACK_OK");
                 assertThat(result).contains("ASSESSMENT_CAPTURE_FAULTS_OK");
                 assertThat(result).contains("ASSESSMENT_PROVIDER_READS_OK");

@@ -133,12 +133,20 @@ final class DocumentPublicationSessions implements AutoCloseable {
 
     void activateSuccessor(SuccessorTarget target, RepositoryCaller coordinatorCaller, RepositoryCaller executionCaller,
             RepositorySuccessorInstall.Plan plan, RepositoryReadControl control) {
+        activateSuccessor(target, coordinatorCaller, executionCaller, plan, control, ignored -> {});
+    }
+
+    /** Internal ownership handoff runs after retention and before any activation SQL. */
+    void activateSuccessor(SuccessorTarget target, RepositoryCaller coordinatorCaller, RepositoryCaller executionCaller,
+            RepositorySuccessorInstall.Plan plan, RepositoryReadControl control,
+            java.util.function.Consumer<DocumentSuccessorFingerprint> retained) {
         Objects.requireNonNull(target); Objects.requireNonNull(plan);
+        Objects.requireNonNull(retained);
         if (target.manager != this || !target.key.equals(plan.next().key())
                 || !target.commandSha256.equals(plan.next().command().sha256())
                 || !target.incarnation.equals(plan.reservation().successorIncarnation()))
             throw new IllegalArgumentException("Successor target differs from manager or plan");
-        activateSuccessor(coordinatorCaller, executionCaller, plan, target.incarnation, control);
+        activateSuccessor(coordinatorCaller, executionCaller, plan, target.incarnation, control, retained);
     }
 
     /**
@@ -149,11 +157,12 @@ final class DocumentPublicationSessions implements AutoCloseable {
      */
     void activateSuccessor(RepositoryCaller coordinatorCaller, RepositoryCaller executionCaller,
             RepositorySuccessorInstall.Plan plan, RepositoryReadControl control) {
-        activateSuccessor(coordinatorCaller, executionCaller, plan, coordinatorIdentity(), control);
+        activateSuccessor(coordinatorCaller, executionCaller, plan, coordinatorIdentity(), control, ignored -> {});
     }
 
     private void activateSuccessor(RepositoryCaller coordinatorCaller, RepositoryCaller executionCaller,
-            RepositorySuccessorInstall.Plan plan, UUID incarnation, RepositoryReadControl control) {
+            RepositorySuccessorInstall.Plan plan, UUID incarnation, RepositoryReadControl control,
+            java.util.function.Consumer<DocumentSuccessorFingerprint> retained) {
         try (var call = beginCall(); var registration = registrations.enter()) {
             Objects.requireNonNull(plan); Objects.requireNonNull(control).check();
             if (!incarnation.equals(plan.reservation().successorIncarnation()))
@@ -173,6 +182,7 @@ final class DocumentPublicationSessions implements AutoCloseable {
                 entry = reserveSuccessor(plan.next().command(), key, fingerprint, session);
             }
             try {
+                retained.accept(entry.successor);
                 RepositorySuccessorExecution.activate(tx, journalBudget, coordinatorCaller, executionCaller, plan, control, execution.drives());
                 entry.session.admit(executionCaller, control).orElseThrow(() -> new IllegalStateException("Successor returned no owner"));
             } finally {
@@ -634,17 +644,9 @@ final class DocumentPublicationSessions implements AutoCloseable {
     DrainProgress drainRegistrations(Duration wait, java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> authority,
             RepositoryReadControl control) throws InterruptedException {
         Objects.requireNonNull(wait); Objects.requireNonNull(authority); Objects.requireNonNull(control).check();
-        if (wait.isNegative()) throw new IllegalArgumentException("Negative registration wait");
-        if (journalBudget == null) throw new IllegalStateException("Session manager does not own journaled registrations");
-        execution.stopProviderStarts();
-        close();
-        if (!registrations.awaitIdle(wait)) return new DrainProgress(false, 0, 0);
+        if (!captureShutdownRegistrations(wait, control)) return new DrainProgress(false, 0, 0);
         final java.util.List<ShutdownEntry> identities;
-        synchronized (this) {
-            if (drainIdentities == null) drainIdentities = entries.values().stream()
-                    .flatMap(entry -> drainIdentity(entry).stream().map(identity -> new ShutdownEntry(identity, entry.successor))).toList();
-            identities = drainIdentities;
-        }
+        synchronized (this) { identities = drainIdentities; }
         int confirmed = 0, unresolved = 0, fenced = 0, detached = 0;
         for (var retained : identities) {
             var identity = retained.identity;
@@ -678,6 +680,30 @@ final class DocumentPublicationSessions implements AutoCloseable {
         }
         control.check();
         return new DrainProgress(true, confirmed, unresolved, fenced, detached);
+    }
+
+    /** Capture ownership without SQL or additional byte leases; recovery owners may then relinquish their copies. */
+    boolean captureShutdownRegistrations(Duration wait, RepositoryReadControl control) throws InterruptedException {
+        Objects.requireNonNull(wait); Objects.requireNonNull(control).check();
+        if (wait.isNegative()) throw new IllegalArgumentException("Negative registration wait");
+        if (journalBudget == null) throw new IllegalStateException("Session manager does not own journaled registrations");
+        execution.stopProviderStarts();
+        close();
+        if (!registrations.awaitIdle(wait)) return false;
+        control.check();
+        synchronized (this) {
+            if (drainIdentities == null) drainIdentities = entries.values().stream()
+                    .flatMap(entry -> drainIdentity(entry).stream().map(identity -> new ShutdownEntry(identity, entry.successor))).toList();
+        }
+        control.check();
+        return true;
+    }
+
+    synchronized boolean ownsShutdownActivation(DocumentSuccessorFingerprint fingerprint) {
+        Objects.requireNonNull(fingerprint);
+        if (!closed || drainIdentities == null)
+            throw new IllegalStateException("Capture closed registration ownership before recovery disposal");
+        return drainIdentities.stream().anyMatch(retained -> fingerprint.equals(retained.successor));
     }
 
     private boolean confirmDetached(ShutdownEntry retained, RepositoryCaller caller, RepositoryReadControl control) {

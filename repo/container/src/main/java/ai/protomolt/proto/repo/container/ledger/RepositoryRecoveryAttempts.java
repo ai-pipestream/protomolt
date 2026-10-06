@@ -17,6 +17,7 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
     private final int capacity;
     private final Map<RepositoryOperationLedger.Key,Entry> entries=new HashMap<>();
     private boolean closed;
+    private boolean detaching;
     private int activeCalls;
 
     private static final class Entry {
@@ -32,6 +33,7 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
         RepositoryReservedPreparation.Loaded loaded;
         PayloadBudget.Lease nextBytes;
         RepositorySuccessorInstall.Plan plan;
+        DocumentSuccessorFingerprint submitted;
         Entry(DocumentPublicationCommand command, RepositoryCaller caller,
                 RepositoryCoordinatorReservation.Proposal proposal, DocumentPublicationSessions.SuccessorTarget target,
                 PayloadBudget.Lease bytes) {
@@ -167,7 +169,8 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
                     // A previous failed activation may still occupy this operation's local slot.
                     // False is not permission to replace it: activation still checks its fingerprint.
                     sessions.retireSuperseded(caller,entry.command,control);
-                    sessions.activateSuccessor(entry.target,authority,caller,entry.plan,control);
+                    sessions.activateSuccessor(entry.target,authority,caller,entry.plan,control,
+                            fingerprint -> entry.submitted=fingerprint);
                     activatedModes=entry.loaded.modes();
                     entry.phase=Phase.ACTIVATED;
                     synchronized (RepositoryRecoveryAttempts.this) { entries.remove(key,entry); }
@@ -238,7 +241,11 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
             if (ended) return;
             ended=true;
             activatedModes=null;
-            synchronized (RepositoryRecoveryAttempts.this) { entry.active=false; activeCalls--; }
+            synchronized (RepositoryRecoveryAttempts.this) {
+                entry.active=false;
+                activeCalls--;
+                RepositoryRecoveryAttempts.this.notifyAll();
+            }
         }
     }
 
@@ -263,6 +270,69 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
     synchronized Drain drain() {
         if (!closed) throw new IllegalStateException("Close recovery admission before inspecting drain");
         return new Drain(activeCalls,entries.size());
+    }
+
+    /** Handle completion only; unresolved entries and session/provider work remain separately owned. */
+    synchronized boolean awaitIdle(Duration timeout) throws InterruptedException {
+        Objects.requireNonNull(timeout);
+        if (!closed) throw new IllegalStateException("Close recovery admission before awaiting idle");
+        if (timeout.isNegative()) throw new IllegalArgumentException("Negative recovery wait");
+        long remaining=timeout.toNanos(), started=System.nanoTime();
+        while (activeCalls!=0) {
+            if (remaining<=0) return false;
+            java.util.concurrent.TimeUnit.NANOSECONDS.timedWait(this,remaining);
+            remaining=timeout.toNanos()-(System.nanoTime()-started);
+        }
+        return true;
+    }
+
+    /**
+     * Dispose local recovery copies only after closed admission and exact activation ownership.
+     * This neither abandons SQL state nor proves session, provider or schema-worker quiescence.
+     */
+    boolean detachClosed(Duration wait, java.util.function.Function<RepositoryOperationLedger.Key,RepositoryCaller> authority,
+            RepositoryReadControl control) throws InterruptedException {
+        Objects.requireNonNull(wait); Objects.requireNonNull(authority); Objects.requireNonNull(control).check();
+        if (wait.isNegative()) throw new IllegalArgumentException("Negative recovery wait");
+        long started=System.nanoTime(), nanos=wait.toNanos();
+        if (!awaitIdle(wait)) return false;
+        control.check();
+        final List<Entry> retained;
+        synchronized (this) {
+            if (detaching) return false;
+            detaching=true;
+            retained=List.copyOf(entries.values());
+        }
+        try {
+            if (!sessions.captureShutdownRegistrations(Duration.ofNanos(Math.max(0,nanos-(System.nanoTime()-started))),control))
+                return false;
+            for (var entry : retained) {
+                control.check();
+                var key=entry.proposal.predecessor().key();
+                var caller=Objects.requireNonNull(authority.apply(key),"Private recovery disposal authority");
+                RepositoryCoordinatorReservation.require(caller,entry.proposal,control);
+                if (entry.submitted!=null && !sessions.ownsShutdownActivation(entry.submitted)) {
+                    // Closed, idle owners cannot retry. Keep command/proposal/fingerprint evidence,
+                    // but release duplicate preparation graphs before bounded terminal inspection.
+                    entry.releasePreparation();
+                    var identity=successorIdentity(entry.submitted.reservation());
+                    if (!RepositoryClaimRetirement.fenced(tx,entry.command,List.of(identity),control)
+                            && !RepositorySuccessorShutdown.terminal(tx,budget,caller,entry.submitted,control)) return false;
+                }
+                control.check();
+                entry.release();
+                synchronized (this) {
+                    entries.remove(key,entry);
+                    entry.phase=Phase.RETIRED;
+                    entry.pending=null;
+                    entry.submitted=null;
+                }
+            }
+            control.check();
+            return true;
+        } finally {
+            synchronized (this) { detaching=false; notifyAll(); }
+        }
     }
     @Override public synchronized void close() { closed=true; }
 }

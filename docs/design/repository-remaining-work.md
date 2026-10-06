@@ -957,11 +957,30 @@ retries preserve proposal identity. The managed runtime still does not own or
 invoke this recovery entry point; its distinct recovery authority, state routing,
 complete-payload retry execution and shutdown reconciliation remain to be wired.
 
-Before enabling host recovery, finish the recovery-owner disposal protocol in the
-publication recovery design. The manager now has a post-close
+Before enabling host recovery, wire the recovery-owner disposal protocol into the
+managed runtime. The manager now has a post-close
 `DETACHED_UNACTIVATED` outcome for exact installed successors, including revalidation
 after an exact late V94 or reviewed takeover. This is separate from permanent
 claim-fenced retirement and adds no V90/V91 or remote-quiescence claim. The original
-rolled-back-V94 regression is preserved with its red evidence. Root recovery-owner
-handles and byte leases still need coordinated disposal and managed-host wiring;
-manager completion alone does not establish that integration.
+rolled-back-V94 regression is preserved with its red evidence. Coordinating owner
+disposal with the managed host remains necessary; manager completion alone does
+not establish that integration.
+
+The private recovery owner now waits for accepted handles and disposes its local
+copies after capturing manager ownership. Possible activation is recorded before
+V94, and a missing manager snapshot requires exact permanent fencing or a terminal
+outcome bound to that successor generation. This still needs host wiring with a
+distinct recovery authority, admission closure ordering, complete-payload retries
+and the existing worker barriers. Owner disposal is not provider quiescence.
+
+Managed-host integration must stage admission closure. Today `runtime.close()`
+closes sessions and lazy schema admission immediately, and `executeScoped` enters
+a new scope. A recovered caller needs one accepted-call scope across reservation,
+activation and ordinary publication, without a second admission check halfway
+through. Decide and test the closure order before wiring the retry entrypoint:
+reject new calls, let accepted recovery handles settle, capture/dispose owner
+state, then finish session/schema/provider/read drains. Never make completion of
+an accepted call require the runtime monitor held by `shutdownStep`. Use a distinct
+explicit recovery authority, not request-supplied process rights or the drain
+authority. Resume local state before exact-key discovery; unsupported recovery
+states must have explicit errors rather than fresh-registration fallback.

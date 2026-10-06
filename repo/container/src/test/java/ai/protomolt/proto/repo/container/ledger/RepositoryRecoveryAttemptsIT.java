@@ -20,7 +20,10 @@ class RepositoryRecoveryAttemptsIT {
     private static final SqlTimeouts TIMEOUTS=new SqlTimeouts(Duration.ofSeconds(1),Duration.ofSeconds(5));
     private record Source(DocumentPublicationCommand command, RepositoryCoordinatorRecoveryDiscovery.Observation observation) {}
     private static Source source(Context c) {
-        var input=input(c); var budget=new PayloadBudget(64_000_000);
+        return source(c,input(c));
+    }
+    private static Source source(Context c, DocumentPublicationPreparationRecord input) {
+        var budget=new PayloadBudget(64_000_000);
         var previous=new DocumentPublicationPreparationRecord(input.key(),input.command(),input.seeds(),input.placements(),Duration.ofSeconds(1),0);
         var claim=new DocumentPublicationPreparationJournal(c.tx(),budget).acquireInitial(CALLER,previous,UUID.randomUUID(),UUID.randomUUID(),NONE);
         new DocumentPublicationModesJournal(c.tx(),budget).bind(CALLER,claim,0,MODES,NONE);
@@ -29,8 +32,136 @@ class RepositoryRecoveryAttemptsIT {
         return new Source(input.command(),new RepositoryCoordinatorRecoveryDiscovery(c.tx(),TIMEOUTS).inspect(CALLER,input.key(),input.command().sha256(),NONE));
     }
 
-    @ParameterizedTest @ValueSource(ints={1,2,3})
-    void expiredUnactivatedAttemptKeepsPendingSupersessionAcrossLostReply(int completedPhases) throws Exception {
+    @ParameterizedTest @ValueSource(booleans={false,true})
+    void partialDisposalCanRetryAfterLaterAuthorityFailureOrCancellation(boolean cancellation) throws Exception {
+        try (var c=context(POSTGRES)) {
+            var input=input(c);
+            var secondCommand=new DocumentPublicationCommand(input.command().intent().toBuilder().setOperationId(UUID.randomUUID().toString()).build());
+            var secondKey=new RepositoryOperationLedger.Key(input.key().account(),input.key().principal(),secondCommand.operationId());
+            var first=source(c,input);
+            var second=source(c,new DocumentPublicationPreparationRecord(secondKey,secondCommand,
+                    DocumentPublicationSeeds.mint(secondKey,secondCommand),input.placements(),LEASE,0));
+            var budget=new PayloadBudget(128_000_000);
+            try (var resources=DocumentJournaledSessionsIT.resources(c.tx(),2,1_000_000,LEASE,budget);
+                 var attempts=new RepositoryRecoveryAttempts(c.tx(),budget,resources.sessions(),LEASE,TIMEOUTS,2)) {
+                for (var source : List.of(first,second)) {
+                    try (var attempt=attempts.begin(CALLER,source.command(),source.observation())) {
+                        attempt.advance(CALLER,CALLER,MODES,NONE);
+                    }
+                }
+                attempts.close();
+                var visits=new java.util.concurrent.atomic.AtomicInteger(); var cancelled=new AtomicBoolean();
+                var control=new RepositoryReadControl() {
+                    public boolean isCancelled() { return cancelled.get(); }
+                    public long remainingNanos() { return Long.MAX_VALUE; }
+                };
+                assertThatThrownBy(() -> attempts.detachClosed(Duration.ZERO,key -> {
+                    if (visits.incrementAndGet()!=2) return CALLER;
+                    if (cancellation) { cancelled.set(true); return CALLER; }
+                    return new RepositoryCaller(CALLER.principalName(),false,Set.of("account"),Set.of());
+                },control)).isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code()).isEqualTo(
+                        cancellation ? RepositoryException.Code.CANCELLED : RepositoryException.Code.PERMISSION_DENIED));
+                assertThat(attempts.drain()).isEqualTo(new RepositoryRecoveryAttempts.Drain(0,1));
+                assertThat(budget.reservedBytes()).isPositive();
+                assertThat(count(c,"repository_coordinator_reservations")).isEqualTo(2);
+                assertThat(attempts.detachClosed(Duration.ZERO,key -> CALLER,NONE)).isTrue();
+                assertThat(attempts.drain()).isEqualTo(new RepositoryRecoveryAttempts.Drain(0,0));
+                assertThat(budget.reservedBytes()).isZero();
+                assertThat(count(c,"repository_coordinator_reservations")).isEqualTo(2);
+            }
+        }
+    }
+
+    @ParameterizedTest @ValueSource(ints={0,1,2})
+    void closedMetadataRecoveryReleasesBytesWithoutChangingDurableState(int completedPhases) throws Exception {
+        try (var c=context(POSTGRES)) {
+            var source=source(c); var budget=new PayloadBudget(128_000_000);
+            try (var resources=DocumentJournaledSessionsIT.resources(c.tx(),2,1_000_000,LEASE,budget);
+                 var attempts=new RepositoryRecoveryAttempts(c.tx(),budget,resources.sessions(),LEASE,TIMEOUTS,1)) {
+                assertThatThrownBy(() -> attempts.awaitIdle(Duration.ZERO)).hasMessageContaining("Close recovery");
+                try (var attempt=attempts.begin(CALLER,source.command(),source.observation())) {
+                    for (int i=0;i<completedPhases;i++) attempt.advance(CALLER,CALLER,MODES,NONE);
+                    attempts.close();
+                    assertThat(attempts.awaitIdle(Duration.ZERO)).isFalse();
+                    assertThat(attempts.detachClosed(Duration.ZERO,key -> CALLER,NONE)).isFalse();
+                    assertThat(budget.reservedBytes()).isPositive();
+                }
+                var reservations=count(c,"repository_coordinator_reservations");
+                var installs=count(c,"repository_successor_installs");
+                assertThat(attempts.awaitIdle(Duration.ZERO)).isTrue();
+                assertThat(attempts.detachClosed(Duration.ZERO,key -> CALLER,NONE)).isTrue();
+                assertThat(attempts.drain()).isEqualTo(new RepositoryRecoveryAttempts.Drain(0,0));
+                assertThat(budget.reservedBytes()).isZero();
+                assertThat(count(c,"repository_coordinator_reservations")).isEqualTo(reservations);
+                assertThat(count(c,"repository_successor_installs")).isEqualTo(installs);
+                assertThat(count(c,"repository_successor_executions")).isZero();
+                assertThat(attempts.detachClosed(Duration.ZERO,key -> CALLER,NONE)).isTrue();
+                assertThatThrownBy(() -> attempts.resume(CALLER,source.command())).hasMessageContaining("admission is closed");
+            }
+        }
+    }
+
+    @Test void closingLastAcceptedHandleWakesRecoveryWaiter() throws Exception {
+        try (var c=context(POSTGRES)) {
+            var source=source(c); var budget=new PayloadBudget(128_000_000);
+            try (var resources=DocumentJournaledSessionsIT.resources(c.tx(),2,1_000_000,LEASE,budget);
+                 var attempts=new RepositoryRecoveryAttempts(c.tx(),budget,resources.sessions(),LEASE,TIMEOUTS,1);
+                 var attempt=attempts.begin(CALLER,source.command(),source.observation());
+                 var executor=java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+                attempts.close();
+                var entered=new java.util.concurrent.CountDownLatch(1);
+                var waiter=executor.submit(() -> { entered.countDown(); return attempts.awaitIdle(Duration.ofSeconds(10)); });
+                try {
+                    assertThat(entered.await(2,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                    assertThatThrownBy(() -> waiter.get(50,java.util.concurrent.TimeUnit.MILLISECONDS))
+                            .isInstanceOf(java.util.concurrent.TimeoutException.class);
+                    attempt.close();
+                    assertThat(waiter.get(2,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                    assertThat(attempts.drain()).isEqualTo(new RepositoryRecoveryAttempts.Drain(0,1));
+                    assertThat(attempts.detachClosed(Duration.ZERO,key -> CALLER,NONE)).isTrue();
+                } finally { waiter.cancel(true); }
+            }
+        }
+    }
+
+    @Test void rolledBackActivationTransfersShutdownOwnershipBeforeReleasingRecoveryBytes() throws Exception {
+        try (var c=context(POSTGRES)) {
+            var source=source(c); var budget=new PayloadBudget(128_000_000); var armed=new AtomicBoolean(true);
+            var datasource=DocumentJdbcFaults.beforeCommit(c.pool(),connection -> {
+                try (var statement=connection.createStatement(); var rows=statement.executeQuery("SELECT count(*) FROM repository_successor_executions")) {
+                    rows.next();
+                    if (rows.getInt(1)!=0 && armed.compareAndSet(true,false))
+                        throw new java.sql.SQLException("Recovery activation rolled back for disposal test","08006");
+                }
+            });
+            try (var emf=jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                    Map.of("hibernate.connection.datasource",datasource,"hibernate.hbm2ddl.auto","validate"));
+                 var resources=DocumentJournaledSessionsIT.resources(new Tx(emf).withTimeouts(TIMEOUTS),2,1_000_000,LEASE,budget);
+                 var attempts=new RepositoryRecoveryAttempts(new Tx(emf),budget,resources.sessions(),LEASE,TIMEOUTS,1)) {
+                try (var attempt=attempts.begin(CALLER,source.command(),source.observation())) {
+                    attempt.advance(CALLER,CALLER,MODES,NONE);
+                    attempt.advance(CALLER,CALLER,MODES,NONE);
+                    assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,MODES,NONE))
+                            .hasStackTraceContaining("Recovery activation rolled back for disposal test");
+                }
+                assertThat(resources.sessions().retainedSessions()).isEqualTo(1);
+                assertThat(budget.reservedBytes()).isPositive();
+                attempts.close();
+                assertThat(attempts.detachClosed(Duration.ZERO,key -> CALLER,NONE)).isTrue();
+                assertThat(budget.reservedBytes()).isZero();
+                assertThat(resources.sessions().retainedSessions()).isEqualTo(1);
+                assertThat(resources.sessions().drainRegistrations(Duration.ZERO,key -> CALLER,NONE).detached()).isEqualTo(1);
+                assertThat(resources.sessions().awaitIdle(Duration.ZERO)).isTrue();
+                assertThat(resources.sessions().attestLocalDrain(key -> CALLER,NONE)).isTrue();
+                assertThat(count(c,"repository_coordinator_reservations")).isEqualTo(1);
+                assertThat(count(c,"repository_successor_installs")).isEqualTo(1);
+                assertThat(count(c,"repository_successor_executions")).isZero();
+            }
+        }
+    }
+
+    @ParameterizedTest @org.junit.jupiter.params.provider.CsvSource({"1,false","2,false","3,false","1,true","2,true","3,true"})
+    void expiredUnactivatedAttemptKeepsPendingSupersessionAcrossLostReply(int completedPhases, boolean shutdown) throws Exception {
         try (var c=context(POSTGRES)) {
             var source=source(c); var cancelled=new AtomicBoolean(); var cancelOnce=new AtomicBoolean(true);
             var failActivation=new AtomicBoolean(completedPhases==3);
@@ -76,6 +207,21 @@ class RepositoryRecoveryAttemptsIT {
                     assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,MODES,NONE)).hasMessageContaining("Pending supersession");
                 }
                 Object committed=c.tx().readOnly(em -> em.createNativeQuery("SELECT successor_token FROM repository_coordinator_supersessions").getSingleResult());
+                if (shutdown) {
+                    attempts.close();
+                    assertThat(attempts.detachClosed(Duration.ZERO,key -> CALLER,NONE)).isTrue();
+                    assertThat(attempts.drain()).isEqualTo(new RepositoryRecoveryAttempts.Drain(0,0));
+                    assertThat(budget.reservedBytes()).isZero();
+                    assertThat(count(c,"repository_coordinator_supersessions")).isEqualTo(1);
+                    assertThat(count(c,"repository_successor_executions")).isZero();
+                    assertThat(c.tx().<Object>readOnly(em -> em.createNativeQuery("SELECT successor_token FROM repository_coordinator_supersessions").getSingleResult())).isEqualTo(committed);
+                    var progress=resources.sessions().drainRegistrations(Duration.ZERO,key -> CALLER,NONE);
+                    assertThat(progress.unresolved()).isZero();
+                    assertThat(progress.fenced()).isEqualTo(completedPhases==3 ? 1 : 0);
+                    assertThat(resources.sessions().awaitIdle(Duration.ZERO)).isTrue();
+                    assertThat(resources.sessions().attestLocalDrain(key -> CALLER,NONE)).isTrue();
+                    return;
+                }
                 try (var retry=attempts.resume(CALLER,source.command()).orElseThrow()) {
                     assertThat(retry.supersedeExpired(CALLER,CALLER,NONE)).isEqualTo(RepositoryRecoveryAttempts.Phase.RESERVED);
                     assertThat(retry.proposal().successorToken()).isEqualTo(committed);
@@ -342,8 +488,10 @@ class RepositoryRecoveryAttemptsIT {
         }
     }
 
-    @ParameterizedTest @ValueSource(strings={"reservation","installation","activation"})
-    void committedPhaseWithCancelledReplyKeepsExactIdentity(String phase) throws Exception {
+    @ParameterizedTest @org.junit.jupiter.params.provider.CsvSource({
+            "reservation,false", "installation,false", "activation,false",
+            "reservation,true", "installation,true", "activation,true"})
+    void committedPhaseWithCancelledReplyKeepsExactIdentity(String phase, boolean shutdown) throws Exception {
         try (var c=context(POSTGRES)) {
             var source=source(c); var armed=new AtomicBoolean(true); var cancelled=new AtomicBoolean();
             String table=switch (phase) {
@@ -375,6 +523,21 @@ class RepositoryRecoveryAttemptsIT {
                 assertThat(armed).isFalse(); assertThat(count(c,table)).isEqualTo(1);
                 var identity=c.tx().readOnly(em -> em.createNativeQuery("SELECT successor_token FROM repository_coordinator_reservations").getSingleResult());
                 Object ownerBefore=!phase.equals("reservation") ? c.tx().readOnly(em -> em.createNativeQuery("SELECT owner_nonce FROM repository_successor_installs").getSingleResult()) : null;
+                if (shutdown) {
+                    attempts.close();
+                    assertThat(attempts.detachClosed(Duration.ZERO,key -> CALLER,NONE)).isTrue();
+                    assertThat(attempts.drain()).isEqualTo(new RepositoryRecoveryAttempts.Drain(0,0));
+                    assertThat(budget.reservedBytes()).isZero();
+                    assertThat(count(c,"repository_coordinator_reservations")).isEqualTo(1);
+                    assertThat(count(c,"repository_successor_installs")).isEqualTo(phase.equals("reservation") ? 0 : 1);
+                    assertThat(count(c,"repository_successor_executions")).isEqualTo(phase.equals("activation") ? 1 : 0);
+                    assertThat(c.tx().<Object>readOnly(em -> em.createNativeQuery("SELECT successor_token FROM repository_coordinator_reservations").getSingleResult())).isEqualTo(identity);
+                    var progress=resources.sessions().drainRegistrations(Duration.ZERO,key -> CALLER,NONE);
+                    assertThat(progress.unresolved()).isZero();
+                    assertThat(resources.sessions().awaitIdle(Duration.ZERO)).isTrue();
+                    assertThat(resources.sessions().attestLocalDrain(key -> CALLER,NONE)).isTrue();
+                    return;
+                }
                 try (var retry=attempts.resume(CALLER,source.command()).orElseThrow()) {
                     assertThat(retry.proposal()).isSameAs(proposal);
                     assertThatThrownBy(() -> attempts.begin(CALLER,source.command(),source.observation())).hasMessageContaining("in use");

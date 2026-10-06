@@ -18,6 +18,77 @@ public final class JournaledSuccessorPublicationProbe {
     private static final Duration LEASE = Duration.ofMinutes(5);
     private static final Map<String, DocumentPublicationCandidate.Mode> MODES = Map.of("a", DocumentPublicationCandidate.Mode.TYPED);
 
+    /** Real expired recovery, cancelled activation reply, terminal cache eviction and owner disposal. */
+    static void runOwned(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentAssessmentRuntimeObserver.Observation observation) throws Exception {
+        var destination=source.candidate().getPartsList().stream().filter(DocumentPublicationPart::hasReuse)
+                .findFirst().orElseThrow().getReuse().getSource();
+        var command=AssessmentMixedReuseProbe.command(source.candidate().toBuilder().setDestination(destination).build());
+        var key=new RepositoryOperationLedger.Key("account","principal",command.operationId());
+        var bodies=new HashMap<DocumentUploadPayloads.Key,PartObject>();
+        for (int ordinal=0;ordinal<source.candidate().getPartsCount();ordinal++) {
+            var part=source.candidate().getParts(ordinal);
+            if (part.hasUpload()) bodies.put(new DocumentUploadPayloads.Key("a",ordinal),
+                    new PartObject(part.getSlot().getPart(),part.getSlot().getSubKey(),
+                            source.fragments().get(ordinal).toByteArray(),part.getUpload().getSha256()));
+        }
+        try (var first=new Host(tx,provider,observation,Duration.ofSeconds(10));
+             var second=new Host(tx,provider,observation,LEASE)) {
+            var interruption=new IllegalStateException("Owned recovery predecessor lookup interrupted");
+            try {
+                first.sessions.execute(CALLER,command,Map.of(source.placement().drive().id(),source.placement()),bodies,
+                        Map.of(),MODES,Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())),
+                        (member,occurrence) -> { throw interruption; },NONE);
+                throw new AssertionError("Interrupted predecessor published");
+            } catch (IllegalStateException failure) { require(failure==interruption,"original failure preserved"); }
+            first.sessions.close();
+            tx.readOnly(em -> em.createNativeQuery("""
+                    SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM
+                     (GREATEST(c.lease_until,o.lease_until)-clock_timestamp())))+0.1)
+                    FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                    WHERE c.operation_id=:id
+                    """).setParameter("id",command.operationId()).getSingleResult());
+            var timeouts=new SqlTimeouts(Duration.ofSeconds(1),Duration.ofSeconds(5));
+            var observed=new RepositoryCoordinatorRecoveryDiscovery(tx,timeouts).inspect(ADMIN,key,command.sha256(),NONE);
+            var budget=new PayloadBudget(128_000_000);
+            try (var recovery=new RepositoryRecoveryAttempts(tx,budget,second.sessions,LEASE,timeouts,1)) {
+                // Cancellation follows the actual committed activation, observed through a separate SQL transaction.
+                var cancelAfterCommit=new RepositoryReadControl() {
+                    public boolean isCancelled() { return tx.readOnly(em -> ((Number)em.createNativeQuery(
+                            "SELECT count(*) FROM repository_successor_executions WHERE operation_id=:id")
+                            .setParameter("id",command.operationId()).getSingleResult()).longValue())==1; }
+                    public long remainingNanos() { return Long.MAX_VALUE; }
+                };
+                try (var attempt=recovery.begin(CALLER,command,observed)) {
+                    attempt.advance(ADMIN,CALLER,MODES,NONE);
+                    attempt.advance(ADMIN,CALLER,MODES,NONE);
+                    try {
+                        attempt.advance(ADMIN,CALLER,MODES,cancelAfterCommit);
+                        throw new AssertionError("Activation cancellation was not observed");
+                    } catch (RepositoryException cancelled) {
+                        require(cancelled.code()==RepositoryException.Code.CANCELLED,"post-commit cancellation preserved");
+                    }
+                }
+                require(second.sessions.retainedSessions()==1,"possible activation retained by manager");
+                var definition=ObservedAssessmentProbe.asset(StringValue.getDescriptor());
+                var result=second.sessions.execute(CALLER,command,Map.of(),bodies,Map.of(),MODES,
+                        Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())),(member,occurrence) -> definition,NONE);
+                require(result.getMembersCount()==1 && second.uploadCalls.get()>0 && second.readCalls.get()>0,
+                        "recovered successor published through real provider writes and reads");
+                require(second.sessions.retainedSessions()==0,"terminal session evicted before owner disposal");
+                recovery.close();
+                require(recovery.drain().unresolved()==1 && budget.reservedBytes()>0,"owner still retains uncertain activation");
+                try (var pressure=budget.reserve(budget.capacity()-budget.reservedBytes())) {
+                    require(recovery.detachClosed(Duration.ZERO,ignored -> ADMIN,NONE),"exact terminal outcome allows owner disposal");
+                    require(budget.reservedBytes()==pressure.bytes(),"owner released bytes under full initial capacity pressure");
+                }
+                require(budget.reservedBytes()==0 && recovery.drain().unresolved()==0,"owner disposal completed");
+                require(recovery.detachClosed(Duration.ZERO,ignored -> ADMIN,NONE),"owner disposal is idempotent");
+            }
+        }
+        System.out.println("RECOVERY_OWNER_TERMINAL_DISPOSAL_OK");
+    }
+
     static void run(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
             DocumentAssessmentRuntimeObserver.Observation observation) throws Exception {
         var destination = source.candidate().getPartsList().stream().filter(DocumentPublicationPart::hasReuse)
@@ -81,6 +152,9 @@ public final class JournaledSuccessorPublicationProbe {
                         var plan = RepositorySuccessorInstall.prepare(handoff, recovered.record(), LEASE, MODES);
                         RepositorySuccessorInstall.install(tx, second.budget, ADMIN, plan, NONE);
                         second.sessions.activateSuccessor(ADMIN, CALLER, plan, NONE);
+                        var fingerprint=DocumentSuccessorFingerprint.of(plan);
+                        require(!RepositorySuccessorShutdown.terminal(tx,second.budget,ADMIN,fingerprint,NONE),
+                                "activation alone is not terminal disposal evidence");
                         var definition = ObservedAssessmentProbe.asset(StringValue.getDescriptor());
                         var result = second.sessions.execute(CALLER, command, Map.of(), bodies, Map.of(), MODES,
                                 Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())),
@@ -129,6 +203,12 @@ public final class JournaledSuccessorPublicationProbe {
                                 """).setParameter("node", source.node()).setParameter("attempt", nextAttempt).getSingleResult()).intValue());
                         require(bound == newObjects.size(), "published revision references successor physical objects");
                         require(second.sessions.retainedSessions() == 0, "durable terminal replay releases successor session");
+                        require(RepositorySuccessorShutdown.terminal(tx,second.budget,ADMIN,fingerprint,NONE),
+                                "exact successor generation has private terminal evidence after cache eviction");
+                        var wrong=new DocumentSuccessorFingerprint(fingerprint.reservation(),fingerprint.previous(),
+                                com.google.protobuf.ByteString.copyFrom(new byte[32]),fingerprint.modes());
+                        require(!RepositorySuccessorShutdown.terminal(tx,second.budget,ADMIN,wrong,NONE),
+                                "terminal command alone cannot replace successor fingerprint evidence");
                     }
                 }
             }
