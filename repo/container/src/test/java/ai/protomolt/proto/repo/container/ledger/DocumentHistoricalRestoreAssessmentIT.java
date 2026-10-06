@@ -91,6 +91,63 @@ class DocumentHistoricalRestoreAssessmentIT {
 
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void opaqueTargetRejectsTypedSourceAmongTwoHistoricalSources(boolean typedFirst) throws Exception {
+        try (var c = context(POSTGRES)) {
+            var original = DocumentSchemaRetentionFixture.prepare(c, typedFirst);
+            var policies = new DocumentSchemaPolicies(c.tx());
+            policies.activate(original.batch().policy().policy(), 0, () -> {});
+            var first = new Fixture(original, DocumentSchemaRetentionFixture.publishBound(c, original,
+                    (em, candidate) -> {}, (em, revision, manifest) -> {
+                        if (typedFirst) original.retention().write(em, original.owner(), revision, () -> {});
+                    }));
+            var document = Document.newBuilder().setDocId(first.address().getDocId())
+                    .setOwnership(original.command().intent().getMembers(0).getOwnership())
+                    .putParserResults("parsed", ParserResult.newBuilder().setDocument(ParserDocument.newBuilder().setShape(
+                            com.google.protobuf.Any.pack(com.google.protobuf.StringValue.of("selected parsed"), "type.test"))).build()).build();
+            var initial = DocumentSchemaRetentionFixture.prepare(c, !typedFirst, false, document, "second-source", "second-drive");
+            var secondPolicy = policies.activate(initial.batch().policy().policy(), 1, () -> {});
+            var secondBatch = DocumentSchemaBatch.prepare(initial.command(), secondPolicy, initial.batch().proofs(), () -> {});
+            var prepared = new DocumentSchemaRetentionFixture.Fixture(initial.command(), initial.owner(), secondBatch,
+                    !typedFirst ? DocumentSchemaRetention.prepare(secondBatch, "member") : null,
+                    initial.prepared(), initial.selected(), initial.content());
+            var second = new Fixture(prepared, DocumentSchemaRetentionFixture.publishBound(c, prepared,
+                    (em, candidate) -> {}, (em, revision, manifest) -> {
+                        if (!typedFirst) prepared.retention().write(em, prepared.owner(), revision, () -> {});
+                    }));
+            var policy = policies.activate(DocumentAdmissionPolicy.of(original.batch().policy().policy().definition().toBuilder()
+                    .setMode(DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_OPAQUE_ALLOWED).build(), () -> {}), 2, () -> {});
+            var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var firstHistory = ledger.captureHistorical(ADMIN, first.address(), first.revision());
+            var secondHistory = ledger.captureHistorical(ADMIN, second.address(), second.revision());
+            var firstMember = member(first, firstHistory);
+            var parsed = member(second, secondHistory).getPartsList().stream()
+                    .filter(part -> part.getSlot().getPart() == DocumentPart.DOCUMENT_PART_PARSED).findFirst().orElseThrow();
+            var command = new DocumentPublicationCommand(original.command().intent().toBuilder()
+                    .setOperationId(UUID.randomUUID().toString()).setMembers(0, firstMember.toBuilder().addParts(parsed)).build());
+            var fragments = new HashMap<>(first.fragments());
+            fragments.put(firstMember.getPartsCount(), second.fragments().get(parsed.getHistoricalReuse().getRevisionOrdinal()));
+            var budget = new PayloadBudget(64L * 1024 * 1024);
+            try {
+                assertThatThrownBy(() -> DocumentPublicationAssessment.prepareHistorical(command, policy,
+                        Map.of("member", DocumentPublicationCandidate.Mode.OPAQUE), Map.of("member", fragments), Optional.empty(),
+                        (m, occurrence) -> { throw new AssertionError("Opaque classification must not resolve schemas"); }, budget,
+                        new ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits(4_000_000, 32, 100, 100, 100_000),
+                        AT, ADMIN, List.of(firstHistory, secondHistory), RepositoryReadControl.NONE))
+                        .isInstanceOfSatisfying(RepositoryException.class,
+                                error -> assertThat(error.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION))
+                        .hasMessageContaining("Historical source cannot be downgraded to opaque mode");
+            } finally {
+                firstHistory.close(); secondHistory.close();
+                assertThat(firstHistory.awaitDrained(Duration.ofSeconds(1))).isTrue();
+                assertThat(secondHistory.awaitDrained(Duration.ofSeconds(1))).isTrue();
+                firstHistory.release(); secondHistory.release(); ledger.fence(); ledger.attestLocalQuiescence();
+                assertThat(budget.reservedBytes()).isZero();
+            }
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
     void oneMemberCombinesTwoSqlHistoricalSourcesAndRechecksBoth(boolean revokeSecond) throws Exception {
         try (var c = context(POSTGRES)) {
             var first = fixture(c);

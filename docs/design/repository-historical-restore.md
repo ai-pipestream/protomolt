@@ -449,8 +449,10 @@ decoding Any payloads. The assessment owner keeps the existing fragment hash che
 target-policy gate and inspection/replay authorization. Acceptance covers explicit
 opaque success, typed-source refusal, admission-less source refusal, current
 typed-required policy refusal, revocation, cancellation and reservation cleanup.
-A two-source opaque member containing a typed source still needs an explicit host
-regression; all distinct sources are classified before any fragment capture. Source
+A two-source opaque member containing a typed source now has a SQL host regression
+covering the typed source in either position, the specific downgrade error, and
+release of both source pins and payload reservations. Provider observations in this
+fixture are synthetic. All distinct sources are classified before fragment capture. Source
 READ checks belong at delivery and commit; deterministic evidence replay remains free
 of provider and SQL calls. Keep source Uses through observed-runtime CREATE and atomic
 reference publication. The public route remains disabled while those integrations

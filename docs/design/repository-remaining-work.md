@@ -22,6 +22,20 @@ confirmation survives transfer. Runtime/service invocation remains disabled unti
 all owned workers, including abandoned schema loads, are proven drained. Preserve
 the independent recovery-only cleanup fence and all retention guards.
 
+The next private host integration must retain an immutable, bounded snapshot of
+the exact nonterminal identities after the registration barrier drains. Do not
+reconstruct these identities from a later SQL query or current claim: terminal
+sessions can be evicted while workers drain. Retain the snapshot across retries.
+After publication sessions, scopes, uploads and readers drain, wait for the
+host-owned `ManagedSchemaAccess`, including abandoned provider loads, before
+recording V91 for every captured identity. A partial attestation batch must retain
+shared resources; retry must confirm every exact marker before releasing them.
+Qualify this with a held schema-provider load (V90 present, V91 absent until
+release), a failure on the second of two attestations, and a terminal-session
+control. Keep ordinary service construction unchanged. Future public publication
+transport also needs accepted-call drain before transport teardown; current
+private runtime qualification does not establish that ordering.
+
 Current restore checkpoint: canonical historical commands, current-READ replay,
 V86 historical provenance, snapshot v2 with v1 replay, and shared physical/slot
 binding are implemented. The internal assessment path records the exact historical
@@ -45,7 +59,10 @@ READ during inspection and replay. Its callback-scoped inspection provides immut
 summaries plus the caller-supplied command and policy values; it exposes no borrowed
 payload or publication capability. Historical opaque-source classification now
 requires explicit sealed OPAQUE admissions and refuses typed downgrades or missing
-admissions. The two-source mixed-mode negative case remains unfinished; durable
+admissions. The two-source mixed-mode regression now refuses a typed source in
+either position of an opaque target member, checks the specific downgrade refusal,
+and verifies both pins and payload reservations drain. This is real SQL/descriptor
+qualification with synthetic provider observations, not provider-read proof; durable
 publication qualification is recorded below.
 The SQL assessment suite now also covers one member assembled from two historical
 sources, including second-source access revocation and release of both pins. The
