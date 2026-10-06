@@ -247,8 +247,11 @@ performance qualification must not displace these requirements.
    transactions. Initial registration now has fresh-process crash qualification:
    death before its COMMIT leaves neither row; death immediately after COMMIT retains
    the exact preparation, original claim and unchanged lease for inspection/retry.
-   The reader receives no private input or token file. This does not qualify death
-   after mode binding, host quiescence, or ordinary session activation. Never turn
+   The reader receives no private input or token file. Mode binding now also has
+   before/after-COMMIT process-death coverage: preparation survives both cases,
+   while only a committed mode row is loaded and retried unchanged. Inspection
+   distinguishes PREPARATION_ONLY from MODES_BOUND without admitting an owner or
+   advancing execution. Host quiescence and ordinary session activation remain open. Never turn
    an explicit claim-only row into permission to invent
    replacement seeds.
 5. **Restore, pruning and backup.** Test retained schema/content reachability,

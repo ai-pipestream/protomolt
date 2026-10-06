@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.*;
 @Testcontainers
 class DocumentInitialRegistrationCrashIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
-    @ParameterizedTest @ValueSource(strings = {"before", "after"})
+    @ParameterizedTest @ValueSource(strings = {"before", "after", "modes-before", "modes-after"})
     void processDeathPreservesAtomicInitialRegistration(String phase, @TempDir Path temp) throws Exception {
         try (var c = context(POSTGRES)) {
             var source = prepare(c, 2, true);
@@ -32,7 +32,7 @@ class DocumentInitialRegistrationCrashIT {
             var bytes = DocumentPublicationPreparationCodec.encode(record).toByteArray();
             var input = temp.resolve("writer-only-input.bin"); Files.write(input, bytes);
             var token = UUID.randomUUID();
-            run(c, temp.resolve("writer.log"), phase.equals("before") ? 81 : 82,
+            String writerLog = run(c, temp.resolve("writer.log"), phase.endsWith("before") ? 81 : 82,
                     "write-" + phase, command.operationId().toString(), input.toString(), command.sha256(), token.toString());
             // Reap the writer and remove its request before launching the independent reader.
             Files.delete(input);
@@ -52,6 +52,12 @@ class DocumentInitialRegistrationCrashIT {
                         "SELECT claim_token FROM repository_execution_claims WHERE operation_id=:id")
                         .setParameter("id", command.operationId()).getSingleResult());
                 assertThat(retainedToken).isEqualTo(token);
+                if (phase.equals("modes-before")) assertThat(log).contains("MODES_ABSENT_PREPARATION_RETAINED_OK");
+                if (phase.equals("modes-after")) assertThat(log).contains("MODES_BOUND_RETAINED_OK");
+                if (phase.startsWith("modes-")) {
+                    var leaseLine = writerLog.lines().filter(line -> line.startsWith("INITIAL_LEASE|")).findFirst().orElseThrow();
+                    assertThat(log).contains("RETAINED_LEASE|" + leaseLine.substring("INITIAL_LEASE|".length()));
+                }
             }
         }
     }

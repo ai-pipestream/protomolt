@@ -9,9 +9,14 @@ import java.util.*;
 
 /** Test-only SQL capability inspection; never a production recovery endpoint. */
 public final class DocumentInitialRegistrationWorker {
+    private static final Map<String, DocumentPublicationCandidate.Mode> MODES = Map.of(
+            "member-0", DocumentPublicationCandidate.Mode.TYPED, "member-1", DocumentPublicationCandidate.Mode.OPAQUE);
     public static void main(String[] args) throws Exception {
         String mode = args[0];
-        require(Set.of("write-before", "write-after", "read-before", "read-after").contains(mode), "known worker mode");
+        require(Set.of("write-before", "write-after", "read-before", "read-after",
+                "write-modes-before", "write-modes-after", "read-modes-before", "read-modes-after").contains(mode), "known worker mode");
+        boolean modeBinding = mode.contains("-modes-");
+        boolean committedModes = mode.equals("read-modes-after");
         var key = new RepositoryOperationLedger.Key("account", "principal", UUID.fromString(args[1]));
         var config = new HikariConfig(); var env = System.getenv();
         config.setJdbcUrl(env.get("TEST_DB_URL")); config.setUsername(env.get("TEST_DB_USER"));
@@ -26,14 +31,16 @@ public final class DocumentInitialRegistrationWorker {
                 }), connection -> {
                     try (var query = connection.prepareStatement("""
                             SELECT (SELECT count(*) FROM repository_execution_claims WHERE operation_id=?),
-                                   (SELECT count(*) FROM repository_publication_preparations WHERE operation_id=?)
+                                   (SELECT count(*) FROM repository_publication_preparations WHERE operation_id=?),
+                                   (SELECT count(*) FROM repository_publication_modes WHERE operation_id=?)
                             """)) {
                         query.setObject(1, key.operationId()); query.setObject(2, key.operationId());
+                        query.setObject(3, key.operationId());
                         try (var rows = query.executeQuery()) {
                             require(rows.next(), "registration counts");
-                            if (rows.getInt(1) == 1 && rows.getInt(2) == 1) {
+                            if (rows.getInt(1) == 1 && rows.getInt(2) == 1 && (!modeBinding || rows.getInt(3) == 1)) {
                                 armed.set(true);
-                                if (mode.equals("write-before")) Runtime.getRuntime().halt(81);
+                                if (mode.endsWith("-before")) Runtime.getRuntime().halt(81);
                             }
                         }
                     }
@@ -46,7 +53,11 @@ public final class DocumentInitialRegistrationWorker {
                 var caller = new RepositoryCaller("principal", true);
                 if (mode.startsWith("write-")) {
                     var record = DocumentPublicationPreparationCodec.decode(ByteString.copyFrom(Files.readAllBytes(Path.of(args[2]))), key, args[3]);
-                    journal.acquireInitial(caller, record, UUID.fromString(args[4]), RepositoryReadControl.NONE);
+                    var claim = journal.acquireInitial(caller, record, UUID.fromString(args[4]), RepositoryReadControl.NONE);
+                    if (modeBinding) {
+                        System.out.println("INITIAL_LEASE|" + claim.leaseUntil()); System.out.flush();
+                        new DocumentPublicationModesJournal(tx, budget).bind(caller, claim, 0, MODES, RepositoryReadControl.NONE);
+                    }
                     throw new AssertionError("Target commit hook did not halt");
                 }
                 require(args.length == 2, "Reader receives only mode and operation ID, no preparation or claim token");
@@ -63,16 +74,27 @@ public final class DocumentInitialRegistrationWorker {
                     var row = (Object[]) claims.getFirst();
                     var lease = (java.time.Instant) row[3];
                     var claim = new RepositoryExecutionClaimLedger.Claim(key, (String) row[0], ((Number) row[1]).longValue(), (UUID) row[2], lease);
+                    System.out.println("RETAINED_LEASE|" + claim.leaseUntil());
                     var command = journal.readCommand(caller, key, 0, RepositoryReadControl.NONE).orElseThrow();
                     try (var loaded = journal.load(caller, claim, 0, RepositoryReadControl.NONE).orElseThrow()) {
                         require(command.intent().equals(loaded.record().command().intent()), "command/preparation agreement");
                         String digest = HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
                                 .digest(DocumentPublicationPreparationCodec.encode(loaded.record()).toByteArray()));
                         require(DocumentPublicationRegistrationInspection.inspect(tx, budget, caller, claim, RepositoryReadControl.NONE)
-                                == DocumentPublicationRegistrationInspection.Phase.PREPARATION_ONLY, "only preparation is registered");
+                                == (committedModes ? DocumentPublicationRegistrationInspection.Phase.MODES_BOUND
+                                        : DocumentPublicationRegistrationInspection.Phase.PREPARATION_ONLY), "exact registration phase");
+                        var modeJournal = new DocumentPublicationModesJournal(tx, budget);
+                        var storedModes = modeJournal.load(caller, claim, 0, RepositoryReadControl.NONE);
+                        require(storedModes.equals(committedModes ? Optional.of(MODES) : Optional.empty()), "exact durable mode choices");
+                        if (committedModes) {
+                            // Retry only the map actually loaded from SQL; never invent missing choices.
+                            modeJournal.bind(caller, claim, 0, storedModes.orElseThrow(), RepositoryReadControl.NONE);
+                            require(modeJournal.load(caller, claim, 0, RepositoryReadControl.NONE).equals(storedModes), "mode retry preserves choices");
+                        }
                         require(journal.acquireInitial(caller, loaded.record(), claim.token(), RepositoryReadControl.NONE).equals(claim),
                                 "exact retry preserves claim epoch token and lease");
                         System.out.println("REGISTRATION_RETAINED_OK|" + command.sha256() + "|" + digest);
+                        if (modeBinding) System.out.println(committedModes ? "MODES_BOUND_RETAINED_OK" : "MODES_ABSENT_PREPARATION_RETAINED_OK");
                     }
                 }
                 for (String table : List.of("repository_publication_modes", "repository_operation_owners", "repository_operations",
@@ -80,7 +102,8 @@ public final class DocumentInitialRegistrationWorker {
                         "document_part_attempts", "document_operation_selection_attempts")) {
                     long count = tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM " + table + " WHERE operation_id=:id")
                             .setParameter("id", key.operationId()).getSingleResult()).longValue());
-                    require(count == 0, "inspection must not advance " + table);
+                    require(count == (committedModes && table.equals("repository_publication_modes") ? 1 : 0),
+                            "inspection must not advance " + table);
                 }
                 require(budget.reservedBytes() == 0, "all inspection reservations released");
             }
