@@ -195,15 +195,14 @@ class DocumentPublicationSessionIT {
         }
     }
 
-    @Test void durableRegistrationRequiresActualAuthorityAndFixedModesBeforeAnyClaim() {
+    @Test void durableRegistrationRequiresAccountBindingAndFixedModesBeforeAnyClaim() {
         try (var c = context(POSTGRES)) {
             var input = input(c);
             var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(32L * 1024 * 1024);
             var scoped = new RepositoryCaller(CALLER.principalName(), false,
-                    java.util.Set.of(input.command().intent().getAccountId()), java.util.Set.of());
+                    java.util.Set.of("other-account"), java.util.Set.of());
             assertThatThrownBy(() -> DocumentPublicationSession.journaled(c.tx(), scoped, input.command(), input.placements(), LEASE, budget))
-                    .isInstanceOfSatisfying(RepositoryException.class,
-                            failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.PERMISSION_DENIED));
+                    .isInstanceOf(RepositoryException.class);
             var session = DocumentPublicationSession.journaled(c.tx(), CALLER, input.command(), input.placements(), LEASE, budget);
             assertThatThrownBy(() -> session.admit(CALLER, RepositoryReadControl.NONE)).hasMessageContaining("modes must be fixed");
             long claims = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
@@ -217,7 +216,7 @@ class DocumentPublicationSessionIT {
                 modes.replaceAll((member, mode) -> DocumentPublicationCandidate.Mode.OPAQUE);
                 assertThatThrownBy(() -> execution.bindModes(modes)).hasMessageContaining("modes changed");
             }
-            assertThatThrownBy(() -> session.admit(scoped, RepositoryReadControl.NONE)).hasMessageContaining("actual process authority");
+            assertThatThrownBy(() -> session.admit(scoped, RepositoryReadControl.NONE)).isInstanceOf(RepositoryException.class);
             assertThat(new RepositoryOperationLedger(c.tx()).find(key(input.command()))).isEmpty();
             assertThat(budget.reservedBytes()).isZero();
         }

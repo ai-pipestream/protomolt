@@ -1,0 +1,6 @@
+ccbdf49e58dcaae3ddae08f25bff885cf708d76c3cb6b1c8bd4ceba67642977c  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationRegistration.java
+6744eb4a6c14e787bbc4dd66780ab063e0aabd32d23ee45a9c97f71204d0b1c9  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationSession.java
+4d3ea1eb068e5554fe921072ade2045866766b5a959c45ac527df50eb95c640c  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationModesJournal.java
+a1254dc6662d7f6cb01cdd712d491f80db20158803516d17343f6cd0b6e51602  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentAssessmentStartJournal.java
+24d5367858f1c652fa4cc7009239155f81d4f3b4775ec23e13bce49ecade9ee3  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentScopedRegistrationIT.java
+8b479c0b5ddd0417be3012c18c21ea6910f6ea96ea409a35297a19519a3e370c  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationSessionIT.java

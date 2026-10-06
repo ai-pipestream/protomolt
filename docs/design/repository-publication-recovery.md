@@ -19,16 +19,44 @@ still commit later, so complete fresh-process recovery of interrupted registrati
 remains to be qualified. Explicit low-level claim-only primitives remain available;
 such a row must never authorize inventing replacement seeds or an owner identity.
 
-Scoped journal access also requires a host-private capability bound to account,
-authenticated principal, operation ID, command digest, owner nonce and claim token.
-Keep the actual caller separate for authorization. The capability permits exact
-V82/V83 journal operations, not document creation or cross-process bootstrap;
-private bootstrap remains process-only. Check current source READ and destination
-WRITE access before first registration, and repeat authoritative checks at mutation.
-Scoped creation of an absent destination needs its own explicit grant policy.
-Retain exact session identity from immediately before the first potentially
-committing SQL call through every ambiguous error, cancellation or lost response.
-Registered-command expiry and cleanup still require qualification before activation.
+Scoped same-session journal access now uses a host-private, nonserializable
+capability bound to account, authenticated principal, operation ID, command digest,
+initial claim token/epoch and saved owner nonce. The actual caller remains separate
+for authorization. Owned V82/V83 operations compare the capability against the
+loaded preparation and live owner. Direct private bind/load/start and cross-process
+bootstrap still require process authority; the capability grants no document access.
+
+The private opt-in session checks current source READ, destination WRITE and
+revision preconditions using its frozen prepared plan before registration and
+before setting the sticky assessment-start flag. These checks run again on retry.
+Scoped creation of an absent destination still requires a separate grant policy
+and is refused. Preflight and journal writes are separate transactions: a concurrent
+revocation after preflight can still precede a marker write. Authoritative checks
+at upload, CREATE/decision and publication remain necessary. Known revocation
+before preflight refuses the marker without setting the sticky flag.
+
+The ordinary manager still does not use journaled sessions. Before activation it
+must retain exact session identity from immediately before the first potentially
+committing journal call through ambiguous errors, cancellation and lost responses.
+Registered-command expiry and cleanup still require qualification. See the
+[scoped journal evidence](../evidence/repository/2026-10-05-scoped-registration/README.md).
+
+The next manager integration must keep its existing reserve-before-construction
+ordering and expose journaled construction only as an explicit opt-in. Mark the
+session locally as potentially committed immediately before initial registration
+SQL. After that point, errors and cancellation retain the exact session, claim
+token, modes and seeds; no replacement construction or ordinary-admission fallback
+is permitted. A proven pre-journal denial may release capacity once no users remain.
+Test same-key concurrency, command-byte accounting and lost acknowledgment at the
+initial pair, modes and owner commits before enabling that opt-in in a host.
+
+Fresh-process interrupted registration is separate from same-process retention.
+The existing restoration handle covers V83-started stages only. A future protocol
+must classify pair-only, modes-present/owner-absent and owner-present states from
+SQL, recover exact preparation identity, and refuse expired/transferred claims.
+Missing modes cannot be invented or inferred from current defaults. Establish the
+trusted original-claim ownership protocol and explicit unresolved-state policy
+before reconstructing a manager entry from such a partial registration.
 
 ## Original-owner restoration handle
 

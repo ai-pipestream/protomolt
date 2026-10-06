@@ -49,6 +49,18 @@ final class DocumentAssessmentStartJournal {
 
     Started start(RepositoryCaller caller, RepositoryOperationLedger.Owner owner, DocumentPublicationCommand command,
             UUID proposedId, Duration retention, RepositoryReadControl control) {
+        return startRetained(caller, owner, command, proposedId, retention, control, null);
+    }
+
+    Started startOwned(DocumentPublicationRegistration.JournalAccess access, RepositoryCaller caller,
+            RepositoryOperationLedger.Owner owner, DocumentPublicationCommand command,
+            UUID proposedId, Duration retention, RepositoryReadControl control) {
+        Objects.requireNonNull(access).requireOwner(caller, owner, command, control);
+        return startRetained(caller, owner, command, proposedId, retention, control, access);
+    }
+
+    private Started startRetained(RepositoryCaller caller, RepositoryOperationLedger.Owner owner, DocumentPublicationCommand command,
+            UUID proposedId, Duration retention, RepositoryReadControl control, DocumentPublicationRegistration.JournalAccess access) {
         Objects.requireNonNull(proposedId); Objects.requireNonNull(retention); Objects.requireNonNull(control).check();
         if (retention.isNegative() || retention.isZero() || retention.compareTo(Duration.ofDays(1))>0 || retention.getNano()%1000!=0)
             throw new IllegalArgumentException("Retention requires exact microseconds within one day");
@@ -56,7 +68,9 @@ final class DocumentAssessmentStartJournal {
         if (!claim.commandSha256().equals(command.sha256()) || !owner.key().operationId().equals(command.operationId())
                 || !owner.key().account().equals(command.intent().getAccountId()))
             throw new IllegalArgumentException("Staging command differs from owner");
-        modes.load(caller, claim, owner.generation()-1, control).orElseThrow(() ->
+        var fixed = access == null ? modes.load(caller, claim, owner.generation()-1, control)
+                : modes.loadOwned(access, caller, claim, owner.generation()-1, control);
+        fixed.orElseThrow(() ->
                 new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Fixed publication modes are absent"));
         var started = tx.inTransaction(em -> {
             RepositoryExecutionClaimLedger.lockLive(em, claim);

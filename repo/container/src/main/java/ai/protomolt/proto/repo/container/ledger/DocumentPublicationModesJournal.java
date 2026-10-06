@@ -30,7 +30,14 @@ final class DocumentPublicationModesJournal {
     Optional<Map<String, DocumentPublicationCandidate.Mode>> load(RepositoryCaller caller,
             RepositoryExecutionClaimLedger.Claim claim, long predecessor, RepositoryReadControl control) {
         requireProcess(caller, claim, control);
-        return loadRetained(caller, claim, predecessor, control);
+        return loadRetained(caller, claim, predecessor, control, null);
+    }
+
+    /** Same-session host authority, separate from the authenticated document caller. */
+    Optional<Map<String, DocumentPublicationCandidate.Mode>> loadOwned(DocumentPublicationRegistration.JournalAccess access,
+            RepositoryCaller caller, RepositoryExecutionClaimLedger.Claim claim, long predecessor, RepositoryReadControl control) {
+        Objects.requireNonNull(access).require(caller, claim, predecessor, control);
+        return loadRetained(caller, claim, predecessor, control, access);
     }
 
     /** Scoped callers receive only a comparison result, never private recovery state. */
@@ -52,7 +59,7 @@ final class DocumentPublicationModesJournal {
                     .setParameter("o", owner.key().operationId()).setParameter("g", owner.generation()-1).getSingleResult()).intValue()==1;
         });
         if (!journaled) return; // Explicit claim-only primitive, without a preparation journal.
-        var fixed = loadRetained(caller, claim, owner.generation()-1, control).orElseThrow(() ->
+        var fixed = loadRetained(caller, claim, owner.generation()-1, control, null).orElseThrow(() ->
                 new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Fixed publication modes are absent"));
         if (!fixed.equals(observed)) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
                 "Observed publication modes differ from fixed modes");
@@ -61,10 +68,12 @@ final class DocumentPublicationModesJournal {
     }
 
     private Optional<Map<String, DocumentPublicationCandidate.Mode>> loadRetained(RepositoryCaller caller,
-            RepositoryExecutionClaimLedger.Claim claim, long predecessor, RepositoryReadControl control) {
+            RepositoryExecutionClaimLedger.Claim claim, long predecessor, RepositoryReadControl control,
+            DocumentPublicationRegistration.JournalAccess access) {
         try (var reservation = budget.reserve(MAX_BYTES);
              var loaded = preparations.load(caller, claim, predecessor, control).orElseThrow(() ->
                      new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Publication preparation is absent"))) {
+            if (access != null) access.requirePreparation(loaded.record());
             var row = tx.inTransaction(em -> {
                 RepositoryExecutionClaimLedger.lockLive(em, claim);
                 var rows = em.createNativeQuery("""
@@ -106,12 +115,26 @@ final class DocumentPublicationModesJournal {
     void bind(RepositoryCaller caller, RepositoryExecutionClaimLedger.Claim claim, long predecessor,
             Map<String, DocumentPublicationCandidate.Mode> requested, RepositoryReadControl control) {
         requireProcess(caller, claim, control);
+        bindRetained(caller, claim, predecessor, requested, control, null);
+    }
+
+    void bindOwned(DocumentPublicationRegistration.JournalAccess access, RepositoryCaller caller,
+            RepositoryExecutionClaimLedger.Claim claim, long predecessor,
+            Map<String, DocumentPublicationCandidate.Mode> requested, RepositoryReadControl control) {
+        Objects.requireNonNull(access).require(caller, claim, predecessor, control);
+        bindRetained(caller, claim, predecessor, requested, control, access);
+    }
+
+    private void bindRetained(RepositoryCaller caller, RepositoryExecutionClaimLedger.Claim claim, long predecessor,
+            Map<String, DocumentPublicationCandidate.Mode> requested, RepositoryReadControl control,
+            DocumentPublicationRegistration.JournalAccess access) {
         var modes = Map.copyOf(requested);
         if (modes.isEmpty() || modes.size()>10000) throw new IllegalArgumentException("Invalid publication mode count");
         try (var reservation = budget.reserve(MAX_BYTES);
              var loaded = preparations.load(caller, claim, predecessor, control).orElseThrow(() ->
                      new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Publication preparation is absent"))) {
             var preparation = loaded.record();
+            if (access != null) access.requirePreparation(preparation);
             var members = preparation.command().intent().getMembersList().stream()
                     .map(member -> member.getMemberId()).collect(Collectors.toSet());
             if (!members.equals(modes.keySet())) throw new IllegalArgumentException("Admission modes differ from command members");

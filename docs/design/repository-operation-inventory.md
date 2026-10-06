@@ -6130,3 +6130,22 @@ admission still commit later. This does not activate ordinary/scoped registratio
 claim transfer, or a publication RPC. No protobuf, migration, schema reference,
 receipt binding or public idempotency contract changes. Evidence is in
 [the regression record](../evidence/repository/2026-10-05-atomic-registration/README.md).
+
+### Scoped caller journal registration
+
+**Extended internal operation:** the private journaled session now accepts the
+actual scoped caller. A private host-held capability binds V82 mode and V83 start
+operations to the exact initial claim, command, owner nonce and loaded preparation.
+It does not elevate the caller to process authority. Direct private recovery access
+remains process-only.
+
+Registration and pre-sticky staging preflight the frozen plan's source READ,
+destination WRITE and revision conditions. Denied requests create no registration
+rows; a revocation already visible before staging creates no marker. These are
+separate preflight transactions, so later mutation checks remain authoritative for
+concurrent ACL changes. Scoped creation of absent documents is still refused.
+
+Ordinary session-manager activation, interrupted-registration recovery and cleanup
+remain unfinished. No protobuf names/tags, receipt identity, schema references,
+public idempotency contract or mounted RPC changes. See the
+[scoped registration checks](../evidence/repository/2026-10-05-scoped-registration/README.md).

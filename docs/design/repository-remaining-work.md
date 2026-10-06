@@ -89,19 +89,25 @@ features available. Recovery is one workstream, not the whole goal.
    the host ownership protocol; a shared token is not proof
    that its previous process is dead. Keep automatic claim transfer off
    until delayed provider writes and cleanup across claim loss are qualified.
-   An internal process-authority session now registers claim, preparation and
+   An internal opt-in session now registers claim, preparation and
    modes before admitting a claimed owner, with lost-acknowledgment tests at all
    four stages. Ordinary runtime creation is still unchanged. Before enabling it,
-   preserve scoped request authorization separately from private journal authority. The
+   qualify retained registration lifetime and cleanup. Scoped request authorization
+   is now separate from the private journal capability. The
+   scoped SQL fixture passes, while the production-JAR journaled provider variants
+   still use process authority; add scoped end-to-end provider qualification before
+   ordinary activation. The
    execution stage now uses the durable assessment-start marker for journaled
    sessions and commits it before CREATE; ambiguous marker acknowledgment leaves
    local staging sticky. Specify retention and
    cleanup for registered commands that later fail policy or ACL checks.
    Registered sessions now pass the real-provider acceptance/rejection matrix,
-   including CREATE rollback and lost CREATE/decision acknowledgments. Separate
-   a host-owned journal capability from the actual scoped caller for V82/V83;
-   keep bootstrap/readCommand process-only. Preflight current destination/source
-   access before new registration, and repeat authoritative checks at mutation.
+   including CREATE rollback and lost CREATE/decision acknowledgments. Separation of
+   a host-owned journal capability from the actual scoped caller for V82/V83 is now
+   implemented; bootstrap/readCommand remain process-only. Current destination/source
+   access and revision preflight run before registration and before the sticky V83
+   marker, using the frozen plan. Authoritative checks still repeat at mutation;
+   separate preflight and journal transactions cannot exclude a concurrent ACL change.
    Before any possible journal commit a denial may discard the in-memory entry;
    afterward retain its exact identity for authorized retry or explicit cleanup.
    Scoped creation of a truly absent destination is currently rejected by replay

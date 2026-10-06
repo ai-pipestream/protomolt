@@ -35,7 +35,6 @@ final class DocumentPublicationSession {
     static DocumentPublicationSession journaled(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
             Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease,
             ai.protomolt.proto.repo.blob.spi.PayloadBudget budget) {
-        DocumentPublicationRegistration.requireProcess(caller);
         return new DocumentPublicationSession(tx, caller, command, placements, lease, 0, Objects.requireNonNull(budget));
     }
 
@@ -71,7 +70,7 @@ final class DocumentPublicationSession {
         ownerNonce = seeds.ownerNonce();
         operations = new RepositoryOperationLedger(Objects.requireNonNull(tx));
         registration = journalBudget == null ? null : new DocumentPublicationRegistration(tx, journalBudget,
-                new DocumentPublicationPreparationRecord(key, command, seeds, placements, lease, predecessorGeneration));
+                new DocumentPublicationPreparationRecord(key, command, seeds, placements, lease, predecessorGeneration), prepared.plan());
     }
 
     /**
@@ -167,7 +166,7 @@ final class DocumentPublicationSession {
                 throw new IllegalArgumentException("Assessment retention requires exact microseconds within one day");
             if (assessmentStageStarted) throw new IllegalStateException("Assessment stage creation already started");
             // Set before journal I/O: a thrown acknowledgment must never permit a new CREATE attempt.
-            if (registration != null) registration.requireStart(caller, owner);
+            if (registration != null) registration.requireStart(caller, owner, control);
             assessmentStageStarted = true;
             if (registration != null) return registration.start(caller, owner, retention, control);
             return new DocumentAssessmentStartJournal.Started(UUID.randomUUID(),
