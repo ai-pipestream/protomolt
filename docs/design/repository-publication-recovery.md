@@ -2272,3 +2272,27 @@ timeout, refusal of new calls and successful final resource release. See
 
 These APIs are available through explicit composition. They are not enabled in
 default builders, deployed by this change or qualified for horizontal throughput.
+
+### Next latency change: compose paired renewal transactions
+
+The actual-JDBC RustFS trace records 18 foreground commits per successful
+publication in the small fixture. Two coordinator phases each renew the owner and
+selected attempts in consecutive transactions. A third selected-attempt renewal
+returns VERIFIED state and must remain separate. Evidence and limitations are in
+`docs/evidence/repository/2026-10-06-jdbc-callsite-trace/`.
+
+Extract transaction-local renewal primitives and compose only the paired initial,
+heartbeat and post-preparation paths. Preserve execution-claim then owner then
+sorted-attempt lock order; all existing identity, expiry, current selection,
+cleanup and write-fence checks remain mandatory. Empty selections keep the
+owner-only path. Do not invoke arbitrary call-control callbacks while SQL locks
+are active; check before and after the transaction.
+
+This changes partial renewal into all-or-none renewal: a selected-attempt failure
+must also roll back owner/claim extension. Before landing, require actual commit
+counts and PostgreSQL tests for failed selection, transferred claim, local drain,
+expired owner, multi-attempt ordering, active-provider heartbeat, cancellation,
+empty selections and lost commit acknowledgement followed by exact retry.
+The expected normal-path saving is two commits, not three. Locks last longer in
+the combined transaction; recheck contention and RustFS timing before claiming a
+latency or scaling improvement.

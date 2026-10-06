@@ -216,6 +216,14 @@ class NativeReplicaRuntimeTest {
                                 assertThat(traced.stream().filter(line -> line.startsWith(operation + ",sql_acquire,"))
                                         .mapToLong(line -> Long.parseLong(line.split(",")[3])).sum())
                                         .as(operation + " traced acquisitions").isPositive();
+                            for (String operation : List.of("publish", "reject", "replay")) {
+                                assertThat(traced.stream().filter(line -> line.startsWith(operation + ",jdbc_commit,"))
+                                        .mapToLong(line -> Long.parseLong(line.split(",")[3])).sum())
+                                        .as(operation + " actual JDBC commits").isPositive();
+                                assertThat(traced.stream().filter(line -> line.startsWith(operation + ",jdbc_execute"))
+                                        .mapToLong(line -> Long.parseLong(line.split(",")[3])).sum())
+                                        .as(operation + " actual JDBC executions").isPositive();
+                            }
                             for (String line : traced.subList(1, traced.size()))
                                 assertThat(Long.parseLong(line.split(",")[5])).as("trace failures").isZero();
                         }

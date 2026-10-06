@@ -17,7 +17,7 @@ final class NativeMixedTrafficProbe {
     private static final RepositoryCaller CALLER = new RepositoryCaller("native-worker", true);
     private record Work(DocumentPublicationCommand command, Map<DocumentPublicationRuntime.PayloadKey,PartObject> bodies, Document document) {}
 
-    static void run(Tx tx, DataSource dataSource, Path root, String worker, OpenedBlobStore provider,
+    static void run(Tx originalTx, DataSource dataSource, Path root, String worker, OpenedBlobStore provider,
             ManagedBackendLedger.Profile profile) throws Exception {
         int clients = Integer.parseInt(System.getenv("PROTOMOLT_NATIVE_CLIENTS"));
         String journalMode = System.getenv("PROTOMOLT_NATIVE_JOURNALED");
@@ -45,6 +45,8 @@ final class NativeMixedTrafficProbe {
         Files.writeString(root.resolve(worker + "-config.txt"), "payload_string_bytes=" + payloadBytes
                 + "\niterations_per_client=" + measuredIterations + "\njournaled=" + journaled + "\ntrace=" + tracing + "\n", StandardOpenOption.APPEND);
         var telemetry = new NativeTrafficTelemetry(tracing); telemetry.attach(dataSource);
+        try (var transactions=telemetry.transactions(originalTx,dataSource)) {
+        var tx=transactions.tx();
         var measuredStore = telemetry.wrap(provider.store());
         var measuredProvider = new OpenedBlobStore(measuredStore, provider, provider.capabilities(), provider::ensureNamespace, provider.reclaimer());
         var budget = new PayloadBudget(128_000_000);
@@ -176,6 +178,7 @@ final class NativeMixedTrafficProbe {
                 require(stopped, "traffic runtime drains");
             }
             require(reads.outstandingReads() == 0 && budget.reservedBytes() == 0, "traffic resources released");
+        }
         }
     }
 

@@ -22,6 +22,59 @@ final class NativeTrafficTelemetry {
     private final Scope inactiveScope = new Scope();
     private final boolean tracing;
     NativeTrafficTelemetry(boolean tracing) { this.tracing = tracing; }
+    record Transactions(Tx tx, jakarta.persistence.EntityManagerFactory factory) implements AutoCloseable {
+        @Override public void close() { if (factory!=null) factory.close(); }
+    }
+
+    /** Optional test-only EMF over the same pool. No migration, pool ownership or production hook. */
+    Transactions transactions(Tx original, javax.sql.DataSource source) {
+        if (!tracing) return new Transactions(original,null);
+        var wrapped=(javax.sql.DataSource)Proxy.newProxyInstance(javax.sql.DataSource.class.getClassLoader(),
+                new Class<?>[]{javax.sql.DataSource.class},(proxy,method,args) -> {
+                    Object result=invoke(source,method,args);
+                    return result instanceof java.sql.Connection connection ? connection(connection) : result;
+                });
+        var factory=jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",Map.of(
+                "hibernate.connection.datasource",wrapped,"hibernate.hbm2ddl.auto","validate",
+                "hibernate.dialect","org.hibernate.dialect.PostgreSQLDialect"));
+        return new Transactions(new Tx(factory),factory);
+    }
+
+    private java.sql.Connection connection(java.sql.Connection actual) {
+        return (java.sql.Connection)Proxy.newProxyInstance(java.sql.Connection.class.getClassLoader(),
+                new Class<?>[]{java.sql.Connection.class},(proxy,method,args) -> {
+                    if (method.getName().equals("unwrap") && args[0]==java.sql.Connection.class) return proxy;
+                    if (method.getName().equals("isWrapperFor") && args[0]==java.sql.Connection.class) return true;
+                    String metric=switch(method.getName()) { case "commit" -> "jdbc_commit"; case "rollback" -> "jdbc_rollback"; default -> null; };
+                    Object result=timed(actual,method,args,metric);
+                    if (result instanceof java.sql.CallableStatement statement) return statement(statement,java.sql.CallableStatement.class);
+                    if (result instanceof java.sql.PreparedStatement statement) return statement(statement,java.sql.PreparedStatement.class);
+                    if (result instanceof java.sql.Statement statement) return statement(statement,java.sql.Statement.class);
+                    return result;
+                });
+    }
+
+    private Object statement(java.sql.Statement actual, Class<?> type) {
+        return Proxy.newProxyInstance(type.getClassLoader(),new Class<?>[]{type},(proxy,method,args) -> {
+            if (method.getName().equals("unwrap") && ((Class<?>)args[0]).isInstance(proxy)) return proxy;
+            if (method.getName().equals("isWrapperFor") && ((Class<?>)args[0]).isInstance(proxy)) return true;
+            // Parameter values and SQL text are deliberately absent from the trace.
+            String metric=method.getName().startsWith("execute") ? "jdbc_"+method.getName() : null;
+            return timed(actual,method,args,metric);
+        });
+    }
+
+    private Object timed(Object actual, Method method, Object[] args, String metric) throws Throwable {
+        if (metric==null) return invoke(actual,method,args);
+        long start=System.nanoTime(); boolean failed=true;
+        try { Object result=invoke(actual,method,args); failed=false; return result; }
+        finally { record(metric,System.nanoTime()-start,failed); }
+    }
+
+    private static Object invoke(Object actual, Method method, Object[] args) throws Throwable {
+        try { return method.invoke(actual,args); }
+        catch (InvocationTargetException failure) { throw failure.getCause(); }
+    }
     final class Scope implements AutoCloseable {
         private final Thread owner;
         private boolean closed;
