@@ -25,7 +25,7 @@ public final class DocumentPublicationProcessWorker {
     static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
     public static void main(String[] args) throws Exception {
         assertThat(args).hasSize(3);
-        assertThat(args[0]).isIn("write", "recover");
+        assertThat(args[0]).isIn("write", "recover", "reserve", "install");
         var command = new DocumentPublicationCommand(DocumentPublicationIntent.parseFrom(Files.readAllBytes(Path.of(args[1]))));
         assertThat(command.intent().getMembersList()).hasSize(1);
         var declared = command.intent().getMembers(0).getPartsList();
@@ -53,13 +53,13 @@ public final class DocumentPublicationProcessWorker {
                     execute(host, input, NONE);
                     throw new AssertionError("Writer must be killed while the real PUT is held");
                 }
-                recover(tx, host, input, opened);
+                recover(tx, host, input, opened, args[0]);
             }
         }
         System.out.println("PROCESS_RECOVERY_OK");
     }
 
-    private static void recover(Tx tx, Host host, Input input, OpenedBlobStore backend) throws Exception {
+    private static void recover(Tx tx, Host host, Input input, OpenedBlobStore backend, String mode) throws Exception {
         var command = input.command();
         var key = new RepositoryOperationLedger.Key("account", "principal", command.operationId());
         var oldAttempt = tx.readOnly(em -> (UUID) em.createNativeQuery("""
@@ -78,19 +78,30 @@ public final class DocumentPublicationProcessWorker {
         // Production discovery returns private identities without adopting or renewing them.
         var observed = new RepositoryCoordinatorRecoveryDiscovery(tx, new SqlTimeouts(Duration.ofSeconds(1),Duration.ofSeconds(5)))
                 .inspect(ADMIN,key,command.sha256(),NONE);
-        assertThat(observed.status()).isEqualTo(RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND);
-        var found = observed.candidate().orElseThrow();
-        long epoch = found.predecessor().epoch();
-        assertThat(epoch).isEqualTo(1);
-        var proposal = new RepositoryCoordinatorReservation.ExpiredUnquiesced(found.predecessor(), UUID.randomUUID(),
-                host.sessions.coordinatorIdentity(), Duration.ofMinutes(5), found.owner());
-        RepositoryCoordinatorExpiration.reserve(tx, ADMIN, proposal, NONE);
-        var claim = tx.inTransaction(em -> { return RepositoryExecutionClaimLedger.lockLive(em, key, command.sha256(), epoch+1, proposal.successorToken()); });
+        RepositoryCoordinatorReservation.Proposal proposal;
+        if (observed.status() == RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND) {
+            var found = observed.candidate().orElseThrow();
+            proposal = new RepositoryCoordinatorReservation.ExpiredUnquiesced(found.predecessor(), UUID.randomUUID(),
+                    host.sessions.coordinatorIdentity(), Duration.ofSeconds(10), found.owner());
+            RepositoryCoordinatorExpiration.reserve(tx, ADMIN,
+                    (RepositoryCoordinatorReservation.ExpiredUnquiesced) proposal, NONE);
+        } else {
+            var found = observed.unactivated().orElseThrow();
+            proposal = new RepositoryCoordinatorReservation.SupersededUnactivated(found.predecessor(), UUID.randomUUID(),
+                    host.sessions.coordinatorIdentity(), Duration.ofSeconds(10), found.owner(),
+                    found.preparationSha256(), found.installation());
+            RepositoryCoordinatorSupersession.reserve(tx, ADMIN,
+                    (RepositoryCoordinatorReservation.SupersededUnactivated) proposal, NONE);
+        }
+        if (mode.equals("reserve")) holdReplacement();
         var budget = new PayloadBudget(64_000_000);
-        try (var loaded = new DocumentPublicationPreparationJournal(tx, budget).load(ADMIN, claim, 0, NONE).orElseThrow()) {
-            var plan = RepositorySuccessorInstall.prepare(proposal, loaded.record(), Duration.ofMinutes(5),
+        try (var loaded = new RepositoryReservedPreparation(tx, budget,
+                new SqlTimeouts(Duration.ofSeconds(1), Duration.ofSeconds(5)))
+                .load(ADMIN, ADMIN, proposal, RepositoryCoordinatorReservation.owner(proposal).orElseThrow(), NONE)) {
+            var plan = RepositorySuccessorInstall.prepare(proposal, loaded.record(), Duration.ofSeconds(10),
                     Map.of("a", DocumentPublicationCandidate.Mode.OPAQUE));
             RepositorySuccessorInstall.install(tx, host.budget, ADMIN, plan, NONE);
+            if (mode.equals("install")) holdReplacement();
             host.sessions.activateSuccessor(ADMIN, ADMIN, plan, NONE);
             var result = execute(host, input, NONE);
             var nextAttempt = plan.next().seeds().attempts().get("a");
@@ -120,6 +131,12 @@ public final class DocumentPublicationProcessWorker {
             assertThat(tx.<Integer>readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM " + table + " WHERE operation_id=:id AND claim_epoch=1")
                     .setParameter("id", key.operationId()).getSingleResult()).intValue())).isZero();
         }
+    }
+
+    private static void holdReplacement() throws InterruptedException {
+        System.out.println("REPLACEMENT_HELD"); System.out.flush();
+        new CountDownLatch(1).await();
+        throw new AssertionError("Replacement must be killed before activation");
     }
 
     static S3Client client() {

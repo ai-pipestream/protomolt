@@ -5,7 +5,8 @@ import java.nio.file.*;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.io.TempDir;
 import org.testcontainers.junit.jupiter.*;
 import org.testcontainers.localstack.LocalStackContainer;
@@ -24,7 +25,8 @@ class DocumentPublicationProcessRecoveryIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
     @Container static final LocalStackContainer S3 = new LocalStackContainer(DockerImageName.parse("localstack/localstack:3.8")).withServices("s3");
 
-    @Test void killedWriterIsRecoveredByFreshJvm(@TempDir Path temp) throws Exception {
+    @ParameterizedTest @ValueSource(strings = {"none", "reserve", "install"})
+    void killedWriterIsRecoveredByFreshJvm(String replacementStage, @TempDir Path temp) throws Exception {
         try (var c = context(POSTGRES); var sdk = S3Client.builder().endpointOverride(S3.getEndpoint())
                 .region(Region.of(S3.getRegion())).forcePathStyle(true)
                 .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(S3.getAccessKey(), S3.getSecretKey()))).build()) {
@@ -59,6 +61,22 @@ class DocumentPublicationProcessRecoveryIT {
                 assertThat(writer.waitFor(10, TimeUnit.SECONDS)).isTrue();
                 assertThat(writer.exitValue()).isEqualTo(137);
                 assertThat(writer.isAlive()).isFalse();
+                if (!replacementStage.equals("none")) {
+                    var replacementLog = temp.resolve("replacement.log");
+                    var replacement = start(c, replacementLog, replacementStage, command, payload);
+                    try {
+                        long replacementDeadline = System.nanoTime() + Duration.ofSeconds(45).toNanos();
+                        boolean replacementHeld = false;
+                        while (replacement.isAlive() && System.nanoTime() < replacementDeadline) {
+                            if (log(replacementLog).contains("REPLACEMENT_HELD")) { replacementHeld = true; break; }
+                            Thread.sleep(50);
+                        }
+                        assertThat(replacementHeld).as(log(replacementLog)).isTrue();
+                        replacement.destroyForcibly();
+                        assertThat(replacement.waitFor(10, TimeUnit.SECONDS)).isTrue();
+                        assertThat(replacement.exitValue()).isEqualTo(137);
+                    } finally { reap(replacement); }
+                }
                 // No capability files or writer output are passed to this separate process.
                 var readerLog = temp.resolve("reader.log");
                 var reader = start(c, readerLog, "recover", command, payload);
@@ -66,6 +84,27 @@ class DocumentPublicationProcessRecoveryIT {
                     assertThat(reader.waitFor(60, TimeUnit.SECONDS)).as("fresh reader completes: %s", readerLog).isTrue();
                     assertThat(reader.exitValue()).as(log(readerLog)).isZero();
                     assertThat(log(readerLog)).contains("PROCESS_RECOVERY_OK");
+                    if (!replacementStage.equals("none")) {
+                        var supersession = c.tx().readOnly(em -> (Object[]) em.createNativeQuery("""
+                                SELECT s.predecessor_epoch,s.phase,c.claim_epoch,b.claim_epoch
+                                FROM repository_coordinator_supersessions s
+                                JOIN repository_execution_claims c USING(account_id,principal,operation_id)
+                                JOIN repository_coordinator_bindings b ON
+                                  (b.account_id,b.principal,b.operation_id,b.claim_epoch)=
+                                  (c.account_id,c.principal,c.operation_id,c.claim_epoch)
+                                WHERE s.operation_id=:id
+                                """).setParameter("id", input.command().operationId()).getSingleResult());
+                        assertThat(((Number) supersession[0]).longValue()).isEqualTo(2);
+                        assertThat(supersession[1]).isEqualTo(replacementStage.equals("reserve") ? "RESERVED_ONLY" : "INSTALLED");
+                        assertThat(((Number) supersession[2]).longValue()).isEqualTo(3);
+                        assertThat(((Number) supersession[3]).longValue()).isEqualTo(3);
+                        for (String table : List.of("repository_coordinator_bindings", "repository_coordinator_drains",
+                                "repository_coordinator_local_drains")) {
+                            assertThat(c.tx().<Number>readOnly(em -> (Number) em.createNativeQuery(
+                                    "SELECT count(*) FROM " + table + " WHERE operation_id=:id AND claim_epoch=2")
+                                    .setParameter("id", input.command().operationId()).getSingleResult()).longValue()).isZero();
+                        }
+                    }
                     var retained = c.tx().readOnly(em -> (Object[]) em.createNativeQuery(
                             "SELECT object_key,verified,provider_version FROM document_part_attempt_objects WHERE attempt_id=:id")
                             .setParameter("id", object[0]).getSingleResult());

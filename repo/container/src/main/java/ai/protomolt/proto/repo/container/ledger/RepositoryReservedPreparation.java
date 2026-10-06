@@ -21,7 +21,7 @@ final class RepositoryReservedPreparation {
         RepositoryCoordinatorReservation.require(authority,reservation,control); Objects.requireNonNull(owner);
         var key = reservation.predecessor().key();
         DocumentAdmissionAuthorization.requireCaller(executionCaller,key,key.account());
-        if (reservation instanceof RepositoryCoordinatorReservation.ExpiredUnquiesced expired && !expired.owner().equals(owner))
+        if (RepositoryCoordinatorReservation.owner(reservation).filter(expected -> !expected.equals(owner)).isPresent())
             throw new IllegalArgumentException("Reserved preparation owner differs from reservation");
         PayloadBudget.Lease[] lease = {null}; boolean transferred = false;
         try {
@@ -34,6 +34,9 @@ final class RepositoryReservedPreparation {
                 return (Object[]) single(preparation(em,"preparation_bytes,preparation_sha256,owner_nonce,command_sha256",key,owner));
             });
             control.check();
+            if (reservation instanceof RepositoryCoordinatorReservation.SupersededUnactivated superseded
+                    && !superseded.preparationSha256().equals(HexFormat.of().formatHex((byte[]) row[1])))
+                throw new RepositoryException(RepositoryException.Code.DATA_LOSS,"Preparation differs from supersession");
             // Decode with no SQL locks held. The immutable hash is checked again before delivery.
             var record = DocumentPublicationPreparationJournal.decode(row,lease[0].bytes(),key,
                     reservation.predecessor().commandSha256(),owner.generation()-1);

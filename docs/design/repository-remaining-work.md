@@ -656,11 +656,10 @@ host discovery/authorization and bounded resource ownership. Graceful fresh-proc
 bootstrap now has a separate reserved preparation-read authority; its existing V91
 fence still refuses the general loader before V94 activation. Fresh-process graceful
 discovery and host integration remain unfinished.
-Also handle replacement death between reservation and V94 activation. Reservation-only
-and V93-installed states lack a current-epoch coordinator binding, so V97 cannot
-reserve a third coordinator. They need an explicit supersession protocol with
-fresh identities and state-specific preparation/owner checks, not fabricated drain
-or binding rows. This is required before automatic recovery can be claimed.
+V98 handles replacement death between reservation and V94 activation with fresh
+identities and phase-specific preparation/owner checks. These states lack a
+current-epoch binding and cannot use V97. Host integration of this explicit
+supersession protocol is still required before automatic recovery can be claimed.
 
 The fresh-process qualification is now distinct from the same-JVM proof:
 `DocumentPublicationProcessRecoveryIT` kills and reaps a writer after a completed
@@ -670,7 +669,8 @@ publication. Old bytes remain unverified and unselected, old reader incarnations
 remain ACTIVE, and receipt replay performs no BlobStore calls. This removes the
 specific missing process-death proof for the admin/opaque post-owner case. It does
 not remove the production hosting, scoped typed, pre-owner,
-replacement-before-activation, pin reclamation or performance requirements above.
+pin reclamation or performance requirements above. Replacement-before-activation
+now has the additional process qualification described below.
 
 Private exact-operation discovery now lives in
 `RepositoryCoordinatorRecoveryDiscovery` and is used by the fresh-process test.
@@ -683,5 +683,10 @@ automatic retry scheduling remain unfinished; no endpoint is advertised.
 stamping execution rights. Both graceful and expired reservations use the same
 byte-bounded decoder and recheck current caller access before delivery. The real
 delayed-provider tests and scoped typed production-JAR probe use this path.
-Unactivated replacement supersession still needs its own immutable reservation
-source and phase checks; the read primitive does not implement that transition.
+V98 now supplies the immutable unactivated-replacement supersession source and
+phase checks. The three-case process test covers a killed writer alone and a
+second killed JVM after reservation or installation. Each final JVM receives only
+the public command and payload, discovers private recovery state, and completes
+publication while preserving old unselected bytes and ACTIVE reader pins. This
+closes those admin/opaque process windows; automatic hosting, scoped typed process
+recovery, pre-owner recovery and safe pin reclamation remain unfinished.

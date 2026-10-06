@@ -1398,7 +1398,7 @@ become stale; V97 must recheck the exact tuple under claim-before-owner locks.
 An observation never authorizes execution or pin release. The process recovery
 test uses this API instead of a test-only private-identity query. This is an
 internal exact-operation building block, not a public endpoint, fleet scanner,
-automatic retry scheduler, or a solution to unactivated replacement recovery.
+automatic retry scheduler. V98 extends it with metadata for unactivated replacement recovery.
 
 #### Preparation reads without an execution fence
 
@@ -1421,16 +1421,22 @@ No write fence is stamped and no lease is renewed. V91 and the ordinary loader's
 guards are unchanged. V93 installation and V94 activation still perform their own
 checks. Both real delayed-provider variants now reload this way, and the scoped
 typed production-JAR successor probe uses it for graceful recovery. These tests
-do not establish an automatic host, a fresh-process graceful discovery path, or
-recovery after an unactivated replacement dies.
+do not establish an automatic host or a fresh-process graceful discovery path.
+The separate process-death suite now covers unactivated replacement recovery for
+admin/opaque publication, including deaths after reservation and installation.
 
-For that next recovery step, an immutable supersession source must distinguish
-reservation-only from installed-but-unactivated state. Under claim-before-owner
-locks, it must verify the exact current parent successor identity, expired claim
-and owner, expected install phase/hashes, and absence of current binding/activation
-before advancing one epoch. A reservation-only retry loads the old owner's
-preparation; an installed retry loads the installed owner's preparation. Older
-install rows must remain intact. Test both graceful and expired origins, repeated
-replacement deaths, V93/V94 races, competing proposals, uncertain acknowledgments,
-and unchanged predecessor objects/pins. Do not fabricate a coordinator binding or
-weaken local-drain guards to close these windows.
+V98 adds an immutable supersession source distinguishing reservation-only from
+installed-but-unactivated state. Under claim-before-owner locks it verifies the
+exact current parent successor identity, expired claim and owner, expected install
+phase/hashes, and absence of current binding/activation before advancing one epoch.
+A reservation-only retry loads the old owner's preparation; an installed retry
+loads the installed owner's preparation. Older install rows remain intact. The
+canonical child retains phase and preparation hashes; the common reservation
+parent records the new successor and current owner. Discovery supplies the exact
+proposal metadata but does not authorize execution.
+
+The focused SQL suite covers both graceful and expired origins, repeated
+replacement deaths, V93/V94 rollback races, competing proposals, uncertain
+acknowledgments, immutable evidence and atomic parent-insertion failure. No
+coordinator binding or local-drain evidence is fabricated. Automatic orchestration
+and recovery of reader pins remain separate work.

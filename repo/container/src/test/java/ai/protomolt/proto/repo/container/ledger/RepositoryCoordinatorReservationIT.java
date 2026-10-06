@@ -21,9 +21,9 @@ import static org.assertj.core.api.Assertions.*;
 @Testcontainers
 class RepositoryCoordinatorReservationIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
-    private record Input(DocumentPublicationPreparationRecord previous, RepositoryCoordinatorReservation.ExpiredUnquiesced proposal) {}
+    record Input(DocumentPublicationPreparationRecord previous, RepositoryCoordinatorReservation.ExpiredUnquiesced proposal) {}
 
-    private static Input inputFor(Context c, Duration successorLease) {
+    static Input inputFor(Context c, Duration successorLease) {
         var original = input(c); var incarnation = UUID.randomUUID();
         var previous = new DocumentPublicationPreparationRecord(original.key(), original.command(), original.seeds(),
                 original.placements(), Duration.ofSeconds(1), 0);

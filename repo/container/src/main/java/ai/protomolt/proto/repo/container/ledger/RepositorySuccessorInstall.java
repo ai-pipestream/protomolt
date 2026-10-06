@@ -22,9 +22,10 @@ final class RepositorySuccessorInstall {
                     || !next.command().sha256().equals(reservation.predecessor().commandSha256())
                     || next.predecessorGeneration() != previous.predecessorGeneration() + 1)
                 throw new IllegalArgumentException("Successor preparation differs from predecessor");
-            if (reservation instanceof RepositoryCoordinatorReservation.ExpiredUnquiesced expired
-                    && (expired.owner().generation() != Math.addExact(previous.predecessorGeneration(), 1)
-                    || !expired.owner().nonce().equals(previous.seeds().ownerNonce())))
+            var expectedOwner = RepositoryCoordinatorReservation.owner(reservation);
+            if (expectedOwner.isPresent()
+                    && (expectedOwner.orElseThrow().generation() != Math.addExact(previous.predecessorGeneration(), 1)
+                    || !expectedOwner.orElseThrow().nonce().equals(previous.seeds().ownerNonce())))
                 throw new IllegalArgumentException("Reservation owner differs from predecessor preparation");
             var ids = new HashSet<UUID>(); ids.add(previous.seeds().ownerNonce());
             ids.addAll(previous.seeds().attempts().values()); ids.addAll(previous.seeds().uploadTokens().values());

@@ -6557,5 +6557,24 @@ path and SQL guards remain unchanged.
 
 **Extended qualification:** graceful and expired real-provider recovery reload
 through the new operation. The production-JAR graceful successor probe also uses
-it with scoped typed data. Automatic hosting and unactivated replacement
-supersession remain unfinished. No public protobuf fields or RPCs change.
+it with scoped typed data. Automatic hosting remains unfinished. No public
+protobuf fields or RPCs change.
+
+### Unactivated replacement supersession
+
+**New private operation:** `RepositoryCoordinatorSupersession.reserve` records
+V98 immutable phase-specific evidence and advances an expired unactivated claim
+by one epoch. It checks the exact previous reservation, current owner and retained
+preparation, plus prior installation hashes when installed. Current-epoch binding
+or activation rejects supersession. It does not install, activate, release pins,
+or renew the owner. Exact retry confirms the original reservation without renewal.
+
+**Extended:** recovery discovery returns unactivated proposal metadata; common
+reservation readback verifies the canonical V98 source. Reserved preparation and
+V93 installation accept the new proposal and preserve its owner/preparation checks.
+
+**Extended qualification:** the real process test kills a second JVM after
+reservation or installation, then a third JVM recovers from the public retry.
+Both windows pass for admin/opaque data. Scoped typed process recovery, automatic
+hosting and reader-pin reclamation remain acceptance work. Public protobuf names,
+tags, imports and RPCs are unchanged.
