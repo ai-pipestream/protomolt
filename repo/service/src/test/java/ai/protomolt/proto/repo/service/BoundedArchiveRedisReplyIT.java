@@ -29,6 +29,102 @@ class BoundedArchiveRedisReplyIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
     @Container static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
 
+    @Test void lostProviderAcknowledgmentLeavesNoPublishedVersionAndCleanupPreservesRetry() throws Exception {
+        String account = "lost-reply-" + UUID.randomUUID();
+        var caller = new RepositoryCaller("lost-reply", true);
+        try (var gate = new RedisReplyGate(REDIS.getHost(), REDIS.getMappedPort(6379));
+                var direct = new RedisBlobStore(new RedisBlobStoreConfig("redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379),
+                        0, 1024, "", RedisWritePolicy.CREATE_ONLY));
+                var sql = DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+            var env = RepoBoundedArchiveMainTest.environment();
+            env.put(LedgerConfig.ENV_JDBC_URL, POSTGRES.getJdbcUrl());
+            env.put(LedgerConfig.ENV_USERNAME, POSTGRES.getUsername());
+            env.put(LedgerConfig.ENV_PASSWORD, POSTGRES.getPassword());
+            env.put(RepoServiceConfig.ENV_REDIS_URI, gate.uri());
+            env.put(RepoServiceConfig.ENV_SWEEP_INTERVAL_MS, "250");
+            env.put(RepoServiceConfig.ENV_RECONCILE_MIN_AGE_MS, "0");
+            env.put(ManagedStoragePolicy.ENV_GENERATION, "lost-reply");
+            env.put(ManagedStoragePolicy.ENV_REALM, "lost-reply-realm");
+            try (var host = RepoServices.buildBoundedArchive(RepoServiceConfig.fromEnvironment(env),
+                    new BoundedArchiveOptions(1024, 2048, 4, 16384, 2))) {
+                host.driveRepository().createDrive(caller, CreateDriveRequest.newBuilder().setAccountId(account).setName("storage").build());
+                host.archiveRepository().createArchive(caller, CreateArchiveRequest.newBuilder().setArchive(Archive.newBuilder()
+                        .setAccountId(account).setName("records").setDriveName("storage")
+                        .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED)).build());
+                var address = EntryAddress.newBuilder().setAccountId(account).setArchive("records").setEntryId("entry").build();
+                var data = ByteString.copyFromUtf8("lost response must not publish");
+                var request = PutEntryRequest.newBuilder().setAddress(address).addRenditions(RenditionContent.newBuilder()
+                        .setRendition(RenditionDescriptor.newBuilder().setName("original")).setData(data)).build();
+                var listener = host.startBoundedArchiveNetty(0, "lost-token");
+                var channel = NettyChannelBuilder.forAddress("127.0.0.1", listener.getPort()).usePlaintext().build();
+                try {
+                    var headers = new Metadata();
+                    headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), "lost-token");
+                    var auth = MetadataUtils.newAttachHeadersInterceptor(headers);
+                    var future = ArchiveServiceGrpc.newFutureStub(channel).withInterceptors(auth).withDeadlineAfter(10, TimeUnit.SECONDS);
+                    var stub = ArchiveServiceGrpc.newBlockingStub(channel).withInterceptors(auth).withDeadlineAfter(10, TimeUnit.SECONDS);
+                    gate.armLostAcknowledgment();
+                    var pending = future.putEntry(request);
+                    UUID abandoned = null; String namespace = null, key = null;
+                    try {
+                        assertThat(gate.held.await(5, TimeUnit.SECONDS)).isTrue();
+                        try (var query = sql.prepareStatement("SELECT b.object_id,b.bucket,b.object_key,u.state FROM archive_object_bindings b JOIN archive_object_uploads u USING(object_id) WHERE b.account_id=?")) {
+                            query.setString(1, account);
+                            try (var result = query.executeQuery()) {
+                                assertThat(result.next()).isTrue();
+                                abandoned = result.getObject(1, UUID.class); namespace = result.getString(2); key = result.getString(3);
+                                assertThat(result.getString(4)).isEqualTo("STAGING");
+                                assertThat(direct.get(namespace, key, null).data()).isEqualTo(data.toByteArray());
+                                assertThat(result.next()).isFalse();
+                            }
+                        }
+                    } finally { gate.release.countDown(); }
+                    assertThatThrownBy(() -> pending.get(5, TimeUnit.SECONDS))
+                            .isInstanceOf(java.util.concurrent.ExecutionException.class)
+                            .satisfies(failure -> assertThat(Status.fromThrowable(failure.getCause()).getCode()).isEqualTo(Status.Code.INTERNAL));
+                    assertThatThrownBy(() -> stub.getEntry(GetEntryRequest.newBuilder().setAddress(address).build()))
+                            .isInstanceOfSatisfying(StatusRuntimeException.class,
+                                    e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.NOT_FOUND));
+                    var saved = stub.putEntry(request);
+                    assertThat(saved.getVersion()).isEqualTo(1);
+                    assertThat(saved.getManifest().getRenditions(0).getStorageObjectId()).isNotEqualTo(abandoned.toString());
+                    assertThat(stub.putEntry(request)).isEqualTo(saved.toBuilder().setDeduplicated(true).build());
+                    awaitAbandonedCleanup(sql, abandoned);
+                    String deletedNamespace = namespace, deletedKey = key;
+                    assertThatThrownBy(() -> direct.get(deletedNamespace, deletedKey, null)).isInstanceOf(BlobStore.BlobNotFoundException.class);
+                    assertThat(stub.withDeadlineAfter(10, TimeUnit.SECONDS).getEntry(GetEntryRequest.newBuilder().setAddress(address).build())
+                            .getRenditions(0).getData()).isEqualTo(data);
+                    assertThat(stub.withDeadlineAfter(10, TimeUnit.SECONDS).putEntry(request)).isEqualTo(saved.toBuilder().setDeduplicated(true).build());
+                    gate.expectClientClose();
+                } finally {
+                    gate.release.countDown(); channel.shutdownNow();
+                    assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+                }
+            }
+        }
+    }
+
+    private static void awaitAbandonedCleanup(java.sql.Connection sql, UUID object) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(6);
+        boolean observedActiveLease = false;
+        try (var query = sql.prepareStatement("SELECT state,lease_until<=clock_timestamp(),(SELECT count(*) FROM archive_version_object_refs WHERE object_id=?) FROM archive_object_uploads WHERE object_id=?")) {
+            query.setObject(1, object); query.setObject(2, object);
+            while (System.nanoTime() < deadline) {
+                try (var result = query.executeQuery()) {
+                    assertThat(result.next()).isTrue();
+                    assertThat(result.getLong(3)).as("unacknowledged object never becomes a version reference").isZero();
+                    String state = result.getString(1); boolean expired = result.getBoolean(2);
+                    if (!expired) { observedActiveLease = true; assertThat(state).isEqualTo("STAGING"); }
+                    if ("DELETED".equals(state)) {
+                        assertThat(observedActiveLease).isTrue(); assertThat(expired).isTrue(); return;
+                    }
+                }
+                Thread.sleep(250);
+            }
+        }
+        throw new AssertionError("Abandoned upload was not reclaimed after its real five-minute lease");
+    }
+
     @Test void drainRetainsRpcAndBudgetUntilActualRedisAcknowledgmentArrives() throws Exception {
         var budget = new PayloadBudget(16384);
         var caller = new RepositoryCaller("reply-gate", true);

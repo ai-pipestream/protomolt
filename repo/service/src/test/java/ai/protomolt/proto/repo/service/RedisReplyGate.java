@@ -15,6 +15,7 @@ final class RedisReplyGate implements AutoCloseable {
     private final Queue<Throwable> failures = new ConcurrentLinkedQueue<>();
     private final AtomicBoolean closed = new AtomicBoolean(), armed = new AtomicBoolean();
     private final AtomicBoolean clientClosing = new AtomicBoolean();
+    private volatile boolean discardReply;
     final CountDownLatch held = new CountDownLatch(1), release = new CountDownLatch(1);
     private final Thread acceptor;
 
@@ -31,6 +32,7 @@ final class RedisReplyGate implements AutoCloseable {
 
     String uri() { return "redis://127.0.0.1:" + listener.getLocalPort(); }
     void arm() { if (!armed.compareAndSet(false, true)) throw new IllegalStateException("Reply gate already armed"); }
+    void armLostAcknowledgment() { discardReply = true; arm(); }
     void expectClientClose() { clientClosing.set(true); }
 
     private void forward(Socket client, String host, int port) {
@@ -48,6 +50,7 @@ final class RedisReplyGate implements AutoCloseable {
                             throw new IOException("Conditional Redis write did not return success");
                         held.countDown();
                         if (!release.await(5, TimeUnit.SECONDS)) throw new IOException("Redis reply gate was not released");
+                        if (discardReply) return; // Close this connection after real execution, without sending its acknowledgment.
                     }
                     client.getOutputStream().write(response.wire()); client.getOutputStream().flush();
                 }

@@ -128,29 +128,23 @@ foundation boundaries without adding JCR dependencies or asserting compliance.
    and `noeviction`: exact bytes/metadata and copies survive, and a second crash
    preserves reclamation of an object already recovered from the first crash.
    A persistence-disabled control loses non-expiring objects as expected. This
-   establishes process-crash behavior only. Managed archival activation remains
-   gated on immutable identity/key policy, shared lifecycle/recovery qualification,
-   and explicit deployment durability requirements; it is not enabled by this test.
-   Sol's activation review identified a concrete next slice: Redis's ordinary PUT
-   overwrites its hash and COPY uses replacement, so versionless published keys need
-   an explicit immutable-write policy. Assess an opt-in atomic create-if-absent path
-   using the existing conditional-write capability, with real Redis tests for racing
-   writers and exact retry after lost acknowledgment. A content hash alone is not
-   permission to overwrite. Keep policy identity distinct and preserve ordinary byte
-   store semantics for existing consumers. Redis's buffered InputStream path does not
-   advertise streaming writes; qualify bounded allocation before claiming that capability.
+   establishes process-crash behavior only. The explicit bounded managed profile now
+   selects immutable create-only storage; deployment durability still requires
+   operator qualification and cannot be inferred from a provider-only test.
+   Redis's ordinary PUT overwrites its hash and COPY uses replacement. A content
+   hash alone is not permission to overwrite. Keep policy identity distinct and
+   preserve ordinary byte-store semantics for existing consumers. Redis's buffered
+   InputStream path does not advertise streaming writes.
    Reuse `SelectedBlobBacking`, `ManagedArchiveServices`, `ArchiveObjectRecovery`,
    `ArchiveCleanupLedger`, and `ArchiveObjectReader` for shared lifecycle qualification.
-   Keep the managed-host activation guard until late writes, cleanup, read pins,
-   recovery and deployment durability pass; a provider-only test cannot remove it.
    The Redis byte adapter now implements the existing bounded conditional-write and
    authoritative-read SPI with atomic Lua operations. This is a prerequisite only:
    ordinary PUT/COPY retain replacement semantics, and content ETags are not epochs.
    An opt-in Redis `create-only` byte policy now uses disjoint v3 physical keys and
    identity, rejects expiry and refuses replacement across byte/stream PUT and COPY.
-   Its 9 MiB limit does not expand the existing conditional bound. The managed host
-   has not selected this policy: shared writer integration, archival size requirements,
-   identity binding, delayed-write fencing and activation qualification remain open.
+   Its 9 MiB limit does not expand the existing conditional bound. The bounded managed
+   host selects this policy with explicit input limits, shared writer integration,
+   and persisted provider identity. Full-profile streaming remains unavailable.
    Deleting a create-only key still permits late recreation, explicitly tested; this
    policy must not be treated as a tombstone or proof of writer quiescence.
    `RedisArchiveLifecycleIT` now composes the existing archive writer, reader,
@@ -159,14 +153,15 @@ foundation boundaries without adding JCR dependencies or asserting compliance.
    real delayed PUT completion after reclamation fails SQL verification and a
    later tombstone cleanup removes its bytes. Read pins prevent cleanup across
    logical deletion, and lost reclamation acknowledgment remains retryable.
-   This is library composition, not `RepoServices` managed activation, streaming
-   support, scoped authorization qualification or Redis durability qualification.
-   The host currently requires `STREAMING_WRITE` for managed ingestion as a whole.
-   Before changing that gate, design an explicit bounded-ingress profile with
-   per-operation availability, aggregate allocation bounds and unsupported streaming
-   behavior. Do not grant Redis a streaming capability or silently buffer an otherwise
-   unbounded upload. Keep provider identity and lifecycle selection common to both
-   profiles, and qualify restart/cleanup behavior before publishing deployment examples.
+   Those cases qualify library composition. The separate bounded `RepoServices`
+   profile and production launcher now add authenticated Netty, bounded admission,
+   restart without relocation, concurrent drive bootstrap, and graceful shutdown
+   during SQL commit and short real Redis acknowledgment delays. Scoped authorization,
+   full repository parity and deployment durability remain distinct gates. The
+   default profile still requires streaming support. Do not grant Redis a streaming
+   capability or silently buffer an otherwise unbounded upload. Keep provider identity
+   and lifecycle selection common to both profiles. See the
+   [bounded-ingress evidence](repository-bounded-ingress.md) for precise boundaries.
 
 ## Work gated by publication and retention guarantees
 

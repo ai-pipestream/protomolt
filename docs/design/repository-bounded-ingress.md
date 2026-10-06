@@ -292,4 +292,11 @@ This is real delayed provider I/O with a shorter embedded deadline, not a ten-se
 process-provider stall. The proxy never generates a success reply. Forwarding errors
 fail the test, and teardown closes sockets and joins workers. Only an explicitly
 expected pool shutdown may reset an idle client connection between complete frames.
-Longer uncertain-acknowledgment faults and process crash recovery remain separate.
+Lost acknowledgment after completed provider execution now has a separate real
+TCP fault test: the proxy drops the actual success reply and closes its connection.
+The RPC fails, no archive version is visible, and a retry publishes with a different
+physical object. The original object stays STAGING throughout its real five-minute
+lease, never gains a version reference, and is eventually reclaimed by the normal
+host loop. Direct Redis absence plus retained retry readability and exact deduplication
+verify that cleanup removed only the abandoned object. This does not establish
+behavior for an indefinitely running remote write or process crash recovery.
