@@ -1,5 +1,15 @@
 # Repository operation inventory
 
+## Pending publication observation (2026-10-06)
+
+- **Extended:** PENDING replay requires current access to the complete destination
+  and source read set. Missing ifAbsent targets still require process authority
+  until scoped creation grants exist. Revision equality is not required to observe.
+- **Unchanged:** NOT_OBSERVED behavior, command identity, terminal receipts, lease
+  renewal, idempotency keys and protobuf contracts. Observation grants no takeover.
+- **Designed, not implemented:** [key-bound creation grants](repository-scoped-creation.md).
+- [Red/green evidence](../evidence/repository/2026-10-06-pending-replay-authorization/README.md).
+
 ## Required network authentication (2026-10-06)
 
 - **Extended:** repository TCP and HTTP startup require a nonblank operator token.

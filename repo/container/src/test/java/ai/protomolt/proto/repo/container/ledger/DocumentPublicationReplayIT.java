@@ -66,6 +66,66 @@ class DocumentPublicationReplayIT {
         }
     }
 
+    @Test void pendingReplayRequiresCurrentReadAccessWithoutRequiringCurrentRevisions() {
+        try (var c=context()) {
+            var prepared=prepare(c,2);
+            var replay=new DocumentPublicationReplay(c.tx());
+            var caller=new RepositoryCaller("principal",false,Set.of("account"),Set.of());
+            assertUnavailable(() -> replay.observe(caller,prepared.command()));
+            c.tx().inTransaction(em -> { em.createNativeQuery("UPDATE documents SET security=CAST(:policy AS jsonb)")
+                    .setParameter("policy","{\"permissions\":[{\"identityType\":\"public\",\"identity\":\"public\",\"access\":\"ACCESS_READ\"}]}")
+                    .executeUpdate(); });
+            assertThat(replay.observe(caller,prepared.command()).state()).isEqualTo(DocumentPublicationReplay.State.PENDING);
+            c.tx().inTransaction(em -> { em.createNativeQuery("UPDATE documents SET mutation_revision=mutation_revision+1").executeUpdate(); });
+            assertThat(replay.observe(caller,prepared.command()).state()).isEqualTo(DocumentPublicationReplay.State.PENDING);
+            c.tx().inTransaction(em -> { em.createNativeQuery("UPDATE documents SET security='{}'::jsonb WHERE node_id=:node")
+                    .setParameter("node",prepared.sources().get(1).row().nodeId).executeUpdate(); });
+            assertUnavailable(() -> replay.observe(caller,prepared.command()));
+            assertThat(count(c,"repository_operation_success")).isZero();
+            assertThat(count(c,"document_events_outbox")).isZero();
+        }
+    }
+
+    @Test void pendingReplayChecksSourcesOutsideTheDestinationSet() {
+        try (var c=context()) {
+            var p=prepare(c,2);
+            var member=p.command().intent().getMembers(0).toBuilder()
+                    .addSources(p.command().intent().getMembers(1).getDestination());
+            var command=new DocumentPublicationCommand(p.command().intent().toBuilder()
+                    .setOperationId(UUID.randomUUID().toString()).clearMembers().addMembers(member).build());
+            new RepositoryOperationLedger(c.tx()).admit(new RepositoryOperationLedger.Key("account","principal",command.operationId()),
+                    command,UUID.randomUUID(),Duration.ofMinutes(5));
+            c.tx().inTransaction(em -> { em.createNativeQuery("UPDATE documents SET security=CAST(:policy AS jsonb)")
+                    .setParameter("policy","{\"permissions\":[{\"identityType\":\"public\",\"identity\":\"public\",\"access\":\"ACCESS_READ\"}]}")
+                    .executeUpdate(); });
+            var replay=new DocumentPublicationReplay(c.tx());
+            var caller=new RepositoryCaller("principal",false,Set.of("account"),Set.of());
+            assertThat(replay.observe(caller,command).state()).isEqualTo(DocumentPublicationReplay.State.PENDING);
+            c.tx().inTransaction(em -> { em.createNativeQuery("UPDATE documents SET security='{}'::jsonb WHERE node_id=:node")
+                    .setParameter("node",p.sources().get(1).row().nodeId).executeUpdate(); });
+            assertUnavailable(() -> replay.observe(caller,command));
+        }
+    }
+
+    @Test void pendingCreationRequiresExplicitAuthorityAndCurrentSourceReadAccess() {
+        try (var c=context()) {
+            var p=prepare(c,1);
+            var member=p.command().intent().getMembers(0);
+            var command=new DocumentPublicationCommand(p.command().intent().toBuilder()
+                    .setOperationId(UUID.randomUUID().toString())
+                    .setMembers(0,member.toBuilder().setDestination(member.getDestination().toBuilder().setIfAbsent(true)
+                            .setAddress(member.getDestination().getAddress().toBuilder().setDocId("new-document")))).build());
+            new RepositoryOperationLedger(c.tx()).admit(new RepositoryOperationLedger.Key("account","principal",command.operationId()),
+                    command,UUID.randomUUID(),Duration.ofMinutes(5));
+            var replay=new DocumentPublicationReplay(c.tx());
+            assertThat(replay.observe(new RepositoryCaller("principal",true),command).state())
+                    .isEqualTo(DocumentPublicationReplay.State.PENDING);
+            assertUnavailable(() -> replay.observe(new RepositoryCaller("principal",false,Set.of("account"),Set.of()),command));
+            c.tx().inTransaction(em -> { em.createNativeQuery("UPDATE documents SET status='PENDING_PURGE'").executeUpdate(); });
+            assertUnavailable(() -> replay.observe(new RepositoryCaller("principal",true),command));
+        }
+    }
+
     @Test void replayRejectsInvalidStoredResults() {
         for (var fault:List.of(Fault.WRONG_RESULT_REVISION,Fault.INVALID_RESULT_WIRE)) try (var c=context()) {
             var prepared=prepare(c,1);
@@ -154,10 +214,12 @@ class DocumentPublicationReplayIT {
         }
     }
 
-    @Test void replaySeesPolicyRevocationCommittedWhileItWaits() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans={false,true})
+    void replaySeesPolicyRevocationCommittedWhileItWaits(boolean committed) throws Exception {
         try (var c=context()) {
             var prepared=prepare(c,1);
-            publish(c,prepared,Fault.NONE,em -> {});
+            if (committed) publish(c,prepared,Fault.NONE,em -> {});
             c.tx().inTransaction(em -> { em.createNativeQuery("UPDATE documents SET security=CAST(:policy AS jsonb)")
                     .setParameter("policy","{\"permissions\":[{\"identityType\":\"public\",\"identity\":\"public\",\"access\":\"ACCESS_READ\"}]}")
                     .executeUpdate(); });

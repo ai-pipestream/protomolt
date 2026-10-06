@@ -742,3 +742,11 @@ A private SQL-backed grant is a candidate for making the decision atomic with th
 existing ledger. This is design work, not an implemented endpoint or a decision to
 put SQL in the byte SPI. Publication transport and host key/account bindings remain
 separate unfinished boundaries.
+
+## Scoped creation design follow-up (2026-10-06)
+
+The [scoped creation design](repository-scoped-creation.md) records the remaining
+credential-identity, durable authorization, revocation, replay and performance
+requirements. It is not an available API. Pending observation now applies current
+destination/source access checks, without reapplying revision conditions. This
+closes an observation gap before new creation authority is introduced.

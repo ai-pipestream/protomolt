@@ -97,6 +97,11 @@ final class DocumentAdmissionAuthorization {
         authorizeReplay(em, caller, command, false);
     }
 
+    /** Pending observation requires the current read set, not matching revision conditions. */
+    static void authorizePending(EntityManager em, RepositoryCaller caller, DocumentPublicationCommand command) {
+        authorizeReplay(em, caller, command, true);
+    }
+
     /** Rejected creation can have no target; only the explicit process creation authority covers it. */
     static void authorizeRejection(EntityManager em, RepositoryCaller caller, DocumentPublicationCommand command) {
         authorizeReplay(em, caller, command, true);

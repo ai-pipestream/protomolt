@@ -47,9 +47,10 @@ final class DocumentPublicationReplay {
      * NOT_OBSERVED and PENDING are observations, never proof of rollback or permission
      * to start a new operation. Only admission/recovery can grant executable ownership.
      * Admission state and command conflicts are private to the authenticated operation
-     * principal and account; they contain no document result. Pending creation may have
-     * no destination to authorize yet. Terminal outcomes require current target access;
-     * rejection replay additionally checks every explicit or retained source dependency.
+     * principal and account; they contain no document result. Pending and rejected
+     * outcomes require the current destination/source read set; only explicit creation
+     * authority covers an absent ifAbsent destination. Successful outcomes require current
+     * target access. Observation never reapplies expected revision conditions.
      * No lease renewal, provider I/O, registry lookup or outbox mutation occurs here.
      */
     Observation observe(RepositoryCaller caller, DocumentPublicationCommand command) {
@@ -128,7 +129,10 @@ final class DocumentPublicationReplay {
                     throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Stored publication rejection is invalid", failure);
                 }
             }
-            if (outcomes.isEmpty()) return new Observation(State.PENDING, Optional.empty());
+            if (outcomes.isEmpty()) {
+                DocumentAdmissionAuthorization.authorizePending(em, caller, command);
+                return new Observation(State.PENDING, Optional.empty());
+            }
             DocumentAdmissionAuthorization.authorizeReplay(em, caller, command);
             var row = (Object[]) outcomes.getFirst();
             long generation = ((Number) row[0]).longValue();
