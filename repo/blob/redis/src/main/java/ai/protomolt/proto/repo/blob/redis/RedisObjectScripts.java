@@ -57,4 +57,18 @@ final class RedisObjectScripts {
             return {1}
             """);
     static final byte[] RECLAIM = script("redis.call('DEL',KEYS[1]); return redis.call('EXISTS',KEYS[1])");
+    static final byte[] COPY_CREATE_ONLY = script(CHECK + """
+            if redis.call('HSTRLEN',KEYS[1],'data')>tonumber(ARGV[1]) then return {2} end
+            if redis.call('EXISTS',KEYS[2])~=0 then
+              if redis.call('TYPE',KEYS[2]).ok~='hash' then return {3} end
+              for _,field in ipairs({'data','content_type','etag','last_modified_ms','attributes'}) do
+                if redis.call('HEXISTS',KEYS[2],field)==0 then return {3} end
+              end
+              return {4}
+            end
+            if redis.call('COPY',KEYS[1],KEYS[2])~=1 then return {3} end
+            redis.call('HSET',KEYS[2],'last_modified_ms',ARGV[2])
+            redis.call('PERSIST',KEYS[2])
+            return {1}
+            """);
 }

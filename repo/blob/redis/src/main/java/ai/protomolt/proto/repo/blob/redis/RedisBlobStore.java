@@ -32,9 +32,11 @@ public final class RedisBlobStore implements ExpiringBlobStore, AutoCloseable {
     private final int ttlSeconds;
     private final long maxObjectBytes;
     private final RedisObjectKeys keys;
+    private final boolean createOnly;
 
     public RedisBlobStore(RedisBlobStoreConfig config) {
-        keys = new RedisObjectKeys(config.keyPrefix());
+        createOnly = config.writePolicy() == RedisWritePolicy.CREATE_ONLY;
+        keys = new RedisObjectKeys(config.keyPrefix(), config.writePolicy());
         ttlSeconds = config.ttlSeconds();
         maxObjectBytes = config.maxObjectBytes();
         pool = new JedisPool(URI.create(config.uri()));
@@ -66,18 +68,21 @@ public final class RedisBlobStore implements ExpiringBlobStore, AutoCloseable {
     private WriteTarget prepare(PutSpec spec, int ttl) {
         Objects.requireNonNull(spec);
         if (ttl < 0) throw new IllegalArgumentException("ttlSeconds must be nonnegative");
+        if (createOnly && ttl != 0) throw new IllegalArgumentException("Create-only storage requires zero TTL");
         String key = keys.object(spec.bucket(), spec.key());
         var metadata = new RedisWriteMetadata(spec.contentType(), spec.metadata());
         return new WriteTarget(key, metadata, spec.sha256Hex(), ttl);
     }
 
     private PutResult write(WriteTarget target, byte[] body) {
-        return write(target, body, null);
+        return write(target, body, createOnly ? WriteCondition.absent() : null);
     }
 
     /** Atomic compare/write. A conflict after an uncertain acknowledgment requires reconciliation. */
     @Override public PutResult conditionalPut(PutSpec spec, byte[] body, WriteCondition condition) {
         Objects.requireNonNull(body); Objects.requireNonNull(condition);
+        if (createOnly && !condition.ifAbsent())
+            throw new UnsupportedOperationException("Create-only storage does not support matching replacements");
         if (body.length > MAX_CONDITIONAL_BYTES)
             throw new IllegalArgumentException("Conditional object exceeds 9 MiB");
         requireSize(body.length);
@@ -131,11 +136,13 @@ public final class RedisBlobStore implements ExpiringBlobStore, AutoCloseable {
     @Override public void copy(String sourceNamespace, String sourceKey, String targetNamespace, String targetKey) {
         if (sourceNamespace == null || sourceNamespace.isBlank() || sourceKey == null || sourceKey.isBlank())
             throw new BlobNotFoundException("Redis copy source is not addressable");
-        int limit = (int) (maxObjectBytes == 0 ? MAX_VALUE_BYTES : Math.min(maxObjectBytes, MAX_VALUE_BYTES));
+        int ceiling = createOnly ? MAX_CONDITIONAL_BYTES : MAX_VALUE_BYTES;
+        int limit = (int) (maxObjectBytes == 0 ? ceiling : Math.min(maxObjectBytes, ceiling));
         try (var jedis = pool.getResource()) {
-            var result = (List<?>) jedis.eval(RedisObjectScripts.COPY,
+            var result = (List<?>) jedis.eval(createOnly ? RedisObjectScripts.COPY_CREATE_ONLY : RedisObjectScripts.COPY,
                     List.of(bytes(keys.object(sourceNamespace, sourceKey)), bytes(keys.object(targetNamespace, targetKey))),
                     List.of(bytes(Integer.toString(limit)), bytes(Long.toString(System.currentTimeMillis())), bytes(Integer.toString(ttlSeconds))));
+            if (((Number) result.getFirst()).intValue() == 4) throw new BlobConflictException("Create-only Redis copy conflicted");
             requireResult(result, limit, sourceKey);
         }
     }
@@ -199,6 +206,8 @@ public final class RedisBlobStore implements ExpiringBlobStore, AutoCloseable {
     private void requireSize(long size) {
         if (size < 0 || size > MAX_VALUE_BYTES || (maxObjectBytes > 0 && size > maxObjectBytes))
             throw new IllegalArgumentException("Object length exceeds Redis value or configured maxObjectBytes limit");
+        if (createOnly && size > MAX_CONDITIONAL_BYTES)
+            throw new IllegalArgumentException("Create-only object exceeds 9 MiB");
     }
     private static void requireResult(List<?> result, int bound, String key) {
         int status = ((Number) result.getFirst()).intValue();

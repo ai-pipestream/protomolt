@@ -90,7 +90,13 @@ features available. Recovery is one workstream, not the whole goal.
    The Redis byte adapter now implements the existing bounded conditional-write and
    authoritative-read SPI with atomic Lua operations. This is a prerequisite only:
    ordinary PUT/COPY retain replacement semantics, and content ETags are not epochs.
-   The explicit managed immutable-write policy and activation qualification remain open.
+   An opt-in Redis `create-only` byte policy now uses disjoint v3 physical keys and
+   identity, rejects expiry and refuses replacement across byte/stream PUT and COPY.
+   Its 9 MiB limit does not expand the existing conditional bound. The managed host
+   has not selected this policy: shared writer integration, archival size requirements,
+   identity binding, delayed-write fencing and activation qualification remain open.
+   Deleting a create-only key still permits late recreation, explicitly tested; this
+   policy must not be treated as a tombstone or proof of writer quiescence.
 
 ## Work gated by publication and retention guarantees
 

@@ -6183,3 +6183,17 @@ protobuf contracts, repository ownership, receipt bindings and operation idempot
 No managed immutable-key policy or archival activation is introduced. Content ETags
 are not mutation epochs; uncertain acknowledgments require reconciliation.
 See [validation scope](../evidence/repository/2026-10-05-redis-conditional/README.md).
+
+### Redis create-only byte policy
+
+**New optional configuration:** `write-policy=create-only` selects disjoint v3 keys
+and `redis/v3` backend identity. **Extended PUT/COPY behavior in that mode:** atomic
+target absence, no TTL, at most 9 MiB or the smaller configured object limit. Existing
+targets and exact retries conflict; matching conditional writes are unsupported.
+The selected handle does not advertise the complete conditional-write capability.
+
+**Unchanged:** default replacement mode and v2 identities/keys, public protobufs,
+receipts, repository operation idempotency and the managed-host qualification guard.
+An operator must not relabel retained backend generations or expect v2 objects to
+appear in v3. This adapter policy does not prevent post-delete resurrection.
+Shared archive integration and late-write recovery qualification are unfinished.

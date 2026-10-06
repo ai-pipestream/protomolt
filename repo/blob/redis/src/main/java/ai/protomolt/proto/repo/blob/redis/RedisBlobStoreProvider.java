@@ -14,7 +14,7 @@ public final class RedisBlobStoreProvider implements BlobStoreProvider {
 
     @Override public ai.protomolt.proto.repo.blob.spi.BackendIdentity managedIdentity(Map<String, String> options) {
         var config = config(options);
-        return RedisBackendIdentity.of(config.uri(), config.keyPrefix());
+        return RedisBackendIdentity.of(config.uri(), config.keyPrefix(), config.writePolicy());
     }
 
     @Override public OpenedBlobStore open(Map<String, String> options) {
@@ -24,16 +24,19 @@ public final class RedisBlobStoreProvider implements BlobStoreProvider {
                 ai.protomolt.proto.repo.blob.spi.BlobCapability.LIST,
                 ai.protomolt.proto.repo.blob.spi.BlobCapability.OBJECT_EXPIRY,
                 ai.protomolt.proto.repo.blob.spi.BlobCapability.BOUNDED_READ,
-                ai.protomolt.proto.repo.blob.spi.BlobCapability.ATOMIC_CONDITIONAL_WRITE,
                 ai.protomolt.proto.repo.blob.spi.BlobCapability.AUTHORITATIVE_CONDITIONAL_READ,
                 ai.protomolt.proto.repo.blob.spi.BlobCapability.PHYSICAL_RECLAMATION);
+        if (config.writePolicy() == RedisWritePolicy.REPLACE)
+            capabilities.add(ai.protomolt.proto.repo.blob.spi.BlobCapability.ATOMIC_CONDITIONAL_WRITE);
         if (config.ttlSeconds() == 0) capabilities.add(ai.protomolt.proto.repo.blob.spi.BlobCapability.NON_EXPIRING_WRITES);
         return new OpenedBlobStore(store, store, capabilities, store::headBucket, store::reclaim);
     }
 
     private static RedisBlobStoreConfig config(Map<String, String> options) {
-        if (!options.keySet().equals(OPTIONS)) {
-            throw new IllegalArgumentException("Redis requires uri, ttl-seconds, max-object-bytes and key-prefix only");
+        var allowed = new java.util.HashSet<>(OPTIONS);
+        allowed.add("write-policy");
+        if (!options.keySet().containsAll(OPTIONS) || !allowed.containsAll(options.keySet())) {
+            throw new IllegalArgumentException("Redis requires uri, ttl-seconds, max-object-bytes and key-prefix; write-policy is optional");
         }
         URI uri;
         try { uri = URI.create(options.get("uri")); }
@@ -53,6 +56,11 @@ public final class RedisBlobStoreProvider implements BlobStoreProvider {
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException("Redis ttl-seconds and max-object-bytes must be integers");
         }
-        return new RedisBlobStoreConfig(uri.toString(), ttl, max, options.get("key-prefix"));
+        RedisWritePolicy policy = switch (options.getOrDefault("write-policy", "replace")) {
+            case "replace" -> RedisWritePolicy.REPLACE;
+            case "create-only" -> RedisWritePolicy.CREATE_ONLY;
+            default -> throw new IllegalArgumentException("Redis write-policy must be replace or create-only");
+        };
+        return new RedisBlobStoreConfig(uri.toString(), ttl, max, options.get("key-prefix"), policy);
     }
 }

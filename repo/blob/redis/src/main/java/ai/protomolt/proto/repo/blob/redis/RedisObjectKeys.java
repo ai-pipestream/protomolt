@@ -11,7 +11,11 @@ import java.util.Objects;
 /** Versioned, injective UTF-8 tuple encoding; no legacy key lookup. */
 final class RedisObjectKeys {
     private final String prefix;
-    RedisObjectKeys(String configuredPrefix) { prefix = "protomolt:redis:v2:" + encode(configuredPrefix) + ":"; }
+    RedisObjectKeys(String configuredPrefix) { this(configuredPrefix, RedisWritePolicy.REPLACE); }
+    RedisObjectKeys(String configuredPrefix, RedisWritePolicy policy) {
+        prefix = "protomolt:redis:" + (policy == RedisWritePolicy.CREATE_ONLY ? "v3-create-only" : "v2")
+                + ":" + encode(configuredPrefix) + ":";
+    }
     String namespace(String namespace) { requireAddress(namespace); return prefix + encode(namespace) + ":"; }
     String object(String namespace, String key) { requireAddress(key); return namespace(namespace) + encode(key); }
     String decode(String namespacePrefix, String physical) {

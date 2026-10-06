@@ -5,10 +5,14 @@ import java.net.URI;
 import java.util.Locale;
 import java.util.Map;
 
-/** Physical v2 identity without credentials, TTL policy or client resource acquisition. */
+/** Physical layout identity without credentials or client resource acquisition. */
 public final class RedisBackendIdentity {
     private RedisBackendIdentity() {}
     public static BackendIdentity of(String endpoint, String keyPrefix) {
+        return of(endpoint, keyPrefix, RedisWritePolicy.REPLACE);
+    }
+    public static BackendIdentity of(String endpoint, String keyPrefix, RedisWritePolicy policy) {
+        java.util.Objects.requireNonNull(policy);
         URI uri;
         try { uri = URI.create(endpoint); }
         catch (RuntimeException invalid) { throw new IllegalArgumentException("Invalid Redis identity URI"); }
@@ -23,7 +27,7 @@ public final class RedisBackendIdentity {
             catch (NumberFormatException invalid) { throw new IllegalArgumentException("Invalid Redis database identity"); }
         }
         RedisObjectKeys.encode(keyPrefix); // Reject strings whose UTF-8 encoding would collapse distinct identities.
-        return new BackendIdentity("redis", "redis/v2", Map.of("scheme", uri.getScheme(),
+        return new BackendIdentity("redis", policy == RedisWritePolicy.CREATE_ONLY ? "redis/v3" : "redis/v2", Map.of("scheme", uri.getScheme(),
                 "host", uri.getHost().toLowerCase(Locale.ROOT), "port", Integer.toString(uri.getPort() < 0 ? 6379 : uri.getPort()),
                 "database", Integer.toString(database), "key-prefix", keyPrefix));
     }

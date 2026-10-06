@@ -16,6 +16,28 @@ Redis commands. Scripts do not promise rollback after server errors. Listing
 uses SCAN and is not a snapshot. The caller's logical prefix is matched literally.
 Redis Cluster is not supported by this implementation.
 
+## Create-only physical keys
+
+Optional `write-policy=create-only` selects a separate physical layout with backend
+identity `redis/v3`. The default `replace` retains `redis/v2` and its existing keys.
+The v3 key prefix is `protomolt:redis:v3-create-only:`; each following component
+uses the same canonical encoding as v2. Identical endpoint, configured prefix,
+namespace and logical key do not alias between policies. There is no automatic
+migration or cross-layout fallback.
+
+Create-only requires zero TTL and caps writes/copies at 9 MiB, or a smaller
+configured limit. PUT and COPY atomically refuse existing targets, including an
+identical retry; self-copy conflicts. Buffered InputStream writes use the same
+policy. Matching conditional replacement is unsupported, so this mode does not
+advertise `ATOMIC_CONDITIONAL_WRITE`; authoritative reads remain available.
+It also does not advertise streaming writes. The capability description below
+applies to the default replacement mode.
+
+This protects against replacement through the selected adapter, not direct Redis
+administration. Reclamation deletes the key; a delayed write can recreate it.
+The repository must qualify writer drain/fencing and repeat cleanup before managed
+archival activation. Create-only is not a retention, tombstone or durability claim.
+
 The provider exposes listing, expiry, bounded reads, atomic conditional writes and physical reclamation.
 It exposes non-expiring writes only when the configured TTL is zero. Explicit
 version requests are unsupported; they never fall back to the current object.
@@ -53,7 +75,7 @@ service's managed-storage qualification guard remains unchanged.
 
 ## Layout change
 
-The v2 physical key encodes the configured prefix, namespace and logical key as
+The default v2 physical key encodes the configured prefix, namespace and logical key as
 separate canonical base64url UTF-8 components. One object's metadata cannot collide
 with another object's name. Managed identity includes the endpoint, database,
 configured prefix and layout version; it excludes credentials and runtime limits.
