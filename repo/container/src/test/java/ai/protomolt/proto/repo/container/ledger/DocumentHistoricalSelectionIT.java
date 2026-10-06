@@ -64,20 +64,20 @@ class DocumentHistoricalSelectionIT {
                 var key = new RepositoryOperationLedger.Key("account", "principal", command.operationId());
                 var nonce = UUID.randomUUID();
                 var otherAccount = new RepositoryCaller("principal", false, Set.of("other-account"), Set.of());
-                assertCode(() -> operations.admitHistoricalAssessment(otherAccount, key, prepared, nonce, Duration.ofMinutes(5)),
+                assertCode(() -> operations.admitHistorical(otherAccount, key, prepared, nonce, Duration.ofMinutes(5)),
                         RepositoryException.Code.NOT_FOUND);
-                assertCode(() -> operations.admitHistoricalAssessment(new RepositoryCaller("another-principal", true), key,
+                assertCode(() -> operations.admitHistorical(new RepositoryCaller("another-principal", true), key,
                         prepared, nonce, Duration.ofMinutes(5)), RepositoryException.Code.PERMISSION_DENIED);
                 assertThat(c.tx().<Long>readOnly(em -> ((Number) em.createNativeQuery(
                         "SELECT count(*) FROM repository_operations WHERE operation_id=:id")
                         .setParameter("id", command.operationId()).getSingleResult()).longValue())).isZero();
-                var owner = operations.admitHistoricalAssessment(caller, key, prepared, nonce, Duration.ofMinutes(5)).owner().orElseThrow();
-                assertThat(operations.admitHistoricalAssessment(caller, key, prepared, nonce, Duration.ofMinutes(5)).owner().orElseThrow()).isEqualTo(owner);
+                var owner = operations.admitHistorical(caller, key, prepared, nonce, Duration.ofMinutes(5)).owner().orElseThrow();
+                assertThat(operations.admitHistorical(caller, key, prepared, nonce, Duration.ofMinutes(5)).owner().orElseThrow()).isEqualTo(owner);
                 var changedCommand = new DocumentPublicationCommand(command.intent().toBuilder().setMembers(0,
                         command.intent().getMembers(0).toBuilder().setClusterId("changed-metadata")).build());
                 var changed = DocumentOperationUploadAdmission.prepareHistorical(changedCommand, placements, attempts, Duration.ofMinutes(5),
                         prepared.uploadTokens(), refs, () -> {});
-                assertThatThrownBy(() -> operations.admitHistoricalAssessment(caller, key, changed, nonce, Duration.ofMinutes(5)))
+                assertThatThrownBy(() -> operations.admitHistorical(caller, key, changed, nonce, Duration.ofMinutes(5)))
                         .isInstanceOf(RepositoryOperationLedger.CommandConflictException.class);
                 assertCode(() -> new DocumentOperationUploadAdmission(c.tx(), new DriveLedger(c.tx())).admit(otherAccount, owner, prepared),
                         RepositoryException.Code.NOT_FOUND);
@@ -122,7 +122,7 @@ class DocumentHistoricalSelectionIT {
                     DocumentCommitParts.bindAssessment(em, owner, plan, selected, reuse, () -> {});
                 })).isInstanceOf(UnsupportedOperationException.class);
                 use.close();
-                assertThatThrownBy(() -> operations.admitHistoricalAssessment(caller, key, prepared, nonce, Duration.ofMinutes(5)))
+                assertThatThrownBy(() -> operations.admitHistorical(caller, key, prepared, nonce, Duration.ofMinutes(5)))
                         .isInstanceOf(IllegalStateException.class).hasMessageContaining("use has ended");
                 assertThatThrownBy(() -> DocumentUploadPlan.prepare(command, placements, attempts, refs, () -> {}))
                         .isInstanceOf(IllegalStateException.class).hasMessageContaining("use has ended");

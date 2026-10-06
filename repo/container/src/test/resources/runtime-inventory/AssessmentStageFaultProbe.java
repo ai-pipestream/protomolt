@@ -42,7 +42,7 @@ public final class AssessmentStageFaultProbe {
                             (wrapper, action, arguments) -> {
                                 var returned = invoke(connection, action, arguments);
                                 if (action.getName().equals("commit") && armed.compareAndSet(true, false))
-                                    throw new SQLException("Injected lost assessment stage acknowledgement", "08006");
+                                    throw new SQLException("Injected lost SQL commit acknowledgement", "08006");
                                 return returned;
                             });
                 });
@@ -52,7 +52,7 @@ public final class AssessmentStageFaultProbe {
             armed.set(true);
             try {
                 create.accept(faultTx);
-                throw new AssertionError("Lost stage acknowledgement returned success");
+                throw new AssertionError("Lost commit acknowledgement returned success");
             } catch (RuntimeException failure) {
                 boolean lost = false;
                 for (Throwable cause = failure; cause != null; cause = cause.getCause())

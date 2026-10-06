@@ -104,11 +104,11 @@ final class RepositoryOperationLedger {
     }
 
     /**
-     * Internal unclaimed historical assessment only. The host supplies authenticated
-     * identity; selection and CREATE check current document authorization. This owner
+     * Internal unclaimed historical operation. The host supplies authenticated
+     * identity; selection, CREATE and publication check current document authorization. This owner
      * cannot be promoted into a claimed/public execution path by this method.
      */
-    Admission admitHistoricalAssessment(RepositoryCaller caller, Key key, DocumentOperationUploadAdmission.Prepared prepared,
+    Admission admitHistorical(RepositoryCaller caller, Key key, DocumentOperationUploadAdmission.Prepared prepared,
             UUID ownerNonce, Duration lease) {
         var plan = Objects.requireNonNull(prepared).plan();
         var command = plan.command();

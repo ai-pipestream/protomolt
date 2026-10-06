@@ -640,7 +640,7 @@ class DocumentHistoricalRestoreAssessmentIT {
         }
     }
 
-    private static DocumentPublicationMember member(Fixture f, DocumentReadLedger.PinnedHistory history) {
+    static DocumentPublicationMember member(Fixture f, DocumentReadLedger.PinnedHistory history) {
         var member = f.original().command().intent().getMembers(0).toBuilder().clearParts();
         member.setDestination(member.getDestination().toBuilder().setExpectedMutationRevision(1));
         try (var use = history.use()) {
@@ -660,7 +660,7 @@ class DocumentHistoricalRestoreAssessmentIT {
         }
         return member.build();
     }
-    private record Fixture(DocumentSchemaRetentionFixture.Fixture original, UUID revision) {
+    record Fixture(DocumentSchemaRetentionFixture.Fixture original, UUID revision) {
         NodeAddress address() { return original.command().intent().getMembers(0).getDestination().getAddress(); }
         Map<Integer, ByteString> fragments() {
             var parts = original.command().intent().getMembers(0).getPartsList();
@@ -686,7 +686,7 @@ class DocumentHistoricalRestoreAssessmentIT {
                         ? "{\"permissions\":[{\"identityType\":\"public\",\"identity\":\"public\",\"access\":\"ACCESS_READ\"}]}" : "{}")
                 .executeUpdate(); });
     }
-    private static void release(DocumentReadLedger ledger, DocumentReadLedger.PinnedHistory history) throws Exception {
+    static void release(DocumentReadLedger ledger, DocumentReadLedger.PinnedHistory history) throws Exception {
         history.close(); assertThat(history.awaitDrained(Duration.ofSeconds(1))).isTrue(); history.release();
         ledger.fence(); ledger.attestLocalQuiescence();
     }

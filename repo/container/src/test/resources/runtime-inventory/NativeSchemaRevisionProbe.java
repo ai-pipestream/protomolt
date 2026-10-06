@@ -119,6 +119,7 @@ public final class NativeSchemaRevisionProbe {
                 }
                 require(registryCalls.get() == 3, "historical reads use retained schemas without registry calls");
                 require(originalDocument.getStructuredData().unpack(StringValue.class).getValue().equals("retained payload"), "real payload retained");
+                HistoricalPublicationProbe.run(tx, provider, source, published.getFirst(), database);
             } finally {
                 boolean stopped = false;
                 for (int pass = 0; pass < 4 && !stopped; pass++) stopped = runtime.shutdownStep(Duration.ofSeconds(5));

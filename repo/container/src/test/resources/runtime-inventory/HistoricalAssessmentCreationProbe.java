@@ -54,7 +54,7 @@ public final class HistoricalAssessmentCreationProbe {
                 var prepared = assessment.preparePhysical(Map.of(source.placement().drive().id(), source.placement()),
                         Map.of(), Duration.ofMinutes(5), Map.of(), RepositoryReadControl.NONE);
                 borrowedPlan = prepared;
-                var owner = new RepositoryOperationLedger(tx).admitHistoricalAssessment(caller,
+                var owner = new RepositoryOperationLedger(tx).admitHistorical(caller,
                         new RepositoryOperationLedger.Key("account", "principal", command.operationId()), prepared,
                         UUID.randomUUID(), Duration.ofMinutes(5)).owner().orElseThrow();
                 new DocumentOperationUploadAdmission(tx, new DriveLedger(tx)).admit(caller, owner, prepared);
@@ -97,7 +97,7 @@ public final class HistoricalAssessmentCreationProbe {
             }
             require(budget.reservedBytes() == 0, "historical CREATE releases byte ownership");
             try {
-                new RepositoryOperationLedger(tx).admitHistoricalAssessment(caller,
+                new RepositoryOperationLedger(tx).admitHistorical(caller,
                         new RepositoryOperationLedger.Key("account", "principal", command.operationId()), borrowedPlan,
                         UUID.randomUUID(), Duration.ofMinutes(5));
                 throw new AssertionError("Expired borrowed source plan was admitted");

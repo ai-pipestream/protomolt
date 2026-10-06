@@ -197,6 +197,36 @@ final class DocumentPublicationAssessment implements AutoCloseable {
             }
         }
 
+        /** Promoted content never escapes the source owner. A commit error may require durable reconciliation. */
+        synchronized ai.protomolt.proto.repo.v1.DocumentPublicationResult publish(
+                ai.protomolt.proto.repo.spi.RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+                DocumentOperationUploadAdmission.Prepared prepared, Map<String, DocumentSelectedAttemptLedger.Selected> selections,
+                RepositorySchemaArtifacts storage, DocumentPublicationCommit publication,
+                ai.protomolt.proto.repo.spi.RepositoryReadControl control) throws InvalidProtocolBufferException {
+            requireOpen();
+            if (inspecting) throw new IllegalStateException("Historical assessment operation is active");
+            inspecting = true;
+            try {
+                sources.requireCaller(caller); sources.authorize(control);
+                var command = assessment.command();
+                var references = sources.references(command, control::check);
+                if (!prepared.plan().historical().equals(references)
+                        || !prepared.plan().command().canonical().equals(command.canonical()))
+                    throw new IllegalArgumentException("Historical physical plan belongs to another assessment owner");
+                DocumentAdmissionAuthorization.requireCaller(caller, owner, command.intent().getAccountId());
+                try (var candidate = assessment.promoteAccepted(control::check, references)) {
+                    candidate.schemas().stage(storage, owner, control::check);
+                    sources.authorize(control);
+                    return publication.commitHistorical(caller, owner, prepared, candidate.opaque(), selections,
+                            candidate.schemas(), control::check, references);
+                }
+            } finally {
+                // SQL commit performs current authorization under locks. Do not turn
+                // a returned durable success into an apparent cancellation afterward.
+                inspecting = false;
+            }
+        }
+
         private void requireOpen() { if (assessment == null) throw new IllegalStateException("Historical assessment is closed"); }
         @Override public synchronized void close() {
             if (inspecting) throw new IllegalStateException("Historical assessment inspection is active");
@@ -284,6 +314,11 @@ final class DocumentPublicationAssessment implements AutoCloseable {
      * consumes this scope: close becomes a no-op and the candidate releases its bytes.
      */
     DocumentPublicationCandidate promoteAccepted(Runnable control) throws InvalidProtocolBufferException {
+        return promoteAccepted(control, null);
+    }
+
+    private DocumentPublicationCandidate promoteAccepted(Runnable control,
+            List<DocumentHistoricalReferenceAdmission.Prepared> historical) throws InvalidProtocolBufferException {
         beginVerification();
         var proofs = new LinkedHashMap<String, DocumentSchemaAdmission.Proof>();
         var prepared = new ArrayList<DocumentSchemaAdmission.PreparedProof>();
@@ -317,7 +352,9 @@ final class DocumentPublicationAssessment implements AutoCloseable {
                 catch (RuntimeException | Error failed) { owner.close(); throw failed; }
                 proofs.put(id, owner.proof());
             }
-            var schemas = DocumentSchemaBatch.prepare(command, policy, proofs, reservations, () -> active(control));
+            var schemas = historical == null
+                    ? DocumentSchemaBatch.prepare(command, policy, proofs, reservations, () -> active(control))
+                    : DocumentSchemaBatch.prepareHistorical(command, policy, proofs, reservations, historical, () -> active(control));
             if (!schemas.artifacts().equals(artifacts))
                 throw new IllegalArgumentException("Promoted artifacts differ from assessment union");
             active(control);

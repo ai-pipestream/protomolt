@@ -34,6 +34,29 @@ final class DocumentPublicationCommit {
     DocumentPublicationResult commit(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentOperationUploadAdmission.Prepared prepared, Map<String,DocumentCommandContent> content,
             Map<String,DocumentSelectedAttemptLedger.Selected> selections, DocumentSchemaBatch schemas, Runnable callerControl) {
+        prepared.plan().command().requireExecutionSupported();
+        return commitInternal(caller, owner, prepared, content, selections, schemas, callerControl, null);
+    }
+
+    /** Internal only: caller owns the exact live source preparations through transaction completion. */
+    DocumentPublicationResult commitHistorical(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentOperationUploadAdmission.Prepared prepared, Map<String,DocumentCommandContent> content,
+            Map<String,DocumentSelectedAttemptLedger.Selected> selections, DocumentSchemaBatch schemas, Runnable control,
+            java.util.List<DocumentHistoricalReferenceAdmission.Prepared> sources) {
+        if (owner.executionClaim().isPresent())
+            throw new UnsupportedOperationException("Claimed historical publication is not implemented");
+        Objects.requireNonNull(schemas, "Historical publication requires a checked schema batch");
+        var references = DocumentHistoricalReferenceAdmission.requireComplete(prepared.plan().command(), sources, control);
+        if (references.isEmpty() || !references.equals(prepared.plan().historical()))
+            throw new IllegalArgumentException("Historical publication differs from physical plan sources");
+        var historical = DocumentHistoricalManifestEntries.prepare(prepared.plan().command(), references, control);
+        return commitInternal(caller, owner, prepared, content, selections, schemas, control, historical);
+    }
+
+    private DocumentPublicationResult commitInternal(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentOperationUploadAdmission.Prepared prepared, Map<String,DocumentCommandContent> content,
+            Map<String,DocumentSelectedAttemptLedger.Selected> selections, DocumentSchemaBatch schemas, Runnable callerControl,
+            DocumentHistoricalManifestEntries historical) {
         Objects.requireNonNull(owner); Objects.requireNonNull(prepared); Objects.requireNonNull(callerControl);
         Runnable control=() -> {
             if (Thread.currentThread().isInterrupted())
@@ -76,7 +99,8 @@ final class DocumentPublicationCommit {
             if (!actual.command().canonical().equals(command.canonical()) || !actual.member().equals(member.intent()))
                 throw new IllegalArgumentException("Checked document content belongs to another command or member");
         }
-        var authorization=DocumentAdmissionAuthorization.prepare(plan);
+        var authorization=historical == null ? DocumentAdmissionAuthorization.prepare(plan)
+                : DocumentAdmissionAuthorization.prepare(plan, plan.historical());
         var reuse=DocumentReuseAdmission.prepare(plan);
         var retainedEntries=DocumentRetainedManifestEntries.prepare(plan,control);
         var placements=plan.members().stream().map(DocumentUploadPlan.Member::placement).distinct()
@@ -95,7 +119,8 @@ final class DocumentPublicationCommit {
                         () -> new IllegalArgumentException("Selected backend is not registered")).equals(placement.profile()))
                     throw new IllegalArgumentException("Selected backend differs from its immutable profile");
             }
-            var parts=DocumentCommitParts.bind(em,owner,plan,selected,reuse,control);
+            var parts=historical == null ? DocumentCommitParts.bind(em,owner,plan,selected,reuse,control)
+                    : DocumentCommitParts.bindHistoricalPublication(em,owner,plan,selected,reuse,control);
             if (schemas != null) schemas.lockArtifacts(em, owner, control);
             control.run();
             // Snapshot all sources and candidates before any destination changes; a
@@ -105,7 +130,10 @@ final class DocumentPublicationCommit {
             Instant now=Instant.now();
             for (var member:plan.members()) {
                 control.run();
-                candidates.add(DocumentCommitWriter.prepare(member,checked.get(member.intent().getMemberId()),parts,locked,sources,now,control));
+                var checkedMember = checked.get(member.intent().getMemberId());
+                candidates.add(historical == null
+                        ? DocumentCommitWriter.prepare(member,checkedMember,parts,locked,sources,now,control)
+                        : DocumentCommitWriter.prepareHistorical(member,checkedMember,parts,locked,sources,historical,now,control));
             }
             var decisions = new java.util.HashMap<String,String>();
             if (schemas != null) {
@@ -140,6 +168,7 @@ final class DocumentPublicationCommit {
                     .setParameter("account",owner.key().account()).setParameter("principal",owner.key().principal())
                     .setParameter("operation",owner.key().operationId()).executeUpdate();
             control.run();
+            if (historical != null) DocumentHistoricalReferenceAdmission.requireComplete(command, plan.historical(), control);
             em.createNativeQuery("SET CONSTRAINTS ALL IMMEDIATE").executeUpdate();
             // No cancellation check after commit: a returned success is the durable outcome.
             return success;

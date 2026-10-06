@@ -51,6 +51,15 @@ final class DocumentCommitParts {
         return new AssessmentBound(bound.physical(), bound.locks());
     }
 
+    /** Publication also protects the old destination objects before replacing their current references. */
+    static Bound bindHistoricalPublication(EntityManager em, RepositoryOperationLedger.Owner owner,
+            DocumentUploadPlan.Prepared plan, Map<String,DocumentSelectedAttemptLedger.Selected> selected,
+            DocumentReuseAdmission.Prepared reuse, Runnable control) {
+        var references = DocumentHistoricalReferenceAdmission.requireComplete(plan.command(), plan.historical(), control);
+        if (references.isEmpty()) throw new IllegalArgumentException("Historical publication requires sources");
+        return bind(em, owner, plan, selected, reuse, control, false, true).physical();
+    }
+
     private static Binding bind(EntityManager em, RepositoryOperationLedger.Owner owner, DocumentUploadPlan.Prepared plan,
             Map<String,DocumentSelectedAttemptLedger.Selected> selected, DocumentReuseAdmission.Prepared reuse,
             Runnable control, boolean assessment, boolean historical) {

@@ -491,3 +491,28 @@ Qualification must cover an older retained revision published as a new revision,
 original provider identity and producer metadata, mixed ordinary/historical parts,
 two revisions of one node/slot, atomic rollback and lost-acknowledgment replay.
 Successful historical assessment CREATE does not establish publication correctness.
+
+### Internal atomic publication integration
+
+`Historical.publish` now keeps strict promotion, schema staging and publication
+inside the source owner. It returns only the durable result and closes promoted
+content before the source Uses can be released. Promotion consumes the assessment;
+if staging or commit fails, reconcile an uncertain outcome rather than calling
+publish again on that consumed scope. A returned SQL success is not subsequently
+reclassified as cancellation by an extra authorization callback.
+
+The dedicated commit path requires the complete exact physical-plan source
+preparations and refuses execution claims. Ordinary publication retains its
+historical-command guard. Historical publication checks current authorization,
+policy, independent source/retention locks, original physical identity and schema
+claims in the existing transaction order. It preserves retained part timestamps
+and producer metadata and writes a new revision and terminal result atomically.
+The source Uses are checked again before immediate constraint validation.
+
+Initial real-SQL cases cover typed and opaque publication, reuse after the head
+advances, policy changes, and rollback after failure at terminal-success insertion.
+Full qualification still requires mixed historical/current/upload commands,
+multiple revisions of the same source node/slot, and historical READ revocation
+during a lock wait. Public restoration, claimed-session activation and automatic
+claim transfer remain disabled. These are required follow-ups, not an assertion
+that the full repository goal is complete.

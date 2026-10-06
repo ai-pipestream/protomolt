@@ -93,7 +93,8 @@ final class DocumentHistoricalSchemas {
             var part = retained.ordinal() >= 0 && retained.ordinal() < member.getPartsCount()
                     ? member.getParts(retained.ordinal()) : null;
             String fragmentSha = part == null ? null : part.hasUpload() ? part.getUpload().getSha256()
-                    : part.hasReuse() ? part.getReuse().getObject().getSha256() : null;
+                    : part.hasReuse() ? part.getReuse().getObject().getSha256()
+                    : part.hasHistoricalReuse() ? part.getHistoricalReuse().getObject().getSha256() : null;
             if (actual == null || !actual.encoded().equals(retained.evidence()) || fragment == null
                     || fragment.size() != retained.fragmentSize()
                     || !retained.fragmentSha().equals(fragmentSha))
