@@ -141,9 +141,17 @@ public final class RepoServices implements AutoCloseable {
 
     private RepoServices(RepoServiceConfig config, BridgeEngine bridges,
             ai.protomolt.proto.repo.blob.spi.BlobStores providers, HistoricalReadAccess historicalAccess) {
+        this(config, bridges, providers, historicalAccess, null);
+    }
+
+    private RepoServices(RepoServiceConfig config, BridgeEngine bridges,
+            ai.protomolt.proto.repo.blob.spi.BlobStores providers, HistoricalReadAccess historicalAccess,
+            ManagedSchemaAccess schemaAccess) {
         ManagedArchiveServices startingArchive = null;
         try {
             this.config = config;
+            if (schemaAccess != null && !config.managedStorage().retentionQualified())
+                throw new IllegalArgumentException("Schema resolution requires qualified managed storage");
             if (historicalAccess != null && !config.managedStorage().retentionQualified())
                 throw new IllegalArgumentException("Historical transport requires qualified managed storage");
             if (config.managedStorage().retentionQualified()
@@ -292,7 +300,7 @@ public final class RepoServices implements AutoCloseable {
             // after this component acquires its durable lifecycle identity.
             this.managedDocuments = generation == null ? null : new ManagedDocumentServices(tx, driveLedger,
                     generation, new ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger(tx).find(generation).orElseThrow(),
-                    java.util.Objects.requireNonNull(selectedBacking).handle(), config.kafkaEnabled(), historicalAccess);
+                    java.util.Objects.requireNonNull(selectedBacking).handle(), config.kafkaEnabled(), historicalAccess, schemaAccess);
         } catch (RuntimeException | Error failure) {
             if (startingArchive != null) {
                 // Construction has not exposed services or started workers. Preserve
@@ -345,6 +353,19 @@ public final class RepoServices implements AutoCloseable {
     public static RepoServices build(RepoServiceConfig config, BridgeEngine bridges, HistoricalReadAccess historicalAccess) {
         return new RepoServices(config, bridges, ai.protomolt.proto.repo.blob.spi.BlobStores.discover(),
                 java.util.Objects.requireNonNull(historicalAccess));
+    }
+
+    /**
+     * Optional native schema composition. Historical transport remains separately
+     * optional (null disables it). Schema lifecycle ownership transfers only on a
+     * successful build; construction failure leaves it with the caller. The host
+     * closes borrowed registry stores after this service closes successfully.
+     * This overload does not mount a publication RPC.
+     */
+    public static RepoServices build(RepoServiceConfig config, BridgeEngine bridges,
+            HistoricalReadAccess historicalAccess, ManagedSchemaAccess schemaAccess) {
+        return new RepoServices(config, bridges, ai.protomolt.proto.repo.blob.spi.BlobStores.discover(),
+                historicalAccess, java.util.Objects.requireNonNull(schemaAccess));
     }
 
     /** Exact native history sharing this composition's storage and cleanup lifetime. */
@@ -752,7 +773,7 @@ public final class RepoServices implements AutoCloseable {
         java.util.Objects.requireNonNull(timeout);
         if (timeout.isNegative() || timeout.isZero()) throw new IllegalArgumentException("Shutdown timeout must be positive");
         lifecycleClosed = true;
-        if (managedDocuments != null) managedDocuments.publication.close();
+        if (managedDocuments != null) managedDocuments.closeAdmission();
         if (managedArchive != null) managedArchive.reader.close();
         LifecycleShutdown.stopBeforeRelease(lifecycleThreads, timeout, () -> releaseAfterWorkersStop(timeout));
     }
@@ -816,6 +837,23 @@ public final class RepoServices implements AutoCloseable {
         if (managedDocuments == null) throw new IllegalStateException("Managed document storage is not configured");
         startLifecycle();
         return managedDocuments.publication;
+    }
+
+    ai.protomolt.proto.repo.v1.DocumentPublicationResult publishDocument(
+            ai.protomolt.proto.repo.spi.RepositoryCaller caller,
+            ai.protomolt.proto.repo.spi.DocumentPublicationCommand command,
+            java.util.Map<java.util.UUID, ai.protomolt.proto.repo.container.ledger.DocumentPublicationRuntime.Placement> placements,
+            java.util.Map<ai.protomolt.proto.repo.container.ledger.DocumentPublicationRuntime.PayloadKey,
+                    ai.protomolt.proto.repo.codec.PartObject> bodies, java.util.Map<String, String> attributes,
+            java.util.Map<String, ai.protomolt.proto.repo.container.ledger.DocumentPublicationRuntime.Mode> modes,
+            java.util.Optional<ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition> container,
+            ai.protomolt.proto.repo.spi.RepositoryReadControl control) throws com.google.protobuf.InvalidProtocolBufferException {
+        requireOpen();
+        if (managedDocuments == null || managedDocuments.schemas == null)
+            throw new IllegalStateException("Managed schema resolution is not configured");
+        startLifecycle();
+        return managedDocuments.publication.executeScoped(caller, command, placements, bodies, attributes,
+                modes, container, managedDocuments.schemas::open, control);
     }
 
     ai.protomolt.proto.repo.spi.HistoricalDocumentRepository documentHistory() {

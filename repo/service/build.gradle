@@ -21,6 +21,7 @@ dependencies {
     // Public historical composition signatures expose the repository port and
     // trusted Caller/CallerResolver bindings to embedding hosts.
     api project(':protomolt-repo-spi')
+    api project(':protomolt-repo-admission')
     api project(':protomolt-authz')
     implementation project(':protomolt-repo-blob-s3')
     implementation project(':protomolt-repo-blob-redis')
@@ -43,6 +44,7 @@ dependencies {
     api project(':protomolt-asset-bridge')
     // The catalog projection is exercised against a real archive.
     testImplementation project(':protomolt-asset-catalog')
+    testImplementation project(':protomolt-repo-schema-registry')
     implementation libs.grpc.netty.shaded
     implementation libs.grpc.services
     implementation libs.grpc.inprocess

@@ -6102,3 +6102,17 @@ size, under the same owner lock. Existing authorization, identity, digest, evide
 expiry and reader-session checks remain. Missing or wrong-identity rows allocate
 no manifest payload reservation. This adds one SQL read; no protobuf or migration
 changes and no automatic recovery activation follow from it.
+
+### Optional managed-host schema composition
+
+**New Java composition:** `ManagedSchemaAccess` supplies caller-aware resolution
+scopes and a nonblocking close/bounded drain lifecycle. The four-argument
+`RepoServices.build` overload transfers lifecycle ownership only on success;
+construction failure leaves cleanup with the caller. The registry store remains
+borrowed, and the registry adapter remains outside service production dependencies.
+
+**Extended internal operation:** managed native publication can execute with those
+scopes while forwarding the exact caller. Shutdown rejects new schema work and
+retains shared resources until publication scopes and abandoned registry loads
+drain. Typed/opaque/replay, scoped identity, warm-cache revocation and startup/close
+failures have real-provider tests. No protobuf or mounted publication RPC changes.

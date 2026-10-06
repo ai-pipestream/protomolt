@@ -18,10 +18,22 @@ copies. Real Git fixtures cover missing artifacts, outage recovery, cancellation
 context isolation and typed admission with a warm cache. Concurrent cold reads now
 share a bounded host-owned load for an exact descriptor digest. Every occurrence
 still authorizes and selects its own complete definition; only descriptor bytes
-are shared. The adapter is not mounted in managed repository services.
+are shared. Managed repository services now accept an optional host-supplied
+`ManagedSchemaAccess` for their internal native publication path. The service does
+not construct a registry adapter or add it as a production dependency.
 The native publication runtime now offers `executeScoped` to own per-member
 resolution attempts and include cleanup in shutdown quiescence. The adapter remains
 an optional host choice; repository container production dependencies exclude it.
+
+`RepoServices.build(config, bridges, historicalAccess, schemaAccess)` transfers
+schema lifecycle ownership only on successful construction. Historical transport
+is separately optional; no publication RPC is mounted. On shutdown the service
+rejects publication/schema admission, drains scoped calls and abandoned registry
+loads, then releases shared resources. The caller closes borrowed registry stores
+only after successful service close; a drain timeout keeps resources available for
+a repeated close. Startup failure leaves schema cleanup with the caller. Host
+selectors still bind the actual caller and member to an authenticated registry
+context and check access on every occurrence, including a warm artifact cache.
 
 ## Existing seams
 

@@ -70,4 +70,12 @@ its scope must release its own partial allocation.
 
 The production dependency gate excludes Git/JGit, repository server/container,
 SQL, Kafka and object-store SDKs. Git is used only by the adapter's integration
-fixtures. Managed repository-host mounting is not implemented by this module.
+fixtures. The optional service assembly accepts a host implementation of
+`ManagedSchemaAccess`; it does not automatically discover or construct this adapter.
+Its `open` delegates to `resolver.open`, capturing the supplied caller/member in
+the authorized selector, `close` delegates to `resolver.close`, and `awaitIdle`
+delegates to `resolver.awaitLoads`. After a successful service build, only that
+composition may open scopes. The service drains publication scopes before awaiting
+loads. Close the borrowed registry store only after service close succeeds. If
+service construction fails, the host still owns adapter cleanup. This is internal
+native publication composition, not a mounted publication RPC or policy-admin API.

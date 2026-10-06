@@ -33,19 +33,20 @@ features available. Recovery is one workstream, not the whole goal.
    caches exact artifact bytes, not discovery grants or validation verdicts.
    The optional registry adapter and native runtime-owned resolution scopes now
    exist. Bounded host-owned sharing now isolates caller cancellation and retains
-   abandoned load capacity through provider completion. Next select
-   the authenticated registry context in managed-host composition. Keep provider
+   abandoned load capacity through provider completion. Managed-host composition
+   now accepts an explicit host-bound schema scope and lifecycle component. Keep provider
    timeout/allocation and shutdown ownership explicit at that boundary.
    `ManagedDocumentServices` owns a native runtime, but the managed publication
-   accessor is package-private and no publication RPC is mounted. Add explicit
-   optional schema-scope composition there without presenting it as a public write
-   API. Keep the registry adapter outside `repo/service`; host-selected scopes
-   capture the actual caller and member and authorize every occurrence. Host
-   shutdown must reject new scopes, quiesce publication, and drain abandoned
-   registry workers before closing the borrowed registry store. A drain timeout
-   retains those resources for another drain attempt. Validate configuration
-   before registering readers. Qualify this with real PostgreSQL/LocalStack/Git,
-   typed/opaque/replay paths and a held registry read during shutdown. Public
+   accessor is package-private and no publication RPC is mounted. `ManagedSchemaAccess`
+   supplies optional scope composition and shutdown ownership without a production
+   dependency on the registry adapter. Scopes receive the actual caller and member
+   and authorize every occurrence. Shutdown rejects new scopes, quiesces publication,
+   and drains abandoned registry workers before shared resources close. A drain
+   timeout retains those resources for another attempt. The host closes its borrowed
+   registry store only after successful service shutdown; failed construction leaves
+   schema cleanup with the caller. Configuration is checked before readers register.
+   Real PostgreSQL/LocalStack/Git fixtures cover typed/opaque/replay, scoped caller
+   forwarding and held-read shutdown. Public
    publication activation additionally needs the scoped authorization and durable
    session work below; schema wiring is not a document-creation grant.
    Establish tenant/security scope, exact schema identity, bounded ownership,

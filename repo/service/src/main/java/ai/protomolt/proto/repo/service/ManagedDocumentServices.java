@@ -21,6 +21,7 @@ final class ManagedDocumentServices {
     final ai.protomolt.proto.repo.engine.DocumentHistoricalOperations history;
     final DocumentHistoryGrpcService historyService;
     final DocumentHistoryMaterializationGrpcService materializationService;
+    final ManagedSchemaAccess schemas;
 
     ManagedDocumentServices(Tx tx, DriveLedger drives, String generation,
             ManagedBackendLedger.Profile profile, OpenedBlobStore backing, boolean deliverEvents) {
@@ -29,7 +30,14 @@ final class ManagedDocumentServices {
 
     ManagedDocumentServices(Tx tx, DriveLedger drives, String generation,
             ManagedBackendLedger.Profile profile, OpenedBlobStore backing, boolean deliverEvents, HistoricalReadAccess access) {
+        this(tx, drives, generation, profile, backing, deliverEvents, access, null);
+    }
+
+    ManagedDocumentServices(Tx tx, DriveLedger drives, String generation,
+            ManagedBackendLedger.Profile profile, OpenedBlobStore backing, boolean deliverEvents, HistoricalReadAccess access,
+            ManagedSchemaAccess schemas) {
         Objects.requireNonNull(backing);
+        this.schemas = schemas;
         var timeouts = new SqlTimeouts(Duration.ofSeconds(2), Duration.ofSeconds(5));
         var bounded = tx.withTimeouts(timeouts);
         var profiles = new ManagedBackendLedger(bounded);
@@ -82,9 +90,16 @@ final class ManagedDocumentServices {
                 if (System.nanoTime() - start >= budget)
                     throw new IllegalStateException("Native publication resources still active; shared resources retained");
             }
+            if (schemas != null && !schemas.awaitIdle(Duration.ofNanos(Math.max(0, budget - (System.nanoTime() - start)))))
+                throw new IllegalStateException("Schema provider loads still active; shared resources retained");
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Native publication drain interrupted; shared resources retained", interrupted);
         }
+    }
+
+    void closeAdmission() {
+        publication.close();
+        if (schemas != null) schemas.close();
     }
 }
