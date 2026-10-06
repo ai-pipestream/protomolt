@@ -1552,3 +1552,58 @@ hash must equal the exact predecessor generation/owner's retained map. Migration
 refuses pre-existing inconsistent installations instead of rewriting them. A
 current policy change may reject the retained mode; it cannot silently change
 that operation's meaning. This is separate from bounded host proposal retention.
+
+### Private recovery-attempt owner
+
+`RepositoryRecoveryAttempts` now owns a bounded map before reservation mutation.
+Each entry binds the exact command, process/scoped identity and credential binding,
+one reservation proposal and, once minted, one installation plan. One active handle
+per entry runs SQL outside the shared map monitor. Every advance receives fresh
+coordinator and execution callers; account/group permissions are not cached as
+grants. The original proposal and plan survive cancelled post-commit replies.
+The owner applies configured SQL timeouts to reservation, loading and installation,
+including confirmation reads. Activation and attachment use the session manager’s
+separate transaction view; host construction must supply a bounded view there too.
+The private owner constructor alone does not enforce that session requirement.
+The retained preparation/modes and next preparation count against the shared byte
+budget. Successful activation transfers ownership to the existing session manager,
+clears the attempt's borrowed data and releases its leases.
+
+This component is private and is not wired to a managed host. It handles eligible
+expired bound and unactivated observations, not graceful-discovery proposals.
+Cached preparation is not delivered again on installation retry: process-authorized
+V93 metadata installation may proceed after execution-caller rights change, while
+V94 activation and attachment recheck live execution rights before provider work.
+Installation alone is not an execution grant.
+
+Closing admission blocks new handles but permits accepted handles to finish.
+Drain reports active calls separately from unresolved identities; it is neither
+provider-quiescence evidence nor durable completion. Unresolved entries retain
+their budget leases. There is no transition yet for an expired retained proposal,
+explicit supersession, or reconciled discard. Those lifecycle transitions and
+trusted host authority integration are required before factory exposure. Closing
+this private owner must not be reported as resource-complete shutdown.
+
+### Next lifecycle requirement: reconcile both local owners
+
+An activation call can retain a session-manager entry before V94 commits. If that
+call fails, superseding the recovery attempt alone would leave the old manager
+fingerprint occupying the same operation key. Before host wiring, reconciliation
+must account for both entries, with exclusive per-operation access and no shared
+monitor held across SQL.
+
+Distinguish local identity retirement, durable operation completion and provider
+quiescence. A never-submitted proposal may be discarded locally. After a submitted
+reservation has an uncertain outcome, serialize against the exact claim transaction
+and inspect durable reservation evidence before deciding whether identity can be
+released. Expired unactivated proposals require V98's exact phase, owner and install
+hash checks. A committed V94 activation instead belongs to the bound-coordinator
+protocol; it must not be treated as an unactivated reservation.
+
+After a durable supersession, an old manager entry needs exact fingerprint matching,
+zero active users and confirmed claim transfer before retirement. A committed
+activation can transfer local ownership to the retained matching session, but
+attachment still requires current authorization. None of these transitions permits
+reader-pin release or deletion of unverified provider objects. Shutdown must report
+local idleness and unresolved durable work separately from completed reconciliation.
+These are design requirements; the retirement transition is not implemented yet.

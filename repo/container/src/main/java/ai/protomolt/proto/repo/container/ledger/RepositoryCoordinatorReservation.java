@@ -83,7 +83,8 @@ final class RepositoryCoordinatorReservation {
 
     static Optional<Instant> confirm(Tx tx, RepositoryCaller caller, Proposal proposal, RepositoryReadControl control) {
         require(caller, proposal, control);
-        var result = tx.readOnly(em -> read(em, proposal));
+        // Timeout settings are transaction-local, including for confirmation reads.
+        var result = tx.inTransaction(em -> { return read(em, proposal); });
         control.check(); return result;
     }
 

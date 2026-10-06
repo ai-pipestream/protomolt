@@ -129,7 +129,7 @@ class RepositoryCoordinatorSupersessionIT {
     @Test void lostCommitAcknowledgmentConfirmsWithoutRenewal() {
         try(var c=context(POSTGRES)) {
             var initial=initial(c,false,true); var p=proposal(c,initial,LEASE); var once=new AtomicBoolean();
-            var source=DocumentJdbcFaults.afterCommit(c.pool(),() -> { if(once.compareAndSet(false,true)) throw new java.sql.SQLException("supersession reply lost","08006"); });
+            var source=DocumentJdbcFaults.afterCommit(c.pool(),() -> { if(RepositoryCoordinatorReservation.confirm(c.tx(),CALLER,p,NONE).isPresent() && once.compareAndSet(false,true)) throw new java.sql.SQLException("supersession reply lost","08006"); });
             try(var emf=jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",Map.of("hibernate.connection.datasource",source,"hibernate.hbm2ddl.auto","validate"))) {
                 RepositoryCoordinatorSupersession.reserve(new Tx(emf),CALLER,p,NONE);
             }
@@ -150,7 +150,7 @@ class RepositoryCoordinatorSupersessionIT {
                 public long remainingNanos() { return Long.MAX_VALUE; }
             };
             var source=DocumentJdbcFaults.afterCommit(c.pool(),() -> {
-                committed.set(true); cancelled.set(true);
+                if (RepositoryCoordinatorReservation.confirm(c.tx(),CALLER,p,NONE).isPresent()) { committed.set(true); cancelled.set(true); }
             });
             try(var emf=jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
                     Map.of("hibernate.connection.datasource",source,"hibernate.hbm2ddl.auto","validate"))) {

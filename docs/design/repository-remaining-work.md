@@ -855,6 +855,13 @@ failure for inconsistent historical installations. See
 [mode continuity evidence](../evidence/repository/2026-10-06-successor-fixed-modes/README.md).
 Host proposal retention remains the next integration requirement.
 
+The private recovery-attempt owner now retains exact reservation and installation
+identities before mutation, including retries after real commits with cancelled
+replies. It is not host-wired. Capacity and accepted-call closure are qualified;
+unresolved entries still retain their leases. Explicit reconciliation, expired
+proposal supersession, graceful discovery and managed shutdown/resource ownership
+remain required before exposing the factory or enabling automatic recovery.
+
 ## Publication-first revocation race
 
 Typed and opaque real-provider tests now pause the actual final success-writing
@@ -869,3 +876,9 @@ non-revoking control commits. Provider-versioned attempt rows remain for recover
 this does not yet qualify their cleanup. A third case now proves expiry at final
 authorization: the publisher waits while the grant is live, the database clock
 passes its immutable deadline, and release causes refusal without publication.
+
+Recovery-attempt identity and cancelled-acknowledgment checks are recorded in
+[recovery owner evidence](../evidence/repository/2026-10-06-recovery-attempt-owner/README.md).
+Reservation confirmations now honor transaction-local SQL timeouts. The owner’s
+reservation/install view and the session manager’s activation/attachment view are
+separate; managed integration must bound both.
