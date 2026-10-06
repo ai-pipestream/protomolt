@@ -244,8 +244,12 @@ performance qualification must not displace these requirements.
    cover rollback, lost acknowledgment, cancellation before/after insertion and
    commit, exact retry identity and unchanged lease. The earlier claim-without-seeds
    window is closed for this path. Fixed modes and owner admission remain later
-   transactions; qualify interrupted registration in a fresh process before ordinary
-   activation. Never turn an explicit claim-only row into permission to invent
+   transactions. Initial registration now has fresh-process crash qualification:
+   death before its COMMIT leaves neither row; death immediately after COMMIT retains
+   the exact preparation, original claim and unchanged lease for inspection/retry.
+   The reader receives no private input or token file. This does not qualify death
+   after mode binding, host quiescence, or ordinary session activation. Never turn
+   an explicit claim-only row into permission to invent
    replacement seeds.
 5. **Restore, pruning and backup.** Test retained schema/content reachability,
    active read and pending-operation pins, current ACLs and failure recovery.
