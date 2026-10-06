@@ -9,7 +9,7 @@ import java.util.Objects;
 
 /** Private durable-state observation. No identity discovery, renewal, takeover or execution grant. */
 final class DocumentPublicationRegistrationInspection {
-    enum Phase { NO_PREPARATION, PREPARATION_ONLY, MODES_BOUND, OWNER_ADMITTED, OWNER_EXPIRED, ASSESSMENT_STARTED, TERMINAL }
+    enum Phase { NO_PREPARATION, PREPARATION_ONLY, MODES_BOUND, ABANDONED, OWNER_ADMITTED, OWNER_EXPIRED, ASSESSMENT_STARTED, TERMINAL }
     private DocumentPublicationRegistrationInspection() {}
 
     static Phase inspect(Tx tx, PayloadBudget budget, RepositoryCaller caller,
@@ -39,6 +39,8 @@ final class DocumentPublicationRegistrationInspection {
                           EXISTS(SELECT 1 FROM repository_operation_success r WHERE r.account_id=k.account_id
                             AND r.principal=k.principal AND r.operation_id=k.operation_id),
                           EXISTS(SELECT 1 FROM repository_operation_rejection r WHERE r.account_id=k.account_id
+                            AND r.principal=k.principal AND r.operation_id=k.operation_id),
+                          EXISTS(SELECT 1 FROM repository_publication_abandonments r WHERE r.account_id=k.account_id
                             AND r.principal=k.principal AND r.operation_id=k.operation_id)
                         FROM repository_execution_claims k
                         LEFT JOIN repository_publication_preparations p ON p.account_id=k.account_id
@@ -67,8 +69,13 @@ final class DocumentPublicationRegistrationInspection {
                 if (row[2] != null && !nonce.equals(row[2])) throw corrupt();
                 if (row[3] == null) {
                     if (row[6] != null || Boolean.TRUE.equals(row[9]) || Boolean.TRUE.equals(row[10])) throw corrupt();
+                    if (Boolean.TRUE.equals(row[11])) {
+                        if (row[8] != null) throw corrupt();
+                        return Phase.ABANDONED;
+                    }
                     return modes.isPresent() ? Phase.MODES_BOUND : Phase.PREPARATION_ONLY;
                 }
+                if (Boolean.TRUE.equals(row[11])) throw corrupt();
                 if (!nonce.equals(row[3]) || ((Number) row[4]).longValue() != 1)
                     throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
                             "Registration owner was replaced");

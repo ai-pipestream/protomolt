@@ -615,5 +615,23 @@ or modes. Real PostgreSQL tests and limits are recorded in
 
 Fresh-process resume of a partial registration still requires a reviewed coordinator
 ownership and late-provider policy. Sharing a token does not prove the previous
-process stopped. Explicit abandonment, retained-capacity cleanup and automatic
-runtime activation remain unfinished.
+process stopped. Retained-capacity cleanup and automatic runtime activation remain
+unfinished.
+
+## Pre-owner abandonment
+
+The private `DocumentPublicationAbandonment` primitive records an immutable V85
+marker bound to the initial preparation digest, owner nonce and original execution
+claim. It requires the original claim to be live. The claim fence serializes marking
+against command and owner admission. A command row, owner or assessment start
+prevents abandonment; a committed marker prevents preparation/mode retries and
+all subsequent command/owner admission for that operation identity.
+
+This covers registrations that cannot yet have issued provider writes. It does
+not abandon admitted owners or enable takeover. Cancellation before commit rolls
+back the marker; cancellation after commit leaves an uncertain caller outcome.
+Exact retry confirms that outcome only while the original claim is still live.
+After lease expiry, a separate private read-only exact-marker confirmation path is
+needed before session capacity can be released. Never weaken live-claim insertion
+requirements to provide that confirmation. The inspector reports `ABANDONED`, but
+neither it nor this primitive currently evicts session-manager entries.
