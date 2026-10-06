@@ -14,9 +14,12 @@ public final class DocumentInitialRegistrationWorker {
     public static void main(String[] args) throws Exception {
         String mode = args[0];
         require(Set.of("write-before", "write-after", "read-before", "read-after",
-                "write-modes-before", "write-modes-after", "read-modes-before", "read-modes-after").contains(mode), "known worker mode");
-        boolean modeBinding = mode.contains("-modes-");
-        boolean committedModes = mode.equals("read-modes-after");
+                "write-modes-before", "write-modes-after", "read-modes-before", "read-modes-after",
+                "write-owner-before", "write-owner-after", "read-owner-before", "read-owner-after").contains(mode), "known worker mode");
+        boolean ownerAdmission = mode.contains("-owner-");
+        boolean modeBinding = mode.contains("-modes-") || ownerAdmission;
+        boolean committedModes = mode.equals("read-modes-after") || ownerAdmission;
+        boolean committedOwner = mode.equals("read-owner-after");
         var key = new RepositoryOperationLedger.Key("account", "principal", UUID.fromString(args[1]));
         var config = new HikariConfig(); var env = System.getenv();
         config.setJdbcUrl(env.get("TEST_DB_URL")); config.setUsername(env.get("TEST_DB_USER"));
@@ -32,13 +35,20 @@ public final class DocumentInitialRegistrationWorker {
                     try (var query = connection.prepareStatement("""
                             SELECT (SELECT count(*) FROM repository_execution_claims WHERE operation_id=?),
                                    (SELECT count(*) FROM repository_publication_preparations WHERE operation_id=?),
-                                   (SELECT count(*) FROM repository_publication_modes WHERE operation_id=?)
+                                   (SELECT count(*) FROM repository_publication_modes WHERE operation_id=?),
+                                   (SELECT count(*) FROM repository_operation_owners WHERE operation_id=?),
+                                   (SELECT count(*) FROM repository_operations WHERE operation_id=?),
+                                   (SELECT lease_until FROM repository_operation_owners WHERE operation_id=?)
                             """)) {
-                        query.setObject(1, key.operationId()); query.setObject(2, key.operationId());
-                        query.setObject(3, key.operationId());
+                        for (int i = 1; i <= 6; i++) query.setObject(i, key.operationId());
                         try (var rows = query.executeQuery()) {
                             require(rows.next(), "registration counts");
-                            if (rows.getInt(1) == 1 && rows.getInt(2) == 1 && (!modeBinding || rows.getInt(3) == 1)) {
+                            if (rows.getInt(1) == 1 && rows.getInt(2) == 1 && (!modeBinding || rows.getInt(3) == 1)
+                                    && (!ownerAdmission || (rows.getInt(4) == 1 && rows.getInt(5) == 1))) {
+                                if (ownerAdmission) {
+                                    System.out.println("OWNER_COMMIT_LEASE|" + rows.getObject(6, java.time.OffsetDateTime.class).toInstant());
+                                    System.out.flush();
+                                }
                                 armed.set(true);
                                 if (mode.endsWith("-before")) Runtime.getRuntime().halt(81);
                             }
@@ -58,6 +68,8 @@ public final class DocumentInitialRegistrationWorker {
                         System.out.println("INITIAL_LEASE|" + claim.leaseUntil()); System.out.flush();
                         new DocumentPublicationModesJournal(tx, budget).bind(caller, claim, 0, MODES, RepositoryReadControl.NONE);
                     }
+                    if (ownerAdmission) new RepositoryOperationLedger(tx).admit(key, record.command(),
+                            record.seeds().ownerNonce(), record.lease(), claim);
                     throw new AssertionError("Target commit hook did not halt");
                 }
                 require(args.length == 2, "Reader receives only mode and operation ID, no preparation or claim token");
@@ -81,7 +93,8 @@ public final class DocumentInitialRegistrationWorker {
                         String digest = HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
                                 .digest(DocumentPublicationPreparationCodec.encode(loaded.record()).toByteArray()));
                         require(DocumentPublicationRegistrationInspection.inspect(tx, budget, caller, claim, RepositoryReadControl.NONE)
-                                == (committedModes ? DocumentPublicationRegistrationInspection.Phase.MODES_BOUND
+                                == (committedOwner ? DocumentPublicationRegistrationInspection.Phase.OWNER_ADMITTED
+                                        : committedModes ? DocumentPublicationRegistrationInspection.Phase.MODES_BOUND
                                         : DocumentPublicationRegistrationInspection.Phase.PREPARATION_ONLY), "exact registration phase");
                         var modeJournal = new DocumentPublicationModesJournal(tx, budget);
                         var storedModes = modeJournal.load(caller, claim, 0, RepositoryReadControl.NONE);
@@ -93,8 +106,24 @@ public final class DocumentInitialRegistrationWorker {
                         }
                         require(journal.acquireInitial(caller, loaded.record(), claim.token(), RepositoryReadControl.NONE).equals(claim),
                                 "exact retry preserves claim epoch token and lease");
+                        if (committedOwner) {
+                            var ownerRow = (Object[]) tx.readOnly(em -> em.createNativeQuery("""
+                                    SELECT owner_generation,owner_token,lease_until FROM repository_operation_owners WHERE operation_id=:id
+                                    """).setParameter("id", key.operationId()).getSingleResult());
+                            var originalOwner = new RepositoryOperationLedger.Owner(key, ((Number) ownerRow[0]).longValue(),
+                                    (UUID) ownerRow[1], (java.time.Instant) ownerRow[2], Optional.of(claim));
+                            require(originalOwner.generation() == 1 && originalOwner.token().equals(loaded.record().seeds().ownerNonce()),
+                                    "owner binds original preparation nonce and first generation");
+                            require(new DocumentOperationCommands(tx).load(caller, key.account(), key.operationId(), RepositoryReadControl.NONE)
+                                    .orElseThrow().intent().equals(command.intent()), "admitted command is exactly the journaled command");
+                            var retried = new RepositoryOperationLedger(tx).admit(key, command, loaded.record().seeds().ownerNonce(),
+                                    loaded.record().lease(), claim).owner().orElseThrow();
+                            require(retried.equals(originalOwner), "owner retry does not renew replace or advance ownership");
+                            System.out.println("OWNER_RETAINED_LEASE|" + retried.leaseUntil());
+                        }
                         System.out.println("REGISTRATION_RETAINED_OK|" + command.sha256() + "|" + digest);
                         if (modeBinding) System.out.println(committedModes ? "MODES_BOUND_RETAINED_OK" : "MODES_ABSENT_PREPARATION_RETAINED_OK");
+                        if (ownerAdmission) System.out.println(committedOwner ? "OWNER_RETAINED_OK" : "OWNER_ABSENT_MODES_RETAINED_OK");
                     }
                 }
                 for (String table : List.of("repository_publication_modes", "repository_operation_owners", "repository_operations",
@@ -102,7 +131,9 @@ public final class DocumentInitialRegistrationWorker {
                         "document_part_attempts", "document_operation_selection_attempts")) {
                     long count = tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM " + table + " WHERE operation_id=:id")
                             .setParameter("id", key.operationId()).getSingleResult()).longValue());
-                    require(count == (committedModes && table.equals("repository_publication_modes") ? 1 : 0),
+                    int expected = (committedModes && table.equals("repository_publication_modes"))
+                            || (committedOwner && Set.of("repository_operation_owners", "repository_operations").contains(table)) ? 1 : 0;
+                    require(count == expected,
                             "inspection must not advance " + table);
                 }
                 require(budget.reservedBytes() == 0, "all inspection reservations released");

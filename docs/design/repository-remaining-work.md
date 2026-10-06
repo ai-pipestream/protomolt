@@ -251,7 +251,12 @@ performance qualification must not displace these requirements.
    before/after-COMMIT process-death coverage: preparation survives both cases,
    while only a committed mode row is loaded and retried unchanged. Inspection
    distinguishes PREPARATION_ONLY from MODES_BOUND without admitting an owner or
-   advancing execution. Host quiescence and ordinary session activation remain open. Never turn
+   advancing execution. Owner admission also has before/after-COMMIT crash coverage:
+   its command and owner appear together or neither appears. Fresh inspection
+   distinguishes MODES_BOUND from OWNER_ADMITTED, and exact retry preserves the
+   original owner nonce, generation and lease. No assessment or upload is started.
+   These test-only private SQL readers are not a production recovery endpoint.
+   Host quiescence and ordinary session activation remain open. Never turn
    an explicit claim-only row into permission to invent
    replacement seeds.
 5. **Restore, pruning and backup.** Test retained schema/content reachability,
