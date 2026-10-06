@@ -1794,7 +1794,12 @@ cache eviction. The recursive SQL chain check returns one boolean to Java and
 uses the supplied SQL timeout; it is linear in history length, not a fixed-memory
 or fixed-work guarantee. Long-history qualification remains outstanding.
 
-The packaged managed-host test holds a real Git schema load through shutdown, but
-does not yet combine that worker with claim takeover. Add that composed test before
-claiming whole-host takeover qualification. Preserve provider UNKNOWN state and
-tombstones throughout; this work grants no physical reclamation right.
+The packaged `FencedSchemaWorkerProbe` now holds a real Git descriptor load through
+V90, natural lease expiry and V97 transfer. It invokes `managedJournaled` directly
+with a short test lease; production lease defaults remain unchanged. Shutdown
+stays incomplete until the worker finishes, then succeeds without V91 for the
+fenced predecessor. Exact successor claim and UNKNOWN reservation state remain
+unchanged. The test exercises real versioned provider uploads and retained reads
+before schema resolution. It qualifies managed-runtime worker gating, not process
+death, remote PUT quiescence, or complete recovery-owner integration into the host.
+This work grants no physical reclamation right.

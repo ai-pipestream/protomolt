@@ -928,7 +928,24 @@ The snapshot classification above is now implemented through
 separate outcomes from V90/V91; final attestation rechecks after worker drain.
 Database tests cover V90-to-V97 transfer, same-epoch registration loss, V98 without
 activation, complete handoff chains and unreviewed gaps. SQL failures propagate
-and retain resources for another shutdown call. Still add the composed packaged
-case holding a real external schema worker across takeover, qualify long histories,
-and integrate recovery-owner shutdown with the managed host. Existing held-worker
-and snapshot tests do not by themselves establish those combined behaviors.
+and retain resources for another shutdown call. The composed packaged
+`FencedSchemaWorkerProbe` now holds a real external Git schema load across takeover
+and proves managed-runtime shutdown still waits. Long-history qualification and
+recovery-owner shutdown integration with the managed host remain outstanding.
+
+Next integration slice: opt-in, exact-operation recovery on an authenticated client
+retry. `RepoServices.publishDocument` already has the caller, canonical command,
+complete payloads and schema access, while `RepositoryRecoveryAttempts` retains
+uncertain proposals and installation identities. The managed runtime should own
+that bounded owner and an explicit recovery authority distinct from drain authority;
+never rediscover or mint a new proposal while a local retained entry exists.
+Compare the retried mode map with retained immutable modes before V93, because
+modes are outside the canonical command. Preserve exact retry state on mismatch.
+Do not broaden this into fleet scheduling without a trusted caller/payload source.
+
+Design the shutdown reconciliation path before exposing that integration:
+`RepoServices.close` rejects new client retries, so retained uncertain entries must
+have a private exact-identity completion or retirement path after admission closes.
+Waiting active handles or an empty session cache alone cannot release their bytes
+or establish whole-host recovery drain. Terminal/graceful and unsupported recovery
+states need explicit outcomes rather than adoption or fallback.
