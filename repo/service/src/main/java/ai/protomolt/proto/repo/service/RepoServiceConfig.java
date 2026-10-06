@@ -475,8 +475,7 @@ public record RepoServiceConfig(
                 && !blobStore.equals(BLOB_STORE_REDIS)
                 && !blobStore.equals(BLOB_STORE_S3_REDIS_CACHE)) {
             throw new IllegalArgumentException(ENV_BLOB_STORE
-                    + " must be one of s3|repo|repo-inprocess|redis|s3-redis-cache"
-                    + " (got \"" + blobStore + "\")");
+                    + " must be one of s3|repo|repo-inprocess|redis|s3-redis-cache");
         }
         if (s3ConditionalWrites && !blobStore.equals(BLOB_STORE_S3)
                 && !blobStore.equals(BLOB_STORE_S3_REDIS_CACHE)) {
@@ -526,7 +525,7 @@ public record RepoServiceConfig(
         purgeQueue = purgeQueue.trim().toLowerCase(java.util.Locale.ROOT);
         if (!purgeQueue.equals(PURGE_QUEUE_JDBC) && !purgeQueue.equals(PURGE_QUEUE_KAFKA)) {
             throw new IllegalArgumentException(ENV_PURGE_QUEUE
-                    + " must be one of jdbc|kafka (got \"" + purgeQueue + "\")");
+                    + " must be one of jdbc|kafka");
         }
         if (purgeQueue.equals(PURGE_QUEUE_KAFKA) && kafkaBootstrapServers == null) {
             throw new IllegalArgumentException(ENV_KAFKA_BOOTSTRAP_SERVERS + " is required when "
@@ -564,84 +563,45 @@ public record RepoServiceConfig(
      * @return the resolved config
      */
     public static RepoServiceConfig fromEnvironment() {
+        return fromEnvironment(System.getenv());
+    }
+
+    /** Parse one environment snapshot, refusing malformed configured limits and flags. */
+    public static RepoServiceConfig fromEnvironment(java.util.Map<String, String> environment) {
+        var env = new RepositoryEnvironment(environment);
         return new RepoServiceConfig(
-                parseIntOrDefault(System.getenv(ENV_GRPC_PORT), DEFAULT_GRPC_PORT),
-                LedgerConfig.fromEnvironment(),
-                System.getenv(ENV_S3_ENDPOINT),
-                envOrDefault(ENV_S3_REGION, DEFAULT_S3_REGION),
-                System.getenv(ENV_S3_ACCESS_KEY),
-                System.getenv(ENV_S3_SECRET_KEY),
-                envOrDefault(ENV_DEFAULT_BUCKET_BASE, DEFAULT_BUCKET_BASE),
-                parseHttpPort(System.getenv(ENV_HTTP_PORT)),
-                envOrDefault(ENV_BLOB_STORE, BLOB_STORE_S3),
-                System.getenv(ENV_REPO_TARGET),
-                envOrDefault(ENV_REPO_DRIVE, DEFAULT_REPO_DRIVE),
-                envOrDefault(ENV_REDIS_URI, DEFAULT_REDIS_URI),
-                parseIntOrDefault(System.getenv(ENV_REDIS_TTL_SECONDS), DEFAULT_REDIS_TTL_SECONDS),
-                parseLongOrDefault(System.getenv(ENV_REDIS_MAX_OBJECT_BYTES),
-                        DEFAULT_REDIS_MAX_OBJECT_BYTES),
-                parseBoolOrDefault(System.getenv(ENV_LIFECYCLE_ENABLED), DEFAULT_LIFECYCLE_ENABLED),
-                parseLongOrDefault(System.getenv(ENV_PURGE_INTERVAL_MS), DEFAULT_PURGE_INTERVAL_MS),
-                parseLongOrDefault(System.getenv(ENV_SWEEP_INTERVAL_MS), DEFAULT_SWEEP_INTERVAL_MS),
-                parseBoolOrDefault(System.getenv(ENV_RECONCILE_ENABLED), DEFAULT_RECONCILE_ENABLED),
-                parseBoolOrDefault(System.getenv(ENV_RECONCILE_DRY_RUN), DEFAULT_RECONCILE_DRY_RUN),
-                parseLongOrDefault(System.getenv(ENV_RECONCILE_MIN_AGE_MS),
-                        DEFAULT_RECONCILE_MIN_AGE_MS),
-                System.getenv(ENV_KAFKA_BOOTSTRAP_SERVERS),
-                envOrDefault(ENV_KAFKA_TOPIC, DEFAULT_KAFKA_TOPIC),
-                System.getenv(ENV_SCHEMA_REGISTRY_URL),
-                System.getenv(ENV_SEED_ACCOUNT_ID),
-                envOrDefault(ENV_PURGE_QUEUE, PURGE_QUEUE_JDBC),
-                envOrDefault(ENV_KAFKA_PURGE_TOPIC, DEFAULT_KAFKA_PURGE_TOPIC),
-                parseBoolOrDefault(System.getenv(ENV_S3_CONDITIONAL_WRITES), false), RemoteBucketBindings.parse(System.getenv(ENV_REPO_BUCKET_BINDINGS)),
-                ManagedStoragePolicy.fromEnvironment(System.getenv()));
-    }
-
-    /** HTTP port parse: {@code "off"} (and {@code "0"}) disables the HTTP server. */
-    private static int parseHttpPort(String value) {
-        if (value != null && value.trim().equalsIgnoreCase("off")) {
-            return 0;
-        }
-        return parseIntOrDefault(value, DEFAULT_HTTP_PORT);
-    }
-
-    private static String envOrDefault(String name, String fallback) {
-        String value = System.getenv(name);
-        return value == null || value.isBlank() ? fallback : value;
+                (int) env.number(ENV_GRPC_PORT, DEFAULT_GRPC_PORT, 0, 65535),
+                LedgerConfig.fromEnvironment(environment),
+                environment.get(ENV_S3_ENDPOINT),
+                env.text(ENV_S3_REGION, DEFAULT_S3_REGION),
+                environment.get(ENV_S3_ACCESS_KEY),
+                environment.get(ENV_S3_SECRET_KEY),
+                env.text(ENV_DEFAULT_BUCKET_BASE, DEFAULT_BUCKET_BASE),
+                env.httpPort(ENV_HTTP_PORT, DEFAULT_HTTP_PORT),
+                env.text(ENV_BLOB_STORE, BLOB_STORE_S3),
+                environment.get(ENV_REPO_TARGET),
+                env.text(ENV_REPO_DRIVE, DEFAULT_REPO_DRIVE),
+                env.text(ENV_REDIS_URI, DEFAULT_REDIS_URI),
+                (int) env.number(ENV_REDIS_TTL_SECONDS, DEFAULT_REDIS_TTL_SECONDS, 0, Integer.MAX_VALUE),
+                env.number(ENV_REDIS_MAX_OBJECT_BYTES, DEFAULT_REDIS_MAX_OBJECT_BYTES, 0, Long.MAX_VALUE),
+                env.flag(ENV_LIFECYCLE_ENABLED, DEFAULT_LIFECYCLE_ENABLED),
+                env.number(ENV_PURGE_INTERVAL_MS, DEFAULT_PURGE_INTERVAL_MS, 1, Long.MAX_VALUE),
+                env.number(ENV_SWEEP_INTERVAL_MS, DEFAULT_SWEEP_INTERVAL_MS, 1, Long.MAX_VALUE),
+                env.flag(ENV_RECONCILE_ENABLED, DEFAULT_RECONCILE_ENABLED),
+                env.flag(ENV_RECONCILE_DRY_RUN, DEFAULT_RECONCILE_DRY_RUN),
+                env.number(ENV_RECONCILE_MIN_AGE_MS, DEFAULT_RECONCILE_MIN_AGE_MS, 0, Long.MAX_VALUE),
+                environment.get(ENV_KAFKA_BOOTSTRAP_SERVERS),
+                env.text(ENV_KAFKA_TOPIC, DEFAULT_KAFKA_TOPIC),
+                environment.get(ENV_SCHEMA_REGISTRY_URL),
+                environment.get(ENV_SEED_ACCOUNT_ID),
+                env.text(ENV_PURGE_QUEUE, PURGE_QUEUE_JDBC),
+                env.text(ENV_KAFKA_PURGE_TOPIC, DEFAULT_KAFKA_PURGE_TOPIC),
+                env.flag(ENV_S3_CONDITIONAL_WRITES, false), RemoteBucketBindings.parse(environment.get(ENV_REPO_BUCKET_BINDINGS)),
+                ManagedStoragePolicy.fromEnvironment(environment));
     }
 
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
-    private static int parseIntOrDefault(String value, int fallback) {
-        if (value == null || value.isBlank()) {
-            return fallback;
-        }
-        try {
-            return Integer.parseInt(value.trim());
-        } catch (NumberFormatException e) {
-            return fallback;
-        }
-    }
-
-    private static long parseLongOrDefault(String value, long fallback) {
-        if (value == null || value.isBlank()) {
-            return fallback;
-        }
-        try {
-            return Long.parseLong(value.trim());
-        } catch (NumberFormatException e) {
-            return fallback;
-        }
-    }
-
-    /** Boolean parse: {@code "true"/"1"/"yes"/"on"} (case-insensitive) is true, anything else false. */
-    private static boolean parseBoolOrDefault(String value, boolean fallback) {
-        if (value == null || value.isBlank()) {
-            return fallback;
-        }
-        String v = value.trim().toLowerCase(java.util.Locale.ROOT);
-        return v.equals("true") || v.equals("1") || v.equals("yes") || v.equals("on");
-    }
 }

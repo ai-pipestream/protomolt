@@ -87,27 +87,44 @@ public record LedgerConfig(
      * @return the resolved config
      */
     public static LedgerConfig fromEnvironment() {
+        return fromEnvironment(System.getenv());
+    }
+
+    /** Uses one supplied environment snapshot; configured pool sizes must be positive integers. */
+    public static LedgerConfig fromEnvironment(java.util.Map<String, String> environment) {
         return new LedgerConfig(
-                envOrDefault(ENV_JDBC_URL, DEFAULT_JDBC_URL),
-                envOrDefault(ENV_USERNAME, DEFAULT_USERNAME),
-                envOrDefault(ENV_PASSWORD, DEFAULT_PASSWORD),
-                parseIntOrDefault(System.getenv(ENV_POOL_SIZE), DEFAULT_POOL_SIZE),
+                envOrDefault(environment, ENV_JDBC_URL, DEFAULT_JDBC_URL),
+                envOrDefault(environment, ENV_USERNAME, DEFAULT_USERNAME),
+                password(environment),
+                poolSize(environment),
                 DEFAULT_MIGRATION_LOCATION);
     }
 
-    private static String envOrDefault(String name, String fallback) {
-        String value = System.getenv(name);
-        return value == null || value.isBlank() ? fallback : value;
+    private static String envOrDefault(java.util.Map<String, String> environment, String name, String fallback) {
+        if (!environment.containsKey(name)) return fallback;
+        String value = environment.get(name);
+        if (value == null || value.isBlank()) throw new IllegalArgumentException(name + " must not be blank when present");
+        return value;
     }
 
-    private static int parseIntOrDefault(String value, int fallback) {
-        if (value == null || value.isBlank()) {
-            return fallback;
-        }
+    private static String password(java.util.Map<String, String> environment) {
+        if (!environment.containsKey(ENV_PASSWORD)) return DEFAULT_PASSWORD;
+        String value = environment.get(ENV_PASSWORD);
+        if (value == null) throw new IllegalArgumentException(ENV_PASSWORD + " must not be null when present");
+        return value; // An explicitly empty password is valid for password-less local authentication.
+    }
+
+    private static int poolSize(java.util.Map<String, String> environment) {
+        if (!environment.containsKey(ENV_POOL_SIZE)) return DEFAULT_POOL_SIZE;
+        String value = environment.get(ENV_POOL_SIZE);
         try {
-            return Integer.parseInt(value.trim());
-        } catch (NumberFormatException e) {
-            return fallback;
+            if (value != null) {
+                int size = Integer.parseInt(value.trim());
+                if (size > 0) return size;
+            }
+        } catch (NumberFormatException invalid) {
+            throw new IllegalArgumentException(ENV_POOL_SIZE + " must be a positive integer");
         }
+        throw new IllegalArgumentException(ENV_POOL_SIZE + " must be a positive integer");
     }
 }

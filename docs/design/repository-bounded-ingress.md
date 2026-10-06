@@ -144,3 +144,25 @@ The configured concurrency does not guarantee that many maximum-sized requests
 fit at once; excess work fails with RESOURCE_EXHAUSTED. This minimum is admission
 accounting, not a JVM memory or read-response bound. The public factory and listener
 are tested from outside the service package against PostgreSQL and Redis.
+
+## Next standalone slice: explicit archive bootstrap
+
+The archive-only listener cannot create drives. A standalone launcher must therefore
+require an explicit bootstrap account and drive name and provision that drive through
+the existing local repository port before listening. Reuse its idempotent provisioning
+and provider-identity checks; an existing incompatible drive must fail startup. Do not
+call the document intake/pipeline seeder or temporarily mount the general DriveService.
+After bootstrap, authenticated clients can create archives using that drive.
+
+Keep this a separate entry point from `RepoServiceMain`. Validate its token, limits,
+bootstrap settings and environment before acquiring resources. Invalid configured
+numbers and flags must not become defaults. Start only the dedicated archive listener
+and its existing lifecycle; leave HTTP, documents, reflection, health, bridge generation
+and streaming unavailable. Startup failure must close acquired resources, and shutdown
+must retain admitted writes until provider completion or report failure to drain.
+
+Acceptance needs a real PostgreSQL/Redis child-process launch, authenticated archive
+write/read and retry, restart with the same drive, incompatible existing-drive refusal,
+missing-token and invalid-limit failures before resource acquisition, unmounted RPC
+checks, and shutdown during a delayed real write. The embedding and Netty tests above
+do not replace the process-level cases. No standalone launcher is implemented yet.

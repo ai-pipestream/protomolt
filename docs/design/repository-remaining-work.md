@@ -333,7 +333,10 @@ and remote retry/history behavior and cancellation without early resource releas
 Startup tests also verify physical identity conflicts preserve the original
 binding and release newly acquired providers. An explicit public Java factory and
 plain-value options now support embedding, with a tested guide. Full repository
-parity, standalone activation and response/read-memory bounds remain open.
+parity, standalone activation and response/read-memory bounds remain open. The next
+standalone slice requires explicit account/drive bootstrap through the local port;
+the archive-only listener cannot provision a drive. Keep environment parsing strict
+and test process startup, restart and failed bootstrap before publishing a launch guide.
 
 The default `RepoServices` managed profile still requires streaming, non-expiring
 writes and reclamation. `ArchiveObjectWriter` distinguishes byte-array

@@ -16,6 +16,12 @@ Build a `RepoServiceConfig` directly or read the existing configuration through
 `RepoServiceConfig.fromEnvironment()`. Supply PostgreSQL connection settings and
 these storage settings:
 
+The environment parser rejects malformed limits and flags, out-of-range ports,
+nonpositive pool sizes, and present-but-blank defaulted service settings. Omit an
+optional setting to use its documented default. A blank storage selector does not
+select S3, and a misspelled lifecycle flag does not disable recovery. Error messages
+identify the setting without echoing numeric, flag or selector values.
+
 ```sh
 DOCUMENT_PLATFORM_BLOB_STORE=redis
 DOCUMENT_PLATFORM_REDIS_URI=redis://localhost:6379
