@@ -172,7 +172,7 @@ final class DocumentHistoricalSchemaRows {
     private static ByteString bytes(Object bytes) { return ByteString.copyFrom((byte[]) bytes); }
     private static String hex(Object bytes) { return HexFormat.of().formatHex((byte[]) bytes); }
     static RepositoryException invalid(String message) { return new RepositoryException(RepositoryException.Code.DATA_LOSS, message); }
-    private static RepositoryException unsupported(String message) {
+    static RepositoryException unsupported(String message) {
         return new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, message);
     }
 }

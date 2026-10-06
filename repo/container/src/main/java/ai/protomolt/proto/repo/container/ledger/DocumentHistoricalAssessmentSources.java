@@ -84,6 +84,23 @@ final class DocumentHistoricalAssessmentSources implements AutoCloseable {
         }
     }
 
+    void requireOpaque(DocumentPublicationMember member, RepositoryReadControl control) {
+        requireOpen();
+        if (!command.intent().getMembersList().contains(member)) throw new IllegalArgumentException("Historical assessment member differs");
+        var checked = new HashSet<Key>();
+        for (var part : member.getPartsList()) {
+            control.check();
+            if (!part.hasHistoricalReuse()) continue;
+            var selector = part.getHistoricalReuse();
+            if (!entries.containsKey(selector)) throw new IllegalArgumentException("Historical opaque selector differs from captured command");
+            var key = key(selector);
+            if (checked.add(key)) {
+                var source = sources.get(key);
+                source.history().requireOpaqueAdmission(source.use(), control::check);
+            }
+        }
+    }
+
     MemberResolution resolve(DocumentPublicationMember member, Optional<DocumentSchemaAdmission.Definition> ordinaryContainer,
             DocumentPublicationCandidate.Resolver ordinary, DocumentSchemaAdmission.Limits limits,
             PayloadBudget budget, RepositoryReadControl control) {

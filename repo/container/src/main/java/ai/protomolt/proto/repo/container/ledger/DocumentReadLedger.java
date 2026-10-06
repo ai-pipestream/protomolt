@@ -462,6 +462,17 @@ public final class DocumentReadLedger {
             }
         }
 
+        void requireOpaqueAdmission(PinnedRead<DocumentHistoricalReadPlan>.Use use, Runnable control) {
+            control.run();
+            if (use.plan() != plan) throw new IllegalArgumentException("Opaque use belongs to another historical capture");
+            tx.inTransaction(em -> {
+                DocumentAdmissionAuthorization.authorizeHistory(em, caller, address);
+                DocumentHistoricalOpaqueAdmission.requireOpaque(em, address, revision, control);
+                control.run(); use.plan();
+                return null;
+            });
+        }
+
         /** Loads retained assets under the captured caller, borrowing this capture's exact live Use. */
         DocumentHistoricalSchemaRows.Snapshot captureSchemas(PinnedRead<DocumentHistoricalReadPlan>.Use use,
                 Runnable control, java.util.function.LongConsumer reserve) {

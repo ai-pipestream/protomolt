@@ -25,8 +25,10 @@ whole-command assessment owner now retains source Uses, binds the exact caller,
 assesses members under one supplied policy and time, and rechecks current source
 READ during inspection and replay. Its callback-scoped inspection provides immutable
 summaries plus the caller-supplied command and policy values; it exposes no borrowed
-payload or publication capability. Historical opaque-source classification and
-durable publication integration remain unfinished.
+payload or publication capability. Historical opaque-source classification now
+requires explicit sealed OPAQUE admissions and refuses typed downgrades or missing
+admissions. The two-source mixed-mode negative case and durable publication
+integration remain unfinished.
 The SQL assessment suite now also covers one member assembled from two historical
 sources, including second-source access revocation and release of both pins. The
 ordinary registry resolver is unavailable in that fixture. This closes the host

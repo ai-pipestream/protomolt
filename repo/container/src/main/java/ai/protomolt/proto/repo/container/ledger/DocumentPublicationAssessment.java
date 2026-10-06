@@ -175,9 +175,8 @@ final class DocumentPublicationAssessment implements AutoCloseable {
                         && member.getPartsList().stream().anyMatch(part -> part.hasHistoricalReuse())
                         && member.getPartsList().stream().allMatch(part -> part.hasHistoricalReuse() || part.hasEmpty())), control);
         if (historical != null) for (var member : command.intent().getMembersList()) {
-            if (selectedModes.get(member.getMemberId()) == DocumentPublicationCandidate.Mode.OPAQUE
-                    && member.getPartsList().stream().anyMatch(part -> part.hasHistoricalReuse()))
-                throw new UnsupportedOperationException("Historical opaque assessment requires explicit source classification");
+            if (selectedModes.get(member.getMemberId()) == DocumentPublicationCandidate.Mode.OPAQUE)
+                historical.requireOpaque(member, readControl);
         }
         var reservations = reservations(budget);
         var typed = new LinkedHashMap<String, DocumentSchemaAssessment>();

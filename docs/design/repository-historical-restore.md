@@ -436,9 +436,15 @@ ordinals against their pinned plans. Run classification under the captured calle
 current READ and live Use; it grants no target-policy exception or write authority.
 Keep this scalar classification separate from typed descriptor loading so opaque
 preservation does not deserialize an unknown Any or require a current registry.
-Acceptance must cover explicit opaque success, typed-source refusal, unknown source,
-current typed-required policy refusal, revocation, cancellation and zero leaked
-reservations. Sol reviewed this boundary; it is not implemented yet. Source
+The internal assessment implements this classification in
+`DocumentHistoricalOpaqueAdmission`, under the exact captured Use and current READ.
+It checks the stored retention manifest without loading descriptor artifacts or
+decoding Any payloads. The assessment owner keeps the existing fragment hash checks,
+target-policy gate and inspection/replay authorization. Acceptance covers explicit
+opaque success, typed-source refusal, admission-less source refusal, current
+typed-required policy refusal, revocation, cancellation and reservation cleanup.
+A two-source opaque member containing a typed source still needs an explicit host
+regression; all distinct sources are classified before any fragment capture. Source
 READ checks belong at delivery and commit; deterministic evidence replay remains free
 of provider and SQL calls. Keep source Uses through observed-runtime CREATE and atomic
 reference publication. The public route remains disabled while those integrations

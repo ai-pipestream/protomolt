@@ -26,6 +26,70 @@ class DocumentHistoricalRestoreAssessmentIT {
     private static final Instant AT = Instant.parse("2026-10-05T00:00:00Z");
 
     @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"valid", "unknown", "typed-source", "typed-required", "revoked", "cancel"})
+    void opaqueHistoricalAssessmentRequiresExplicitSourceModeAndCurrentPolicy(String variant) throws Exception {
+        try (var c = context(POSTGRES)) {
+            boolean typedSource = variant.equals("typed-source");
+            var original = DocumentSchemaRetentionFixture.prepare(c, typedSource);
+            var policies = new DocumentSchemaPolicies(c.tx());
+            if (!variant.equals("unknown")) policies.activate(original.batch().policy().policy(), 0, () -> {});
+            var f = new Fixture(original, variant.equals("unknown")
+                    ? DocumentSchemaRetentionFixture.publish(c, original, (em, revision) -> {})
+                    : DocumentSchemaRetentionFixture.publishBound(c, original, (em, candidate) -> {},
+                            (em, revision, manifest) -> { if (typedSource) original.retention().write(em, original.owner(), revision, () -> {}); }));
+            if (variant.equals("unknown")) policies.activate(original.batch().policy().policy(), 0, () -> {});
+            var policy = original.batch().policy();
+            if (typedSource || variant.equals("typed-required")) policy = policies.activate(DocumentAdmissionPolicy.of(
+                    policy.policy().definition().toBuilder().setMode(typedSource
+                            ? DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_OPAQUE_ALLOWED
+                            : DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_TYPED_REQUIRED).build(), () -> {}), 1, () -> {});
+            var currentPolicy = policy;
+            grant(c, f.address(), true);
+            var caller = new RepositoryCaller("scoped", false, Set.of("account"), Set.of());
+            var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var history = ledger.captureHistorical(caller, f.address(), f.revision());
+            var command = new DocumentPublicationCommand(original.command().intent().toBuilder()
+                    .setOperationId(UUID.randomUUID().toString()).setMembers(0, member(f, history)).build());
+            var budget = new PayloadBudget(32L * 1024 * 1024);
+            var control = new RepositoryReadControl() {
+                public boolean isCancelled() { return variant.equals("cancel") && budget.reservedBytes() > 0; }
+                public long remainingNanos() { return Long.MAX_VALUE; }
+            };
+            if (variant.equals("revoked")) grant(c, f.address(), false);
+            try {
+                if (variant.equals("valid")) {
+                    try (var assessment = DocumentPublicationAssessment.prepareHistorical(command, currentPolicy,
+                            Map.of("member", DocumentPublicationCandidate.Mode.OPAQUE), Map.of("member", f.fragments()), Optional.empty(),
+                            (m, occurrence) -> { throw new AssertionError("Opaque preservation must not resolve schemas"); }, budget,
+                            new ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits(4_000_000, 32, 100, 100, 100_000),
+                            AT, caller, List.of(history), control)) {
+                        assessment.inspect(access -> {
+                            var snapshot = access.snapshot(); assertThat(snapshot.typed()).isEmpty();
+                            assertThat(snapshot.opaque()).containsExactly("member"); assertThat(snapshot.failure()).isEmpty();
+                        }, control);
+                        assessment.verifySchemas(control);
+                        grant(c, f.address(), false);
+                        assertThatThrownBy(() -> assessment.inspect(access -> { throw new AssertionError("Revoked inspection"); }, control))
+                                .isInstanceOf(RepositoryException.class);
+                    }
+                } else assertThatThrownBy(() -> DocumentPublicationAssessment.prepareHistorical(command, currentPolicy,
+                        Map.of("member", DocumentPublicationCandidate.Mode.OPAQUE), Map.of("member", f.fragments()), Optional.empty(),
+                        (m, occurrence) -> { throw new AssertionError("Opaque mode must not resolve schemas"); }, budget,
+                        new ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits(4_000_000, 32, 100, 100, 100_000),
+                        AT, caller, List.of(history), control)).satisfies(error -> {
+                            if (variant.equals("typed-required")) assertThat(error).isInstanceOf(IllegalArgumentException.class);
+                            else assertThat(error).isInstanceOfSatisfying(RepositoryException.class, denied ->
+                                    assertThat(denied.code()).isEqualTo(switch (variant) {
+                                        case "revoked" -> RepositoryException.Code.NOT_FOUND;
+                                        case "cancel" -> RepositoryException.Code.CANCELLED;
+                                        default -> RepositoryException.Code.FAILED_PRECONDITION;
+                                    }));
+                        });
+            } finally { assertThat(budget.reservedBytes()).isZero(); release(ledger, history); }
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
     void oneMemberCombinesTwoSqlHistoricalSourcesAndRechecksBoth(boolean revokeSecond) throws Exception {
         try (var c = context(POSTGRES)) {
@@ -598,7 +662,17 @@ class DocumentHistoricalRestoreAssessmentIT {
     }
     private record Fixture(DocumentSchemaRetentionFixture.Fixture original, UUID revision) {
         NodeAddress address() { return original.command().intent().getMembers(0).getDestination().getAddress(); }
-        Map<Integer, ByteString> fragments() { return original.batch().proofs().get("member").fragments(); }
+        Map<Integer, ByteString> fragments() {
+            var parts = original.command().intent().getMembers(0).getPartsList();
+            var result = new HashMap<Integer, ByteString>();
+            for (var fragment : original.content().assembly().fragments()) {
+                int ordinal = java.util.stream.IntStream.range(0, parts.size()).filter(index ->
+                        parts.get(index).getSlot().getPart() == fragment.part()
+                                && parts.get(index).getSlot().getSubKey().equals(fragment.subKey())).findFirst().orElseThrow();
+                result.put(ordinal, fragment.bytes());
+            }
+            return Map.copyOf(result);
+        }
     }
     private static Fixture fixture(Context c) throws Exception {
         var f = DocumentSchemaRetentionFixture.prepare(c);
