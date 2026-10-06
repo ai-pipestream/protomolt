@@ -2048,3 +2048,10 @@ V98 proposal types. Both proposal identities participate in fencing retirement;
 unactivated reconciliation rejects a pending V97. See the
 [bounded transition evidence](../evidence/repository/2026-10-06-expired-bound-reconciliation/README.md)
 for current checks and remaining acceptance cases.
+
+Competing bound-owner recovery now has two focused PostgreSQL cases, with and
+without a retained V97 whose commit failed. An independently activated winner is
+not adopted after expiry; rejection and local cleanup leave its exact claim,
+owner and leases unchanged. Retry metadata and session retirement are separately
+asserted. See [competing-owner evidence](../evidence/repository/2026-10-06-foreign-bound-winner/README.md).
+This does not qualify real provider-worker drain or revoked-caller retries.

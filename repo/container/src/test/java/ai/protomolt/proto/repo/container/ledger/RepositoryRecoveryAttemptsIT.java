@@ -560,6 +560,85 @@ class RepositoryRecoveryAttemptsIT {
         }
     }
 
+    @ParameterizedTest @ValueSource(booleans={false,true})
+    void foreignBoundWinnerCannotReplaceRetainedAttempt(boolean pending) throws Exception {
+        try (var c=context(POSTGRES)) {
+            var source=source(c); var cancelled=new AtomicBoolean(); var rejectReservation=new AtomicBoolean();
+            var before=DocumentJdbcFaults.beforeCommit(c.pool(),connection -> {
+                if (!rejectReservation.get()) return;
+                try (var statement=connection.createStatement();
+                     var rows=statement.executeQuery("SELECT count(*) FROM repository_coordinator_expirations")) {
+                    rows.next();
+                    if (rows.getInt(1)==2 && rejectReservation.compareAndSet(true,false))
+                        throw new java.sql.SQLException("Bound reservation rejected by test", "08006");
+                }
+            });
+            var datasource=DocumentJdbcFaults.afterCommit(before,() -> {
+
+                if (count(c,"repository_successor_executions")==1) cancelled.set(true);
+            });
+            var control=new RepositoryReadControl() {
+                public boolean isCancelled() { return cancelled.get(); }
+                public long remainingNanos() { return Long.MAX_VALUE; }
+            };
+            var attemptBudget=new PayloadBudget(128_000_000); var lease=Duration.ofSeconds(3);
+            try (var emf=jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",Map.of(
+                    "hibernate.connection.datasource",datasource,"hibernate.hbm2ddl.auto","validate"));
+                 var resources=DocumentJournaledSessionsIT.resources(new Tx(emf).withTimeouts(TIMEOUTS),1,1_000_000,lease,new PayloadBudget(128_000_000));
+                 var attempts=new RepositoryRecoveryAttempts(new Tx(emf),attemptBudget,resources.sessions(),lease,TIMEOUTS,1)) {
+                try (var attempt=attempts.begin(CALLER,source.command(),source.observation())) {
+                    var original=attempt.proposal();
+                    attempt.advance(CALLER,CALLER,MODES,NONE); attempt.advance(CALLER,CALLER,MODES,NONE);
+                    assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,MODES,control))
+                            .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.CANCELLED));
+                    assertThat(count(c,"repository_successor_executions")).isEqualTo(1);
+                    expire(c,source.command());
+                    assertThat(new RepositoryCoordinatorRecoveryDiscovery(c.tx(),TIMEOUTS)
+                            .inspect(CALLER,original.predecessor().key(),source.command().sha256(),NONE).status())
+                            .isEqualTo(RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND);
+                    if (pending) {
+                        rejectReservation.set(true);
+                        assertThatThrownBy(() -> attempt.reconcileExpiredBound(CALLER,CALLER,MODES,NONE))
+                                .hasStackTraceContaining("Bound reservation rejected by test");
+                        assertThat(rejectReservation).isFalse();
+                        assertThat(count(c,"repository_coordinator_expirations")).isEqualTo(1);
+                    }
+                    var discovered=new RepositoryCoordinatorRecoveryDiscovery(c.tx(),TIMEOUTS)
+                            .inspect(CALLER,original.predecessor().key(),source.command().sha256(),NONE);
+                    try (var other=DocumentJournaledSessionsIT.resources(c.tx().withTimeouts(TIMEOUTS),1,1_000_000,
+                            lease,new PayloadBudget(128_000_000));
+                         var winners=new RepositoryRecoveryAttempts(c.tx(),new PayloadBudget(128_000_000),
+                                 other.sessions(),lease,TIMEOUTS,1);
+                         var winner=winners.begin(CALLER,source.command(),discovered)) {
+                        winner.advance(CALLER,CALLER,MODES,NONE);
+                        winner.advance(CALLER,CALLER,MODES,NONE);
+                        winner.advance(CALLER,CALLER,MODES,NONE);
+                        expire(c,source.command());
+                        var durable=claimAndOwner(c,source.command());
+                        long held=attemptBudget.reservedBytes();
+                        assertThatThrownBy(() -> attempt.reconcileExpiredBound(CALLER,CALLER,MODES,NONE))
+                                .hasMessageContaining(pending ? "differs from original binding" : "differs from retained attempt");
+                        assertThat(attempt.proposal()).isSameAs(original);
+                        assertThat(attemptBudget.reservedBytes()).isEqualTo(held).isPositive();
+                        assertThat(claimAndOwner(c,source.command())).containsExactly(durable);
+                        assertThat(count(c,"repository_coordinator_expirations")).isEqualTo(2);
+                        assertThat(count(c,"repository_successor_executions")).isEqualTo(2);
+                        assertThat(count(c,"repository_coordinator_supersessions")).isZero();
+                        assertThat(attempt.retireFenced(CALLER,CALLER,NONE)).isTrue();
+                        assertThat(attemptBudget.reservedBytes()).isZero();
+                        // Retiring retry metadata does not remove separately owned sessions.
+                        assertThat(resources.sessions().retainedSessions()).isEqualTo(1);
+                        assertThat(resources.sessions().retireClaimFenced(CALLER,source.command(),NONE)).isTrue();
+                        assertThat(other.sessions().retainedSessions()).isEqualTo(1);
+                        assertThat(claimAndOwner(c,source.command())).containsExactly(durable);
+                    }
+                    attempts.close();
+                }
+                assertThat(attempts.drain()).isEqualTo(new RepositoryRecoveryAttempts.Drain(0,0));
+            }
+        }
+    }
+
     @Test void expiredCommittedActivationCannotBeSupersededAsUnactivated() throws Exception {
         try (var c=context(POSTGRES)) {
             var source=source(c); var cancelled=new AtomicBoolean();
