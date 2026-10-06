@@ -1803,3 +1803,28 @@ unchanged. The test exercises real versioned provider uploads and retained reads
 before schema resolution. It qualifies managed-runtime worker gating, not process
 death, remote PUT quiescence, or complete recovery-owner integration into the host.
 This work grants no physical reclamation right.
+
+### Retained retry inputs before managed-host integration
+
+`RepositoryRecoveryAttempts.resume(caller, command)` reopens only an existing
+local entry. It performs no SQL or discovery and cannot mint a proposal. Missing
+entries return empty; closed admission, a different canonical command or caller
+identity, concurrent use and exhausted call capacity remain explicit errors.
+`begin` uses the same synchronized lookup before considering a supplied discovery
+observation, so a retained attempt wins even when that observation is stale.
+
+The private `advance` contract now requires the resubmitted mode map. Modes are
+outside the canonical publication command. The map is bounded before copying,
+then validated by the existing mode encoder for exact member keys and byte size.
+Malformed shape fails before SQL. After loading immutable retained modes, a valid
+but different map fails with FAILED_PRECONDITION before V93 installation; the same
+comparison occurs before V94 activation. The proposal and retained preparation
+stay available for a corrected retry. Cached preparation is not a fresh caller
+authorization grant; activation still applies its existing live authorization.
+
+An acknowledged activated handle retains only its bounded fixed-mode map for
+idempotent comparison until handle closure, then clears that reference. The
+recovery entry and its byte leases are released as before. This is an internal
+prerequisite for authenticated client-retry integration, not a new public endpoint
+or automatic scheduler. Existing immutable mode storage and validation semantics
+are unchanged; this adds a comparison with the prospective host retry's inputs.

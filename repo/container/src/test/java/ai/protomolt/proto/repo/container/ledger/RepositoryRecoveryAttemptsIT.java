@@ -57,10 +57,10 @@ class RepositoryRecoveryAttemptsIT {
                 RepositoryCoordinatorReservation.Proposal original;
                 try (var attempt=attempts.begin(CALLER,source.command(),source.observation())) {
                     original=attempt.proposal();
-                    assertThat(attempt.advance(CALLER,CALLER,NONE)).isEqualTo(RepositoryRecoveryAttempts.Phase.RESERVED);
-                    if (completedPhases>=2) assertThat(attempt.advance(CALLER,CALLER,NONE)).isEqualTo(RepositoryRecoveryAttempts.Phase.INSTALLED);
+                    assertThat(attempt.advance(CALLER,CALLER,MODES,NONE)).isEqualTo(RepositoryRecoveryAttempts.Phase.RESERVED);
+                    if (completedPhases>=2) assertThat(attempt.advance(CALLER,CALLER,MODES,NONE)).isEqualTo(RepositoryRecoveryAttempts.Phase.INSTALLED);
                     if (completedPhases==3) {
-                        assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,NONE)).hasStackTraceContaining("Activation commit refused by test");
+                        assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,MODES,NONE)).hasStackTraceContaining("Activation commit refused by test");
                         assertThat(resources.sessions().retainedSessions()).isEqualTo(1);
                         assertThat(count(c,"repository_successor_executions")).isZero();
                     }
@@ -73,17 +73,17 @@ class RepositoryRecoveryAttemptsIT {
                     assertThat(count(c,"repository_coordinator_supersessions")).isEqualTo(1);
                     assertThat(attempt.proposal()).isSameAs(original);
                     assertThat(budget.reservedBytes()).isEqualTo(held);
-                    assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,NONE)).hasMessageContaining("Pending supersession");
+                    assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,MODES,NONE)).hasMessageContaining("Pending supersession");
                 }
                 Object committed=c.tx().readOnly(em -> em.createNativeQuery("SELECT successor_token FROM repository_coordinator_supersessions").getSingleResult());
-                try (var retry=attempts.begin(CALLER,source.command(),source.observation())) {
+                try (var retry=attempts.resume(CALLER,source.command()).orElseThrow()) {
                     assertThat(retry.supersedeExpired(CALLER,CALLER,NONE)).isEqualTo(RepositoryRecoveryAttempts.Phase.RESERVED);
                     assertThat(retry.proposal().successorToken()).isEqualTo(committed);
                     assertThat(retry.proposal().successorIncarnation()).isNotEqualTo(original.successorIncarnation());
                     assertThat(retry.proposal().predecessor().epoch()).isEqualTo(original.predecessor().epoch()+1);
                     assertThat(budget.reservedBytes()).isEqualTo((long)source.command().canonical().size()+source.command().intent().getSerializedSize());
-                    assertThat(retry.advance(CALLER,CALLER,NONE)).isEqualTo(RepositoryRecoveryAttempts.Phase.INSTALLED);
-                    assertThat(retry.advance(CALLER,CALLER,NONE)).isEqualTo(RepositoryRecoveryAttempts.Phase.ACTIVATED);
+                    assertThat(retry.advance(CALLER,CALLER,MODES,NONE)).isEqualTo(RepositoryRecoveryAttempts.Phase.INSTALLED);
+                    assertThat(retry.advance(CALLER,CALLER,MODES,NONE)).isEqualTo(RepositoryRecoveryAttempts.Phase.ACTIVATED);
                     assertThat(resources.sessions().retainedSessions()).isEqualTo(1);
                     assertThat(count(c,"repository_coordinator_supersessions")).isEqualTo(1);
                     assertThat(count(c,"repository_successor_executions")).isEqualTo(1);
@@ -111,8 +111,8 @@ class RepositoryRecoveryAttemptsIT {
                  var attempts=new RepositoryRecoveryAttempts(new Tx(emf),attemptBudget,resources.sessions(),lease,TIMEOUTS,1)) {
                 try (var attempt=attempts.begin(CALLER,source.command(),source.observation())) {
                     var original=attempt.proposal();
-                    attempt.advance(CALLER,CALLER,NONE); attempt.advance(CALLER,CALLER,NONE);
-                    assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,control))
+                    attempt.advance(CALLER,CALLER,MODES,NONE); attempt.advance(CALLER,CALLER,MODES,NONE);
+                    assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,MODES,control))
                             .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.CANCELLED));
                     assertThat(count(c,"repository_successor_executions")).isEqualTo(1);
                     expire(c,source.command());
@@ -156,7 +156,7 @@ class RepositoryRecoveryAttemptsIT {
                 try (var attempt=attempts.begin(CALLER,source.command(),source.observation())) {
                     var original=attempt.proposal();
                     assertThat(attempt.retireFenced(CALLER,CALLER,NONE)).isFalse();
-                    attempt.advance(CALLER,CALLER,NONE); attempt.advance(CALLER,CALLER,NONE);
+                    attempt.advance(CALLER,CALLER,MODES,NONE); attempt.advance(CALLER,CALLER,MODES,NONE);
                     expire(c,source.command());
                     assertThat(attempt.retireFenced(CALLER,CALLER,NONE)).isFalse();
                     if (pending) {
@@ -174,8 +174,8 @@ class RepositoryRecoveryAttemptsIT {
                     long held=budget.reservedBytes();
                     assertThatThrownBy(() -> attempt.supersedeExpired(CALLER,CALLER,NONE))
                             .hasMessageContaining(pending ? "differs from original binding" : "differs from retained attempt");
-                    if (pending) assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,NONE)).hasMessageContaining("Pending supersession");
-                    else assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,NONE))
+                    if (pending) assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,MODES,NONE)).hasMessageContaining("Pending supersession");
+                    else assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,MODES,NONE))
                             .hasStackTraceContaining("Execution requires exact live successor claim");
                     assertThat(count(c,"repository_successor_executions")).isZero();
                     assertThat(attempt.proposal()).isSameAs(original);
@@ -200,7 +200,7 @@ class RepositoryRecoveryAttemptsIT {
                     assertThat(attempt.retireFenced(CALLER,CALLER,NONE)).isTrue();
                     assertThat(budget.reservedBytes()).isZero();
                     assertThat(claimAndOwner(c,source.command())).containsExactly(before);
-                    assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,NONE)).hasMessageContaining("retired");
+                    assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,MODES,NONE)).hasMessageContaining("retired");
                     assertThat(resources.sessions().retainedSessions()).isEqualTo(pending ? 0 : 1);
                     assertThat(resources.sessions().retireSuperseded(CALLER,source.command(),NONE)).isFalse();
                     var scoped=new RepositoryCaller(CALLER.principalName(),false,Set.of("account"),Set.of());
@@ -258,6 +258,44 @@ class RepositoryRecoveryAttemptsIT {
         }
     }
 
+    @ParameterizedTest @ValueSource(booleans={false,true})
+    void changedRetryModesCannotInstallOrActivate(boolean installed) throws Exception {
+        try (var c=context(POSTGRES)) {
+            var source=source(c); var budget=new PayloadBudget(128_000_000);
+            try (var resources=DocumentJournaledSessionsIT.resources(c.tx(),2,1_000_000,LEASE,new PayloadBudget(128_000_000));
+                 var attempts=new RepositoryRecoveryAttempts(c.tx(),budget,resources.sessions(),LEASE,TIMEOUTS,1)) {
+                var changed=new HashMap<String,DocumentPublicationCandidate.Mode>();
+                MODES.forEach((member,mode) -> changed.put(member,mode==DocumentPublicationCandidate.Mode.TYPED
+                        ? DocumentPublicationCandidate.Mode.OPAQUE : DocumentPublicationCandidate.Mode.TYPED));
+                RepositoryCoordinatorReservation.Proposal proposal;
+                try (var attempt=attempts.begin(CALLER,source.command(),source.observation())) {
+                    proposal=attempt.proposal();
+                    assertThat(attempt.advance(CALLER,CALLER,MODES,NONE)).isEqualTo(RepositoryRecoveryAttempts.Phase.RESERVED);
+                    if (installed) assertThat(attempt.advance(CALLER,CALLER,MODES,NONE)).isEqualTo(RepositoryRecoveryAttempts.Phase.INSTALLED);
+                    assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,changed,NONE))
+                            .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+                    assertThat(count(c,"repository_successor_installs")).isEqualTo(installed ? 1 : 0);
+                    assertThat(count(c,"repository_successor_executions")).isZero();
+                    assertThat(attempt.proposal()).isSameAs(proposal);
+                    assertThat(budget.reservedBytes()).isPositive();
+                }
+                try (var retry=attempts.resume(CALLER,source.command()).orElseThrow()) {
+                    assertThat(retry.proposal()).isSameAs(proposal);
+                    RepositoryRecoveryAttempts.Phase phase;
+                    do { phase=retry.advance(CALLER,CALLER,MODES,NONE); } while (phase!=RepositoryRecoveryAttempts.Phase.ACTIVATED);
+                    assertThatThrownBy(() -> retry.advance(CALLER,CALLER,changed,NONE))
+                            .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+                    assertThat(retry.advance(CALLER,CALLER,MODES,NONE)).isEqualTo(RepositoryRecoveryAttempts.Phase.ACTIVATED);
+                    retry.close();
+                    assertThatThrownBy(() -> retry.advance(CALLER,CALLER,MODES,NONE)).hasMessageContaining("closed");
+                }
+                attempts.close();
+                assertThat(attempts.drain()).isEqualTo(new RepositoryRecoveryAttempts.Drain(0,0));
+                assertThat(budget.reservedBytes()).isZero();
+            }
+        }
+    }
+
     private static void expire(Context c, DocumentPublicationCommand command) {
         c.tx().readOnly(em -> em.createNativeQuery("""
                 SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM
@@ -273,6 +311,7 @@ class RepositoryRecoveryAttemptsIT {
             var source=source(c); var budget=new PayloadBudget(128_000_000);
             try (var resources=DocumentJournaledSessionsIT.resources(c.tx(),2,1_000_000,LEASE,budget);
                  var attempts=new RepositoryRecoveryAttempts(c.tx(),budget,resources.sessions(),LEASE,TIMEOUTS,1)) {
+                assertThat(attempts.resume(CALLER,source.command())).isEmpty();
                 try (var pressure=budget.reserve(budget.capacity()-1)) {
                     assertThatThrownBy(() -> attempts.begin(CALLER,source.command(),source.observation()))
                             .isInstanceOf(PayloadBudget.CapacityExceededException.class);
@@ -282,12 +321,19 @@ class RepositoryRecoveryAttemptsIT {
                     var changed=new DocumentPublicationCommand(source.command().intent().toBuilder().setMembers(0,
                             source.command().intent().getMembers(0).toBuilder().setMemberId("changed")).build());
                     assertThatThrownBy(() -> attempts.begin(CALLER,changed,source.observation())).hasMessageContaining("command changed");
-                    for (int i=0;i<completedPhases;i++) attempt.advance(CALLER,CALLER,NONE);
+                    assertThatThrownBy(() -> attempts.resume(CALLER,changed)).hasMessageContaining("command changed");
+                    assertThatThrownBy(() -> attempts.resume(CALLER,source.command())).hasMessageContaining("in use");
+                    var scoped=new RepositoryCaller(CALLER.principalName(),false,Set.of("account"),Set.of());
+                    assertThatThrownBy(() -> attempts.resume(scoped,source.command())).hasMessageContaining("caller identity changed");
+                    assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,Map.of(),NONE)).isInstanceOf(IllegalArgumentException.class);
+                    assertThat(count(c,"repository_coordinator_reservations")).isZero();
+                    for (int i=0;i<completedPhases;i++) attempt.advance(CALLER,CALLER,MODES,NONE);
                     attempts.close();
                     assertThat(attempts.drain()).isEqualTo(new RepositoryRecoveryAttempts.Drain(1,1));
                     assertThatThrownBy(() -> attempts.begin(CALLER,source.command(),source.observation())).hasMessageContaining("admission is closed");
+                    assertThatThrownBy(() -> attempts.resume(CALLER,source.command())).hasMessageContaining("admission is closed");
                     RepositoryRecoveryAttempts.Phase current;
-                    do { current=attempt.advance(CALLER,CALLER,NONE); } while (current!=RepositoryRecoveryAttempts.Phase.ACTIVATED);
+                    do { current=attempt.advance(CALLER,CALLER,MODES,NONE); } while (current!=RepositoryRecoveryAttempts.Phase.ACTIVATED);
                     assertThat(attempts.drain()).isEqualTo(new RepositoryRecoveryAttempts.Drain(1,0));
                 }
                 assertThat(attempts.drain()).isEqualTo(new RepositoryRecoveryAttempts.Drain(0,0));
@@ -321,19 +367,19 @@ class RepositoryRecoveryAttemptsIT {
                 RepositoryCoordinatorReservation.Proposal proposal;
                 try (var attempt=attempts.begin(CALLER,source.command(),source.observation())) {
                     proposal=attempt.proposal();
-                    if (!phase.equals("reservation")) assertThat(attempt.advance(CALLER,CALLER,control)).isEqualTo(RepositoryRecoveryAttempts.Phase.RESERVED);
-                    if (phase.equals("activation")) assertThat(attempt.advance(CALLER,CALLER,control)).isEqualTo(RepositoryRecoveryAttempts.Phase.INSTALLED);
-                    assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,control))
+                    if (!phase.equals("reservation")) assertThat(attempt.advance(CALLER,CALLER,MODES,control)).isEqualTo(RepositoryRecoveryAttempts.Phase.RESERVED);
+                    if (phase.equals("activation")) assertThat(attempt.advance(CALLER,CALLER,MODES,control)).isEqualTo(RepositoryRecoveryAttempts.Phase.INSTALLED);
+                    assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,MODES,control))
                             .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.CANCELLED));
                 }
                 assertThat(armed).isFalse(); assertThat(count(c,table)).isEqualTo(1);
                 var identity=c.tx().readOnly(em -> em.createNativeQuery("SELECT successor_token FROM repository_coordinator_reservations").getSingleResult());
                 Object ownerBefore=!phase.equals("reservation") ? c.tx().readOnly(em -> em.createNativeQuery("SELECT owner_nonce FROM repository_successor_installs").getSingleResult()) : null;
-                try (var retry=attempts.begin(CALLER,source.command(),source.observation())) {
+                try (var retry=attempts.resume(CALLER,source.command()).orElseThrow()) {
                     assertThat(retry.proposal()).isSameAs(proposal);
                     assertThatThrownBy(() -> attempts.begin(CALLER,source.command(),source.observation())).hasMessageContaining("in use");
                     RepositoryRecoveryAttempts.Phase current;
-                    do { current=retry.advance(CALLER,CALLER,NONE); } while (current!=RepositoryRecoveryAttempts.Phase.ACTIVATED);
+                    do { current=retry.advance(CALLER,CALLER,MODES,NONE); } while (current!=RepositoryRecoveryAttempts.Phase.ACTIVATED);
                     attempts.close();
                     assertThat(attempts.drain()).isEqualTo(new RepositoryRecoveryAttempts.Drain(1,0));
                 }

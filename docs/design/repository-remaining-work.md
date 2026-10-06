@@ -949,3 +949,10 @@ have a private exact-identity completion or retirement path after admission clos
 Waiting active handles or an empty session cache alone cannot release their bytes
 or establish whole-host recovery drain. Terminal/graceful and unsupported recovery
 states need explicit outcomes rather than adoption or fallback.
+
+The input prerequisite above is implemented: recovery `advance` requires bounded
+resubmitted modes and compares them with immutable modes before installation and
+activation. `resume` reopens a retained local attempt without rediscovery. Corrected
+retries preserve proposal identity. The managed runtime still does not own or
+invoke this recovery entry point; its distinct recovery authority, state routing,
+complete-payload retry execution and shutdown reconciliation remain to be wired.

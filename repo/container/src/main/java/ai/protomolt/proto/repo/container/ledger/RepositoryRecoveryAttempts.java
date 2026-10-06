@@ -66,29 +66,40 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
     /** No SQL here. An existing entry wins over a newer observation of its own reservation. */
     synchronized Attempt begin(RepositoryCaller caller, DocumentPublicationCommand command,
             RepositoryCoordinatorRecoveryDiscovery.Observation observed) {
+        var retained=resume(caller,command);
+        if (retained.isPresent()) return retained.orElseThrow();
+        Objects.requireNonNull(observed);
+        var key=new RepositoryOperationLedger.Key(command.intent().getAccountId(),caller.principalName(),command.operationId());
+        if (entries.size()>=capacity || activeCalls>=capacity) throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED,"Recovery capacity exhausted");
+        var predecessor=observed.candidate().map(RepositoryCoordinatorRecoveryDiscovery.Candidate::predecessor)
+                .or(() -> observed.unactivated().map(RepositoryCoordinatorRecoveryDiscovery.UnactivatedCandidate::predecessor))
+                .orElseThrow(() -> new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                        "Recovery state is not eligible: "+observed.status()));
+        var target=sessions.successorTarget(key,command.sha256(),predecessor.incarnation());
+        var proposal=proposal(observed,target.incarnation());
+        if (!proposal.predecessor().key().equals(key) || !proposal.predecessor().commandSha256().equals(command.sha256()))
+            throw conflict("Recovery observation differs from command");
+        var bytes=budget.reserve((long)command.canonical().size()+command.intent().getSerializedSize());
+        var entry=new Entry(command,caller,proposal,target,bytes); entries.put(key,entry);
+        return borrow(key,entry);
+    }
+
+    /** Reopen only a local retained attempt, without SQL, discovery or a newly minted identity. */
+    synchronized Optional<Attempt> resume(RepositoryCaller caller, DocumentPublicationCommand command) {
         if (closed) throw new RepositoryException(RepositoryException.Code.UNAVAILABLE,"Recovery admission is closed");
-        Objects.requireNonNull(caller); Objects.requireNonNull(command); Objects.requireNonNull(observed);
+        Objects.requireNonNull(caller); Objects.requireNonNull(command);
         var key=new RepositoryOperationLedger.Key(command.intent().getAccountId(),caller.principalName(),command.operationId());
         DocumentAdmissionAuthorization.requireCaller(caller,key,key.account());
         var entry=entries.get(key);
-        if (entry!=null) {
-            requireCaller(entry,caller);
-            if (!entry.command.canonical().equals(command.canonical())) throw conflict("Recovery command changed");
-            if (entry.active) throw conflict("Recovery attempt is in use");
-            if (activeCalls>=capacity) throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED,"Recovery call capacity exhausted");
-        } else {
-            if (entries.size()>=capacity || activeCalls>=capacity) throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED,"Recovery capacity exhausted");
-            var predecessor=observed.candidate().map(RepositoryCoordinatorRecoveryDiscovery.Candidate::predecessor)
-                    .or(() -> observed.unactivated().map(RepositoryCoordinatorRecoveryDiscovery.UnactivatedCandidate::predecessor))
-                    .orElseThrow(() -> new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
-                            "Recovery state is not eligible: "+observed.status()));
-            var target=sessions.successorTarget(key,command.sha256(),predecessor.incarnation());
-            var proposal=proposal(observed,target.incarnation());
-            if (!proposal.predecessor().key().equals(key) || !proposal.predecessor().commandSha256().equals(command.sha256()))
-                throw conflict("Recovery observation differs from command");
-            var bytes=budget.reserve((long)command.canonical().size()+command.intent().getSerializedSize());
-            entry=new Entry(command,caller,proposal,target,bytes); entries.put(key,entry);
-        }
+        if (entry==null) return Optional.empty();
+        requireCaller(entry,caller);
+        if (!entry.command.canonical().equals(command.canonical())) throw conflict("Recovery command changed");
+        if (entry.active) throw conflict("Recovery attempt is in use");
+        if (activeCalls>=capacity) throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED,"Recovery call capacity exhausted");
+        return Optional.of(borrow(key,entry));
+    }
+
+    private Attempt borrow(RepositoryOperationLedger.Key key, Entry entry) {
         entry.active=true;
         activeCalls++;
         return new Attempt(key,entry);
@@ -112,15 +123,22 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
         private final RepositoryOperationLedger.Key key;
         private final Entry entry;
         private boolean ended;
+        private Map<String,DocumentPublicationCandidate.Mode> activatedModes;
         private Attempt(RepositoryOperationLedger.Key key,Entry entry) { this.key=key; this.entry=entry; }
 
         /** One bounded protocol phase. Both authorities are supplied anew; no cached permission grants. */
-        synchronized Phase advance(RepositoryCaller authority, RepositoryCaller caller, RepositoryReadControl control) {
+        synchronized Phase advance(RepositoryCaller authority, RepositoryCaller caller,
+                Map<String, DocumentPublicationCandidate.Mode> expectedModes, RepositoryReadControl control) {
             if (ended) throw new IllegalStateException("Recovery attempt call is closed");
             Objects.requireNonNull(control).check();
             RepositoryCoordinatorReservation.require(authority,entry.proposal,control);
             DocumentAdmissionAuthorization.requireCaller(caller,key,key.account()); requireCaller(entry,caller);
             if (entry.pending!=null) throw conflict("Pending supersession must be confirmed before advancing");
+            Objects.requireNonNull(expectedModes);
+            if (expectedModes.size()>10000) throw new IllegalArgumentException("Invalid publication mode count");
+            var requestedModes=Map.copyOf(expectedModes);
+            DocumentPublicationModesJournal.encode(entry.command,requestedModes);
+            control.check();
             switch (entry.phase) {
                 case PROPOSED -> {
                     switch (entry.proposal) {
@@ -133,6 +151,7 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
                 case RESERVED -> {
                     if (entry.loaded==null) entry.loaded=new RepositoryReservedPreparation(tx,budget,timeouts).load(
                             authority,caller,entry.proposal,RepositoryCoordinatorReservation.owner(entry.proposal).orElseThrow(),control);
+                    requireModes(entry.loaded.modes(),requestedModes);
                     if (entry.plan==null) {
                         var bytes=budget.reserve(DocumentPublicationPreparationCodec.MAX_BYTES);
                         try {
@@ -144,15 +163,17 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
                     entry.phase=Phase.INSTALLED;
                 }
                 case INSTALLED -> {
+                    requireModes(entry.loaded.modes(),requestedModes);
                     // A previous failed activation may still occupy this operation's local slot.
                     // False is not permission to replace it: activation still checks its fingerprint.
                     sessions.retireSuperseded(caller,entry.command,control);
                     sessions.activateSuccessor(entry.target,authority,caller,entry.plan,control);
+                    activatedModes=entry.loaded.modes();
                     entry.phase=Phase.ACTIVATED;
                     synchronized (RepositoryRecoveryAttempts.this) { entries.remove(key,entry); }
                     entry.release();
                 }
-                case ACTIVATED -> { }
+                case ACTIVATED -> requireModes(activatedModes,requestedModes);
                 case RETIRED -> throw conflict("Recovery attempt is retired");
             }
             return entry.phase;
@@ -216,6 +237,7 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
         @Override public synchronized void close() {
             if (ended) return;
             ended=true;
+            activatedModes=null;
             synchronized (RepositoryRecoveryAttempts.this) { entry.active=false; activeCalls--; }
         }
     }
@@ -231,6 +253,11 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
             throw conflict("Recovery caller identity changed");
     }
     private static RepositoryException conflict(String message) { return new RepositoryException(RepositoryException.Code.CONFLICT,message); }
+    private static void requireModes(Map<String,DocumentPublicationCandidate.Mode> fixed,
+            Map<String,DocumentPublicationCandidate.Mode> requested) {
+        if (!Objects.requireNonNull(fixed).equals(requested)) throw new RepositoryException(
+                RepositoryException.Code.FAILED_PRECONDITION,"Retry publication modes differ from fixed modes");
+    }
 
     /** Reports unresolved identities separately from active calls; neither field attests provider quiescence. */
     synchronized Drain drain() {
