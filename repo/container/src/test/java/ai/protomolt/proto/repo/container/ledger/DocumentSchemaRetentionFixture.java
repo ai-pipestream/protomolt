@@ -49,6 +49,11 @@ final class DocumentSchemaRetentionFixture {
 
     static Fixture prepare(Context c, boolean typed, boolean explicitSchema, Document document,
             String graphAddress, String driveName, WriteProvenance provenance) throws Exception {
+        return prepare(c, typed, explicitSchema, document, graphAddress, driveName, provenance, null);
+    }
+
+    static Fixture prepare(Context c, boolean typed, boolean explicitSchema, Document document,
+            String graphAddress, String driveName, WriteProvenance provenance, Long expectedRevision) throws Exception {
         var ownership = document.getOwnership();
         var profile = new ManagedBackendLedger.Profile(new BackendIdentity("test-location", "test-location/v1",
                 Map.of("endpoint", "synthetic")), "schema-retention");
@@ -61,6 +66,7 @@ final class DocumentSchemaRetentionFixture {
                 .setOwnership(ownership).setRowKind(DocumentPublicationRowKind.DOCUMENT_PUBLICATION_ROW_KIND_PIPELINE)
                 .setDestination(DocumentRevisionCondition.newBuilder().setIfAbsent(true).setAddress(NodeAddress.newBuilder()
                         .setAccountId("account").setDocId(document.getDocId()).setGraphId("graph").setGraphAddressId(graphAddress)));
+        if (expectedRevision != null) member.setDestination(member.getDestination().toBuilder().setExpectedMutationRevision(expectedRevision));
         var fragments = new HashMap<Integer, ByteString>();
         for (var part : DocumentPartCodec.split(document, PartLayouts.document())) {
             fragments.put(member.getPartsCount(), ByteString.copyFrom(part.bytes()));

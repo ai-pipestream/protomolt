@@ -511,8 +511,12 @@ The source Uses are checked again before immediate constraint validation.
 
 Initial real-SQL cases cover typed and opaque publication, reuse after the head
 advances, policy changes, and rollback after failure at terminal-success insertion.
-Full qualification still requires mixed historical/current/upload commands,
-multiple revisions of the same source node/slot, and historical READ revocation
-during a lock wait. Public restoration, claimed-session activation and automatic
+Additional real-SQL qualification now covers two revisions of the same source
+node/slot with distinct payloads, physical IDs and provenance, and mixed current
+and historical reuse. READ revocation while publication waits at its policy lock
+refuses the operation without advancing the published revision. See the
+`2026-10-06-historical-publication-races` evidence record for controls and limits.
+Mixed fresh-upload/current/historical commands remain a required follow-up.
+Public restoration, claimed-session activation and automatic
 claim transfer remain disabled. These are required follow-ups, not an assertion
 that the full repository goal is complete.
