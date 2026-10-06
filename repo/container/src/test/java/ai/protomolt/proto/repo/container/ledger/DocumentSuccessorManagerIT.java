@@ -53,6 +53,67 @@ class DocumentSuccessorManagerIT {
         }
     }
 
+    @ParameterizedTest @ValueSource(booleans = {true, false})
+    void failedActivationRetiresOnlyAfterReplacementOwnerIsInstalled(boolean beforeInstall) throws Exception {
+        try (var c = context(POSTGRES); var r = resources(c.tx(), 1, 1_000_000);
+             var other = resources(c.tx(), 1, 1_000_000)) {
+            assertThat(r.sessions().coordinatorIdentity()).isNotEqualTo(other.sessions().coordinatorIdentity());
+            var shortLease = Duration.ofSeconds(1);
+            var reserved = RepositorySuccessorInstallIT.plan(c, input(c), shortLease, r.sessions().coordinatorIdentity());
+            var first = RepositorySuccessorInstall.prepare(reserved.reservation(), reserved.previous(), shortLease, MODES);
+            var command = first.next().command();
+            if (beforeInstall) assertThatThrownBy(() -> r.sessions().activateSuccessor(CALLER, CALLER, first, NONE))
+                    .hasMessageContaining("install is not committed");
+            RepositorySuccessorInstall.install(c.tx(), r.budget(), CALLER, first, NONE);
+            if (!beforeInstall) {
+                var denied = new RepositoryCaller("principal", false, Set.of("account"), Set.of());
+                assertThatThrownBy(() -> r.sessions().activateSuccessor(CALLER, denied, first, NONE))
+                        .isInstanceOfSatisfying(RepositoryException.class,
+                                e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.NOT_FOUND));
+            }
+            assertThat(r.sessions().retainedSessions()).isEqualTo(1);
+            assertThat(count(c)).isZero();
+            c.tx().readOnly(em -> em.createNativeQuery("""
+                    SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM
+                     (GREATEST(c.lease_until,o.lease_until)-clock_timestamp())))+0.05)
+                    FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                    WHERE c.operation_id=:id
+                    """).setParameter("id",command.operationId()).getSingleResult());
+            assertThat(r.sessions().retireSuperseded(CALLER, command, NONE)).isFalse();
+            var timeouts = new SqlTimeouts(Duration.ofSeconds(1), Duration.ofSeconds(5));
+            var observed = new RepositoryCoordinatorRecoveryDiscovery(c.tx(), timeouts)
+                    .inspect(CALLER, first.next().key(), command.sha256(), NONE).unactivated().orElseThrow();
+            var proposal = new RepositoryCoordinatorReservation.SupersededUnactivated(observed.predecessor(),
+                    UUID.randomUUID(), other.sessions().coordinatorIdentity(), LEASE, observed.owner(),
+                    observed.preparationSha256(), observed.installation());
+            RepositoryCoordinatorSupersession.reserve(c.tx(), CALLER, proposal, NONE);
+            // Claim transfer alone leaves the old owner in place. It is not retirement proof.
+            assertThat(r.sessions().retireSuperseded(CALLER, command, NONE)).isFalse();
+            try (var loaded = new RepositoryReservedPreparation(c.tx(), r.budget(), timeouts)
+                    .load(CALLER, CALLER, proposal, proposal.owner(), NONE)) {
+                var replacement = RepositorySuccessorInstall.prepare(proposal, loaded.record(), LEASE, loaded.modes());
+                RepositorySuccessorInstall.install(c.tx(), r.budget(), CALLER, replacement, NONE);
+                assertThatThrownBy(() -> r.sessions().activateSuccessor(CALLER, CALLER, replacement, NONE))
+                        .hasMessageContaining("incarnation");
+                var durable = identity(c, replacement);
+                assertThat(r.sessions().retireSuperseded(CALLER, command, NONE)).isTrue();
+                assertThat(r.sessions().retainedSessions()).isZero();
+                assertThat(r.sessions().retainedCommandBytes()).isZero();
+                assertThat(identity(c, replacement)).containsExactly(durable);
+                assertThat(count(c)).isZero();
+                other.sessions().activateSuccessor(CALLER, CALLER, replacement, NONE);
+                assertThat(other.sessions().retainedSessions()).isEqualTo(1);
+                assertThat(count(c)).isEqualTo(1);
+                assertThat(r.sessions().retireSuperseded(CALLER, command, NONE)).isFalse();
+                assertThat(other.sessions().retireSuperseded(CALLER, command, NONE)).isFalse();
+                var unrelated = anotherInstalled(c, r.sessions(), first.previous());
+                r.sessions().activateSuccessor(CALLER, CALLER, unrelated, NONE);
+                assertThat(r.sessions().retainedSessions()).isEqualTo(1);
+                assertThat(count(c)).isEqualTo(2);
+            }
+        }
+    }
+
     @Test void capacityAndClosedManagerRejectBeforeActivation() throws Exception {
         try (var c = context(POSTGRES); var r = resources(c.tx(), 1, 1_000_000)) {
             var first = installed(c, r.sessions());

@@ -882,3 +882,12 @@ Recovery-attempt identity and cancelled-acknowledgment checks are recorded in
 Reservation confirmations now honor transaction-local SQL timeouts. The owner’s
 reservation/install view and the session manager’s activation/attachment view are
 separate; managed integration must bound both.
+
+Session retirement after a different coordinator installs the replacement owner
+is covered by [two-coordinator evidence](../evidence/repository/2026-10-06-successor-session-retirement/README.md).
+Reuse the existing exact-owner retirement helper rather than adding another API.
+A fixed-incarnation manager cannot supersede its own expired reservation under the
+current Java and SQL guards. Resolve fresh-incarnation ownership for automatic
+same-host recovery before integration; do not rotate the manager identity while
+other sessions still depend on it. Recovery-attempt entry reconciliation remains
+unimplemented and separate from this existing session-retirement behavior.

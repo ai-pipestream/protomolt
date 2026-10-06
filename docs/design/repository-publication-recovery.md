@@ -1606,4 +1606,21 @@ activation can transfer local ownership to the retained matching session, but
 attachment still requires current authorization. None of these transitions permits
 reader-pin release or deletion of unverified provider objects. Shutdown must report
 local idleness and unresolved durable work separately from completed reconciliation.
-These are design requirements; the retirement transition is not implemented yet.
+These are design requirements; recovery-attempt entry reconciliation is not
+implemented yet. Existing session retirement is described below.
+
+The session-retirement primitive already exists: `retireSuperseded` exclusively
+borrows the local entry, then checks its exact owner generation/nonce and command
+under the SQL owner lock. It can be reused after V93 installs a replacement owner.
+V98 reservation alone advances the claim but leaves that owner unchanged, so it
+cannot satisfy this retirement check. A new fingerprint-retirement API is not
+required for this path. Recovery-attempt lease reconciliation remains separate.
+
+A further host-composition constraint is now explicit: reservation constructors
+and SQL require a different successor incarnation. A session manager owns one
+fixed incarnation, so it cannot directly supersede its own expired reservation.
+Do not rotate that shared identity while other sessions still use it or relax the
+SQL guard as a fallback. Automatic same-host recovery requires a reviewed lifecycle
+for a fresh manager incarnation, or a separately designed per-operation incarnation
+model. Existing two-coordinator supersession remains supported. This constraint
+must be resolved before claiming automatic same-host recovery.
