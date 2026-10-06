@@ -1405,22 +1405,34 @@ class DocumentPublicationCommitIT {
         var reads = new DocumentReadLedger(tx, UUID.randomUUID());
         var modes = Map.of("member-0", typed ? DocumentPublicationCandidate.Mode.TYPED : DocumentPublicationCandidate.Mode.OPAQUE);
         var control = ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE;
-        try (var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, selected) -> opened.store(),
+        try (var barrier = new DocumentPublicationCommitBarrier(database.dataSource(), command.operationId());
+                var workers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+                var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, selected) -> opened.store(),
                     4, 1_000_000, budget);
-                var uploads = new DocumentUploadCoordinator(tx, drives, budget,
+                var uploads = new DocumentUploadCoordinator(barrier.tx(), drives, budget,
                     (generation, selected) -> new DocumentUploadCoordinator.Backend(profile.identity(), opened),
                     4, Duration.ofMillis(25), new SqlTimeouts(Duration.ofSeconds(2), Duration.ofSeconds(5)))) {
-            var execution = new DocumentPublicationExecution(tx, drives, reads, uploads, reader, budget, LIMITS, false);
-            try (var sessions = DocumentPublicationSessions.journaled(tx, execution, LEASE, 4, 4_000_000, budget)) {
+            var execution = new DocumentPublicationExecution(barrier.tx(), drives, reads, uploads, reader, budget, LIMITS, false);
+            try (var sessions = DocumentPublicationSessions.journaled(barrier.tx(), execution, LEASE, 4, 4_000_000, budget)) {
                 gateChecks.set(0);
                 var resolutions = new java.util.concurrent.atomic.AtomicInteger();
-                var result = sessions.execute(caller, command, placements, f.bodies, Map.of(), modes,
+                var publication = workers.submit(() -> sessions.execute(caller, command, placements, f.bodies, Map.of(), modes,
                         typed ? java.util.Optional.of(DocumentSchemaRetentionFixture.definition(Document.getDescriptor())) : java.util.Optional.empty(),
                         (member, occurrence) -> {
                             assertThat(typed).as("Opaque publication must not resolve schemas").isTrue();
                             resolutions.incrementAndGet();
                             return DocumentSchemaRetentionFixture.definition(com.google.protobuf.StringValue.getDescriptor());
-                        }, control);
+                        }, control));
+                final DocumentPublicationResult result;
+                try {
+                    int publisher = barrier.awaitCommit();
+                    var revocation = workers.submit(() -> grants.revoke(ADMIN, grant.key()));
+                    DocumentPublicationCommitBarrier.awaitGrantRevocationWaiter(tx, publisher);
+                    assertThat(revocation.isDone()).isFalse();
+                    barrier.release();
+                    result = publication.get(10, java.util.concurrent.TimeUnit.SECONDS);
+                    revocation.get(10, java.util.concurrent.TimeUnit.SECONDS);
+                } finally { barrier.release(); }
                 assertThat(result.getMembersCount()).isEqualTo(1);
                 assertThat(resolutions.get()).isEqualTo(typed ? 1 : 0);
                 assertThat(gateChecks.get()).isPositive();
@@ -1440,7 +1452,6 @@ class DocumentPublicationCommitIT {
                             .isEqualTo("typed provider payload");
                     assertThat(validated.policySha256()).isNotBlank();
                 }
-                grants.revoke(ADMIN, grant.key());
                 assertThat(new DocumentPublicationReplay(tx).observe(caller, command).result()).contains(result);
                 credentials.revoke(ADMIN, binding, caller.principalName());
                 assertThatThrownBy(() -> new DocumentPublicationReplay(tx).observe(caller, command))

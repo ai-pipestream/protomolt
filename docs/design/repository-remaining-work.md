@@ -808,3 +808,12 @@ rejection. Exact immutable activation confirmation after revocation does not all
 attachment. See [evidence](../evidence/repository/2026-10-06-scoped-successor/README.md).
 Manager-level recovered provider publication and commit/revocation races remain open;
 this does not qualify automatic recovery discovery or scheduling.
+
+## Publication-first revocation race
+
+Typed and opaque real-provider tests now pause the actual final success-writing
+transaction before commit and observe grant revocation blocked on its PostgreSQL
+PID. Releasing commit lets publication finish, then revocation succeeds; committed
+receipt READ remains valid until credential revocation. See
+[evidence](../evidence/repository/2026-10-06-scoped-commit-race/README.md).
+Revocation-first refusal and expiry at final authorization still need direct tests.
