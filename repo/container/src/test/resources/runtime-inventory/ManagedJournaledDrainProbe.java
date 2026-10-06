@@ -66,6 +66,12 @@ public final class ManagedJournaledDrainProbe {
             var host = new RepoServices(config, BridgeEngine.standard(), BlobStores.discover(), null, access, null, journaled);
             var tx = new Tx(database.entityManagerFactory());
             try {
+                var terminal = prepare(host, tx, generation, false);
+                var completed = execute(host, ADMIN, terminal);
+                require(completed.getMembersCount() == 1, "terminal control published");
+                require(host.publishDocument(ADMIN, terminal.command, Map.of(), Map.of(), Map.of(), Map.of(),
+                        Optional.empty(), RepositoryReadControl.NONE).equals(completed), "terminal receipt replay");
+                require(entered.getCount() == 1, "opaque terminal control did not resolve a schema");
                 var work = prepare(host, tx, generation, true);
                 var second = prepare(host, tx, generation, true);
                 var cancelled = new java.util.concurrent.atomic.AtomicBoolean();
@@ -142,6 +148,10 @@ public final class ManagedJournaledDrainProbe {
                 Object timestamp = tx.readOnly(em -> em.createNativeQuery("SELECT recorded_at FROM repository_coordinator_local_drains WHERE operation_id=:id")
                         .setParameter("id", first[0]).getSingleResult());
                 require(timestamp.equals(first[1]), "retry confirms the original first marker");
+                require(count(tx, "repository_coordinator_drains", terminal.command.operationId()) == 0,
+                        "completed session excluded from drain snapshot");
+                require(count(tx, "repository_coordinator_local_drains", terminal.command.operationId()) == 0,
+                        "completed session needs no local-drain marker");
                 require(resolver.cachedBytes() == 0, "schema cache released");
                 try { host.ledgerDataSource().getConnection(); throw new AssertionError("closed host still lends SQL"); }
                 catch (java.sql.SQLException expected) { /* Host now releases its own pool. */ }
@@ -199,8 +209,9 @@ public final class ManagedJournaledDrainProbe {
         var security = DocumentSecurity.newBuilder().addPermissions(AccessRule.newBuilder().setIdentityType("public").setIdentity("public").setAccess(ai.protomolt.proto.repo.v1.Access.ACCESS_READ))
                 .addPermissions(AccessRule.newBuilder().setIdentityType("public").setIdentity("public").setAccess(ai.protomolt.proto.repo.v1.Access.ACCESS_WRITE)).build();
         var ownership = OwnershipContext.newBuilder().setAccountId(account).setDatasourceId("source").setSecurity(security).build();
-        var document = Document.newBuilder().setDocId("document").setOwnership(ownership)
-                .setStructuredData(Any.pack(StringValue.of("managed registry payload"), "type.test")).build();
+        var documentBuilder = Document.newBuilder().setDocId("document").setOwnership(ownership);
+        if (typed) documentBuilder.setStructuredData(Any.pack(StringValue.of("managed registry payload"), "type.test"));
+        var document = documentBuilder.build();
         var member = DocumentPublicationMember.newBuilder().setMemberId("document").setDriveId(drive.driveId.toString()).setOwnership(ownership)
                 .setRowKind(DocumentPublicationRowKind.DOCUMENT_PUBLICATION_ROW_KIND_PIPELINE).setDestination(DocumentRevisionCondition.newBuilder()
                         .setIfAbsent(true).setAddress(NodeAddress.newBuilder().setAccountId(account).setDocId("document").setGraphId("graph").setGraphAddressId("node")));

@@ -22,9 +22,10 @@ leaves schema access with its caller and cleans up newly registered readers.
 now covers a held actual Git descriptor load, two retained operations, a real SQL
 failure on the second attestation, retry preserving the first marker, and startup
 ownership. The second operation is owner-admitted; the test does not claim two
-independent Git loads. A successful terminal-session control through this new
-managed factory remains to add; private journaled terminal eviction already has
-coverage. Future public publication transport still needs accepted-call drain
+independent Git loads. The managed factory also has an opaque successful-publication
+and exact receipt-replay control: completed sessions require neither V90 nor V91
+markers. The full production-JAR regression passed. Future public publication
+transport still needs accepted-call drain
 before transport teardown. Safe successor execution and late provider effects
 remain separate work.
 

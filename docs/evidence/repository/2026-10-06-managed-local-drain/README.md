@@ -21,7 +21,8 @@ and failure assertions without finding a blocker.
 
 This qualifies internal managed composition. Public builders, protobuf contracts
 and RPC availability are unchanged. It proves neither remote-effect quiescence nor
-successor safety. A successful terminal-session control through the new managed
-factory remains pending. Temporary host logs are cleaned after successful runs;
+successor safety. A subsequent successful opaque publication and exact receipt replay prove that
+completed sessions require no V90 or V91 drain markers. That extended complete
+regression passed in 2 minutes 56 seconds; see `terminal-runtime.xml.gz`. Temporary host logs are cleaned after successful runs;
 the persisted JUnit result records the aggregate test that requires the probe's
 success marker. LocalStack results are correctness evidence, not performance data.

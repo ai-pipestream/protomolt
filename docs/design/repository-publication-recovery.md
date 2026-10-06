@@ -892,3 +892,42 @@ is refused. Close releases the loaded bytes while retaining the original coordin
 identity for V90. This does not demonstrate restored publication or provider reads.
 The host must additionally drain its schema workers before whole-host V91 activation;
 these checks do not record local-drain attestations.
+
+### Next successor increment: reserved graceful handoff
+
+The first successor increment must preserve the current execution closure. V89
+admits only an initial coordinator binding, V90 refuses admission after drain, and
+V91 closes mutations across claim epochs. Advancing the claim epoch alone must
+never bypass these guards.
+
+Implement a private immutable graceful-handoff record before enabling successor
+execution. Bind the original account/principal/operation and command digest to the
+exact predecessor epoch, token and incarnation, plus a distinct successor token,
+incarnation and epoch. Under the per-operation claim lock, require the exact
+V89/V90/V91 chain, an expired predecessor claim lease and no terminal operation,
+then reserve the successor and transfer
+the claim atomically. Lock order remains claim, operation owner, dependent rows.
+The caller retains proposed identities across uncertain acknowledgments; an exact
+record confirms success without renewing or transferring again, even when the
+successor lease has subsequently expired; confirmation grants no execution. A conflicting
+proposal is refused. Expiry alone never substitutes for the predecessor's local
+drain attestation. Require authenticated process authority at the Java boundary.
+
+Initial acceptance must exercise concurrent proposals, wrong scope/digest/claim/
+incarnation, missing drain, terminal operations, rollback, and lost-ack exact retry
+against PostgreSQL. Prove the resulting successor still cannot admit attempts,
+mutate results or start providers. Keep this private; a reservation is not an
+available recovery API. Changing V89 requires a distinct successor-binding path,
+not loosening its protection of initial binding.
+
+The following increment must authorize a new owner generation and fresh per-member
+attempts under that exact successor binding. Existing upload plans prefix physical
+keys with fresh attempt UUIDs; preserve that separation and the SQL physical-key
+uniqueness guard. Never reuse predecessor attempts or interpret a local drain as
+permission to remove predecessor plans, historical references or cleanup tombstones.
+A real delayed provider write must land at an old key after handoff without becoming
+successor content or allowing old cleanup to delete new content. Only after that
+execution path is qualified may admission/mutation guards recognize the successor.
+Abrupt-death recovery requires a separate policy because it lacks local attestation.
+
+This is the reviewed next implementation boundary, not implemented behavior.
