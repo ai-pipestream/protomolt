@@ -30,5 +30,6 @@ The five affected suites passed: 55 tests, no failures or skips, in 45 seconds.
 Local log: `/tmp/protomolt-historical-mixed-member-qualified.log`.
 An initial compile caught an assertion against a content-type accessor absent from
 the manifest; the final test checks the persisted physical-object content type.
-Actual-provider same-member qualification, public/claimed restore, hosted CI,
-merge and deployment remain separate gates.
+Actual-provider same-member qualification is now recorded in the
+[production-JAR follow-up](../2026-10-06-historical-mixed-member-provider/README.md).
+Public/claimed restore, hosted CI, merge and deployment remain separate gates.

@@ -47,6 +47,12 @@ coverage. The production-JAR harness adds retained provider reads, post-commit l
 acknowledgment, and mixed fresh-upload/current/historical members with an unverified
 upload negative case. These checks do not enable public or claimed restore sessions.
 See [mixed provider qualification](../evidence/repository/2026-10-06-historical-mixed-upload/README.md).
+The production-JAR probe also combines historical CORE and fresh PARSED fragments
+inside one typed member. It uploads to the actual versioned provider, refuses the
+whole member without verified upload observations, and verifies exact replay after
+publication. A provider reread reconstructs both shapes using only retained schema
+artifacts. This covers same-member composition, not public/claimed activation or
+pruning/backup completeness.
 Preserve each member's container and occurrence definitions,
 source-to-target ordinals, shared byte accounting and source pins. A prior historical
 verdict cannot substitute for a new assessment. Claims, sessions and public
