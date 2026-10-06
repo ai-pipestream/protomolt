@@ -6688,3 +6688,25 @@ admission denial cases and existing runtime/successor suites. See
 [integration evidence](../evidence/repository/2026-10-06-scoped-creation-integration/README.md).
 Dedicated scoped successor execution and concurrent final-commit revocation remain
 to be qualified. Provisioning is internal and retention remains unfinished.
+
+## Retained managed recovery reconciliation
+
+**Extended private operation:** managed retry now distinguishes expired
+unactivated successors from expired bound owners after an uncertain activation
+reply. It reuses existing command digests, coordinator reservations, owner
+identities, preparation/mode journals, session ownership and SQL V93/V94/V97/V98.
+There are no protobuf field, service, import or Any URL changes in this work.
+
+**Extended local ownership:** one retained pending proposal can be a typed V97 or
+V98. Confirmation retries its exact identity. Fencing retirement includes both the
+old successor and the pending successor; expiration does not prove worker drain.
+Current caller authorization and fixed publication modes are checked before
+bound-owner reservation or confirmation. Private process authority is separate.
+
+**Evidence scope:** live activation readback passed its PostgreSQL regression.
+Unactivated reconciliation passed 60 focused tests and the packaged regression.
+Expired-bound reconciliation passed its expanded 63-test PostgreSQL suite and
+the packaged regression. These metadata cases do not prove provider publication
+or worker lifetime for every new branch. See the
+[recovery design](repository-publication-recovery.md) and linked evidence for
+remaining acceptance cases. The behavior is not a newly available public RPC.

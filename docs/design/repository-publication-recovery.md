@@ -1996,11 +1996,11 @@ provider regression, with no failures or skips. See the
 
 An arbitrary activation failure never authorizes supersession. A committed V94
 with a lost reply is bound-owner reconciliation, not unactivated V98 recovery;
-automating that distinct retained-owner path remains open.
+that distinct retained-owner path is implemented and qualified as described below.
 
-#### Next: retained activated-owner retry
+#### Retained activated-owner retry
 
-This path is designed but not implemented. While an uncertain V94 activation's
+The implementation passed 63 focused PostgreSQL tests and the packaged regression. While an uncertain V94 activation's
 claim and owner remain live, retry the same activation and session attachment;
 there is no reason to mint another proposal. Once that bound owner expires,
 attachment cannot proceed under the expired lease.
@@ -2042,3 +2042,9 @@ claim does not settle the uncertain new reservation. Terminal and shutdown dispo
 must clear pending metadata only under their existing complete-operation or exact
 ownership proofs. Capacity exhaustion or unresolved activation evidence is no
 proof, and a private identity read does not replace current caller authorization.
+
+The implementation uses the existing retained Pending holder with distinct V97 and
+V98 proposal types. Both proposal identities participate in fencing retirement;
+unactivated reconciliation rejects a pending V97. See the
+[bounded transition evidence](../evidence/repository/2026-10-06-expired-bound-reconciliation/README.md)
+for current checks and remaining acceptance cases.

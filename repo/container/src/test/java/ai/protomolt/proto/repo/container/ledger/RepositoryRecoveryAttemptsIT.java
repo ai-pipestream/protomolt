@@ -488,6 +488,78 @@ class RepositoryRecoveryAttemptsIT {
         }
     }
 
+    @ParameterizedTest @ValueSource(booleans={false,true})
+    void expiredCommittedActivationRetainsNewReservationAndReactivates(boolean lostReservationReply) throws Exception {
+        try (var c=context(POSTGRES)) {
+            var source=source(c); var cancelled=new AtomicBoolean(); var reservationReply=new AtomicBoolean();
+            var datasource=DocumentJdbcFaults.afterCommit(c.pool(),() -> {
+                if ((!reservationReply.get() && count(c,"repository_successor_executions")==1)
+                        || (reservationReply.get() && count(c,"repository_coordinator_expirations")==2)) cancelled.set(true);
+            });
+            var control=new RepositoryReadControl() {
+                public boolean isCancelled() { return cancelled.get(); }
+                public long remainingNanos() { return Long.MAX_VALUE; }
+            };
+            var attemptBudget=new PayloadBudget(128_000_000); var lease=Duration.ofSeconds(3);
+            try (var emf=jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",Map.of(
+                    "hibernate.connection.datasource",datasource,"hibernate.hbm2ddl.auto","validate"));
+                 var resources=DocumentJournaledSessionsIT.resources(new Tx(emf).withTimeouts(TIMEOUTS),1,1_000_000,lease,new PayloadBudget(128_000_000));
+                 var attempts=new RepositoryRecoveryAttempts(new Tx(emf),attemptBudget,resources.sessions(),lease,TIMEOUTS,1)) {
+                try (var attempt=attempts.begin(CALLER,source.command(),source.observation())) {
+                    var original=attempt.proposal();
+                    attempt.advance(CALLER,CALLER,MODES,NONE); attempt.advance(CALLER,CALLER,MODES,NONE);
+                    assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,MODES,control))
+                            .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.CANCELLED));
+                    assertThat(count(c,"repository_successor_executions")).isEqualTo(1);
+                    expire(c,source.command());
+                    assertThat(new RepositoryCoordinatorRecoveryDiscovery(c.tx(),TIMEOUTS)
+                            .inspect(CALLER,original.predecessor().key(),source.command().sha256(),NONE).status())
+                            .isEqualTo(RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND);
+                    var wrong=Map.of("target",DocumentPublicationCandidate.Mode.OPAQUE);
+                    assertThatThrownBy(() -> attempt.reconcileExpiredBound(CALLER,CALLER,wrong,NONE))
+                            .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code())
+                                    .isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+                    assertThat(attempt.proposal()).isSameAs(original);
+                    assertThat(count(c,"repository_coordinator_expirations")).isEqualTo(1);
+                    Object[] pendingIdentity=null;
+                    if (lostReservationReply) {
+                        reservationReply.set(true); cancelled.set(false);
+                        assertThatThrownBy(() -> attempt.reconcileExpiredBound(CALLER,CALLER,MODES,control))
+                                .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code())
+                                        .isEqualTo(RepositoryException.Code.CANCELLED));
+                        assertThat(count(c,"repository_coordinator_expirations")).isEqualTo(2);
+                        assertThat(attempt.proposal()).isSameAs(original);
+                        pendingIdentity=claimAndOwner(c,source.command());
+                        assertThat(attempt.retireFenced(CALLER,CALLER,NONE)).isFalse();
+                        assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,MODES,NONE))
+                                .hasMessageContaining("Pending supersession");
+                        assertThatThrownBy(() -> attempt.reconcileUnactivated(CALLER,CALLER,MODES,NONE))
+                                .hasMessageContaining("Pending bound reservation");
+                        assertThatThrownBy(() -> attempt.supersedeExpired(CALLER,CALLER,NONE))
+                                .hasMessageContaining("Pending bound reservation");
+                        assertThatThrownBy(() -> attempt.reconcileExpiredBound(CALLER,CALLER,wrong,NONE))
+                                .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code())
+                                        .isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+                    }
+                    assertThat(attempt.reconcileExpiredBound(CALLER,CALLER,MODES,NONE)).isTrue();
+                    if (pendingIdentity!=null)
+                        assertThat(claimAndOwner(c,source.command())).containsExactly(pendingIdentity);
+
+                    assertThat(attempt.proposal().predecessor().epoch()).isEqualTo(original.predecessor().epoch()+1);
+                    assertThat(attempt.advance(CALLER,CALLER,MODES,NONE)).isEqualTo(RepositoryRecoveryAttempts.Phase.INSTALLED);
+                    assertThat(attempt.advance(CALLER,CALLER,MODES,NONE)).isEqualTo(RepositoryRecoveryAttempts.Phase.ACTIVATED);
+                    assertThat(count(c,"repository_coordinator_expirations")).isEqualTo(2);
+                    assertThat(count(c,"repository_successor_executions")).isEqualTo(2);
+                    assertThat(count(c,"repository_coordinator_supersessions")).isZero();
+                    assertThat(resources.sessions().retainedSessions()).isEqualTo(1);
+                    assertThat(attemptBudget.reservedBytes()).isZero();
+                }
+                attempts.close();
+                assertThat(attempts.drain()).isEqualTo(new RepositoryRecoveryAttempts.Drain(0,0));
+            }
+        }
+    }
+
     @Test void expiredCommittedActivationCannotBeSupersededAsUnactivated() throws Exception {
         try (var c=context(POSTGRES)) {
             var source=source(c); var cancelled=new AtomicBoolean();

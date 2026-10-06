@@ -53,7 +53,7 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
         }
     }
 
-    private record Pending(RepositoryCoordinatorReservation.SupersededUnactivated proposal,
+    private record Pending(RepositoryCoordinatorReservation.Proposal proposal,
             DocumentPublicationSessions.SuccessorTarget target) {}
 
     RepositoryRecoveryAttempts(Tx tx, PayloadBudget budget, DocumentPublicationSessions sessions,
@@ -195,7 +195,56 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
             return supersedeExpired(authority,caller,control,null,null);
         }
 
+        /** Reconcile an expired bound successor after an uncertain activation reply. */
+        synchronized boolean reconcileExpiredBound(RepositoryCaller authority, RepositoryCaller caller,
+                Map<String,DocumentPublicationCandidate.Mode> modes, RepositoryReadControl control) {
+            if (ended) throw new IllegalStateException("Recovery attempt call is closed");
+            Objects.requireNonNull(control).check(); Objects.requireNonNull(modes);
+            RepositoryCoordinatorReservation.require(authority,entry.proposal,control);
+            DocumentAdmissionAuthorization.requireCaller(caller,key,key.account()); requireCaller(entry,caller);
+            if (entry.terminalObserved || entry.phase==Phase.ACTIVATED || entry.phase==Phase.RETIRED)
+                throw conflict("Completed local recovery requires its session reconciliation path");
+            if (entry.pending!=null && !(entry.pending.proposal() instanceof RepositoryCoordinatorReservation.ExpiredUnquiesced))
+                return false;
+            if (entry.pending==null) {
+                if (entry.phase!=Phase.INSTALLED || entry.submitted==null) return false;
+                var observed=new RepositoryCoordinatorRecoveryDiscovery(tx,timeouts)
+                        .inspect(authority,key,entry.command.sha256(),control);
+                if (observed.candidate().isEmpty()) return false;
+                var source=observed.candidate().orElseThrow();
+                var expected=successorIdentity(entry.proposal);
+                var expectedOwner=new RepositoryCoordinatorReservation.OwnerIdentity(
+                        Math.addExact(entry.plan.next().predecessorGeneration(),1),entry.plan.next().seeds().ownerNonce());
+                if (!expected.equals(source.predecessor()) || !expectedOwner.equals(source.owner()))
+                    throw conflict("Bound recovery successor differs from retained attempt");
+                requireModes(entry.loaded.modes(),modes);
+                if (RepositorySuccessorShutdown.inspect(tx,budget,authority,entry.submitted,control)
+                        !=RepositorySuccessorShutdown.State.ACTIVATED)
+                    throw conflict("Bound recovery activation is not proven");
+                var target=sessions.successorTarget(key,entry.command.sha256(),expected.incarnation());
+                var proposal=new RepositoryCoordinatorReservation.ExpiredUnquiesced(expected,UUID.randomUUID(),
+                        target.incarnation(),lease,expectedOwner);
+                entry.pending=new Pending(proposal,target);
+            }
+            // Reauthorize even when confirming an uncertain committed reservation. Private
+            // activation evidence and retained preparation do not confer caller permission.
+            requireModes(entry.loaded.modes(),modes);
+            tx.inTransaction(em -> {
+                control.check(); DocumentAdmissionAuthorization.authorizeRejection(em,caller,entry.command);
+                control.check(); return null;
+            });
+            var pending=entry.pending;
+            RepositoryCoordinatorExpiration.reserve(tx,authority,
+                    (RepositoryCoordinatorReservation.ExpiredUnquiesced)pending.proposal(),control);
+            // Confirmation permanently fences the old claim, not its outstanding workers.
+            entry.releasePreparation();
+            entry.proposal=pending.proposal(); entry.target=pending.target();
+            entry.phase=Phase.RESERVED; entry.pending=null;
+            return true;
+        }
+
         /** One bounded reconciliation of our own unactivated successor before retrying execution phases. */
+
         synchronized boolean reconcileUnactivated(RepositoryCaller authority, RepositoryCaller caller,
                 Map<String,DocumentPublicationCandidate.Mode> modes, RepositoryReadControl control) {
             if (ended) throw new IllegalStateException("Recovery attempt call is closed");
@@ -205,6 +254,8 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
             DocumentAdmissionAuthorization.requireCaller(caller,key,key.account()); requireCaller(entry,caller);
             if (entry.terminalObserved || entry.phase==Phase.ACTIVATED || entry.phase==Phase.RETIRED)
                 throw conflict("Completed local recovery requires its session reconciliation path");
+            if (entry.pending!=null && !(entry.pending.proposal() instanceof RepositoryCoordinatorReservation.SupersededUnactivated))
+                throw conflict("Pending bound reservation must be confirmed before unactivated reconciliation");
             if (entry.pending!=null) {
                 supersedeExpired(authority,caller,control,null,modes);
                 return true;
@@ -230,6 +281,8 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
             if (entry.phase==Phase.ACTIVATED || entry.phase==Phase.RETIRED)
                 throw conflict("Completed local recovery requires its session reconciliation path");
             if (entry.terminalObserved) throw conflict("Terminal recovery requires outcome reconciliation");
+            if (entry.pending!=null && !(entry.pending.proposal() instanceof RepositoryCoordinatorReservation.SupersededUnactivated))
+                throw conflict("Pending bound reservation must be confirmed before supersession");
             if (entry.pending==null) {
                 if (observed==null) observed=new RepositoryCoordinatorRecoveryDiscovery(tx,timeouts)
                         .inspect(authority,key,entry.command.sha256(),control);
@@ -246,10 +299,10 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
                 entry.pending=new Pending(proposal,target);
             } else if (modes!=null) {
                 new DocumentPublicationModesJournal(tx,budget)
-                        .requireSupersessionModes(authority,caller,entry.command,entry.pending.proposal(),modes,control);
+                        .requireSupersessionModes(authority,caller,entry.command,(RepositoryCoordinatorReservation.SupersededUnactivated)entry.pending.proposal(),modes,control);
             }
             var pending=entry.pending;
-            RepositoryCoordinatorSupersession.reserve(tx,authority,pending.proposal(),control);
+            RepositoryCoordinatorSupersession.reserve(tx,authority,(RepositoryCoordinatorReservation.SupersededUnactivated)pending.proposal(),control);
             // Commit confirmation fences the old claim. It does not settle old provider work.
             entry.releasePreparation();
             entry.proposal=pending.proposal(); entry.target=pending.target();
