@@ -1,5 +1,17 @@
 # Repository operation inventory
 
+## Durable credential authority primitive (2026-10-06)
+
+- **New internal operations:** register an exact credential authority, revoke its
+  current generation, compare-and-set rotate, and check liveness under a shared lock.
+- **New storage:** V99 credential authority table and isolation/immutability guards.
+  No tokens are stored; prior operations receive no inferred credential authority.
+- **Unchanged:** V79 execution-scope locking, wire contracts, receipts, idempotency
+  keys and current publication authorization. The primitive is not wired into it yet.
+- **Remaining:** per-operation grant storage/first-admission races, publication and
+  recovery enforcement, retention, provider qualification and transport integration.
+
+
 ## Authenticated credential identity (2026-10-06)
 
 - **New Java values:** authz `CredentialBinding`/`AuthenticatedCaller` and independent

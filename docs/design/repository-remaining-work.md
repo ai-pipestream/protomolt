@@ -761,3 +761,14 @@ Next implement the durable authority records and install/revoke protocol from
 [scoped creation](repository-scoped-creation.md), including lock-order proof and
 current-key checks at publication and recovery. Identity propagation alone does
 not satisfy those requirements.
+
+## Credential authority foundation (2026-10-06)
+
+V99 now retains current key generation and irreversible per-generation revocation.
+The internal port has real SQL coverage for registration, CAS rotation, revocation,
+shared readers and revocation waiting, prior-row migration and unsupported isolation.
+Publication does not call it yet. Next install the exact-command grant atomically
+with a new execution-scope insertion; never lock an existing scope in the shared V79
+function. The reviewed [serialization design](repository-scoped-creation.md#transaction-and-revocation-rules)
+explains the claim/scope deadlock rejected during review. Test both first-admission
+winners before integrating grant checks into the publication transaction.

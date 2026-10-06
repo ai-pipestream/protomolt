@@ -66,6 +66,30 @@ to update this durable state; until that mechanism is qualified, do not advertis
 immediate external revocation. No external network lookup runs under repository
 revision locks.
 
+## Durable credential primitive
+
+V99 adds repository-local credential authority state keyed by issuer and opaque
+credential UUID, with an immutable principal and current generation. The internal
+RepositoryCredentialAuthorities port is process-only for provisioning, revocation
+and compare-and-set rotation. Exact registration retries cannot change identity or
+revive a revoked generation. Revoke is idempotent for the current generation;
+revoking an absent or replaced generation returns NOT_FOUND and makes no promise
+about a future registration. Rotation requires the expected current generation and
+advances exactly one; stale/repeated rotation conflicts. It does not transfer grants.
+
+The live check verifies exact principal/key/generation under a shared SQL lock in
+the caller's existing transaction. A dedicated SQL function checks READ COMMITTED
+even when the key is absent, without an extra client round trip. Mutation triggers
+also enforce that isolation. Database constraints reject identity changes,
+generation rollback/skips, same-generation revival and tombstone deletion.
+
+This primitive is not yet called by publication admission or replay. It provides
+no account membership and no creation grant. Its successful revocation applies to
+future uses of this live-check primitive, not to all authenticated requests on the
+platform. Key state is retained indefinitely at this stage; pruning requires the
+future operation/grant retention proof. Existing operations gain no authority from
+migration. [Evidence](../evidence/repository/2026-10-06-credential-authority/README.md).
+
 ## Grant and operation identity
 
 A host with process authority provisions one immutable authorization record for an
@@ -93,15 +117,31 @@ SDKs. No new publication RPC is required to qualify this foundation.
 
 Use the existing owner/claim fencing and globally ordered revision-key locks.
 Within the shared authorization path, acquire shared locks on the exact credential
-binding and grant before accepting their state. Grant provisioning must inspect/lock any existing operation first, then take the
-required revision locks before binding and grant locks, and acquire no owner or
-document locks afterward. Reuse the operation admission serialization for absent
-owner rows; an unlocked absence query is not a fence. Revocation takes only the
-authority locks and must not acquire owner/document locks afterward. When both
-binding and grant are touched, acquire binding first. Test concurrent install and
-admission explicitly. Review every caller of
-`lockAndAuthorize`, not just registration, to verify a single lock order before
-landing a migration.
+binding and grant before accepting their state. Revocation touches only authority
+rows and must not acquire owner or document locks afterward. When both binding and
+grant are touched, acquire binding first. Review every caller of lockAndAuthorize,
+not just registration, before integrating the grant check.
+
+For first grant installation, reuse the unique immutable execution-scope insertion
+from V79. In one transaction, attempt to insert a claimed scope for the exact
+account/principal/operation. Only its insertion winner may install a new grant;
+validate placement and live credential state and commit the scope and grant
+atomically. A competing first claim or standalone operation insertion waits on that
+same unique key. If admission wins first, a later installer cannot attach a grant.
+If installation loses, it may only confirm an already installed identical live
+grant. An existing bare scope is not permission to install one. Refuse it.
+
+Do not add FOR UPDATE to establish_repository_execution_scope. Operation admission
+can already hold a claim before inserting an operation, while a claim INSERT retry
+reaches the scope trigger before waiting on the claim. Locking existing scopes in
+that shared function creates a claim-to-scope versus scope-to-claim cycle. The
+unique insertion protocol orders first admission without adding that lock.
+
+Test both installation/admission winners, exact installation retry after claim
+admission, orphan scope refusal, rollback after scope insertion, and concurrent
+claim/operation retry. A revoke against an absent grant must return NOT_FOUND
+without promising to prevent future installation, or use a separately specified
+durable deny tombstone. An UPDATE affecting zero rows is not successful revocation.
 
 Shared authority locks permit concurrent independent operations using one key.
 There must be no global authorization mutex, account-wide exclusive lock, database
