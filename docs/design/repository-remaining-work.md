@@ -486,3 +486,10 @@ Read-only exact drain confirmation survives claim expiry without granting new wo
 Host provider-start permits, full local drain and safe successor execution are still
 required. This does not close the independent restore/pruning, transport parity,
 provider durability or hydration requirements.
+
+Local provider-start permits now close before runtime session cleanup. Permitted
+PUT/read-back calls retain their resources through return; queued refusals do not
+cancel siblings or discard their completed observations. Transfer-only idle is not
+full shutdown or remote-effect quiescence. Compose this host-wide gate with the full
+set of retained V89/V90 operation identities next, preserving uncertain markers,
+late-effect tombstones and existing schema/revision retention protections.

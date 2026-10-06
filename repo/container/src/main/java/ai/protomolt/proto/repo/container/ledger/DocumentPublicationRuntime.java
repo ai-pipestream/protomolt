@@ -224,8 +224,8 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
         return result;
     }
 
-    /** Refuse new calls. Accepted work may finish; this does not release borrowed resources. */
-    @Override public void close() { scopeCalls.close(); sessions.close(); }
+    /** Refuse new calls and provider starts. Permitted transfers may settle; resources remain borrowed. */
+    @Override public void close() { uploads.stopProviderStarts(); scopeCalls.close(); sessions.close(); }
 
     /** One bounded maintenance pass; the host schedules and retries failures. */
     public synchronized int tick() {

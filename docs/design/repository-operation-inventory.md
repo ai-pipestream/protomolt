@@ -6260,3 +6260,19 @@ comparison. No provider work, schema verdict, write grant or new pin lifetime is
 created. **Unchanged:** public RPCs, publication execution guard, receipts, command
 encoding, retention SQL and schema contracts. Source-selection tests use real
 PostgreSQL and synthetic provider observations; full restore remains unavailable.
+
+### Local provider-start drain
+
+**Extended internal Java behavior:** runtime close now shuts upload-start admission
+before scope/session cleanup. Already permitted transfers retain their cancellation,
+verification and settlement rules. Queued transfers not yet permitted do not issue
+provider calls; their refusal is reported after permitted work and observations
+drain. An incomplete attempt is not converted into success or silently retried.
+
+**New private Java operations:** `DocumentUploadCoordinator.stopProviderStarts`,
+`awaitProviderIdle` and `providerActivity` provide local admission closure and
+transfer-only observation. They do not claim durable coordinator drain or remote
+quiescence and are not mounted as RPCs. Existing hard close still cancels normally.
+No protobuf name, field, Any URL, receipt format, provider capability or SQL contract
+changes in this increment. Host-wide local closure and per-operation V90 markers
+still need explicit composition before durable LOCAL_DRAINED or takeover activation.

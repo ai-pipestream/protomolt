@@ -67,6 +67,15 @@ final class DocumentUploadCoordinator implements AutoCloseable {
     private final Semaphore partsInFlight = new Semaphore(32, true);
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Object lifecycle = new Object();
+    private boolean providerStartsClosed;
+    private int activeTransfers;
+    private long refusedProviderStarts;
+
+    /** Local transfer counters only; idle is not proof that an operation or remote effect settled. */
+    record ProviderActivity(boolean accepting, int active, long refused) {}
+    ProviderActivity providerActivity() {
+        synchronized (lifecycle) { return new ProviderActivity(!providerStartsClosed, activeTransfers, refusedProviderStarts); }
+    }
 
     DocumentUploadCoordinator(Tx tx, DriveLedger drives, PayloadBudget budget, Resolver resolver,
             int parallelism, Duration flushAge, SqlTimeouts timeouts) {
@@ -188,17 +197,26 @@ final class DocumentUploadCoordinator implements AutoCloseable {
                         if (flusher != null) {
                             var flushing = tasks.submit(flusher::run);
                             var entries = use.entries();
-                            DocumentPartWorkers.run(entries.size(), parallelism, partsInFlight, active, (index, workerCheck) -> {
+                            var transferred = DocumentPartWorkers.run(entries.size(), parallelism, partsInFlight, active, (index, workerCheck) -> {
                                 var entry = entries.get(index);
                                 var binding = bindings.get(entry.attempt());
                                 if (binding == null) throw new IllegalStateException("Payload attempt was not admitted");
-                                var observation = DocumentPartTransfer.upload(binding.store(), binding.namespace(), entry.upload().object(),
-                                        entry.body(), metadata, workerCheck, workerCheck);
+                                final DocumentPartTransfer.Verified observation;
+                                try (var permit = beginTransfer()) {
+                                    // A queued refusal must not poison permitted siblings or their observation flusher.
+                                    if (permit == null) return Boolean.FALSE;
+                                    observation = DocumentPartTransfer.upload(binding.store(), binding.namespace(), entry.upload().object(),
+                                            entry.body(), metadata, workerCheck, workerCheck);
+                                }
                                 flusher.add(binding.selection(), observation);
                                 return Boolean.TRUE;
                             }, cause -> failure.compareAndSet(null, cause));
                             flusher.finish();
                             await(flushing, failure);
+                            if (transferred.contains(Boolean.FALSE))
+                                throw new ai.protomolt.proto.repo.spi.RepositoryException(
+                                        ai.protomolt.proto.repo.spi.RepositoryException.Code.UNAVAILABLE,
+                                        "Provider start admission stopped; incomplete attempts require reconciliation");
                         }
                         active.run();
                         var verified = selections.isEmpty() ? List.<DocumentPartAttemptLedger.Attempt>of()
@@ -307,7 +325,51 @@ final class DocumentUploadCoordinator implements AutoCloseable {
         if (cause != null) throw new IllegalStateException("Upload background task failed", cause);
     }
 
-    @Override public void close() { synchronized (lifecycle) { closed.set(true); } }
+    /** Close only transfer admission; already permitted PUT/read-back calls may settle normally. */
+    void stopProviderStarts() { synchronized (lifecycle) { providerStartsClosed = true; } }
+
+    /**
+     * Transfer-only wait. Does not cover queued workers, SQL observation settlement,
+     * retained payloads, remote effects after SDK timeout, or full runtime shutdown.
+     */
+    boolean awaitProviderIdle(Duration timeout) throws InterruptedException {
+        Objects.requireNonNull(timeout);
+        if (timeout.isNegative()) throw new IllegalArgumentException("Provider idle timeout must not be negative");
+        long budget = timeout.toNanos(), start = System.nanoTime();
+        synchronized (lifecycle) {
+            if (!providerStartsClosed) throw new IllegalStateException("Stop provider starts before awaiting idle");
+            while (activeTransfers != 0) {
+                long remaining = budget - (System.nanoTime() - start);
+                if (remaining <= 0) return false;
+                TimeUnit.NANOSECONDS.timedWait(lifecycle, remaining);
+            }
+            return true;
+        }
+    }
+
+    private Transfer beginTransfer() {
+        synchronized (lifecycle) {
+            if (providerStartsClosed) { refusedProviderStarts++; return null; }
+            activeTransfers++;
+            return new Transfer();
+        }
+    }
+
+    private final class Transfer implements AutoCloseable {
+        private boolean ended;
+        @Override public void close() {
+            synchronized (lifecycle) {
+                if (ended) return;
+                ended = true;
+                activeTransfers--;
+                lifecycle.notifyAll();
+            }
+        }
+    }
+
+    @Override public void close() {
+        synchronized (lifecycle) { providerStartsClosed = true; closed.set(true); }
+    }
 
     /** False means a provider/database call is still running and borrowed resources must remain open. */
     boolean awaitIdle(Duration timeout) throws InterruptedException {

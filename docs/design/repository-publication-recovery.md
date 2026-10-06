@@ -745,3 +745,42 @@ host-local provider-start permits, retain each permit through SDK completion, an
 compose manager/publication/read/upload shutdown. No LOCAL_DRAINED state, automatic
 successor, provider-quiescence claim or ordinary-runtime activation is added here.
 A shared marker never permits deleting late-effect cleanup tombstones.
+
+## Local provider-start admission
+
+`DocumentUploadCoordinator` now admits each PUT/read-back transfer through a local
+permit immediately before `DocumentPartTransfer.upload`. The existing bounded
+part-worker capacity still limits concurrency. Admission and closure share a short
+monitor; neither provider I/O nor SQL runs under that monitor. There is no new
+per-part SQL round trip. A permit acquired before closure is admitted work even if
+thread scheduling delays the first provider instruction. It remains held until the
+entire transfer method returns, including read-back and failure paths.
+
+`stopProviderStarts` refuses subsequent permits without setting the coordinator's
+hard-cancellation flag. A refused queued part returns a distinct not-started result,
+so it does not poison sibling workers or their observation flusher. Permitted calls
+finish under the existing cancellation, heartbeat and claim checks. The coordinator
+flushes completed observations before reporting incomplete staging as UNAVAILABLE.
+Incomplete attempts retain their normal reconciliation/cleanup obligations; stop
+neither retries a PUT nor discards its key or evidence.
+
+Runtime close stops provider admission before closing scopes or sessions, because
+session cleanup may block or fail. Existing hard close/interruption semantics remain
+separate. Runtime shutdown still drains sessions, schema scopes, upload operations,
+and readers before borrowed resources may close. `awaitProviderIdle` and the local
+activity counters cover transfers only: queued work, SQL settlement, retained bytes
+and remote effects after a provider timeout are outside that observation.
+
+The real PostgreSQL/LocalStack tests hold return from actual PUT and bounded read
+calls, preserving resources until release and allowing admitted work to verify.
+A two-worker case observes a third part refused while another permitted transfer
+is still held; both permitted observations persist, only two PUTs occur, and the
+whole incomplete attempt fails explicitly. This is delayed transfer-return evidence,
+not proof that a remote network request is still active or that all remote effects
+are quiescent. See the [provider-start evidence](../evidence/repository/2026-10-06-provider-start-drain/README.md).
+
+This local gate is not yet composed with V90 for every retained coordinator-bound
+operation. The next host protocol must close the local gate once, mark the complete
+retained operation set with exact identities, and keep the gate closed on uncertain
+marker outcomes. Full shutdown must precede LOCAL_DRAINED. Ordinary runtime sessions
+remain unjournaled; automatic successor execution is still disabled.

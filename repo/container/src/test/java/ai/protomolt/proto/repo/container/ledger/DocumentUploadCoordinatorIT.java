@@ -358,6 +358,86 @@ class DocumentUploadCoordinatorIT {
         assertThat(budget.reservedBytes()).isZero();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"put", "getBounded"})
+    void stoppingProviderStartsAllowsAlreadyPermittedTransferToVerify(String heldMethod) throws Exception {
+        var f = fixture(1, LEASE);
+        var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
+        var puts = new java.util.concurrent.atomic.AtomicInteger();
+        var store = intercept((method, args, call) -> {
+            if (method.equals("put")) puts.incrementAndGet();
+            var result = call.call();
+            if (method.equals(heldMethod)) {
+                entered.countDown();
+                if (!release.await(15, TimeUnit.SECONDS)) throw new IllegalStateException("provider gate timed out");
+            }
+            return result;
+        });
+        var budget = new PayloadBudget(1024 * 1024);
+        try (var coordinator = coordinator(store, budget, Duration.ofMillis(25));
+                var workers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            assertThatThrownBy(() -> coordinator.awaitProviderIdle(Duration.ZERO)).hasMessageContaining("Stop provider starts");
+            var pending = workers.submit(() -> coordinator.stage(ADMIN, f.owner, f.prepared, f.bodies, Map.of(), () -> {}));
+            try {
+                assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+                coordinator.stopProviderStarts();
+                coordinator.stopProviderStarts();
+                assertThat(coordinator.providerActivity().accepting()).isFalse();
+                assertThat(coordinator.providerActivity().active()).isEqualTo(1);
+                assertThat(coordinator.awaitProviderIdle(Duration.ofMillis(50))).isFalse();
+                assertThat(budget.reservedBytes()).isPositive();
+                release.countDown();
+                assertThat(pending.get(10, TimeUnit.SECONDS).attempts().getFirst().state()).isEqualTo("VERIFIED");
+                assertThat(coordinator.awaitProviderIdle(Duration.ofSeconds(1))).isTrue();
+                assertThat(coordinator.providerActivity().active()).isZero();
+                assertThat(coordinator.providerActivity().refused()).isZero();
+                assertThat(puts).hasValue(1);
+                assertThat(verified(f)).isEqualTo(1);
+                assertThat(budget.reservedBytes()).isZero();
+            } finally { release.countDown(); }
+        }
+    }
+
+    @Test void queuedRefusalDoesNotCancelPermittedSiblingOrDiscardItsObservation() throws Exception {
+        var f = fixture(3, LEASE);
+        var entered = new CountDownLatch(2);
+        var firstRelease = new CountDownLatch(1); var secondRelease = new CountDownLatch(1);
+        var puts = new java.util.concurrent.atomic.AtomicInteger();
+        var store = intercept((method, args, call) -> {
+            int ordinal = method.equals("put") ? puts.incrementAndGet() : 0;
+            var result = call.call();
+            if (ordinal > 0 && ordinal <= 2) {
+                entered.countDown();
+                if (!(ordinal == 1 ? firstRelease : secondRelease).await(15, TimeUnit.SECONDS))
+                    throw new IllegalStateException("provider gate timed out");
+            }
+            return result;
+        });
+        var budget = new PayloadBudget(1024 * 1024);
+        try (var coordinator = coordinator(store, budget, Duration.ofMillis(25), 2);
+                var workers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var pending = workers.submit(() -> coordinator.stage(ADMIN, f.owner, f.prepared, f.bodies, Map.of(), () -> {}));
+            try {
+                assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+                coordinator.stopProviderStarts();
+                secondRelease.countDown();
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                while (coordinator.providerActivity().refused() == 0 && System.nanoTime() < deadline) Thread.sleep(10);
+                assertThat(coordinator.providerActivity().refused()).isEqualTo(1);
+                assertThat(coordinator.providerActivity().active()).isEqualTo(1);
+                assertThat(coordinator.awaitProviderIdle(Duration.ZERO)).isFalse();
+                assertThat(pending.isDone()).isFalse();
+                assertThat(budget.reservedBytes()).isPositive();
+                firstRelease.countDown();
+                assertThatThrownBy(() -> pending.get(10, TimeUnit.SECONDS)).hasStackTraceContaining("incomplete attempts require reconciliation");
+                assertThat(puts).hasValue(2);
+                assertThat(verified(f)).isEqualTo(2);
+                assertThat(coordinator.awaitProviderIdle(Duration.ofSeconds(1))).isTrue();
+                assertThat(budget.reservedBytes()).isZero();
+            } finally { firstRelease.countDown(); secondRelease.countDown(); }
+        }
+    }
+
     @Test void callerInterruptionPreventsVerificationAndRetainsBytesUntilRealPutDrains() throws Exception {
         var f = fixture(1, LEASE);
         var committed = new CountDownLatch(1); var release = new CountDownLatch(1);
@@ -1063,13 +1143,17 @@ class DocumentUploadCoordinatorIT {
     }
 
     private static DocumentUploadCoordinator coordinator(BlobStore store, PayloadBudget budget, Duration age) {
+        return coordinator(store, budget, age, 4);
+    }
+
+    private static DocumentUploadCoordinator coordinator(BlobStore store, PayloadBudget budget, Duration age, int parallelism) {
         // A fault-injecting wrapper delegates to the real adapter; the underlying handle remains borrowed.
         var borrowed = new OpenedBlobStore(store, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer());
         return new DocumentUploadCoordinator(tx, new DriveLedger(tx), budget, (generation, retained) -> {
             assertThat(generation).isEqualTo(GENERATION);
             assertThat(retained).isEqualTo(profile);
             return new DocumentUploadCoordinator.Backend(profile.identity(), borrowed);
-        }, 4, age, SQL_LIMITS);
+        }, parallelism, age, SQL_LIMITS);
     }
 
     private static long verified(Fixture f) {
