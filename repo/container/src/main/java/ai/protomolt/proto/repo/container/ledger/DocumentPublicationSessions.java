@@ -111,8 +111,64 @@ final class DocumentPublicationSessions implements AutoCloseable {
         } catch (DocumentPublicationReplay.Terminated terminated) {
             terminal = true; // Authorized terminal replay, independent of provider cleanup.
             throw terminated;
+        } catch (RuntimeException failure) {
+            // A marker may commit after the pre-creation observation. Preserve the
+            // primary error; only fresh authorized evidence permits local eviction.
+            if (journalBudget != null) {
+                try {
+                    control.check();
+                    var observed = replay.observe(caller, command);
+                    control.check();
+                    terminal = observed.state() == DocumentPublicationReplay.State.ABANDONED;
+                } catch (RuntimeException confirmation) {
+                    if (confirmation != failure) failure.addSuppressed(confirmation);
+                }
+            }
+            throw failure;
         } finally {
             release(key, entry, terminal);
+        }
+    }
+
+    /** Explicit private cancellation; absence is not proof of a durable outcome. */
+    boolean abandonRetained(RepositoryCaller caller, DocumentPublicationCommand command, RepositoryReadControl control) {
+        try (var call = beginCall()) {
+            Objects.requireNonNull(command); Objects.requireNonNull(control).check();
+            if (caller == null) throw new RepositoryException(RepositoryException.Code.UNAUTHENTICATED,
+                    "Authenticated repository caller is required");
+            var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(),
+                    caller.principalName(), command.operationId());
+            DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+            if (!caller.processAuthority()) throw new RepositoryException(RepositoryException.Code.PERMISSION_DENIED,
+                    "Registration abandonment requires private process authority");
+            if (journalBudget == null) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Session manager does not own journaled registrations");
+            final Entry entry;
+            synchronized (this) {
+                entry = entries.get(key);
+                if (entry == null) return false;
+                requireCommand(entry, command);
+                if (entry.users != 0 || entry.recovering || entry.session == null)
+                    throw new RepositoryException(RepositoryException.Code.CONFLICT, "Publication session is in use");
+                entry.users = 1; entry.recovering = true;
+            }
+            boolean confirmed = false;
+            try {
+                // Operation-wide evidence also covers a replacement session refused
+                // by SQL after its earlier NOT_OBSERVED replay raced abandonment.
+                var observed = replay.observe(caller, command);
+                control.check();
+                if (observed.state() != DocumentPublicationReplay.State.ABANDONED)
+                    entry.session.abandonRegistration(caller, control);
+                control.check();
+                confirmed = true;
+                return true;
+            } finally {
+                synchronized (this) {
+                    entry.recovering = false;
+                    release(key, entry, confirmed);
+                }
+            }
         }
     }
 

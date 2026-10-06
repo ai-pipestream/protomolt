@@ -130,7 +130,10 @@ class DocumentPublicationRegistrationInspectionIT {
         };
     }
     static DocumentPublicationPreparationRecord input(Context c) {
-        var seed = prepare(c, 1, true);
+        return input(c, 1);
+    }
+    static DocumentPublicationPreparationRecord input(Context c, int members) {
+        var seed = prepare(c, members, true);
         var command = new DocumentPublicationCommand(seed.command().intent().toBuilder().setOperationId(UUID.randomUUID().toString()).build());
         var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), "principal", command.operationId());
         UUID drive = UUID.fromString(command.intent().getMembers(0).getDriveId());

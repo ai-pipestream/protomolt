@@ -263,7 +263,8 @@ closes neither workstream. See [inspection evidence](../evidence/repository/2026
 
 The private V85 primitive now records an explicit durable abandonment marker for
 exact registrations with preparation or modes but no admitted command or owner.
-This is not implemented session cleanup. Bind it to the original claim and preparation identity;
+The private session manager now uses confirmed abandonment for idle-entry cleanup.
+Bind it to the original claim and preparation identity;
 serialize marking against owner admission with the existing claim-first lock order.
 If owner admission wins, abandonment must refuse. If the marker wins, preparation
 retry, mode binding and owner admission must refuse. Only a confirmed durable marker
@@ -272,9 +273,11 @@ acknowledgment alone cannot establish abandonment.
 
 Acceptance requires real PostgreSQL races, lost preparation/modes acknowledgments,
 stale or transferred claims, and capacity release only after confirmed marking.
-The marker's exact retry still requires a live original claim. Add private read-only
-confirmation after lease expiry before integrating manager eviction; an inspector
-phase alone is not the exact-marker identity proof for that operation.
+New marker insertion still requires a live original claim. Private read-only exact
+confirmation after expiry or transfer and authorized ABANDONED replay now permit
+idle session eviction. An absent marker, inspection phase or expired lease alone
+does not permit eviction. Public runtime execution returns FAILED_PRECONDITION for
+authorized abandoned commands. Ordinary journaled runtime activation remains off.
 Owner-admitted or assessment-started registrations remain outside this slice:
 qualify coordinator quiescence and delayed real provider writes before takeover or
 abandonment. Continue restore admission independently of that recovery protocol.

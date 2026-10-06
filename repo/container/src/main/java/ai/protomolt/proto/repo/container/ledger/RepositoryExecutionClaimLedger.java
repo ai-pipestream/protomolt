@@ -96,16 +96,22 @@ final class RepositoryExecutionClaimLedger {
     /** First lock in a short mutation transaction; not a reusable preflight grant. */
     static Claim lockLive(EntityManager em, Claim expected) {
         Objects.requireNonNull(expected);
+        return lockLive(em, expected.key, expected.commandSha256, expected.epoch, expected.token);
+    }
+
+    /** Fence a retained exact identity when acquisition's acknowledgment was lost; never creates or renews it. */
+    static Claim lockLive(EntityManager em, RepositoryOperationLedger.Key key, String digest, long epoch, UUID token) {
+        Objects.requireNonNull(key); Objects.requireNonNull(token);
         if (!em.getTransaction().isActive() || em.getTransaction().getRollbackOnly())
             throw new IllegalStateException("Execution claim requires a writable transaction");
         try {
             // One JDBC call; the database checks time after obtaining the row lock.
             var rows = bind(em.createNativeQuery("""
                     SELECT lease_until FROM fence_repository_execution_claim(:account,:principal,:id,:digest,:epoch,:token)
-                    """), expected.key).setParameter("digest", HexFormat.of().parseHex(expected.commandSha256))
-                    .setParameter("epoch", expected.epoch).setParameter("token", expected.token).getResultList();
+                    """), key).setParameter("digest", HexFormat.of().parseHex(digest))
+                    .setParameter("epoch", epoch).setParameter("token", token).getResultList();
             if (rows.isEmpty()) throw new Fenced();
-            return new Claim(expected.key, expected.commandSha256, expected.epoch, expected.token, instant(rows.getFirst()));
+            return new Claim(key, digest, epoch, token, instant(rows.getFirst()));
         } catch (RuntimeException | Error failure) {
             try { em.getTransaction().setRollbackOnly(); }
             catch (RuntimeException markingFailure) { if (markingFailure != failure) failure.addSuppressed(markingFailure); }

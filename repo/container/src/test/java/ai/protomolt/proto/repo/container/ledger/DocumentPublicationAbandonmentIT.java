@@ -177,6 +177,101 @@ class DocumentPublicationAbandonmentIT {
         }
     }
 
+    @Test void exactConfirmationSurvivesExpiryAndTransferWithoutRenewingClaim() {
+        try (var c = context(POSTGRES)) {
+            var original = input(c); var budget = new PayloadBudget(64_000_000);
+            var value = new DocumentPublicationPreparationRecord(original.key(), original.command(), original.seeds(),
+                    original.placements(), java.time.Duration.ofSeconds(1), 0);
+            var token = UUID.randomUUID();
+            assertThat(DocumentPublicationAbandonment.confirm(c.tx(), budget, CALLER, token, value, NONE)).isFalse();
+            var claim = new DocumentPublicationPreparationJournal(c.tx(), budget).acquireInitial(CALLER, value, token, NONE);
+            DocumentPublicationAbandonment.abandon(c.tx(), budget, CALLER, claim, value, NONE);
+            c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(1.1)").getSingleResult());
+            assertThat(DocumentPublicationAbandonment.confirm(new Tx(c.emf()), budget, CALLER, token, value, NONE)).isTrue();
+            var successor = new RepositoryExecutionClaimLedger(c.tx()).takeOver(value.key(), value.command(), 1, UUID.randomUUID(), LEASE);
+            assertThat(DocumentPublicationAbandonment.confirm(new Tx(c.emf()), budget, CALLER, token, value, NONE)).isTrue();
+            assertThatThrownBy(() -> DocumentPublicationAbandonment.confirm(c.tx(), budget, CALLER, successor.token(), value, NONE))
+                    .hasMessageContaining("differs from retained registration");
+            assertThatThrownBy(() -> DocumentPublicationAbandonment.confirm(c.tx(), budget,
+                    new RepositoryCaller("principal", false, java.util.Set.of("account"), java.util.Set.of()), token, value, NONE))
+                    .hasMessageContaining("private process authority");
+            var lease = c.tx().readOnly(em -> em.createNativeQuery("SELECT lease_until FROM repository_execution_claims WHERE operation_id=:o")
+                    .setParameter("o", value.key().operationId()).getSingleResult());
+            DocumentPublicationAbandonment.abandonRetained(c.tx(), budget, CALLER, token, value, NONE);
+            Object afterLease = c.tx().readOnly(em -> em.createNativeQuery("SELECT lease_until FROM repository_execution_claims WHERE operation_id=:o")
+                    .setParameter("o", value.key().operationId()).getSingleResult());
+            assertThat(afterLease).isEqualTo(lease);
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @Test void abandonedReplayRequiresCurrentReadAndExactCommand() {
+        try (var c = context(POSTGRES)) {
+            var value = input(c, 2); var budget = new PayloadBudget(64_000_000);
+            var claim = new DocumentPublicationPreparationJournal(c.tx(), budget).acquireInitial(CALLER, value, UUID.randomUUID(), NONE);
+            DocumentPublicationAbandonment.abandon(c.tx(), budget, CALLER, claim, value, NONE);
+            var address = value.command().intent().getMembers(0).getDestination().getAddress();
+            var node = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(address);
+            var document = new DocumentLedger(c.tx()).findByNodeId(node).orElseThrow();
+            document.writeSecurity(ai.protomolt.proto.repo.v1.DocumentSecurity.newBuilder().addPermissions(
+                    ai.protomolt.proto.repo.v1.AccessRule.newBuilder().setIdentityType("public").setIdentity("public")
+                            .setAccess(ai.protomolt.proto.repo.v1.Access.ACCESS_READ)).build());
+            c.tx().inTransaction(em -> { em.createNativeQuery("UPDATE documents SET security=CAST(:s AS jsonb) WHERE node_id=:n")
+                    .setParameter("s", document.security).setParameter("n", node).executeUpdate(); });
+            var otherNode = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(
+                    value.command().intent().getMembers(1).getDestination().getAddress());
+            c.tx().inTransaction(em -> { em.createNativeQuery("UPDATE documents SET security=CAST(:s AS jsonb) WHERE node_id=:n")
+                    .setParameter("s", document.security).setParameter("n", otherNode).executeUpdate(); });
+            var scoped = new RepositoryCaller("principal", false, java.util.Set.of("account"), java.util.Set.of());
+            var replay = new DocumentPublicationReplay(c.tx());
+            assertThat(replay.observe(scoped, value.command()).state()).isEqualTo(DocumentPublicationReplay.State.ABANDONED);
+            // The alternate command references only the document whose READ grant
+            // survives revocation below. Its identity must not reveal the old marker.
+            var changed = new DocumentPublicationCommand(value.command().intent().toBuilder().clearMembers()
+                    .addMembers(value.command().intent().getMembers(1)).build());
+            assertThatThrownBy(() -> replay.observe(scoped, changed)).isInstanceOf(RepositoryOperationLedger.CommandConflictException.class);
+            document.writeSecurity(ai.protomolt.proto.repo.v1.DocumentSecurity.getDefaultInstance());
+            c.tx().inTransaction(em -> { em.createNativeQuery("UPDATE documents SET security=CAST(:s AS jsonb) WHERE node_id=:n")
+                    .setParameter("s", document.security).setParameter("n", node).executeUpdate(); });
+            assertThatThrownBy(() -> replay.observe(scoped, value.command())).isInstanceOf(RepositoryException.class);
+            assertThatThrownBy(() -> replay.observe(scoped, changed)).isInstanceOf(RepositoryException.class);
+            assertThatThrownBy(() -> replay.observe(new RepositoryCaller("principal", false, java.util.Set.of("other"), java.util.Set.of()), value.command()))
+                    .isInstanceOf(RepositoryException.class);
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @Test void publicRuntimeReportsTypedAbandonmentWithoutOpeningStorageOrSchemas() throws Exception {
+        try (var c = context(POSTGRES)) {
+            var value = input(c); var budget = new PayloadBudget(64_000_000);
+            var claim = new DocumentPublicationPreparationJournal(c.tx(), budget).acquireInitial(CALLER, value, UUID.randomUUID(), NONE);
+            DocumentPublicationAbandonment.abandon(c.tx(), budget, CALLER, claim, value, NONE);
+            try (var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, profile) -> {
+                throw new AssertionError("Abandoned operation must not read storage");
+            }, 4, 1_000_000, budget)) {
+                var reads = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+                var runtime = new DocumentPublicationRuntime(c.tx(), new DriveLedger(c.tx()), reads, reader, budget,
+                        (generation, profile) -> { throw new AssertionError("Abandoned operation must not select storage"); },
+                        new ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits(1_000_000, 100, 100, 100, 100_000),
+                        new SqlTimeouts(java.time.Duration.ofSeconds(2), java.time.Duration.ofSeconds(5)), 2,
+                        java.time.Duration.ofMillis(25), LEASE, 4, 4_000_000, 100, false);
+                try {
+                    assertThatThrownBy(() -> runtime.execute(CALLER, value.command(), java.util.Map.of(), java.util.Map.of(),
+                            java.util.Map.of(), java.util.Map.of(), java.util.Optional.empty(),
+                            (caller, member, occurrence) -> { throw new AssertionError("No schema lookup"); }, NONE))
+                            .isInstanceOfSatisfying(RepositoryException.class,
+                                    e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+                    assertThatThrownBy(() -> runtime.executeScoped(CALLER, value.command(), java.util.Map.of(), java.util.Map.of(),
+                            java.util.Map.of(), java.util.Map.of(), java.util.Optional.empty(),
+                            (caller, member, control) -> { throw new AssertionError("No schema scope"); }, NONE))
+                            .isInstanceOfSatisfying(RepositoryException.class,
+                                    e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+                } finally { assertThat(runtime.shutdownStep(java.time.Duration.ofSeconds(2))).isTrue(); }
+                assertThat(budget.reservedBytes()).isZero();
+            }
+        }
+    }
+
     @Test void racingAdmissionAndAbandonmentHaveExactlyOneWinner() throws Exception {
         try (var c = context(POSTGRES); var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var original = input(c);

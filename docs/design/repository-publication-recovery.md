@@ -630,8 +630,21 @@ all subsequent command/owner admission for that operation identity.
 This covers registrations that cannot yet have issued provider writes. It does
 not abandon admitted owners or enable takeover. Cancellation before commit rolls
 back the marker; cancellation after commit leaves an uncertain caller outcome.
-Exact retry confirms that outcome only while the original claim is still live.
-After lease expiry, a separate private read-only exact-marker confirmation path is
-needed before session capacity can be released. Never weaken live-claim insertion
-requirements to provide that confirmation. The inspector reports `ABANDONED`, but
-neither it nor this primitive currently evicts session-manager entries.
+New marker insertion still requires the original claim to be live. Private exact
+confirmation now compares the immutable marker to the retained preparation digest,
+nonce, command and original token without renewing or fencing the claim. It works
+after claim expiry or transfer; an absent marker does not prove rollback.
+
+The journaled session manager can explicitly abandon an idle retained registration.
+It keeps the entry reserved while SQL runs and releases capacity only after confirmed
+abandonment. Lost acknowledgments, expired claims without markers, cancellation and
+active users preserve the entry. An admitted owner cannot use this path. This is
+private host functionality, not an exposed cancellation RPC or default activation.
+
+Replay now distinguishes `ABANDONED` without manufacturing a publication receipt.
+It checks the canonical stored command and current READ access to its complete
+destination/source set before exposing the marker or a command conflict. It must
+not authorize only an alternative command supplied by the caller. Public runtime
+execution reports FAILED_PRECONDITION and does not open storage or schema scopes.
+A fresh authorized observation also permits eviction when an execution failure races
+abandonment. Failed confirmation preserves the original failure and retained entry.

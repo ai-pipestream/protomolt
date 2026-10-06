@@ -98,6 +98,12 @@ final class DocumentPublicationSession {
     /** Only the manager with no remaining users may release this proven pre-journal identity. */
     boolean discardableBeforeRegistration() { return registration != null && !registration.mayHaveCommitted(); }
 
+    void abandonRegistration(RepositoryCaller caller, RepositoryReadControl control) {
+        if (registration == null) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                "Session has no durable registration");
+        try (var execution = begin(caller, control)) { registration.abandon(caller, control); }
+    }
+
     boolean isSuperseded(RepositoryCaller caller, RepositoryReadControl control) {
         Objects.requireNonNull(control).check();
         DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());

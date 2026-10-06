@@ -18,7 +18,7 @@ import java.util.UUID;
 
 /** Internal authorized observation of an immutable outcome; never creates or resumes work. */
 final class DocumentPublicationReplay {
-    enum State { NOT_OBSERVED, PENDING, COMMITTED, TERMINATED }
+    enum State { NOT_OBSERVED, PENDING, COMMITTED, TERMINATED, ABANDONED }
     record Observation(State state, Optional<DocumentPublicationResult> result, Optional<DocumentPublicationRejection> rejection) {
         Observation(State state, Optional<DocumentPublicationResult> result) { this(state, result, Optional.empty()); }
         Observation {
@@ -26,7 +26,11 @@ final class DocumentPublicationReplay {
             if ((state == State.COMMITTED) != result.isPresent() || (state == State.TERMINATED) != rejection.isPresent())
                 throw new IllegalArgumentException("Terminal observations must carry exactly their stored outcome");
         }
-        void requireNotTerminated() { rejection.ifPresent(receipt -> { throw new Terminated(receipt); }); }
+        void requireNotTerminated() {
+            if (state == State.ABANDONED) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Publication registration was abandoned");
+            rejection.ifPresent(receipt -> { throw new Terminated(receipt); });
+        }
     }
 
     /** Internal success-only execution surfaces preserve the authorized terminal receipt in this signal. */
@@ -65,7 +69,32 @@ final class DocumentPublicationReplay {
                     SELECT owner_generation,require_repository_read_committed() FROM repository_operation_owners
                     WHERE account_id=:account AND principal=:principal AND operation_id=:operation FOR SHARE
                     """), key).getResultList();
-            if (owner.isEmpty()) return new Observation(State.NOT_OBSERVED, Optional.empty());
+            if (owner.isEmpty()) {
+                var abandoned = bind(em.createNativeQuery("""
+                        SELECT p.command_sha256,a.owner_nonce=p.owner_nonce AND a.preparation_sha256=p.preparation_sha256,
+                          CASE WHEN octet_length(p.command_bytes)<=1048576 THEN p.command_bytes END
+                        FROM repository_publication_abandonments a
+                        JOIN repository_publication_preparations p USING(account_id,principal,operation_id,predecessor_generation)
+                        WHERE a.account_id=:account AND a.principal=:principal AND a.operation_id=:operation
+                        """), key).getResultList();
+                if (abandoned.isEmpty()) return new Observation(State.NOT_OBSERVED, Optional.empty());
+                var row = (Object[]) abandoned.getFirst();
+                if (!Boolean.TRUE.equals(row[1])) throw invalidBinding();
+                // Authorize the stored read set, not an alternative command whose
+                // documents happen to be accessible to the same principal.
+                DocumentPublicationCommand stored;
+                try {
+                    if (!(row[2] instanceof byte[] bytes)) throw invalidBinding();
+                    stored = new DocumentPublicationCommand(ai.protomolt.proto.repo.v1.DocumentPublicationIntent.parseFrom(bytes)
+                            .toBuilder().setOperationId(key.operationId().toString()).build());
+                    if (!stored.canonical().equals(ByteString.copyFrom(bytes))
+                            || !stored.sha256().equals(java.util.HexFormat.of().formatHex((byte[]) row[0]))) throw invalidBinding();
+                } catch (InvalidProtocolBufferException | IllegalArgumentException malformed) { throw invalidBinding(); }
+                DocumentAdmissionAuthorization.authorizeRejection(em, caller, stored);
+                if (!command.sha256().equals(java.util.HexFormat.of().formatHex((byte[]) row[0])))
+                    throw new RepositoryOperationLedger.CommandConflictException();
+                return new Observation(State.ABANDONED, Optional.empty());
+            }
             RepositoryOperationLedger.requireCommand(em, key, command);
             var outcomes = bind(em.createNativeQuery("""
                     SELECT owner_generation,result_codec,result_version,result_bytes,encode(result_sha256,'hex')

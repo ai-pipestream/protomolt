@@ -11,6 +11,7 @@ import java.util.UUID;
 /** Fixed initial-session registration; no replacement claim, provider work or authority escalation. */
 final class DocumentPublicationRegistration {
     private final Tx tx;
+    private final PayloadBudget budget;
     private final DocumentPublicationPreparationRecord preparation;
     private final UUID claimToken = UUID.randomUUID();
     private final JournalAccess access;
@@ -24,6 +25,7 @@ final class DocumentPublicationRegistration {
     DocumentPublicationRegistration(Tx tx, PayloadBudget budget, DocumentPublicationPreparationRecord preparation,
             DocumentUploadPlan.Prepared plan) {
         this.tx = Objects.requireNonNull(tx);
+        this.budget = Objects.requireNonNull(budget);
         this.preparation = Objects.requireNonNull(preparation);
         this.plan = Objects.requireNonNull(plan);
         if (!plan.command().sha256().equals(preparation.command().sha256())
@@ -63,6 +65,10 @@ final class DocumentPublicationRegistration {
     }
 
     boolean mayHaveCommitted() { return mayHaveCommitted; }
+
+    void abandon(RepositoryCaller caller, RepositoryReadControl control) {
+        DocumentPublicationAbandonment.abandonRetained(tx, budget, caller, claimToken, preparation, control);
+    }
 
     private void preflight(RepositoryCaller caller, RepositoryReadControl control) {
         control.check();
