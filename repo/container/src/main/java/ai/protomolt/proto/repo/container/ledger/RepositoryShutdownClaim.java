@@ -18,6 +18,17 @@ final class RepositoryShutdownClaim {
     /** The host supplies bounded SQL timeouts; claim lock serializes binding and reservation observations. */
     static State inspect(Tx tx, RepositoryCaller caller, RepositoryCoordinatorDrain.Identity identity,
             RepositoryReadControl control) {
+        return inspect(tx, caller, identity, control, false);
+    }
+
+    /** Detached successors require a reviewed handoff path even if they never acquired a binding. */
+    static State inspectDetached(Tx tx, RepositoryCaller caller, RepositoryCoordinatorDrain.Identity identity,
+            RepositoryReadControl control) {
+        return inspect(tx, caller, identity, control, true);
+    }
+
+    private static State inspect(Tx tx, RepositoryCaller caller, RepositoryCoordinatorDrain.Identity identity,
+            RepositoryReadControl control, boolean requireReviewedPath) {
         Objects.requireNonNull(control).check();
         DocumentAdmissionAuthorization.requireCaller(caller, identity.key(), identity.key().account());
         if (!caller.processAuthority()) throw new RepositoryException(RepositoryException.Code.PERMISSION_DENIED,
@@ -43,11 +54,15 @@ final class RepositoryShutdownClaim {
                     WHERE account_id=:a AND principal=:p AND operation_id=:o AND claim_epoch=:e
                     """).setParameter("a", key.account()).setParameter("p", key.principal())
                     .setParameter("o", key.operationId()).setParameter("e", identity.epoch()).getResultList();
-            if (bindings.isEmpty()) return State.FENCED_UNREGISTERED;
-            var binding = (Object[]) bindings.getFirst();
-            if (!identity.token().equals(binding[0])) return State.FENCED_UNREGISTERED;
-            if (!identity.incarnation().equals(binding[1]))
-                throw new RepositoryException(RepositoryException.Code.CONFLICT, "Shutdown coordinator binding changed");
+            if (bindings.isEmpty()) {
+                if (!requireReviewedPath) return State.FENCED_UNREGISTERED;
+            } else {
+                var binding = (Object[]) bindings.getFirst();
+                if (!identity.token().equals(binding[0]))
+                    return requireReviewedPath ? State.UNRESOLVED : State.FENCED_UNREGISTERED;
+                if (!identity.incarnation().equals(binding[1]))
+                    throw new RepositoryException(RepositoryException.Code.CONFLICT, "Shutdown coordinator binding changed");
+            }
             // A bound predecessor needs a complete reviewed handoff path to the current claim.
             // Epochs strictly increase; bounded SQL timeouts cover arbitrarily long histories.
             boolean reviewed = (Boolean) em.createNativeQuery("""

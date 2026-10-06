@@ -1828,3 +1828,78 @@ recovery entry and its byte leases are released as before. This is an internal
 prerequisite for authenticated client-retry integration, not a new public endpoint
 or automatic scheduler. Existing immutable mode storage and validation semantics
 are unchanged; this adds a comparison with the prospective host retry's inputs.
+
+### Post-close disposal of unactivated successors
+
+Managed recovery integration exposed a distinct shutdown state: a V93-installed
+successor whose V94 transaction rolled back can remain current and unbound. It
+cannot create V90, and waiting for an external V98 is not a usable local shutdown
+protocol. The real-database regression is recorded in
+[unactivated shutdown evidence](../evidence/repository/2026-10-06-unactivated-shutdown/README.md).
+The manager classification and revalidation described below are implemented.
+Recovery-owner disposal and managed-host integration remain outstanding.
+
+Close recovery admission first, then wait for every accepted recovery handle.
+Close publication and registration admission and complete the registration barrier.
+The manager retains the complete successor identity before V94 SQL. Its immutable
+shutdown snapshot retains the fixed-size successor fingerprint alongside that
+identity, without another command or preparation copy.
+
+An explicit local `DETACHED_UNACTIVATED` outcome can dispose of this retained
+context after proving the exact current reservation, V93 installation, installed
+owner and command and observing no V94. It is limited to a manager-owned successor
+session and its fingerprint, not arbitrary unbound claims. Retain the outcome in
+the closed manager across retries. It is neither permanent SQL fencing nor a
+V90/V91 marker, and changes no claim, reservation, attempt, pin or UNKNOWN state.
+
+Before releasing shared resources, still wait for session calls, uploads, reads
+and external schema workers. Revalidate each detached identity: unchanged
+unactivated SQL state or its exact late V94 activation is compatible with local
+shutdown. That late activation cannot start Java/provider work because local
+admission is closed and accepted calls have ended. A fresh host can later recover
+it through the existing expired-bound protocol. A reviewed successor chain is
+also acceptable; unrelated tokens, changed command or incomplete chains remain
+unresolved. Do not turn a transient absent-row observation into a permanent fence.
+
+Recovery-owner command/preparation/plan leases can then be detached only after
+its accepted handles have ended and manager ownership of every possible V94
+registration is accounted for. This transfers retry responsibility to durable
+state; it does not declare logical completion, abandonment, quiescence or automatic
+execution. No same-host resume is allowed after disposal. An uncertain late
+metadata commit remains recoverable through its atomic journals.
+
+The proof compares fingerprints by reading bounded stored mode JSON under the
+claim lock, then normalizing its string values and key order outside SQL. Java's
+compact mode JSON digest and PostgreSQL's jsonb-text mode digest are different
+encodings. The SQL digest binds the journal to the install; the normalized Java
+digest binds it to the manager's retained fingerprint. Byte-budget exhaustion
+reports `CAPACITY_UNAVAILABLE`, leaving drain incomplete for retry after accepted
+work releases capacity. It grants no substitute proof. Strict reviewed-chain
+checks apply to retained successors even before the first detached observation.
+Required cases include failed V94 rollback, lost V94 reply, a late activation after
+local classification, current and pending V97/V98 replies, active recovery handles,
+held schema/provider work, changed fingerprint and an incomplete successor chain.
+Keep the existing initial-registration absent-claim behavior separate until its
+own durable handoff proof is designed.
+
+#### Next integration step: recovery-owner disposal
+
+This step remains planned. Close recovery admission and add a bounded wait for
+accepted `Attempt` handles, notified by handle closure. Capture the manager's
+immutable registration snapshot before disposing of owner entries. Separate that
+snapshot barrier from SQL drain classification so owner-held preparation leases
+cannot prevent the classification's bounded mode capture from obtaining capacity.
+
+For each possibly submitted V94, require an exact retained manager fingerprint or
+exact durable terminal/abandonment or claim-fenced evidence. Preserve the last
+submitted activation identity across pending supersession until a confirmed
+replacement accounts for it. A missing cache entry or an `INSTALLED` phase alone
+cannot prove that activation was never submitted. Earlier metadata-only phases
+can release local bytes after accepted calls end: committed V97/V98/V93 state is
+recoverable and uncommitted state started no local provider work.
+
+Do not hold the recovery-owner monitor while consulting Sessions or SQL. After
+detachment, continue the existing session, upload, read and external-worker
+barriers; owner-byte release does not establish their completion. Acceptance
+must cover active handles, uncertain reservation/install acknowledgments,
+attempted activation, terminal eviction, pending supersession and held workers.

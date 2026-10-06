@@ -32,7 +32,27 @@ final class DocumentPublicationSessions implements AutoCloseable {
     private final Map<RepositoryOperationLedger.Key, Entry> entries = new HashMap<>();
     // Captured only after registration admission closes and its accepted calls drain.
     // Never refresh from the cache: accepted calls may subsequently evict terminal entries.
-    private java.util.List<RepositoryCoordinatorDrain.Identity> drainIdentities;
+    private java.util.List<ShutdownEntry> drainIdentities;
+
+    private static final class ShutdownEntry {
+        final RepositoryCoordinatorDrain.Identity identity;
+        final DocumentSuccessorFingerprint successor;
+        // Monotonic local outcome; an exact late activation cannot reopen this host.
+        volatile boolean detachedUnactivated;
+        ShutdownEntry(RepositoryCoordinatorDrain.Identity identity, DocumentSuccessorFingerprint successor) {
+            this.identity = identity;
+            this.successor = successor;
+            if (successor != null) {
+                var p = successor.reservation();
+                if (!identity.key().equals(p.predecessor().key())
+                        || !identity.commandSha256().equals(p.predecessor().commandSha256())
+                        || identity.epoch() != p.predecessor().epoch()+1
+                        || !identity.token().equals(p.successorToken())
+                        || !identity.incarnation().equals(p.successorIncarnation()))
+                    throw new IllegalStateException("Shutdown successor differs from retained identity");
+            }
+        }
+    }
 
     private static final class Entry {
         final DocumentPublicationCommand command;
@@ -602,9 +622,12 @@ final class DocumentPublicationSessions implements AutoCloseable {
      * Entries already evicted after durable terminal proof are excluded. This is neither
      * LOCAL_DRAINED nor permission to close providers.
      */
-    record DrainProgress(boolean registrationsIdle, int confirmed, int unresolved, int fenced) {
+    record DrainProgress(boolean registrationsIdle, int confirmed, int unresolved, int fenced, int detached) {
         DrainProgress(boolean registrationsIdle, int confirmed, int unresolved) {
-            this(registrationsIdle, confirmed, unresolved, 0);
+            this(registrationsIdle, confirmed, unresolved, 0, 0);
+        }
+        DrainProgress(boolean registrationsIdle, int confirmed, int unresolved, int fenced) {
+            this(registrationsIdle, confirmed, unresolved, fenced, 0);
         }
     }
 
@@ -616,24 +639,54 @@ final class DocumentPublicationSessions implements AutoCloseable {
         execution.stopProviderStarts();
         close();
         if (!registrations.awaitIdle(wait)) return new DrainProgress(false, 0, 0);
-        final java.util.List<RepositoryCoordinatorDrain.Identity> identities;
+        final java.util.List<ShutdownEntry> identities;
         synchronized (this) {
             if (drainIdentities == null) drainIdentities = entries.values().stream()
-                    .flatMap(entry -> drainIdentity(entry).stream()).toList();
+                    .flatMap(entry -> drainIdentity(entry).stream().map(identity -> new ShutdownEntry(identity, entry.successor))).toList();
             identities = drainIdentities;
         }
-        int confirmed = 0, unresolved = 0, fenced = 0;
-        for (var identity : identities) {
+        int confirmed = 0, unresolved = 0, fenced = 0, detached = 0;
+        for (var retained : identities) {
+            var identity = retained.identity;
             control.check();
             var caller = Objects.requireNonNull(authority.apply(identity.key()), "Private operation authority");
-            var state = RepositoryShutdownClaim.inspect(tx, caller, identity, control);
+            if (retained.detachedUnactivated) {
+                if (confirmDetached(retained, caller, control)) detached++;
+                else unresolved++;
+                continue;
+            }
+            var state = retained.successor == null ? RepositoryShutdownClaim.inspect(tx, caller, identity, control)
+                    : RepositoryShutdownClaim.inspectDetached(tx, caller, identity, control);
             if (state.fenced()) fenced++;
             else if (state == RepositoryShutdownClaim.State.UNRESOLVED) unresolved++;
-            else if (RepositoryCoordinatorDrain.beginRetained(tx, caller, identity, control)) confirmed++;
-            else unresolved++;
+            else {
+                if (retained.successor != null) {
+                    var successorState = RepositorySuccessorShutdown.inspect(tx, journalBudget, caller, retained.successor, control);
+                    if (successorState == RepositorySuccessorShutdown.State.UNACTIVATED) {
+                        retained.detachedUnactivated = true;
+                        detached++;
+                        continue;
+                    }
+                    if (successorState != RepositorySuccessorShutdown.State.ACTIVATED) {
+                        unresolved++;
+                        continue;
+                    }
+                }
+                if (RepositoryCoordinatorDrain.beginRetained(tx, caller, identity, control)) confirmed++;
+                else unresolved++;
+            }
         }
         control.check();
-        return new DrainProgress(true, confirmed, unresolved, fenced);
+        return new DrainProgress(true, confirmed, unresolved, fenced, detached);
+    }
+
+    private boolean confirmDetached(ShutdownEntry retained, RepositoryCaller caller, RepositoryReadControl control) {
+        var state = RepositoryShutdownClaim.inspectDetached(tx, caller, retained.identity, control);
+        if (state.fenced()) return true;
+        if (state != RepositoryShutdownClaim.State.CURRENT) return false;
+        var successor = RepositorySuccessorShutdown.inspect(tx, journalBudget, caller, retained.successor, control);
+        return successor == RepositorySuccessorShutdown.State.UNACTIVATED
+                || successor == RepositorySuccessorShutdown.State.ACTIVATED;
     }
 
     private void releaseClosedRestorations() {
@@ -662,17 +715,23 @@ final class DocumentPublicationSessions implements AutoCloseable {
     boolean attestLocalDrain(java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> authority,
             RepositoryReadControl control) {
         Objects.requireNonNull(authority); Objects.requireNonNull(control).check();
-        final java.util.List<RepositoryCoordinatorDrain.Identity> identities;
+        final java.util.List<ShutdownEntry> identities;
         synchronized (this) {
             if (journalBudget == null || !closed || activeCalls != 0 || drainIdentities == null)
                 throw new IllegalStateException("Journaled registration and session drain must complete before attestation");
             identities = drainIdentities;
         }
-        for (var identity : identities) {
+        for (var retained : identities) {
+            var identity = retained.identity;
             control.check();
             var caller = Objects.requireNonNull(authority.apply(identity.key()), "Private operation authority");
+            if (retained.detachedUnactivated) {
+                if (!confirmDetached(retained, caller, control)) return false;
+                continue;
+            }
             if (RepositoryCoordinatorLocalDrain.confirm(tx, caller, identity, control).isPresent()) continue;
-            var state = RepositoryShutdownClaim.inspect(tx, caller, identity, control);
+            var state = retained.successor == null ? RepositoryShutdownClaim.inspect(tx, caller, identity, control)
+                    : RepositoryShutdownClaim.inspectDetached(tx, caller, identity, control);
             if (state.fenced()) continue;
             if (state == RepositoryShutdownClaim.State.UNRESOLVED) return false;
             RepositoryCoordinatorLocalDrain.record(tx, caller, identity, control);

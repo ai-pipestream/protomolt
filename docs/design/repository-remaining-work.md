@@ -956,3 +956,12 @@ activation. `resume` reopens a retained local attempt without rediscovery. Corre
 retries preserve proposal identity. The managed runtime still does not own or
 invoke this recovery entry point; its distinct recovery authority, state routing,
 complete-payload retry execution and shutdown reconciliation remain to be wired.
+
+Before enabling host recovery, finish the recovery-owner disposal protocol in the
+publication recovery design. The manager now has a post-close
+`DETACHED_UNACTIVATED` outcome for exact installed successors, including revalidation
+after an exact late V94 or reviewed takeover. This is separate from permanent
+claim-fenced retirement and adds no V90/V91 or remote-quiescence claim. The original
+rolled-back-V94 regression is preserved with its red evidence. Root recovery-owner
+handles and byte leases still need coordinated disposal and managed-host wiring;
+manager completion alone does not establish that integration.
