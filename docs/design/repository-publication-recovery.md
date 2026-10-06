@@ -1007,8 +1007,14 @@ and verify all six row families remain absent, followed by exact retained-sessio
 retry. Session tests verify complete admission after lost commit acknowledgments,
 current caller denial, and a drain snapshot surviving terminal replay eviction.
 Standalone legacy journals still qualify abandonment after a lost actual commit
-reply and expiry. Initial-admission process-kill and performance qualification
-remain acceptance work; the post-owner process recovery suite is a separate proof.
+reply and expiry. Initial-admission process tests hold the actual owner transaction
+before and after JDBC commit, check zero versus all six row families independently,
+kill and reap the JVM, and retry public command/payload files in a fresh process.
+Before-commit death publishes as generation one; after-commit death waits for
+expiry and recovers as generation two with fresh attempt/upload identities. Both
+cases require one final attempt, selected versioned provider bytes and receipt
+replay without storage calls. Performance and broader authorization/concurrency
+qualification remain acceptance work.
 
 Acceptance requires rollback faults after each SQL insertion before commit; lost commit
 acknowledgment; cancellation before and after commit; concurrent exact/conflicting

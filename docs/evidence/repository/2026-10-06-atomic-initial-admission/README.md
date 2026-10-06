@@ -52,3 +52,31 @@ The production-JAR storage qualification also passed with zero failures/errors/s
 
 Build successful in 2 minutes 57 seconds. The runtime inventory contains 38
 production artifacts; its compressed XML is retained here.
+
+## Initial-commit process qualification
+
+The subsequent five-case `DocumentPublicationProcessRecoveryIT` run passed in
+93.232 seconds (build 1 minute 37 seconds), zero failures/errors/skips. Its output
+is preserved separately as `initial-commit-process.xml.gz`.
+
+Two new cases gate the actual JDBC transaction immediately before or after COMMIT,
+once the writer connection sees claim, binding, preparation, modes, operation and
+owner. Independent parent reads see zero or all six rows respectively, with no
+upload attempt, assessment start or terminal outcome. The parent kills and reaps
+the writer and checks the same visibility again; a committed claim/owner tuple and
+its leases remain unchanged by termination.
+
+A new JVM receives only public command/payload files plus test service configuration.
+It publishes as generation one after rollback, or waits for lease expiry and uses
+discovery, V97, reserved preparation, V93 and V94 to publish as generation two after
+commit. The latter requires fresh attempt/upload tokens relative to retained seeds.
+Both cases verify one final attempt, one success receipt, exact selected provider
+bytes and replay without storage calls. The three existing provider-write and
+unactivated-replacement kill cases also pass. Sol reviewed the extension and its
+suggested identity/count assertions were included.
+
+This closes the initial-commit process boundary for the admin/opaque fixture.
+It does not establish scoped typed process recovery, automatic recovery hosting,
+legacy partial-row recovery, reader-pin reclamation or performance. This follow-up
+changes tests and documentation only; the production-JAR result above applies to
+unchanged production code.

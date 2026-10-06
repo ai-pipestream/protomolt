@@ -25,7 +25,7 @@ public final class DocumentPublicationProcessWorker {
     static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
     public static void main(String[] args) throws Exception {
         assertThat(args).hasSize(3);
-        assertThat(args[0]).isIn("write", "recover", "reserve", "install");
+        assertThat(args[0]).isIn("write", "recover", "reserve", "install", "initial-before", "initial-after", "publish", "recover-initial");
         var command = new DocumentPublicationCommand(DocumentPublicationIntent.parseFrom(Files.readAllBytes(Path.of(args[1]))));
         assertThat(command.intent().getMembersList()).hasSize(1);
         var declared = command.intent().getMembers(0).getPartsList();
@@ -42,18 +42,24 @@ public final class DocumentPublicationProcessWorker {
         config.setPassword(env.get("TEST_DB_PASSWORD")); config.setSchema(env.get("TEST_DB_SCHEMA")); config.setMaximumPoolSize(6);
         try (var pool = new HikariDataSource(config);
              var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
-                     Map.of("hibernate.connection.datasource", pool, "hibernate.hbm2ddl.auto", "validate"));
+                     Map.of("hibernate.connection.datasource", admissionGate(pool,args[0],command.operationId()), "hibernate.hbm2ddl.auto", "validate"));
              var sdk = client(); var opened = opened(sdk, args[0].equals("write"))) {
             var tx = new Tx(emf);
             var profile = new ManagedBackendLedger(tx).find(GENERATION).orElseThrow();
             var drive = new DriveLedger(tx).findById(UUID.fromString(command.intent().getMembers(0).getDriveId())).orElseThrow();
             var input = new Input(command, Map.of(drive.driveId, DocumentUploadPlan.Placement.sample(drive, GENERATION, profile)), body);
             try (var host = new Host(tx, profile, new AtomicReference<>(opened), Duration.ofSeconds(10))) {
-                if (args[0].equals("write")) {
+                if (args[0].equals("write") || args[0].startsWith("initial-")) {
                     execute(host, input, NONE);
                     throw new AssertionError("Writer must be killed while the real PUT is held");
                 }
-                recover(tx, host, input, opened, args[0]);
+                if (args[0].equals("publish")) {
+                    var result=execute(host,input,NONE);
+                    int calls=((ObservedStore)opened.store()).calls().get();
+                    assertThat(host.sessions.execute(ADMIN,command,Map.of(),Map.of(),Map.of(),Map.of(),Optional.empty(),
+                            (member,occurrence) -> {throw new AssertionError("Replay cannot resolve schema");},NONE)).isEqualTo(result);
+                    assertThat(((ObservedStore)opened.store()).calls().get()).isEqualTo(calls);
+                } else recover(tx, host, input, opened, args[0]);
             }
         }
         System.out.println("PROCESS_RECOVERY_OK");
@@ -62,13 +68,17 @@ public final class DocumentPublicationProcessWorker {
     private static void recover(Tx tx, Host host, Input input, OpenedBlobStore backend, String mode) throws Exception {
         var command = input.command();
         var key = new RepositoryOperationLedger.Key("account", "principal", command.operationId());
-        var oldAttempt = tx.readOnly(em -> (UUID) em.createNativeQuery("""
+        boolean initial=mode.equals("recover-initial");
+        if(initial) assertThat(tx.<Number>readOnly(em -> (Number) em.createNativeQuery(
+                "SELECT count(*) FROM document_part_attempts WHERE operation_id=:id")
+                .setParameter("id",command.operationId()).getSingleResult()).longValue()).isZero();
+        var oldAttempt = initial ? null : tx.readOnly(em -> (UUID) em.createNativeQuery("""
                 SELECT attempt_id FROM document_part_attempts WHERE operation_id=:id
                 """).setParameter("id", command.operationId()).getSingleResult());
-        var oldObject = tx.readOnly(em -> (String) em.createNativeQuery(
+        var oldObject = initial ? null : tx.readOnly(em -> (String) em.createNativeQuery(
                 "SELECT object_key FROM document_part_attempt_objects WHERE attempt_id=:id")
                 .setParameter("id", oldAttempt).getSingleResult());
-        assertThat(backend.store().get(BUCKET, oldObject).data()).containsExactly(input.body().bytes());
+        if(!initial) assertThat(backend.store().get(BUCKET, oldObject).data()).containsExactly(input.body().bytes());
         tx.readOnly(em -> em.createNativeQuery("""
                 SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM
                   (GREATEST(c.lease_until,o.lease_until)-clock_timestamp())))+0.1)
@@ -78,6 +88,11 @@ public final class DocumentPublicationProcessWorker {
         // Production discovery returns private identities without adopting or renewing them.
         var observed = new RepositoryCoordinatorRecoveryDiscovery(tx, new SqlTimeouts(Duration.ofSeconds(1),Duration.ofSeconds(5)))
                 .inspect(ADMIN,key,command.sha256(),NONE);
+        if(initial) {
+            assertThat(observed.status()).isEqualTo(RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND);
+            assertThat(observed.candidate().orElseThrow().predecessor().epoch()).isEqualTo(1);
+            assertThat(observed.candidate().orElseThrow().owner().generation()).isEqualTo(1);
+        }
         RepositoryCoordinatorReservation.Proposal proposal;
         if (observed.status() == RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND) {
             var found = observed.candidate().orElseThrow();
@@ -105,7 +120,9 @@ public final class DocumentPublicationProcessWorker {
             host.sessions.activateSuccessor(ADMIN, ADMIN, plan, NONE);
             var result = execute(host, input, NONE);
             var nextAttempt = plan.next().seeds().attempts().get("a");
-            assertThat(nextAttempt).isNotEqualTo(oldAttempt);
+            assertThat(nextAttempt).isNotEqualTo(loaded.record().seeds().attempts().get("a"));
+            assertThat(plan.next().seeds().uploadTokens().get("a")).isNotEqualTo(loaded.record().seeds().uploadTokens().get("a"));
+            if(!initial) assertThat(nextAttempt).isNotEqualTo(oldAttempt);
             var object = tx.readOnly(em -> (Object[]) em.createNativeQuery(
                     "SELECT object_key,provider_version FROM document_part_attempt_objects WHERE attempt_id=:id AND verified")
                     .setParameter("id", nextAttempt).getSingleResult());
@@ -117,7 +134,7 @@ public final class DocumentPublicationProcessWorker {
                     WHERE p.revision_id=:revision AND o.attempt_id=:attempt
                     """).setParameter("revision", UUID.fromString(result.getMembers(0).getRevisionId()))
                     .setParameter("attempt", nextAttempt).getSingleResult()).intValue())).isEqualTo(1);
-            assertThat(tx.<Integer>readOnly(em -> ((Number) em.createNativeQuery("""
+            if(!initial) assertThat(tx.<Integer>readOnly(em -> ((Number) em.createNativeQuery("""
                     SELECT count(*) FROM document_revision_parts p JOIN document_part_attempt_objects o ON p.object_id=o.physical_object_id
                     WHERE o.attempt_id=:attempt
                     """).setParameter("attempt", oldAttempt).getSingleResult()).intValue())).isZero();
@@ -131,6 +148,42 @@ public final class DocumentPublicationProcessWorker {
             assertThat(tx.<Integer>readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM " + table + " WHERE operation_id=:id AND claim_epoch=1")
                     .setParameter("id", key.operationId()).getSingleResult()).intValue())).isZero();
         }
+    }
+
+    /** Hold an actual owner transaction at the JDBC commit boundary, before any provider work. */
+    private static javax.sql.DataSource admissionGate(javax.sql.DataSource source,String mode,UUID operation) {
+        if(!mode.startsWith("initial-")) return source;
+        var ready=new java.util.concurrent.atomic.AtomicBoolean();
+        var after=DocumentJdbcFaults.afterCommit(source,() -> {
+            if(mode.equals("initial-after") && ready.compareAndSet(true,false)) holdInitial();
+        });
+        return DocumentJdbcFaults.beforeCommit(after,connection -> {
+            try(var query=connection.prepareStatement("""
+                    SELECT count(*) FROM repository_execution_claims c
+                    JOIN repository_coordinator_bindings b USING(account_id,principal,operation_id)
+                    JOIN repository_publication_preparations p USING(account_id,principal,operation_id)
+                    JOIN repository_publication_modes m USING(account_id,principal,operation_id)
+                    JOIN repository_operations r USING(account_id,principal,operation_id)
+                    JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                    WHERE c.operation_id=? AND c.claim_epoch=1 AND o.owner_generation=1
+                    """)) {
+                query.setObject(1,operation);
+                try(var rows=query.executeQuery()) {
+                    rows.next();
+                    if(rows.getInt(1)==1) {
+                        ready.set(true);
+                        if(mode.equals("initial-before")) holdInitial();
+                    }
+                }
+            }
+        });
+    }
+
+    private static void holdInitial() throws java.sql.SQLException {
+        System.out.println("INITIAL_COMMIT_HELD");System.out.flush();
+        try {new CountDownLatch(1).await();}
+        catch(InterruptedException e) {Thread.currentThread().interrupt();throw new java.sql.SQLException("Initial commit gate interrupted",e);}
+        throw new AssertionError("Initial writer must be killed");
     }
 
     private static void holdReplacement() throws InterruptedException {

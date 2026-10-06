@@ -6595,6 +6595,7 @@ qualification. There are no new protobuf fields, RPCs or SQL migrations.
 
 **Qualification limits:** real SQL faults cover all six insertions, exact retries,
 lost acknowledgments, legacy abandonment and terminal drain-snapshot retention.
-Process death at initial commit, full concurrency/authorization-race coverage and
+Process death before and after initial commit now has fresh-JVM qualification with
+real provider publication. Full concurrency/authorization-race coverage and
 RustFS latency measurements remain to be completed. This change does not recover
 existing partial registrations or enable an automatic recovery host.

@@ -25,6 +25,80 @@ class DocumentPublicationProcessRecoveryIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
     @Container static final LocalStackContainer S3 = new LocalStackContainer(DockerImageName.parse("localstack/localstack:3.8")).withServices("s3");
 
+    private static final List<String> INITIAL_TABLES=List.of("repository_execution_claims","repository_coordinator_bindings",
+            "repository_publication_preparations","repository_publication_modes","repository_operations","repository_operation_owners");
+
+    @ParameterizedTest @ValueSource(booleans={false,true})
+    void killedAtInitialCommitIsRetriedByFreshJvm(boolean afterCommit,@TempDir Path temp) throws Exception {
+        try(var c=context(POSTGRES);var sdk=S3Client.builder().endpointOverride(S3.getEndpoint())
+                .region(Region.of(S3.getRegion())).forcePathStyle(true)
+                .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(S3.getAccessKey(),S3.getSecretKey()))).build()) {
+            new S3NamespaceProvisioner(sdk).ensureNamespace(BUCKET);
+            sdk.putBucketVersioning(b -> b.bucket(BUCKET).versioningConfiguration(v -> v.status("Enabled")));
+            var profile=new ManagedBackendLedger.Profile(S3BackendIdentity.of(S3.getEndpoint().toString(),S3.getRegion(),true),"late-realm");
+            new ManagedBackendLedger(c.tx()).bind(GENERATION,profile);
+            var input=input(c.tx(),profile);
+            var command=temp.resolve("command.pb");var payload=temp.resolve("payload.pb");
+            Files.write(command,input.command().intent().toByteArray());Files.write(payload,input.body().bytes());
+            var writerLog=temp.resolve("initial-writer.log");
+            var writer=start(c,writerLog,afterCommit?"initial-after":"initial-before",command,payload);
+            try {
+                long deadline=System.nanoTime()+Duration.ofSeconds(45).toNanos();boolean held=false;
+                while(writer.isAlive() && System.nanoTime()<deadline) {
+                    if(log(writerLog).contains("INITIAL_COMMIT_HELD")) {held=true;break;}
+                    Thread.sleep(50);
+                }
+                assertThat(held).as(log(writerLog)).isTrue();
+                assertInitialRows(c,input.command().operationId(),afterCommit);
+                Object[] original=afterCommit?initialIdentity(c,input.command().operationId()):null;
+                writer.destroyForcibly();assertThat(writer.waitFor(10,TimeUnit.SECONDS)).isTrue();
+                assertThat(writer.exitValue()).isEqualTo(137);
+                assertInitialRows(c,input.command().operationId(),afterCommit);
+                if(afterCommit) assertThat(initialIdentity(c,input.command().operationId())).containsExactly(original);
+                var readerLog=temp.resolve("initial-reader.log");
+                var reader=start(c,readerLog,afterCommit?"recover-initial":"publish",command,payload);
+                try {
+                    assertThat(reader.waitFor(60,TimeUnit.SECONDS)).as("fresh retry completes: %s",readerLog).isTrue();
+                    assertThat(reader.exitValue()).as(log(readerLog)).isZero();
+                    assertThat(log(readerLog)).contains("PROCESS_RECOVERY_OK");
+                    var current=initialIdentity(c,input.command().operationId());
+                    assertThat(count(c,"document_part_attempts",input.command().operationId())).isEqualTo(1);
+                    assertThat(count(c,"repository_operation_success",input.command().operationId())).isEqualTo(1);
+                    assertThat(((Number)current[0]).longValue()).isEqualTo(afterCommit?2:1);
+                    assertThat(((Number)current[2]).longValue()).isEqualTo(afterCommit?2:1);
+                    if(afterCommit) {assertThat(current[1]).isNotEqualTo(original[1]);assertThat(current[3]).isNotEqualTo(original[3]);}
+                    var object=c.tx().readOnly(em -> (Object[]) em.createNativeQuery("""
+                            SELECT o.object_key,o.provider_version FROM document_part_attempt_objects o
+                            JOIN document_part_attempts a USING(attempt_id)
+                            JOIN document_revision_parts p ON p.object_id=o.physical_object_id
+                            WHERE a.operation_id=:id AND o.verified
+                            """).setParameter("id",input.command().operationId()).getSingleResult());
+                    assertThat((String)object[1]).isNotBlank();
+                    assertThat(new S3BlobStore(sdk).getBounded(BUCKET,(String)object[0],(String)object[1],input.body().bytes().length).data())
+                            .containsExactly(input.body().bytes());
+                } finally {reap(reader);}
+            } finally {reap(writer);}
+        }
+    }
+
+    private static void assertInitialRows(DocumentNativePublicationFixture.Context c,UUID operation,boolean committed) {
+        for(String table:INITIAL_TABLES) assertThat(count(c,table,operation)).as(table).isEqualTo(committed?1:0);
+        for(String table:List.of("document_part_attempts","repository_publication_assessment_starts",
+                "repository_operation_success","repository_operation_rejection"))
+            assertThat(count(c,table,operation)).as(table).isZero();
+    }
+    private static long count(DocumentNativePublicationFixture.Context c,String table,UUID operation) {
+        return c.tx().<Number>readOnly(em -> (Number)em.createNativeQuery("SELECT count(*) FROM "+table+" WHERE operation_id=:id")
+                .setParameter("id",operation).getSingleResult()).longValue();
+    }
+    private static Object[] initialIdentity(DocumentNativePublicationFixture.Context c,UUID operation) {
+        return c.tx().readOnly(em -> (Object[])em.createNativeQuery("""
+                SELECT c.claim_epoch,c.claim_token,o.owner_generation,o.owner_token,c.lease_until,o.lease_until
+                FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                WHERE c.operation_id=:id
+                """).setParameter("id",operation).getSingleResult());
+    }
+
     @ParameterizedTest @ValueSource(strings = {"none", "reserve", "install"})
     void killedWriterIsRecoveredByFreshJvm(String replacementStage, @TempDir Path temp) throws Exception {
         try (var c = context(POSTGRES); var sdk = S3Client.builder().endpointOverride(S3.getEndpoint())
