@@ -46,7 +46,7 @@ public final class AssessmentCreationProbe {
         NativeAssessmentExecutionProbe.run(tx, database, provider, executionSource, observation);
         NativeAssessmentExecutionProbe.runScoped(tx, database, provider, scopedExecutionSource, observation);
         NativeAssessmentRuntimeProbe.run(database, provider, runtimeSource);
-        NativeSchemaRevisionProbe.run(tx, provider, schemaRevisionSource);
+        NativeSchemaRevisionProbe.run(tx, provider, schemaRevisionSource, database);
         AssessmentMixedReuseProbe.run(tx, provider, mixedSource, initial, observation);
         var active = AssessmentOperationReplayProbe.run(tx, provider, initial, observation, database, rejectionTargets);
         for (int scenario : new int[]{0, 2, 1}) {

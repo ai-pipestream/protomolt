@@ -87,7 +87,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 assertThat(result).contains("OBSERVED_ASSESSMENT_CREATION_OK", "CLOSED_SCOPE_ASSESSMENT_ACK_OK");
                 assertThat(result).contains("ASSESSMENT_CAPTURE_FAULTS_OK");
                 assertThat(result).contains("ASSESSMENT_PROVIDER_READS_OK");
-                assertThat(result).contains("ASSESSMENT_MIXED_REUSE_OK", "HISTORICAL_ASSESSMENT_CREATE_OK");
+                assertThat(result).contains("ASSESSMENT_MIXED_REUSE_OK", "HISTORICAL_ASSESSMENT_CREATE_OK", "HISTORICAL_ASSESSMENT_LOST_ACK_OK");
                 assertThat(result).contains("SCOPED_NATIVE_ASSESSMENT_EXECUTION_OK");
                 assertThat(result).contains("ASSESSMENT_SOURCE_ADVANCED_OK");
                 assertThat(result).contains("ASSESSMENT_REPLAY_INPUTS_OK");

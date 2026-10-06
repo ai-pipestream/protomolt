@@ -46,3 +46,29 @@ lost acknowledgment, revocation during CREATE, conflicting policy, failed physic
 binding and closed borrowed-plan cases still need explicit acceptance coverage.
 Existing ordinary recovery coverage does not prove those historical cases. Atomic
 reference publication, public activation, hosted CI and deployment are not established.
+
+## Historical lost acknowledgment and borrowed-plan follow-up
+
+The production-JAR probe now repeats historical CREATE with an injected JDBC
+acknowledgment loss after the real PostgreSQL commit. Only CREATE receives the
+wrapped datasource; artifact staging uses the original transaction service. The
+injector is armed after persistence initialization and requires SQLState 08006
+after its real commit. Normal return and pre-commit failure fail the test.
+
+Discovery receives no stage coordinates. It recovers the original assessment ID
+and deadline, and retained reconciliation verifies the full manifest, historical
+slots and roots. Historical-only commands have no upload selections. The test
+again checks exact source provenance and no publication or destination advance.
+After closing the Historical owner, attempting to admit its borrowed plan must
+fail with the exact ended-Use error. All payload reservations are released.
+
+Sol reviewed the fault targeting and assertions with no blocker. The first run
+failed on the test's expected lifetime error wording; the implementation already
+refused the expired plan. The assertion now matches `Read plan use has ended`.
+The new required harness marker is `HISTORICAL_ASSESSMENT_LOST_ACK_OK`.
+The full `admissionStorageTest` harness passed in 2 minutes 38 seconds, with zero
+failures/errors/skips. Log: `/tmp/protomolt-historical-create-lost-ack-qualified.log`.
+
+Historical-specific policy/authorization changes during CREATE, physical-binding
+rollback and post-commit READ revocation still require dedicated qualification.
+The added lost-acknowledgment case does not close those separate requirements.

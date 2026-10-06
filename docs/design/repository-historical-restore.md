@@ -461,3 +461,33 @@ final authorization. A post-commit access revocation can withhold that result; t
 an uncertain outcome, not proof of rollback. Retain the proposed assessment ID and
 reconcile before retrying. The physical plan's references are borrowed and expire with
 the historical owner. No independent evidence or source lifetime is transferred.
+
+## Atomic publication implementation order
+
+Keep promotion and publication inside the Historical owner. A promoted candidate
+must not escape and outlive its source Uses. Recheck the exact caller and current
+source READ, prepare strict accepted proofs, stage artifacts outside write locks,
+then call an explicit historical commit path with the owner's exact physical-plan
+references. Close the candidate before releasing the Uses and return only the
+terminal result. Ordinary entry-point guards remain in place.
+
+The historical schema-batch path must receive complete live source preparations,
+not a boolean that bypasses execution checks. Retention and the schema manifest
+must read size, hash and physical object identity from historical declarations.
+The commit writer must retain the historical manifest's producer and timestamp
+metadata rather than interpreting a historical part as a new upload. Snapshot
+these entries from pinned plans before write locks, keyed by full source revision
+and ordinal or exact selector. Node and slot alone are insufficient when a command
+selects two revisions of the same source slot.
+
+Preserve transaction ordering: owner and command, current policy, destination
+WRITE and source READ, drive/backend identity, independent origin and retention
+locks, schema artifact claims, candidate construction, admission/retention writes,
+and terminal result. Current-reuse manifest loading remains separate from the
+historical entry map. No provider IO, registry resolution or descriptor validation
+belongs inside this write transaction. Sol reviewed these integration boundaries.
+
+Qualification must cover an older retained revision published as a new revision,
+original provider identity and producer metadata, mixed ordinary/historical parts,
+two revisions of one node/slot, atomic rollback and lost-acknowledgment replay.
+Successful historical assessment CREATE does not establish publication correctness.

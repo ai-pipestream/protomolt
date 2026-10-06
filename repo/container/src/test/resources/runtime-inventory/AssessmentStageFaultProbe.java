@@ -16,6 +16,22 @@ public final class AssessmentStageFaultProbe {
             RepositoryOperationLedger.Owner owner, DocumentOperationUploadAdmission.Prepared plan,
             Map<String, DocumentSelectedAttemptLedger.Selected> selections, DocumentAssessmentEvidence evidence,
             UUID id, Instant deadline, PayloadBudget budget) {
+        loseAcknowledgement(database, faultTx -> new DocumentAssessmentCreation(faultTx, new DriveLedger(faultTx)).create(
+                caller, owner, plan, selections, evidence, id, deadline, budget, () -> {}));
+        // No id/hash/deadline or original evidence is supplied to discovery.
+        var original = new DocumentAssessmentDiscovery(observer).discover(caller, owner, plan.plan().command(), () -> {}).orElseThrow();
+        require(original.stage().assessment().equals(id) && original.stage().retainUntil().equals(deadline)
+                && original.stage().manifestSha256().equals(evidence.manifestSha256(() -> {})), "original committed stage recovered");
+        require(original.selections().equals(DocumentAssessmentRetainedSlots.uploadSelections(selections)),
+                "original immutable attempt selection recovered");
+        var exact = new DocumentAssessmentReconciliation(observer).observeRetained(caller, owner, plan.plan().command(),
+                original.selections(), original.stage().assessment(), original.stage().manifestSha256(),
+                original.stage().retainUntil(), budget, () -> {}).orElseThrow();
+        require(exact.equals(original.stage()), "discovered coordinates pass full retained verification");
+        System.out.println("ASSESSMENT_STAGE_LOST_ACK_DISCOVERY_OK");
+        return exact;
+    }
+    static void loseAcknowledgement(DataSource database, java.util.function.Consumer<Tx> create) {
         var armed = new AtomicBoolean();
         var source = (DataSource) Proxy.newProxyInstance(DataSource.class.getClassLoader(), new Class<?>[]{DataSource.class},
                 (proxy, method, args) -> {
@@ -35,8 +51,7 @@ public final class AssessmentStageFaultProbe {
             var faultTx = new Tx(emf);
             armed.set(true);
             try {
-                new DocumentAssessmentCreation(faultTx, new DriveLedger(faultTx)).create(caller, owner, plan,
-                        selections, evidence, id, deadline, budget, () -> {});
+                create.accept(faultTx);
                 throw new AssertionError("Lost stage acknowledgement returned success");
             } catch (RuntimeException failure) {
                 boolean lost = false;
@@ -45,18 +60,6 @@ public final class AssessmentStageFaultProbe {
                 require(lost && !armed.get(), "failure followed the real database commit");
             }
         }
-        // No id/hash/deadline or original evidence is supplied to discovery.
-        var original = new DocumentAssessmentDiscovery(observer).discover(caller, owner, plan.plan().command(), () -> {}).orElseThrow();
-        require(original.stage().assessment().equals(id) && original.stage().retainUntil().equals(deadline)
-                && original.stage().manifestSha256().equals(evidence.manifestSha256(() -> {})), "original committed stage recovered");
-        require(original.selections().equals(DocumentAssessmentRetainedSlots.uploadSelections(selections)),
-                "original immutable attempt selection recovered");
-        var exact = new DocumentAssessmentReconciliation(observer).observeRetained(caller, owner, plan.plan().command(),
-                original.selections(), original.stage().assessment(), original.stage().manifestSha256(),
-                original.stage().retainUntil(), budget, () -> {}).orElseThrow();
-        require(exact.equals(original.stage()), "discovered coordinates pass full retained verification");
-        System.out.println("ASSESSMENT_STAGE_LOST_ACK_DISCOVERY_OK");
-        return exact;
     }
     private static Object invoke(Object target, Method method, Object[] arguments) throws Throwable {
         try { return method.invoke(target, arguments); }

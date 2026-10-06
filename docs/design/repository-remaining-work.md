@@ -37,9 +37,11 @@ routing test gap, not the provider-read or publication gates.
 The internal unclaimed historical path now retains observed evidence through CREATE,
 using current-policy/destination authorization and shared historical physical/slot
 locks in its transaction. A production-JAR host qualifies the successful path with
-real versioned provider reads. Historical-specific failed/ambiguous CREATE cases and
-atomic reference publication remain next; do not infer complete recovery from this
-successful path.
+real versioned provider reads. The same harness now injects acknowledgment loss after
+a real historical CREATE commit, discovers the original stage and verifies retained
+evidence. It also refuses a borrowed plan after its owner closes. Historical-specific
+policy/access races and physical-binding rollback remain open alongside atomic
+reference publication; these cases are not inferred from the successful path.
 Preserve each member's container and occurrence definitions,
 source-to-target ordinals, shared byte accounting and source pins. A prior historical
 verdict cannot substitute for a new assessment. Claims, sessions and public
