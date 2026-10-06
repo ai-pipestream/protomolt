@@ -15,12 +15,17 @@ import javax.sql.DataSource;
 /** Mixed native traffic with explicit warmup, correctness checks and measured operation boundaries. */
 final class NativeMixedTrafficProbe {
     private static final RepositoryCaller CALLER = new RepositoryCaller("native-worker", true);
-    private record Work(DocumentPublicationCommand command, Map<DocumentPublicationRuntime.PayloadKey,PartObject> bodies) {}
+    private record Work(DocumentPublicationCommand command, Map<DocumentPublicationRuntime.PayloadKey,PartObject> bodies, Document document) {}
 
     static void run(Tx tx, DataSource dataSource, Path root, String worker, OpenedBlobStore provider,
             ManagedBackendLedger.Profile profile) throws Exception {
         int clients = Integer.parseInt(System.getenv("PROTOMOLT_NATIVE_CLIENTS"));
         if (clients < 1 || clients > 16) throw new IllegalArgumentException("Invalid client count");
+        int payloadBytes = Integer.parseInt(System.getenv("PROTOMOLT_NATIVE_PAYLOAD_BYTES"));
+        int measuredIterations = Integer.parseInt(System.getenv("PROTOMOLT_NATIVE_ITERATIONS"));
+        if (payloadBytes != 0 && (payloadBytes < 256 || payloadBytes > 786_432)) throw new IllegalArgumentException("Invalid payload bytes");
+        if (measuredIterations < 8 || measuredIterations > 256 || measuredIterations % 8 != 0) throw new IllegalArgumentException("Invalid iteration count");
+        String content = payloadBytes == 0 ? null : payload(worker, payloadBytes);
         int readSlots = Integer.parseInt(System.getenv("PROTOMOLT_NATIVE_READ_SLOTS"));
         if (readSlots < 1 || readSlots > 64) throw new IllegalArgumentException("Invalid reader slot count");
         int readHandles = Integer.parseInt(System.getenv("PROTOMOLT_NATIVE_READ_HANDLES"));
@@ -31,6 +36,8 @@ final class NativeMixedTrafficProbe {
         require(pool.getMaximumPoolSize() == requestedPool, "configured SQL pool applied");
         Files.writeString(root.resolve(worker + "-config.txt"), "clients=" + clients + "\npool=" + pool.getMaximumPoolSize() + "\nread_slots=" + readSlots + "\nread_handles=" + readHandles + "\n",
                 StandardOpenOption.CREATE_NEW);
+        Files.writeString(root.resolve(worker + "-config.txt"), "payload_string_bytes=" + payloadBytes
+                + "\niterations_per_client=" + measuredIterations + "\n", StandardOpenOption.APPEND);
         var telemetry = new NativeTrafficTelemetry(); telemetry.attach(dataSource);
         var measuredStore = telemetry.wrap(provider.store());
         var measuredProvider = new OpenedBlobStore(measuredStore, provider, provider.capabilities(), provider::ensureNamespace, provider.reclaimer());
@@ -56,6 +63,20 @@ final class NativeMixedTrafficProbe {
                     16, 4_000_000, 32, false, new DocumentPublicationRuntime.Assessments(Path.of(System.getenv("PROTOMOLT_TEST_RUNTIME_BUNDLE")),
                             Duration.ofMinutes(2), Duration.ofSeconds(1)));
             try {
+                var readReferences = new ArrayList<DocumentPublishedRevision>();
+                var readDocuments = new ArrayList<Document>();
+                for (int client = 0; client < clients; client++) {
+                    var seed = content == null ? null : command(drive.driveId, worker + "-read-seed-" + client, content);
+                    readReferences.add(seed == null ? reference : runtime.execute(CALLER, seed.command(), placement, seed.bodies(), Map.of(),
+                            Map.of("document", DocumentPublicationRuntime.Mode.TYPED), container,
+                            (caller, member, occurrence) -> definition, RepositoryReadControl.NONE).getMembers(0));
+                    readDocuments.add(seed == null ? expected : seed.document());
+                    Files.writeString(root.resolve(worker + "-config.txt"), "read_document_bytes_" + client + "="
+                            + readDocuments.get(client).getSerializedSize() + "\nread_part_bytes_" + client + "="
+                            + (seed == null ? DocumentPartCodec.split(expected, PartLayouts.document()).stream().mapToInt(part -> part.bytes().length).sum()
+                                    : seed.bodies().values().stream().mapToInt(part -> part.bytes().length).sum())
+                            + "\n", StandardOpenOption.APPEND);
+                }
                 Map<String,long[]> measuredBaseline = null;
                 try (var maintenance = new NativeTrafficMaintenance(runtime)) {
                 var history = new DocumentHistoricalOperations(reads, reader, budget);
@@ -69,24 +90,26 @@ final class NativeMixedTrafficProbe {
                         }
                     }
                     var before = telemetry.snapshot();
-                    int iterations = phase.equals("warmup") ? 8 : 32;
+                    int iterations = phase.equals("warmup") ? 8 : measuredIterations;
                     try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
                         var jobs = new ArrayList<Future<?>>();
                         for (int client = 0; client < clients; client++) {
                             final int number = client;
                             jobs.add(executor.submit(() -> {
+                                var readReference = readReferences.get(number);
+                                var readExpected = readDocuments.get(number);
                                 for (int iteration = 0; iteration < iterations; iteration++) {
                                     maintenance.check();
                                     String id = worker + "-" + phase + "-" + number + "-" + iteration;
                                     boolean read = iteration % 2 == 0, reject = iteration % 8 == 7;
-                                    Work work = read ? null : command(drive.driveId, id);
+                                    Work work = read ? null : command(drive.driveId, id, content);
                                     Object result;
                                     long start = System.nanoTime();
                                     if (read) {
-                                        try (var archived = history.readValidated(CALLER, reference.getAddress(),
-                                                UUID.fromString(reference.getRevisionId()), RepositoryReadControl.NONE)) {
-                                            require(archived.document().equals(expected), "concurrent historical bytes");
-                                            require(archived.publicationRevision() == reference.getMutationRevision(), "concurrent historical identity");
+                                        try (var archived = history.readValidated(CALLER, readReference.getAddress(),
+                                                UUID.fromString(readReference.getRevisionId()), RepositoryReadControl.NONE)) {
+                                            require(archived.document().equals(readExpected), "concurrent historical bytes");
+                                            require(archived.publicationRevision() == readReference.getMutationRevision(), "concurrent historical identity");
                                         }
                                         result = null;
                                     } else {
@@ -140,11 +163,11 @@ final class NativeMixedTrafficProbe {
         }
     }
 
-    private static Work command(UUID drive, String id) {
+    private static Work command(UUID drive, String id, String content) {
         var ownership = OwnershipContext.newBuilder().setAccountId("native-replica").setDatasourceId("source")
                 .setSecurity(DocumentSecurity.getDefaultInstance()).build();
         var document = Document.newBuilder().setDocId(id).setOwnership(ownership)
-                .setStructuredData(Any.pack(StringValue.of("payload-" + id), "type.test")).build();
+                .setStructuredData(Any.pack(StringValue.of(content == null ? "payload-" + id : content), "type.test")).build();
         var member = DocumentPublicationMember.newBuilder().setMemberId("document").setDriveId(drive.toString()).setOwnership(ownership)
                 .setRowKind(DocumentPublicationRowKind.DOCUMENT_PUBLICATION_ROW_KIND_PIPELINE)
                 .setDestination(DocumentRevisionCondition.newBuilder().setIfAbsent(true).setAddress(NodeAddress.newBuilder()
@@ -157,7 +180,14 @@ final class NativeMixedTrafficProbe {
                     .setSizeBytes(part.bytes().length).setSha256(DocumentPartCodec.sha256Hex(part.bytes())).setContentType("application/protobuf")));
         }
         return new Work(new DocumentPublicationCommand(DocumentPublicationIntent.newBuilder().setEncodingVersion(1).setAccountId("native-replica")
-                .setOperationId(UUID.randomUUID().toString()).addMembers(member).build()), Map.copyOf(bodies));
+                .setOperationId(UUID.randomUUID().toString()).addMembers(member).build()), Map.copyOf(bodies), document);
+    }
+    private static String payload(String id, int bytes) {
+        if (bytes == 0) return "payload-" + id;
+        var random = new Random(id.hashCode());
+        var chars = new char[bytes];
+        for (int i = 0; i < chars.length; i++) chars[i] = (char) ('!' + random.nextInt(94));
+        return new String(chars); // ASCII: requested bytes are exact before protobuf framing.
     }
     private static void require(boolean condition, String message) { if (!condition) throw new AssertionError(message); }
 }

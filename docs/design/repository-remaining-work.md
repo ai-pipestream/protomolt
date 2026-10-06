@@ -154,7 +154,16 @@ performance qualification must not displace these requirements.
    boundaries. Use RustFS for local performance and LocalStack for S3 correctness;
    record correctness parity separately from timings. Increase offered load in
    the existing multi-JVM benchmark, retaining latency distributions, pool sizes,
-   provider failures and database contention. The four- and eight-client measurements
+   provider failures and database contention. A larger-payload follow-up with
+   sixteen clients, 64 KiB values and 64 measured
+   iterations/client passed twelve interleaved RustFS windows with exact historical
+   reads, terminal replay and durable counts. Two workers with sixteen total SQL
+   connections reached about 96 operations/second versus 81 with one worker/eight
+   connections; four workers did not beat two. Fixed-total SQL connection profiles
+   were slower with more workers. This is a bounded benchmark with growing aggregate
+   memory and an uncontrolled host, not linear scaling or a soak. Preserve the
+   [measurements and limits](../evidence/repository/2026-10-06-native-64k/README.md).
+   The earlier four- and eight-client measurements
    showed no replica speedup; neither is a saturation or scale-out result. Eight
    clients exposed maximum-size slot-snapshot over-reservation, now fixed with
    exact-size reservation and a SQL length gate. The complete repeated workload

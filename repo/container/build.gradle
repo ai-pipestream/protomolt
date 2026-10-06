@@ -206,6 +206,8 @@ tasks.register('nativeReplicaBenchmark', Test) {
     // fix total reader capacity across the one/two/four-replica comparison.
     systemProperty 'protomolt.test.nativeBenchmarkReadSlots', providers.gradleProperty('nativeBenchmarkReadSlots').getOrElse('0')
     systemProperty 'protomolt.test.nativeBenchmarkReadHandles', providers.gradleProperty('nativeBenchmarkReadHandles').getOrElse('0')
+    systemProperty 'protomolt.test.nativeBenchmarkPayloadBytes', providers.gradleProperty('nativeBenchmarkPayloadBytes').getOrElse('0')
+    systemProperty 'protomolt.test.nativeBenchmarkIterations', providers.gradleProperty('nativeBenchmarkIterations').getOrElse('32')
     systemProperty 'protomolt.test.nativeBenchmarkOutput', layout.buildDirectory.dir('native-replica-benchmark').get().asFile.absolutePath
     doFirst {
         systemProperty 'protomolt.test.admissionRuntimeBundle', hostAdmissionInventory.get().asFile.absolutePath

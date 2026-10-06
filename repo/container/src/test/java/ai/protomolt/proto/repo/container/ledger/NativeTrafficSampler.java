@@ -81,7 +81,7 @@ final class NativeTrafficSampler implements AutoCloseable {
         if (Long.parseLong(rss) < 0) throw new IllegalStateException("Process RSS is negative");
         return new MemoryStatus(rss, "running");
     }
-    void finish(String name, int clients) throws Exception {
+    void finish(String name, int clients, int iterations) throws Exception {
         var csv = new StringBuilder("query_id,calls,total_exec_ms,rows\n");
         try (var statement = connection.createStatement()) {
             statement.setQueryTimeout(5);
@@ -105,7 +105,8 @@ final class NativeTrafficSampler implements AutoCloseable {
                 if (!row.next()) throw new IllegalStateException("Missing final counts");
                 long docs = row.getLong(1) - baseline[0], revisions = row.getLong(2) - baseline[1], rejections = row.getLong(3) - baseline[2];
                 Files.writeString(output.resolve(name + "-durable-delta.csv"), "documents,revisions,rejections\n" + docs + "," + revisions + "," + rejections + "\n");
-                if (docs != 12L * clients || revisions != 12L * clients || rejections != 4L * clients)
+                long accepted = 3L * iterations / 8 * clients, rejected = (long) iterations / 8 * clients;
+                if (docs != accepted || revisions != accepted || rejections != rejected)
                     throw new AssertionError("Measured durable counts differ: " + docs + "," + revisions + "," + rejections);
             }
         }

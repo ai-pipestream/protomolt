@@ -126,13 +126,23 @@ class NativeReplicaRuntimeTest {
         if (totalReadHandles < 0 || totalReadHandles > 256 || totalReadHandles % 4 != 0)
             throw new IllegalArgumentException("Total read handles must be zero or a multiple of four up to 256");
         Path output = Path.of(System.getProperty("protomolt.test.nativeBenchmarkOutput")).resolve(java.util.UUID.randomUUID().toString());
+        int payloadBytes = Integer.parseInt(System.getProperty("protomolt.test.nativeBenchmarkPayloadBytes", "0"));
+        int iterations = Integer.parseInt(System.getProperty("protomolt.test.nativeBenchmarkIterations", "32"));
+        if (payloadBytes != 0 && (payloadBytes < 256 || payloadBytes > 786_432))
+            throw new IllegalArgumentException("Payload must be zero (original small workload) or 256 to 786432 bytes");
+        if (iterations < 8 || iterations > 256 || iterations % 8 != 0)
+            throw new IllegalArgumentException("Measured iterations must be a multiple of eight from 8 to 256");
+        builder.environment().put("PROTOMOLT_NATIVE_PAYLOAD_BYTES", Integer.toString(payloadBytes));
+        builder.environment().put("PROTOMOLT_NATIVE_ITERATIONS", Integer.toString(iterations));
         Files.createDirectories(output);
         Files.writeString(output.resolve("environment.txt"), "java=" + System.getProperty("java.version")
                 + "\nos=" + System.getProperty("os.name") + " " + System.getProperty("os.arch")
                 + "\nloadavg=" + Files.readString(Path.of("/proc/loadavg")).trim()
                 + "\nclients=" + totalClients + "\ntotal_read_slots=" + totalReadSlots
                 + "\ntotal_read_handles=" + totalReadHandles + "\nzero_read_handles_means=32 per worker"
-                + "\nzero_read_slots_means=8 per worker\nworker_heap_limit=512MiB\npayload=small typed StringValue\nNo host isolation or container CPU/memory limits; trusted internal Java path.\n");
+                + "\nzero_read_slots_means=8 per worker\nworker_heap_limit=512MiB\npayload_string_bytes=" + payloadBytes
+                + "\nzero_payload_means=original small workload\niterations_per_client=" + iterations
+                + "\nNo host isolation or container CPU/memory limits; trusted internal Java path.\n");
         try (var sampler = new NativeTrafficSampler(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), output)) {
             var windows = new StringBuilder("window,replicas,pool_per_replica,clients_per_replica,operations,inclusive_nanos\n");
             int window = 0;
@@ -177,7 +187,7 @@ class NativeReplicaRuntimeTest {
                         if (!done) Thread.sleep(25);
                     } while (!done);
                     long elapsed = System.nanoTime() - start;
-                    sampler.finish(name, totalClients);
+                    sampler.finish(name, totalClients, iterations);
                     Files.writeString(directory.resolve(name + ".release"), "release", java.nio.file.StandardOpenOption.CREATE_NEW);
                     for (int index = 0; index < replicas; index++) {
                         var process = children.get(index);
@@ -198,14 +208,14 @@ class NativeReplicaRuntimeTest {
                         assertThat(metrics.stream().filter(line -> line.startsWith("sql_timeout,")).map(line -> Long.parseLong(line.split(",")[1])))
                                 .allMatch(count -> count == 0);
                         var rows = Files.readAllLines(output.resolve(worker + "-operations.csv"));
-                        assertThat(rows.stream().filter(line -> line.startsWith("measure,")).count()).isEqualTo(32L * clients);
+                        assertThat(rows.stream().filter(line -> line.startsWith("measure,")).count()).isEqualTo((long) iterations * clients);
                         for (String kind : List.of("read", "publish", "reject")) {
-                            long expected = (kind.equals("read") ? 16 : kind.equals("publish") ? 12 : 4) * clients;
+                            long expected = (kind.equals("read") ? iterations / 2 : kind.equals("publish") ? iterations * 3 / 8 : iterations / 8) * clients;
                             assertThat(rows.stream().filter(line -> line.startsWith("measure,") && line.split(",")[3].equals(kind)).count()).isEqualTo(expected);
                         }
                     }
                     windows.append(name).append(',').append(replicas).append(',').append(pool).append(',').append(clients)
-                            .append(',').append(32L * totalClients).append(',').append(elapsed).append('\n');
+                            .append(',').append((long) iterations * totalClients).append(',').append(elapsed).append('\n');
                     Files.writeString(output.resolve("windows.csv"), windows);
                 } catch (Exception | Error failure) { primary = failure; throw failure; }
                 finally { stopChildren(children, primary); }
