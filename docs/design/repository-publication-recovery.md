@@ -995,7 +995,7 @@ after commit stays visible, and terminal results still require authorized replay
 Registration scope must span the composed operation so local drain cannot attest
 while its owner admission remains in flight.
 
-Acceptance requires rollback faults after each durable substep; lost commit
+Acceptance requires rollback faults after each SQL insertion before commit; lost commit
 acknowledgment; cancellation before and after commit; concurrent exact/conflicting
 registration; policy revocation at admission; local drain racing the composed call;
 and a real process kill before and after commit. Assert absence of all new rows on
@@ -1011,7 +1011,9 @@ separate bootstrap transition still needs review before extending that recovery 
 
 Sol's source review agrees with atomic initial admission as the next bounded
 implementation. V84 already requires modes before owner insertion; the sequence
-above preserves that rule. Before commit there is no new journaled registration;
+is claim, binding, preparation, modes, operation, then owner. Recheck authorization
+after the claim fence and before domain writes. Before commit there is no durable
+new journaled registration;
 after commit there is a real generation-one owner eligible for the existing
 post-owner recovery protocols. This does not resolve legacy generation-zero rows:
 V85 abandonment is permanent and V93 requires an existing owner. Their recovery
