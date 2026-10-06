@@ -715,3 +715,33 @@ not prove a privileged SQL caller created the claim in the same transaction.
 This is registration identity, not proof of process liveness, local drain or remote
 provider quiescence. Durable drain, successor execution, late-provider cleanup and
 ordinary runtime activation remain unfinished.
+
+## SQL admission closure (V90)
+
+`RepositoryCoordinatorDrain.begin` inserts an immutable per-operation marker under
+the original incarnation's live claim fence. It requires private process authority
+in the authenticated account/principal scope. An exact retry preserves the original
+timestamp. `confirm` checks the immutable marker's epoch, token, incarnation and
+command digest without renewing the claim; it remains usable after expiry or
+transfer to resolve an uncertain commit reply. Absence is not a rollback proof.
+
+The database classifies work at its existing boundaries:
+
+- New preparation, modes, command/owner, upload attempt and assessment-start rows
+  are admission. V90 rejects actual INSERTs after the marker. Existing conflict
+  retries remain valid because these guards run AFTER INSERT.
+- Advancing the operation owner generation is admission; same-generation renewals
+  remain settlement. A low-level claim transfer cannot bypass closure because the
+  drain lookup covers every marker for the operation, not just its current epoch.
+- Existing attempt verification, observations, schema/evidence staging, assessment
+  CREATE from an already committed start, and terminal decisions are settlement.
+  The existing live-claim and owner fences still apply; V90 does not replace them.
+- Read-only inspection, pre-owner abandonment and separately authorized cleanup
+  remain distinct from admission. This marker releases no retained references.
+
+This is a private SQL prerequisite, not the complete host DRAINING state. Already
+staged attempts can still begin provider calls. The next integration must close
+host-local provider-start permits, retain each permit through SDK completion, and
+compose manager/publication/read/upload shutdown. No LOCAL_DRAINED state, automatic
+successor, provider-quiescence claim or ordinary-runtime activation is added here.
+A shared marker never permits deleting late-effect cleanup tombstones.

@@ -478,3 +478,11 @@ reuse, actual reads, joined loads and owned bytes. The counters distinguish cold
 warm behavior without weakening per-occurrence authorization. They do not replace
 RustFS scaling measurements, provider durability, retention/pruning or the optional
 JCR assessment. Continue those slices alongside the local-drain protocol.
+
+V90 adds private SQL admission closure under the original coordinator binding.
+Actual new registrations, owners, upload attempts and assessment starts are fenced;
+exact retries and same-generation settlement retain their existing authority checks.
+Read-only exact drain confirmation survives claim expiry without granting new work.
+Host provider-start permits, full local drain and safe successor execution are still
+required. This does not close the independent restore/pruning, transport parity,
+provider durability or hydration requirements.
