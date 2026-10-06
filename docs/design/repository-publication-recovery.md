@@ -1624,3 +1624,54 @@ SQL guard as a fallback. Automatic same-host recovery requires a reviewed lifecy
 for a fresh manager incarnation, or a separately designed per-operation incarnation
 model. Existing two-coordinator supersession remains supported. This constraint
 must be resolved before claiming automatic same-host recovery.
+
+### Per-operation successor targets
+
+The private manager now mints a `SuccessorTarget` containing its owning manager,
+exact operation key, command digest and fresh incarnation. The bounded recovery
+entry retains that target with its proposal before reservation SQL. The manager
+keeps no separate target registry. A target grants neither a claim nor execution:
+activation still requires trusted coordinator authority, the current execution
+caller, the exact installed plan and all existing SQL fences.
+
+Target activation rejects a foreign manager, different key/digest or different
+incarnation before retaining a session or mutating SQL. The initial manager
+incarnation stays fixed. A successor session retains its target incarnation in
+its registration, so shutdown snapshots and local drain use the exact per-session
+identity. The existing fixed-incarnation activation overload remains available for
+its original callers. Neither Java nor SQL freshness guards are relaxed.
+
+The private fixed-incarnation `resumeStarted` path remains restricted to its
+original incarnation. It cannot adopt a target-bound owner by substituting a UUID
+read from SQL. Existing target sessions retry through their retained registration;
+a separate target-bound restoration API would require explicit lifecycle review.
+
+This addresses incarnation selection for same-manager successor preparation, not
+complete automatic recovery. A superseded session still requires durable owner
+replacement and explicit retirement before a new target can occupy its operation
+slot. The recovery-attempt owner still needs reconciliation and replacement of its
+old retained entry; scheduler, cleanup and resource-complete shutdown remain open.
+
+### Reviewed next transition: retained unactivated supersession
+
+An explicit recovery-attempt supersession step must first recheck process authority
+and the retained execution-caller identity. Fresh bounded discovery must identify
+an expired unactivated predecessor equal to this entry's exact successor key,
+digest, epoch, token and incarnation. A different winner or an activated coordinator
+is not eligible for this transition.
+
+Mint and retain one pending target/proposal before V98. While pending, ordinary
+advance must refuse; retries must use that exact tuple rather than rediscovering
+and minting another identity after an uncertain acknowledgment. Only after exact
+V98 confirmation may the entry replace its old proposal/target, release borrowed
+preparation and plan leases, and resume at RESERVED. Keep its command lease. The
+retained SQL preparation and modes remain the source for the next installation.
+
+After that installation permanently fences the old owner, use existing session
+retirement before activation. An active local session must leave the attempt
+INSTALLED and retryable. A false retirement result is not itself a success proof:
+the existing activation fingerprint check must continue to reject a mismatched
+retained session. Never interpret committed V94 with a lost reply as unactivated
+V98 work. Host retry policy needs a finite attempt limit or deadline; a single
+pending proposal bounds concurrent state, not the total number of generations.
+This transition has been reviewed but is not implemented yet.

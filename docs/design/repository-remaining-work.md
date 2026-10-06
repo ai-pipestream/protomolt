@@ -891,3 +891,9 @@ current Java and SQL guards. Resolve fresh-incarnation ownership for automatic
 same-host recovery before integration; do not rotate the manager identity while
 other sessions still depend on it. Recovery-attempt entry reconciliation remains
 unimplemented and separate from this existing session-retirement behavior.
+
+The private per-operation `SuccessorTarget` now supplies fresh incarnations without
+rotating a manager shared by other sessions. Recovery entries retain it before SQL;
+activation checks its owning manager, key, digest and installed incarnation. This
+resolves target selection, not expired-entry reconciliation or automatic scheduling.
+Fixed-incarnation restoration intentionally cannot adopt a target-bound owner.

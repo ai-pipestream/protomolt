@@ -80,6 +80,48 @@ final class DocumentPublicationSessions implements AutoCloseable {
     }
 
     /**
+     * Host-private target identity, not a proposal authorization. The retained
+     * successor fingerprint and SQL checks bind the complete proposal and plan.
+     * Retaining this capability grants no SQL claim or execution authority.
+     */
+    static final class SuccessorTarget {
+        private final DocumentPublicationSessions manager;
+        private final RepositoryOperationLedger.Key key;
+        private final String commandSha256;
+        private final UUID incarnation;
+        private SuccessorTarget(DocumentPublicationSessions manager, RepositoryOperationLedger.Key key,
+                String commandSha256, UUID incarnation) {
+            this.manager = manager; this.key = key; this.commandSha256 = commandSha256; this.incarnation = incarnation;
+        }
+        UUID incarnation() { return incarnation; }
+        @Override public String toString() { return "SuccessorTarget[private]"; }
+    }
+
+    /** The bounded recovery entry owns this capability; the manager keeps no extra target registry. */
+    synchronized SuccessorTarget successorTarget(RepositoryOperationLedger.Key key, String commandSha256,
+            UUID predecessorIncarnation) {
+        if (closed) throw new RepositoryException(RepositoryException.Code.UNAVAILABLE, "Publication sessions are closed");
+        coordinatorIdentity();
+        Objects.requireNonNull(key); Objects.requireNonNull(predecessorIncarnation);
+        if (commandSha256 == null || !commandSha256.matches("[0-9a-f]{64}"))
+            throw new IllegalArgumentException("Expected command SHA-256");
+        UUID incarnation;
+        do { incarnation = UUID.randomUUID(); }
+        while (incarnation.equals(predecessorIncarnation) || incarnation.equals(coordinator));
+        return new SuccessorTarget(this, key, commandSha256, incarnation);
+    }
+
+    void activateSuccessor(SuccessorTarget target, RepositoryCaller coordinatorCaller, RepositoryCaller executionCaller,
+            RepositorySuccessorInstall.Plan plan, RepositoryReadControl control) {
+        Objects.requireNonNull(target); Objects.requireNonNull(plan);
+        if (target.manager != this || !target.key.equals(plan.next().key())
+                || !target.commandSha256.equals(plan.next().command().sha256())
+                || !target.incarnation.equals(plan.reservation().successorIncarnation()))
+            throw new IllegalArgumentException("Successor target differs from manager or plan");
+        activateSuccessor(coordinatorCaller, executionCaller, plan, target.incarnation, control);
+    }
+
+    /**
      * Retain the exact successor before activation can commit. A failed or cancelled
      * attachment leaves that identity available for retry and shutdown reconciliation.
      * Both callers come from the trusted host; coordinator rights never replace the
@@ -87,9 +129,14 @@ final class DocumentPublicationSessions implements AutoCloseable {
      */
     void activateSuccessor(RepositoryCaller coordinatorCaller, RepositoryCaller executionCaller,
             RepositorySuccessorInstall.Plan plan, RepositoryReadControl control) {
+        activateSuccessor(coordinatorCaller, executionCaller, plan, coordinatorIdentity(), control);
+    }
+
+    private void activateSuccessor(RepositoryCaller coordinatorCaller, RepositoryCaller executionCaller,
+            RepositorySuccessorInstall.Plan plan, UUID incarnation, RepositoryReadControl control) {
         try (var call = beginCall(); var registration = registrations.enter()) {
             Objects.requireNonNull(plan); Objects.requireNonNull(control).check();
-            if (!coordinatorIdentity().equals(plan.reservation().successorIncarnation()))
+            if (!incarnation.equals(plan.reservation().successorIncarnation()))
                 throw new IllegalArgumentException("Successor incarnation differs from session manager");
             var key = plan.next().key();
             DocumentAdmissionAuthorization.requireCaller(coordinatorCaller, key, key.account());
@@ -101,7 +148,7 @@ final class DocumentPublicationSessions implements AutoCloseable {
             // Reserving encoded bytes does not account for the complete parsed heap.
             try (var encoded = journalBudget.reserve(2L * DocumentPublicationPreparationCodec.MAX_BYTES + 1024 * 1024)) {
                 var fingerprint = DocumentSuccessorFingerprint.of(plan);
-                var session = DocumentPublicationSession.successor(tx, execution.drives(), executionCaller, plan, journalBudget, coordinator, registrations);
+                var session = DocumentPublicationSession.successor(tx, execution.drives(), executionCaller, plan, journalBudget, incarnation, registrations);
                 control.check();
                 entry = reserveSuccessor(plan.next().command(), key, fingerprint, session);
             }

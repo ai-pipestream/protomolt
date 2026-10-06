@@ -24,6 +24,7 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
         final boolean processCaller;
         final Optional<RepositoryCredentialBinding> credential;
         final RepositoryCoordinatorReservation.Proposal proposal;
+        final DocumentPublicationSessions.SuccessorTarget target;
         final PayloadBudget.Lease commandBytes;
         boolean active;
         Phase phase=Phase.PROPOSED;
@@ -31,9 +32,10 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
         PayloadBudget.Lease nextBytes;
         RepositorySuccessorInstall.Plan plan;
         Entry(DocumentPublicationCommand command, RepositoryCaller caller,
-                RepositoryCoordinatorReservation.Proposal proposal, PayloadBudget.Lease bytes) {
+                RepositoryCoordinatorReservation.Proposal proposal, DocumentPublicationSessions.SuccessorTarget target,
+                PayloadBudget.Lease bytes) {
             this.command=command; processCaller=caller.processAuthority(); credential=caller.credentialBinding();
-            this.proposal=proposal; commandBytes=bytes;
+            this.proposal=proposal; this.target=target; commandBytes=bytes;
         }
         void release() {
             if (loaded!=null) loaded.close();
@@ -69,19 +71,24 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
             if (activeCalls>=capacity) throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED,"Recovery call capacity exhausted");
         } else {
             if (entries.size()>=capacity || activeCalls>=capacity) throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED,"Recovery capacity exhausted");
-            var proposal=proposal(observed);
+            var predecessor=observed.candidate().map(RepositoryCoordinatorRecoveryDiscovery.Candidate::predecessor)
+                    .or(() -> observed.unactivated().map(RepositoryCoordinatorRecoveryDiscovery.UnactivatedCandidate::predecessor))
+                    .orElseThrow(() -> new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                            "Recovery state is not eligible: "+observed.status()));
+            var target=sessions.successorTarget(key,command.sha256(),predecessor.incarnation());
+            var proposal=proposal(observed,target.incarnation());
             if (!proposal.predecessor().key().equals(key) || !proposal.predecessor().commandSha256().equals(command.sha256()))
                 throw conflict("Recovery observation differs from command");
             var bytes=budget.reserve((long)command.canonical().size()+command.intent().getSerializedSize());
-            entry=new Entry(command,caller,proposal,bytes); entries.put(key,entry);
+            entry=new Entry(command,caller,proposal,target,bytes); entries.put(key,entry);
         }
         entry.active=true;
         activeCalls++;
         return new Attempt(key,entry);
     }
 
-    private RepositoryCoordinatorReservation.Proposal proposal(RepositoryCoordinatorRecoveryDiscovery.Observation observed) {
-        var token=UUID.randomUUID(); var incarnation=sessions.coordinatorIdentity();
+    private RepositoryCoordinatorReservation.Proposal proposal(RepositoryCoordinatorRecoveryDiscovery.Observation observed, UUID incarnation) {
+        var token=UUID.randomUUID();
         if (observed.status()==RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND) {
             var source=observed.candidate().orElseThrow();
             return new RepositoryCoordinatorReservation.ExpiredUnquiesced(source.predecessor(),token,incarnation,lease,source.owner());
@@ -129,7 +136,7 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
                     entry.phase=Phase.INSTALLED;
                 }
                 case INSTALLED -> {
-                    sessions.activateSuccessor(authority,caller,entry.plan,control);
+                    sessions.activateSuccessor(entry.target,authority,caller,entry.plan,control);
                     entry.phase=Phase.ACTIVATED;
                     synchronized (RepositoryRecoveryAttempts.this) { entries.remove(key,entry); }
                     entry.release();
