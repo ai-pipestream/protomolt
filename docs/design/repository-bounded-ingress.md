@@ -204,3 +204,23 @@ remains a crash and needs recovery qualification. Test a real delayed Redis writ
 that exceeds the first drain deadline, then completes, before claiming graceful
 shutdown. Keep startup failure cleanup separate, preserve suppressed failures,
 and do not force-close a provider still owned by an accepted operation.
+
+### Bounded transport drain prerequisite
+
+The bounded host now closes admission and waits for archive RPCs, puts and reads
+before shutting down its transport. A drain timeout retains the transport,
+executor and provider for a later close attempt. It checks idle state again after
+transport shutdown before releasing storage. The full repository profile keeps
+its existing transport-first ordering.
+
+This closes a gap in the launcher plan: previously, transport shutdown could force
+cancel an accepted RPC after ten seconds before the archive drain check ran. A
+shutdown-hook retry alone could not preserve that call. The regression uses real
+PostgreSQL, Redis and authenticated Netty, holding the return from an actual Redis
+write beyond that interval. It checks that timed drain refuses new calls, preserves
+reservations, and allows the accepted RPC to return success after release.
+
+The production launcher and child-process SIGTERM case are still pending. The
+current injected pause is after Redis completes its command, not a delayed network
+write. The process test must qualify its actual provider boundary and shutdown
+hook; it must not infer crash or power-loss durability from this host test.

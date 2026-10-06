@@ -848,45 +848,40 @@ public final class RepoServices implements AutoCloseable {
     }
 
     private void releaseAfterWorkersStop(java.time.Duration timeout) {
+        // Bounded admission is already closed. Keep transport/executor alive for
+        // accepted calls; transport shutdown can otherwise forcibly cancel them.
+        // A timeout retains every resource so the owner can retry draining.
+        if (archiveIngress != null) awaitArchiveIdle(timeout);
         var transports = new java.util.ArrayList<AutoCloseable>();
         transports.addAll(httpServers);
         transports.addAll(servers);
         ShutdownBarrier.releaseAfter(transports, () -> {
-            if (archiveIngress != null) {
-                try {
-                    if (!archiveIngress.awaitIdle(timeout))
-                        throw new IllegalStateException("Archive RPCs still active; shared resources retained");
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    throw new IllegalStateException("Archive RPC drain interrupted; shared resources retained", interrupted);
-                }
-            }
-            if (archiveAdmission != null) {
-                try {
-                    if (!archiveAdmission.awaitIdle(timeout))
-                        throw new IllegalStateException("Archive puts still active; shared resources retained");
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    throw new IllegalStateException("Archive put drain interrupted; shared resources retained", interrupted);
-                }
-            }
+            awaitArchiveIdle(timeout);
             if (managedDocuments != null) managedDocuments.drain(timeout);
-            if (managedArchive != null) {
-                try {
-                    if (!managedArchive.reader.awaitIdle(timeout))
-                        throw new IllegalStateException("Managed archive reads still active; shared resources retained");
-                    managedArchive.reader.attestLocalQuiescence();
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    throw new IllegalStateException("Archive reader drain interrupted; shared resources retained", interrupted);
-                }
-            }
+            if (managedArchive != null) managedArchive.reader.attestLocalQuiescence();
             lifecycleThreads.clear();
             httpServers.clear();
             servers.clear();
             owned.close();
         });
         LOG.info("repo-service stopped");
+    }
+
+    private void awaitArchiveIdle(java.time.Duration timeout) {
+        String phase = "Archive RPC";
+        try {
+            if (archiveIngress != null && !archiveIngress.awaitIdle(timeout))
+                throw new IllegalStateException("Archive RPCs still active; shared resources retained");
+            phase = "Archive put";
+            if (archiveAdmission != null && !archiveAdmission.awaitIdle(timeout))
+                throw new IllegalStateException("Archive puts still active; shared resources retained");
+            phase = "Archive reader";
+            if (managedArchive != null && !managedArchive.reader.awaitIdle(timeout))
+                throw new IllegalStateException("Managed archive reads still active; shared resources retained");
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(phase + " drain interrupted; shared resources retained", interrupted);
+        }
     }
 
     private void requireFullProfile() {

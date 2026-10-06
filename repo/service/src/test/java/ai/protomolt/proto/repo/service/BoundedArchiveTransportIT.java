@@ -180,6 +180,34 @@ class BoundedArchiveTransportIT {
         }
     }
 
+    @Test void drainTimeoutKeepsAcceptedRpcAliveUntilRedisCompletion() throws Exception {
+        try (var f = new Fixture(true); var executor = Executors.newSingleThreadExecutor()) {
+            try {
+                var pending = f.future.putEntry(f.request);
+                assertThat(f.entered.await(5, TimeUnit.SECONDS)).isTrue();
+                long reserved = f.budget.reservedBytes();
+                var closing = executor.submit(() -> f.host.close(java.time.Duration.ofMillis(100)));
+                assertThatThrownBy(() -> closing.get(2, TimeUnit.SECONDS))
+                        .isInstanceOf(ExecutionException.class).cause()
+                        .isInstanceOf(IllegalStateException.class).hasMessageContaining("Archive RPCs still active");
+                assertThat(f.closes.get()).isZero();
+                assertThat(f.budget.reservedBytes()).isEqualTo(reserved);
+                assertThatThrownBy(() -> f.archive.getArchive(GetArchiveRequest.getDefaultInstance()))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class,
+                                e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+                // Exceed the transport's former ten-second forced-cancellation window.
+                assertThatThrownBy(() -> pending.get(11, TimeUnit.SECONDS)).isInstanceOf(TimeoutException.class);
+                assertThat(f.closes.get()).isZero();
+                assertThat(f.budget.reservedBytes()).isEqualTo(reserved);
+                f.release.countDown();
+                assertThat(pending.get(5, TimeUnit.SECONDS).getVersion()).isEqualTo(1);
+                f.awaitBudget(0);
+                f.host.close();
+                assertThat(f.closes.get()).isEqualTo(1);
+            } finally { f.release.countDown(); }
+        }
+    }
+
     @Test void mountedArchiveMethodsAreExplicitlyReviewedAndStreamingIsRejectedAtHeaders() throws Exception {
         var described = ArchiveServiceGrpc.getServiceDescriptor().getMethods().stream()
                 .map(MethodDescriptor::getFullMethodName).collect(java.util.stream.Collectors.toSet());
