@@ -320,13 +320,14 @@ engine copies and storage work. Real Redis library/in-process tests cover capaci
 oversize refusal, delayed-write drain, reuse and historical reads. The optional
 composition refuses streaming and bridge generation. An internal bounded archive-only
 host now passes Redis save/history/restart and delayed-write shutdown tests. Public
-managed-host activation and pre-decode transport allocation remain unfinished;
-the internal profile rejects transport startup.
-The standalone pre-protobuf unary admission guard now has real Netty lifecycle
-tests, but is not mounted. Integrate all exposed synchronous archive methods with
-the same budget as archive writes, then test real Redis cancellation and transport
-parity. Startup tests also verify physical identity conflicts preserve the original
-binding and release newly acquired providers.
+managed-host activation and HTTP admission remain unfinished. General transport
+startup still rejects the internal profile. A dedicated authenticated archive-only
+Netty mount now shares the pre-protobuf gate and byte budget with archive writes;
+all exposed unary methods are explicitly reviewed. Real Redis tests cover local
+and remote retry/history behavior and cancellation without early resource release.
+Startup tests also verify physical identity conflicts preserve the original
+binding and release newly acquired providers. Full repository parity, public
+configuration and response/read-memory bounds remain open.
 
 The default `RepoServices` managed profile still requires streaming, non-expiring
 writes and reclamation. `ArchiveObjectWriter` distinguishes byte-array

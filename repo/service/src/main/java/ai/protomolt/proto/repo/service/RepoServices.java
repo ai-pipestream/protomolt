@@ -106,6 +106,7 @@ public final class RepoServices implements AutoCloseable {
     private final ai.protomolt.proto.repo.engine.RawObjectRecovery rawRecovery;
     private final ai.protomolt.proto.repo.container.ledger.DocumentAttemptRecoveryService documentRecovery;
     private boolean lifecycleStarted;
+    private final UnaryRequestAdmission archiveIngress;
     private final ai.protomolt.proto.repo.engine.ArchivePutAdmission archiveAdmission;
     private final ArchiveOperations archiveOperations;
     private final ManagedArchiveServices managedArchive;
@@ -162,6 +163,8 @@ public final class RepoServices implements AutoCloseable {
             ManagedSchemaAccess schemaAccess, BoundedArchiveProfile bounded) {
         ManagedArchiveServices startingArchive = null;
         this.archiveAdmission = bounded == null ? null : bounded.openAdmission(config);
+        this.archiveIngress = bounded == null ? null : new UnaryRequestAdmission(bounded.budget(),
+                bounded.limits().maxRequestBytes(), bounded.maxActive(), BoundedArchiveMethods.UNARY);
         try {
             this.config = config;
             if (schemaAccess != null && !config.managedStorage().retentionQualified())
@@ -318,6 +321,7 @@ public final class RepoServices implements AutoCloseable {
                     generation, new ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger(tx).find(generation).orElseThrow(),
                     java.util.Objects.requireNonNull(selectedBacking).handle(), config.kafkaEnabled(), historicalAccess, schemaAccess);
         } catch (RuntimeException | Error failure) {
+            if (archiveIngress != null) archiveIngress.close();
             if (archiveAdmission != null) archiveAdmission.close();
             if (startingArchive != null) {
                 // Construction has not exposed services or started workers. Preserve
@@ -528,6 +532,27 @@ public final class RepoServices implements AutoCloseable {
             return server;
         } catch (IOException e) {
             throw new UncheckedIOException(e);
+        }
+    }
+
+    /** Internal authenticated archive-only transport; public profile selection remains disabled. */
+    synchronized Server startBoundedArchiveNetty(int port, String apiToken) {
+        requireOpen();
+        if (archiveIngress == null) throw new IllegalStateException("Bounded archive profile is not configured");
+        if (apiToken == null || apiToken.isBlank()) throw new IllegalArgumentException("Bounded archive transport requires an API token");
+        try {
+            startLifecycle();
+            var builder = NettyServerBuilder.forPort(port).addService(new ArchiveGrpcService(archiveOperations));
+            archiveIngress.configure(builder);
+            // Last registered runs first: authentication precedes request admission.
+            builder.intercept(new ApiTokenServerInterceptor(apiToken, null));
+            return GrpcServerLifetime.start(builder, servers::add).server();
+        } catch (IOException failure) {
+            try { close(); } catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
+            throw new UncheckedIOException(failure);
+        } catch (RuntimeException | Error failure) {
+            try { close(); } catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
         }
     }
 
@@ -795,6 +820,7 @@ public final class RepoServices implements AutoCloseable {
         java.util.Objects.requireNonNull(timeout);
         if (timeout.isNegative() || timeout.isZero()) throw new IllegalArgumentException("Shutdown timeout must be positive");
         lifecycleClosed = true;
+        if (archiveIngress != null) archiveIngress.close();
         if (archiveAdmission != null) archiveAdmission.close();
         if (managedDocuments != null) managedDocuments.closeAdmission();
         if (managedArchive != null) managedArchive.reader.close();
@@ -806,6 +832,15 @@ public final class RepoServices implements AutoCloseable {
         transports.addAll(httpServers);
         transports.addAll(servers);
         ShutdownBarrier.releaseAfter(transports, () -> {
+            if (archiveIngress != null) {
+                try {
+                    if (!archiveIngress.awaitIdle(timeout))
+                        throw new IllegalStateException("Archive RPCs still active; shared resources retained");
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Archive RPC drain interrupted; shared resources retained", interrupted);
+                }
+            }
             if (archiveAdmission != null) {
                 try {
                     if (!archiveAdmission.awaitIdle(timeout))

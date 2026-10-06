@@ -1,7 +1,8 @@
 # Bounded archive ingestion
 
-Status: library admission and an internal local managed-host profile are implemented.
-Public configuration and transport activation remain unfinished.
+Status: library admission, an internal managed-host profile and a dedicated
+authenticated archive-only Netty mount are implemented. Public configuration,
+HTTP admission and broader repository transport parity remain unfinished.
 
 The repository must support a provider that accepts bounded byte arrays without
 claiming streaming support. Keep the existing streaming profile and raw-ingestion
@@ -97,7 +98,8 @@ Shutdown timeout preserves the provider and byte reservation; new puts fail and 
 later close succeeds after the accepted write returns. S3 provider selection is
 guarded by an assertion in the fixture. Default managed Redis still fails startup;
 the new profile requires explicit internal selection. Document operations, HTTP,
-gRPC and external service registration are disabled for this profile.
+general gRPC startup and external service registration are disabled for this profile.
+A separate internal archive-only Netty mount is described below.
 
 See [local host evidence](../evidence/repository/2026-10-06-bounded-archive-host/README.md).
 This does not establish aggregate transport bounds, Redis deployment durability or
@@ -122,11 +124,13 @@ oversized compressed input, early cancellation, shutdown, duplicate unary messag
 and header-time stream rejection. Test handlers use synthetic protobuf echo data;
 they do not establish repository/provider behavior.
 
-The interceptor is not mounted in `RepoServices` yet. Next, add a dedicated
-authenticated bounded archive transport with every exposed method explicitly
-listed, sharing the profile's budget with `ArchivePutAdmission`. Test delayed real
-Redis writes through that mount, authentication rejection, remote/local archive
-parity and shutdown. Keep HTTP disabled until its own admission boundary exists.
+`RepoServices.startBoundedArchiveNetty` now mounts only the archive service with
+an explicit list of ten reviewed synchronous unary methods. An API token is
+mandatory; authentication runs before admission. Bridge and streaming methods fail
+at headers. All listeners on one host share the same ingress gate, and ingress
+shares the profile's budget with `ArchivePutAdmission`. Ordinary host startup is
+unchanged. This remains an internal profile, not environment-driven activation.
+Keep HTTP disabled until its own admission boundary exists.
 In gRPC 1.84, compressed size failure during parsing reports UNKNOWN; uncompressed
 oversize reports RESOURCE_EXHAUSTED. Both stop before handler execution and release
 reservations. Do not describe the error statuses as identical.
