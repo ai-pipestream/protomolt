@@ -322,6 +322,11 @@ composition refuses streaming and bridge generation. An internal bounded archive
 host now passes Redis save/history/restart and delayed-write shutdown tests. Public
 managed-host activation and pre-decode transport allocation remain unfinished;
 the internal profile rejects transport startup.
+The standalone pre-protobuf unary admission guard now has real Netty lifecycle
+tests, but is not mounted. Integrate all exposed synchronous archive methods with
+the same budget as archive writes, then test real Redis cancellation and transport
+parity. Startup tests also verify physical identity conflicts preserve the original
+binding and release newly acquired providers.
 
 The default `RepoServices` managed profile still requires streaming, non-expiring
 writes and reclamation. `ArchiveObjectWriter` distinguishes byte-array

@@ -27,11 +27,13 @@ class BoundedArchiveHostIT {
     @Container static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
     static final RepositoryCaller CALLER = new RepositoryCaller("bounded-host", true);
 
-    private RepoServiceConfig config() {
+    private RepoServiceConfig config() { return config(0); }
+
+    private RepoServiceConfig config(int database) {
         return new RepoServiceConfig(0,
                 new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
                 "http://127.0.0.1:1", "us-east-1", "unused", "unused", "bounded-host", 0,
-                "redis", null, null, "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379), 0, 1024)
+                "redis", null, null, "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379) + "/" + database, 0, 1024)
                 .withManagedStorage(new ManagedStoragePolicy("bounded-redis", "bounded-realm", true));
     }
 
@@ -171,5 +173,52 @@ class BoundedArchiveHostIT {
                 assertThatThrownBy(host::archiveRepository).isInstanceOf(IllegalStateException.class).hasMessageContaining("closed");
             }
         }
+    }
+
+    @Test void backendIdentityConflictClosesNewProviderWithoutReplacingOriginalBinding() {
+        var closes = new java.util.concurrent.atomic.AtomicInteger();
+        var actual = new RedisBlobStoreProvider();
+        var observed = new BlobStoreProvider() {
+            public String id() { return "redis"; }
+            public BackendIdentity managedIdentity(Map<String, String> options) { return actual.managedIdentity(options); }
+            public OpenedBlobStore open(Map<String, String> options) {
+                assertThat(options.get("write-policy")).isEqualTo("create-only");
+                var opened = actual.open(options);
+                return new OpenedBlobStore(opened.store(), () -> { closes.incrementAndGet(); opened.close(); },
+                        opened.capabilities(), opened::ensureNamespace, opened.reclaimer());
+            }
+        };
+        var selected = BlobStores.of(List.of(observed));
+        var profile = new BoundedArchiveProfile(new ArchivePutAdmission.Limits(16, 2048, 4), new PayloadBudget(8192), 1);
+        try (var original = new RepoServices(config(0), BridgeEngine.standard(), selected, profile)) {
+            assertThatThrownBy(() -> new RepoServices(config(1), BridgeEngine.standard(), selected, profile))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("another physical profile");
+            assertThat(closes.get()).isEqualTo(1);
+            try (var same = new RepoServices(config(0), BridgeEngine.standard(), selected, profile)) {
+                assertThat(same.archiveRepository()).isNotNull();
+            }
+            assertThat(closes.get()).isEqualTo(2);
+        }
+        assertThat(closes.get()).isEqualTo(3);
+    }
+
+    @Test void unsupportedProviderCapabilityClosesAcquiredHandle() {
+        var closes = new java.util.concurrent.atomic.AtomicInteger();
+        var actual = new RedisBlobStoreProvider();
+        var restricted = new BlobStoreProvider() {
+            public String id() { return "redis"; }
+            public BackendIdentity managedIdentity(Map<String, String> options) { return actual.managedIdentity(options); }
+            public OpenedBlobStore open(Map<String, String> options) {
+                var opened = actual.open(options);
+                var capabilities = new java.util.HashSet<>(opened.capabilities());
+                capabilities.remove(BlobCapability.NON_EXPIRING_WRITES);
+                return new OpenedBlobStore(opened.store(), () -> { closes.incrementAndGet(); opened.close(); },
+                        capabilities, opened::ensureNamespace, opened.reclaimer());
+            }
+        };
+        var profile = new BoundedArchiveProfile(new ArchivePutAdmission.Limits(16, 2048, 4), new PayloadBudget(8192), 1);
+        assertThatThrownBy(() -> new RepoServices(config(), BridgeEngine.standard(), BlobStores.of(List.of(restricted)), profile))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("cannot support managed ingestion");
+        assertThat(closes.get()).isEqualTo(1);
     }
 }

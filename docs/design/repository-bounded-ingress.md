@@ -102,3 +102,31 @@ gRPC and external service registration are disabled for this profile.
 See [local host evidence](../evidence/repository/2026-10-06-bounded-archive-host/README.md).
 This does not establish aggregate transport bounds, Redis deployment durability or
 full repository parity. Keep those acceptance requirements open.
+
+## Pre-protobuf admission prerequisite
+
+The internal `UnaryRequestAdmission` interceptor reserves a request slot and a fixed
+serialized-byte allowance before invoking the service handler or request parser.
+Its explicit method set must contain only synchronous unary handlers. Streaming
+and unlisted methods fail at headers without constructing a stream observer.
+The server message cap also applies to decompressed bytes. Reserve two maximum
+requests per call because gRPC's unary handler requests two messages to detect an
+invalid extra request. This is accounting for serialized input, not a decoded-heap
+or Netty-buffer bound.
+
+Release occurs in serialized terminal listener callbacks, after any synchronous
+handler has returned. Neither client cancellation nor `ServerCall.close` alone
+releases capacity. The scope is unsuitable for detached request-consuming work.
+Actual Netty tests cover cancellation during a blocked handler, malformed protobuf,
+oversized compressed input, early cancellation, shutdown, duplicate unary messages
+and header-time stream rejection. Test handlers use synthetic protobuf echo data;
+they do not establish repository/provider behavior.
+
+The interceptor is not mounted in `RepoServices` yet. Next, add a dedicated
+authenticated bounded archive transport with every exposed method explicitly
+listed, sharing the profile's budget with `ArchivePutAdmission`. Test delayed real
+Redis writes through that mount, authentication rejection, remote/local archive
+parity and shutdown. Keep HTTP disabled until its own admission boundary exists.
+In gRPC 1.84, compressed size failure during parsing reports UNKNOWN; uncompressed
+oversize reports RESOURCE_EXHAUSTED. Both stop before handler execution and release
+reservations. Do not describe the error statuses as identical.
