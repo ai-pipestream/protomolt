@@ -22,25 +22,55 @@ import java.util.UUID;
 final class DocumentAdmissionAuthorization {
     private DocumentAdmissionAuthorization() {}
 
-    record Prepared(Set<UUID> destinations, Map<UUID, DocumentRevisionCondition> sources) {
+    record Prepared(Set<UUID> destinations, Map<UUID, DocumentRevisionCondition> sources,
+            Map<UUID, NodeAddress> historicalSources) {
         Prepared {
             destinations = Set.copyOf(destinations);
             // Prepare stable diagnostic order before acquiring database locks.
             sources = java.util.Collections.unmodifiableMap(new java.util.TreeMap<>(sources));
+            historicalSources = java.util.Collections.unmodifiableMap(new java.util.TreeMap<>(historicalSources));
         }
     }
 
     static Prepared prepare(DocumentUploadPlan.Prepared plan) {
+        return prepare(plan, List.of());
+    }
+
+    static Prepared prepare(DocumentUploadPlan.Prepared plan, List<DocumentHistoricalReferenceAdmission.Prepared> historical) {
         var nodes = new HashSet<UUID>();
         var sources = new HashMap<UUID, DocumentRevisionCondition>();
+        var expected = new HashSet<ai.protomolt.proto.repo.v1.PublicationHistoricalReuse>();
         for (var member : plan.members()) {
             nodes.add(member.nodeId());
             for (var source : member.intent().getSourcesList()) addSource(sources, source);
             for (var part : member.intent().getPartsList()) {
                 if (part.hasReuse()) addSource(sources, part.getReuse().getSource());
+                if (part.hasHistoricalReuse()) expected.add(part.getHistoricalReuse());
             }
         }
-        return new Prepared(nodes, sources);
+        var actual = new HashSet<ai.protomolt.proto.repo.v1.PublicationHistoricalReuse>();
+        var addresses = new HashMap<UUID, NodeAddress>();
+        if (historical.size() > DocumentPublicationCommand.MAX_PARTS)
+            throw new IllegalArgumentException("Historical source preparations exceed bounds");
+        int count = 0;
+        long bytes = 0;
+        for (var prepared : historical) for (var selector : prepared.selectors()) {
+            if (++count > DocumentPublicationCommand.MAX_PARTS)
+                throw new IllegalArgumentException("Historical source selectors exceed bounds");
+            bytes += selector.getSerializedSize();
+            if (bytes > DocumentPublicationCommand.MAX_COMMAND_BYTES)
+                throw new IllegalArgumentException("Historical source selector bytes exceed command bound");
+            var address = selector.getSource();
+            if (!plan.command().intent().getAccountId().equals(address.getAccountId()))
+                throw new IllegalArgumentException("Historical source differs from command account");
+            var prior = addresses.putIfAbsent(DocumentIds.nodeId(address), address);
+            if (prior != null && !prior.equals(address))
+                throw new IllegalArgumentException("Conflicting historical source addresses");
+            actual.add(selector);
+        }
+        if (!actual.equals(expected))
+            throw new IllegalArgumentException("Historical source preparations differ from complete command");
+        return new Prepared(nodes, sources, addresses);
     }
 
     private static void addSource(Map<UUID, DocumentRevisionCondition> sources, DocumentRevisionCondition condition) {
@@ -138,8 +168,16 @@ final class DocumentAdmissionAuthorization {
             DocumentUploadPlan.Prepared plan, Prepared prepared) {
         // Lock every address first, but authorize before exposing revision mismatches.
         // Otherwise a source revision conflict can disclose a document the caller cannot read.
-        var admitted = DocumentRevisionLocks.lockForAdmission(em, prepared.destinations(), prepared.sources().keySet());
+        var readNodes = new HashSet<>(prepared.sources().keySet());
+        readNodes.addAll(prepared.historicalSources().keySet());
+        var admitted = DocumentRevisionLocks.lockForAdmission(em, prepared.destinations(), readNodes);
         var locked = admitted.documents();
+        for (var source : prepared.historicalSources().entrySet()) {
+            var row = admitted.sources().get(source.getKey());
+            requireIdentity(row, source.getValue());
+            requireSourceAccess(caller, row);
+            if (!DocumentStatus.AVAILABLE.equals(row.status()) || row.pendingPurgeId() != null) throw unavailable();
+        }
         for (var source : prepared.sources().entrySet()) {
             var row = admitted.sources().get(source.getKey());
             requireIdentity(row, source.getValue().getAddress());

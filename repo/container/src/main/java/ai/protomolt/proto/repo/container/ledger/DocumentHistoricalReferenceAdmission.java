@@ -23,10 +23,13 @@ final class DocumentHistoricalReferenceAdmission {
         private final String account;
         private final Set<UUID> objects;
         private final List<Batch> batches;
+        private final List<PublicationHistoricalReuse> selectors;
         private Prepared(DocumentReadLedger.PinnedRead<DocumentHistoricalReadPlan>.Use use,
-                String account, Set<UUID> objects, List<Batch> batches) {
+                String account, Set<UUID> objects, List<Batch> batches, List<PublicationHistoricalReuse> selectors) {
             this.use = use; this.account = account; this.objects = Set.copyOf(objects); this.batches = List.copyOf(batches);
+            this.selectors = List.copyOf(selectors);
         }
+        List<PublicationHistoricalReuse> selectors() { use.plan(); return selectors; }
     }
 
     /** Borrows an existing Use, which the caller retains through the final transaction. */
@@ -68,7 +71,7 @@ final class DocumentHistoricalReferenceAdmission {
         }
         control.check(); use.plan();
         return new Prepared(use, plan.address().getAccountId(),
-                entries.stream().map(DocumentHistoricalReadPlan.Entry::objectId).collect(Collectors.toSet()), batches);
+                entries.stream().map(DocumentHistoricalReadPlan.Entry::objectId).collect(Collectors.toSet()), batches, selectors);
     }
 
     /**

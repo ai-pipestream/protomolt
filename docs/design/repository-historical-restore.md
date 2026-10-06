@@ -222,3 +222,17 @@ failures, then acquire drive/origin/retention locks and publish all new referenc
 atomically while the source Use remains held. Command analysis, assessment retention
 and replay must recognize the historical alternative consistently before removing
 the public command guard. [Transaction evidence](../evidence/repository/2026-10-05-historical-reference/README.md).
+
+## Historical authorization lockset checkpoint
+
+Authorization preparation now accepts validated pinned historical sources and
+requires their selector set to match the complete plan's historical arms. It bounds
+count and bytes and keeps their addresses separate from current revision conditions.
+The final authorization step locks the combined set once, checks current historical
+source READ before destination WRITE and revision conflicts, and applies no old-head
+CAS to historical sources. Per-target ordinal binding remains the writer's duty.
+
+The positive SQL tests exercise this internal lockset directly; the public historical
+command guard still prevents an executable restore. Full prepared-command acceptance,
+input/assessment/commit integration and receipt replay authorization remain required.
+[Authorization evidence](../evidence/repository/2026-10-05-historical-authorization/README.md).
