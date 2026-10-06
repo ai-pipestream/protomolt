@@ -23,3 +23,9 @@ This marks retained nonterminal registrations only. Terminal entries already
 evicted with durable proof are excluded. No LOCAL_DRAINED marker, provider remote
 quiescence, automatic successor authority or ordinary journaled runtime activation
 is claimed. This is local validation, not hosted CI, a merge or deployment.
+
+The same production source also passed
+`./gradlew :protomolt-repo-container:admissionStorageTest --console=plain`.
+Attached runtime XML records the PostgreSQL/LocalStack production-JAR regression.
+This exercises existing provider/runtime paths; it does not qualify LOCAL_DRAINED
+or automatic successor execution.

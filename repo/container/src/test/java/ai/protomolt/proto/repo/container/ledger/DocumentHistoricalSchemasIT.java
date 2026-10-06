@@ -61,6 +61,105 @@ class DocumentHistoricalSchemasIT {
         }
     }
 
+    @Test void replaysSameUrlOccurrencesFromTheirDistinctRetainedDefinitions() throws Exception {
+        try (var c = context(POSTGRES)) {
+            var coreType = recordType("historical_core.proto", "core_label");
+            var parsedType = recordType("historical_parsed.proto", "parsed_label");
+            String url = "type.test/archive.Record";
+            var coreAny = com.google.protobuf.Any.newBuilder().setTypeUrl(url).setValue(
+                    com.google.protobuf.DynamicMessage.newBuilder(coreType)
+                            .setField(coreType.findFieldByName("core_label"), "core occurrence").build().toByteString()).build();
+            var parsedAny = com.google.protobuf.Any.newBuilder().setTypeUrl(url).setValue(
+                    com.google.protobuf.DynamicMessage.newBuilder(parsedType)
+                            .setField(parsedType.findFieldByName("parsed_label"), "parsed occurrence").build().toByteString()).build();
+            var ownership = ai.protomolt.proto.repo.v1.OwnershipContext.newBuilder()
+                    .setAccountId("account").setDatasourceId("source")
+                    .setSecurity(ai.protomolt.proto.repo.v1.DocumentSecurity.getDefaultInstance()).build();
+            var document = ai.protomolt.proto.repo.v1.Document.newBuilder().setDocId("same-url-history")
+                    .setOwnership(ownership).setStructuredData(coreAny)
+                    .putParserResults("parser", ai.protomolt.proto.repo.v1.ParserResult.newBuilder()
+                            .setParserName("parser").setParserVersion("1")
+                            .setStatus(ai.protomolt.proto.repo.v1.ParseStatus.PARSE_STATUS_OK)
+                            .setDocument(ai.protomolt.proto.repo.v1.ParserDocument.newBuilder().setShape(parsedAny)).build())
+                    .build();
+            var coreDefinition = DocumentSchemaRetentionFixture.definition(coreType, true);
+            var parsedDefinition = DocumentSchemaRetentionFixture.definition(parsedType, true);
+            assertThat(coreDefinition.metadata().getTypeUrl()).isEqualTo(parsedDefinition.metadata().getTypeUrl());
+            assertThat(coreDefinition.metadata().getArtifactSha256()).isNotEqualTo(parsedDefinition.metadata().getArtifactSha256());
+            var fixture = DocumentSchemaRetentionFixture.prepare(c, true, false, document, "same-url-node",
+                    "same-url-history", null, null, occurrence -> switch (occurrence.root().getSlot().getPart()) {
+                        case DOCUMENT_PART_CORE -> coreDefinition;
+                        case DOCUMENT_PART_PARSED -> parsedDefinition;
+                        default -> throw new AssertionError("Unexpected typed root part: " + occurrence.root().getSlot().getPart());
+                    });
+            activate(c, fixture);
+            UUID revision = publishTyped(c, fixture);
+            var prepared = fixture.batch().proofs().get("member");
+            assertThat(prepared.roots()).hasSize(2);
+            assertThat(prepared.references()).filteredOn(reference -> reference.typeUrl().equals(url))
+                    .extracting(ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Reference::descriptorSha256)
+                    .containsExactlyInAnyOrder(coreDefinition.metadata().getArtifactSha256(), parsedDefinition.metadata().getArtifactSha256());
+
+            // A new reader can replay only the sealed SQL artifacts, even after active policy changes.
+            var advanced = DocumentAdmissionPolicy.of(expectedPolicy(fixture).toBuilder()
+                    .setMode(DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_OPAQUE_ALLOWED).build(), () -> {});
+            new DocumentSchemaPolicies(c.tx()).activate(advanced, 1, () -> {});
+            var address = fixture.command().intent().getMembers(0).getDestination().getAddress();
+            // DocumentHistoricalSchemas has no resolver dependency; this fresh instance can only load retained SQL artifacts.
+            var replay = new DocumentHistoricalSchemas(new Tx(c.emf())).check(ADMIN, address, revision, prepared.fragments(), () -> {});
+            assertThat(replay.roots()).hasSize(2);
+            assertThat(replay.artifacts()).containsEntry(coreDefinition.metadata().getArtifactSha256(), coreDefinition.descriptors())
+                    .containsEntry(parsedDefinition.metadata().getArtifactSha256(), parsedDefinition.descriptors());
+            assertThat(replay.references()).filteredOn(reference -> reference.typeUrl().equals(url))
+                    .extracting(ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Reference::descriptorSha256)
+                    .containsExactlyInAnyOrder(coreDefinition.metadata().getArtifactSha256(), parsedDefinition.metadata().getArtifactSha256());
+
+            var ledger = new DocumentReadLedger(new Tx(c.emf()), UUID.randomUUID());
+            var history = ledger.captureHistorical(ADMIN, address, revision);
+            var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(32L * 1024 * 1024);
+            try {
+                for (var root : replay.roots()) {
+                    var evidence = ai.protomolt.proto.repo.v1.DocumentRootSchemaEvidence.parseFrom(root.encoded().bytes());
+                    var path = evidence.getOccurrences(0);
+                    String descriptorHash = root.locator().getSlot().getPart() == ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CORE
+                            ? coreDefinition.metadata().getArtifactSha256() : parsedDefinition.metadata().getArtifactSha256();
+                    var selection = new ai.protomolt.proto.repo.admission.DocumentSchemaMaterialization.Selection(
+                            root.locatorSha256(), ai.protomolt.proto.repo.codec.DocumentPartCodec.sha256Hex(path.toByteArray()));
+                    try (var materialized = history.materializeFragment(root.ordinal(), replay.fragments().get(root.ordinal()), selection,
+                            new ai.protomolt.proto.repo.admission.DocumentSchemaMaterialization.Limits(
+                                    4_000_000, 4_000_000, 16_000_000, 64, 4_000_000, 64), budget,
+                            ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+                        var view = materialized.view(ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+                        assertThat(ai.protomolt.proto.repo.codec.DocumentPartCodec.sha256Hex(view.descriptorArtifact().toByteArray()))
+                                .isEqualTo(descriptorHash);
+                        String field = root.locator().getSlot().getPart() == ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CORE
+                                ? "core_label" : "parsed_label";
+                        assertThat(view.value().getAllFields().keySet())
+                                .extracting(com.google.protobuf.Descriptors.FieldDescriptor::getName).containsExactly(field);
+                        assertThat(view.value().getField(view.value().getDescriptorForType().findFieldByName(field)))
+                                .isEqualTo(field.equals("core_label") ? "core occurrence" : "parsed occurrence");
+                    }
+                }
+                assertThat(budget.reservedBytes()).isZero();
+            } finally {
+                history.close();
+                assertThat(history.awaitDrained(java.time.Duration.ofSeconds(5))).isTrue();
+                history.release(); ledger.fence(); ledger.attestLocalQuiescence();
+            }
+        }
+    }
+
+    private static com.google.protobuf.Descriptors.Descriptor recordType(String fileName, String fieldName) throws Exception {
+        var field = com.google.protobuf.DescriptorProtos.FieldDescriptorProto.newBuilder().setName(fieldName).setNumber(1)
+                .setType(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.Type.TYPE_STRING)
+                .setLabel(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.Label.LABEL_OPTIONAL);
+        var proto = com.google.protobuf.DescriptorProtos.FileDescriptorProto.newBuilder().setName(fileName)
+                .setPackage("archive").setSyntax("proto3").addMessageType(
+                        com.google.protobuf.DescriptorProtos.DescriptorProto.newBuilder().setName("Record").addField(field)).build();
+        return com.google.protobuf.Descriptors.FileDescriptor.buildFrom(proto, new com.google.protobuf.Descriptors.FileDescriptor[0])
+                .findMessageTypeByName("Record");
+    }
+
     @Test void wrongOrMissingFragmentsFailHistoricalReplay() throws Exception {
         try (var c = context(POSTGRES)) {
             var f = DocumentSchemaRetentionFixture.prepare(c); activate(c, f);

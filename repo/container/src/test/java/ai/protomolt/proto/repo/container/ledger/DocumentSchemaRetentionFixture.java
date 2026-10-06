@@ -54,6 +54,13 @@ final class DocumentSchemaRetentionFixture {
 
     static Fixture prepare(Context c, boolean typed, boolean explicitSchema, Document document,
             String graphAddress, String driveName, WriteProvenance provenance, Long expectedRevision) throws Exception {
+        return prepare(c, typed, explicitSchema, document, graphAddress, driveName, provenance, expectedRevision,
+                ignored -> definition(StringValue.getDescriptor(), true));
+    }
+
+    static Fixture prepare(Context c, boolean typed, boolean explicitSchema, Document document,
+            String graphAddress, String driveName, WriteProvenance provenance, Long expectedRevision,
+            DocumentSchemaAdmission.Resolver resolver) throws Exception {
         var ownership = document.getOwnership();
         var profile = new ManagedBackendLedger.Profile(new BackendIdentity("test-location", "test-location/v1",
                 Map.of("endpoint", "synthetic")), "schema-retention");
@@ -90,9 +97,8 @@ final class DocumentSchemaRetentionFixture {
                 .setValidationProfile("protomolt-retained-schema-admission/v1").setLimits(DocumentSchemaPolicyLimits.newBuilder()
                         .setMaxFragments(32).setMaxFragmentBytes(4_000_000).setMaxRoots(100).setMaxEvidenceBytes(4_000_000)
                         .setMaxBindings(20).setMaxRetainedBytes(16_000_000).setMaxDecodedBytes(1_000_000)).build(), () -> {});
-        var payload = definition(StringValue.getDescriptor(), true);
         var proof = policy.prepareAndCheck(ByteString.copyFrom(HexFormat.of().parseHex(command.sha256())),
-                command.intent().getMembers(0), fragments, definition(Document.getDescriptor()), ignored -> payload, () -> {});
+                command.intent().getMembers(0), fragments, definition(Document.getDescriptor()), resolver, () -> {});
         var batch = DocumentSchemaBatch.prepare(command, new DocumentSchemaPolicies.Selection("account", 1, policy), typed ? Map.of("member", proof) : Map.of(), () -> {});
         batch.stage(new RepositorySchemaArtifacts(c.tx()), owner, () -> {});
         var placements = Map.of(drive.driveId, DocumentUploadPlan.Placement.sample(drive, "schema-retention", profile));

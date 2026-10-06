@@ -156,6 +156,12 @@ performance qualification must not displace these requirements.
    covers raw preservation without resolution, distinct occurrence-bound definitions
    for an equal type URL, and explicit unavailable outcomes. These are library
    guarantees; new container schemas and public host wiring need their own coverage.
+   Persisted historical replay now also covers equal type URLs with distinct retained
+   descriptor artifacts across CORE and PARSED occurrences. A fresh SQL reader
+   materializes each with its original field definition after active policy changes,
+   without a registry dependency. This is SQL/schema qualification with synthetic
+   physical observations, not a new provider-read claim. See
+   [historical definition evidence](../evidence/repository/2026-10-06-historical-distinct-definitions/README.md).
 3. **Provider durability and capacity.** Keep provider identity independent of
    implementation vocabulary. Qualify a non-S3 provider and its startup/dependency
    boundaries. Use RustFS for local performance and LocalStack for S3 correctness;
