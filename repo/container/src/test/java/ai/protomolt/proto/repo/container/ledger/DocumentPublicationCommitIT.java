@@ -1471,8 +1471,8 @@ class DocumentPublicationCommitIT {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
-    void finalPublicationRechecksGrantAfterConcurrentRevokerCommits(boolean revoke) throws Exception {
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"live", "revoked", "expired"})
+    void finalPublicationRechecksGrantAfterConcurrentRevokerCommits(String outcome) throws Exception {
         var f = fixture(1, 1, publicReadGrant(), "revocation-first-" + UUID.randomUUID(), false);
         var command = new DocumentPublicationCommand(f.command.intent().toBuilder().setOperationId(UUID.randomUUID().toString()).build());
         var placements = f.prepared.plan().members().stream().collect(java.util.stream.Collectors.toMap(
@@ -1482,7 +1482,8 @@ class DocumentPublicationCommitIT {
                 java.util.Set.of(), java.util.Optional.of(binding));
         new RepositoryCredentialAuthorities(tx).register(ADMIN, binding, caller.principalName());
         var drives = new DriveLedger(tx);
-        var grant = RepositoryCreationGrants.prepare(caller, command, placements, (System.currentTimeMillis()+300_000)*1000);
+        long expires = databaseNowMicros() + java.util.concurrent.TimeUnit.SECONDS.toMicros(outcome.equals("expired") ? 15 : 300);
+        var grant = RepositoryCreationGrants.prepare(caller, command, placements, expires);
         new RepositoryCreationGrants(tx, drives).install(ADMIN, grant);
         var budget = new PayloadBudget(64_000_000);
         var session = DocumentPublicationSession.journaled(tx, drives, caller, command, placements, LEASE,
@@ -1500,7 +1501,7 @@ class DocumentPublicationCommitIT {
                 rows.next(); blocker = rows.getInt(1);
             }
             try (var update = revoker.prepareStatement("UPDATE repository_creation_grants SET revoked=? WHERE operation_id=?")) {
-                update.setBoolean(1, revoke); update.setObject(2, command.operationId());
+                update.setBoolean(1, outcome.equals("revoked")); update.setObject(2, command.operationId());
                 assertThat(update.executeUpdate()).isEqualTo(1);
             }
             try {
@@ -1508,8 +1509,15 @@ class DocumentPublicationCommitIT {
                         .commit(caller, owner, session.prepared(), staged.content, staged.selected, () -> {}));
                 DocumentPublicationCommitBarrier.awaitGrantReaderWaiter(tx, blocker);
                 assertThat(publication.isDone()).isFalse();
+                if (outcome.equals("expired")) {
+                    assertThat(databaseNowMicros()).isLessThan(expires);
+                    long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(20);
+                    while (databaseNowMicros() <= expires && System.nanoTime() < deadline) Thread.sleep(10);
+                    assertThat(databaseNowMicros()).isGreaterThan(expires);
+                    assertThat(publication.isDone()).isFalse();
+                }
                 revoker.commit();
-                if (revoke) {
+                if (!outcome.equals("live")) {
                     assertThatThrownBy(() -> publication.get(10, java.util.concurrent.TimeUnit.SECONDS))
                             .hasCauseInstanceOf(ai.protomolt.proto.repo.spi.RepositoryException.class)
                             .hasStackTraceContaining("Creation grant is unavailable");
@@ -1529,6 +1537,12 @@ class DocumentPublicationCommitIT {
             } finally { revoker.rollback(); }
         }
         assertThat(budget.reservedBytes()).isZero();
+    }
+
+    private static long databaseNowMicros() {
+        return tx.readOnly(em -> ((Number) em.createNativeQuery(
+                "SELECT floor(extract(epoch FROM clock_timestamp())*1000000)::bigint")
+                .getSingleResult()).longValue());
     }
 
     private static Fixture fixture(int count) {

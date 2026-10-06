@@ -793,9 +793,9 @@ successful receipt replay checks original key identity and live credentials whil
 ignoring creation-grant liveness. Local typed/opaque initial publication and
 historical byte/schema recovery have real-provider coverage.
 
-Remaining qualification includes scoped successor publication, exact revocation
-races at commit and recovery, mixed source/target policy cases under a valid grant,
-and expiry between execution phases. Internal provisioning still needs bounded
+Remaining qualification includes scoped successor publication, revocation during
+recovery, mixed source/target policy cases under a valid grant,
+and expiry at other execution phases. Internal provisioning still needs bounded
 retention/lifecycle rules before an external endpoint can be exposed. These checks
 do not close recovery discovery, pin reclamation, pruning, provider conformance,
 performance or progressive hydration requirements elsewhere in this inventory.
@@ -806,7 +806,7 @@ Real SQL tests now cover scoped successor activation, live attachment and genera
 upload admission, plus refusal after grant revocation, key substitution or host backend
 rejection. Exact immutable activation confirmation after revocation does not allow live
 attachment. See [evidence](../evidence/repository/2026-10-06-scoped-successor/README.md).
-Manager-level recovered provider publication and commit/revocation races remain open;
+Manager-level recovered provider publication remains open;
 this does not qualify automatic recovery discovery or scheduling.
 
 ## Publication-first revocation race
@@ -820,5 +820,6 @@ Revocation-first refusal is now covered at the opaque direct final-commit bounda
 real provider uploads finish first, the publisher demonstrably waits on the grant
 row, and committed revocation leaves no destination or success record. A matching
 non-revoking control commits. Provider-versioned attempt rows remain for recovery;
-this does not yet qualify their cleanup. Expiry at final authorization still needs
-a direct test.
+this does not yet qualify their cleanup. A third case now proves expiry at final
+authorization: the publisher waits while the grant is live, the database clock
+passes its immutable deadline, and release causes refusal without publication.

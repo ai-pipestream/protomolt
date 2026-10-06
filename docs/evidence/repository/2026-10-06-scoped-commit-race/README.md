@@ -44,3 +44,17 @@ Sol reviewed the test and synchronization with no blocker. This qualifies the
 opaque direct final-commit boundary, not runtime retry or cleanup. Final-check
 expiry remains open. `revocation-first-green.tar.gz` contains the two-case XML
 and binary results.
+
+## Expiry during the final grant check
+
+Base: `728da6ad65645d01b3b297b1fc09510e7090cfe8`. The same command above now
+runs three named cases: live, revoked and expired. All three passed with no skips.
+The expiry case uses PostgreSQL's clock to set an immutable grant deadline. After
+real uploads, it proves the final publisher is blocked while the grant is still
+live, waits until that database clock passes the deadline, then releases the row.
+The publisher refuses the expired grant with no destination or success record.
+This checks expiry after waiting, rather than a timestamp sampled before the lock.
+`final-expiry-green.tar.gz` retains the three-case XML and binary results.
+Sol found no correctness blocker. The test requires staging and reaching the
+observed lock wait within the 15-second grant lifetime; an overloaded test host
+can fail that pre-expiry assertion. No clock is mocked or grant deadline rewritten.
