@@ -41,8 +41,14 @@ final class DocumentPublicationSession {
     static DocumentPublicationSession journaled(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
             Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease,
             ai.protomolt.proto.repo.blob.spi.PayloadBudget budget, UUID coordinator) {
+        return journaled(tx, caller, command, placements, lease, budget, coordinator, new DocumentPublicationScopeCalls());
+    }
+
+    static DocumentPublicationSession journaled(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease,
+            ai.protomolt.proto.repo.blob.spi.PayloadBudget budget, UUID coordinator, DocumentPublicationScopeCalls registrations) {
         return new DocumentPublicationSession(tx, caller, command, placements, lease, 0,
-                Objects.requireNonNull(budget), Objects.requireNonNull(coordinator));
+                Objects.requireNonNull(budget), Objects.requireNonNull(coordinator), Objects.requireNonNull(registrations));
     }
 
     /** Explicit host recovery; never selected automatically by ordinary admission. */
@@ -58,12 +64,12 @@ final class DocumentPublicationSession {
 
     private DocumentPublicationSession(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
             Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease, long predecessorGeneration) {
-        this(tx, caller, command, placements, lease, predecessorGeneration, null, null);
+        this(tx, caller, command, placements, lease, predecessorGeneration, null, null, null);
     }
 
     private DocumentPublicationSession(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
             Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease, long predecessorGeneration,
-            ai.protomolt.proto.repo.blob.spi.PayloadBudget journalBudget, UUID coordinator) {
+            ai.protomolt.proto.repo.blob.spi.PayloadBudget journalBudget, UUID coordinator, DocumentPublicationScopeCalls registrations) {
         this.command = Objects.requireNonNull(command); this.lease = Objects.requireNonNull(lease);
         this.predecessorGeneration = predecessorGeneration;
         if (caller == null) throw new RepositoryException(RepositoryException.Code.UNAUTHENTICATED,
@@ -77,7 +83,7 @@ final class DocumentPublicationSession {
         ownerNonce = seeds.ownerNonce();
         operations = new RepositoryOperationLedger(Objects.requireNonNull(tx));
         registration = journalBudget == null ? null : new DocumentPublicationRegistration(tx, journalBudget,
-                new DocumentPublicationPreparationRecord(key, command, seeds, placements, lease, predecessorGeneration), prepared.plan(), coordinator);
+                new DocumentPublicationPreparationRecord(key, command, seeds, placements, lease, predecessorGeneration), prepared.plan(), coordinator, registrations);
     }
 
     /**
@@ -104,6 +110,10 @@ final class DocumentPublicationSession {
 
     /** Only the manager with no remaining users may release this proven pre-journal identity. */
     boolean discardableBeforeRegistration() { return registration != null && !registration.mayHaveCommitted(); }
+
+    Optional<RepositoryCoordinatorDrain.Identity> drainIdentity() {
+        return registration == null || !registration.mayHaveCommitted() ? Optional.empty() : Optional.of(registration.drainIdentity());
+    }
 
     void abandonRegistration(RepositoryCaller caller, RepositoryReadControl control) {
         if (registration == null) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,

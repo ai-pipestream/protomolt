@@ -27,6 +27,157 @@ class DocumentJournaledSessionsIT {
     private static final RepositoryCaller CALLER = new RepositoryCaller("principal", true);
     private static final Duration LEASE = Duration.ofMinutes(5);
 
+    @Test void acceptedCallCannotRegisterAfterDrainSnapshot() throws Exception {
+        try (var c = context(POSTGRES); var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var input = input(c);
+            var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
+            var firstCheck = new AtomicBoolean(true);
+            var control = new RepositoryReadControl() {
+                public boolean isCancelled() {
+                    if (firstCheck.compareAndSet(true, false)) {
+                        entered.countDown();
+                        try {
+                            if (!release.await(10, TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                        } catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt(); throw new AssertionError(interrupted);
+                        }
+                    }
+                    return false;
+                }
+                public long remainingNanos() { return Long.MAX_VALUE; }
+            };
+            try (var r = resources(c.tx(), 1, input.bytes())) {
+                var operation = workers.submit(() -> catchThrowable(() -> execute(r.sessions(), input, input.modes(), control)));
+                try {
+                    assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+                    assertThat(r.sessions().drainRegistrations(Duration.ZERO,
+                            key -> { throw new AssertionError("No registered identity"); }, NONE))
+                            .isEqualTo(new DocumentPublicationSessions.DrainProgress(true, 0, 0));
+                    release.countDown();
+                    assertThat(operation.get(5, TimeUnit.SECONDS)).isInstanceOf(RepositoryException.class);
+                    assertThat(count(c, "repository_execution_claims", input)).isZero();
+                    assertThat(r.sessions().retainedSessions()).isZero();
+                    assertThat(r.sessions().retainedCommandBytes()).isZero();
+                } finally { release.countDown(); }
+            }
+        }
+    }
+
+    @Test void absentClaimAfterRegistrationFailureRemainsUnresolved() throws Exception {
+        try (var c = context(POSTGRES)) {
+            var input = input(c); var armed = new AtomicBoolean(true);
+            var source = DocumentJdbcFaults.beforeCommit(c.pool(), connection -> {
+                if (!armed.get()) return;
+                try (var statement = connection.prepareStatement("SELECT count(*) FROM repository_coordinator_bindings WHERE operation_id=?")) {
+                    statement.setObject(1, input.command().operationId());
+                    try (var rows = statement.executeQuery()) {
+                        rows.next();
+                        if (rows.getInt(1) == 1 && armed.compareAndSet(true, false))
+                            throw new java.sql.SQLException("registration commit refused", "08006");
+                    }
+                }
+            });
+            try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                    Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"));
+                    var r = resources(new Tx(emf), 1, input.bytes())) {
+                assertThatThrownBy(() -> execute(r.sessions(), input, input.modes(), NONE))
+                        .hasStackTraceContaining("registration commit refused");
+                assertThat(count(c, "repository_execution_claims", input)).isZero();
+                assertThat(r.sessions().drainRegistrations(Duration.ZERO, key -> CALLER, NONE))
+                        .isEqualTo(new DocumentPublicationSessions.DrainProgress(true, 0, 1));
+                assertThat(r.sessions().retainedSessions()).isEqualTo(1);
+                assertThat(r.sessions().retainedCommandBytes()).isEqualTo(input.bytes());
+                assertThat(count(c, "repository_coordinator_drains", input)).isZero();
+            }
+        }
+    }
+
+    @Test void managerDrainsEveryRetainedRegistrationWithoutEvictingItsIdentity() throws Exception {
+        try (var c = context(POSTGRES)) {
+            var first = input(c);
+            var second = new Input(new DocumentPublicationCommand(first.command().intent().toBuilder()
+                    .setOperationId(UUID.randomUUID().toString()).build()), first.placements(), first.modes());
+            try (var r = resources(c.tx(), 2, first.bytes() + second.bytes())) {
+                pending(r.sessions(), first); pending(r.sessions(), second);
+                var firstIdentity = identity(c, first); var secondIdentity = identity(c, second);
+                var result = r.sessions().drainRegistrations(Duration.ZERO, key -> CALLER, NONE);
+                assertThat(result).isEqualTo(new DocumentPublicationSessions.DrainProgress(true, 2, 0));
+                assertThat(r.uploads().providerActivity().accepting()).isFalse();
+                assertThat(count(c, "repository_coordinator_drains", first)).isEqualTo(1);
+                assertThat(count(c, "repository_coordinator_drains", second)).isEqualTo(1);
+                assertThat(r.sessions().retainedSessions()).isEqualTo(2);
+                assertThat(r.sessions().retainedCommandBytes()).isEqualTo(first.bytes() + second.bytes());
+                assertIdentity(c, first, firstIdentity); assertIdentity(c, second, secondIdentity);
+                assertThat(r.sessions().drainRegistrations(Duration.ZERO, key -> CALLER, NONE)).isEqualTo(result);
+            }
+        }
+    }
+
+    @Test void drainRequiresSuppliedPrivateAuthorityAndRetriesARealLostMarkerReply() throws Exception {
+        try (var c = context(POSTGRES)) {
+            var input = input(c); var armed = new AtomicBoolean();
+            var source = DocumentJdbcFaults.afterCommit(c.pool(), () -> {
+                if (armed.get() && count(c, "repository_coordinator_drains", input) == 1 && armed.compareAndSet(true, false))
+                    throw new java.sql.SQLException("drain reply lost", "08006");
+            });
+            try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                    Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"));
+                    var r = resources(new Tx(emf), 1, input.bytes())) {
+                pending(r.sessions(), input);
+                var original = identity(c, input);
+                var scoped = new RepositoryCaller("principal", false, java.util.Set.of("account"), java.util.Set.of());
+                assertThatThrownBy(() -> r.sessions().drainRegistrations(Duration.ZERO, key -> scoped, NONE))
+                        .hasMessageContaining("private process authority");
+                assertThat(count(c, "repository_coordinator_drains", input)).isZero();
+                assertThat(r.uploads().providerActivity().accepting()).isFalse();
+                assertThat(r.sessions().retainedSessions()).isEqualTo(1);
+                armed.set(true);
+                assertThat(r.sessions().drainRegistrations(Duration.ZERO, key -> CALLER, NONE))
+                        .isEqualTo(new DocumentPublicationSessions.DrainProgress(true, 1, 0));
+                assertThat(count(c, "repository_coordinator_drains", input)).isEqualTo(1);
+                assertThat(r.sessions().drainRegistrations(Duration.ZERO, key -> CALLER, NONE))
+                        .isEqualTo(new DocumentPublicationSessions.DrainProgress(true, 1, 0));
+                assertIdentity(c, input, original);
+            }
+        }
+    }
+
+    @Test void drainCannotSnapshotWhileRegistrationCommitIsStillHeld() throws Exception {
+        try (var c = context(POSTGRES); var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var input = input(c); var armed = new AtomicBoolean(true);
+            var committing = new CountDownLatch(1); var release = new CountDownLatch(1);
+            var source = DocumentJdbcFaults.beforeCommit(c.pool(), connection -> {
+                if (!armed.get()) return;
+                try (var statement = connection.prepareStatement("SELECT count(*) FROM repository_coordinator_bindings WHERE operation_id=?")) {
+                    statement.setObject(1, input.command().operationId());
+                    try (var rows = statement.executeQuery()) {
+                        rows.next();
+                        if (rows.getInt(1) == 0 || !armed.compareAndSet(true, false)) return;
+                    }
+                }
+                committing.countDown();
+                try { if (!release.await(10, TimeUnit.SECONDS)) throw new java.sql.SQLException("release timeout"); }
+                catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new java.sql.SQLException(interrupted); }
+            });
+            try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                    Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"));
+                    var r = resources(new Tx(emf), 1, input.bytes())) {
+                var operation = workers.submit(() -> { pending(r.sessions(), input); return true; });
+                try {
+                    assertThat(committing.await(5, TimeUnit.SECONDS)).isTrue();
+                    assertThat(r.sessions().drainRegistrations(Duration.ZERO, key -> { throw new AssertionError("registration is still active"); }, NONE))
+                            .isEqualTo(new DocumentPublicationSessions.DrainProgress(false, 0, 0));
+                    assertThat(r.uploads().providerActivity().accepting()).isFalse();
+                    assertThat(count(c, "repository_coordinator_drains", input)).isZero();
+                    release.countDown();
+                    assertThat(operation.get(5, TimeUnit.SECONDS)).isTrue();
+                    assertThat(r.sessions().drainRegistrations(Duration.ZERO, key -> CALLER, NONE))
+                            .isEqualTo(new DocumentPublicationSessions.DrainProgress(true, 1, 0));
+                } finally { release.countDown(); }
+            }
+        }
+    }
+
     @Test void differentManagerCannotResumeAnotherIncarnationsNonterminalOwner() throws Exception {
         try (var c = context(POSTGRES)) {
             var input = input(c);

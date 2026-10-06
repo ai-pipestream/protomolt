@@ -19,6 +19,57 @@ import static org.assertj.core.api.Assertions.*;
 class RepositoryCoordinatorDrainIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void claimTransferAfterInitialConfirmationRequiresAnExactCommittedMarker(boolean marked) {
+        try (var c = context(POSTGRES)) {
+            var original = input(c); var incarnation = UUID.randomUUID(); var budget = new PayloadBudget(64_000_000);
+            var value = new DocumentPublicationPreparationRecord(original.key(), original.command(), original.seeds(),
+                    original.placements(), java.time.Duration.ofSeconds(1), 0);
+            var claim = new DocumentPublicationPreparationJournal(c.tx(), budget)
+                    .acquireInitial(CALLER, value, UUID.randomUUID(), incarnation, NONE);
+            var identity = new RepositoryCoordinatorDrain.Identity(claim.key(), claim.commandSha256(),
+                    claim.epoch(), claim.token(), incarnation);
+            var checks = new AtomicInteger();
+            // Deterministic interleaving after the initial empty confirmation, before claim lookup.
+            var control = new RepositoryReadControl() {
+                public boolean isCancelled() { return false; }
+                public long remainingNanos() { return Long.MAX_VALUE; }
+                public void check() {
+                    if (checks.incrementAndGet() != 3) return;
+                    if (marked) RepositoryCoordinatorDrain.begin(c.tx(), CALLER, claim, incarnation, NONE);
+                    c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(1.1)").getSingleResult());
+                    new RepositoryExecutionClaimLedger(c.tx()).takeOver(value.key(), value.command(), 1, UUID.randomUUID(), LEASE);
+                }
+            };
+            if (marked) assertThat(RepositoryCoordinatorDrain.beginRetained(c.tx(), CALLER, identity, control)).isTrue();
+            else assertThatThrownBy(() -> RepositoryCoordinatorDrain.beginRetained(c.tx(), CALLER, identity, control))
+                    .isInstanceOf(RepositoryExecutionClaimLedger.Fenced.class);
+            assertThat(RepositoryCoordinatorDrain.confirm(c.tx(), CALLER, claim, incarnation, NONE).isPresent()).isEqualTo(marked);
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @Test void repeatedControlFailurePreservesOriginalException() {
+        try (var c = context(POSTGRES)) {
+            var value = input(c); var budget = new PayloadBudget(64_000_000); var incarnation = UUID.randomUUID();
+            var claim = new DocumentPublicationPreparationJournal(c.tx(), budget)
+                    .acquireInitial(CALLER, value, UUID.randomUUID(), incarnation, NONE);
+            var identity = new RepositoryCoordinatorDrain.Identity(claim.key(), claim.commandSha256(),
+                    claim.epoch(), claim.token(), incarnation);
+            var failure = new RepositoryException(RepositoryException.Code.CANCELLED, "same cancellation instance");
+            var checks = new AtomicInteger();
+            var control = new RepositoryReadControl() {
+                public boolean isCancelled() { return false; }
+                public long remainingNanos() { return Long.MAX_VALUE; }
+                public void check() { if (checks.incrementAndGet() >= 4) throw failure; }
+            };
+            assertThat(catchThrowable(() -> RepositoryCoordinatorDrain.beginRetained(c.tx(), CALLER, identity, control)))
+                    .isSameAs(failure);
+            assertThat(RepositoryCoordinatorDrain.confirm(c.tx(), CALLER, claim, incarnation, NONE)).isEmpty();
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
     @Test void committedDrainSerializesBeforeWaitingAdmission() throws Exception {
         try (var c = context(POSTGRES); var workers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
             var value = input(c); var budget = new PayloadBudget(64_000_000); var incarnation = UUID.randomUUID();

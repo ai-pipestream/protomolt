@@ -28,6 +28,7 @@ final class DocumentPublicationExecution {
     private final DocumentRevisionAssembly.Limits opaqueLimits;
     private final DocumentPublicationAssessmentExecution assessments;
     private final DocumentPublicationModesJournal fixedModes;
+    private final DocumentUploadCoordinator uploads;
 
     DocumentPublicationExecution(Tx tx, DriveLedger drives, DocumentReadLedger reads,
             DocumentUploadCoordinator uploads, DocumentRetainedReader retained, PayloadBudget budget,
@@ -40,6 +41,7 @@ final class DocumentPublicationExecution {
             DocumentRevisionAssembly.Limits opaqueLimits, boolean deliverEvents,
             DocumentPublicationAssessmentExecution assessments) {
         this.assessments = assessments;
+        this.uploads = Objects.requireNonNull(uploads);
         this.tx = Objects.requireNonNull(tx); this.budget = Objects.requireNonNull(budget);
         fixedModes = new DocumentPublicationModesJournal(tx, budget);
         this.reads = Objects.requireNonNull(reads); this.opaqueLimits = Objects.requireNonNull(opaqueLimits);
@@ -56,6 +58,8 @@ final class DocumentPublicationExecution {
         requireAssessments();
         return DocumentPublicationRestoration.restore(tx, budget, caller, owner, control);
     }
+
+    void stopProviderStarts() { uploads.stopProviderStarts(); }
 
     DocumentPublicationResult resumeStarted(RepositoryCaller caller, DocumentPublicationRestoration restoration,
             RepositoryReadControl control) {

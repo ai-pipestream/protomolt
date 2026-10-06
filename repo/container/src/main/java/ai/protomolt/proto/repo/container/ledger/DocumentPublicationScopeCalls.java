@@ -5,7 +5,7 @@ import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
-/** Extends runtime quiescence through resolver cleanup, beyond the inner publication session. */
+/** Closeable admission barrier for owned resolver or registration scopes. */
 final class DocumentPublicationScopeCalls {
     private int active;
     private boolean closed;

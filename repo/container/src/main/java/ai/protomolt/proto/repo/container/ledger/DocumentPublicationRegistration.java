@@ -15,6 +15,7 @@ final class DocumentPublicationRegistration {
     private final DocumentPublicationPreparationRecord preparation;
     private final UUID claimToken = UUID.randomUUID();
     private final UUID coordinator;
+    private final DocumentPublicationScopeCalls registrations;
     private final JournalAccess access;
     private final DocumentUploadPlan.Prepared plan;
     private final DocumentAdmissionAuthorization.Prepared authorization;
@@ -24,12 +25,13 @@ final class DocumentPublicationRegistration {
     private volatile boolean mayHaveCommitted;
 
     DocumentPublicationRegistration(Tx tx, PayloadBudget budget, DocumentPublicationPreparationRecord preparation,
-            DocumentUploadPlan.Prepared plan, UUID coordinator) {
+            DocumentUploadPlan.Prepared plan, UUID coordinator, DocumentPublicationScopeCalls registrations) {
         this.tx = Objects.requireNonNull(tx);
         this.budget = Objects.requireNonNull(budget);
         this.preparation = Objects.requireNonNull(preparation);
         this.plan = Objects.requireNonNull(plan);
         this.coordinator = Objects.requireNonNull(coordinator);
+        this.registrations = Objects.requireNonNull(registrations);
         if (!plan.command().sha256().equals(preparation.command().sha256())
                 || !plan.command().operationId().equals(preparation.command().operationId()))
             throw new IllegalArgumentException("Registration plan differs from preparation");
@@ -53,6 +55,13 @@ final class DocumentPublicationRegistration {
 
     RepositoryExecutionClaimLedger.Claim register(RepositoryCaller caller,
             Map<String, DocumentPublicationCandidate.Mode> fixedModes, RepositoryReadControl control) {
+        try (var scope = registrations.enter()) {
+            return registerOpen(caller, fixedModes, control);
+        }
+    }
+
+    private RepositoryExecutionClaimLedger.Claim registerOpen(RepositoryCaller caller,
+            Map<String, DocumentPublicationCandidate.Mode> fixedModes, RepositoryReadControl control) {
         Objects.requireNonNull(control).check();
         DocumentAdmissionAuthorization.requireCaller(caller, preparation.key(), preparation.key().account());
         if (fixedModes == null) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
@@ -67,6 +76,10 @@ final class DocumentPublicationRegistration {
     }
 
     boolean mayHaveCommitted() { return mayHaveCommitted; }
+
+    RepositoryCoordinatorDrain.Identity drainIdentity() {
+        return new RepositoryCoordinatorDrain.Identity(preparation.key(), preparation.command().sha256(), 1, claimToken, coordinator);
+    }
 
     void abandon(RepositoryCaller caller, RepositoryReadControl control) {
         DocumentPublicationAbandonment.abandonRetained(tx, budget, caller, claimToken, preparation, control);

@@ -4,6 +4,13 @@ This is the working order for the additions to the repository composition goal.
 It does not replace the [design](repository-composition.md) or declare unfinished
 features available. Recovery is one workstream, not the whole goal.
 
+The opt-in journaled manager now closes provider starts and its shared registration
+barrier before marking retained nonterminal operation identities in SQL. Missing
+claims remain unresolved, and uncertain replies require exact marker confirmation.
+This does not enable ordinary journaled runtime execution, record LOCAL_DRAINED,
+or authorize successor execution. Continue historical client lifecycle qualification
+alongside that recovery integration; the independent work below remains required.
+
 Current restore checkpoint: canonical historical commands, current-READ replay,
 V86 historical provenance, snapshot v2 with v1 replay, and shared physical/slot
 binding are implemented. The internal assessment path records the exact historical
@@ -483,13 +490,14 @@ V90 adds private SQL admission closure under the original coordinator binding.
 Actual new registrations, owners, upload attempts and assessment starts are fenced;
 exact retries and same-generation settlement retain their existing authority checks.
 Read-only exact drain confirmation survives claim expiry without granting new work.
-Host provider-start permits, full local drain and safe successor execution are still
-required. This does not close the independent restore/pruning, transport parity,
+Full local drain and safe successor execution are still required. This does not
+close the independent restore/pruning, transport parity,
 provider durability or hydration requirements.
 
 Local provider-start permits now close before runtime session cleanup. Permitted
 PUT/read-back calls retain their resources through return; queued refusals do not
 cancel siblings or discard their completed observations. Transfer-only idle is not
-full shutdown or remote-effect quiescence. Compose this host-wide gate with the full
-set of retained V89/V90 operation identities next, preserving uncertain markers,
-late-effect tombstones and existing schema/revision retention protections.
+full shutdown or remote-effect quiescence. The journaled manager now composes this
+gate with retained nonterminal V89/V90 identities through a registration barrier.
+Next compose full runtime quiescence, preserving uncertain markers, late-effect
+tombstones and existing schema/revision retention protections.

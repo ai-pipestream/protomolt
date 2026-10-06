@@ -779,8 +779,22 @@ whole incomplete attempt fails explicitly. This is delayed transfer-return evide
 not proof that a remote network request is still active or that all remote effects
 are quiescent. See the [provider-start evidence](../evidence/repository/2026-10-06-provider-start-drain/README.md).
 
-This local gate is not yet composed with V90 for every retained coordinator-bound
-operation. The next host protocol must close the local gate once, mark the complete
-retained operation set with exact identities, and keep the gate closed on uncertain
-marker outcomes. Full shutdown must precede LOCAL_DRAINED. Ordinary runtime sessions
-remain unjournaled; automatic successor execution is still disabled.
+The opt-in journaled manager now composes this local gate with V90 for retained
+nonterminal registrations. It closes provider starts before manager cleanup, closes
+a shared registration barrier, then waits for both registration transactions to
+leave that barrier before taking a bounded identity snapshot. An accepted call
+that has not entered registration cannot register after the barrier closes.
+Entries evicted with durable terminal proof are outside that snapshot.
+
+Each marker requires supplied private process authority for the original principal
+and exact operation identity. The manager reads the actual persisted claim lease;
+it does not invent a lease or derive authority from a key. A failed lookup or marker
+reply is resolved only by exact durable marker confirmation. Cancellation remains
+effective during confirmation. An absent claim is reported as unresolved and its
+local identity remains retained: absence after a failed JDBC call is not rollback
+proof. The gate stays closed on partial failure, and another pass can confirm markers
+already committed without changing their identity.
+
+This is registration and SQL admission closure only. Full runtime shutdown must
+precede LOCAL_DRAINED; no such state is recorded by this operation. Ordinary runtime
+sessions remain unjournaled, and automatic successor execution is still disabled.

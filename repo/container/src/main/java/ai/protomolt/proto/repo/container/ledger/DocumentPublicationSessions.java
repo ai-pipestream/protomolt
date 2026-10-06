@@ -28,6 +28,7 @@ final class DocumentPublicationSessions implements AutoCloseable {
     private long commandBytes;
     private boolean closed;
     private int activeCalls;
+    private final DocumentPublicationScopeCalls registrations = new DocumentPublicationScopeCalls();
     private final Map<RepositoryOperationLedger.Key, Entry> entries = new HashMap<>();
 
     private static final class Entry {
@@ -199,7 +200,7 @@ final class DocumentPublicationSessions implements AutoCloseable {
         try {
             // Bounded preparation can still be substantial; keep it outside the shared lock.
             var session = journalBudget == null ? new DocumentPublicationSession(tx, caller, command, placements, lease)
-                    : DocumentPublicationSession.journaled(tx, caller, command, placements, lease, journalBudget, coordinator);
+                    : DocumentPublicationSession.journaled(tx, caller, command, placements, lease, journalBudget, coordinator, registrations);
             synchronized (this) { reserved.session = session; }
             return reserved;
         } catch (RuntimeException | Error failure) {
@@ -456,7 +457,38 @@ final class DocumentPublicationSessions implements AutoCloseable {
     }
 
     /** Refuse new calls without cancelling accepted work or discarding uncertain identities. */
-    @Override public synchronized void close() { closed = true; releaseClosedRestorations(); }
+    @Override public synchronized void close() { registrations.close(); closed = true; releaseClosedRestorations(); }
+
+    /**
+     * Registration barrier/SQL markers for retained nonterminal registrations only.
+     * Entries already evicted after durable terminal proof are excluded. This is neither
+     * LOCAL_DRAINED nor permission to close providers.
+     */
+    record DrainProgress(boolean registrationsIdle, int confirmed, int unresolved) {}
+
+    DrainProgress drainRegistrations(Duration wait, java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> authority,
+            RepositoryReadControl control) throws InterruptedException {
+        Objects.requireNonNull(wait); Objects.requireNonNull(authority); Objects.requireNonNull(control).check();
+        if (wait.isNegative()) throw new IllegalArgumentException("Negative registration wait");
+        if (journalBudget == null) throw new IllegalStateException("Session manager does not own journaled registrations");
+        execution.stopProviderStarts();
+        close();
+        if (!registrations.awaitIdle(wait)) return new DrainProgress(false, 0, 0);
+        final java.util.List<RepositoryCoordinatorDrain.Identity> identities;
+        synchronized (this) {
+            identities = entries.values().stream().filter(entry -> entry.session != null)
+                    .flatMap(entry -> entry.session.drainIdentity().stream()).toList();
+        }
+        int confirmed = 0, unresolved = 0;
+        for (var identity : identities) {
+            control.check();
+            var caller = Objects.requireNonNull(authority.apply(identity.key()), "Private operation authority");
+            if (RepositoryCoordinatorDrain.beginRetained(tx, caller, identity, control)) confirmed++;
+            else unresolved++;
+        }
+        control.check();
+        return new DrainProgress(true, confirmed, unresolved);
+    }
 
     private void releaseClosedRestorations() {
         if (!closed || activeCalls != 0) return;
