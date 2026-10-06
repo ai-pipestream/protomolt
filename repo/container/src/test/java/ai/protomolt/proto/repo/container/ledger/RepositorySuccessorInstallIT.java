@@ -17,11 +17,11 @@ import static org.assertj.core.api.Assertions.*;
 class RepositorySuccessorInstallIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
-    private static RepositorySuccessorInstall.Plan plan(Context c) {
+    static RepositorySuccessorInstall.Plan plan(Context c) {
         return plan(c, LEASE);
     }
 
-    private static RepositorySuccessorInstall.Plan plan(Context c, Duration successorLease) {
+    static RepositorySuccessorInstall.Plan plan(Context c, Duration successorLease) {
         var input = input(c); var incarnation = UUID.randomUUID();
         var previous = new DocumentPublicationPreparationRecord(input.key(), input.command(), input.seeds(),
                 input.placements(), Duration.ofSeconds(1), 0);

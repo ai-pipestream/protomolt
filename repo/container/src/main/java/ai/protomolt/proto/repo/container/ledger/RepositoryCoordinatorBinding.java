@@ -22,9 +22,13 @@ final class RepositoryCoordinatorBinding {
         RepositoryExecutionClaimLedger.lockLive(em, claim);
         var rows = bind(em.createNativeQuery("""
                 SELECT claim_token,incarnation,claim_epoch FROM repository_coordinator_bindings
-                WHERE account_id=:a AND principal=:p AND operation_id=:o
-                """), claim).getResultList();
-        if (rows.isEmpty() && incarnation == null) return; // Existing explicitly unbound reconciliation primitive.
+                WHERE account_id=:a AND principal=:p AND operation_id=:o AND claim_epoch=:epoch
+                """), claim).setParameter("epoch", claim.epoch()).getResultList();
+        if (rows.isEmpty() && incarnation == null) {
+            // An older binding still makes this a coordinated operation.
+            requireUnbound(em, claim);
+            return;
+        }
         if (rows.isEmpty()) throw new IllegalStateException("Unbound claim cannot resume in a coordinator-bound manager");
         var row = (Object[]) rows.getFirst();
         if (!claim.token().equals(row[0]) || !Objects.equals(incarnation, row[1])

@@ -1017,3 +1017,27 @@ whose digest is checked in SQL. This is registration, with current source READ
 checks; it does not retain a prior schema verdict as current or authorize provider
 work. Current WRITE/policy/schema/placement rechecks remain an execution prerequisite.
 The old attempts, retained definitions and cleanup records are untouched.
+
+### V94 successor execution identity
+
+The database can bind an installed successor to its exact claim epoch/token,
+coordinator incarnation, owner generation/nonce, command, preparation and modes.
+Activation and the coordinator binding must commit in one transaction, after the
+V93 install commits. Both leases must remain live through activation commit.
+An activation record is immutable and is not a cached authorization or schema
+verdict.
+
+Only the current matching grant opens the execution fence. New assessment starts
+and content attempts additionally require that this successor has not begun its
+admission drain. Its admission drain permits settlement; its local-drain marker
+closes execution. Preparations, modes and later owner generations still require
+the separate installation protocol. A low-level transfer to another claim epoch
+cannot inherit an earlier grant. Resume now selects the exact epoch binding and
+cannot treat an operation with older bindings as an unbound operation.
+
+This is a private SQL boundary. No host or public API activates successors yet.
+The next implementation must authorize current WRITE and source access, confirm
+exact activation after uncertain commit acknowledgments without lease renewal,
+and integrate fresh session identities. It must recheck schema/policy/placement
+at the existing execution boundaries. Delayed predecessor provider effects and
+cleanup isolation require separate qualification before automatic recovery.

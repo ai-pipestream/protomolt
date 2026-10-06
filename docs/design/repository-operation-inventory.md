@@ -6374,3 +6374,21 @@ admission, provider calls, normal publication and cleanup guards. Registration
 checks process authority and current source READ; current WRITE/policy/schema and
 placement checks remain required before a future execution grant. Pre-owner
 handoff still needs a separate protocol.
+
+### Successor execution identity
+
+**New:** V94 immutable `repository_successor_executions` and transaction-bound
+successor coordinator registration. This SQL boundary is not a public operation.
+It requires the exact committed V93 install and live claim/owner; the binding and
+activation commit together. It permits current-generation assessment and attempt
+admission until that successor starts draining.
+
+**Extended:** private coordinator resume selects its exact epoch; retained drain
+accepts the exact successor identity through the same claim/binding checks.
+Initial registration and unbound operation behavior remain supported. An older
+binding prevents unbound adoption.
+
+**Unchanged:** protobuf contracts, provider calls, business authorization, schema
+checks, terminal outcomes and cleanup. The public session factories do not invoke
+activation. Host activation, uncertain-commit confirmation and automatic successor
+execution remain unfinished; see repository-publication-recovery.md.

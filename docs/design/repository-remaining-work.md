@@ -571,3 +571,13 @@ WRITE/policy/schema/placement checks, fresh attempts, late predecessor writes an
 cleanup isolation. Registration checks current source READ but is not an execution
 approval. Pre-owner recovery and abrupt-death recovery remain separate required
 paths. The provider, historical, pruning, RustFS and JCR work remains in scope.
+
+## Successor execution boundary
+
+V94 adds an exact SQL execution identity and successor binding. This is an internal
+boundary, not completed automatic recovery. Finish the Java activation operation
+with current authorization, cancellation, exact retry and lost-acknowledgment
+confirmation; then integrate fresh successor sessions and the provider-effect
+checks above. Qualify mismatched activation fields, terminal states, competing
+activations and claim/owner expiry alongside those paths. No public API advertises
+successor execution at this checkpoint.

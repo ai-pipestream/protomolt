@@ -24,7 +24,6 @@ final class RepositoryCoordinatorDrain {
     /** False is unresolved absence, never permission to discard an uncertain registration. */
     static boolean beginRetained(Tx tx, RepositoryCaller caller, Identity identity, RepositoryReadControl control) {
         require(caller, identity, control);
-        if (identity.epoch() != 1) throw new IllegalArgumentException("Only initial coordinator registration is supported");
         if (confirm(tx, caller, identity, control).isPresent()) return true;
         try {
             return beginUnconfirmed(tx, caller, identity, control);
