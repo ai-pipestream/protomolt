@@ -1675,3 +1675,25 @@ retained session. Never interpret committed V94 with a lost reply as unactivated
 V98 work. Host retry policy needs a finite attempt limit or deadline; a single
 pending proposal bounds concurrent state, not the total number of generations.
 This transition has been reviewed but is not implemented yet.
+
+### Retained unactivated supersession implementation
+
+`Attempt.supersedeExpired` now implements the reviewed single pending transition.
+It accepts only fresh discovery of this entry's exact expired, unactivated successor.
+It retains the replacement target/proposal before V98, refuses ordinary advance
+while that proposal is pending, and confirms the same tuple on retry. Only a
+confirmed V98 commit replaces the current proposal and releases its borrowed
+preparation/plan; the command lease remains held. This is an explicit single step,
+not an automatic loop or a grant to discard provider state.
+
+After the new V93 installation, ordinary advance calls existing session retirement
+before activation. An old mismatched or active session cannot be overwritten:
+retirement's exclusive-use check and activation's fingerprint check remain in force.
+An already activated coordinator must use its bound-coordinator recovery path,
+even if its acknowledgment was lost and its lease has since expired. A different
+coordinator's winner cannot be adopted as this entry's own successor.
+
+Automatic host orchestration, graceful and terminal reconciliation, removal of
+entries fenced by a foreign winner, shutdown coordination and retry policy remain
+unfinished. Local closure may therefore still report unresolved entries with
+retained byte leases. No reader pin or provider object is reclaimed by this step.

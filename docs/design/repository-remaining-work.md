@@ -897,3 +897,13 @@ rotating a manager shared by other sessions. Recovery entries retain it before S
 activation checks its owning manager, key, digest and installed incarnation. This
 resolves target selection, not expired-entry reconciliation or automatic scheduling.
 Fixed-incarnation restoration intentionally cannot adopt a target-bound owner.
+
+Explicit same-entry unactivated supersession is implemented and qualified in
+[retained supersession evidence](../evidence/repository/2026-10-06-retained-supersession/README.md).
+One pending proposal survives uncertain replies; only exact V98 confirmation
+releases old borrowed preparation, followed by V93 and safe local session retirement.
+Activated and foreign-winning coordinators are refused, leaving unresolved leases.
+Still qualify the full owner path with an active old local execution during
+retirement; shared session exclusion already has separate tests. Add foreign and
+terminal entry reconciliation, graceful recovery and coordinated shutdown before
+exposing automatic recovery.
