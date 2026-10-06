@@ -6420,8 +6420,9 @@ Its drain identity survives failed attachment. Owner locking now accepts an exac
 identity tuple without inventing an observed lease timestamp.
 
 **Unchanged:** public contracts, default host startup, provider I/O and cleanup.
-End-to-end successor publication remains open. Installed successors use owner
-cancellation, not pre-owner abandonment.
+Graceful provider publication is qualified below; abrupt-death and late-effect
+recovery remain open. Installed successors use owner cancellation, not pre-owner
+abandonment.
 
 ### Manager-owned successor activation
 
@@ -6435,5 +6436,8 @@ attachment. An uncertain or cancelled attachment retains the exact drain identit
 ordinary execution cannot replace it with an initial session.
 
 **Unchanged:** protobuf definitions, default host factories, provider I/O and cleanup.
-This private entry point does not enable automatic recovery or qualify recovered
-provider publication, abrupt-death recovery or late predecessor effects.
+This private entry point does not enable automatic recovery. The production-JAR
+graceful successor probe now qualifies an existing-destination update through a
+real versioned provider, with scoped execution, new attempt/object identities and
+retained schema evidence. Abrupt-death recovery and late predecessor effects remain
+unqualified. No protobuf or externally served operation changed in this test slice.

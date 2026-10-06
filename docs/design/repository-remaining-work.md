@@ -592,19 +592,31 @@ session before activation can commit. Its registration barrier covers reservatio
 activation and attachment. Failed attachment keeps the session and drain identity;
 changed handoff/preparation/modes cannot replace it on retry. Closing admission may
 refuse attachment after activation commits, so shutdown must reconcile the retained
-identity. Full recovered publication using real providers and late-effect cleanup
-remain required before enabling automatic recovery. Admission from an expired owner,
+identity. The graceful real-provider publication probe below now covers the positive
+handoff path. Late-effect cleanup and abrupt-death recovery remain required before
+enabling automatic recovery. Admission from an expired owner,
 revoked policy or closed registration scope must never be inferred from an earlier
 activation confirmation.
 
-The next provider qualification should use the existing production-JAR ledger
-probe and real versioned object-store fixtures. Stop generation one after a real
-upload but before publication; retain its exact preparation, attempts and physical
-object version. Complete local admission/provider/read drain and V90/V91, then wait
-for the actual database claim and owner leases to expire. A fresh manager supplies
-the V92 successor incarnation, installs V93 and activates V94, then publishes the
-same command through the real provider. Assert generation-two selection and receipt
-replay, distinct attempt/object identities, unchanged predecessor evidence and
-released local resources. Do not manually edit lease timestamps. A remote PUT
-finishing after local drain needs a separate controlled late-effect test; the
-positive recovery probe alone cannot establish that property.
+The production-JAR provider qualification interrupts generation one after a real
+upload but before publication and retains its preparation, attempts and physical
+object version. It completes local admission/provider/read drain and V90/V91, then
+waits for actual database claim and owner expiry. A fresh manager supplies the V92
+successor incarnation, installs V93 and activates V94, then publishes the same
+command through the real provider. Assertions cover generation-two selection and
+receipt replay, distinct attempt/object identities, unchanged predecessor evidence,
+retained Any schema binding and released local resources. No lease timestamps are
+manually edited. A remote PUT finishing after local drain still needs a separate
+controlled late-effect test; positive recovery alone cannot establish that property.
+
+For that late-effect qualification, the existing transfer tests that pause before
+calling the provider are insufficient: their local worker is still active and cannot
+legitimately attest local drain. First qualify a bounded HTTP request gate over a
+real S3-compatible service. Hold one complete PUT before forwarding, let the real
+SDK time out and its local worker drain, then forward the original request after
+successor publication and observe the provider's actual response. Preserve signing
+and exact backend identity, and explicitly control SDK retries. Holding only a
+response tests lost acknowledgment, not a delayed write. Then verify that the old
+attempt remains unverified/unreferenced and that another cleanup pass removes only
+its exact object versions while the successor stays readable. This transport seam
+and the composed late-effect case are not implemented or qualified yet.

@@ -20,6 +20,7 @@ public final class AssessmentCreationProbe {
         var scopedExecutionSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "scoped-execution", true);
         var runtimeSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "runtime");
         var schemaRevisionSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "schema-revision");
+        var successorSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "successor", true);
         List<DocumentPublicationMember> restartMembers = new ArrayList<>();
         for (String memberId : List.of("a", "b")) {
             var member = ObservedAssessmentProbe.member(memberId).member();
@@ -43,6 +44,7 @@ public final class AssessmentCreationProbe {
                         .setMaxDecodedBytes(1_000_000)).build(), () -> {});
         var initial = new DocumentSchemaPolicies(tx).activate(policy, 0, () -> {});
         initial = PromotedAssessmentCommitProbe.run(tx, provider, promotedSource, initial);
+        JournaledSuccessorPublicationProbe.run(tx, provider, successorSource, observation);
         NativeAssessmentExecutionProbe.run(tx, database, provider, executionSource, observation);
         NativeAssessmentExecutionProbe.runScoped(tx, database, provider, scopedExecutionSource, observation);
         NativeAssessmentRuntimeProbe.run(database, provider, runtimeSource);

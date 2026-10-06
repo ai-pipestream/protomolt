@@ -1118,3 +1118,24 @@ session supplies the exact successor identity for V90/V91 reconciliation. This i
 not a promise that accepted activation always completes, or proof of provider
 quiescence. Full recovered provider publication and late predecessor effects remain
 separate qualification requirements.
+
+### Graceful successor provider qualification
+
+The production-JAR `JournaledSuccessorPublicationProbe` exercises a scoped caller
+updating an existing writable document. The original manager performs real uploads
+and a retained-source read, then an injected resolver failure interrupts it before
+publication. The probe retains the exact preparation and verifies the original
+provider versions and hashes. It releases local work and SQL reader pins before
+V91, waits for actual claim/owner expiry, and uses a fresh manager for V92/V93/V94.
+
+The successor publishes through the real versioned provider and runtime validation.
+Its selected attempt and physical objects are distinct, its revision references
+those objects, and its Any descriptor binding matches the selected definition.
+The predecessor's attempt/object/cleanup rows and readable provider versions remain
+unchanged. Exact receipt replay performs no provider or resolver work.
+
+This is graceful local quiescence with shared SQL and object storage. The predecessor
+process is not killed; its provider handle remains open but locally drained during
+handoff. This does not establish abrupt-death recovery, a delayed remote PUT after
+local drain, multi-replica throughput, or automatic public-host recovery. The probe
+uses LocalStack for correctness; it supplies no RustFS performance result.
