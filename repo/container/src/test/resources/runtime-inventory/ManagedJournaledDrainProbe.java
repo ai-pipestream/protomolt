@@ -90,7 +90,7 @@ public final class ManagedJournaledDrainProbe {
             var tx = new Tx(database.entityManagerFactory());
             try {
                 var terminal = prepare(host, tx, generation, false);
-                var completed = executeFacade(host, ADMIN, terminal, access);
+                var completed = executeFacade(host, ADMIN, terminal);
                 require(completed.getMembersCount() == 1, "terminal control published");
                 var receiptOnly=host.documentPublication().repository((caller,command,control) -> {
                     throw new AssertionError("Terminal receipt selected host storage or schemas");
@@ -112,6 +112,23 @@ public final class ManagedJournaledDrainProbe {
                 require(host.publishDocument(ADMIN, terminal.command, Map.of(), Map.of(), Map.of(), Map.of(),
                         Optional.empty(), RepositoryReadControl.NONE).equals(completed), "terminal receipt replay");
                 require(entered.getCount() == 1, "opaque terminal control did not resolve a schema");
+                var foreign=new DriveRecord(); foreign.driveId=UUID.randomUUID(); foreign.accountId="foreign-"+UUID.randomUUID();
+                foreign.name="private-drive"; foreign.driveType="PIPELINE"; foreign.bucket="private-bucket";
+                foreign.provider="unsupported-private-provider";
+                host.driveLedger().insert(foreign);
+                for (var driveId:List.of(foreign.driveId,UUID.randomUUID())) {
+                    var denied=request(terminal).toBuilder().setIntent(terminal.command.intent().toBuilder()
+                            .setOperationId(UUID.randomUUID().toString()).setMembers(0,terminal.command.intent().getMembers(0)
+                                    .toBuilder().setDriveId(driveId.toString()))).build();
+                    try {
+                        host.publicationRepository().publishDocument(ADMIN,denied,RepositoryReadControl.NONE);
+                        throw new AssertionError("Publication selected a missing or foreign drive");
+                    } catch (RepositoryException expected) {
+                        require(expected.code()==RepositoryException.Code.NOT_FOUND,"foreign drive stays private before backend checks");
+                    }
+                    require(count(tx,"repository_operation_owners",UUID.fromString(denied.getIntent().getOperationId()))==0,
+                            "invalid selection acquired no operation owner");
+                }
                 var work = prepare(host, tx, generation, true);
                 if (scenario==2) {
                     recoveryOperation.set(work.command);
@@ -126,7 +143,7 @@ public final class ManagedJournaledDrainProbe {
                     return;
                 }
                 if (recoveryEnabled) {
-                    var accepted=executor.submit(() -> executeFacade(host,ADMIN,work,access));
+                    var accepted=executor.submit(() -> executeFacade(host,ADMIN,work));
                     require(entered.await(10,TimeUnit.SECONDS),"enabled host entered real schema lookup");
                     try { host.close(Duration.ofMillis(100)); throw new AssertionError("accepted publication was not retained"); }
                     catch (IllegalStateException expected) {
@@ -346,14 +363,8 @@ public final class ManagedJournaledDrainProbe {
                 RepositoryReadControl.NONE);
     }
 
-    private static DocumentPublicationResult executeFacade(RepoServices host, RepositoryCaller caller, Work work,
-            ManagedSchemaAccess access) {
-        var repository=host.documentPublication().repository((actual,command,control) -> {
-            require(actual.equals(caller) && command.sha256().equals(work.command.sha256()),"trusted fixture host selection identity");
-            return new DocumentPublicationRuntime.PublicationSelection(work.placements,Map.of(),
-                    work.modes.get("document")==DocumentPublicationRuntime.Mode.TYPED
-                            ? Optional.of(definition(Document.getDescriptor())) : Optional.empty(),access::open);
-        });
+    private static DocumentPublicationResult executeFacade(RepoServices host, RepositoryCaller caller, Work work) {
+        var repository=host.publicationRepository();
         var response=repository.publishDocument(caller,request(work),RepositoryReadControl.NONE);
         require(response.hasCommitted(),"facade published a committed receipt");
         return response.getCommitted();

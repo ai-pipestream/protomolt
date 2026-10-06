@@ -51,6 +51,28 @@ public final class DriveLedger {
         return tx.readOnly(em -> Optional.ofNullable(em.find(DriveRecord.class, driveId))).map(this::checked);
     }
 
+    /** Account filtering precedes backend validation so foreign configuration stays private. */
+    public Optional<DriveRecord> findById(String accountId, UUID driveId) {
+        java.util.Objects.requireNonNull(accountId); java.util.Objects.requireNonNull(driveId);
+        return findByIds(accountId,java.util.Set.of(driveId)).map(records -> records.get(driveId));
+    }
+
+    /** Complete account-scoped batch, up to 64 drives. Missing IDs never reach the backend gate. */
+    public Optional<java.util.Map<UUID,DriveRecord>> findByIds(String accountId, java.util.Set<UUID> driveIds) {
+        java.util.Objects.requireNonNull(accountId);
+        var ids=java.util.Set.copyOf(driveIds);
+        if (ids.isEmpty() || ids.size()>64) throw new IllegalArgumentException("Drive batch must contain 1 to 64 IDs");
+        var records=tx.inTransaction(em -> { return em.createQuery(
+                "SELECT d FROM DriveRecord d WHERE d.accountId = :account AND d.driveId IN :ids ORDER BY d.driveId", DriveRecord.class)
+                .setParameter("account",accountId).setParameter("ids",ids).setMaxResults(64).getResultList(); });
+        if (records.size()!=ids.size()) return Optional.empty();
+        var result=new java.util.LinkedHashMap<UUID,DriveRecord>();
+        records.forEach(record -> result.put(record.driveId,record));
+        if (!result.keySet().equals(ids)) return Optional.empty();
+        records.forEach(this::checked);
+        return Optional.of(java.util.Map.copyOf(result));
+    }
+
     /**
      * Resolve a drive by its account-scoped name — the lookup document rows
      * depend on, since they reference their drive by bare name.

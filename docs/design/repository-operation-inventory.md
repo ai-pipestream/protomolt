@@ -6755,3 +6755,12 @@ storage test passed, along with 39 SPI tests and the dependency check. See
 [facade evidence](../evidence/repository/2026-10-06-publication-facade/README.md).
 Production service selection and gRPC adapters remain unfinished; no endpoint was
 mounted by this change.
+
+**Extended service composition:** journaled RepoServices supplies publication
+through configured backend identity, an account-filtered drive batch and the
+bundled Document schema. Compiler provenance is packaged with generated code;
+runtime identity reflects the loaded protobuf library. Storage, privacy and
+lock-timeout checks passed. See
+[selection evidence](../evidence/repository/2026-10-06-publication-selection/README.md).
+Public journaled configuration and transport parity remain pending. The RPC is
+not mounted.

@@ -2206,3 +2206,21 @@ V1 can use a precomputed definition of the built-in Document descriptor for its
 container. Any occurrence resolution remains caller-authorized registry work.
 The service-owned drive/profile selector, RPC handler and client are still to be
 connected and qualified. This factory alone does not mount a publication API.
+
+### Service-owned publication selection
+
+The service selects the configured backend generation/profile and account-scoped
+SQL drive records. Request fields cannot choose credentials or alternate backend
+configuration. The generated Document descriptor supplies the V1 container;
+compiler artifact identity is packaged with repo-proto from the same Gradle
+version provider that configures protoc. Provenance classifies that identity as
+producer-reported, not a local compiler observation. Runtime identity is read from
+the loaded protobuf class, avoiding Java constant inlining. Missing compiler
+metadata fails initialization before creating the managed reader.
+
+Drive selection uses bounded transactions and must apply account filtering before
+backend validation. Batch selection must reject an incomplete ID set before
+checking any returned backend; mixed owned/foreign and owned/missing sets must
+have the same result. The target query count is one configured-profile query plus
+one drive batch query, regardless of the number of distinct drives in a request.
+This reduces database round trips; throughput still requires measurement.

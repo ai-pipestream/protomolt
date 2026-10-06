@@ -422,6 +422,15 @@ public final class RepoServices implements AutoCloseable {
                 historicalAccess, java.util.Objects.requireNonNull(schemaAccess));
     }
 
+    /** Shared publication boundary for explicitly journaled composition; does not mount an RPC. */
+    public ai.protomolt.proto.repo.spi.DocumentPublicationRepository publicationRepository() {
+        requireOpen();
+        if (managedDocuments==null || managedDocuments.publicationRepository==null)
+            throw new IllegalStateException("Journaled document publication is not configured");
+        startLifecycle();
+        return managedDocuments.publicationRepository;
+    }
+
     /** Exact native history sharing this composition's storage and cleanup lifetime. */
     public ai.protomolt.proto.repo.spi.HistoricalDocumentRepository historicalRepository() {
         requireOpen();

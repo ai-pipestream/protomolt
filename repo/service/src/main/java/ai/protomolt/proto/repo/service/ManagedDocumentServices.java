@@ -18,6 +18,7 @@ import java.util.Objects;
 /** Host-owned native document resources and explicitly configured historical transport. */
 final class ManagedDocumentServices {
     final DocumentPublicationRuntime publication;
+    final ai.protomolt.proto.repo.spi.DocumentPublicationRepository publicationRepository;
     final ai.protomolt.proto.repo.engine.DocumentHistoricalOperations history;
     final DocumentHistoryGrpcService historyService;
     final DocumentHistoryMaterializationGrpcService materializationService;
@@ -60,6 +61,8 @@ final class ManagedDocumentServices {
         var profiles = new ManagedBackendLedger(bounded);
         if (!profiles.find(generation).filter(profile::equals).isPresent())
             throw new IllegalStateException("Original document backend profile is not bound");
+        var selection=journaled==null ? null : new ManagedPublicationSelection(
+                new DriveLedger(bounded,drives::validateBackend),profiles,generation,profile,schemas);
         var budget = new PayloadBudget(64L * 1024 * 1024);
         var reader = new DocumentPartReader((original, selected) -> {
             requireOriginal(generation, profile, original, selected);
@@ -91,6 +94,7 @@ final class ManagedDocumentServices {
                             },journaled.recovery());
                 } catch (java.io.IOException failure) { throw new java.io.UncheckedIOException("Cannot observe managed publication runtime", failure); }
             }
+            publicationRepository=selection==null ? null : publication.repository(selection);
         } catch (RuntimeException | Error failure) {
             // Nothing has been exposed: no calls, batches or provider workers can exist.
             try {
