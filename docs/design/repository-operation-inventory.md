@@ -6341,3 +6341,16 @@ schema ownership with the caller and cleans up registered readers.
 **Unchanged:** public service builders, protobuf definitions, SQL migrations,
 receipts, RPC availability and successor authority. See
 [managed qualification](../evidence/repository/2026-10-06-managed-local-drain/README.md).
+
+### Private graceful successor reservation
+
+**New:** V92 `repository_coordinator_handoffs` and package-private
+`RepositoryCoordinatorHandoff.reserve/confirm`. A proposal binds the complete
+predecessor identity, distinct successor token/incarnation and a bounded lease.
+Reservation atomically transfers an expired exactly drained claim and records the
+immutable handoff. Exact confirmation does not renew leases or grant execution.
+
+**Unchanged:** V89 initial coordinator binding, V90 admission closure and V91
+operation-wide mutation closure. Public builders, protobuf contracts, receipts and
+RPCs remain unchanged. No owner generation, attempt, storage key or provider call
+is created by reservation. Successor execution remains a separate integration gate.

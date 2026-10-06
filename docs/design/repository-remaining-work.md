@@ -542,3 +542,18 @@ repair must trigger a new registry read and allow admission through the same res
 See [qualification](../evidence/repository/2026-10-06-schema-corruption-retry/README.md).
 This adds adapter coverage without changing production behavior or broadening the
 cache into an authorization or validation-verdict cache.
+
+## Graceful successor reservation
+
+V92 adds a private immutable handoff record and atomic expired-claim transfer after
+exact local drain. It preserves V89 initial bindings and V90/V91 execution closure.
+No runtime invokes this reservation or gains provider access. The next increment
+must bind a new owner generation and fresh attempts to that successor, then qualify
+late predecessor writes and cleanup isolation. Pre-owner and admitted-owner states
+must be handled explicitly. Abrupt-death recovery cannot assume local attestation.
+Focused acceptance covers terminal cancellation; a successful-terminal handoff
+negative case remains to qualify alongside successor execution.
+The [V92 qualification](../evidence/repository/2026-10-06-graceful-handoff/README.md)
+records 35 focused cases and the passing production-JAR regression. Exact concurrent
+retries converge without a second claim transfer; lost acknowledgments confirm the
+original row, and cancellation before commit rolls back both transfer and record.

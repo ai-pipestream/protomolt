@@ -930,4 +930,44 @@ successor content or allowing old cleanup to delete new content. Only after that
 execution path is qualified may admission/mutation guards recognize the successor.
 Abrupt-death recovery requires a separate policy because it lacks local attestation.
 
-This is the reviewed next implementation boundary, not implemented behavior.
+The reservation portion is implemented below. The execution and late-effect
+qualification portions remain required before automatic successor activation.
+
+### V92 reservation implementation
+
+The private handoff row binds the reserved successor without widening V89's initial
+binding rules. Its insert trigger locks the predecessor claim, checks exact V91
+identity, lease expiry and both terminal tables, then transfers the claim in the
+same transaction as the immutable row. It locks an existing operation owner after
+the claim. The V91 record transitively requires V90 and V89; its narrow foreign key
+is supplemented by exact token/incarnation/digest comparison.
+
+The Java entry requires process authority and exact caller scope. Plain INSERT
+avoids the BEFORE-trigger side effects of ON CONFLICT DO NOTHING. Concurrent retries
+that lose the predecessor check can only return success by reading the exact
+committed proposal. Different proposals fail. A failed statement or transaction
+rolls back the claim transfer. Confirmation can outlive the successor lease without
+renewing it. The reservation stamps the new claim identity but V90/V91 still refuse
+all new admission and execution; no runtime invokes this primitive yet.
+
+#### Activation must distinguish pre-owner and admitted-owner states
+
+V92 may reserve a successor before an operation owner exists. Existing V81 recovery
+preparation for predecessor generation greater than zero requires an expired owner;
+V82 requires modes before generation advancement, and `RepositoryOperationLedger`
+then compares and advances that owner generation. These APIs cannot silently recover
+a pre-owner generation-zero preparation with its old seeds.
+
+The first executable path should therefore handle an existing nonterminal owner:
+verify exact V92 identity and a live successor claim; read retained command and
+preparation through trusted authority; reauthorize caller, current policy and storage
+placement; persist fresh owner nonce and per-upload attempt identities for predecessor
+generation g, with modes bound to the same successor; then atomically acquire owner
+generation g+1. Any exception to V90/V91 must require this explicit generation
+binding, never merely a higher epoch or the existence of V92. Do not call the current
+unjournaled recovery path from a journaled manager.
+
+Pre-owner recovery remains a required separate protocol; reservation alone grants
+nothing, and the occupied generation-zero preparation cannot be overwritten or its
+seeds reused. Both paths must preserve predecessor attempts, historical source pins,
+schema retention and tombstones while checking current READ and admission policy.
