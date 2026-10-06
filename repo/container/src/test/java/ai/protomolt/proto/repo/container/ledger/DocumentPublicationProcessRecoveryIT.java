@@ -100,9 +100,10 @@ class DocumentPublicationProcessRecoveryIT {
                 """).setParameter("id",operation).getSingleResult());
     }
 
-    @ParameterizedTest @ValueSource(strings = {"none", "reserve", "install", "scoped", "scoped-revoked-grant", "scoped-revoked-key", "scoped-activated-live", "scoped-activated-grant", "scoped-activated-key"})
+    @ParameterizedTest @ValueSource(strings = {"none", "reserve", "install", "scoped", "scoped-revoked-grant", "scoped-revoked-key", "scoped-activated-live", "scoped-activated-grant", "scoped-activated-key", "scoped-typed"})
     void killedWriterIsRecoveredByFreshJvm(String replacementStage, @TempDir Path temp) throws Exception {
         boolean scoped = replacementStage.startsWith("scoped");
+        boolean typed = replacementStage.equals("scoped-typed");
         boolean afterActivation = replacementStage.startsWith("scoped-activated-");
         boolean revoked = scoped && (replacementStage.endsWith("-key") || replacementStage.endsWith("-grant"));
         try (var c = context(POSTGRES); var sdk = S3Client.builder().endpointOverride(S3.getEndpoint())
@@ -115,7 +116,7 @@ class DocumentPublicationProcessRecoveryIT {
             var security = ai.protomolt.proto.repo.v1.DocumentSecurity.newBuilder().addPermissions(
                     ai.protomolt.proto.repo.v1.AccessRule.newBuilder().setIdentityType("public").setIdentity("public")
                             .setAccess(ai.protomolt.proto.repo.v1.Access.ACCESS_READ)).build();
-            var input = scoped ? input(c.tx(), profile, security) : input(c.tx(), profile);
+            var input = scoped ? input(c.tx(), profile, security, typed) : input(c.tx(), profile);
             if (scoped) {
                 var caller = DocumentPublicationProcessWorker.scopedCaller(input.command());
                 new RepositoryCredentialAuthorities(c.tx()).register(DocumentPublicationProcessWorker.ADMIN,
@@ -127,7 +128,7 @@ class DocumentPublicationProcessRecoveryIT {
             var command = temp.resolve("public-command.pb"); var payload = temp.resolve("public-payload.pb");
             Files.write(command, input.command().intent().toByteArray()); Files.write(payload, input.body().bytes());
             var writerLog = temp.resolve("writer.log");
-            var writer = start(c, writerLog, scoped ? "scoped-write" : "write", command, payload);
+            var writer = start(c, writerLog, typed ? "scoped-typed-write" : scoped ? "scoped-write" : "write", command, payload);
             try {
                 long deadline = System.nanoTime() + Duration.ofSeconds(45).toNanos();
                 boolean held = false;
@@ -169,7 +170,7 @@ class DocumentPublicationProcessRecoveryIT {
                 if (revoked && !afterActivation) revoke(c, input.command(), replacementStage.endsWith("-key"));
                 // No capability files or writer output are passed to this separate process.
                 var readerLog = temp.resolve("reader.log");
-                var reader = start(c, readerLog, afterActivation ? "scoped-recover-activated" : scoped ? "scoped-recover" : "recover", command, payload);
+                var reader = start(c, readerLog, typed ? "scoped-typed-recover" : afterActivation ? "scoped-recover-activated" : scoped ? "scoped-recover" : "recover", command, payload);
                 try {
                     if (afterActivation) {
                         long activationDeadline = System.nanoTime() + Duration.ofSeconds(45).toNanos();

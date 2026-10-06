@@ -228,11 +228,17 @@ class DocumentSuccessorLatePutIT {
         return input(tx, profile, DocumentSecurity.getDefaultInstance());
     }
     static Input input(Tx tx, ManagedBackendLedger.Profile profile, DocumentSecurity security) {
+        return input(tx, profile, security, false);
+    }
+    static Input input(Tx tx, ManagedBackendLedger.Profile profile, DocumentSecurity security, boolean typed) {
         var drive = new DriveRecord(); drive.driveId = UUID.randomUUID(); drive.accountId = "account";
         drive.name = "late"; drive.bucket = BUCKET; drive.prefix = "root"; drive.provider = "s3"; drive.driveType = "CUSTOM"; drive.status = "ACTIVE";
         new DriveLedger(tx).insert(drive);
         var ownership = OwnershipContext.newBuilder().setAccountId("account").setDatasourceId("source").setSecurity(security).build();
-        var parts = DocumentPartCodec.split(Document.newBuilder().setDocId("late-document").setOwnership(ownership).build(), PartLayouts.document());
+        var document = Document.newBuilder().setDocId("late-document").setOwnership(ownership);
+        if (typed) document.setStructuredData(com.google.protobuf.Any.pack(
+                com.google.protobuf.StringValue.of("recovered typed data"), "type.test"));
+        var parts = DocumentPartCodec.split(document.build(), PartLayouts.document());
         assertThat(parts).hasSize(1);
         var body = parts.getFirst();
         var member = DocumentPublicationMember.newBuilder().setMemberId("a").setDriveId(drive.driveId.toString()).setOwnership(ownership)
@@ -244,7 +250,8 @@ class DocumentSuccessorLatePutIT {
         var command = new DocumentPublicationCommand(DocumentPublicationIntent.newBuilder().setEncodingVersion(1).setAccountId("account")
                 .setOperationId(UUID.randomUUID().toString()).addMembers(member).build());
         var policy = DocumentAdmissionPolicy.of(DocumentSchemaPolicy.newBuilder().setEncodingVersion(1).setAccountId("account")
-                .setMode(DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_OPAQUE_ALLOWED).setAnyResolvedSchema(true)
+                .setMode(typed ? DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_TYPED_REQUIRED
+                        : DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_OPAQUE_ALLOWED).setAnyResolvedSchema(true)
                 .setValidationProfile("protomolt-retained-schema-admission/v1")
                 .setLimits(DocumentSchemaPolicyLimits.newBuilder().setMaxFragments(100).setMaxFragmentBytes(4_000_000)
                         .setMaxRoots(100).setMaxEvidenceBytes(4_000_000).setMaxBindings(20).setMaxRetainedBytes(16_000_000).setMaxDecodedBytes(1_000_000))

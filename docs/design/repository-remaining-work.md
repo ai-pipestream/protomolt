@@ -831,6 +831,14 @@ control with the same barrier succeeds. Typed recovery, host policy refusal and
 revocation at later provider phases remain open, along with automatic scheduling
 and safe reclamation of predecessor resources.
 
+Fresh-process scoped typed publication now passes in the same ten-case recovery
+suite. After the writer dies following a real PUT, the successor resolves the
+embedded Any, runs typed admission and retains its schema; a historical validated
+read reconstructs the exact value using retained schemas. This covers fresh
+admission after a post-upload crash. Recovery of an already-started typed
+assessment, live registry transport, host policy refusal, automatic scheduling
+and predecessor-resource reclamation still require qualification.
+
 ## Publication-first revocation race
 
 Typed and opaque real-provider tests now pause the actual final success-writing

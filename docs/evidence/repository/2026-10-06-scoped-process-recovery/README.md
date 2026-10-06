@@ -67,3 +67,25 @@ Sol found no blocker. `activated-green.tar.gz` records these nine results.
 The barrier has a bounded child wait and the parent reaps the process on failure.
 This qualifies revocation between activation and execution; it does not imply
 automatic cleanup, typed recovery, or revocation at every later provider phase.
+
+## Typed admission in the fresh successor process
+
+Base: `1762a33c14d2a5e9d62a3b7df0b7ea4afb99264e`. The same targeted command
+now passes ten cases without skips. The additional scoped typed case uploads a
+Document containing an embedded StringValue Any under a TYPED_REQUIRED policy.
+The writer dies after the real PUT, before schema admission. The fresh successor
+uses the durable TYPED mode, resolves that exact type once, validates and publishes.
+It then reads the committed revision with `readValidated`, reconstructing the Any
+from retained schemas and checking its exact value and retained policy identity.
+Receipt replay adds no provider access. Existing predecessor retention and
+successor object/version assertions still apply.
+
+Sol reviewed the typed path with no blocker. An initial fixture used a default Any
+URL inconsistent with the definition helper's `type.test` URL; admission rejected
+it. The fixture now uses the same explicit URL as its definition. Runtime checks
+were unchanged. `typed-green.tar.gz` contains the ten-case results.
+
+This proves fresh typed admission after a post-upload crash, not restoration of an
+assessment started before the crash. Definitions come from generated test types,
+not a live registry transport. Those integration cases, automatic scheduling and
+resource reclamation remain separate work.

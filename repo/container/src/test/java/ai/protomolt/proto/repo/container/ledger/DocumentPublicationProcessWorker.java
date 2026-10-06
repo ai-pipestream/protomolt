@@ -27,6 +27,8 @@ public final class DocumentPublicationProcessWorker {
         assertThat(args).hasSize(3);
         boolean scoped = args[0].startsWith("scoped-");
         String mode = scoped ? args[0].substring(7) : args[0];
+        boolean typed = mode.startsWith("typed-");
+        if (typed) mode = mode.substring(6);
         assertThat(mode).isIn("write", "recover", "reserve", "install", "initial-before", "initial-after", "publish", "recover-initial", "recover-activated");
         var command = new DocumentPublicationCommand(DocumentPublicationIntent.parseFrom(Files.readAllBytes(Path.of(args[1]))));
         assertThat(command.intent().getMembersList()).hasSize(1);
@@ -53,16 +55,16 @@ public final class DocumentPublicationProcessWorker {
             var input = new Input(command, Map.of(drive.driveId, DocumentUploadPlan.Placement.sample(drive, GENERATION, profile)), body);
             try (var host = new Host(tx, profile, new AtomicReference<>(opened), Duration.ofSeconds(10))) {
                 if (mode.equals("write") || mode.startsWith("initial-")) {
-                    execute(host, input, caller);
+                    execute(host, input, caller, typed);
                     throw new AssertionError("Writer must be killed while the real PUT is held");
                 }
                 if (mode.equals("publish")) {
-                    var result=execute(host,input,caller);
+                    var result=execute(host,input,caller,typed);
                     int calls=((ObservedStore)opened.store()).calls().get();
                     assertThat(host.sessions.execute(caller,command,Map.of(),Map.of(),Map.of(),Map.of(),Optional.empty(),
                             (member,occurrence) -> {throw new AssertionError("Replay cannot resolve schema");},NONE)).isEqualTo(result);
                     assertThat(((ObservedStore)opened.store()).calls().get()).isEqualTo(calls);
-                } else recover(tx, host, input, opened, mode, caller, Path.of(args[2]).resolveSibling("activation-release"));
+                } else recover(tx, host, input, opened, mode, caller, Path.of(args[2]).resolveSibling("activation-release"), typed);
             }
         }
         System.out.println("PROCESS_RECOVERY_OK");
@@ -73,14 +75,22 @@ public final class DocumentPublicationProcessWorker {
                 Optional.of(new RepositoryCredentialBinding("process-recovery-test", command.operationId(), 1)));
     }
 
-    private static DocumentPublicationResult execute(Host host, Input input, RepositoryCaller caller) throws Exception {
-        return host.sessions.execute(caller, input.command(), input.placements(),
+    private static DocumentPublicationResult execute(Host host, Input input, RepositoryCaller caller, boolean typed) throws Exception {
+        var resolutions = new java.util.concurrent.atomic.AtomicInteger();
+        var result = host.sessions.execute(caller, input.command(), input.placements(),
                 Map.of(new DocumentUploadPayloads.Key("a", 0), input.body()), Map.of(),
-                Map.of("a", DocumentPublicationCandidate.Mode.OPAQUE), Optional.empty(),
-                (member, occurrence) -> { throw new AssertionError("Opaque fixture cannot resolve schemas"); }, NONE);
+                Map.of("a", typed ? DocumentPublicationCandidate.Mode.TYPED : DocumentPublicationCandidate.Mode.OPAQUE),
+                typed ? Optional.of(DocumentSchemaRetentionFixture.definition(Document.getDescriptor())) : Optional.empty(),
+                (member, occurrence) -> {
+                    assertThat(typed).as("Only typed data resolves schemas").isTrue();
+                    resolutions.incrementAndGet();
+                    return DocumentSchemaRetentionFixture.definition(com.google.protobuf.StringValue.getDescriptor());
+                }, NONE);
+        assertThat(resolutions.get()).isEqualTo(typed ? 1 : 0);
+        return result;
     }
 
-    private static void recover(Tx tx, Host host, Input input, OpenedBlobStore backend, String mode, RepositoryCaller caller, Path activationRelease) throws Exception {
+    private static void recover(Tx tx, Host host, Input input, OpenedBlobStore backend, String mode, RepositoryCaller caller, Path activationRelease, boolean typed) throws Exception {
         var command = input.command();
         var key = new RepositoryOperationLedger.Key("account", "principal", command.operationId());
         boolean initial=mode.equals("recover-initial");
@@ -129,7 +139,7 @@ public final class DocumentPublicationProcessWorker {
                 new SqlTimeouts(Duration.ofSeconds(1), Duration.ofSeconds(5)))
                 .load(ADMIN, caller, proposal, RepositoryCoordinatorReservation.owner(proposal).orElseThrow(), NONE)) {
             var plan = RepositorySuccessorInstall.prepare(proposal, loaded.record(), Duration.ofSeconds(10),
-                    Map.of("a", DocumentPublicationCandidate.Mode.OPAQUE));
+                    Map.of("a", typed ? DocumentPublicationCandidate.Mode.TYPED : DocumentPublicationCandidate.Mode.OPAQUE));
             RepositorySuccessorInstall.install(tx, host.budget, ADMIN, plan, NONE);
             if (mode.equals("install")) holdReplacement();
             host.sessions.activateSuccessor(ADMIN, caller, plan, NONE);
@@ -139,7 +149,7 @@ public final class DocumentPublicationProcessWorker {
                 while (!Files.exists(activationRelease) && System.nanoTime() < deadline) Thread.sleep(10);
                 assertThat(Files.exists(activationRelease)).as("parent released activation barrier").isTrue();
             }
-            var result = execute(host, input, caller);
+            var result = execute(host, input, caller, typed);
             var nextAttempt = plan.next().seeds().attempts().get("a");
             assertThat(nextAttempt).isNotEqualTo(loaded.record().seeds().attempts().get("a"));
             assertThat(plan.next().seeds().uploadTokens().get("a")).isNotEqualTo(loaded.record().seeds().uploadTokens().get("a"));
@@ -159,6 +169,16 @@ public final class DocumentPublicationProcessWorker {
                     SELECT count(*) FROM document_revision_parts p JOIN document_part_attempt_objects o ON p.object_id=o.physical_object_id
                     WHERE o.attempt_id=:attempt
                     """).setParameter("attempt", oldAttempt).getSingleResult()).intValue())).isZero();
+            if (typed) {
+                var published = result.getMembers(0);
+                var history = new ai.protomolt.proto.repo.engine.DocumentHistoricalOperations(host.reads, host.reader, host.budget);
+                try (var validated = history.readValidated(caller, published.getAddress(),
+                        UUID.fromString(published.getRevisionId()), NONE)) {
+                    assertThat(validated.document().getStructuredData().unpack(com.google.protobuf.StringValue.class).getValue())
+                            .isEqualTo("recovered typed data");
+                    assertThat(validated.policySha256()).isNotBlank();
+                }
+            }
             int calls = ((ObservedStore) backend.store()).calls().get();
             assertThat(host.sessions.execute(caller, command, Map.of(), Map.of(), Map.of(), Map.of(), Optional.empty(),
                     (member, occurrence) -> { throw new AssertionError("Receipt replay cannot resolve schemas"); }, NONE)).isEqualTo(result);
