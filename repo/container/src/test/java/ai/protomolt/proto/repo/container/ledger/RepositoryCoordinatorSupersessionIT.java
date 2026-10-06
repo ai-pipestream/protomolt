@@ -140,6 +140,68 @@ class RepositoryCoordinatorSupersessionIT {
     }
 
     @ParameterizedTest @ValueSource(booleans={false,true})
+    void cancellationBeforeCallOrAfterCommitRemainsVisible(boolean afterCommit) {
+        try(var c=context(POSTGRES)) {
+            var initial=initial(c,false,true); var p=proposal(c,initial,LEASE);
+            var before=state(c,initial.previous().key());
+            var cancelled=new AtomicBoolean(!afterCommit); var committed=new AtomicBoolean();
+            var control=new RepositoryReadControl() {
+                public boolean isCancelled() { return cancelled.get(); }
+                public long remainingNanos() { return Long.MAX_VALUE; }
+            };
+            var source=DocumentJdbcFaults.afterCommit(c.pool(),() -> {
+                committed.set(true); cancelled.set(true);
+            });
+            try(var emf=jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                    Map.of("hibernate.connection.datasource",source,"hibernate.hbm2ddl.auto","validate"))) {
+                assertThatThrownBy(() -> RepositoryCoordinatorSupersession.reserve(new Tx(emf),CALLER,p,control))
+                        .isInstanceOfSatisfying(RepositoryException.class,
+                                failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.CANCELLED));
+            }
+            assertThat(committed.get()).isEqualTo(afterCommit);
+            assertThat(RepositoryCoordinatorReservation.confirm(c.tx(),CALLER,p,NONE).isPresent()).isEqualTo(afterCommit);
+            if(!afterCommit) assertThat(state(c,initial.previous().key())).containsExactly(before);
+            else {
+                var saved=state(c,initial.previous().key());
+                assertThat(saved[0]).isEqualTo(3L);
+                RepositoryCoordinatorSupersession.reserve(c.tx(),CALLER,p,NONE);
+                assertThat(state(c,initial.previous().key())).containsExactly(saved);
+            }
+        }
+    }
+
+    @Test void committedActivationRejectsSupersessionAfterExpiry() {
+        try(var c=context(POSTGRES)) {
+            var initial=initial(c,true,true,Duration.ofSeconds(3),false);
+            var h=initial.reservation(); var key=initial.previous().key();
+            var hashes=c.tx().readOnly(em -> (Object[]) em.createNativeQuery("""
+                    SELECT predecessor_preparation_sha256,preparation_sha256,modes_sha256
+                    FROM repository_successor_installs WHERE operation_id=:id AND successor_epoch=2
+                    """).setParameter("id",key.operationId()).getSingleResult());
+            var hex=HexFormat.of();
+            var p=new RepositoryCoordinatorReservation.SupersededUnactivated(
+                    new RepositoryCoordinatorDrain.Identity(key,h.predecessor().commandSha256(),2,h.successorToken(),h.successorIncarnation()),
+                    UUID.randomUUID(),UUID.randomUUID(),LEASE,
+                    new RepositoryCoordinatorReservation.OwnerIdentity(initial.next().predecessorGeneration()+1,initial.next().seeds().ownerNonce()),
+                    hex.formatHex((byte[]) hashes[1]),Optional.of(new RepositoryCoordinatorReservation.Installation(
+                            hex.formatHex((byte[]) hashes[0]),hex.formatHex((byte[]) hashes[1]),hex.formatHex((byte[]) hashes[2]))));
+            var budget=new PayloadBudget(64_000_000);
+            RepositorySuccessorExecution.activate(c.tx(),budget,CALLER,CALLER,initial,NONE);
+            expire(c,key); var before=state(c,key);
+            assertThatThrownBy(() -> RepositoryCoordinatorSupersession.reserve(c.tx(),CALLER,p,NONE))
+                    .hasStackTraceContaining("Activated coordinator requires bound recovery");
+            assertThat(state(c,key)).containsExactly(before);
+            assertThat(RepositoryCoordinatorReservation.confirm(c.tx(),CALLER,p,NONE)).isEmpty();
+            var observed=new RepositoryCoordinatorRecoveryDiscovery(c.tx(),TIMEOUTS)
+                    .inspect(CALLER,key,initial.previous().command().sha256(),NONE);
+            assertThat(observed.status()).isEqualTo(RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND);
+            assertThat(observed.unactivated()).isEmpty();
+            assertThat(observed.candidate().orElseThrow().predecessor().epoch()).isEqualTo(2);
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @ParameterizedTest @ValueSource(booleans={false,true})
     void concurrentProposalsConvergeOnlyOnExactIdentity(boolean identical) throws Exception {
         try(var c=context(POSTGRES);var workers=Executors.newVirtualThreadPerTaskExecutor()) {
             var initial=initial(c,true,true); var a=proposal(c,initial,LEASE); var b=identical?a:proposal(c,initial,LEASE);

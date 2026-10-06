@@ -56,3 +56,16 @@ The packaged runtime regression also passed:
 Build successful in 2 minutes 58 seconds, with zero test failures/errors/skips.
 The runtime inventory contains 38 production artifacts. Its compressed XML is
 retained beside the focused and process-test reports.
+
+Follow-up qualification adds pre-call and post-commit cancellation, plus the
+opposite activation ordering: V94 commits while live, leases expire, and an exact
+installed-phase V98 proposal is refused without changing the claim or adding a
+reservation. Discovery then reports the activated epoch as expired bound recovery.
+Cancellation after a real commit remains CANCELLED; a fresh exact retry confirms
+the committed reservation without lease renewal. Sol reviewed these cases.
+
+The focused `RepositoryCoordinatorSupersessionIT` rerun passed all 18 cases with
+zero failures/errors/skips (68.269 seconds; build 1 minute 12 seconds). Its separate
+`supersession-cancellation-activation.xml.gz` preserves the follow-up evidence.
+This follow-up changes tests only; the production-JAR result above applies to the
+unchanged production implementation.
