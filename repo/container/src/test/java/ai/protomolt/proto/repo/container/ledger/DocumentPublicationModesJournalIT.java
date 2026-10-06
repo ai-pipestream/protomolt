@@ -112,6 +112,34 @@ class DocumentPublicationModesJournalIT {
 
     private static PayloadBudget budget() { return new PayloadBudget(32L * 1024 * 1024); }
 
+    @Test void scopedModeComparisonUsesTwoCommitsAndExactPreparationBudget() {
+        try (var c = context(POSTGRES)) {
+            var value = input(c); var budget = budget(); var claim = save(c, value, budget, LEASE);
+            new DocumentPublicationModesJournal(c.tx(), budget).bind(CALLER, claim, 0, MODES, NONE);
+            var owner = new RepositoryOperationLedger(c.tx()).admit(value.key(), value.command(), value.seeds().ownerNonce(), LEASE, claim)
+                    .owner().orElseThrow();
+            var scoped = new RepositoryCaller("principal", false, Set.of(value.key().account()), Set.of());
+            var bounded = new PayloadBudget(DocumentPublicationModesJournal.MAX_BYTES + DocumentPublicationPreparationCodec.encode(value).size());
+            var commits = new java.util.concurrent.atomic.AtomicInteger();
+            var source = DocumentJdbcFaults.afterCommit(c.pool(), commits::incrementAndGet);
+            try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                    Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
+                var journal = new DocumentPublicationModesJournal(new Tx(emf), bounded);
+                commits.set(0);
+                journal.requireObservedModes(scoped, owner, value.command(), MODES, NONE);
+                assertThat(commits.get()).as("capture and final live authority check").isEqualTo(2);
+                assertThat(bounded.reservedBytes()).isZero();
+                commits.set(0);
+                assertThatThrownBy(() -> journal.requireObservedModes(scoped, owner, value.command(),
+                        Map.of("member-0", DocumentPublicationCandidate.Mode.OPAQUE), NONE))
+                        .isInstanceOfSatisfying(RepositoryException.class, failure ->
+                                assertThat(failure.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+                assertThat(commits.get()).as("mismatch refuses after capture").isEqualTo(1);
+                assertThat(bounded.reservedBytes()).isZero();
+            }
+        }
+    }
+
     @Test void scopedCallerCanCheckObservedModesWithoutReadingPrivateChoices() {
         try (var c = context(POSTGRES)) {
             var value = input(c); var budget = budget(); var claim = save(c, value, budget, LEASE);
@@ -128,6 +156,128 @@ class DocumentPublicationModesJournalIT {
                         assertThat(failure.getMessage()).isEqualTo("Observed publication modes differ from fixed modes");
                     });
             assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @Test void claimOnlyComparisonNeedsNoPayloadReservationAndOneCommit() {
+        try (var c = context(POSTGRES)) {
+            var value = input(c);
+            var claim = new RepositoryExecutionClaimLedger(c.tx()).acquire(value.key(), value.command(), UUID.randomUUID(), LEASE);
+            var owner = new RepositoryOperationLedger(c.tx()).admit(value.key(), value.command(), value.seeds().ownerNonce(), LEASE, claim)
+                    .owner().orElseThrow();
+            var commits = new java.util.concurrent.atomic.AtomicInteger();
+            var source = DocumentJdbcFaults.afterCommit(c.pool(), commits::incrementAndGet);
+            try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                    Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
+                var bounded = new PayloadBudget(1);
+                commits.set(0);
+                new DocumentPublicationModesJournal(new Tx(emf), bounded).requireObservedModes(CALLER, owner, value.command(), MODES, NONE);
+                assertThat(commits.get()).isEqualTo(1);
+                assertThat(bounded.reservedBytes()).isZero();
+            }
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"missing", "members", "value", "nonce", "preparation", "preparation-and-missing"})
+    void scopedComparisonRefusesCorruptStoredRowsAndPreservesErrorOrder(String corruption) {
+        try (var c = context(POSTGRES)) {
+            var value = input(c); var budget = budget(); var claim = save(c, value, budget, LEASE);
+            var journal = new DocumentPublicationModesJournal(c.tx(), budget);
+            journal.bind(CALLER, claim, 0, MODES, NONE);
+            var owner = new RepositoryOperationLedger(c.tx()).admit(value.key(), value.command(), value.seeds().ownerNonce(), LEASE, claim)
+                    .owner().orElseThrow();
+            // Damage real stored rows deliberately. Bypass immutable-write/owner guards to exercise Java corruption handling.
+            c.tx().inTransaction(em -> {
+                em.createNativeQuery("ALTER TABLE repository_publication_modes DISABLE TRIGGER repository_publication_modes_guard").executeUpdate();
+                em.createNativeQuery("ALTER TABLE repository_operation_owners DISABLE TRIGGER repository_journaled_owner_guard").executeUpdate();
+                if (corruption.contains("missing")) em.createNativeQuery("DELETE FROM repository_publication_modes").executeUpdate();
+                if (corruption.equals("members")) em.createNativeQuery("UPDATE repository_publication_modes SET modes='{\"wrong\":\"TYPED\"}'::jsonb").executeUpdate();
+                if (corruption.equals("value")) em.createNativeQuery("UPDATE repository_publication_modes SET modes='{\"member-0\":1,\"member-1\":\"OPAQUE\"}'::jsonb").executeUpdate();
+                if (corruption.equals("nonce")) em.createNativeQuery("UPDATE repository_publication_modes SET owner_nonce=:nonce")
+                        .setParameter("nonce", UUID.randomUUID()).executeUpdate();
+                if (corruption.startsWith("preparation")) {
+                    em.createNativeQuery("ALTER TABLE repository_publication_preparations DISABLE TRIGGER repository_publication_preparation_guard").executeUpdate();
+                    em.createNativeQuery("ALTER TABLE repository_publication_preparations DROP CONSTRAINT repository_preparation_digest").executeUpdate();
+                    em.createNativeQuery("UPDATE repository_publication_preparations SET preparation_bytes=set_byte(preparation_bytes,0,0)").executeUpdate();
+                }
+                return null;
+            });
+            assertThatThrownBy(() -> journal.requireObservedModes(CALLER, owner, value.command(), MODES, NONE))
+                    .isInstanceOfSatisfying(RepositoryException.class, failure -> {
+                        assertThat(failure.code()).isEqualTo(corruption.equals("missing")
+                                ? RepositoryException.Code.FAILED_PRECONDITION : RepositoryException.Code.DATA_LOSS);
+                        if (corruption.startsWith("preparation")) assertThat(failure.getMessage()).contains("preparation integrity");
+                    });
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @Test void insufficientCaptureBudgetReleasesModesReservation() {
+        try (var c = context(POSTGRES)) {
+            var value = input(c); var budget = budget(); var claim = save(c, value, budget, LEASE);
+            new DocumentPublicationModesJournal(c.tx(), budget).bind(CALLER, claim, 0, MODES, NONE);
+            var owner = new RepositoryOperationLedger(c.tx()).admit(value.key(), value.command(), value.seeds().ownerNonce(), LEASE, claim)
+                    .owner().orElseThrow();
+            var bounded = new PayloadBudget(DocumentPublicationModesJournal.MAX_BYTES);
+            assertThatThrownBy(() -> new DocumentPublicationModesJournal(c.tx(), bounded)
+                    .requireObservedModes(CALLER, owner, value.command(), MODES, NONE))
+                    .isInstanceOf(PayloadBudget.CapacityExceededException.class);
+            assertThat(bounded.reservedBytes()).isZero();
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"claim-transfer", "owner-expiry", "cancel"})
+    void captureCannotDeliverAfterAuthorityChanges(String change) throws Exception {
+        try (var c = context(POSTGRES); var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var value = input(c); var budget = budget();
+            var claim = save(c, value, budget, change.equals("claim-transfer") ? Duration.ofSeconds(2) : LEASE);
+            new DocumentPublicationModesJournal(c.tx(), budget).bind(CALLER, claim, 0, MODES, NONE);
+            var owner = new RepositoryOperationLedger(c.tx()).admit(value.key(), value.command(), value.seeds().ownerNonce(),
+                    change.equals("owner-expiry") ? Duration.ofSeconds(2) : LEASE, claim).owner().orElseThrow();
+            var captured = new CountDownLatch(1); var release = new CountDownLatch(1);
+            var armed = new java.util.concurrent.atomic.AtomicBoolean();
+            var cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+            var control = new RepositoryReadControl() {
+                @Override public boolean isCancelled() { return cancelled.get(); }
+                @Override public long remainingNanos() { return Long.MAX_VALUE; }
+            };
+            var source = DocumentJdbcFaults.afterCommit(c.pool(), () -> {
+                if (armed.compareAndSet(true, false)) {
+                    captured.countDown();
+                    try { if (!release.await(10, TimeUnit.SECONDS)) throw new java.sql.SQLException("Capture release timed out"); }
+                    catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new java.sql.SQLException(interrupted); }
+                }
+            });
+            try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                    Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
+                armed.set(true);
+                var future = workers.submit(() -> new DocumentPublicationModesJournal(new Tx(emf), budget)
+                        .requireObservedModes(CALLER, owner, value.command(), MODES, control));
+                try {
+                    assertThat(captured.await(5, TimeUnit.SECONDS)).isTrue();
+                    if (change.equals("cancel")) cancelled.set(true);
+                    else {
+                        c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(2.1)").getSingleResult());
+                        if (change.equals("claim-transfer")) {
+                            var next = new RepositoryExecutionClaimLedger(c.tx()).takeOver(value.key(), value.command(), 1, UUID.randomUUID(), LEASE);
+                            assertThat(next.epoch()).isEqualTo(2);
+                        }
+                    }
+                    release.countDown();
+                    assertThatThrownBy(() -> future.get(5, TimeUnit.SECONDS)).isInstanceOfSatisfying(ExecutionException.class, failure -> {
+                        if (change.equals("claim-transfer")) assertThat(failure.getCause()).isInstanceOf(RepositoryExecutionClaimLedger.Fenced.class);
+                        else if (change.equals("owner-expiry")) assertThat(failure.getCause()).isInstanceOf(RepositoryOperationLedger.OwnerFencedException.class);
+                        else assertThat(failure.getCause()).isInstanceOfSatisfying(RepositoryException.class,
+                                cancelledFailure -> assertThat(cancelledFailure.code()).isEqualTo(RepositoryException.Code.CANCELLED));
+                    });
+                    assertThat(budget.reservedBytes()).isZero();
+                } finally {
+                    release.countDown();
+                    if (!future.isDone()) future.get(5, TimeUnit.SECONDS);
+                }
+            }
         }
     }
 

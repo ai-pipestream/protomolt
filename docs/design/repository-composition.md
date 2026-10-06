@@ -6276,13 +6276,13 @@ preparation loading and mode loading. See
 [callsite evidence](../evidence/repository/2026-10-06-journaled-callsite-trace/README.md).
 This is an attribution diagnostic, not a commit-count or speedup proof.
 
-The next bounded production change is scoped mode comparison only. Capture the
-bounded preparation and modes in one transaction after the exact live owner/claim
-fence and command identity check. Reserve the actual encoded preparation size,
-plus the existing bounded modes allowance. Keep decode, integrity verification
-and map comparison outside SQL locks. Re-fence the exact owner and claim and
-recheck command identity before returning a successful comparison. Hold byte
-reservations through the comparison and release on every failure path.
+Scoped mode comparison now captures bounded preparation and modes in one
+transaction after the exact live owner/claim fence and command identity check.
+It reserves the actual encoded preparation size plus the existing bounded modes
+allowance. Decode, integrity verification and map comparison remain outside SQL
+locks. It re-fences the exact owner and claim and rechecks command identity before
+returning a successful comparison. Byte reservations cover the comparison and
+are released on every failure path.
 
 Share the bounded preparation capture/decode logic; do not invoke the existing
 standalone loader and nest its delivery transactions. Its public-to-package private
@@ -6293,12 +6293,14 @@ exists, its corruption is checked before missing or corrupt modes, preserving er
 order. Preserve preparation hash, command digest, predecessor, owner nonce, JSON
 value/member-set checks and the exact mode-mismatch refusal.
 
-Acceptance: an actual JDBC counter should prove two commits for successful
+The actual JDBC counter first observed six commits and now proves two for successful
 journaled comparison, one for claim-only comparison, and one for a mode mismatch
-rejected after capture. Corrupt preparation/modes and missing modes must keep their
-existing errors; insufficient capacity and cancellation must release reservations.
-A held capture followed by real owner/claim expiry or transfer must refuse delivery.
-The private loaders' authorization and retained-data tests must remain green.
-Performance validation then repeats similarly instrumented real RustFS work;
-transaction reduction alone is not a latency or capacity result. Sol reviewed this
-composition approach; implementation and regression qualification remain open.
+rejected after capture. Corrupt preparation/modes and missing modes keep their
+errors; insufficient capacity and cancellation release reservations. A held capture
+followed by actual claim transfer or owner expiry refuses delivery. The private
+loaders' authorization and retained-data tests remain green: 52 focused cases,
+including initial admission. See
+[composed mode verification](../evidence/repository/2026-10-06-composed-mode-verification/README.md).
+Sol reviewed the implementation and focused evidence. Runtime and similarly
+instrumented RustFS qualification are recorded separately in that evidence;
+transaction reduction alone is not a latency or capacity result.

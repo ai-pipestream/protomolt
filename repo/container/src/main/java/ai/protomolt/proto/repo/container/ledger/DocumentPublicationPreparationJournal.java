@@ -128,22 +128,8 @@ final class DocumentPublicationPreparationJournal {
         require(caller, claim.key(), control); generation(predecessor);
         PayloadBudget.Lease[] reservation = {null}; boolean transferred = false;
         try {
-            var row = tx.inTransaction(em -> {
-                RepositoryExecutionClaimLedger.lockLive(em, claim);
-                var sizes = bind(em.createNativeQuery("""
-                        SELECT octet_length(preparation_bytes) FROM repository_publication_preparations
-                        WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=:g
-                        """), claim.key(), predecessor).getResultList();
-                if (sizes.isEmpty()) return null;
-                int size = ((Number) sizes.getFirst()).intValue();
-                if (size < 1 || size > DocumentPublicationPreparationCodec.MAX_BYTES) throw corrupt();
-                reservation[0] = budget.reserve(size);
-                control.check();
-                return (Object[]) bind(em.createNativeQuery("""
-                        SELECT preparation_bytes,preparation_sha256,owner_nonce,command_sha256 FROM repository_publication_preparations
-                        WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=:g
-                        """), claim.key(), predecessor).getSingleResult();
-            });
+            var row = tx.inTransaction(em -> { return capture(em, claim, predecessor,
+                    size -> reservation[0] = budget.reserve(size), control); });
             control.check();
             if (row == null) return Optional.empty();
             var record = decode(row, reservation[0].bytes(), claim.key(), claim.commandSha256(), predecessor);
@@ -155,6 +141,26 @@ final class DocumentPublicationPreparationJournal {
             var loaded = new Loaded(record, reservation[0]); transferred = true;
             return Optional.of(loaded);
         } finally { if (!transferred && reservation[0]!=null) reservation[0].close(); }
+    }
+
+    /** Caller owns the reservation through decode/use and closes it even if the enclosing transaction fails. */
+    static Object[] capture(EntityManager em, RepositoryExecutionClaimLedger.Claim claim, long predecessor,
+            java.util.function.LongConsumer reserveBytes, RepositoryReadControl control) {
+        generation(predecessor);
+        RepositoryExecutionClaimLedger.lockLive(em, claim);
+        var sizes = bind(em.createNativeQuery("""
+                SELECT octet_length(preparation_bytes) FROM repository_publication_preparations
+                WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=:g
+                """), claim.key(), predecessor).getResultList();
+        if (sizes.isEmpty()) return null;
+        int size = ((Number) sizes.getFirst()).intValue();
+        if (size < 1 || size > DocumentPublicationPreparationCodec.MAX_BYTES) throw corrupt();
+        reserveBytes.accept(size);
+        control.check();
+        return (Object[]) bind(em.createNativeQuery("""
+                SELECT preparation_bytes,preparation_sha256,owner_nonce,command_sha256 FROM repository_publication_preparations
+                WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=:g
+                """), claim.key(), predecessor).getSingleResult();
     }
 
     /** Borrowed value: finish all uses before close. It grants no operation or claim authority. */

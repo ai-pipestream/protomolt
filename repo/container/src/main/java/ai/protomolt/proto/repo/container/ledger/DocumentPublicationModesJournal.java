@@ -49,23 +49,43 @@ final class DocumentPublicationModesJournal {
         if (!owner.key().operationId().equals(command.operationId())) throw new IllegalArgumentException("Mode command differs from owner");
         if (owner.executionClaim().isEmpty()) return;
         var claim = owner.executionClaim().orElseThrow();
-        boolean journaled = tx.inTransaction(em -> {
-            RepositoryOperationLedger.fenceLiveOwner(em, owner);
-            RepositoryOperationLedger.requireCommand(em, owner.key(), command);
-            return ((Number) em.createNativeQuery("""
-                    SELECT count(*) FROM repository_publication_preparations WHERE account_id=:a AND principal=:p
-                      AND operation_id=:o AND predecessor_generation=:g
-                    """).setParameter("a", owner.key().account()).setParameter("p", owner.key().principal())
-                    .setParameter("o", owner.key().operationId()).setParameter("g", owner.generation()-1).getSingleResult()).intValue()==1;
-        });
-        if (!journaled) return; // Explicit claim-only primitive, without a preparation journal.
-        var fixed = loadRetained(caller, claim, owner.generation()-1, control, null).orElseThrow(() ->
-                new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Fixed publication modes are absent"));
-        if (!fixed.equals(observed)) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
-                "Observed publication modes differ from fixed modes");
-        tx.inTransaction(em -> { RepositoryOperationLedger.fenceLiveOwner(em, owner); return null; });
-        control.check();
+        PayloadBudget.Lease[] reservations = {null, null};
+        try {
+            var captured = tx.inTransaction(em -> {
+                RepositoryOperationLedger.fenceLiveOwner(em, owner);
+                RepositoryOperationLedger.requireCommand(em, owner.key(), command);
+                var preparation = DocumentPublicationPreparationJournal.capture(em, claim, owner.generation()-1, size -> {
+                    reservations[0] = budget.reserve(MAX_BYTES);
+                    reservations[1] = budget.reserve(size);
+                }, control);
+                if (preparation == null) return null; // Explicit claim-only primitive, without a preparation journal.
+                return new Captured(preparation, readModes(em, claim, owner.generation()-1));
+            });
+            control.check();
+            if (captured == null) return;
+            // Keep integrity/error ordering: validate preparation before missing or malformed modes.
+            var preparation = DocumentPublicationPreparationJournal.decode(captured.preparation(), reservations[1].bytes(),
+                    claim.key(), claim.commandSha256(), owner.generation()-1);
+            control.check();
+            if (captured.modes() == null) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Fixed publication modes are absent");
+            var fixed = decodeModes(preparation, captured.modes());
+            control.check();
+            if (!fixed.equals(observed)) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Observed publication modes differ from fixed modes");
+            tx.inTransaction(em -> {
+                RepositoryOperationLedger.fenceLiveOwner(em, owner);
+                RepositoryOperationLedger.requireCommand(em, owner.key(), command);
+                control.check(); return null;
+            });
+            control.check();
+        } finally {
+            if (reservations[1] != null) reservations[1].close();
+            if (reservations[0] != null) reservations[0].close();
+        }
     }
+
+    private record Captured(Object[] preparation, Object[] modes) {}
 
     private Optional<Map<String, DocumentPublicationCandidate.Mode>> loadRetained(RepositoryCaller caller,
             RepositoryExecutionClaimLedger.Claim claim, long predecessor, RepositoryReadControl control,
@@ -76,38 +96,45 @@ final class DocumentPublicationModesJournal {
             if (access != null) access.requirePreparation(loaded.record());
             var row = tx.inTransaction(em -> {
                 RepositoryExecutionClaimLedger.lockLive(em, claim);
-                var rows = em.createNativeQuery("""
-                        SELECT owner_nonce, CASE WHEN octet_length(modes::text)<=1048576 THEN modes::text END
-                        FROM repository_publication_modes
-                        WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=:g
-                        """).setParameter("a", claim.key().account()).setParameter("p", claim.key().principal())
-                        .setParameter("o", claim.key().operationId()).setParameter("g", predecessor).getResultList();
-                return rows.isEmpty() ? null : (Object[]) rows.getFirst();
+                return readModes(em, claim, predecessor);
             });
             control.check();
             if (row == null) return Optional.empty();
-            Map<String, DocumentPublicationCandidate.Mode> modes;
-            try {
-                if (!loaded.record().seeds().ownerNonce().equals(row[0]) || row[1] == null)
-                    throw new IllegalArgumentException("Stored mode binding differs");
-                var parsed = JsonParser.parseString((String) row[1]).getAsJsonObject();
-                var copy = new TreeMap<String, DocumentPublicationCandidate.Mode>();
-                parsed.entrySet().forEach(entry -> {
-                    if (!entry.getValue().isJsonPrimitive() || !entry.getValue().getAsJsonPrimitive().isString())
-                        throw new IllegalArgumentException("Stored mode is not a string");
-                    copy.put(entry.getKey(), DocumentPublicationCandidate.Mode.valueOf(entry.getValue().getAsString()));
-                });
-                if (!copy.keySet().equals(loaded.record().command().intent().getMembersList().stream()
-                        .map(member -> member.getMemberId()).collect(Collectors.toSet())))
-                    throw new IllegalArgumentException("Stored modes differ from command members");
-                modes = Map.copyOf(copy);
-            } catch (IllegalArgumentException | IllegalStateException malformed) {
-                throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Private publication modes are invalid");
-            }
+            var modes = decodeModes(loaded.record(), row);
             control.check();
             tx.inTransaction(em -> { RepositoryExecutionClaimLedger.lockLive(em, claim); return null; });
             control.check();
             return Optional.of(modes);
+        }
+    }
+
+    private static Object[] readModes(jakarta.persistence.EntityManager em, RepositoryExecutionClaimLedger.Claim claim, long predecessor) {
+        var rows = em.createNativeQuery("""
+                SELECT owner_nonce, CASE WHEN octet_length(modes::text)<=1048576 THEN modes::text END
+                FROM repository_publication_modes
+                WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=:g
+                """).setParameter("a", claim.key().account()).setParameter("p", claim.key().principal())
+                .setParameter("o", claim.key().operationId()).setParameter("g", predecessor).getResultList();
+        return rows.isEmpty() ? null : (Object[]) rows.getFirst();
+    }
+
+    private static Map<String, DocumentPublicationCandidate.Mode> decodeModes(DocumentPublicationPreparationRecord preparation, Object[] row) {
+        try {
+            if (!preparation.seeds().ownerNonce().equals(row[0]) || row[1] == null)
+                throw new IllegalArgumentException("Stored mode binding differs");
+            var parsed = JsonParser.parseString((String) row[1]).getAsJsonObject();
+            var copy = new TreeMap<String, DocumentPublicationCandidate.Mode>();
+            parsed.entrySet().forEach(entry -> {
+                if (!entry.getValue().isJsonPrimitive() || !entry.getValue().getAsJsonPrimitive().isString())
+                    throw new IllegalArgumentException("Stored mode is not a string");
+                copy.put(entry.getKey(), DocumentPublicationCandidate.Mode.valueOf(entry.getValue().getAsString()));
+            });
+            if (!copy.keySet().equals(preparation.command().intent().getMembersList().stream()
+                    .map(member -> member.getMemberId()).collect(Collectors.toSet())))
+                throw new IllegalArgumentException("Stored modes differ from command members");
+            return Map.copyOf(copy);
+        } catch (IllegalArgumentException | IllegalStateException malformed) {
+            throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Private publication modes are invalid");
         }
     }
 

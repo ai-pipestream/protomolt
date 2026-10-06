@@ -14,6 +14,8 @@ The focused admission/retry test counts two real commits per call; the small Rus
 mode diagnostic is retained separately. Additional admission races, controlled
 capacity measurements and publication-stage performance work remain acceptance work. See
 [atomic admission evidence](../evidence/repository/2026-10-06-atomic-initial-admission/README.md).
+Scoped mode comparison also composes its retained reads while preserving authority
+checks; its focused proof is [recorded separately](../evidence/repository/2026-10-06-composed-mode-verification/README.md).
 
 The internal managed journaled host now composes registration closure, sessions,
 scopes, uploads, readers and owned schema workers before V91 local-drain attestation.
