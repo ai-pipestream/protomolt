@@ -4,7 +4,7 @@ import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
 import ai.protomolt.proto.repo.engine.ArchivePutAdmission;
 import java.util.Objects;
 
-/** Internal local archive composition pending qualification of transport ingress. */
+/** Shared internal state for local and authenticated Netty archive admission. */
 record BoundedArchiveProfile(ArchivePutAdmission.Limits limits, PayloadBudget budget, int maxActive) {
     BoundedArchiveProfile {
         Objects.requireNonNull(limits);

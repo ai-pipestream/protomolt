@@ -354,6 +354,20 @@ public final class RepoServices implements AutoCloseable {
     }
 
     /**
+     * Builds managed archives with explicit bounded Redis storage and shared input
+     * admission. Requires retention-qualified Redis, zero TTL, a finite object cap
+     * within 9 MiB and lifecycle recovery. Redis persistence and eviction settings
+     * remain the operator's responsibility. This profile supports local archive
+     * operations and {@link #startBoundedArchiveNetty}; document operations, bridge
+     * generation, streaming uploads and the general transport methods are unavailable.
+     */
+    public static RepoServices buildBoundedArchive(RepoServiceConfig config, BoundedArchiveOptions options) {
+        return new RepoServices(java.util.Objects.requireNonNull(config), BridgeEngine.standard(),
+                ai.protomolt.proto.repo.blob.spi.BlobStores.discover(),
+                java.util.Objects.requireNonNull(options).profile());
+    }
+
+    /**
      * Builds the service set with an explicit bridge engine. The default
      * engine runs what needs no other service; a host that can reach a
      * parser supplies one that also runs the text and OCR bridges.
@@ -535,8 +549,14 @@ public final class RepoServices implements AutoCloseable {
         }
     }
 
-    /** Internal authenticated archive-only transport; public profile selection remains disabled. */
-    synchronized Server startBoundedArchiveNetty(int port, String apiToken) {
+    /**
+     * Starts the bounded archive-only Netty listener. Requires a nonblank operator
+     * token granting process-level access across accounts. The listener is plaintext;
+     * use a trusted network or terminate TLS before remote access. Every listener
+     * shares this host's input budget. Read responses and decoded heap are separate
+     * from those allowances. No document, drive, bridge or streaming RPC is exposed.
+     */
+    public synchronized Server startBoundedArchiveNetty(int port, String apiToken) {
         requireOpen();
         if (archiveIngress == null) throw new IllegalStateException("Bounded archive profile is not configured");
         if (apiToken == null || apiToken.isBlank()) throw new IllegalArgumentException("Bounded archive transport requires an API token");
@@ -871,7 +891,7 @@ public final class RepoServices implements AutoCloseable {
 
     private void requireFullProfile() {
         if (archiveAdmission != null) throw new UnsupportedOperationException(
-                "Bounded archive profile supports local archive operations only; transport admission is not implemented");
+                "General transport admission and document operations are unavailable in the bounded archive profile");
     }
 
     private void requireOpen() {

@@ -1,8 +1,8 @@
 # Bounded archive ingestion
 
-Status: library admission, an internal managed-host profile and a dedicated
-authenticated archive-only Netty mount are implemented. Public configuration,
-HTTP admission and broader repository transport parity remain unfinished.
+Status: library admission, explicit public Java embedding options and a dedicated
+authenticated archive-only Netty mount are implemented. Standalone environment
+activation, HTTP admission and broader repository transport parity remain unfinished.
 
 The repository must support a provider that accepts bounded byte arrays without
 claiming streaming support. Keep the existing streaming profile and raw-ingestion
@@ -129,8 +129,18 @@ an explicit list of ten reviewed synchronous unary methods. An API token is
 mandatory; authentication runs before admission. Bridge and streaming methods fail
 at headers. All listeners on one host share the same ingress gate, and ingress
 shares the profile's budget with `ArchivePutAdmission`. Ordinary host startup is
-unchanged. This remains an internal profile, not environment-driven activation.
+unchanged. `buildBoundedArchive(config, options)` selects this profile explicitly
+for Java embedding; the default entry point does not activate it from environment
+settings alone. See the [embedding guide](../apps/bounded-archive.md).
 Keep HTTP disabled until its own admission boundary exists.
 In gRPC 1.84, compressed size failure during parsing reports UNKNOWN; uncompressed
 oversize reports RESOURCE_EXHAUSTED. Both stop before handler execution and release
 reservations. Do not describe the error statuses as identical.
+
+`BoundedArchiveOptions` exposes plain limit values, not engine or budget types.
+The factory owns one shared budget. Before external resource acquisition, options
+require capacity for one maximum transport put: seven times the request limit.
+The configured concurrency does not guarantee that many maximum-sized requests
+fit at once; excess work fails with RESOURCE_EXHAUSTED. This minimum is admission
+accounting, not a JVM memory or read-response bound. The public factory and listener
+are tested from outside the service package against PostgreSQL and Redis.
