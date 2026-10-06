@@ -67,18 +67,68 @@ class RedisArchiveLifecycleIT {
             this(writer, null);
         }
         Fixture(BlobStore writer, ArchivePutAdmission admission) {
+            this(writer, admission, opened.store(), null);
+        }
+        Fixture(BlobStore writer, ArchivePutAdmission admission, BlobStore readStore, ArchiveGetAdmission getAdmission) {
             reader = new ArchiveObjectReader(new ArchiveReadLedger(tx, UUID.randomUUID()), (generation, realm) -> {
                 assertThat(generation).isEqualTo("redis-original"); assertThat(realm).isEqualTo("redis-realm");
-                return opened.store();
+                return readStore;
             });
             operations = new ArchiveOperations(ledger, drives, opened.store(), BridgeEngine.standard(), reader,
-                    writer(writer), admission);
+                    writer(writer), admission, getAdmission);
         }
         @Override public void close() {
             reader.close();
             try { assertThat(reader.awaitIdle(Duration.ofSeconds(5))).isTrue(); }
             catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new AssertionError(interrupted); }
             reader.attestLocalQuiescence();
+        }
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void aggregateReadRefusesBeforeProviderIoButSelectedHistoricalSubsetFits(boolean transport) throws Exception {
+        var saved = request("a".repeat(64)).toBuilder().addRenditions(RenditionContent.newBuilder()
+                .setRendition(RenditionDescriptor.newBuilder().setName("later"))
+                .setData(ByteString.copyFromUtf8("b".repeat(64)))).build();
+        var request = GetEntryRequest.newBuilder().setAddress(saved.getAddress()).setVersion(1).build();
+        int responseLimit;
+        try (var fixture = new Fixture(opened.store())) {
+            fixture.operations.putEntry(CALLER, saved);
+            responseLimit = fixture.operations.getEntry(CALLER, request).getSerializedSize() - 1;
+            fixture.operations.putEntry(CALLER, saved.toBuilder().setTitle("new revision").build());
+        }
+        var reads = new java.util.concurrent.atomic.AtomicInteger();
+        var observed = intercepted((proxy, method, args) -> {
+            if (method.getName().equals("getBounded")) reads.incrementAndGet();
+            return actual(method, args);
+        });
+        var budget = new PayloadBudget(8192);
+        try (var gate = new ArchiveGetAdmission(new ArchiveGetAdmission.Limits(64, responseLimit, 4), budget, 2);
+                var fixture = new Fixture(opened.store(), null, observed, gate)) {
+            String name = "bounded-get-" + UUID.randomUUID();
+            var server = io.grpc.inprocess.InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(fixture.operations)).build().start();
+            var channel = io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
+            try {
+                var stub = ArchiveServiceGrpc.newBlockingStub(channel);
+                java.util.function.Function<GetEntryRequest, GetEntryResponse> get = transport ? stub::getEntry
+                        : r -> fixture.operations.getEntry(CALLER, r);
+                Throwable refusal = catchThrowable(() -> get.apply(request));
+                if (transport) assertThat(io.grpc.Status.fromThrowable(refusal).getCode()).isEqualTo(io.grpc.Status.Code.RESOURCE_EXHAUSTED);
+                else assertThat(refusal).isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                        e -> assertThat(e.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED));
+                assertThat(reads.get()).isZero();
+                assertThat(budget.reservedBytes()).isZero();
+                var subset = get.apply(request.toBuilder().addRenditions("later").build());
+                assertThat(subset.getRenditionsCount()).isEqualTo(1);
+                assertThat(subset.getRenditions(0).getData()).isEqualTo(ByteString.copyFromUtf8("b".repeat(64)));
+                assertThat(subset.getManifest().getVersion()).isEqualTo(1);
+                assertThat(reads.get()).isEqualTo(1);
+                assertThat(budget.reservedBytes()).isZero();
+            } finally {
+                channel.shutdownNow(); server.shutdownNow();
+                assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+            }
         }
     }
 
@@ -164,6 +214,82 @@ class RedisArchiveLifecycleIT {
 
     static ArchiveObjectWriter writer(BlobStore store) {
         return new ArchiveObjectWriter(new ArchiveUploadLedger(tx), store, "redis-original", opened.capabilities(), Duration.ofMinutes(1));
+    }
+
+    @Test void boundedReadRefusesLegacyManifestBeforeUnboundedProviderFallback() {
+        var legacy = new ArchiveOperations(ledger, drives, opened.store());
+        var saved = request("legacy bytes");
+        var put = legacy.putEntry(CALLER, saved);
+        assertThat(put.getManifest().getRenditions(0).getStorageObjectId()).isEmpty();
+        var request = GetEntryRequest.newBuilder().setAddress(saved.getAddress()).build();
+        assertThat(legacy.getEntry(CALLER, request).getRenditions(0).getData()).isEqualTo(saved.getRenditions(0).getData());
+        var reads = new java.util.concurrent.atomic.AtomicInteger();
+        var observed = intercepted((proxy, method, args) -> {
+            if (method.getName().equals("get") || method.getName().equals("getBounded")) reads.incrementAndGet();
+            return actual(method, args);
+        });
+        var budget = new PayloadBudget(8192);
+        try (var gate = new ArchiveGetAdmission(new ArchiveGetAdmission.Limits(64, 2048, 4), budget, 1);
+                var fixture = new Fixture(opened.store(), null, observed, gate)) {
+            // Also observe the raw legacy fallback, which bypasses the managed resolver.
+            var bounded = new ArchiveOperations(ledger, drives, observed, BridgeEngine.standard(), fixture.reader,
+                    null, null, gate);
+            assertThatThrownBy(() -> bounded.getEntry(CALLER, request))
+                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            e -> assertThat(e.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION));
+            assertThat(reads.get()).isZero();
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void readConstructionRetainsBudgetAndPinThroughProviderCompletion(boolean corrupt) throws Exception {
+        var saved = request("retained read bytes");
+        try (var fixture = new Fixture(opened.store())) { fixture.operations.putEntry(CALLER, saved); }
+        var request = GetEntryRequest.newBuilder().setAddress(saved.getAddress()).build();
+        var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
+        var held = intercepted((proxy, method, args) -> {
+            Object result = actual(method, args);
+            if (method.getName().equals("getBounded")) {
+                entered.countDown();
+                if (!release.await(10, TimeUnit.SECONDS)) throw new AssertionError("Read completion gate expired");
+                if (corrupt) {
+                    var read = (BlobStore.GetResult) result;
+                    read.data()[0] ^= 1;
+                }
+            }
+            return result;
+        });
+        var budget = new PayloadBudget(8192);
+        try (var gate = new ArchiveGetAdmission(new ArchiveGetAdmission.Limits(64, 2048, 4), budget, 1);
+                var fixture = new Fixture(opened.store(), null, held, gate);
+                var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var read = executor.submit(() -> fixture.operations.getEntry(CALLER, request));
+            try {
+                assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+                long reserved = budget.reservedBytes();
+                assertThat(reserved).isPositive();
+                assertThatThrownBy(() -> fixture.operations.getEntry(CALLER, request))
+                        .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                                e -> assertThat(e.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED));
+                gate.close();
+                assertThat(gate.awaitIdle(Duration.ZERO)).isFalse();
+                assertThat(budget.reservedBytes()).isEqualTo(reserved);
+                long pins = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                        "SELECT count(*) FROM archive_read_pins WHERE entry_uuid=:entry")
+                        .setParameter("entry", ArchiveIds.entryUuid(saved.getAddress())).getSingleResult()).longValue());
+                assertThat(pins).isEqualTo(1);
+            } finally { release.countDown(); }
+            if (corrupt) assertThatThrownBy(() -> read.get(10, TimeUnit.SECONDS))
+                    .hasCauseInstanceOf(ai.protomolt.proto.repo.spi.RepositoryException.class);
+            else assertThat(read.get(10, TimeUnit.SECONDS).getRenditions(0).getData()).isEqualTo(saved.getRenditions(0).getData());
+            assertThat(gate.awaitIdle(Duration.ofSeconds(1))).isTrue();
+            assertThat(budget.reservedBytes()).isZero();
+            long pins = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM archive_read_pins WHERE entry_uuid=:entry")
+                    .setParameter("entry", ArchiveIds.entryUuid(saved.getAddress())).getSingleResult()).longValue());
+            assertThat(pins).isZero();
+        }
     }
     static PutEntryRequest request(String value) {
         return PutEntryRequest.newBuilder().setAddress(EntryAddress.newBuilder().setAccountId("account")

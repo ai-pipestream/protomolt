@@ -60,12 +60,15 @@ evidence; adding processes alone does not demonstrate scaling. Hydration follows
 recovery and retention foundations. The optional JCR assessment continues to govern
 foundation boundaries without adding JCR dependencies or asserting compliance.
 
-The next independent implementation slice is aggregate archive GetEntry admission,
+The current independent implementation slice is aggregate archive GetEntry admission,
 specified in [the read-response plan](repository-bounded-ingress.md#next-slice-aggregate-archive-read-responses).
 Per-object limits currently do not bound a response assembled from many renditions.
 The reviewed plan separates engine construction lifetime from transport response
 lifetime and includes real-provider local/remote acceptance cases. It remains
-unimplemented. Continue it alongside claimed-session recovery and retention work;
+partially implemented as an optional library construction gate. Real Redis/SQL
+tests cover aggregate refusal, historical subset reads and held provider completion.
+Managed-host options and transport response lifetime remain next. Continue them
+alongside claimed-session recovery and retention work;
 performance qualification must not displace these requirements.
 
 ## Independent work that can advance now

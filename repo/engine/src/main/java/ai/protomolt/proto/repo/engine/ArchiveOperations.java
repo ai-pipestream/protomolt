@@ -126,6 +126,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     private final ArchiveObjectReader objectReader;
     private final ArchiveObjectWriter objectWriter;
     private final ArchivePutAdmission putAdmission;
+    private final ArchiveGetAdmission getAdmission;
 
     public ArchiveOperations(ArchiveLedger ledger, DriveLedger drives, BlobStore blobStore) {
         this(ledger, drives, blobStore, BridgeEngine.standard());
@@ -150,8 +151,17 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     public ArchiveOperations(ArchiveLedger ledger, DriveLedger drives, BlobStore blobStore,
                       BridgeEngine bridgeEngine, ArchiveObjectReader objectReader, ArchiveObjectWriter objectWriter,
                       ArchivePutAdmission putAdmission) {
+        this(ledger, drives, blobStore, bridgeEngine, objectReader, objectWriter, putAdmission, null);
+    }
+
+    /** Optional shared read construction gate; the host owns its close and drain. */
+    public ArchiveOperations(ArchiveLedger ledger, DriveLedger drives, BlobStore blobStore,
+                      BridgeEngine bridgeEngine, ArchiveObjectReader objectReader, ArchiveObjectWriter objectWriter,
+                      ArchivePutAdmission putAdmission, ArchiveGetAdmission getAdmission) {
         if (objectWriter != null && objectReader == null)
             throw new IllegalArgumentException("Managed archive writes require original-backend reads");
+        if (getAdmission != null && objectReader == null)
+            throw new IllegalArgumentException("Bounded archive reads require a managed bounded reader");
         this.ledger = ledger;
         this.drives = drives;
         this.blobStore = blobStore;
@@ -159,6 +169,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
         this.objectReader = objectReader;
         this.objectWriter = objectWriter;
         this.putAdmission = putAdmission;
+        this.getAdmission = getAdmission;
     }
 
     // ------------------------------------------------------------------
@@ -656,36 +667,39 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
         GetEntryResponse.Builder response = GetEntryResponse.newBuilder()
                 .setInfo(toProto(entry))
                 .setManifest(manifest);
-        for (RenditionManifestEntry item : manifest.getRenditionsList()) {
-            if (item.getState() != RenditionState.RENDITION_STATE_PRESENT) {
-                continue;
+        var selected = manifest.getRenditionsList().stream()
+                .filter(item -> item.getState() == RenditionState.RENDITION_STATE_PRESENT)
+                .filter(item -> wanted.isEmpty() || wanted.contains(item.getRendition().getName())).toList();
+        if (getAdmission != null && selected.stream().anyMatch(item -> item.getStorageObjectId().isBlank()))
+            throw failedPrecondition("Bounded archive reads require published storage bindings for every selected rendition");
+        try (var scope = getAdmission == null ? null : getAdmission.admit(response.build(), selected)) {
+            for (RenditionManifestEntry item : selected) {
+                BlobStore.GetResult got;
+                try {
+                    got = readObject(archive, entry, version.version, item);
+                } catch (BlobStore.BlobNotFoundException e) {
+                    // The manifest says PRESENT and the store disagrees: fail
+                    // honestly with the account of what is missing, never an
+                    // opaque not-found.
+                    throw failedPrecondition("rendition '" + item.getRendition().getName()
+                            + "' of entry '" + address.getEntryId()
+                            + "' is unavailable: object " + item.getObjectKey() + " is missing");
+                }
+                String sha256 = ArchiveManifests.sha256Hex(got.data());
+                if (!sha256.equals(item.getSha256())) {
+                    throw failedPrecondition("rendition '" + item.getRendition().getName()
+                            + "' of entry '" + address.getEntryId()
+                            + "' is corrupt: stored bytes hash to " + sha256
+                            + " but the manifest attests " + item.getSha256());
+                }
+                response.addRenditions(RenditionContent.newBuilder()
+                        .setRendition(item.getRendition())
+                        .setData(ByteString.copyFrom(got.data())));
             }
-            if (!wanted.isEmpty() && !wanted.contains(item.getRendition().getName())) {
-                continue;
-            }
-            BlobStore.GetResult got;
-            try {
-                got = readObject(archive, entry, version.version, item);
-            } catch (BlobStore.BlobNotFoundException e) {
-                // The manifest says PRESENT and the store disagrees: fail
-                // honestly with the account of what is missing, never an
-                // opaque not-found.
-                throw failedPrecondition("rendition '" + item.getRendition().getName()
-                        + "' of entry '" + address.getEntryId()
-                        + "' is unavailable: object " + item.getObjectKey() + " is missing");
-            }
-            String sha256 = ArchiveManifests.sha256Hex(got.data());
-            if (!sha256.equals(item.getSha256())) {
-                throw failedPrecondition("rendition '" + item.getRendition().getName()
-                        + "' of entry '" + address.getEntryId()
-                        + "' is corrupt: stored bytes hash to " + sha256
-                        + " but the manifest attests " + item.getSha256());
-            }
-            response.addRenditions(RenditionContent.newBuilder()
-                    .setRendition(item.getRendition())
-                    .setData(ByteString.copyFrom(got.data())));
+            var result = response.build();
+            if (scope != null) scope.verify(result);
+            return result;
         }
-        return response.build();
     }
 
     @Override

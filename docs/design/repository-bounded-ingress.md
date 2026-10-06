@@ -2,11 +2,12 @@
 
 ## Next slice: aggregate archive read responses
 
-Design reviewed; not implemented or advertised as available. The current
+Design reviewed; the optional library construction gate is implemented. Managed
+host activation and transport response reservations remain unfinished. The current
 `ArchiveObjectReader` checks each object's published size before its bounded
 provider read. `ArchiveOperations.getEntryImpl` can nevertheless combine multiple
 allowed objects into one response, copying each payload into a protobuf ByteString.
-The bounded write profile does not yet bound that aggregate allocation.
+The default bounded write profile does not yet activate the new read gate.
 
 Add an engine-owned `ArchiveGetAdmission` shared by local and transport calls.
 After authorization and exact version selection, freeze the selected PRESENT
@@ -51,6 +52,24 @@ This is bounded in-flight payload construction and response accounting, not a to
 heap or network-buffer limit. Manifest parsing, metadata-only/list responses and
 caller-retained results remain explicit follow-up work. No schema, wire tags,
 provider identity or JCR semantics change in this slice.
+
+### Library read-construction checkpoint
+
+`ArchiveGetAdmission` is now an optional `ArchiveOperations` constructor dependency.
+It computes complete serialized response size from the metadata envelope and frozen
+selection without allocating payload placeholders. It reserves that size plus two
+payload allowances through construction and verifies the result's actual serialized
+size. Closure rejects new work while accepted scopes retain their reservations.
+The optional gate requires the managed reader. All selected legacy renditions
+without storage identities are refused before provider I/O, because their old path
+uses an unbounded GET. Existing constructors retain that legacy behavior.
+
+Real PostgreSQL/Redis tests cover local/in-process aggregate refusal with zero GETs,
+selected historical success, and delayed real GET completion retaining both budget
+and SQL pin until success or checksum failure. This does not activate the gate in
+`RepoServices`, establish scoped-user authorization, or retain transport responses
+past the library return. Header-time response admission, explicit host options,
+transport cancellation and metadata/list bounds remain open.
 
 Status: library admission, explicit public Java embedding options and a dedicated
 authenticated archive-only Netty mount and standalone environment entry point are
