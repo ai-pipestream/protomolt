@@ -1326,3 +1326,28 @@ live successor claim, installation, activation and exact attachment. It does not
 yet prove provider publication by an automatically recovered host, death of the
 predecessor or recovery from an unactivated replacement's death. Those remain
 required qualifications alongside reader/pin lifecycle handling.
+
+#### Unquiesced replacement with a real delayed provider effect
+
+`DocumentSuccessorLatePutIT` now runs both graceful and expired-unquiesced cases
+against PostgreSQL and LocalStack. In the uncertain case, the first manager remains
+open after its real SDK call times out. Its provider activity is zero before closing
+the SDK; the proxy still holds the original signed request. No epoch-one V90 or V91
+record exists. After natural claim, owner and attempt expiry, a second manager
+reserves through V97. Retrying the old manager fails at its stale claim.
+
+The replacement loads retained preparation under its live successor claim and uses
+the ordinary installation, activation and manager publication path. SQL cleanup
+first observes absence; the proxy then forwards the actual old PUT. The old object
+remains unverified/unreferenced, another cleanup removes its version, and the
+replacement's exact bytes and receipt survive. Test cleanup releases local drained
+read handles without asserting coordinator drain or reader QUIESCED.
+
+This is a fresh manager in the same JVM, using admin authority and opaque CORE
+data. It does not prove process death, a provider SDK call still active at transfer,
+scoped typed uncertain recovery, reader/schema worker quiescence, or performance.
+
+The graceful fixture still uses preparation retained before V91. A fresh pre-V94
+preparation load after graceful reservation is rejected by the local-drain fence.
+Fresh-process graceful bootstrap therefore needs its own reviewed read authority;
+do not weaken the general loader or claim guard to make that case pass.

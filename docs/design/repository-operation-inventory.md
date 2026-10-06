@@ -6513,3 +6513,15 @@ is now `reservation()` rather than `handoff()`.
 **Unchanged:** protobuf definitions, SQL migrations, public host startup, provider
 calls and reader/pin cleanup. Private Java/SQL attachment is qualified separately
 from automatic host recovery or real process-death/provider qualification.
+
+### Unquiesced manager provider qualification
+
+**Extended qualification:** the real delayed-PUT test now covers both graceful and
+expired-unquiesced reservations. The latter keeps the old manager open without V90
+or V91, rejects its stale retry, reloads preparation through the new claim and
+publishes from a second manager. Tombstone cleanup reclaims a late real LocalStack
+version while preserving the replacement's exact bytes and receipt.
+
+**Unchanged:** production code and public protocols. This is same-JVM admin/opaque
+CORE coverage, not process death, an active SDK call at transfer, scoped typed
+uncertain recovery, automatic host recovery or performance evidence.

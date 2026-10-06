@@ -649,8 +649,12 @@ expired owner and coordinator identities and no synthetic drain records.
 Installation/activation now consume a kind-bound common Java proposal; attachment
 also confirms its kind and old owner. The private expired Java reservation supports
 exact confirmation and retry, but it does not enable automatic lease-based failover
-or prove process death. Qualify fresh-host provider publication through this path
-and connect trusted host discovery/authorization and bounded resource ownership.
+or prove process death. Real-provider publication and delayed predecessor cleanup
+now pass through a fresh manager in the same JVM with admin/opaque CORE data.
+Qualify a genuinely fresh process and scoped typed recovery, and connect trusted
+host discovery/authorization and bounded resource ownership. Graceful fresh-process
+bootstrap also needs reviewed preparation-read authority: its existing V91 fence
+refuses the general loader before V94 activation.
 Also handle replacement death between reservation and V94 activation. Reservation-only
 and V93-installed states lack a current-epoch coordinator binding, so V97 cannot
 reserve a third coordinator. They need an explicit supersession protocol with

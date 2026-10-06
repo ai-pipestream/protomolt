@@ -12,7 +12,8 @@ import java.time.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.localstack.LocalStackContainer;
@@ -37,7 +38,8 @@ class DocumentSuccessorLatePutIT {
     private static final String GENERATION = "late-successor", BUCKET = "late-successor";
     private static final Duration LEASE = Duration.ofMinutes(5);
 
-    @Test void tombstoneReclaimsRemotePredecessorPutWithoutChangingPublishedSuccessor() throws Exception {
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void tombstoneReclaimsRemotePredecessorPutWithoutChangingPublishedSuccessor(boolean graceful) throws Exception {
         try (var c = context(POSTGRES); var direct = opened(null, Duration.ofSeconds(10));
              var workers = Executors.newVirtualThreadPerTaskExecutor()) {
             var tx = c.tx();
@@ -51,6 +53,7 @@ class DocumentSuccessorLatePutIT {
             var selectedBackend = new AtomicReference<>(direct);
             var bootstrap = new PayloadBudget(64_000_000);
             try (var first = new Host(tx, profile, selectedBackend, Duration.ofSeconds(10))) {
+                first.attestOnClose = graceful;
                 var cancelledAfterOwner = new RepositoryReadControl() {
                     public boolean isCancelled() {
                         return tx.readOnly(em -> ((Number) em.createNativeQuery(
@@ -84,14 +87,16 @@ class DocumentSuccessorLatePutIT {
                                 });
                         assertThat(call.isDone()).isTrue();
                         gateway.disconnectClient();
-                        first.drain();
+                        if (graceful) first.drain();
                         int drains = tx.readOnly(em -> ((Number) em.createNativeQuery("""
                                 SELECT count(*) FROM repository_coordinator_drains d
                                 JOIN repository_coordinator_local_drains l USING(account_id,principal,operation_id,claim_epoch,claim_token,incarnation)
                                 WHERE d.operation_id=:id AND d.claim_epoch=1 AND d.claim_token=:token AND d.incarnation=:host
                                 """).setParameter("id", key.operationId()).setParameter("token", claim.token())
                                 .setParameter("host", first.sessions.coordinatorIdentity()).getSingleResult()).intValue());
-                        assertThat(drains).isEqualTo(1);
+                        assertThat(drains).isEqualTo(graceful ? 1 : 0);
+                        if (!graceful) assertNoCoordinatorDrain(tx, key.operationId());
+                        assertThat(first.uploads.providerActivity().active()).isZero();
                         delayed.close(); // The repository's old SDK is gone; the intermediary still owns the original request.
                         assertThat(first.uploads.providerActivity().active()).isZero();
                         assertThat(gateway.requests()).isEqualTo(1);
@@ -108,52 +113,79 @@ class DocumentSuccessorLatePutIT {
                                 JOIN document_part_attempts a ON a.attempt_id=:attempt WHERE c.operation_id=:id
                                 """).setParameter("id", key.operationId()).setParameter("attempt", oldAttempt).getSingleResult());
                         try (var second = new Host(tx, profile, new AtomicReference<>(direct), LEASE)) {
-                            var handoff = new RepositoryCoordinatorHandoff.Proposal(identity, UUID.randomUUID(), second.sessions.coordinatorIdentity(), LEASE);
-                            RepositoryCoordinatorHandoff.reserve(tx, ADMIN, handoff, NONE);
-                            var plan = RepositorySuccessorInstall.prepare(handoff, previous, LEASE,
-                                    Map.of("a", DocumentPublicationCandidate.Mode.OPAQUE));
-                            RepositorySuccessorInstall.install(tx, second.budget, ADMIN, plan, NONE);
-                            second.sessions.activateSuccessor(ADMIN, ADMIN, plan, NONE);
-                            var result = execute(second, input, NONE);
-                            var newAttempt = plan.next().seeds().attempts().get("a");
-                            var newObject = plan.next().prepare().plan().members().getFirst().attempt().orElseThrow().uploads().getFirst().object();
-                            assertThat(newAttempt).isNotEqualTo(oldAttempt);
-                            assertThat(newObject.objectKey()).isNotEqualTo(oldObject.objectKey());
-                            var version = tx.readOnly(em -> (String) em.createNativeQuery(
-                                    "SELECT provider_version FROM document_part_attempt_objects WHERE attempt_id=:id AND verified")
-                                    .setParameter("id", newAttempt).getSingleResult());
-                            assertThat(direct.store().getBounded(BUCKET, newObject.objectKey(), version, input.body().bytes().length).data())
-                                    .containsExactly(input.body().bytes());
-                            int referenced = tx.readOnly(em -> ((Number) em.createNativeQuery("""
-                                    SELECT count(*) FROM document_revision_parts p JOIN document_part_attempt_objects o ON p.object_id=o.physical_object_id
-                                    WHERE p.revision_id=:revision AND o.attempt_id=:attempt
-                                    """).setParameter("revision", UUID.fromString(result.getMembers(0).getRevisionId()))
-                                    .setParameter("attempt", newAttempt).getSingleResult()).intValue());
-                            assertThat(referenced).isEqualTo(1);
-                            var recovery = new DocumentAttemptRecovery(new DocumentAttemptCleanupLedger(tx), (generation, retained) -> {
-                                assertThat(generation).isEqualTo(GENERATION);
-                                assertThat(retained).isEqualTo(profile);
-                                return direct.reclaimer();
-                            });
-                            recover(recovery, oldAttempt);
-                            assertAbsentTombstone(tx, oldAttempt);
-                            var delivered = gateway.forwardTo(S3.getEndpoint());
-                            assertThat(delivered.status()).isEqualTo(200);
-                            assertThat(delivered.version()).isNotBlank();
-                            assertThat(direct.store().getBounded(BUCKET, oldObject.objectKey(), delivered.version(), input.body().bytes().length).data())
-                                    .containsExactly(input.body().bytes());
-                            assertUnverified(tx, oldAttempt);
-                            assertThat(new DocumentAttemptCleanupLedger(tx).candidates(Duration.ZERO, 100, GENERATION)).contains(oldAttempt);
-                            recover(recovery, oldAttempt);
-                            assertAbsentTombstone(tx, oldAttempt);
-                            assertUnverified(tx, oldAttempt);
-                            assertThatThrownBy(() -> direct.store().get(BUCKET, oldObject.objectKey(), delivered.version()))
-                                    .isInstanceOf(BlobStore.BlobNotFoundException.class);
-                            assertThat(direct.store().getBounded(BUCKET, newObject.objectKey(), version, input.body().bytes().length).data())
-                                    .containsExactly(input.body().bytes());
-                            assertThat(second.sessions.execute(ADMIN, input.command(), Map.of(), Map.of(), Map.of(), Map.of(), Optional.empty(),
-                                    (member, occurrence) -> { throw new AssertionError("Receipt replay must not resolve schemas"); }, NONE)).isEqualTo(result);
-                            assertThat(gateway.requests()).isEqualTo(1);
+                            RepositoryCoordinatorReservation.Proposal reservation;
+                            if (graceful) {
+                                var handoff = new RepositoryCoordinatorHandoff.Proposal(identity, UUID.randomUUID(), second.sessions.coordinatorIdentity(), LEASE);
+                                RepositoryCoordinatorHandoff.reserve(tx, ADMIN, handoff, NONE);
+                                reservation = new RepositoryCoordinatorReservation.Graceful(handoff);
+                            } else {
+                                var owner = tx.readOnly(em -> (Object[]) em.createNativeQuery(
+                                        "SELECT owner_generation,owner_token FROM repository_operation_owners WHERE operation_id=:id")
+                                        .setParameter("id", key.operationId()).getSingleResult());
+                                var expired = new RepositoryCoordinatorReservation.ExpiredUnquiesced(identity, UUID.randomUUID(),
+                                        second.sessions.coordinatorIdentity(), LEASE, new RepositoryCoordinatorReservation.OwnerIdentity(
+                                        ((Number) owner[0]).longValue(), (UUID) owner[1]));
+                                RepositoryCoordinatorExpiration.reserve(tx, ADMIN, expired, NONE);
+                                reservation = expired;
+                                // The old manager is still open; retry must fail at the stale claim, before any provider call.
+                                assertThatThrownBy(() -> execute(first, input, NONE))
+                                        .isInstanceOf(RepositoryExecutionClaimLedger.Fenced.class);
+                                assertThat(gateway.requests()).isEqualTo(1);
+                            }
+                            // Graceful handoff carries the preparation retained before drain. The uncertain
+                            // path instead reloads it through its exact live successor claim.
+                            var successorClaim = graceful ? null : tx.inTransaction(em -> { return RepositoryExecutionClaimLedger.lockLive(em,
+                                    key, input.command().sha256(), 2, reservation.successorToken()); });
+                            try (var recovered = graceful ? null : new DocumentPublicationPreparationJournal(tx, bootstrap)
+                                    .load(ADMIN, successorClaim, 0, NONE).orElseThrow()) {
+                                var plan = RepositorySuccessorInstall.prepare(reservation, graceful ? previous : recovered.record(), LEASE,
+                                        Map.of("a", DocumentPublicationCandidate.Mode.OPAQUE));
+                                RepositorySuccessorInstall.install(tx, second.budget, ADMIN, plan, NONE);
+                                second.sessions.activateSuccessor(ADMIN, ADMIN, plan, NONE);
+                                var result = execute(second, input, NONE);
+                                var newAttempt = plan.next().seeds().attempts().get("a");
+                                var newObject = plan.next().prepare().plan().members().getFirst().attempt().orElseThrow().uploads().getFirst().object();
+                                assertThat(newAttempt).isNotEqualTo(oldAttempt);
+                                assertThat(newObject.objectKey()).isNotEqualTo(oldObject.objectKey());
+                                var version = tx.readOnly(em -> (String) em.createNativeQuery(
+                                        "SELECT provider_version FROM document_part_attempt_objects WHERE attempt_id=:id AND verified")
+                                        .setParameter("id", newAttempt).getSingleResult());
+                                assertThat(direct.store().getBounded(BUCKET, newObject.objectKey(), version, input.body().bytes().length).data())
+                                        .containsExactly(input.body().bytes());
+                                int referenced = tx.readOnly(em -> ((Number) em.createNativeQuery("""
+                                        SELECT count(*) FROM document_revision_parts p JOIN document_part_attempt_objects o ON p.object_id=o.physical_object_id
+                                        WHERE p.revision_id=:revision AND o.attempt_id=:attempt
+                                        """).setParameter("revision", UUID.fromString(result.getMembers(0).getRevisionId()))
+                                        .setParameter("attempt", newAttempt).getSingleResult()).intValue());
+                                assertThat(referenced).isEqualTo(1);
+                                var recovery = new DocumentAttemptRecovery(new DocumentAttemptCleanupLedger(tx), (generation, retained) -> {
+                                    assertThat(generation).isEqualTo(GENERATION);
+                                    assertThat(retained).isEqualTo(profile);
+                                    return direct.reclaimer();
+                                });
+                                recover(recovery, oldAttempt);
+                                assertAbsentTombstone(tx, oldAttempt);
+                                var delivered = gateway.forwardTo(S3.getEndpoint());
+                                assertThat(delivered.status()).isEqualTo(200);
+                                assertThat(delivered.version()).isNotBlank();
+                                assertThat(direct.store().getBounded(BUCKET, oldObject.objectKey(), delivered.version(), input.body().bytes().length).data())
+                                        .containsExactly(input.body().bytes());
+                                assertUnverified(tx, oldAttempt);
+                                assertThat(new DocumentAttemptCleanupLedger(tx).candidates(Duration.ZERO, 100, GENERATION)).contains(oldAttempt);
+                                recover(recovery, oldAttempt);
+                                assertAbsentTombstone(tx, oldAttempt);
+                                assertUnverified(tx, oldAttempt);
+                                assertThatThrownBy(() -> direct.store().get(BUCKET, oldObject.objectKey(), delivered.version()))
+                                        .isInstanceOf(BlobStore.BlobNotFoundException.class);
+                                assertThat(direct.store().getBounded(BUCKET, newObject.objectKey(), version, input.body().bytes().length).data())
+                                        .containsExactly(input.body().bytes());
+                                assertThat(second.sessions.execute(ADMIN, input.command(), Map.of(), Map.of(), Map.of(), Map.of(), Optional.empty(),
+                                        (member, occurrence) -> { throw new AssertionError("Receipt replay must not resolve schemas"); }, NONE)).isEqualTo(result);
+                                assertThat(gateway.requests()).isEqualTo(1);
+                                if (!graceful) {
+                                    assertNoCoordinatorDrain(tx, key.operationId());
+                                }
+                            }
                         }
                     }
                 }
@@ -166,6 +198,13 @@ class DocumentSuccessorLatePutIT {
         var result = recovery.recover(attempt, Duration.ofSeconds(10));
         assertThat(result.failure()).isNull();
         assertThat(result.outcome()).isEqualTo(DocumentAttemptRecovery.Outcome.ABSENT);
+    }
+    private static void assertNoCoordinatorDrain(Tx tx, UUID operation) {
+        for (var table : java.util.List.of("repository_coordinator_drains", "repository_coordinator_local_drains")) {
+            int count = tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM " + table
+                    + " WHERE operation_id=:id AND claim_epoch=1").setParameter("id", operation).getSingleResult()).intValue());
+            assertThat(count).as(table).isZero();
+        }
     }
     private static void assertUnverified(Tx tx, UUID attempt) {
         var counts = tx.readOnly(em -> (Object[]) em.createNativeQuery("""
@@ -240,6 +279,7 @@ class DocumentSuccessorLatePutIT {
         final DocumentUploadCoordinator uploads;
         final DocumentPublicationSessions sessions;
         boolean drained;
+        boolean attestOnClose = true;
         Host(Tx tx, ManagedBackendLedger.Profile profile, AtomicReference<OpenedBlobStore> backend, Duration lease) {
             var drives = new DriveLedger(tx);
             reads = new DocumentReadLedger(tx, UUID.randomUUID(), 1);
@@ -266,6 +306,15 @@ class DocumentSuccessorLatePutIT {
             sessions.attestLocalDrain(ignored -> ADMIN, NONE);
             assertThat(budget.reservedBytes()).isZero(); drained = true;
         }
-        public void close() throws Exception { drain(); }
+        public void close() throws Exception {
+            if (attestOnClose) { drain(); return; }
+            // Test resource cleanup only: no V90/V91 marker and no reader-quiescence claim.
+            sessions.close(); assertThat(sessions.awaitIdle(Duration.ofSeconds(5))).isTrue();
+            uploads.close(); assertThat(uploads.awaitIdle(Duration.ofSeconds(5))).isTrue();
+            assertThat(uploads.awaitProviderIdle(Duration.ofSeconds(5))).isTrue();
+            reader.close(); reads.closeForShutdown(); assertThat(reads.awaitLocalDrain(Duration.ofSeconds(5))).isTrue();
+            reads.releaseDrained(1);
+            assertThat(reads.outstandingReads()).isZero(); assertThat(budget.reservedBytes()).isZero();
+        }
     }
 }
