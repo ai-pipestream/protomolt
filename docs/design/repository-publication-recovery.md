@@ -2027,3 +2027,18 @@ winner with no mutation. Verify old worker ownership and provider tombstones
 through the transition. The same-key call guard must cover the full managed retry
 and publication; it is local exclusion, not distributed authority. Sol reviewed
 this next-step design against the existing session implementation.
+
+The live-lease readback case now has a focused PostgreSQL regression:
+[live activation evidence](../evidence/repository/2026-10-06-live-activation-readback/README.md).
+It confirms exact attachment after cancellation following a committed V94, with
+one durable installation and activation and no additional supersession.
+
+Implementation must represent an uncertain new V97 as a distinct retained pending
+state. Retry that exact proposal before inspecting the old activation again:
+the reservation may already have committed. Both ordinary advancement and the
+unactivated V98 path must reject this pending state. Claim-fenced retirement must
+check both the old successor and the pending V97 successor; fencing only the old
+claim does not settle the uncertain new reservation. Terminal and shutdown disposal
+must clear pending metadata only under their existing complete-operation or exact
+ownership proofs. Capacity exhaustion or unresolved activation evidence is no
+proof, and a private identity read does not replace current caller authorization.

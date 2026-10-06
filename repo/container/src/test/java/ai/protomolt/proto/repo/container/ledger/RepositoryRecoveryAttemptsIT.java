@@ -451,6 +451,43 @@ class RepositoryRecoveryAttemptsIT {
         }
     }
 
+    @Test void liveCommittedActivationLostReplyReattachesExactSuccessor() throws Exception {
+        try (var c=context(POSTGRES)) {
+            var source=source(c); var cancelled=new AtomicBoolean();
+            var datasource=DocumentJdbcFaults.afterCommit(c.pool(),() -> {
+                if (count(c,"repository_successor_executions")==1) cancelled.set(true);
+            });
+            var control=new RepositoryReadControl() {
+                public boolean isCancelled() { return cancelled.get(); }
+                public long remainingNanos() { return Long.MAX_VALUE; }
+            };
+            var attemptBudget=new PayloadBudget(128_000_000); var lease=Duration.ofSeconds(30);
+            try (var emf=jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",Map.of(
+                    "hibernate.connection.datasource",datasource,"hibernate.hbm2ddl.auto","validate"));
+                 var resources=DocumentJournaledSessionsIT.resources(new Tx(emf).withTimeouts(TIMEOUTS),1,1_000_000,lease,new PayloadBudget(128_000_000));
+                 var attempts=new RepositoryRecoveryAttempts(new Tx(emf),attemptBudget,resources.sessions(),lease,TIMEOUTS,1)) {
+                try (var attempt=attempts.begin(CALLER,source.command(),source.observation())) {
+                    var original=attempt.proposal();
+                    attempt.advance(CALLER,CALLER,MODES,NONE); attempt.advance(CALLER,CALLER,MODES,NONE);
+                    assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,MODES,control))
+                            .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.CANCELLED));
+                    assertThat(count(c,"repository_successor_executions")).isEqualTo(1);
+                    assertThat(attempt.reconcileUnactivated(CALLER,CALLER,MODES,NONE)).isFalse();
+                    assertThat(attempt.advance(CALLER,CALLER,MODES,NONE))
+                            .isEqualTo(RepositoryRecoveryAttempts.Phase.ACTIVATED);
+                    assertThat(attempt.proposal()).isSameAs(original);
+                    assertThat(count(c,"repository_successor_executions")).isEqualTo(1);
+                    assertThat(count(c,"repository_successor_installs")).isEqualTo(1);
+                    assertThat(count(c,"repository_coordinator_supersessions")).isZero();
+                    assertThat(resources.sessions().retainedSessions()).isEqualTo(1);
+                    assertThat(attemptBudget.reservedBytes()).isZero();
+                }
+                attempts.close();
+                assertThat(attempts.drain()).isEqualTo(new RepositoryRecoveryAttempts.Drain(0,0));
+            }
+        }
+    }
+
     @Test void expiredCommittedActivationCannotBeSupersededAsUnactivated() throws Exception {
         try (var c=context(POSTGRES)) {
             var source=source(c); var cancelled=new AtomicBoolean();
