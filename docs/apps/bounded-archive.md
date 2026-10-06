@@ -1,4 +1,4 @@
-# Embed a bounded Redis archive
+# Run or embed a bounded Redis archive
 
 Use this profile when a Java application needs managed archive entries, retained
 versions and optional gRPC access backed by Redis. It uses PostgreSQL for repository
@@ -9,6 +9,47 @@ are unavailable in this profile.
 The Java API lives in `protomolt-repo-service`. Select it explicitly with
 `RepoServices.buildBoundedArchive`; the existing `RepoServiceMain` does not select
 this profile from environment settings alone.
+
+## Run a standalone process
+
+`RepoBoundedArchiveMain` starts this profile without an embedding application.
+Provide the storage settings below, PostgreSQL connection settings
+(`DOCUMENT_PLATFORM_JDBC_URL`, `DOCUMENT_PLATFORM_USERNAME`,
+`DOCUMENT_PLATFORM_PASSWORD`), and `PROTOMOLT_API_TOKEN` through your process's
+secret configuration. Select an account and drive explicitly:
+
+```sh
+export DOCUMENT_PLATFORM_ARCHIVE_ACCOUNT=desktop
+export DOCUMENT_PLATFORM_ARCHIVE_DRIVE=storage
+export DOCUMENT_PLATFORM_GRPC_PORT=9090
+./gradlew :protomolt-repo-service:installDist
+java -cp 'repo/service/build/install/protomolt-repo-service/lib/*' \
+  ai.protomolt.proto.repo.service.RepoBoundedArchiveMain
+```
+
+The launcher provisions the drive through the local repository API before opening
+the archive listener. It reports `PROTOMOLT_ARCHIVE_READY port=<bound-port>` after
+startup. An existing drive keeps its stored location when host defaults change;
+an inactive drive or one belonging to a different selected provider prevents
+startup. Clients can then create an archive on that drive through ArchiveService.
+The credential has the process-level access described below, not per-account scope.
+
+The standalone limits default to a 1 MiB object, 2 MiB request, 16 renditions,
+14 MiB payload budget and four concurrent requests. Override them with
+`DOCUMENT_PLATFORM_ARCHIVE_MAX_OBJECT_BYTES`,
+`DOCUMENT_PLATFORM_ARCHIVE_MAX_REQUEST_BYTES`,
+`DOCUMENT_PLATFORM_ARCHIVE_MAX_RENDITIONS`,
+`DOCUMENT_PLATFORM_ARCHIVE_PAYLOAD_BUDGET_BYTES`, and
+`DOCUMENT_PLATFORM_ARCHIVE_MAX_CONCURRENT_REQUESTS`. Invalid configured values
+fail startup. Redis's configured object cap must cover the archive object limit;
+its TTL must explicitly be zero.
+
+SIGTERM closes admission and waits for accepted work. A drain timeout keeps the
+shutdown hook alive and retries; other shutdown errors are reported as failures.
+The process test covers a write blocked at SQL commit beyond ten seconds and reads
+the committed version after restart. Delayed Redis I/O and forced-kill recovery
+are separate qualification work. Choose an external supervisor's termination grace
+period accordingly; a forced kill is not graceful shutdown.
 
 ## Configure storage
 

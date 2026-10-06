@@ -1,8 +1,9 @@
 # Bounded archive ingestion
 
 Status: library admission, explicit public Java embedding options and a dedicated
-authenticated archive-only Netty mount are implemented. Standalone environment
-activation, HTTP admission and broader repository transport parity remain unfinished.
+authenticated archive-only Netty mount and standalone environment entry point are
+implemented. Delayed-provider process shutdown, HTTP admission and broader repository
+transport parity remain unfinished.
 
 The repository must support a provider that accepts bounded byte arrays without
 claiming streaming support. Keep the existing streaming profile and raw-ingestion
@@ -165,7 +166,8 @@ Acceptance needs a real PostgreSQL/Redis child-process launch, authenticated arc
 write/read and retry, restart with the same drive, incompatible existing-drive refusal,
 missing-token and invalid-limit failures before resource acquisition, unmounted RPC
 checks, and shutdown during a delayed real write. The embedding and Netty tests above
-do not replace the process-level cases. No standalone launcher is implemented yet.
+do not replace the process-level cases. `RepoBoundedArchiveMain` now implements this
+separate entry point; its process qualification is recorded below.
 
 ### Bootstrap identity and process lifetime review
 
@@ -220,10 +222,13 @@ PostgreSQL, Redis and authenticated Netty, holding the return from an actual Red
 write beyond that interval. It checks that timed drain refuses new calls, preserves
 reservations, and allows the accepted RPC to return success after release.
 
-The production launcher and child-process SIGTERM case are still pending. The
-current injected pause is after Redis completes its command, not a delayed network
-write. The process test must qualify its actual provider boundary and shutdown
-hook; it must not infer crash or power-loss durability from this host test.
+The original host test pauses after Redis completes its command, not during a
+network write. Production child-process qualification now blocks an accepted write
+at its actual PostgreSQL commit lock, sends SIGTERM, and requires the process and
+RPC to survive the first ten-second drain timeout. Releasing the lock permits the
+write to return success, orderly process exit, and a restart read of the new version.
+Delayed Redis I/O remains a separate provider boundary to qualify; neither case
+establishes crash or power-loss durability.
 
 ### Distinguishing a retryable drain timeout
 
@@ -236,3 +241,23 @@ close attempt after successful startup, never classify message text or suppresse
 startup failures. This type does not imply that all transports are still open:
 the second idle check follows transport shutdown. Shared storage remains retained
 until the relevant drain succeeds.
+
+### Standalone process qualification
+
+`BoundedArchiveProcessIT` launches the production main with real PostgreSQL and
+Redis. It covers authenticated put/get/retry, missing credentials, an unmounted
+DriveService RPC, restart with changed host defaults while retaining the drive's
+stored location, suspended and incompatible drive refusal, and malformed limits
+or missing token before connecting to an unavailable database. The SIGTERM case
+above checks Linux exit status and absence of uncaught shutdown exceptions.
+
+After listener activation, exceptional cleanup also retries direct drain timeouts.
+A preexisting thread interrupt is temporarily cleared for cleanup and restored
+before propagating the original error. A new interruption during cleanup remains
+a separate failure; arbitrary repeated interruption is not an unconditional graceful
+shutdown guarantee. Non-timeout cleanup errors are attached to the original error.
+Startup failures before listener activation retain the separate cleanup path.
+
+Follow-up qualification still includes delayed provider completion, concurrent
+drive-bootstrap winners, and exhaustive unmounted RPC checks. Public deployment,
+minimal packaged dependencies and full repository parity remain separate gates.
