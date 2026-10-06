@@ -15,7 +15,8 @@ gradle.projectsEvaluated {
         }
     }
     ['protomolt-repo-spi', 'protomolt-repo-codec', 'protomolt-repo-blob-spi', 'protomolt-repo-blob-s3',
-     'protomolt-repo-blob-redis', 'protomolt-repo-blob-cache', 'protomolt-repo-blob-grpc'].each { visit(root.project(':' + it)) }
+     'protomolt-repo-blob-redis', 'protomolt-repo-blob-cache', 'protomolt-repo-blob-grpc',
+     'protomolt-repo-publication-grpc'].each { visit(root.project(':' + it)) }
     selected.each { project ->
         project.publishing.repositories.maven {
             name = 'RepositoryConsumer'

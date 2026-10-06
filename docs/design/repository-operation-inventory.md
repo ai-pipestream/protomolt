@@ -6787,3 +6787,11 @@ revocation, cancellation, status mapping and corruption after server validation.
 See [client evidence](../evidence/repository/2026-10-06-publication-client/README.md)
 and the [composition guide](../repo/publication.md). Isolated published-consumer
 verification, non-S3 complete-document providers and scaling remain open.
+
+**Publication-client packaging verified:** the independent consumer now compiles
+the client API from filesystem-published artifacts with both Gradle metadata and
+Maven POM-only resolution. Its isolated runtime passes the named server, SQL,
+Kafka and provider dependency exclusions. See
+[consumer evidence](../evidence/repository/2026-10-06-publication-consumer/README.md).
+No remote artifact release occurred. Non-S3 complete-document qualification,
+throughput/scaling and the remaining recovery/history/hydration work stay open.

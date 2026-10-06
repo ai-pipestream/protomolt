@@ -85,3 +85,8 @@ receipts. It exercises PostgreSQL, versioned LocalStack and Git-backed schemas,
 including scoped credential revocation, cancellation and corrupted wire responses.
 This is integration evidence, not a throughput or horizontal-scaling qualification.
 Partial hydration and additional complete-document providers remain separate work.
+
+The [independent consumer](../../verification/repository-consumer/README.md) also
+compiles this API from filesystem-published artifacts using Gradle metadata and
+Maven POMs separately. Its isolated runtime checks the server, SQL, Kafka and
+provider dependency exclusions.

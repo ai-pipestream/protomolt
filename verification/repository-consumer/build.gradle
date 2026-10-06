@@ -15,12 +15,13 @@ repositories {
     mavenCentral()
 }
 java { toolchain { languageVersion = JavaLanguageVersion.of(25) } }
-sourceSets { grpcClient }
+sourceSets { grpcClient; publicationClient }
 configurations { repositorySpiOnly; blobSpiOnly; s3Only; redisOnly; cacheOnly; grpcOnly }
 dependencies {
     repositorySpiOnly "ai.pipestream:protomolt-repo-spi:${providers.gradleProperty('candidateVersion').get()}"
     implementation "ai.pipestream:protomolt-repo-spi:${providers.gradleProperty('candidateVersion').get()}"
     grpcClientImplementation "ai.pipestream:protomolt-repo-blob-grpc:${providers.gradleProperty('candidateVersion').get()}"
+    publicationClientImplementation "ai.pipestream:protomolt-repo-publication-grpc:${providers.gradleProperty('candidateVersion').get()}"
     blobSpiOnly "ai.pipestream:protomolt-repo-blob-spi:${providers.gradleProperty('candidateVersion').get()}"
     s3Only "ai.pipestream:protomolt-repo-blob-s3:${providers.gradleProperty('candidateVersion').get()}"
     redisOnly "ai.pipestream:protomolt-repo-blob-redis:${providers.gradleProperty('candidateVersion').get()}"
@@ -30,7 +31,7 @@ dependencies {
     implementation "ai.pipestream:protomolt-repo-blob-spi:${providers.gradleProperty('candidateVersion').get()}"
 }
 tasks.register('verifyConsumer', JavaExec) {
-    dependsOn classes, grpcClientClasses
+    dependsOn classes, grpcClientClasses, publicationClientClasses
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'RepositoryConsumer'
     doFirst {
@@ -53,6 +54,14 @@ tasks.register('verifyConsumer', JavaExec) {
                 .collect { it.moduleVersion?.name }.findAll { it != null }
         def leaked = names.findAll { forbidden.contains(it) }
         if (!leaked.isEmpty()) throw new GradleException('Repository dependencies leaked: ' + leaked)
+        def publication = configurations.publicationClientRuntimeClasspath.incoming.resolutionResult.allComponents
+                .collect { it.moduleVersion }.findAll { it != null }
+        def publicationLeaks = publication.findAll {
+            (forbidden + ['protomolt-repo-engine']).contains(it.name) ||
+                    it.group == 'software.amazon.awssdk' || it.group.startsWith('com.azure') || it.group == 'redis.clients'
+        }
+        if (!publicationLeaks.isEmpty()) throw new GradleException('Publication client dependencies leaked: ' + publicationLeaks)
+        logger.lifecycle('Published publication client runtime: ' + publication.collect { it.toString() }.sort())
     }
 }
 check { dependsOn 'verifyConsumer' }

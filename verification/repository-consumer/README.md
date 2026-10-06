@@ -20,3 +20,10 @@ conditional-write alternatives, and rejects storage/database implementations in
 the resolved production graph. The second resolution uses Maven POM metadata
 without Gradle metadata redirection. Neither run substitutes project dependencies.
 Use a unique candidate version and destination when comparing different revisions.
+
+The separate `publicationClient` source set depends only on the published
+`protomolt-repo-publication-grpc` artifact. It compiles client construction and the
+shared publication method without dependencies from the other consumer source
+sets. Its resolved runtime rejects repository server/engine code, SQL, Kafka and
+AWS, Azure or Redis storage SDKs. Both metadata modes apply that check. This is a
+packaging check; real transport behavior is tested in the packaged storage suite.
