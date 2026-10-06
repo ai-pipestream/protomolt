@@ -24,7 +24,13 @@ class RepositoryClaimMutationFenceIT {
             var claims = new RepositoryExecutionClaimLedger(c.tx()); var operations = new RepositoryOperationLedger(c.tx());
             var first = claims.acquire(key, command, UUID.randomUUID(), Duration.ofSeconds(1));
             var owner = operations.admit(key, command, UUID.randomUUID(), LEASE, first).owner().orElseThrow();
-            assertThat(operations.renew(owner, LEASE).executionClaim()).contains(first);
+            // Heartbeat renews both leases. Keep this claim short so transfer is tested after real expiry.
+            var renewed = operations.renew(owner, Duration.ofSeconds(1)).executionClaim().orElseThrow();
+            assertThat(renewed.key()).isEqualTo(first.key());
+            assertThat(renewed.commandSha256()).isEqualTo(first.commandSha256());
+            assertThat(renewed.token()).isEqualTo(first.token());
+            assertThat(renewed.epoch()).isEqualTo(first.epoch());
+            assertThat(renewed.leaseUntil()).isAfterOrEqualTo(first.leaseUntil());
             c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(1.1)").getSingleResult());
             var next = claims.takeOver(key, command, 1, UUID.randomUUID(), LEASE);
             assertThatThrownBy(() -> operations.renew(owner, LEASE)).isInstanceOf(RepositoryExecutionClaimLedger.Fenced.class);

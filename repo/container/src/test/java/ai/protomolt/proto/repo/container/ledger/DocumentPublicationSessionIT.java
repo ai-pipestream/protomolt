@@ -23,6 +23,48 @@ class DocumentPublicationSessionIT {
     private static final RepositoryCaller CALLER = new RepositoryCaller("principal", true);
     private static final Duration LEASE = Duration.ofMinutes(5);
 
+    @Test void preparationCommitFailureCannotLeaveAnInitialClaimWithoutSeeds() {
+        try (var c = context(POSTGRES)) {
+            var input = input(c);
+            var armed = new AtomicBoolean();
+            var source = DocumentJdbcFaults.beforeCommit(c.pool(), connection -> {
+                if (!armed.get()) return;
+                try (var query = connection.prepareStatement(
+                        "SELECT count(*) FROM repository_publication_preparations WHERE operation_id=?")) {
+                    query.setObject(1, input.command().operationId());
+                    try (var rows = query.executeQuery()) {
+                        rows.next();
+                        if (rows.getInt(1) == 1 && armed.compareAndSet(true, false))
+                            throw new java.sql.SQLException("Preparation commit refused", "08006");
+                    }
+                }
+            });
+            var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(32L * 1024 * 1024);
+            try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                    Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
+                var session = DocumentPublicationSession.journaled(new Tx(emf), CALLER, input.command(), input.placements(), LEASE, budget);
+                var modes = new java.util.HashMap<String, DocumentPublicationCandidate.Mode>();
+                input.command().intent().getMembersList().forEach(member -> modes.put(member.getMemberId(), DocumentPublicationCandidate.Mode.TYPED));
+                try (var execution = session.begin(CALLER, RepositoryReadControl.NONE)) { execution.bindModes(modes); }
+                armed.set(true);
+                assertThatThrownBy(() -> session.admit(CALLER, RepositoryReadControl.NONE))
+                        .hasStackTraceContaining("Preparation commit refused");
+                assertThat(armed.get()).isFalse();
+                assertThat(budget.reservedBytes()).isZero();
+                for (String table : java.util.List.of("repository_execution_claims", "repository_publication_preparations",
+                        "repository_publication_modes", "repository_operation_owners")) {
+                    int count = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                            "SELECT count(*) FROM " + table + " WHERE operation_id=:id")
+                            .setParameter("id", input.command().operationId()).getSingleResult()).intValue());
+                    assertThat(count).as(table).isZero();
+                }
+                assertThat(session.admit(CALLER, RepositoryReadControl.NONE).orElseThrow().token())
+                        .isEqualTo(session.seeds().ownerNonce());
+                assertThat(budget.reservedBytes()).isZero();
+            }
+        }
+    }
+
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(ints = {0, 1, 2})
     void journaledAssessmentStartKeepsOriginalCoordinatesAfterAcknowledgmentUncertainty(int fault) {
@@ -122,6 +164,11 @@ class DocumentPublicationSessionIT {
                 assertThat(armed.get()).isFalse();
                 assertThat(budget.reservedBytes()).isZero();
                 assertThat(new RepositoryOperationLedger(c.tx()).find(key(input.command())).isPresent()).isEqualTo(stage == 3);
+                int preparations = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                        "SELECT count(*) FROM repository_publication_preparations WHERE operation_id=:id")
+                        .setParameter("id", input.command().operationId()).getSingleResult()).intValue());
+                assertThat(preparations)
+                        .as("acknowledged or uncertain initial claim always has durable seeds").isEqualTo(1);
                 var before = c.tx().readOnly(em -> (Object[]) em.createNativeQuery("""
                         SELECT claim_token,lease_until FROM repository_execution_claims WHERE operation_id=:id
                         """).setParameter("id", input.command().operationId()).getSingleResult());

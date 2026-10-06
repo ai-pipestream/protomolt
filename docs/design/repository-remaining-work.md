@@ -107,13 +107,13 @@ features available. Recovery is one workstream, not the whole goal.
    Scoped creation of a truly absent destination is currently rejected by replay
    authorization; resolve that policy explicitly, without widening journal access
    into a document-creation grant.
-   Review also found that initial claim acquisition commits before preparation
-   seeds are saved. Same-process retry retains those seeds, but a process crash
-   between commits can strand a claim without recoverable preparation. Commit
-   claim and initial preparation atomically (or prove an equivalent seed recovery
-   protocol) before ordinary durable registration is enabled. Test rollback before
-   preparation insertion, lost commit acknowledgment and fresh-process recovery;
-   never turn a claim-only row into permission to invent replacement seeds.
+   Initial claim and preparation now commit atomically. Real SQL regression tests
+   cover rollback, lost acknowledgment, cancellation before/after insertion and
+   commit, exact retry identity and unchanged lease. The earlier claim-without-seeds
+   window is closed for this path. Fixed modes and owner admission remain later
+   transactions; qualify interrupted registration in a fresh process before ordinary
+   activation. Never turn an explicit claim-only row into permission to invent
+   replacement seeds.
 5. **Restore, pruning and backup.** Test retained schema/content reachability,
    active read and pending-operation pins, current ACLs and failure recovery.
    Restore publishes through the same concurrency and validation boundaries;

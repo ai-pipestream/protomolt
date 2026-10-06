@@ -7,6 +7,7 @@ import ai.protomolt.proto.repo.spi.RepositoryException;
 import ai.protomolt.proto.repo.spi.RepositoryReadControl;
 import ai.protomolt.proto.repo.v1.DocumentPublicationIntent;
 import com.google.protobuf.ByteString;
+import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -24,6 +25,29 @@ final class DocumentPublicationPreparationJournal {
         this.tx = Objects.requireNonNull(tx); this.budget = Objects.requireNonNull(budget);
     }
 
+    /** Claim and immutable initial seeds become visible together, including uncertain commit responses. */
+    RepositoryExecutionClaimLedger.Claim acquireInitial(RepositoryCaller caller,
+            DocumentPublicationPreparationRecord record, UUID token, RepositoryReadControl control) {
+        Objects.requireNonNull(record); Objects.requireNonNull(token); require(caller, record.key(), control);
+        if (record.predecessorGeneration() != 0)
+            throw new IllegalArgumentException("Initial registration requires no predecessor");
+        try (var reservation = budget.reserve(DocumentPublicationPreparationCodec.MAX_BYTES)) {
+            // Serialize before acquiring SQL locks; the immutable record is the exact retry identity.
+            var encoded = DocumentPublicationPreparationCodec.encode(record); var digest = digest(encoded);
+            control.check();
+            var claim = tx.inTransaction(em -> {
+                var acquired = RepositoryExecutionClaimLedger.acquireInTransaction(
+                        em, record.key(), record.command(), token, record.lease());
+                control.check();
+                insert(em, acquired, record, encoded, digest);
+                control.check();
+                return acquired;
+            });
+            control.check();
+            return claim;
+        }
+    }
+
     void save(RepositoryCaller caller, RepositoryExecutionClaimLedger.Claim claim,
             DocumentPublicationPreparationRecord record, RepositoryReadControl control) {
         Objects.requireNonNull(record); require(caller, claim.key(), control);
@@ -34,21 +58,27 @@ final class DocumentPublicationPreparationJournal {
             var encoded = DocumentPublicationPreparationCodec.encode(record); var digest = digest(encoded);
             control.check();
             tx.inTransaction(em -> {
-                RepositoryExecutionClaimLedger.lockLive(em, claim);
-                bind(em.createNativeQuery("""
-                        INSERT INTO repository_publication_preparations(account_id,principal,operation_id,predecessor_generation,
-                          owner_nonce,command_codec,command_version,command_bytes,command_sha256,preparation_bytes,preparation_sha256)
-                        VALUES (:a,:p,:o,:g,:owner,:codec,:version,:command,:commandDigest,:bytes,:digest)
-                        ON CONFLICT(account_id,principal,operation_id,predecessor_generation) DO NOTHING
-                        """), claim.key(), record.predecessorGeneration()).setParameter("owner", record.seeds().ownerNonce())
-                        .setParameter("codec", DocumentPublicationCommand.CODEC).setParameter("version", DocumentPublicationCommand.ENCODING_VERSION)
-                        .setParameter("command", record.command().canonical().toByteArray())
-                        .setParameter("commandDigest", HexFormat.of().parseHex(record.command().sha256()))
-                        .setParameter("bytes", encoded.toByteArray()).setParameter("digest", digest).executeUpdate();
+                insert(em, claim, record, encoded, digest);
                 control.check(); return null;
             });
             control.check();
         }
+    }
+
+    private static void insert(EntityManager em, RepositoryExecutionClaimLedger.Claim claim,
+            DocumentPublicationPreparationRecord record, ByteString encoded, byte[] digest) {
+        // Exact claim retries must re-establish the current-transaction fence for V81's guard.
+        RepositoryExecutionClaimLedger.lockLive(em, claim);
+        bind(em.createNativeQuery("""
+                INSERT INTO repository_publication_preparations(account_id,principal,operation_id,predecessor_generation,
+                  owner_nonce,command_codec,command_version,command_bytes,command_sha256,preparation_bytes,preparation_sha256)
+                VALUES (:a,:p,:o,:g,:owner,:codec,:version,:command,:commandDigest,:bytes,:digest)
+                ON CONFLICT(account_id,principal,operation_id,predecessor_generation) DO NOTHING
+                """), claim.key(), record.predecessorGeneration()).setParameter("owner", record.seeds().ownerNonce())
+                .setParameter("codec", DocumentPublicationCommand.CODEC).setParameter("version", DocumentPublicationCommand.ENCODING_VERSION)
+                .setParameter("command", record.command().canonical().toByteArray())
+                .setParameter("commandDigest", HexFormat.of().parseHex(record.command().sha256()))
+                .setParameter("bytes", encoded.toByteArray()).setParameter("digest", digest).executeUpdate();
     }
 
     /** Trusted process-only bootstrap before claim acquisition; never returns private seeds or placement. */

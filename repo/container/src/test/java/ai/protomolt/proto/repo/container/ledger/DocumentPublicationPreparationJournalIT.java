@@ -23,6 +23,35 @@ class DocumentPublicationPreparationJournalIT {
     private static final Duration LEASE = Duration.ofMinutes(1);
     private static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {1, 2, 3, 4, 5})
+    void initialRegistrationCancellationNeverSeparatesClaimFromPreparation(int checkpoint) {
+        try (var c = context(POSTGRES)) {
+            var budget = budget(); var journal = new DocumentPublicationPreparationJournal(c.tx(), budget);
+            // Entry, encoded-before-SQL, claim-before-preparation, preparation-before-commit, after-commit.
+            var value = input(c); var token = UUID.randomUUID();
+            var control = cancelAt(checkpoint);
+            assertThatThrownBy(() -> journal.acquireInitial(CALLER, value, token, control))
+                    .isInstanceOfSatisfying(RepositoryException.class,
+                            failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.CANCELLED));
+            for (String table : java.util.List.of("repository_execution_claims", "repository_publication_preparations")) {
+                int count = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                        "SELECT count(*) FROM " + table + " WHERE operation_id=:id")
+                        .setParameter("id", value.command().operationId()).getSingleResult()).intValue());
+                assertThat(count).as("%s at checkpoint %s", table, checkpoint).isEqualTo(checkpoint == 5 ? 1 : 0);
+            }
+            assertThat(budget.reservedBytes()).isZero();
+            var claim = journal.acquireInitial(CALLER, value, token, NONE);
+            assertThat(journal.acquireInitial(CALLER, value, token, NONE)).isEqualTo(claim);
+            try (var loaded = journal.load(CALLER, claim, 0, NONE).orElseThrow()) {
+                assertThat(loaded.record().seeds().ownerNonce()).isEqualTo(value.seeds().ownerNonce());
+                assertThat(loaded.record().seeds().attempts()).isEqualTo(value.seeds().attempts());
+                assertThat(loaded.record().seeds().uploadTokens()).isEqualTo(value.seeds().uploadTokens());
+            }
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
     @Test void journalRoundTripAdmitsOriginalIdentitiesAndRetainsBudgetUntilClose() {
         try (var c = context(POSTGRES)) {
             var value = input(c); var budget = budget(); var journal = new DocumentPublicationPreparationJournal(c.tx(), budget);

@@ -12,7 +12,6 @@ import java.util.UUID;
 final class DocumentPublicationRegistration {
     private final DocumentPublicationPreparationRecord preparation;
     private final UUID claimToken = UUID.randomUUID();
-    private final RepositoryExecutionClaimLedger claims;
     private final DocumentPublicationPreparationJournal preparations;
     private final DocumentPublicationModesJournal modes;
     private final DocumentAssessmentStartJournal starts;
@@ -20,7 +19,6 @@ final class DocumentPublicationRegistration {
     DocumentPublicationRegistration(Tx tx, PayloadBudget budget, DocumentPublicationPreparationRecord preparation) {
         this.preparation = Objects.requireNonNull(preparation);
         if (preparation.predecessorGeneration() != 0) throw new IllegalArgumentException("Initial registration requires no predecessor");
-        claims = new RepositoryExecutionClaimLedger(tx);
         preparations = new DocumentPublicationPreparationJournal(tx, budget);
         modes = new DocumentPublicationModesJournal(tx, budget);
         starts = new DocumentAssessmentStartJournal(tx, budget);
@@ -46,9 +44,7 @@ final class DocumentPublicationRegistration {
         DocumentAdmissionAuthorization.requireCaller(caller, preparation.key(), preparation.key().account());
         if (fixedModes == null) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
                 "Publication modes must be fixed before durable registration");
-        var claim = claims.acquire(preparation.key(), preparation.command(), claimToken, preparation.lease());
-        control.check();
-        preparations.save(caller, claim, preparation, control);
+        var claim = preparations.acquireInitial(caller, preparation, claimToken, control);
         modes.bind(caller, claim, 0, fixedModes, control);
         control.check();
         return claim;

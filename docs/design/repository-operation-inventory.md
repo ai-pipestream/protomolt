@@ -6116,3 +6116,17 @@ scopes while forwarding the exact caller. Shutdown rejects new schema work and
 retains shared resources until publication scopes and abandoned registry loads
 drain. Typed/opaque/replay, scoped identity, warm-cache revocation and startup/close
 failures have real-provider tests. No protobuf or mounted publication RPC changes.
+
+### Atomic initial claim and preparation
+
+**Extended internal operation:** private publication registration now writes the
+initial execution claim and immutable preparation in one SQL transaction. Encoding
+precedes locks; the current claim fence covers the preparation insert, including
+exact retries. A pre-commit failure leaves neither row. Lost acknowledgment or
+post-commit cancellation leaves both with the original identity and lease.
+
+Explicit low-level claim-only operations remain unchanged. Fixed modes and owner
+admission still commit later. This does not activate ordinary/scoped registration,
+claim transfer, or a publication RPC. No protobuf, migration, schema reference,
+receipt binding or public idempotency contract changes. Evidence is in
+[the regression record](../evidence/repository/2026-10-05-atomic-registration/README.md).

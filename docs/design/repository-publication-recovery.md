@@ -5,14 +5,19 @@ This extends the repository composition goal without changing public contracts.
 
 ## Initial registration activation requirements
 
-The private registration path currently commits claim acquisition and preparation
-storage separately. Retained same-process retries preserve the token and seeds;
-a process crash between those commits can instead leave a claim with no durable
-preparation. Ordinary runtime registration remains disabled. Before enabling it,
-commit the initial claim and preparation in one transaction or prove an equivalent
-durable seed protocol. Cover rollback before preparation insertion, lost commit
-acknowledgment and fresh-process recovery. A claim-only row must never authorize
-inventing new seeds or a new owner identity.
+The private initial registration path now commits claim acquisition and immutable
+preparation together. It encodes the bounded preparation before taking SQL locks,
+then holds the claim lock and current-transaction fence through insertion and the
+last pre-commit cancellation check. Exact retry keeps the original token, seeds
+and lease; it does not renew or replace them. Real PostgreSQL regression tests
+prove rollback leaves neither row and a lost commit acknowledgment leaves both.
+Cancellation at every explicit boundary has the same all-or-nothing behavior.
+See the [atomic-registration evidence](../evidence/repository/2026-10-05-atomic-registration/README.md).
+
+Ordinary runtime registration remains disabled. Fixed modes and owner admission
+still commit later, so complete fresh-process recovery of interrupted registration
+remains to be qualified. Explicit low-level claim-only primitives remain available;
+such a row must never authorize inventing replacement seeds or an owner identity.
 
 Scoped journal access also requires a host-private capability bound to account,
 authenticated principal, operation ID, command digest, owner nonce and claim token.

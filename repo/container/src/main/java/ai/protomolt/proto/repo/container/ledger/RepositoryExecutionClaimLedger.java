@@ -33,20 +33,26 @@ final class RepositoryExecutionClaimLedger {
 
     /** Exact admission retry observes the original lease; it never renews it. */
     Claim acquire(RepositoryOperationLedger.Key key, DocumentPublicationCommand command, UUID token, Duration lease) {
+        return tx.inTransaction(em -> { return acquireInTransaction(em, key, command, token, lease); });
+    }
+
+    /** Initial preparation may share this transaction; no provider I/O belongs inside it. */
+    static Claim acquireInTransaction(EntityManager em, RepositoryOperationLedger.Key key,
+            DocumentPublicationCommand command, UUID token, Duration lease) {
         scope(key, command); Objects.requireNonNull(token); long millis = millis(lease);
-        return tx.inTransaction(em -> {
-            bind(em.createNativeQuery("""
-                    INSERT INTO repository_execution_claims(account_id,principal,operation_id,command_sha256,
-                        claim_epoch,claim_token,lease_until,fence_epoch,fence_token)
-                    VALUES (:account,:principal,:id,:digest,1,:token,clock_timestamp()+(:millis * interval '1 millisecond'),1,:token)
-                    ON CONFLICT(account_id,principal,operation_id) DO NOTHING
-                    """), key).setParameter("digest", HexFormat.of().parseHex(command.sha256()))
-                    .setParameter("token", token).setParameter("millis", millis).executeUpdate();
-            var current = readLocked(em, key);
-            requireCommand(current, command);
-            if (current.epoch != 1 || !current.token.equals(token) || !live(em, key)) throw new Fenced();
-            return current;
-        });
+        if (!em.getTransaction().isActive() || em.getTransaction().getRollbackOnly())
+            throw new IllegalStateException("Execution claim acquisition requires a writable transaction");
+        bind(em.createNativeQuery("""
+                INSERT INTO repository_execution_claims(account_id,principal,operation_id,command_sha256,
+                    claim_epoch,claim_token,lease_until,fence_epoch,fence_token)
+                VALUES (:account,:principal,:id,:digest,1,:token,clock_timestamp()+(:millis * interval '1 millisecond'),1,:token)
+                ON CONFLICT(account_id,principal,operation_id) DO NOTHING
+                """), key).setParameter("digest", HexFormat.of().parseHex(command.sha256()))
+                .setParameter("token", token).setParameter("millis", millis).executeUpdate();
+        var current = readLocked(em, key);
+        requireCommand(current, command);
+        if (current.epoch != 1 || !current.token.equals(token) || !live(em, key)) throw new Fenced();
+        return current;
     }
 
     /** The caller retains predecessor epoch and proposed token across uncertain acknowledgments. */
