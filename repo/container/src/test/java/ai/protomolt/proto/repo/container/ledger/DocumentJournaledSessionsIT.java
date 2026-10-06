@@ -88,6 +88,51 @@ class DocumentJournaledSessionsIT {
                 assertThat(r.sessions().retainedSessions()).isEqualTo(1);
                 assertThat(r.sessions().retainedCommandBytes()).isEqualTo(input.bytes());
                 assertThat(count(c, "repository_coordinator_drains", input)).isZero();
+                try (var winner = resources(c.tx(), 1, input.bytes())) {
+                    pending(winner.sessions(), input);
+                    var winningIdentity = identity(c, input);
+                    assertThat(r.sessions().drainRegistrations(Duration.ZERO, key -> CALLER, NONE))
+                            .isEqualTo(new DocumentPublicationSessions.DrainProgress(true, 0, 0, 1));
+                    assertThat(r.sessions().attestLocalDrain(key -> CALLER, NONE)).isTrue();
+                    assertThat(count(c, "repository_coordinator_drains", input)).isZero();
+                    assertThat(count(c, "repository_coordinator_local_drains", input)).isZero();
+                    assertIdentity(c, input, winningIdentity);
+                }
+            }
+        }
+    }
+
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void takeoverBetweenAdmissionAndLocalDrainRequiresReviewedHandoff(boolean reviewed) throws Exception {
+        try (var c = context(POSTGRES)) {
+            var input = input(c);
+            try (var r = resources(c.tx(), 1, input.bytes(), Duration.ofSeconds(1))) {
+                pending(r.sessions(), input);
+                var saved = identity(c, input);
+                var key = new RepositoryOperationLedger.Key("account", "principal", input.command().operationId());
+                var original = new RepositoryCoordinatorDrain.Identity(key, input.command().sha256(), 1,
+                        (UUID) saved[0], (UUID) saved[4]);
+                assertThat(r.sessions().drainRegistrations(Duration.ZERO, k -> CALLER, NONE))
+                        .isEqualTo(new DocumentPublicationSessions.DrainProgress(true, 1, 0));
+                c.tx().readOnly(em -> em.createNativeQuery("""
+                        SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM
+                         (GREATEST(c.lease_until,o.lease_until)-clock_timestamp())))+0.05)
+                        FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                        WHERE c.operation_id=:id
+                        """).setParameter("id", key.operationId()).getSingleResult());
+                if (reviewed) RepositoryCoordinatorExpiration.reserve(c.tx(), CALLER,
+                        new RepositoryCoordinatorReservation.ExpiredUnquiesced(original, UUID.randomUUID(), UUID.randomUUID(),
+                                LEASE, new RepositoryCoordinatorReservation.OwnerIdentity(1, (UUID) saved[2])), NONE);
+                else new RepositoryExecutionClaimLedger(c.tx()).takeOver(key, input.command(), 1, UUID.randomUUID(), LEASE);
+                assertThat(r.sessions().attestLocalDrain(k -> CALLER, NONE)).isEqualTo(reviewed);
+                assertThat(count(c, "repository_coordinator_local_drains", input)).isZero();
+                assertThat(count(c, "repository_coordinator_drains", input)).isEqualTo(1);
+                assertThat(r.sessions().drainRegistrations(Duration.ZERO, k -> CALLER, NONE))
+                        .isEqualTo(new DocumentPublicationSessions.DrainProgress(true, 0, reviewed ? 0 : 1, reviewed ? 1 : 0));
+                var scoped = new RepositoryCaller("principal", false, java.util.Set.of("account"), java.util.Set.of());
+                assertThatThrownBy(() -> r.sessions().drainRegistrations(Duration.ZERO, k -> scoped, NONE))
+                        .isInstanceOfSatisfying(RepositoryException.class,
+                                e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.PERMISSION_DENIED));
             }
         }
     }

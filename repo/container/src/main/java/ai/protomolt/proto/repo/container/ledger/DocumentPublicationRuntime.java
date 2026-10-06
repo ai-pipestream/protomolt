@@ -348,7 +348,7 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
         if (externalWorkers != null) {
             if (!externalWorkers.awaitIdle(remaining(budget, start))) return false;
             control.check();
-            sessions.attestLocalDrain(drainAuthority, control);
+            if (!sessions.attestLocalDrain(drainAuthority, control)) return false;
         }
         control.check();
         stopped = true;

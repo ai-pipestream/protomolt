@@ -72,6 +72,49 @@ class RepositoryCoordinatorExpirationIT {
         }
     }
 
+    @Test void shutdownRequiresCompleteHandoffChainAndHonorsPostCommitCancellation() {
+        try (var c = context(POSTGRES)) {
+            var input = inputFor(c, Duration.ofSeconds(1), Duration.ofSeconds(1), true);
+            var identity = new RepositoryCoordinatorDrain.Identity(input.claim().key(), input.claim().commandSha256(),
+                    1, input.claim().token(), input.incarnation());
+            expire(c);
+            var first = new RepositoryCoordinatorReservation.ExpiredUnquiesced(identity, UUID.randomUUID(), UUID.randomUUID(),
+                    Duration.ofSeconds(1), new RepositoryCoordinatorReservation.OwnerIdentity(1, input.owner().token()));
+            RepositoryCoordinatorExpiration.reserve(c.tx(), CALLER, first, NONE);
+            expire(c);
+            var timeouts = new SqlTimeouts(Duration.ofSeconds(1), Duration.ofSeconds(5));
+            var observed = new RepositoryCoordinatorRecoveryDiscovery(c.tx(), timeouts)
+                    .inspect(CALLER, identity.key(), identity.commandSha256(), NONE).unactivated().orElseThrow();
+            var second = new RepositoryCoordinatorReservation.SupersededUnactivated(observed.predecessor(),
+                    UUID.randomUUID(), UUID.randomUUID(), Duration.ofSeconds(1), observed.owner(),
+                    observed.preparationSha256(), observed.installation());
+            RepositoryCoordinatorSupersession.reserve(c.tx(), CALLER, second, NONE);
+            assertThat(RepositoryShutdownClaim.inspect(c.tx().withTimeouts(timeouts), CALLER, identity, NONE))
+                    .isEqualTo(RepositoryShutdownClaim.State.FENCED_REGISTERED);
+            var cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+            var source = DocumentJdbcFaults.afterCommit(c.pool(), () -> cancelled.set(true));
+            try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                    java.util.Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
+                var control = new ai.protomolt.proto.repo.spi.RepositoryReadControl() {
+                    public boolean isCancelled() { return cancelled.get(); }
+                    public long remainingNanos() { return Long.MAX_VALUE; }
+                };
+                assertThatThrownBy(() -> RepositoryShutdownClaim.inspect(new Tx(emf).withTimeouts(timeouts), CALLER, identity, control))
+                        .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                                e -> assertThat(e.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.CANCELLED));
+            }
+            assertThat(RepositoryShutdownClaim.inspect(c.tx().withTimeouts(timeouts), CALLER, identity, NONE))
+                    .isEqualTo(RepositoryShutdownClaim.State.FENCED_REGISTERED);
+            expire(c);
+            new RepositoryExecutionClaimLedger(c.tx()).takeOver(identity.key(), input.preparation().command(), 3, UUID.randomUUID(), LEASE);
+            assertThat(RepositoryShutdownClaim.inspect(c.tx().withTimeouts(timeouts), CALLER, identity, NONE))
+                    .isEqualTo(RepositoryShutdownClaim.State.UNRESOLVED);
+            var localDrains = c.tx().readOnly(em -> em.createNativeQuery(
+                    "SELECT count(*) FROM repository_coordinator_local_drains").getSingleResult());
+            assertThat(localDrains).isEqualTo(0L);
+        }
+    }
+
     @ParameterizedTest @ValueSource(booleans = {false, true})
     void reservesWithoutInventingLocalDrainAndKeepsExecutionClosed(boolean admissionDrained) {
         try (var c = context(POSTGRES)) {

@@ -99,6 +99,41 @@ class DocumentSuccessorTargetIT {
         }
     }
 
+    @Test void supersededUnactivatedSessionCanFinishShutdownWithoutInventingDrainMarkers() throws Exception {
+        try (var c = context(POSTGRES); var r = resources(c, 1)) {
+            var source = RepositorySuccessorInstallIT.plan(c, input(c), Duration.ofSeconds(1),
+                    r.sessions().coordinatorIdentity());
+            var first = RepositorySuccessorInstall.prepare(source.reservation(), source.previous(), Duration.ofSeconds(1), MODES);
+            assertThatThrownBy(() -> r.sessions().activateSuccessor(CALLER, CALLER, first, NONE))
+                    .hasMessageContaining("install is not committed");
+            RepositorySuccessorInstall.install(c.tx(), r.budget(), CALLER, first, NONE);
+            c.tx().readOnly(em -> em.createNativeQuery("""
+                    SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM
+                     (GREATEST(c.lease_until,o.lease_until)-clock_timestamp())))+0.05)
+                    FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                    WHERE c.operation_id=:id
+                    """).setParameter("id", first.next().key().operationId()).getSingleResult());
+            var observed = new RepositoryCoordinatorRecoveryDiscovery(c.tx(), TIMEOUTS)
+                    .inspect(CALLER, first.next().key(), first.next().command().sha256(), NONE).unactivated().orElseThrow();
+            var proposal = new RepositoryCoordinatorReservation.SupersededUnactivated(observed.predecessor(),
+                    UUID.randomUUID(), UUID.randomUUID(), LEASE, observed.owner(), observed.preparationSha256(), observed.installation());
+            RepositoryCoordinatorSupersession.reserve(c.tx(), CALLER, proposal, NONE);
+            var originalDrains = count(c, "repository_coordinator_drains");
+            var originalLocalDrains = count(c, "repository_coordinator_local_drains");
+            var progress = r.sessions().drainRegistrations(Duration.ZERO, key -> CALLER, NONE);
+            assertThat(progress.registrationsIdle()).isTrue();
+            assertThat(progress.confirmed()).isZero();
+            assertThat(progress.unresolved()).isZero();
+            assertThat(progress.fenced()).isEqualTo(1);
+            assertThat(r.sessions().awaitIdle(Duration.ZERO)).isTrue();
+            // This registration never activated and this fixture has no provider/schema workers.
+            assertThat(r.sessions().attestLocalDrain(key -> CALLER, NONE)).isTrue();
+            assertThat(count(c, "repository_coordinator_drains")).isEqualTo(originalDrains);
+            assertThat(count(c, "repository_coordinator_local_drains")).isEqualTo(originalLocalDrains);
+            assertThat(r.sessions().drainRegistrations(Duration.ZERO, key -> CALLER, NONE)).isEqualTo(progress);
+        }
+    }
+
     private static DocumentJournaledSessionsIT.Resources resources(Context c, int capacity) {
         return DocumentJournaledSessionsIT.resources(c.tx().withTimeouts(TIMEOUTS), capacity, 1_000_000,
                 LEASE, new PayloadBudget(128_000_000));

@@ -602,7 +602,11 @@ final class DocumentPublicationSessions implements AutoCloseable {
      * Entries already evicted after durable terminal proof are excluded. This is neither
      * LOCAL_DRAINED nor permission to close providers.
      */
-    record DrainProgress(boolean registrationsIdle, int confirmed, int unresolved) {}
+    record DrainProgress(boolean registrationsIdle, int confirmed, int unresolved, int fenced) {
+        DrainProgress(boolean registrationsIdle, int confirmed, int unresolved) {
+            this(registrationsIdle, confirmed, unresolved, 0);
+        }
+    }
 
     DrainProgress drainRegistrations(Duration wait, java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> authority,
             RepositoryReadControl control) throws InterruptedException {
@@ -618,15 +622,18 @@ final class DocumentPublicationSessions implements AutoCloseable {
                     .flatMap(entry -> drainIdentity(entry).stream()).toList();
             identities = drainIdentities;
         }
-        int confirmed = 0, unresolved = 0;
+        int confirmed = 0, unresolved = 0, fenced = 0;
         for (var identity : identities) {
             control.check();
             var caller = Objects.requireNonNull(authority.apply(identity.key()), "Private operation authority");
-            if (RepositoryCoordinatorDrain.beginRetained(tx, caller, identity, control)) confirmed++;
+            var state = RepositoryShutdownClaim.inspect(tx, caller, identity, control);
+            if (state.fenced()) fenced++;
+            else if (state == RepositoryShutdownClaim.State.UNRESOLVED) unresolved++;
+            else if (RepositoryCoordinatorDrain.beginRetained(tx, caller, identity, control)) confirmed++;
             else unresolved++;
         }
         control.check();
-        return new DrainProgress(true, confirmed, unresolved);
+        return new DrainProgress(true, confirmed, unresolved, fenced);
     }
 
     private void releaseClosedRestorations() {
@@ -652,7 +659,7 @@ final class DocumentPublicationSessions implements AutoCloseable {
     }
 
     /** Host has drained provider/read/schema workers; partial SQL success remains exactly retryable. */
-    void attestLocalDrain(java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> authority,
+    boolean attestLocalDrain(java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> authority,
             RepositoryReadControl control) {
         Objects.requireNonNull(authority); Objects.requireNonNull(control).check();
         final java.util.List<RepositoryCoordinatorDrain.Identity> identities;
@@ -664,9 +671,14 @@ final class DocumentPublicationSessions implements AutoCloseable {
         for (var identity : identities) {
             control.check();
             var caller = Objects.requireNonNull(authority.apply(identity.key()), "Private operation authority");
+            if (RepositoryCoordinatorLocalDrain.confirm(tx, caller, identity, control).isPresent()) continue;
+            var state = RepositoryShutdownClaim.inspect(tx, caller, identity, control);
+            if (state.fenced()) continue;
+            if (state == RepositoryShutdownClaim.State.UNRESOLVED) return false;
             RepositoryCoordinatorLocalDrain.record(tx, caller, identity, control);
         }
         control.check();
+        return true;
     }
 
     /**

@@ -922,3 +922,13 @@ fenced identities in an already captured snapshot: foreign takeover after closur
 must be classified separately from successful V90/V91 drain, while local workers
 still drain. Current `beginRetained` can throw on this state. Do not silently remove
 snapshot identities or call an empty cache proof of provider quiescence.
+
+The snapshot classification above is now implemented through
+`RepositoryShutdownClaim`: never-bound losers and reviewed bound handoffs have
+separate outcomes from V90/V91; final attestation rechecks after worker drain.
+Database tests cover V90-to-V97 transfer, same-epoch registration loss, V98 without
+activation, complete handoff chains and unreviewed gaps. SQL failures propagate
+and retain resources for another shutdown call. Still add the composed packaged
+case holding a real external schema worker across takeover, qualify long histories,
+and integrate recovery-owner shutdown with the managed host. Existing held-worker
+and snapshot tests do not by themselves establish those combined behaviors.

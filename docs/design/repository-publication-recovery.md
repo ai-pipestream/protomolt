@@ -1743,9 +1743,58 @@ a bounded view; arbitrary private/test journaled factories are still responsible
 for doing so. No universal timeout guarantee follows from this helper alone.
 
 This method accepts calls only while the manager is open. It cannot change an
-already captured shutdown snapshot. A foreign takeover after closure still needs
-explicit snapshot reconciliation: `beginRetained` can observe a fenced claim without
-an old V90 marker, and the current runtime cannot interpret that as successful drain.
-Add a separate fenced classification without pretending DRAINING or LOCAL_DRAINED,
-and continue draining local uploads, reads and schema workers. Preserve UNKNOWN
-remote state and keep physical reclamation independently fenced.
+already captured shutdown snapshot. Shutdown instead uses the separate identity
+classification below, while continuing to drain local uploads, reads and schema
+workers. Preserve UNKNOWN remote state and keep physical reclamation independently
+fenced; local cache removal cannot supply either proof.
+
+### Shutdown classification after claim transfer
+
+`RepositoryShutdownClaim` now classifies retained identities separately from
+DRAINING and LOCAL_DRAINED; neither claim expiry nor an exception proves completion.
+
+Keep the immutable, identity-only registration snapshot across retries and cache
+eviction. Re-resolve private process authority on every retry. A bounded SQL
+transaction locks the current claim and checks the original key, command digest,
+epoch and token. A missing claim remains unresolved; a changed digest is an error.
+Permanent token exclusion is required before considering either fenced outcome:
+
+- **Never bound:** no immutable coordinator binding matches the retained token and
+  incarnation. Initial registration and V94 activation commit their binding
+  atomically with authority. Once the claim permanently excludes that token, this
+  registration cannot subsequently become active. A different winner's binding
+  must never be adopted as this registration's identity.
+- **Previously bound:** the original binding exists. Require exact immutable
+  reservation evidence for its first handoff, including predecessor identity and
+  digest. An unreviewed low-level claim transfer is not a reviewed shutdown handoff.
+  Verify the reservation successor against the current claim or subsequent durable
+  handoff chain; an inconsistent or incomplete chain remains unresolved.
+
+Registration draining first classifies the current claim. A proven fenced identity
+is counted separately, even if it has an old V90 marker. Unresolved identities keep
+shutdown pending; current identities use exact V90 confirmation or insertion. SQL,
+control and integrity failures propagate. A takeover racing marker insertion can
+therefore fail that call; the next shutdown call takes a fresh proof. No broad
+exception handler converts errors into successful shutdown. An expired current
+claim without V90 still fails admission closure until a reviewed transfer resolves
+it; expiry alone does not produce a fenced classification.
+
+After session, scope, upload, read and external schema workers stop, final
+attestation must inspect every snapshot identity again. Confirm exact existing V91
+first. Otherwise accept a proven fenced classification without inserting V91, or
+record V91 only for the original claim with exact V90. V97 can transfer a claim
+between V90 and V91, so registration-phase classification is insufficient. A race
+while inserting V91 requires fresh proof or propagation, never a silent fallback.
+
+Real-database coverage now includes a failed initial registration losing to another
+epoch-one token; failed activation followed by V98; V90 followed by V97 before V91;
+an unreviewed bound transfer; a complete two-hop chain followed by an unreviewed
+third hop; cancellation after proof commit; and existing snapshot retries after
+cache eviction. The recursive SQL chain check returns one boolean to Java and
+uses the supplied SQL timeout; it is linear in history length, not a fixed-memory
+or fixed-work guarantee. Long-history qualification remains outstanding.
+
+The packaged managed-host test holds a real Git schema load through shutdown, but
+does not yet combine that worker with claim takeover. Add that composed test before
+claiming whole-host takeover qualification. Preserve provider UNKNOWN state and
+tombstones throughout; this work grants no physical reclamation right.
