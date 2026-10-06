@@ -2064,3 +2064,12 @@ revision: later activation rejects it. See the
 [scoped recovery evidence](../evidence/repository/2026-10-06-bound-retry-acl/README.md).
 Credential and creation-grant revocation remain distinct unqualified cases for
 this composed path; these tests use a scoped caller without a credential binding.
+
+Credential-backed creation retries passed 6 PostgreSQL cases covering key revoke,
+key rotation and grant revoke, before reservation and after a lost commit reply.
+Invalid keys return UNAUTHENTICATED; revoked grants return NOT_FOUND. Denial
+preserves durable identity, leases, proposal and retained capacity. Private cleanup
+preserves SQL state and the session. See the
+[credential and grant evidence](../evidence/repository/2026-10-06-bound-retry-authority/README.md).
+Transport authentication, provider workers, existing-document operations without
+creation grants and concurrent authority changes at commit remain unqualified.

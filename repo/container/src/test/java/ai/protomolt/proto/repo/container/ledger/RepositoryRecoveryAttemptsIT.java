@@ -18,11 +18,11 @@ import static org.assertj.core.api.Assertions.*;
 class RepositoryRecoveryAttemptsIT {
     @Container static final PostgreSQLContainer POSTGRES=new PostgreSQLContainer("postgres:18-alpine");
     private static final SqlTimeouts TIMEOUTS=new SqlTimeouts(Duration.ofSeconds(1),Duration.ofSeconds(5));
-    private record Source(DocumentPublicationCommand command, RepositoryCoordinatorRecoveryDiscovery.Observation observation) {}
+    record Source(DocumentPublicationCommand command, RepositoryCoordinatorRecoveryDiscovery.Observation observation) {}
     private static Source source(Context c) {
         return source(c,input(c));
     }
-    private static Source source(Context c, DocumentPublicationPreparationRecord input) {
+    static Source source(Context c, DocumentPublicationPreparationRecord input) {
         var budget=new PayloadBudget(64_000_000);
         var previous=new DocumentPublicationPreparationRecord(input.key(),input.command(),input.seeds(),input.placements(),Duration.ofSeconds(1),0);
         var claim=new DocumentPublicationPreparationJournal(c.tx(),budget).acquireInitial(CALLER,previous,UUID.randomUUID(),UUID.randomUUID(),NONE);
@@ -963,7 +963,7 @@ class RepositoryRecoveryAttemptsIT {
         }
     }
 
-    private static void expire(Context c, DocumentPublicationCommand command) {
+    static void expire(Context c, DocumentPublicationCommand command) {
         c.tx().readOnly(em -> em.createNativeQuery("""
                 SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM
                  (GREATEST(c.lease_until,o.lease_until)-clock_timestamp())))+0.05)
