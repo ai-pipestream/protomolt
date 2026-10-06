@@ -116,6 +116,9 @@ class NativeReplicaRuntimeTest {
     }
 
     private void benchmark(ProcessBuilder builder, String classpath, PostgreSQLContainer postgres) throws Exception {
+        String journaled = System.getProperty("protomolt.test.nativeBenchmarkJournaled", "false");
+        if (!List.of("true", "false").contains(journaled)) throw new IllegalArgumentException("Journaled mode must be true or false");
+        builder.environment().put("PROTOMOLT_NATIVE_JOURNALED", journaled);
         int totalClients = Integer.parseInt(System.getProperty("protomolt.test.nativeBenchmarkClients", "4"));
         if (totalClients != 4 && totalClients != 8 && totalClients != 16)
             throw new IllegalArgumentException("Benchmark client count must be 4, 8 or 16");
@@ -142,6 +145,7 @@ class NativeReplicaRuntimeTest {
                 + "\ntotal_read_handles=" + totalReadHandles + "\nzero_read_handles_means=32 per worker"
                 + "\nzero_read_slots_means=8 per worker\nworker_heap_limit=512MiB\npayload_string_bytes=" + payloadBytes
                 + "\nzero_payload_means=original small workload\niterations_per_client=" + iterations
+                + "\njournaled=" + journaled
                 + "\nNo host isolation or container CPU/memory limits; trusted internal Java path.\n");
         try (var sampler = new NativeTrafficSampler(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), output)) {
             var windows = new StringBuilder("window,replicas,pool_per_replica,clients_per_replica,operations,inclusive_nanos\n");
@@ -169,6 +173,8 @@ class NativeReplicaRuntimeTest {
                             assertThat(System.nanoTime() < readyDeadline).as("traffic warmup readiness").isTrue();
                             Thread.sleep(10);
                         }
+                        assertThat(Files.readString(directory.resolve(name + "-" + index + "-config.txt")))
+                                .contains("\njournaled=" + journaled + "\n");
                     }
                     sampler.begin(name);
                     long start = System.nanoTime();

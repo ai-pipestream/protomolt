@@ -15,6 +15,27 @@ import static org.assertj.core.api.Assertions.*;
 class DocumentInitialAdmissionIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
+    @org.junit.jupiter.api.Test void initialAdmissionAndExactRetryEachCommitOnlyPreflightAndAtomicWrite() {
+        try(var c=context(POSTGRES)) {
+            var input=input(c);var budget=new PayloadBudget(64_000_000);
+            var commits=new java.util.concurrent.atomic.AtomicInteger();
+            var source=DocumentJdbcFaults.afterCommit(c.pool(),commits::incrementAndGet);
+            try(var emf=jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                    java.util.Map.of("hibernate.connection.datasource",source,"hibernate.hbm2ddl.auto","validate"))) {
+                var session=DocumentPublicationSession.journaled(new Tx(emf),CALLER,input.command(),input.placements(),LEASE,budget);
+                try(var execution=session.begin(CALLER,NONE)) {
+                    execution.bindModes(MODES); commits.set(0);
+                    var owner=session.admit(CALLER,NONE).orElseThrow();
+                    assertThat(commits.get()).as("authorization preflight and atomic registration").isEqualTo(2);
+                    commits.set(0);
+                    assertThat(session.admit(CALLER,NONE)).contains(owner);
+                    assertThat(commits.get()).as("exact retry does not reload journals in separate transactions").isEqualTo(2);
+                }
+                assertThat(budget.reservedBytes()).isZero();
+            }
+        }
+    }
+
     @ParameterizedTest @ValueSource(strings={"repository_execution_claims","repository_coordinator_bindings",
             "repository_publication_preparations","repository_publication_modes","repository_operations","repository_operation_owners"})
     void insertionFailureRollsBackEntireRegistration(String failedTable) {

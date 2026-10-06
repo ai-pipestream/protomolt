@@ -6242,3 +6242,28 @@ bindings. Authentication, cancellation/deadline, error sanitization, wrong-reque
 binding and real in-process transport conformance remain required tests. Existing
 RAW/VALIDATED wire messages, field tags, import paths and Any URLs remain unchanged.
 This section specifies unfinished transport work; it does not mount an RPC.
+
+#### Journaled RustFS performance diagnostic
+
+The native benchmark now explicitly selects journaled or unjournaled execution,
+records the selection, and verifies it in every worker. Both modes passed the same
+short twelve-window fixture. The complete raw results, source patch, JUnit output,
+and reproducible summaries are retained in
+[`2026-10-06-journaled-rustfs-diagnostic`](../evidence/repository/2026-10-06-journaled-rustfs-diagnostic/README.md).
+A focused actual-JDBC test separately counts two commits for initial admission and
+its exact retry: authorization preflight and atomic registration. That count excludes
+assessment and publication.
+
+The mode comparison shows more connection acquisitions for journaled execution,
+without appreciable pool-acquisition waiting or sampled database lock waits. It
+does not isolate atomic-admission effects, establish a latency budget, or qualify
+horizontal scaling. The two modes ran sequentially with four clients and small
+payloads on an unisolated host. Read, publication and rejection distributions are
+reported separately; inclusive window rates also include replay and checks.
+
+Before altering transaction boundaries, trace database work and elapsed time in
+replay, registration, policy/source capture, preparation, schema staging,
+publication, and retained rejection assessment. Keep first execution separate from
+replay and background maintenance. Preserve commit-time ownership checks, durable
+attempt identity and rejection evidence. The diagnostic calls for attribution;
+it does not establish that any one check or journal write can be removed.

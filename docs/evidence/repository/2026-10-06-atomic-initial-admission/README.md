@@ -38,11 +38,12 @@ to reproduce states the atomic manager no longer creates.
 
 Sol reviewed the production changes and test adaptations and found no blocker.
 There are no protobuf or migration changes. This is an internal journaled-session
-change, not a public RPC or automatic recovery host. The process tests above kill
-writers after provider writes and replacements during takeover; they do not qualify
-death immediately before/after initial COMMIT. That test, expanded admission race
-coverage, transaction counts and RustFS latency measurements remain work. Existing
-partial registrations still require their own recovery design.
+change, not a public RPC or automatic recovery host. Follow-up sections below
+qualify death immediately before/after initial COMMIT and count admission commits.
+The adjacent `2026-10-06-journaled-rustfs-diagnostic` evidence records a small
+latency diagnostic. Expanded admission race coverage and controlled RustFS capacity
+measurements remain work. Existing partial registrations still require their own
+recovery design.
 
 The production-JAR storage qualification also passed with zero failures/errors/skips:
 
@@ -80,3 +81,13 @@ It does not establish scoped typed process recovery, automatic recovery hosting,
 legacy partial-row recovery, reader-pin reclamation or performance. This follow-up
 changes tests and documentation only; the production-JAR result above applies to
 unchanged production code.
+
+## Focused transaction count
+
+`DocumentInitialAdmissionIT` now counts actual JDBC commits around the session's
+`admit` call, excluding fixture construction and subsequent assessment/publication.
+Initial admission and exact retry each commit twice: early authorization preflight
+and the atomic journal/owner transaction. The owner identity and lease remain equal
+on retry, and byte reservations return to zero. The seven-case focused suite passed
+with zero failures/errors/skips; `admission-transaction-count.xml.gz` retains it.
+This is a transaction-count assertion, not a latency or full-publication measurement.

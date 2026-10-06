@@ -20,6 +20,9 @@ final class NativeMixedTrafficProbe {
     static void run(Tx tx, DataSource dataSource, Path root, String worker, OpenedBlobStore provider,
             ManagedBackendLedger.Profile profile) throws Exception {
         int clients = Integer.parseInt(System.getenv("PROTOMOLT_NATIVE_CLIENTS"));
+        String journalMode = System.getenv("PROTOMOLT_NATIVE_JOURNALED");
+        if (!List.of("true", "false").contains(journalMode)) throw new IllegalArgumentException("Explicit journaled mode required");
+        boolean journaled = Boolean.parseBoolean(journalMode);
         if (clients < 1 || clients > 16) throw new IllegalArgumentException("Invalid client count");
         int payloadBytes = Integer.parseInt(System.getenv("PROTOMOLT_NATIVE_PAYLOAD_BYTES"));
         int measuredIterations = Integer.parseInt(System.getenv("PROTOMOLT_NATIVE_ITERATIONS"));
@@ -37,7 +40,7 @@ final class NativeMixedTrafficProbe {
         Files.writeString(root.resolve(worker + "-config.txt"), "clients=" + clients + "\npool=" + pool.getMaximumPoolSize() + "\nread_slots=" + readSlots + "\nread_handles=" + readHandles + "\n",
                 StandardOpenOption.CREATE_NEW);
         Files.writeString(root.resolve(worker + "-config.txt"), "payload_string_bytes=" + payloadBytes
-                + "\niterations_per_client=" + measuredIterations + "\n", StandardOpenOption.APPEND);
+                + "\niterations_per_client=" + measuredIterations + "\njournaled=" + journaled + "\n", StandardOpenOption.APPEND);
         var telemetry = new NativeTrafficTelemetry(); telemetry.attach(dataSource);
         var measuredStore = telemetry.wrap(provider.store());
         var measuredProvider = new OpenedBlobStore(measuredStore, provider, provider.capabilities(), provider::ensureNamespace, provider.reclaimer());
@@ -55,13 +58,19 @@ final class NativeMixedTrafficProbe {
         try (var reader = new DocumentPartReader((generation, actual) -> {
             require(generation.equals("native-replica-s3") && actual.equals(profile), "exact read backend"); return measuredStore;
         }, readSlots, 16_000_000, budget)) {
-            var runtime = new DocumentPublicationRuntime(tx, drives, reads, reader, budget, (generation, actual) -> {
+            DocumentPublicationRuntime.Backends backends = (generation, actual) -> {
                 require(generation.equals("native-replica-s3") && actual.equals(profile), "exact upload backend");
                 return new DocumentPublicationRuntime.Backend(profile.identity(), measuredProvider);
-            }, new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000),
+            };
+            var limits = new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000);
+            var timeouts = new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(15));
+            var assessments = new DocumentPublicationRuntime.Assessments(Path.of(System.getenv("PROTOMOLT_TEST_RUNTIME_BUNDLE")),
+                    Duration.ofMinutes(2), Duration.ofSeconds(1));
+            var runtime = journaled ? DocumentPublicationRuntime.journaled(tx, drives, reads, reader, budget, backends, limits,
+                    timeouts, 8, Duration.ofMillis(25), Duration.ofMinutes(5),16,4_000_000,32,false,assessments,key -> CALLER)
+                    : new DocumentPublicationRuntime(tx, drives, reads, reader, budget, backends, limits,
                     new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(15)), 8, Duration.ofMillis(25), Duration.ofMinutes(5),
-                    16, 4_000_000, 32, false, new DocumentPublicationRuntime.Assessments(Path.of(System.getenv("PROTOMOLT_TEST_RUNTIME_BUNDLE")),
-                            Duration.ofMinutes(2), Duration.ofSeconds(1)));
+                    16, 4_000_000, 32, false, assessments);
             try {
                 var readReferences = new ArrayList<DocumentPublishedRevision>();
                 var readDocuments = new ArrayList<Document>();
