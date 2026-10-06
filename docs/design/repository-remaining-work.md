@@ -10,6 +10,11 @@ binding are implemented. The internal assessment path records the exact historic
 command with authenticated principal/account checks and stages its selections under
 current authorization. See [latest qualification](../evidence/repository/2026-10-05-historical-exact-admission/README.md).
 
+Retained definition loading now has a separate owned scope bound to the captured
+caller's authorization and exact live source Use. Selection identity, cancellation,
+capacity and reservation cleanup have focused regression coverage. This is a reusable
+loader, not whole-command restore execution.
+
 Next, carry retained schema definitions into whole-command assessment under one
 current policy and evaluation time, then through observed-runtime CREATE and atomic
 reference publication. Preserve each member's container and occurrence definitions,

@@ -124,7 +124,7 @@ class DocumentHistoricalRestoreAssessmentIT {
                 var roots = new ArrayList<>(snapshot.roots()); roots.set(0, changed);
                 var corrupt = new DocumentHistoricalSchemaRows.Snapshot(snapshot.header(), snapshot.references(), roots, snapshot.artifacts());
                 var budget = new PayloadBudget(32L * 1024 * 1024);
-                assertThatThrownBy(() -> DocumentHistoricalRestoreAssessment.requireRootBindings(corrupt, binding,
+                assertThatThrownBy(() -> DocumentHistoricalSchemaResolution.requireRootBindings(corrupt, binding,
                         List.of(), budget, RepositoryReadControl.NONE)).isInstanceOfSatisfying(RepositoryException.class,
                                 error -> assertThat(error.code()).isEqualTo(RepositoryException.Code.DATA_LOSS));
                 assertThat(budget.reservedBytes()).isZero();
@@ -189,6 +189,72 @@ class DocumentHistoricalRestoreAssessmentIT {
                     .isInstanceOfSatisfying(RepositoryException.class,
                             error -> assertThat(error.code()).isEqualTo(RepositoryException.Code.NOT_FOUND));
             assertThat(revoked).isTrue(); assertThat(budget.reservedBytes()).isZero(); release(ledger, history);
+        }
+    }
+
+    @Test void schemaScopeOwnsSqlBytesButBorrowsExactLiveSourceUse() throws Exception {
+        try (var c = context(POSTGRES)) {
+            var f = fixture(c); var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var history = ledger.captureHistorical(ADMIN, f.address(), f.revision());
+            var budget = new PayloadBudget(32L * 1024 * 1024);
+            try (var use = history.use()) {
+                var selected = use.plan().entries();
+                var mapping = new HashMap<Integer, Integer>();
+                for (var entry : selected) mapping.put(entry.revisionOrdinal(), entry.revisionOrdinal());
+                var bad = new ArrayList<>(selected);
+                var first = bad.getFirst();
+                bad.set(0, new DocumentHistoricalReadPlan.Entry(first.revisionOrdinal(), UUID.randomUUID(), first.part()));
+                assertThatThrownBy(() -> DocumentHistoricalSchemaResolution.open(history, use, mapping, bad,
+                        budget, RepositoryReadControl.NONE)).hasMessageContaining("differs from pinned source");
+                assertThatThrownBy(() -> DocumentHistoricalSchemaResolution.open(history, use, Map.of(), selected,
+                        budget, RepositoryReadControl.NONE)).hasMessageContaining("differs from selected ordinals");
+                var other = ledger.captureHistorical(ADMIN, f.address(), f.revision());
+                try {
+                    assertThatThrownBy(() -> DocumentHistoricalSchemaResolution.open(other, use, mapping, selected,
+                            budget, RepositoryReadControl.NONE)).hasMessageContaining("another historical capture");
+                } finally { other.close(); other.release(); }
+                assertThat(budget.reservedBytes()).isZero();
+                try (var schemas = DocumentHistoricalSchemaResolution.open(history, use, mapping, selected,
+                        budget, RepositoryReadControl.NONE)) {
+                    assertThat(schemas.resolution().container()).isNotNull();
+                    assertThat(budget.reservedBytes()).isPositive();
+                }
+                assertThat(budget.reservedBytes()).isZero();
+                assertThat(use.plan().revision()).isEqualTo(f.revision());
+                try (var schemas = DocumentHistoricalSchemaResolution.open(history, use, mapping, selected,
+                        budget, RepositoryReadControl.NONE)) {
+                    var borrowed = schemas.resolution();
+                    use.close();
+                    assertThatThrownBy(schemas::resolution).isInstanceOf(IllegalStateException.class);
+                    assertThatThrownBy(borrowed::container).isInstanceOf(IllegalStateException.class);
+                }
+                assertThat(budget.reservedBytes()).isZero();
+            } finally { release(ledger, history); }
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void schemaLoadingFailureReleasesSqlReservationsWithoutClosingBorrowedUse(boolean cancel) throws Exception {
+        try (var c = context(POSTGRES)) {
+            var f = fixture(c); var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var history = ledger.captureHistorical(ADMIN, f.address(), f.revision());
+            var budget = new PayloadBudget(cancel ? 32L * 1024 * 1024 : 1);
+            try (var use = history.use()) {
+                var selected = use.plan().entries();
+                var mapping = new HashMap<Integer, Integer>();
+                for (var entry : selected) mapping.put(entry.revisionOrdinal(), entry.revisionOrdinal());
+                var control = new RepositoryReadControl() {
+                    public boolean isCancelled() { return cancel && budget.reservedBytes() > 0; }
+                    public long remainingNanos() { return Long.MAX_VALUE; }
+                };
+                assertThatThrownBy(() -> DocumentHistoricalSchemaResolution.open(history, use, mapping, selected,
+                        budget, control)).isInstanceOfSatisfying(RepositoryException.class,
+                                e -> assertThat(e.code()).isEqualTo(cancel ? RepositoryException.Code.CANCELLED
+                                        : RepositoryException.Code.RESOURCE_EXHAUSTED));
+                assertThat(budget.reservedBytes()).isZero();
+                assertThat(use.plan().revision()).isEqualTo(f.revision());
+            } finally { release(ledger, history); }
         }
     }
 

@@ -1,18 +1,14 @@
 package ai.protomolt.proto.repo.container.ledger;
 
 import ai.protomolt.proto.repo.admission.DocumentAdmissionPolicy;
-import ai.protomolt.proto.repo.admission.DocumentRetainedSchemaResolution;
 import ai.protomolt.proto.repo.admission.DocumentSchemaAssessment;
-import ai.protomolt.proto.repo.admission.DocumentSchemaAdmission;
 import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
 import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
-import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryException;
 import ai.protomolt.proto.repo.spi.RepositoryReadControl;
 import ai.protomolt.proto.repo.v1.DocumentPublicationMember;
 import ai.protomolt.proto.repo.v1.PublicationHistoricalReuse;
 import com.google.protobuf.ByteString;
-import com.google.protobuf.InvalidProtocolBufferException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -36,12 +32,10 @@ final class DocumentHistoricalRestoreAssessment implements AutoCloseable {
         this.history = history; this.pin = pin; this.assessment = assessment; this.fragmentsLease = fragmentsLease;
     }
 
-    static DocumentHistoricalRestoreAssessment assess(Tx tx, RepositoryCaller caller,
-            DocumentReadLedger.PinnedHistory history, DocumentPublicationMember member,
+    static DocumentHistoricalRestoreAssessment assess(DocumentReadLedger.PinnedHistory history, DocumentPublicationMember member,
             DocumentAdmissionPolicy policy, ByteString commandSha256, Map<Integer, ByteString> fragments,
             Instant evaluatedAt, PayloadBudget budget, RepositoryReadControl control) {
         var pin = history.use();
-        var leases = new ArrayList<PayloadBudget.Lease>();
         DocumentSchemaAssessment assessment = null;
         PayloadBudget.Lease fragmentsLease = null;
         boolean transferred = false;
@@ -89,25 +83,12 @@ final class DocumentHistoricalRestoreAssessment implements AutoCloseable {
                     throw new IllegalArgumentException("Restore fragment hash differs from selected object");
                 ownedFragments.put(ordinal, copy);
             }
-            var snapshot = tx.inTransaction(em -> {
-                DocumentAdmissionAuthorization.authorizeHistory(em, caller, plan.address());
-                return DocumentHistoricalSchemaRows.capture(em, plan.address(), plan.revision(), control::check,
-                        bytes -> leases.add(reserve(budget, bytes)));
-            });
-            final DocumentHistoricalSchemaBinding binding;
-            try { binding = DocumentHistoricalSchemaBinding.read(plan.address(), snapshot, control::check); }
-            catch (InvalidProtocolBufferException | IllegalArgumentException failure) {
-                throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Invalid historical schema binding", failure);
-            }
-            requireRootBindings(snapshot, binding, selected, budget, control);
-            var source = binding.validationRequest(Map.of(), snapshot.roots());
-            try (var retained = DocumentRetainedSchemaResolution.open(source, mapping,
-                    hash -> java.util.Optional.ofNullable(snapshot.artifacts().get(hash)), binding.policy().limits(),
-                    bytes -> { var lease = reserve(budget, bytes); return lease::close; }, control::check)) {
+            try (var schemas = DocumentHistoricalSchemaResolution.open(history, pin, mapping, selected, budget, control)) {
+                var retained = schemas.resolution();
                 assessment = policy.assess(commandSha256, member, Map.copyOf(ownedFragments), retained.container(), retained,
                         bytes -> { var lease = reserve(budget, bytes); return lease::close; }, evaluatedAt, control::check);
                 retained.requireComplete(assessment.view());
-            } catch (InvalidProtocolBufferException failure) {
+            } catch (com.google.protobuf.InvalidProtocolBufferException failure) {
                 throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Invalid retained schema encoding", failure);
             }
             history.authorizeDelivery(control);
@@ -121,45 +102,10 @@ final class DocumentHistoricalRestoreAssessment implements AutoCloseable {
             history.authorizeDelivery(control);
             throw failure;
         } finally {
-            for (int i = leases.size() - 1; i >= 0; i--) leases.get(i).close();
             if (!transferred) {
                 if (assessment != null) assessment.close();
                 if (fragmentsLease != null) fragmentsLease.close();
                 pin.close();
-            }
-        }
-    }
-
-    static void requireRootBindings(DocumentHistoricalSchemaRows.Snapshot snapshot,
-            DocumentHistoricalSchemaBinding binding, java.util.List<DocumentHistoricalReadPlan.Entry> selected,
-            PayloadBudget budget, RepositoryReadControl control) {
-        var entries = new HashMap<Integer, DocumentHistoricalReadPlan.Entry>();
-        selected.forEach(entry -> entries.put(entry.revisionOrdinal(), entry));
-        for (var root : snapshot.roots()) {
-            control.check();
-            if (root.ordinal() < 0 || root.ordinal() >= binding.member().getPartsCount())
-                throw DocumentHistoricalSchemaRows.invalid("Historical root ordinal is outside source member");
-            var part = binding.member().getParts(root.ordinal());
-            long size; String hash;
-            switch (part.getContentCase()) {
-                case UPLOAD -> { size = part.getUpload().getSizeBytes(); hash = part.getUpload().getSha256(); }
-                case REUSE -> { size = part.getReuse().getObject().getSizeBytes(); hash = part.getReuse().getObject().getSha256(); }
-                case HISTORICAL_REUSE -> { size = part.getHistoricalReuse().getObject().getSizeBytes(); hash = part.getHistoricalReuse().getObject().getSha256(); }
-                default -> throw DocumentHistoricalSchemaRows.invalid("Historical root has no source payload");
-            }
-            if (size != root.fragmentSize() || !hash.equals(root.fragmentSha()))
-                throw DocumentHistoricalSchemaRows.invalid("Historical root differs from source payload identity");
-            var selectedEntry = entries.get(root.ordinal());
-            if (selectedEntry != null && (selectedEntry.part().part().size() != size
-                    || !selectedEntry.part().part().sha256().equals(hash)))
-                throw DocumentHistoricalSchemaRows.invalid("Historical root differs from selected physical identity");
-            try {
-                var evidence = DocumentSchemaAdmission.decodeRootEvidence(root.ordinal(), root.evidence(),
-                        bytes -> { var lease = reserve(budget, bytes); return lease::close; }, control::check);
-                if (!root.locatorSha().equals(evidence.locatorSha256()))
-                    throw DocumentHistoricalSchemaRows.invalid("Historical root locator differs from evidence");
-            } catch (InvalidProtocolBufferException | IllegalArgumentException failure) {
-                throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Invalid historical root evidence", failure);
             }
         }
     }

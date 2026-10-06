@@ -345,7 +345,7 @@ public final class DocumentReadLedger {
                 java.util.Map<Integer, com.google.protobuf.ByteString> fragments, java.time.Instant evaluatedAt,
                 ai.protomolt.proto.repo.blob.spi.PayloadBudget budget,
                 ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
-            return DocumentHistoricalRestoreAssessment.assess(tx, caller, this, member, policy,
+            return DocumentHistoricalRestoreAssessment.assess(this, member, policy,
                     commandSha256, fragments, evaluatedAt, budget, control);
         }
         private PinnedHistory(DocumentReadPins.Captured<DocumentHistoricalReadPlan> captured, RepositoryCaller caller) {
@@ -452,6 +452,21 @@ public final class DocumentReadLedger {
                     pin.close();
                 }
             }
+        }
+
+        /** Loads retained assets under the captured caller, borrowing this capture's exact live Use. */
+        DocumentHistoricalSchemaRows.Snapshot captureSchemas(PinnedRead<DocumentHistoricalReadPlan>.Use use,
+                Runnable control, java.util.function.LongConsumer reserve) {
+            control.run();
+            if (use.plan() != plan)
+                throw new IllegalArgumentException("Schema use belongs to another historical capture");
+            return tx.inTransaction(em -> {
+                DocumentAdmissionAuthorization.authorizeHistory(em, caller, address);
+                var snapshot = DocumentHistoricalSchemaRows.capture(em, address, revision, control, reserve);
+                control.run();
+                use.plan();
+                return snapshot;
+            });
         }
 
         /** Rechecks current policy for the exact caller bound at capture; grants no new read lifetime. */

@@ -361,8 +361,14 @@ now uses that actual admitted historical command rather than an ordinary operati
 as a fixture stand-in. Ordinary admission, claims, sessions and public runtime
 execution remain gated.
 
-Next, extract the existing retained-definition loading/root-binding logic into an
-owned attempt resolver for whole-command assessment. Current policy must assess
+The retained-definition loader now owns its SQL asset reservations and attempt-local
+resolver separately from the single-member assessment. It borrows an exact live
+source Use, checks selected entries and ordinal mappings, and authorizes SQL loading
+with the caller bound to that historical capture. It cannot accept a replacement
+caller. Closing it releases the resolver before SQL reservations without closing
+the borrowed Use. See [loader evidence](../evidence/repository/2026-10-06-historical-schema-loader/README.md).
+
+Next, wire this loader into whole-command assessment. Current policy must assess
 all members at one evaluation time and the real runtime observer must produce its
 manifest. Do not substitute the earlier single-member assessment's verdict or
 fabricate runtime evidence. Then connect CREATE with exact command/ACL/policy
