@@ -247,10 +247,36 @@ class DocumentJournaledSessionsIT {
         }
     }
 
-    @Test void failedSameIncarnationRestorationRetainsItsIdentityForDrain() throws Exception {
-        try (var c = context(POSTGRES)) {
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void failedSameIncarnationRestorationRetainsItsIdentityForDrain(boolean holdReservation) throws Exception {
+        try (var c = context(POSTGRES); var workers = Executors.newVirtualThreadPerTaskExecutor()) {
             var input = input(c);
-            try (var r = resources(c.tx(), 1, input.bytes(), Duration.ofSeconds(1))) {
+            var armed = new AtomicBoolean();
+            var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
+            var source = DocumentJdbcFaults.beforeCommit(c.pool(), connection -> {
+                if (!armed.get()) return;
+                // Replay also commits a transaction. Hold only restoration's actual claim fence.
+                try (var statement = connection.prepareStatement("""
+                        SELECT write_fence_xid=pg_current_xact_id_if_assigned()
+                        FROM repository_execution_claims WHERE operation_id=?
+                        """)) {
+                    statement.setObject(1, input.command().operationId());
+                    try (var rows = statement.executeQuery()) {
+                        if (!rows.next() || !rows.getBoolean(1)) return;
+                    }
+                }
+                if (!armed.compareAndSet(true, false)) return;
+                entered.countDown();
+                try {
+                    if (!release.await(10, TimeUnit.SECONDS)) throw new java.sql.SQLException("restoration gate timeout");
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt(); throw new java.sql.SQLException(interrupted);
+                }
+            });
+            try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                    Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"));
+                    var r = resources(new Tx(emf), 1, input.bytes(), Duration.ofSeconds(1))) {
                 pending(r.sessions(), input);
                 var original = identity(c, input);
                 var key = new RepositoryOperationLedger.Key("account", "principal", input.command().operationId());
@@ -261,12 +287,27 @@ class DocumentJournaledSessionsIT {
                 var owner = new RepositoryOperationLedger(c.tx()).takeOver(key, input.command(), 1, UUID.randomUUID(), LEASE, claim);
                 assertThat(r.sessions().retireSuperseded(CALLER, input.command(), NONE)).isTrue();
                 assertThat(r.sessions().retainedSessions()).isZero();
-                assertThatThrownBy(() -> r.sessions().resumeStarted(CALLER, input.command(), owner, NONE))
-                        .hasMessage("Retained assessment execution is not configured");
+                if (holdReservation) {
+                    armed.set(true);
+                    var restoring = workers.submit(() -> catchThrowable(() -> r.sessions().resumeStarted(CALLER, input.command(), owner, NONE)));
+                    try {
+                        assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+                        assertThat(r.sessions().retainedSessions()).isZero();
+                        assertThat(r.sessions().drainRegistrations(Duration.ZERO, k -> {
+                            throw new AssertionError("Restoration identity has not been reserved");
+                        }, NONE)).isEqualTo(new DocumentPublicationSessions.DrainProgress(false, 0, 0));
+                        assertThat(count(c, "repository_coordinator_drains", input)).isZero();
+                        release.countDown();
+                        assertThat(restoring.get(5, TimeUnit.SECONDS)).hasMessage("Retained assessment execution is not configured");
+                    } finally { release.countDown(); }
+                } else {
+                    assertThatThrownBy(() -> r.sessions().resumeStarted(CALLER, input.command(), owner, NONE))
+                            .hasMessage("Retained assessment execution is not configured");
+                    // A retry may fail for the same reason, but must retain the owned identity.
+                    assertThatThrownBy(() -> r.sessions().resumeStarted(CALLER, input.command(), owner, NONE))
+                            .hasMessage("Retained assessment execution is not configured");
+                }
                 assertThat(r.sessions().retainedSessions()).isEqualTo(1);
-                // A retry may fail for the same reason, but must not lose the owned identity.
-                assertThatThrownBy(() -> r.sessions().resumeStarted(CALLER, input.command(), owner, NONE))
-                        .hasMessage("Retained assessment execution is not configured");
                 r.sessions().close();
                 assertThat(r.sessions().drainRegistrations(Duration.ZERO, k -> CALLER, NONE))
                         .isEqualTo(new DocumentPublicationSessions.DrainProgress(true, 1, 0));

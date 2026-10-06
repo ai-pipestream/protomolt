@@ -876,6 +876,10 @@ owner identity for the snapshot. Non-journaled resource release remains unchange
 SQL regression covers a real pre-owner rollback followed by accepted abandonment
 and cache eviction during drain, and a same-incarnation owner takeover followed by
 failed restoration and retry. Both bugs were reproduced before the fixes. A held
-restoration reservation race and loaded journaled restoration cleanup still require
-qualification before whole-host V91 activation. The host must additionally drain
-its schema workers; this change does not record local-drain attestations.
+actual restoration claim-fence transaction now verifies that the registration barrier
+prevents an early snapshot. The production-JAR fixture also loads a generation-2
+restoration using an observed executor; its deliberately uncommitted assessment stage
+is refused. Close releases the loaded bytes while retaining the original coordinator
+identity for V90. This does not demonstrate restored publication or provider reads.
+The host must additionally drain its schema workers before whole-host V91 activation;
+these checks do not record local-drain attestations.

@@ -28,8 +28,11 @@ snapshot across retries, even when an accepted operation subsequently becomes
 terminal and leaves the session cache. Restoration authority checks and reservation
 share that barrier; failed journaled restoration retains its exact owner identity
 and bounded command capacity. Closing a loaded restoration releases its borrowed
-resources while retaining that identity. Before host attestation, still qualify a
-held restoration reservation and a loaded journaled restoration's resource release.
+resources while retaining that identity. Qualification now covers a held actual
+restoration claim-fence transaction (drain cannot snapshot before reservation), and
+a production-JAR loaded restoration that releases its bytes on close while retaining
+its identity for V90. The observed executor refuses the deliberately absent stage;
+this is lifecycle evidence, not successful restored publication or provider-read proof.
 Do not reconstruct these identities from a later SQL query or current claim.
 The next private host integration must consume the retained snapshot.
 After publication sessions, scopes, uploads and readers drain, wait for the
@@ -41,6 +44,19 @@ release), a failure on the second of two attestations, and a terminal-session
 control. Keep ordinary service construction unchanged. Future public publication
 transport also needs accepted-call drain before transport teardown; current
 private runtime qualification does not establish that ordering.
+
+The service/container package boundary needs one narrow managed-host factory,
+rather than a public attestation flag or access to the private ledger. Its trusted
+authority resolver should receive account, principal and operation UUID, adapting
+internally to the package-private operation key without exposing claim tokens.
+It must own an explicit external-worker lifecycle (`closeAdmission`, `awaitIdle`),
+implemented by the service around its owned schema access. Only this managed
+composition may proceed from runtime drain through schema-worker drain to V91.
+Keep ordinary public service builders unchanged and select the factory through an
+internal opt-in. Set runtime completion only after every retained identity has an
+exact local-drain confirmation; retries after partial attestation retain all
+resources needed for SQL confirmation. The existing private journaled runtime
+without that external-worker lifecycle remains unable to attest whole-host drain.
 
 Current restore checkpoint: canonical historical commands, current-READ replay,
 V86 historical provenance, snapshot v2 with v1 replay, and shared physical/slot

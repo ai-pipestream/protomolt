@@ -6319,3 +6319,10 @@ discarding that identity. Exact same-owner retries remain available before close
 claim transfer semantics and SQL migrations. This increment records no V91 marker
 and grants no successor authority. The private host still needs complete lifecycle
 composition and qualification, including service-owned schema workers.
+
+The restoration barrier and loaded-resource cases now have
+[qualification evidence](../evidence/repository/2026-10-06-restoration-drain/README.md).
+An actual claim-fence commit holds the reservation barrier; a production-JAR observed
+executor loads a restoration whose assessment stage is absent, then refuses it.
+Closing releases its reserved bytes while preserving the identity for V90. No
+operation or protobuf contract changes in this qualification increment.

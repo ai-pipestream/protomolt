@@ -18,7 +18,81 @@ import javax.sql.DataSource;
 public final class NativeAssessmentExecutionProbe {
     static void run(Tx observer, DataSource database, AssessmentProviderProbe provider,
             AssessmentMixedReuseProbe.Source source, DocumentAssessmentRuntimeObserver.Observation observation) throws Exception {
+        restorationDrain(observer, source, observation);
         run(observer, database, provider, source, observation, false);
+    }
+
+    /** Real observed executor and SQL journals; missing stage refuses before provider reads. */
+    private static void restorationDrain(Tx tx,
+            AssessmentMixedReuseProbe.Source source, DocumentAssessmentRuntimeObserver.Observation observation) throws Exception {
+        var command = AssessmentMixedReuseProbe.command(source.candidate());
+        var caller = new RepositoryCaller("principal", true);
+        var key = new RepositoryOperationLedger.Key("account", "principal", command.operationId());
+        var budget = new PayloadBudget(128_000_000);
+        var reads = new DocumentReadLedger(tx, UUID.randomUUID(), 1);
+        var drives = new DriveLedger(tx);
+        var limits = new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000);
+        var placements = Map.of(source.placement().drive().id(), source.placement());
+        var modes = Map.of("a", DocumentPublicationCandidate.Mode.TYPED);
+        try (var reader = new DocumentPartReader((generation, profile) -> {
+                    throw new AssertionError("Unresolved restoration must not open a provider");
+                }, 2, 16_000_000, budget);
+                var uploads = new DocumentUploadCoordinator(tx, drives, budget,
+                        (generation, profile) -> { throw new AssertionError("Cancelled admission must not upload"); },
+                        1, Duration.ofMillis(10), new SqlTimeouts(Duration.ofSeconds(1), Duration.ofSeconds(5)))) {
+            var assessments = new DocumentPublicationAssessmentExecution(tx, drives, reads, reader, budget, limits,
+                    observation, Duration.ofMinutes(5), Duration.ofSeconds(5));
+            var execution = new DocumentPublicationExecution(tx, drives, reads, uploads, reader, budget, limits, false, assessments);
+            try (var sessions = DocumentPublicationSessions.journaled(tx, execution, Duration.ofSeconds(5), 1, 4_000_000, budget)) {
+                var cancelledAfterOwner = new RepositoryReadControl() {
+                    public boolean isCancelled() {
+                        return tx.readOnly(em -> ((Number) em.createNativeQuery(
+                                "SELECT count(*) FROM repository_operation_owners WHERE operation_id=:id")
+                                .setParameter("id", command.operationId()).getSingleResult()).intValue()) != 0;
+                    }
+                    public long remainingNanos() { return Long.MAX_VALUE; }
+                };
+                try {
+                    sessions.execute(caller, command, placements, Map.of(), Map.of(), modes, Optional.empty(),
+                            (member, occurrence) -> { throw new AssertionError("Cancelled admission must not resolve schemas"); }, cancelledAfterOwner);
+                    throw new AssertionError("Cancelled admission returned success");
+                } catch (RepositoryException cancelled) {
+                    require(cancelled.code() == RepositoryException.Code.CANCELLED, "cancel after real owner admission");
+                }
+                var claimRow = tx.readOnly(em -> (Object[]) em.createNativeQuery(
+                        "SELECT claim_token,lease_until FROM repository_execution_claims WHERE operation_id=:id")
+                        .setParameter("id", command.operationId()).getSingleResult());
+                var claim = new RepositoryExecutionClaimLedger.Claim(key, command.sha256(), 1, (UUID) claimRow[0], (Instant) claimRow[1]);
+                claim = new RepositoryExecutionClaimLedger(tx).renew(claim, Duration.ofMinutes(5));
+                tx.readOnly(em -> em.createNativeQuery("SELECT pg_sleep(5.1)").getSingleResult());
+                var seeds = DocumentPublicationSeeds.mint(key, command);
+                var preparation = new DocumentPublicationPreparationRecord(key, command, seeds, placements, Duration.ofMinutes(5), 1);
+                new DocumentPublicationPreparationJournal(tx, budget).save(caller, claim, preparation, RepositoryReadControl.NONE);
+                new DocumentPublicationModesJournal(tx, budget).bind(caller, claim, 1, modes, RepositoryReadControl.NONE);
+                var owner = new RepositoryOperationLedger(tx).takeOver(key, command, 1, seeds.ownerNonce(), Duration.ofMinutes(5), claim);
+                new DocumentAssessmentStartJournal(tx, budget).start(caller, owner, command, UUID.randomUUID(),
+                        Duration.ofMinutes(5), RepositoryReadControl.NONE);
+                require(sessions.retireSuperseded(caller, command, RepositoryReadControl.NONE), "retire superseded original session");
+                require(budget.reservedBytes() == 0, "pre-restoration reservations released");
+                try {
+                    sessions.resumeStarted(caller, command, owner, RepositoryReadControl.NONE);
+                    throw new AssertionError("Uncommitted assessment stage returned success");
+                } catch (RepositoryException unresolved) {
+                    require(unresolved.code() == RepositoryException.Code.FAILED_PRECONDITION
+                            && unresolved.getMessage().equals("Assessment stage outcome is unresolved; explicit recovery is required"),
+                            "observed executor refuses unresolved stage after loading restoration");
+                }
+                require(budget.reservedBytes() > 0 && sessions.retainedSessions() == 1, "loaded restoration retains its reservation");
+                sessions.close();
+                require(sessions.awaitIdle(Duration.ZERO) && budget.reservedBytes() == 0, "close releases loaded journaled restoration");
+                require(sessions.retainedSessions() == 1 && sessions.retainedCommandBytes() > 0, "close retains exact nonterminal identity");
+                require(sessions.drainRegistrations(Duration.ZERO, ignored -> caller, RepositoryReadControl.NONE)
+                        .equals(new DocumentPublicationSessions.DrainProgress(true, 1, 0)), "closed restoration identity receives drain marker");
+            }
+            require(reads.outstandingReads() == 0 && budget.reservedBytes() == 0, "restoration cleanup leaves no reads or reservations");
+            reads.fence(); reads.attestLocalQuiescence();
+        }
+        System.out.println("JOURNALED_RESTORATION_DRAIN_OK");
     }
 
     static void runScoped(Tx observer, DataSource database, AssessmentProviderProbe provider,
