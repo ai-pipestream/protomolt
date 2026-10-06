@@ -522,8 +522,13 @@ Leaving the real upload unverified must leave all three destinations absent;
 verification permits atomic publication and exact replay. Sealed physical origins
 are checked against the selected upload attempt and retained selectors. In this
 probe current and historical reuse select the same bytes; the multi-revision SQL
-case above covers distinct versions. Mixed sources within one member still need
-qualification.
+case above covers distinct versions. A separate PostgreSQL test now publishes
+historical CORE and a fresh PARSED upload within one typed member. It refuses an
+unverified upload, preserves historical manifest entries and physical identities,
+checks the fresh upload's selected attempt and byte metadata, and replays both
+roots using retained schemas without registry access. Provider observations in
+this test are synthetic; actual-provider same-member reads remain unqualified.
+See [same-member evidence](../evidence/repository/2026-10-06-historical-mixed-member/README.md).
 Public restoration, claimed-session activation and automatic
 claim transfer remain disabled. These are required follow-ups, not an assertion
 that the full repository goal is complete.
