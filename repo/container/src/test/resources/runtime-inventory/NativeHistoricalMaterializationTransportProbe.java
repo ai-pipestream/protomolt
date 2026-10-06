@@ -108,6 +108,7 @@ public final class NativeHistoricalMaterializationTransportProbe {
                 require(response.getAddress().equals(address) && response.getRevisionId().equals(revision.toString()), "captured transport identity");
                 require(response.getOriginal().unpack(com.google.protobuf.StringValue.class).getValue().equals("retained payload"), "real selected transport payload");
                 require(response.getSelection().equals(request.getSelection()), "exact selection echoed from result");
+                malformedClientResponses(request, response);
                 status(() -> owner.readHistoricalOccurrence(request.toBuilder().clearSelection().build()), Status.Code.INVALID_ARGUMENT);
                 var foreignHeaders = new Metadata(); foreignHeaders.put(identity, "foreign");
                 status(() -> plain.withInterceptors(MetadataUtils.newAttachHeadersInterceptor(foreignHeaders)).readHistoricalOccurrence(request), Status.Code.NOT_FOUND);
@@ -134,6 +135,49 @@ public final class NativeHistoricalMaterializationTransportProbe {
         require(budget.reservedBytes() == 0, "transport reservations drained");
         NativeHistoricalMaterializationLifecycleProbe.run(repository, request, limits);
         System.out.println("NATIVE_HISTORICAL_MATERIALIZATION_TRANSPORT_OK");
+    }
+    /** Client verification only: replay a real response, deliberately corrupting one field at a time. */
+    private static void malformedClientResponses(ReadHistoricalOccurrenceRequest request,
+            ReadHistoricalOccurrenceResponse valid) throws Exception {
+        var supplied = new java.util.concurrent.atomic.AtomicReference<>(valid);
+        var responses = new DocumentHistoryMaterializationServiceGrpc.DocumentHistoryMaterializationServiceImplBase() {
+            @Override public void readHistoricalOccurrence(ReadHistoricalOccurrenceRequest incoming,
+                    io.grpc.stub.StreamObserver<ReadHistoricalOccurrenceResponse> observer) {
+                observer.onNext(supplied.get()); observer.onCompleted();
+            }
+        };
+        String name = InProcessServerBuilder.generateName();
+        var server = InProcessServerBuilder.forName(name).directExecutor().addService(responses).build().start();
+        var channel = InProcessChannelBuilder.forName(name).directExecutor().build();
+        var budget = new PayloadBudget(32L * 1024 * 1024);
+        var client = new HistoricalOccurrenceClient(DocumentHistoryMaterializationServiceGrpc.newFutureStub(channel), budget,
+                new DocumentHistoricalResponseMaterialization.Limits(8 * 1024 * 1024, 100_000, 100),
+                java.time.Duration.ofSeconds(20), 1);
+        try {
+            for (var invalid : java.util.List.of(
+                    valid.toBuilder().setRevisionId(UUID.randomUUID().toString()).build(),
+                    valid.toBuilder().setOriginal(valid.getOriginal().toBuilder()
+                            .setValue(com.google.protobuf.ByteString.copyFromUtf8("changed"))).build(),
+                    valid.toBuilder().setDefinition(valid.getDefinition().toBuilder()
+                            .setDescriptorArtifact(com.google.protobuf.ByteString.copyFromUtf8("not descriptors"))).build())) {
+                supplied.set(invalid);
+                status(() -> client.read(request, RepositoryReadControl.NONE), Status.Code.DATA_LOSS);
+                require(budget.reservedBytes() == 0, "invalid client response releases all reservations");
+                supplied.set(valid);
+                try (var recovered = client.read(request, RepositoryReadControl.NONE)) {
+                    var value = recovered.view(RepositoryReadControl.NONE).value();
+                    require(value.getField(value.getDescriptorForType().findFieldByNumber(1)).equals("retained payload"),
+                            "valid retry decodes retained data after malformed response");
+                    status(() -> client.read(request, RepositoryReadControl.NONE), Status.Code.RESOURCE_EXHAUSTED);
+                }
+                require(budget.reservedBytes() == 0, "valid retry releases recovered call capacity and bytes");
+            }
+        } finally {
+            channel.shutdownNow(); server.shutdownNow();
+            require(channel.awaitTermination(5, TimeUnit.SECONDS) && server.awaitTermination(5, TimeUnit.SECONDS),
+                    "client response fixture drained");
+        }
+        System.out.println("HISTORICAL_CLIENT_MALFORMED_RESPONSE_OK");
     }
     private static void status(Runnable work, Status.Code expected) {
         try { work.run(); throw new AssertionError("Expected " + expected); }

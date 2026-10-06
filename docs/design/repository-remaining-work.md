@@ -63,16 +63,16 @@ foundation boundaries without adding JCR dependencies or asserting compliance.
 ## Independent work that can advance now
 
 1. **Selected historical reads.** The optional Java SPI, wire contract, response
-   verifier and explicit gRPC service exist. Complete malformed-response coverage,
-   then the remote client and managed host wiring. Require local/remote parity,
+   verifier, remote client and explicit managed gRPC mount exist. Extend malformed
+   response and lifecycle qualification at the client boundary. Require local/remote parity,
    current authorization at delivery, cancellation and byte-budget release. Test
    exact retained descriptors with the original registry unavailable. Never
    substitute the latest registry definition for historical evidence.
    The client belongs in the `repo/history/grpc` leaf, independent of the service's
    SQL and provider assemblies. Admission exposes a closeable selected-response
    decode result using the already verified descriptor. Bound inbound messages,
-   shared reservations and open results, and test the actual in-process service
-   before adding managed-host wiring.
+   shared reservations and open results. Existing real-service in-process and managed
+   host tests qualify the selected-read path, not every repository operation.
    The remote adapter must preserve current READ authorization at each exposure:
    cached decoded bytes and local cancellation checks alone cannot satisfy the
    repository SPI. Bind the caller to transport credentials explicitly; a request
@@ -83,6 +83,12 @@ foundation boundaries without adding JCR dependencies or asserting compliance.
    managed mounting now shares native reader lifetime and response capacity with
    ordinary history; selected reads match the local SPI across fresh in-process
    and Netty hosts. Full local/remote repository parity remains unfinished.
+   The production-JAR transport probe also replays a captured real response through
+   a test endpoint with deliberately changed revision, payload or descriptor bytes.
+   The client refuses each response with DATA_LOSS, releases its byte reservations,
+   and permits a valid retry on the same one-call client. This is client-verifier
+   coverage, not a substitute for the real service's authorization tests. See
+   [client evidence](../evidence/repository/2026-10-06-historical-client-verification/README.md).
 2. **Schema resolution and cache.** Reuse the existing resolver and registry
    abstractions. Separate authorized discovery from immutable artifact lookup.
    Follow the [bounded cache plan](repository-schema-cache.md); its first slice
@@ -111,6 +117,12 @@ foundation boundaries without adding JCR dependencies or asserting compliance.
    revoked access and unresolved envelopes. Raw preservation must remain usable
    without descriptors; selected decoding still requires a definition. An outage
    must not silently become an authoritative missing-definition result.
+   The current descriptor-graph inventory test enumerates every declared `Any`
+   location in `Document`: CORE structured data and PARSED parser shapes. It fails
+   when the graph gains an unaccounted route. `DocumentAnyMaterializationTest`
+   covers raw preservation without resolution, distinct occurrence-bound definitions
+   for an equal type URL, and explicit unavailable outcomes. These are library
+   guarantees; new container schemas and public host wiring need their own coverage.
 3. **Provider durability and capacity.** Keep provider identity independent of
    implementation vocabulary. Qualify a non-S3 provider and its startup/dependency
    boundaries. Use RustFS for local performance and LocalStack for S3 correctness;
@@ -232,13 +244,11 @@ foundation boundaries without adding JCR dependencies or asserting compliance.
    READ, destination WRITE, and current admission policy; preserve historical bytes
    and definitions without silently substituting the latest registry definition.
    Record policy incompatibility as an explicit refusal rather than rewriting history.
-   Review whether the existing reuse contract expresses this before adding fields.
-   One concrete mismatch is already identified: `PublicationReuse.source` is a
-   pre-change current-revision dependency, and `DocumentPublicationCommand` rejects
-   a source revision different from the destination's expected revision at the same
-   address. An older same-address restore therefore cannot be represented by simply
-   filling in today's reuse fields. Preserve that concurrency check; assess an explicit
-   historical source selector with retained-read protection instead of weakening it.
+   `PublicationHistoricalReuse` now supplies the explicit historical source selector
+   and retained-read binding. Ordinary `PublicationReuse.source` remains a pre-change
+   current-revision dependency; its concurrency check has not been weakened to admit
+   older same-address revisions. Internal unclaimed publication exercises historical
+   selectors; public and claimed execution remain separate activation gates.
 
    Current deletion protection is stronger than a completed pruning implementation:
    V48 rejects schema artifact mutation pending a cleanup protocol; V55 makes revision
@@ -339,8 +349,10 @@ Restore has also advanced independently: private SQL-backed typed assessment now
 owns fragment copies and a source pin, checks exact source/evidence identities,
 and applies the supplied current policy. Source revocation is checked during
 delivery, including on errors. See the [assessment checkpoint](repository-historical-restore.md#sql-backed-current-policy-assessment-checkpoint).
-This does not close the restore task: destination authorization, active-policy
-fencing, command integration and atomic historical reference publication remain.
+Internal unclaimed publication now adds destination authorization, active-policy
+fencing, command integration and atomic historical reference publication. Real SQL
+and production-JAR provider probes qualify that path. Public/claimed activation,
+automatic claim transfer, complete recovery and safe pruning remain open.
 
 ## Next non-S3 slice: explicit bounded ingestion
 
@@ -349,9 +361,9 @@ Follow the [bounded ingress design](repository-bounded-ingress.md). The reusable
 engine copies and storage work. Real Redis library/in-process tests cover capacity,
 oversize refusal, delayed-write drain, reuse and historical reads. The optional
 composition refuses streaming and bridge generation. An internal bounded archive-only
-host now passes Redis save/history/restart and delayed-write shutdown tests. Public
-standalone environment activation and HTTP admission remain unfinished. General transport
-startup still rejects the internal profile. A dedicated authenticated archive-only
+host now passes Redis save/history/restart and delayed-write shutdown tests. The
+standalone environment launcher is implemented; general HTTP is outside this
+profile. General transport startup still rejects the bounded profile. A dedicated authenticated archive-only
 Netty mount now shares the pre-protobuf gate and byte budget with archive writes;
 all exposed unary methods are explicitly reviewed. Real Redis tests cover local
 and remote retry/history behavior and cancellation without early resource release.
@@ -362,7 +374,9 @@ parity and response/read-memory bounds remain open. The standalone
 `RepoBoundedArchiveMain` now bootstraps its explicitly selected account/drive through
 the local port before opening its archive-only listener. Child-process tests cover
 startup, restart without relocation, failed bootstrap, and SIGTERM during a real SQL
-commit wait. Delayed Redis I/O and forced-kill recovery remain separate gates; see
+commit wait. Real Redis reply-gate tests cover short delayed acknowledgments and a
+lost acknowledgment after provider write, followed by retry and normal lease-expiry
+recovery. Forced-kill host recovery and deployment durability remain separate gates; see
 the [bounded-ingress plan](repository-bounded-ingress.md).
 
 The default `RepoServices` managed profile still requires streaming, non-expiring
@@ -370,8 +384,8 @@ writes and reclamation. `ArchiveObjectWriter` distinguishes byte-array
 staging from streaming staging; `RawIngestionOperations` requires streaming.
 The internal bounded profile preserves those operation distinctions, shared
 provider identity and cleanup without changing default capability requirements.
-Before activation, specify aggregate reservations before ingress allocation,
-per-request size limits, capacity retention through delayed provider completion,
-and which streaming operations report unsupported. Local host evidence does not
-establish transport admission or deployment durability. This remains independent of restore
+The qualified archive-only listener applies aggregate reservations before protobuf
+decoding and per-request limits, retains capacity through delayed provider completion,
+and leaves streaming unavailable. This transport evidence does not establish general
+repository parity, response/read-memory bounds or deployment durability. This remains independent of restore
 and of the RustFS saturation measurements.
