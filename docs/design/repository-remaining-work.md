@@ -27,6 +27,10 @@ READ during inspection and replay. Its callback-scoped inspection provides immut
 summaries plus the caller-supplied command and policy values; it exposes no borrowed
 payload or publication capability. Historical opaque-source classification and
 durable publication integration remain unfinished.
+The SQL assessment suite now also covers one member assembled from two historical
+sources, including second-source access revocation and release of both pins. The
+ordinary registry resolver is unavailable in that fixture. This closes the host
+routing test gap, not the provider-read or publication gates.
 
 Next, carry the whole-command assessment through observed-runtime CREATE and atomic
 reference publication, with authoritative current-policy and destination fences.

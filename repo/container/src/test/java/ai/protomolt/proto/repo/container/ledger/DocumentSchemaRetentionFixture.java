@@ -39,17 +39,23 @@ final class DocumentSchemaRetentionFixture {
                 .setSecurity(DocumentSecurity.getDefaultInstance()).build();
         var document = Document.newBuilder().setDocId("typed-fixture").setOwnership(ownership)
                 .setStructuredData(Any.pack(StringValue.of("real payload"), "type.test")).build();
+        return prepare(c, typed, explicitSchema, document, "node", "schema-retention");
+    }
+
+    static Fixture prepare(Context c, boolean typed, boolean explicitSchema, Document document,
+            String graphAddress, String driveName) throws Exception {
+        var ownership = document.getOwnership();
         var profile = new ManagedBackendLedger.Profile(new BackendIdentity("test-location", "test-location/v1",
                 Map.of("endpoint", "synthetic")), "schema-retention");
         new ManagedBackendLedger(c.tx()).bind("schema-retention", profile);
         var drive = new DriveRecord(); drive.driveId = UUID.randomUUID(); drive.accountId = "account";
-        drive.name = "schema-retention"; drive.bucket = "bucket"; drive.prefix = "root";
+        drive.name = driveName; drive.bucket = "bucket"; drive.prefix = "root";
         drive.provider = "test-location"; drive.driveType = "CUSTOM"; drive.status = "ACTIVE";
         new DriveLedger(c.tx()).insert(drive);
         var member = DocumentPublicationMember.newBuilder().setMemberId("member").setDriveId(drive.driveId.toString())
                 .setOwnership(ownership).setRowKind(DocumentPublicationRowKind.DOCUMENT_PUBLICATION_ROW_KIND_PIPELINE)
                 .setDestination(DocumentRevisionCondition.newBuilder().setIfAbsent(true).setAddress(NodeAddress.newBuilder()
-                        .setAccountId("account").setDocId(document.getDocId()).setGraphId("graph").setGraphAddressId("node")));
+                        .setAccountId("account").setDocId(document.getDocId()).setGraphId("graph").setGraphAddressId(graphAddress)));
         var fragments = new HashMap<Integer, ByteString>();
         for (var part : DocumentPartCodec.split(document, PartLayouts.document())) {
             fragments.put(member.getPartsCount(), ByteString.copyFrom(part.bytes()));

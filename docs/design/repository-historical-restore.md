@@ -416,15 +416,29 @@ two definitions under the same type URL is refused even when the union is unchan
 Source scopes and input bytes remain host-owned; the composite owns its metadata
 scratch and does not close the sources. See [composite evidence](../evidence/repository/2026-10-06-composite-schema-resolution/README.md).
 
-Next, integrate these checks with whole-command assessment and its current policy
-and evaluation time. The host must derive each mapping from authenticated pinned
-selectors, bind the exact command/member identity and reauthorize delivery. The
-library resolver does not provide SQL authorization, source retention, or publication
-authority. Observed-runtime CREATE and atomic reference publication remain gated.
+The internal whole-command assessment now derives mappings from authenticated pinned
+selectors, binds the exact caller and command/member identity, and reauthorizes
+inspection and replay. One supplied policy and evaluation time govern all members.
+SQL integration tests also combine CORE and PARSED from two distinct historical
+sources into one member without registry access. Both source Uses survive outer
+handle closure, and revoking the second source prevents further replay. These tests
+cover retained schema routing, not actual provider reads or publication authority.
+Observed-runtime CREATE and atomic reference publication remain gated.
 
 Opaque restore needs explicit source classification and current-policy mode selection
 before raw assembly. A failed typed load or assessment must never trigger raw mode.
-Settle any typed-source-to-opaque downgrade rule before exposing restoration. Source
+For the first implementation, refuse typed-source-to-opaque downgrade. Require each
+historical source of an opaque target member to have an explicit sealed native
+OPAQUE admission, with matching account, node, revision, commit, admission and
+operation-success bindings. Missing admissions, legacy unknown modes and inconsistent
+bindings remain unsupported or corrupt, not implicit opaque data. Verify selected
+ordinals against their pinned plans. Run classification under the captured caller's
+current READ and live Use; it grants no target-policy exception or write authority.
+Keep this scalar classification separate from typed descriptor loading so opaque
+preservation does not deserialize an unknown Any or require a current registry.
+Acceptance must cover explicit opaque success, typed-source refusal, unknown source,
+current typed-required policy refusal, revocation, cancellation and zero leaked
+reservations. Sol reviewed this boundary; it is not implemented yet. Source
 READ checks belong at delivery and commit; deterministic evidence replay remains free
 of provider and SQL calls. Keep source Uses through observed-runtime CREATE and atomic
 reference publication. The public route remains disabled while those integrations

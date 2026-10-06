@@ -27,6 +27,60 @@ class DocumentHistoricalRestoreAssessmentIT {
 
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void oneMemberCombinesTwoSqlHistoricalSourcesAndRechecksBoth(boolean revokeSecond) throws Exception {
+        try (var c = context(POSTGRES)) {
+            var first = fixture(c);
+            var document = Document.newBuilder().setDocId(first.address().getDocId())
+                    .setOwnership(first.original().command().intent().getMembers(0).getOwnership())
+                    .setStructuredData(com.google.protobuf.Any.pack(com.google.protobuf.StringValue.of("unselected core"), "type.test"))
+                    .putParserResults("parsed", ParserResult.newBuilder().setDocument(ParserDocument.newBuilder().setShape(
+                            com.google.protobuf.Any.pack(com.google.protobuf.StringValue.of("selected parsed"), "type.test"))).build()).build();
+            var prepared = DocumentSchemaRetentionFixture.prepare(c, true, false, document, "second-source", "second-drive");
+            var second = new Fixture(prepared, DocumentSchemaRetentionFixture.publishBound(c, prepared, (em, candidate) -> {},
+                    (em, revision, manifest) -> prepared.retention().write(em, prepared.owner(), revision, () -> {})));
+            grant(c, first.address(), true); grant(c, second.address(), true);
+            var caller = new RepositoryCaller("scoped", false, Set.of("account"), Set.of());
+            var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var firstHistory = ledger.captureHistorical(caller, first.address(), first.revision());
+            var secondHistory = ledger.captureHistorical(caller, second.address(), second.revision());
+            var firstMember = member(first, firstHistory); var secondMember = member(second, secondHistory);
+            var parsed = secondMember.getPartsList().stream()
+                    .filter(part -> part.getSlot().getPart() == DocumentPart.DOCUMENT_PART_PARSED).findFirst().orElseThrow();
+            var combined = firstMember.toBuilder().addParts(parsed).build();
+            var command = new DocumentPublicationCommand(first.original().command().intent().toBuilder()
+                    .setOperationId(UUID.randomUUID().toString()).setMembers(0, combined).build());
+            var fragments = new HashMap<>(first.fragments());
+            fragments.put(firstMember.getPartsCount(), second.fragments().get(parsed.getHistoricalReuse().getRevisionOrdinal()));
+            var budget = new PayloadBudget(64L * 1024 * 1024);
+            try (var assessment = DocumentPublicationAssessment.prepareHistorical(command, first.original().batch().policy(),
+                    Map.of("member", DocumentPublicationCandidate.Mode.TYPED), Map.of("member", fragments), Optional.empty(),
+                    (m, occurrence) -> { throw new AssertionError("Historical sources cannot resolve through current registry"); }, budget,
+                    new ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits(4_000_000, 32, 100, 100, 100_000),
+                    AT, caller, List.of(secondHistory, firstHistory), RepositoryReadControl.NONE)) {
+                firstHistory.close(); secondHistory.close();
+                assertThat(firstHistory.isDrained()).isFalse(); assertThat(secondHistory.isDrained()).isFalse();
+                assessment.inspect(access -> {
+                    var value = access.snapshot(); assertThat(value.failure()).isEmpty();
+                    assertThat(value.typed().get("member").rootCount()).isEqualTo(2);
+                }, RepositoryReadControl.NONE);
+                if (revokeSecond) {
+                    grant(c, second.address(), false);
+                    assertThatThrownBy(() -> assessment.verifySchemas(RepositoryReadControl.NONE))
+                            .isInstanceOfSatisfying(RepositoryException.class,
+                                    error -> assertThat(error.code()).isEqualTo(RepositoryException.Code.NOT_FOUND));
+                } else assessment.verifySchemas(RepositoryReadControl.NONE);
+            } finally {
+                assertThat(budget.reservedBytes()).isZero();
+                firstHistory.close(); secondHistory.close();
+                assertThat(firstHistory.awaitDrained(Duration.ofSeconds(1))).isTrue();
+                assertThat(secondHistory.awaitDrained(Duration.ofSeconds(1))).isTrue();
+                firstHistory.release(); secondHistory.release(); ledger.fence(); ledger.attestLocalQuiescence();
+            }
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
     void wholeCommandAssessmentKeepsOnePolicyTimeAndOwnedSources(boolean ordinaryOpaque) throws Exception {
         try (var c = context(POSTGRES)) {
             var f = fixture(c); var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
