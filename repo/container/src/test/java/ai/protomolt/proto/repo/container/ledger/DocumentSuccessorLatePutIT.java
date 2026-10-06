@@ -132,13 +132,11 @@ class DocumentSuccessorLatePutIT {
                                         .isInstanceOf(RepositoryExecutionClaimLedger.Fenced.class);
                                 assertThat(gateway.requests()).isEqualTo(1);
                             }
-                            // Graceful handoff carries the preparation retained before drain. The uncertain
-                            // path instead reloads it through its exact live successor claim.
-                            var successorClaim = graceful ? null : tx.inTransaction(em -> { return RepositoryExecutionClaimLedger.lockLive(em,
-                                    key, input.command().sha256(), 2, reservation.successorToken()); });
-                            try (var recovered = graceful ? null : new DocumentPublicationPreparationJournal(tx, bootstrap)
-                                    .load(ADMIN, successorClaim, 0, NONE).orElseThrow()) {
-                                var plan = RepositorySuccessorInstall.prepare(reservation, graceful ? previous : recovered.record(), LEASE,
+                            // Both paths reload under reserved read authority without stamping an execution fence.
+                            try (var recovered = new RepositoryReservedPreparation(tx,bootstrap,
+                                    new SqlTimeouts(Duration.ofSeconds(1),Duration.ofSeconds(5))).load(ADMIN,ADMIN,reservation,
+                                    new RepositoryCoordinatorReservation.OwnerIdentity(previous.predecessorGeneration()+1,previous.seeds().ownerNonce()),NONE)) {
+                                var plan = RepositorySuccessorInstall.prepare(reservation, recovered.record(), LEASE,
                                         Map.of("a", DocumentPublicationCandidate.Mode.OPAQUE));
                                 RepositorySuccessorInstall.install(tx, second.budget, ADMIN, plan, NONE);
                                 second.sessions.activateSuccessor(ADMIN, ADMIN, plan, NONE);

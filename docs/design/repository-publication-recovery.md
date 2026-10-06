@@ -1347,10 +1347,9 @@ This is a fresh manager in the same JVM, using admin authority and opaque CORE
 data. It does not prove process death, a provider SDK call still active at transfer,
 scoped typed uncertain recovery, reader/schema worker quiescence, or performance.
 
-The graceful fixture still uses preparation retained before V91. A fresh pre-V94
-preparation load after graceful reservation is rejected by the local-drain fence.
-Fresh-process graceful bootstrap therefore needs its own reviewed read authority;
-do not weaken the general loader or claim guard to make that case pass.
+The general preparation loader still rejects a pre-V94 read after V91 local drain.
+The separate reserved read authority below now serves both graceful and expired
+reservations. The execution fence remains unchanged.
 
 #### Writer process death and public-request retry
 
@@ -1400,3 +1399,38 @@ An observation never authorizes execution or pin release. The process recovery
 test uses this API instead of a test-only private-identity query. This is an
 internal exact-operation building block, not a public endpoint, fleet scanner,
 automatic retry scheduler, or a solution to unactivated replacement recovery.
+
+#### Preparation reads without an execution fence
+
+`RepositoryReservedPreparation` accepts private process authority, the current
+execution caller, an exact committed reservation and an expected expired owner.
+It locks claim then owner, confirms the exact live reserved successor and source
+reservation, and refuses current-epoch installation, activation or coordinator
+binding. It reads only the owner's preparation generation, with byte accounting
+reserved before fetching it. SQL lock and statement timeouts are mandatory.
+
+Decoding and checksum validation happen outside SQL locks using the same integrity
+checks as the ordinary preparation journal. Before delivering the borrowed record,
+the loader locks and rechecks the reservation/claim/owner and immutable hash, then
+checks current read access for the host-supplied execution caller. Process authority
+for bootstrap does not substitute for that caller's document access. Missing
+preparation is an explicit failed precondition. All failure paths release the byte
+reservation; a successful caller retains it until closing the borrowed value.
+
+No write fence is stamped and no lease is renewed. V91 and the ordinary loader's
+guards are unchanged. V93 installation and V94 activation still perform their own
+checks. Both real delayed-provider variants now reload this way, and the scoped
+typed production-JAR successor probe uses it for graceful recovery. These tests
+do not establish an automatic host, a fresh-process graceful discovery path, or
+recovery after an unactivated replacement dies.
+
+For that next recovery step, an immutable supersession source must distinguish
+reservation-only from installed-but-unactivated state. Under claim-before-owner
+locks, it must verify the exact current parent successor identity, expired claim
+and owner, expected install phase/hashes, and absence of current binding/activation
+before advancing one epoch. A reservation-only retry loads the old owner's
+preparation; an installed retry loads the installed owner's preparation. Older
+install rows must remain intact. Test both graceful and expired origins, repeated
+replacement deaths, V93/V94 races, competing proposals, uncertain acknowledgments,
+and unchanged predecessor objects/pins. Do not fabricate a coordinator binding or
+weaken local-drain guards to close these windows.

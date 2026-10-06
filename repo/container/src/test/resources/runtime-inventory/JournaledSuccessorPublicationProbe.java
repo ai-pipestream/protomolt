@@ -74,57 +74,62 @@ public final class JournaledSuccessorPublicationProbe {
                     var handoff = new RepositoryCoordinatorHandoff.Proposal(identity, UUID.randomUUID(),
                             second.sessions.coordinatorIdentity(), LEASE);
                     RepositoryCoordinatorHandoff.reserve(tx, ADMIN, handoff, NONE);
-                    var plan = RepositorySuccessorInstall.prepare(handoff, previous, LEASE, MODES);
-                    RepositorySuccessorInstall.install(tx, second.budget, ADMIN, plan, NONE);
-                    second.sessions.activateSuccessor(ADMIN, CALLER, plan, NONE);
-                    var definition = ObservedAssessmentProbe.asset(StringValue.getDescriptor());
-                    var result = second.sessions.execute(CALLER, command, Map.of(), bodies, Map.of(), MODES,
-                            Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())),
-                            (member, occurrence) -> definition, NONE);
-                    require(result.getMembersCount() == 1 && second.uploadCalls.get() > 0 && second.readCalls.get() > 0,
-                            "successor published through real upload/read and runtime validation");
-                    int uploadCalls = second.uploadCalls.get(), readCalls = second.readCalls.get();
-                    require(second.sessions.execute(CALLER, command, Map.of(), Map.of(), Map.of(), Map.of(), Optional.empty(),
-                            (member, occurrence) -> { throw new AssertionError("Receipt replay resolved schema"); }, NONE).equals(result),
-                            "exact successor receipt replay");
-                    require(second.uploadCalls.get() == uploadCalls && second.readCalls.get() == readCalls,
-                            "receipt replay did not access provider");
-                    var nextAttempt = plan.next().seeds().attempts().get("a");
-                    require(!nextAttempt.equals(oldAttempt), "successor has distinct attempt identity");
-                    var newObjects = objects(tx, nextAttempt);
-                    verifyBytes(provider, newObjects);
-                    require(newObjects.size() == oldObjects.size(), "same declared upload count");
-                    for (var a : oldObjects) for (var b : newObjects)
-                        require(!a[0].equals(b[0]) && !a[2].equals(b[2]), "successor has distinct physical IDs and keys");
-                    require(snapshot(tx, oldAttempt).equals(oldState), "successor leaves predecessor attempts and cleanup unchanged");
-                    verifyBytes(provider, oldObjects);
-                    var selected = tx.readOnly(em -> (UUID) em.createNativeQuery("""
-                            SELECT attempt_id FROM document_operation_selections
-                            WHERE operation_id=:id AND owner_generation=2 AND member_id='a'
-                            """).setParameter("id", command.operationId()).getSingleResult());
-                    require(selected.equals(nextAttempt), "generation two selects its own attempt");
-                    var current = new DocumentLedger(tx).findByNodeId(source.node()).orElseThrow();
-                    // Mutation revisions use a shared sequence, not a per-document counter.
-                    require(current.mutationRevision > destination.getExpectedMutationRevision()
-                            && current.mutationRevision == result.getMembers(0).getMutationRevision(),
-                            "successor receipt identifies the current mutation revision");
-                    int commits = tx.readOnly(em -> ((Number) em.createNativeQuery(
-                            "SELECT count(*) FROM document_revision_commits WHERE operation_id=:id")
-                            .setParameter("id", command.operationId()).getSingleResult()).intValue());
-                    require(commits == 1, "one committed revision for this operation");
-                    var revision = UUID.fromString(result.getMembers(0).getRevisionId());
-                    var descriptor = tx.readOnly(em -> (String) em.createNativeQuery("""
-                            SELECT encode(descriptor_sha256,'hex') FROM document_revision_schema_assets
-                            WHERE revision_id=:id AND type_url=:url
-                            """).setParameter("id", revision).setParameter("url", definition.metadata().getTypeUrl()).getSingleResult());
-                    require(descriptor.equals(definition.metadata().getArtifactSha256()), "successor retains exact Any schema definition");
-                    int bound = tx.readOnly(em -> ((Number) em.createNativeQuery("""
-                            SELECT count(*) FROM document_revision_parts p JOIN document_revision_current c USING(revision_id)
-                            JOIN document_part_attempt_objects o ON p.object_id=o.physical_object_id
-                            WHERE c.node_id=:node AND o.attempt_id=:attempt
-                            """).setParameter("node", source.node()).setParameter("attempt", nextAttempt).getSingleResult()).intValue());
-                    require(bound == newObjects.size(), "published revision references successor physical objects");
-                    require(second.sessions.retainedSessions() == 0, "durable terminal replay releases successor session");
+                    try (var recovered = new RepositoryReservedPreparation(tx,bootstrapBudget,
+                            new SqlTimeouts(Duration.ofSeconds(1),Duration.ofSeconds(5))).load(ADMIN,CALLER,
+                            new RepositoryCoordinatorReservation.Graceful(handoff),
+                            new RepositoryCoordinatorReservation.OwnerIdentity(previous.predecessorGeneration()+1,previous.seeds().ownerNonce()),NONE)) {
+                        var plan = RepositorySuccessorInstall.prepare(handoff, recovered.record(), LEASE, MODES);
+                        RepositorySuccessorInstall.install(tx, second.budget, ADMIN, plan, NONE);
+                        second.sessions.activateSuccessor(ADMIN, CALLER, plan, NONE);
+                        var definition = ObservedAssessmentProbe.asset(StringValue.getDescriptor());
+                        var result = second.sessions.execute(CALLER, command, Map.of(), bodies, Map.of(), MODES,
+                                Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())),
+                                (member, occurrence) -> definition, NONE);
+                        require(result.getMembersCount() == 1 && second.uploadCalls.get() > 0 && second.readCalls.get() > 0,
+                                "successor published through real upload/read and runtime validation");
+                        int uploadCalls = second.uploadCalls.get(), readCalls = second.readCalls.get();
+                        require(second.sessions.execute(CALLER, command, Map.of(), Map.of(), Map.of(), Map.of(), Optional.empty(),
+                                (member, occurrence) -> { throw new AssertionError("Receipt replay resolved schema"); }, NONE).equals(result),
+                                "exact successor receipt replay");
+                        require(second.uploadCalls.get() == uploadCalls && second.readCalls.get() == readCalls,
+                                "receipt replay did not access provider");
+                        var nextAttempt = plan.next().seeds().attempts().get("a");
+                        require(!nextAttempt.equals(oldAttempt), "successor has distinct attempt identity");
+                        var newObjects = objects(tx, nextAttempt);
+                        verifyBytes(provider, newObjects);
+                        require(newObjects.size() == oldObjects.size(), "same declared upload count");
+                        for (var a : oldObjects) for (var b : newObjects)
+                            require(!a[0].equals(b[0]) && !a[2].equals(b[2]), "successor has distinct physical IDs and keys");
+                        require(snapshot(tx, oldAttempt).equals(oldState), "successor leaves predecessor attempts and cleanup unchanged");
+                        verifyBytes(provider, oldObjects);
+                        var selected = tx.readOnly(em -> (UUID) em.createNativeQuery("""
+                                SELECT attempt_id FROM document_operation_selections
+                                WHERE operation_id=:id AND owner_generation=2 AND member_id='a'
+                                """).setParameter("id", command.operationId()).getSingleResult());
+                        require(selected.equals(nextAttempt), "generation two selects its own attempt");
+                        var current = new DocumentLedger(tx).findByNodeId(source.node()).orElseThrow();
+                        // Mutation revisions use a shared sequence, not a per-document counter.
+                        require(current.mutationRevision > destination.getExpectedMutationRevision()
+                                && current.mutationRevision == result.getMembers(0).getMutationRevision(),
+                                "successor receipt identifies the current mutation revision");
+                        int commits = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                                "SELECT count(*) FROM document_revision_commits WHERE operation_id=:id")
+                                .setParameter("id", command.operationId()).getSingleResult()).intValue());
+                        require(commits == 1, "one committed revision for this operation");
+                        var revision = UUID.fromString(result.getMembers(0).getRevisionId());
+                        var descriptor = tx.readOnly(em -> (String) em.createNativeQuery("""
+                                SELECT encode(descriptor_sha256,'hex') FROM document_revision_schema_assets
+                                WHERE revision_id=:id AND type_url=:url
+                                """).setParameter("id", revision).setParameter("url", definition.metadata().getTypeUrl()).getSingleResult());
+                        require(descriptor.equals(definition.metadata().getArtifactSha256()), "successor retains exact Any schema definition");
+                        int bound = tx.readOnly(em -> ((Number) em.createNativeQuery("""
+                                SELECT count(*) FROM document_revision_parts p JOIN document_revision_current c USING(revision_id)
+                                JOIN document_part_attempt_objects o ON p.object_id=o.physical_object_id
+                                WHERE c.node_id=:node AND o.attempt_id=:attempt
+                                """).setParameter("node", source.node()).setParameter("attempt", nextAttempt).getSingleResult()).intValue());
+                        require(bound == newObjects.size(), "published revision references successor physical objects");
+                        require(second.sessions.retainedSessions() == 0, "durable terminal replay releases successor session");
+                    }
                 }
             }
         }

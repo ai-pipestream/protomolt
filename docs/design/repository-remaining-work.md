@@ -653,8 +653,9 @@ or prove process death. Real-provider publication and delayed predecessor cleanu
 now pass through a fresh manager in the same JVM with admin/opaque CORE data.
 Qualify a genuinely fresh process and scoped typed recovery, and connect trusted
 host discovery/authorization and bounded resource ownership. Graceful fresh-process
-bootstrap also needs reviewed preparation-read authority: its existing V91 fence
-refuses the general loader before V94 activation.
+bootstrap now has a separate reserved preparation-read authority; its existing V91
+fence still refuses the general loader before V94 activation. Fresh-process graceful
+discovery and host integration remain unfinished.
 Also handle replacement death between reservation and V94 activation. Reservation-only
 and V93-installed states lack a current-epoch coordinator binding, so V97 cannot
 reserve a third coordinator. They need an explicit supersession protocol with
@@ -677,3 +678,10 @@ It reads bounded metadata with SQL timeouts, classifies structural recovery gaps
 and returns expired identities without changing ownership. V97 still rechecks
 under locks. Host orchestration, fleet discovery if required by that host, and
 automatic retry scheduling remain unfinished; no endpoint is advertised.
+
+`RepositoryReservedPreparation` now reads an exact reserved predecessor without
+stamping execution rights. Both graceful and expired reservations use the same
+byte-bounded decoder and recheck current caller access before delivery. The real
+delayed-provider tests and scoped typed production-JAR probe use this path.
+Unactivated replacement supersession still needs its own immutable reservation
+source and phase checks; the read primitive does not implement that transition.

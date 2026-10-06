@@ -146,13 +146,7 @@ final class DocumentPublicationPreparationJournal {
             });
             control.check();
             if (row == null) return Optional.empty();
-            var bytes = ByteString.copyFrom((byte[]) row[0]);
-            if (bytes.size()!=reservation[0].bytes() || !Arrays.equals(digest(bytes), (byte[]) row[1])
-                    || !claim.commandSha256().equals(HexFormat.of().formatHex((byte[]) row[3]))) throw corrupt();
-            DocumentPublicationPreparationRecord record;
-            try { record = DocumentPublicationPreparationCodec.decode(bytes, claim.key(), claim.commandSha256()); }
-            catch (IllegalArgumentException malformed) { throw corrupt(malformed); }
-            if (record.predecessorGeneration()!=predecessor || !record.seeds().ownerNonce().equals((UUID) row[2])) throw corrupt();
+            var record = decode(row, reservation[0].bytes(), claim.key(), claim.commandSha256(), predecessor);
             control.check();
             // Decoding happens outside SQL locks. Reauthorize delivery after that work;
             // the borrowed record itself grants no authority for later mutations.
@@ -167,13 +161,26 @@ final class DocumentPublicationPreparationJournal {
     static final class Loaded implements AutoCloseable {
         private DocumentPublicationPreparationRecord record;
         private final PayloadBudget.Lease lease;
-        private Loaded(DocumentPublicationPreparationRecord record, PayloadBudget.Lease lease) { this.record=record; this.lease=lease; }
+        Loaded(DocumentPublicationPreparationRecord record, PayloadBudget.Lease lease) { this.record=record; this.lease=lease; }
         synchronized DocumentPublicationPreparationRecord record() {
             if (record==null) throw new IllegalStateException("Preparation load is closed");
             return record;
         }
         @Override public synchronized void close() { record=null; lease.close(); }
         @Override public String toString() { return "LoadedPreparation[private]"; }
+    }
+
+    /** Common integrity checks; authority is established by each loader before delivery. */
+    static DocumentPublicationPreparationRecord decode(Object[] row, long reservedBytes, RepositoryOperationLedger.Key key,
+                                                       String commandDigest, long predecessor) {
+        var bytes = ByteString.copyFrom((byte[]) row[0]);
+        if (bytes.size()!=reservedBytes || !Arrays.equals(digest(bytes), (byte[]) row[1])
+                || !commandDigest.equals(HexFormat.of().formatHex((byte[]) row[3]))) throw corrupt();
+        DocumentPublicationPreparationRecord record;
+        try { record = DocumentPublicationPreparationCodec.decode(bytes,key,commandDigest); }
+        catch (IllegalArgumentException malformed) { throw corrupt(malformed); }
+        if (record.predecessorGeneration()!=predecessor || !record.seeds().ownerNonce().equals((UUID) row[2])) throw corrupt();
+        return record;
     }
 
     private static Query bind(Query query, RepositoryOperationLedger.Key key, long predecessor) {

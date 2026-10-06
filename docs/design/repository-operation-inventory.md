@@ -6544,3 +6544,18 @@ The fresh-JVM qualification now uses it. Host recovery orchestration remains new
 implementation work; this is not a public or automatic recovery API.
 Replacement death before activation, scoped typed recovery, old pin lifecycle and
 RustFS scaling remain separate acceptance work.
+
+### Reserved preparation read authority
+
+**New private operation:** `RepositoryReservedPreparation.load` checks an exact
+live reservation and expired owner, obtains bounded preparation bytes, decodes
+outside SQL locks and rechecks the current execution caller's read access before
+returning a borrowed record. It neither stamps an execution fence nor renews a
+lease. Missing data, cancellation, stale owner, expired reservation and revoked
+access are explicit failures. The ordinary journal decoder is shared; its access
+path and SQL guards remain unchanged.
+
+**Extended qualification:** graceful and expired real-provider recovery reload
+through the new operation. The production-JAR graceful successor probe also uses
+it with scoped typed data. Automatic hosting and unactivated replacement
+supersession remain unfinished. No public protobuf fields or RPCs change.

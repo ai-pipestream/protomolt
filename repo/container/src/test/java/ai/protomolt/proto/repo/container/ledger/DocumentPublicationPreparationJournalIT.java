@@ -78,7 +78,7 @@ class DocumentPublicationPreparationJournalIT {
             var next = new RepositoryExecutionClaimLedger(c.tx()).takeOver(value.key(), value.command(), 1, UUID.randomUUID(), LEASE);
             assertThatThrownBy(() -> c.tx().inTransaction(em -> {
                 RepositoryCoordinatorBinding.requireResume(em, next, null); return null;
-            })).hasMessageContaining("restoring incarnation");
+            })).hasMessageContaining("Coordinator-bound claim cannot use unbound registration");
         }
     }
 
