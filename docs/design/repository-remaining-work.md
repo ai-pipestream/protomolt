@@ -15,6 +15,13 @@ caller's authorization and exact live source Use. Selection identity, cancellati
 capacity and reservation cleanup have focused regression coverage. This is a reusable
 loader, not whole-command restore execution.
 
+Whole-command fragment capture now supports exact pinned historical references,
+mixed upload/current/historical identities, aggregate copy reservations and hash
+checks before schema loading. The raw assembly helper has an explicit historical
+path, with no policy-mode selection or typed validation grant. Composite per-source
+schema routing and whole-command assessment remain next; preserve the full mixed
+part and opaque-source requirements rather than treating helper coverage as restore.
+
 Next, carry retained schema definitions into whole-command assessment under one
 current policy and evaluation time, then through observed-runtime CREATE and atomic
 reference publication. Preserve each member's container and occurrence definitions,

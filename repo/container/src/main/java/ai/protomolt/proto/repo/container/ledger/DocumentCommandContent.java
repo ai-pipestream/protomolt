@@ -47,6 +47,24 @@ final class DocumentCommandContent {
             Runnable control) throws InvalidProtocolBufferException {
         Objects.requireNonNull(command); Objects.requireNonNull(materialized); Objects.requireNonNull(control);
         command.requireExecutionSupported();
+        return checkContent(command, memberId, materialized, schemaRequired, limits, control);
+    }
+
+    /** Explicit raw historical path. Does not load retained schemas or grant typed admission. */
+    static DocumentCommandContent checkHistorical(DocumentPublicationCommand command, String memberId,
+            Map<Integer, ByteString> materialized, boolean schemaRequired, DocumentRevisionAssembly.Limits limits,
+            java.util.List<DocumentHistoricalReferenceAdmission.Prepared> historical, Runnable control)
+            throws InvalidProtocolBufferException {
+        Objects.requireNonNull(command); Objects.requireNonNull(materialized); Objects.requireNonNull(control);
+        var references = DocumentHistoricalReferenceAdmission.requireComplete(command, historical, control);
+        var result = checkContent(command, memberId, materialized, schemaRequired, limits, control);
+        DocumentHistoricalReferenceAdmission.requireComplete(command, references, control);
+        return result;
+    }
+
+    private static DocumentCommandContent checkContent(DocumentPublicationCommand command, String memberId,
+            Map<Integer, ByteString> materialized, boolean schemaRequired, DocumentRevisionAssembly.Limits limits,
+            Runnable control) throws InvalidProtocolBufferException {
         Objects.requireNonNull(limits);
         control.run();
         var member = command.intent().getMembersList().stream().filter(m -> m.getMemberId().equals(memberId))
@@ -73,8 +91,14 @@ final class DocumentCommandContent {
             var part = member.getParts(ordinal);
             if (part.hasEmpty()) continue;
             var bytes = bytesByOrdinal.get(ordinal);
-            long size = part.hasUpload() ? part.getUpload().getSizeBytes() : part.getReuse().getObject().getSizeBytes();
-            String digest = part.hasUpload() ? part.getUpload().getSha256() : part.getReuse().getObject().getSha256();
+            long size;
+            String digest;
+            switch (part.getContentCase()) {
+                case UPLOAD -> { size = part.getUpload().getSizeBytes(); digest = part.getUpload().getSha256(); }
+                case REUSE -> { size = part.getReuse().getObject().getSizeBytes(); digest = part.getReuse().getObject().getSha256(); }
+                case HISTORICAL_REUSE -> { size = part.getHistoricalReuse().getObject().getSizeBytes(); digest = part.getHistoricalReuse().getObject().getSha256(); }
+                default -> throw new IllegalArgumentException("Materialized fragment has no declared payload");
+            }
             if (bytes.size() != size || !sha256(bytes, control).equals(digest))
                 throw new IllegalArgumentException("Materialized bytes differ from command declaration");
             fragments.add(new DocumentRevisionAssembly.Fragment(part.getSlot().getPart(), part.getSlot().getSubKey(), bytes));

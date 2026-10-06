@@ -25,6 +25,85 @@ class DocumentHistoricalRestoreAssessmentIT {
     private static final ByteString COMMAND = ByteString.copyFrom(new byte[32]);
     private static final Instant AT = Instant.parse("2026-10-05T00:00:00Z");
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"valid", "missing-source", "closed-source", "close-during-copy",
+            "later-hash", "later-size", "missing-member", "capacity", "cancel-during-copy"})
+    void wholeCommandFragmentCaptureChecksHistoricalPinsAndEveryMemberBeforeResolution(String fault) throws Exception {
+        try (var c = context(POSTGRES)) {
+            var f = fixture(c); var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var history = ledger.captureHistorical(ADMIN, f.address(), f.revision());
+            var historical = member(f, history);
+            var ordinary = f.original().command().intent().getMembers(0).toBuilder().setMemberId("upload");
+            ordinary.setDestination(ordinary.getDestination().toBuilder().setAddress(
+                    ordinary.getDestination().getAddress().toBuilder().setGraphAddressId("other-node")));
+            var command = new DocumentPublicationCommand(f.original().command().intent().toBuilder()
+                    .setOperationId(UUID.randomUUID().toString()).clearMembers().addMembers(historical).addMembers(ordinary).build());
+            var budget = new PayloadBudget(fault.equals("capacity") ? 1 : 32L * 1024 * 1024);
+            try (var use = history.use()) {
+                var selectors = historical.getPartsList().stream().filter(DocumentPublicationPart::hasHistoricalReuse)
+                        .map(DocumentPublicationPart::getHistoricalReuse).toList();
+                var reference = DocumentHistoricalReferenceAdmission.prepare(history, use, selectors, RepositoryReadControl.NONE);
+                var references = fault.equals("missing-source") ? List.<DocumentHistoricalReferenceAdmission.Prepared>of() : List.of(reference);
+                var later = new HashMap<>(f.fragments());
+                int ordinal = later.keySet().iterator().next();
+                if (fault.equals("later-hash")) later.put(ordinal, ByteString.copyFrom(new byte[later.get(ordinal).size()]));
+                if (fault.equals("later-size")) later.put(ordinal, later.get(ordinal).concat(ByteString.copyFromUtf8("extra")));
+                var mutable = new HashMap<Integer, ByteString>(); var buffers = new ArrayList<byte[]>();
+                f.fragments().forEach((index, bytes) -> {
+                    byte[] buffer = bytes.toByteArray(); buffers.add(buffer); mutable.put(index, UnsafeByteOperations.unsafeWrap(buffer));
+                });
+                var supplied = new HashMap<String, Map<Integer, ByteString>>();
+                supplied.put("member", mutable);
+                if (!fault.equals("missing-member")) supplied.put("upload", later);
+                if (fault.equals("closed-source")) use.close();
+                Runnable control = () -> {
+                    if (budget.reservedBytes() > 0) {
+                        if (fault.equals("close-during-copy")) use.close();
+                        if (fault.equals("cancel-during-copy")) throw new java.util.concurrent.CancellationException("capture cancelled");
+                    }
+                };
+                assertThatThrownBy(() -> DocumentPublicationFragments.capture(command, supplied, budget, control))
+                        .isInstanceOf(UnsupportedOperationException.class);
+                if (fault.equals("valid")) {
+                    try (var snapshot = DocumentPublicationFragments.captureHistorical(command, supplied, references, budget, control)) {
+                        buffers.forEach(buffer -> Arrays.fill(buffer, (byte) 0)); mutable.clear(); supplied.clear();
+                        assertThat(snapshot.fragments()).containsOnlyKeys("member", "upload");
+                        assertThat(snapshot.fragments().get("member")).isEqualTo(f.fragments());
+                        assertThat(snapshot.fragments().get("upload")).isEqualTo(f.fragments());
+                        assertThat(budget.reservedBytes()).isEqualTo(2L * f.fragments().values().stream().mapToLong(ByteString::size).sum());
+                        var limits = new ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits(4_000_000, 32, 100, 100, 100_000);
+                        for (var id : List.of("member", "upload")) {
+                            var raw = DocumentCommandContent.checkHistorical(command, id, snapshot.fragments().get(id),
+                                    false, limits, references, control);
+                            assertThat(raw.assembly().document().getStructuredData()).isEqualTo(
+                                    f.original().content().assembly().document().getStructuredData());
+                            assertThat(raw.structuredResolution().orElseThrow().getNotAttempted()).isTrue();
+                            assertThatThrownBy(() -> DocumentCommandContent.checkHistorical(command, id,
+                                    snapshot.fragments().get(id), true, limits, references, control))
+                                    .isInstanceOf(UnsupportedOperationException.class).hasMessageContaining("Typed content");
+                        }
+                    }
+                    assertThat(use.plan().revision()).isEqualTo(f.revision());
+                } else {
+                    var refused = assertThatThrownBy(() -> DocumentPublicationFragments.captureHistorical(
+                            command, supplied, references, budget, control));
+                    switch (fault) {
+                        case "missing-source" -> refused.isInstanceOf(DocumentPartAttemptLedger.FenceException.class);
+                        case "closed-source", "close-during-copy" -> refused.isInstanceOf(IllegalStateException.class).hasMessageContaining("use has ended");
+                        case "later-hash" -> refused.hasMessageContaining("hash differs");
+                        case "later-size" -> refused.hasMessageContaining("size or ordinal differs");
+                        case "missing-member" -> refused.hasMessageContaining("members differ");
+                        case "capacity" -> refused.isInstanceOfSatisfying(RepositoryException.class,
+                                e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.RESOURCE_EXHAUSTED));
+                        case "cancel-during-copy" -> refused.isInstanceOf(java.util.concurrent.CancellationException.class);
+                        default -> throw new AssertionError(fault);
+                    }
+                }
+                assertThat(budget.reservedBytes()).isZero();
+            } finally { release(ledger, history); }
+        }
+    }
+
     @Test void ownsCopiedFragmentsAndPinAndBindsNewPolicyCommandAndTime() throws Exception {
         try (var c = context(POSTGRES)) {
             var f = fixture(c); var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());

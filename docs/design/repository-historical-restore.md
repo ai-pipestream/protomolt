@@ -373,3 +373,44 @@ all members at one evaluation time and the real runtime observer must produce it
 manifest. Do not substitute the earlier single-member assessment's verdict or
 fabricate runtime evidence. Then connect CREATE with exact command/ACL/policy
 checks, the source Uses, historical physical/slot binding, and retained schemas.
+
+## Whole-command content preparation
+
+The explicit historical fragment capture path now checks complete pinned source
+references before inspecting supplied payloads. It checks all members and ordinals,
+reserves their aggregate copy size, copies and hashes every payload, and rechecks
+source Uses before returning. A source closed during copying refuses the result and
+releases the reservation. Upload, current reuse and historical reuse have explicit
+size/hash handling; ordinary capture still rejects historical commands.
+
+The explicit raw structural helper also checks complete references before and after
+assembly and recognizes historical payload identities. This helper does not select
+an admission mode, resolve descriptors, authorize delivery or grant a validation
+verdict. Its result borrows snapshot bytes. Typed-required calls remain refused.
+The caller must keep the snapshot and source Uses alive through all consumers.
+See [content preparation evidence](../evidence/repository/2026-10-06-historical-content-preparation/README.md).
+
+### Composite typed assessment design
+
+Whole-command assessment must use one current policy, command digest and evaluation
+time, with explicit per-member modes. Each historical target ordinal routes to one
+exact pinned source revision and source ordinal. Ordinary parts route to the current
+resolver. A member can require several retained scopes; do not silently merge their
+type-URL indexes. All sources within that member must agree on the exact container
+definition, including metadata and descriptor/source bytes. A mixed member's ordinary
+container must agree too. Different members may use distinct container definitions.
+
+Extend retained completeness checking to verify each source's mapped target roots,
+consume every selected occurrence exactly once, and check exact selected reference
+and artifact bytes. Keep the existing whole-member completeness check. The completed
+assessment must equal the union of all retained and ordinary selections; subset
+checks alone must not permit unaccounted schema assets. These composite checks are
+not implemented by the content helpers above.
+
+Opaque restore needs explicit source classification and current-policy mode selection
+before raw assembly. A failed typed load or assessment must never trigger raw mode.
+Settle any typed-source-to-opaque downgrade rule before exposing restoration. Source
+READ checks belong at delivery and commit; deterministic evidence replay remains free
+of provider and SQL calls. Keep source Uses through observed-runtime CREATE and atomic
+reference publication. The public route remains disabled while those integrations
+and their tests are unfinished.

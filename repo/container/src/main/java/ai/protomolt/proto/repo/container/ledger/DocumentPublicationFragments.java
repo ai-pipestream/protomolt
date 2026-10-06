@@ -32,6 +32,30 @@ final class DocumentPublicationFragments implements AutoCloseable {
             Map<String, Map<Integer, ByteString>> supplied, PayloadBudget budget, Runnable control) {
         Objects.requireNonNull(command); Objects.requireNonNull(supplied); Objects.requireNonNull(budget);
         command.requireExecutionSupported();
+        return captureChecked(command, supplied, budget, control);
+    }
+
+    /** Explicit historical path; references remain borrowed and grant no publication authority. */
+    static DocumentPublicationFragments captureHistorical(DocumentPublicationCommand command,
+            Map<String, Map<Integer, ByteString>> supplied,
+            java.util.List<DocumentHistoricalReferenceAdmission.Prepared> historical,
+            PayloadBudget budget, Runnable control) {
+        Objects.requireNonNull(command); Objects.requireNonNull(supplied); Objects.requireNonNull(budget);
+        active(control);
+        var references = DocumentHistoricalReferenceAdmission.requireComplete(command, historical, control);
+        var result = captureChecked(command, supplied, budget, control);
+        try {
+            // A Use may have closed during copying or hashing. Never expose that snapshot.
+            DocumentHistoricalReferenceAdmission.requireComplete(command, references, control);
+            return result;
+        } catch (RuntimeException | Error failure) {
+            result.close();
+            throw failure;
+        }
+    }
+
+    private static DocumentPublicationFragments captureChecked(DocumentPublicationCommand command,
+            Map<String, Map<Integer, ByteString>> supplied, PayloadBudget budget, Runnable control) {
         active(control);
         var members = command.intent().getMembersList();
         if (supplied.size() != members.size()) throw new IllegalArgumentException("Fragment members differ from command");
@@ -52,7 +76,12 @@ final class DocumentPublicationFragments implements AutoCloseable {
                 if (part.hasEmpty()) continue;
                 expected.add(ordinal);
                 var bytes = parts.get(ordinal);
-                long size = part.hasUpload() ? part.getUpload().getSizeBytes() : part.getReuse().getObject().getSizeBytes();
+                long size = switch (part.getContentCase()) {
+                    case UPLOAD -> part.getUpload().getSizeBytes();
+                    case REUSE -> part.getReuse().getObject().getSizeBytes();
+                    case HISTORICAL_REUSE -> part.getHistoricalReuse().getObject().getSizeBytes();
+                    default -> throw new IllegalArgumentException("Fragment has no declared payload");
+                };
                 if (bytes == null || bytes.size() != size)
                     throw new IllegalArgumentException("Fragment size or ordinal differs from command");
                 total = Math.addExact(total, bytes.size());
@@ -78,8 +107,12 @@ final class DocumentPublicationFragments implements AutoCloseable {
                     // Avoid flattening a rope and then allocating a second copy of it.
                     var copy = com.google.protobuf.UnsafeByteOperations.unsafeWrap(entry.getValue().toByteArray());
                     var declaration = member.getParts(entry.getKey());
-                    String digest = declaration.hasUpload() ? declaration.getUpload().getSha256()
-                            : declaration.getReuse().getObject().getSha256();
+                    String digest = switch (declaration.getContentCase()) {
+                        case UPLOAD -> declaration.getUpload().getSha256();
+                        case REUSE -> declaration.getReuse().getObject().getSha256();
+                        case HISTORICAL_REUSE -> declaration.getHistoricalReuse().getObject().getSha256();
+                        default -> throw new IllegalArgumentException("Fragment has no declared payload");
+                    };
                     if (!DocumentCommandContent.sha256(copy, () -> active(control)).equals(digest))
                         throw new IllegalArgumentException("Fragment hash differs from command declaration");
                     parts.put(entry.getKey(), copy);
