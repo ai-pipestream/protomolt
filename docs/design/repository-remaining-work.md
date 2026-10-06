@@ -249,3 +249,12 @@ descriptor/metadata artifacts; and changed occurrence paths. Every cancellation
 checkpoint must propagate cancellation and release all verification reservations.
 The fixture uses actual descriptor and metadata encodings. This does not prove
 remote-client behavior, authentication, or managed-host deployment.
+
+## Registration inspection checkpoint
+
+The private registration inspector now distinguishes partial registration states
+using the supplied original live claim, bounded journals and coherent binding
+checks. Five PostgreSQL cases plus 34 journal regressions pass. It does not restore
+execution or establish coordinator quiescence. Continue both the recovery ownership
+protocol and the independent restore contract assessment above; this checkpoint
+closes neither workstream. See [inspection evidence](../evidence/repository/2026-10-05-registration-inspection/README.md).

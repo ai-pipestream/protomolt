@@ -594,3 +594,26 @@ This guards publication; operation-scoped schema artifacts may already have been
 staged in an earlier transaction. Raw privileged SQL is not a substitute for the
 validated commit API. Automatic session restoration, claim-transfer/late-provider
 qualification and forced-process-crash recovery remain separate unfinished work.
+
+## Interrupted registration inspection
+
+`DocumentPublicationRegistrationInspection` now classifies the original registration
+as no preparation, preparation only, modes bound, owner admitted, owner expired,
+assessment started, or terminal. The caller supplies the original live execution
+claim and actual private process authority. The inspector does not discover tokens,
+renew a lease, transfer ownership, mint identities, or grant execution permission.
+It uses bounded preparation/mode loading, then a short claim-before-owner fenced
+transaction that checks immutable bindings and terminal presence. A registration
+that advances while its payload is decoded requires a fresh inspection.
+
+An admitted owner is live only at the database observation. An assessment-start
+marker does not prove assessment CREATE committed. A terminal marker routes the
+caller to separately authorized replay; the inspector returns no receipt. Claim-only
+operations remain unjournaled primitives, never permission to invent missing seeds
+or modes. Real PostgreSQL tests and limits are recorded in
+[the inspection evidence](../evidence/repository/2026-10-05-registration-inspection/README.md).
+
+Fresh-process resume of a partial registration still requires a reviewed coordinator
+ownership and late-provider policy. Sharing a token does not prove the previous
+process stopped. Explicit abandonment, retained-capacity cleanup and automatic
+runtime activation remain unfinished.
