@@ -971,3 +971,34 @@ Pre-owner recovery remains a required separate protocol; reservation alone grant
 nothing, and the occupied generation-zero preparation cannot be overwritten or its
 seeds reused. Both paths must preserve predecessor attempts, historical source pins,
 schema retention and tombstones while checking current READ and admission policy.
+
+#### Atomic generation-install implementation boundary
+
+Do not chain `DocumentPublicationPreparationJournal.save`,
+`DocumentPublicationModesJournal.bind` and `RepositoryOperationLedger.takeOver`:
+each opens its own transaction, and each remains fenced after V92. One composed
+transaction must install all three exact records or none.
+
+The proposed private install record binds account/principal/operation, V92 successor
+epoch/token/incarnation, predecessor owner generation and nonce, new owner nonce,
+command digest, preparation digest, canonical modes digest and transaction XID.
+Acquire claim then owner locks. Require a live exact successor claim, an expired
+exact predecessor owner and no terminal result. Run provider/schema selection
+outside SQL locks; recheck database-backed caller, policy, placement and source
+identities under the short transaction. No provider or registry I/O belongs there.
+
+Only preparation, modes and exact owner-takeover guards may recognize this
+transaction's install record. Preserve each guard's existing payload and identity
+checks, and require the actual inserted digests to match the install. A deferred
+completeness constraint must refuse commit unless all three exact rows exist.
+The affected paths are V81 preparation, V82 modes, V79 owner execution, V84 journaled
+owner and V90 AFTER registration. Any claim stamping exception to V91 must be
+limited to the exact install transaction and successor identity. Do not use a GUC,
+a higher claim epoch or V92 existence as general permission.
+
+General execution, command admission, assessment starts, attempts and terminal
+writes remain closed at this increment. Cancellation must roll back every record;
+lost commit acknowledgment must confirm the immutable install without renewal or
+repeating writes. Tests must reject incomplete installs, digest/mode/owner mismatch,
+expired or transferred successor, unrelated operations and mutations of old owners.
+Only a later qualified execution path may use the installed generation.

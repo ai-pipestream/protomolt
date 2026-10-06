@@ -23,3 +23,9 @@ uses a real cancellation. Abrupt death without local attestation remains separat
 The complete combined command passed in 3 minutes 16 seconds, including the
 production-JAR storage host and restart processes. `runtime.xml.gz` retains that
 result. These LocalStack-backed checks establish correctness, not performance.
+
+All 7 handoff tests pass, including the recovery entry points after V92. Exact
+retry retrieves the saved successor claim without renewing it. V91 blocks
+preparation save, modes bind and owner takeover. The original owner generation
+stays unchanged, no successor records are created and reserved bytes return to
+zero. See `entrypoints.xml.gz`. Sol reviewed the test and atomic-install design.

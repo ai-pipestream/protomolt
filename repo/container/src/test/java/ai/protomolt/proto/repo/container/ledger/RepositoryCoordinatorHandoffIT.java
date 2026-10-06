@@ -182,4 +182,46 @@ class RepositoryCoordinatorHandoffIT {
             assertThat(RepositoryCoordinatorHandoff.confirm(c.tx(), CALLER, proposal, NONE)).isEmpty();
         }
     }
+
+    @Test void reservedSuccessorCannotUseExistingRecoveryEntryPoints() {
+        try (var c = context(POSTGRES)) {
+            var initial = input(c); var incarnation = UUID.randomUUID();
+            var value = new DocumentPublicationPreparationRecord(initial.key(), initial.command(), initial.seeds(),
+                    initial.placements(), Duration.ofSeconds(1), 0);
+            var budget = new PayloadBudget(64_000_000);
+            var preparations = new DocumentPublicationPreparationJournal(c.tx(), budget);
+            var modes = new DocumentPublicationModesJournal(c.tx(), budget);
+            var operations = new RepositoryOperationLedger(c.tx());
+            var claim = preparations.acquireInitial(CALLER, value, UUID.randomUUID(), incarnation, NONE);
+            modes.bind(CALLER, claim, 0, MODES, NONE);
+            var owner = operations.admit(value.key(), value.command(), value.seeds().ownerNonce(), Duration.ofSeconds(1), claim)
+                    .owner().orElseThrow();
+            RepositoryCoordinatorDrain.begin(c.tx(), CALLER, claim, incarnation, NONE);
+            var identity = new RepositoryCoordinatorDrain.Identity(claim.key(), claim.commandSha256(), 1, claim.token(), incarnation);
+            RepositoryCoordinatorLocalDrain.record(c.tx(), CALLER, identity, NONE);
+            c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(1.1)").getSingleResult());
+            var proposal = new RepositoryCoordinatorHandoff.Proposal(identity, UUID.randomUUID(), UUID.randomUUID(), LEASE);
+            RepositoryCoordinatorHandoff.reserve(c.tx(), CALLER, proposal, NONE);
+            var successor = new RepositoryExecutionClaimLedger(c.tx()).takeOver(value.key(), value.command(),
+                    claim.epoch(), proposal.successorToken(), LEASE);
+            assertThat(successor.epoch()).isEqualTo(2);
+            var fresh = new DocumentPublicationPreparationRecord(value.key(), value.command(),
+                    DocumentPublicationSeeds.mint(value.key(), value.command()), value.placements(), LEASE, owner.generation());
+            assertThatThrownBy(() -> preparations.save(CALLER, successor, fresh, NONE)).hasStackTraceContaining("locally drained");
+            assertThatThrownBy(() -> modes.bind(CALLER, successor, owner.generation(), MODES, NONE)).hasStackTraceContaining("locally drained");
+            assertThatThrownBy(() -> operations.takeOver(value.key(), value.command(), owner.generation(),
+                    fresh.seeds().ownerNonce(), LEASE, successor)).hasStackTraceContaining("locally drained");
+            long generation = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT owner_generation FROM repository_operation_owners WHERE operation_id=:o")
+                    .setParameter("o", value.key().operationId()).getSingleResult()).longValue());
+            assertThat(generation).isEqualTo(owner.generation());
+            for (String table : java.util.List.of("repository_publication_preparations", "repository_publication_modes")) {
+                long count = c.tx().readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM " + table
+                        + " WHERE operation_id=:o AND predecessor_generation=1")
+                        .setParameter("o", value.key().operationId()).getSingleResult()).longValue());
+                assertThat(count).isZero();
+            }
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
 }
