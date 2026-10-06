@@ -1546,3 +1546,9 @@ worker lifecycle. Neither lease expiry nor successor publication proves old
 readers or remote provider effects have stopped. Pin reclamation and physical
 cleanup remain independently fenced. This integration plan does not advertise an
 automatic recovery scheduler or a new public publication RPC.
+
+V101 also enforces mode continuity in SQL at installation. Every successor mode
+hash must equal the exact predecessor generation/owner's retained map. Migration
+refuses pre-existing inconsistent installations instead of rewriting them. A
+current policy change may reject the retained mode; it cannot silently change
+that operation's meaning. This is separate from bounded host proposal retention.

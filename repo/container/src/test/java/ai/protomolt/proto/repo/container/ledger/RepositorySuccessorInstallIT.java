@@ -72,6 +72,51 @@ class RepositorySuccessorInstallIT {
         }
     }
 
+    @Test void successorCannotChangeTheRetainedPublicationMode() {
+        try (var c=context(POSTGRES)) {
+            var original=plan(c); var budget=new PayloadBudget(64_000_000);
+            var before=state(c,original);
+            var changed=new HashMap<>(original.modes());
+            changed.replaceAll((member,mode) -> mode==DocumentPublicationCandidate.Mode.TYPED
+                    ? DocumentPublicationCandidate.Mode.OPAQUE : DocumentPublicationCandidate.Mode.TYPED);
+            var altered=new RepositorySuccessorInstall.Plan(original.reservation(),original.previous(),original.next(),changed);
+            assertThatThrownBy(() -> RepositorySuccessorInstall.install(c.tx(),budget,CALLER,altered,NONE))
+                    .hasStackTraceContaining("Successor modes differ from predecessor");
+            assertThat(state(c,original)).containsExactly(before);
+        assertThat(count(c,"repository_successor_installs")).isZero();
+        for (String table:List.of("repository_publication_preparations","repository_publication_modes")) {
+            long added=c.tx().readOnly(em -> ((Number)em.createNativeQuery("SELECT count(*) FROM "+table+" WHERE predecessor_generation=1")
+                    .getSingleResult()).longValue());
+            assertThat(added).as(table).isZero();
+        }
+        assertThat(budget.reservedBytes()).isZero();
+            RepositorySuccessorInstall.install(c.tx(),budget,CALLER,original,NONE);
+            assertThat(count(c,"repository_successor_installs")).isEqualTo(1);
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans={false,true})
+    void migrationChecksAlreadyInstalledModes(boolean changed) {
+        try (var c=context(POSTGRES,"100")) {
+            var original=plan(c); var modes=new HashMap<>(original.modes());
+            if (changed) modes.replaceAll((member,mode) -> mode==DocumentPublicationCandidate.Mode.TYPED
+                    ? DocumentPublicationCandidate.Mode.OPAQUE : DocumentPublicationCandidate.Mode.TYPED);
+            var installed=new RepositorySuccessorInstall.Plan(original.reservation(),original.previous(),original.next(),modes);
+            var budget=new PayloadBudget(64_000_000);
+            RepositorySuccessorInstall.install(c.tx(),budget,CALLER,installed,NONE);
+            var before=state(c,installed);
+            var flyway=org.flywaydb.core.Flyway.configure().dataSource(c.pool()).schemas(c.pool().getSchema())
+                    .defaultSchema(c.pool().getSchema()).locations("classpath:db/migration/repo").load();
+            if (changed) assertThatThrownBy(flyway::migrate)
+                    .hasStackTraceContaining("Existing successor modes differ from predecessor");
+            else flyway.migrate();
+            assertThat(state(c,installed)).containsExactly(before);
+            assertThat(count(c,"repository_successor_installs")).isEqualTo(1);
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
     @Test void cancellationAfterOwnerChangeRollsBackEveryRecord() {
         try(var c=context(POSTGRES)) {
             var plan=plan(c); var budget=new PayloadBudget(64_000_000);

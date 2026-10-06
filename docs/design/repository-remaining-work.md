@@ -848,6 +848,13 @@ The next managed-host prerequisite is bounded retention of exact proposal and pl
 identities before reservation/installation, including uncertain acknowledgments and
 shutdown. That begins earlier than the existing session activation retention.
 
+V101 closes a reproduced successor-install gap: an alternate internal caller could
+previously propose different fixed modes for the new generation. Installation now
+compares the predecessor's exact retained mode hash in SQL, with explicit upgrade
+failure for inconsistent historical installations. See
+[mode continuity evidence](../evidence/repository/2026-10-06-successor-fixed-modes/README.md).
+Host proposal retention remains the next integration requirement.
+
 ## Publication-first revocation race
 
 Typed and opaque real-provider tests now pause the actual final success-writing
