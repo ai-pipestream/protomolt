@@ -4,37 +4,26 @@ This is the working order for the additions to the repository composition goal.
 It does not replace the [design](repository-composition.md) or declare unfinished
 features available. Recovery is one workstream, not the whole goal.
 
-Latest restore checkpoint: canonical historical commands and current-READ replay
-authorization are implemented, with execution explicitly gated before preparation
-or persistence. See [qualification](../evidence/repository/2026-10-05-historical-canonical/README.md).
-Next restore integration must add distinct historical assessment-slot provenance,
-retained-schema handling and atomic reference binding before enabling execution.
+Current restore checkpoint: canonical historical commands, current-READ replay,
+V86 historical provenance, snapshot v2 with v1 replay, and shared physical/slot
+binding are implemented. The internal assessment path records the exact historical
+command with authenticated principal/account checks and stages its selections under
+current authorization. See [latest qualification](../evidence/repository/2026-10-05-historical-exact-admission/README.md).
+
+Next, carry retained schema definitions into whole-command assessment under one
+current policy and evaluation time, then through observed-runtime CREATE and atomic
+reference publication. Preserve each member's container and occurrence definitions,
+source-to-target ordinals, shared byte accounting and source pins. A prior historical
+verdict cannot substitute for a new assessment. Claims, sessions and public
+historical execution remain disabled until their own integration tests pass.
+
 The independent provider, remote parity, recovery, pruning and hydration work below
-remains part of the goal.
-
-Historical staging now has a distinct SQL declaration and source-node binding in
-V86; existing V85 rows and current-reuse behavior pass upgrade tests. Java slot
-binding remains next. Snapshot v2 with v1 replay support is now implemented and
-[qualified](../evidence/repository/2026-10-05-assessment-snapshot-v2/README.md).
-Execution is still gated;
-[staging evidence](../evidence/repository/2026-10-05-historical-staging/README.md)
-records the narrower SQL proof and remaining negative cases.
-
-The explicit pinned historical slot binder is now qualified separately. The next
-integration is the physical binder and assessment creation, carrying the same
-source Uses and transaction-local origin/retention lock proof. See
-[binding evidence](../evidence/repository/2026-10-05-historical-slot-binding/README.md).
-
-The shared physical binder now has an internal historical assessment path that
-reads ledger objects and returns the transaction-local origin/retention proof to
-slot binding. Exact historical operation admission and assessment creation remain
-the next integration boundary; ordinary public execution is still gated.
-
-The internal unclaimed path now admits the exact historical command with trusted
-principal/account binding and stages its actual member selections under current
-authorization. Retained-schema whole-command assessment and CREATE are next;
-the earlier ordinary-owner substitution is no longer used by the physical binder
-integration test. Claims, sessions and public historical execution remain gated.
+remains part of the goal. Continue the bounded non-S3 managed profile review alongside
+restore. Use RustFS for performance and LocalStack for S3 correctness. Replica
+throughput must be measured under sufficient offered load with latency and contention
+evidence; adding processes alone does not demonstrate scaling. Hydration follows the
+recovery and retention foundations. The optional JCR assessment continues to govern
+foundation boundaries without adding JCR dependencies or asserting compliance.
 
 ## Independent work that can advance now
 

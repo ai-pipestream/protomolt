@@ -61,3 +61,31 @@ or cancel provider work. Use one shared gate, not a new budget per request.
 This changes ingress admission, not the archive transaction boundary or JCR
 capabilities. Existing manifest publication and physical retention remain responsible
 for atomic visibility and recovery.
+
+## Reviewed implementation order
+
+Start with an explicit archive-only bounded managed profile in `RepoServices`.
+Use the selected provider's existing identity, handle and reclaimer. For Redis,
+require create-only writes, zero TTL and a finite object limit within 9 MiB.
+Construct `ManagedArchiveServices` and one shared `ArchivePutAdmission`; pass that
+gate to `ArchiveOperations`. Keep raw ingestion and managed document execution
+disabled in this profile. Preserve the existing streaming profile's requirements.
+
+The first acceptance test uses the actual `RepoServices.archiveRepository()`
+composition with PostgreSQL and Redis. It must establish startup without an S3
+client, immutable provider identity, save/read/history behavior, size and capacity
+rejection before writes, and shutdown during a delayed write. Close admission
+before draining accepted calls; close provider and database resources only after
+the drain succeeds. A timeout must retain those resources for another close attempt.
+Apply the same ownership order on constructor failure, preserving cleanup failures
+as suppressed exceptions. Redis persistence and eviction configuration require
+separate deployment checks; provider capabilities cannot establish those settings.
+Reuse the real fixtures in `RedisArchiveLifecycleIT`, `RedisServiceCompositionIT`
+and `ManagedArchiveHostIT`.
+
+That local composition does not authorize remote activation. Follow it with
+aggregate admission before unary decoding, explicit rejection of unsupported
+streaming at the transport boundary, and the same repository cases over gRPC.
+The current message-size cap and post-decode library gate cannot establish the
+aggregate transport allocation bound. Sol reviewed this separation; implementation
+and its acceptance tests remain open.
