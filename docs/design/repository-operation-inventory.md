@@ -6710,3 +6710,21 @@ the packaged regression. These metadata cases do not prove provider publication
 or worker lifetime for every new branch. See the
 [recovery design](repository-publication-recovery.md) and linked evidence for
 remaining acceptance cases. The behavior is not a newly available public RPC.
+
+## Staged managed publication transport
+
+**New, not mounted:** DocumentPublicationService.PublishDocument. It composes the
+unchanged intent/result/rejection contracts with explicit per-member modes and
+indexed upload bytes. Generated and dynamic fixtures pass ProtoMolt validation;
+Buf lint and descriptor compatibility pass. See the
+[contract evidence](../evidence/repository/2026-10-06-publication-transport-contract/README.md).
+
+**Existing and unchanged:** DocumentService.SaveDocument, schema condition fields,
+canonical command encoding and durable receipt identities. No takeover operation,
+process authority, provider configuration or raw descriptor upload is exposed.
+
+**Required implementation:** shared facade validation and receipt binding; trusted
+host placement/container selection; retained retry-mode checks; thin authenticated
+gRPC adapter; real local/transport conformance; cancellation and lifecycle gates.
+The [transport design](repository-publication-recovery.md#managed-publication-transport-boundary)
+details resource limits and distinguishes durable rejection from transient errors.

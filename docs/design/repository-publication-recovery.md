@@ -2073,3 +2073,87 @@ preserves SQL state and the session. See the
 [credential and grant evidence](../evidence/repository/2026-10-06-bound-retry-authority/README.md).
 Transport authentication, provider workers, existing-document operations without
 creation grants and concurrent authority changes at commit remain unqualified.
+
+## Managed publication transport boundary
+
+Status: contract design for the next implementation stage. No endpoint is mounted.
+Keep `DocumentService.SaveDocument` semantics unchanged. Add a separate managed
+publication operation using the existing `DocumentPublicationIntent`,
+`DocumentPublicationResult` and `DocumentPublicationRejection`. Host configuration
+must explicitly enable it after authentication and lifecycle qualification.
+
+The request carries the intent, one explicit TYPED or OPAQUE choice per member,
+and payload bytes indexed by member ID and full revision ordinal. Ordinals include
+empty and reused slots; only upload declarations receive bytes. Zero-length upload
+content is valid and differs from an absent payload. Check exact upload coverage,
+duplicates, declaration lengths and actual SHA-256 before any storage side effect.
+The intent remains the canonical command; mode choices retain their existing
+immutable journal binding. A changed mode is not a new spelling of the same retry.
+
+No request field chooses provider coordinates, credentials, process authority,
+owner generations, retry reservations or descriptor implementations. The host
+samples placements through the existing drive/backend identity path and opens
+schema scopes through configured, authorized registry access. Existing member
+schema conditions retain type name and descriptor fingerprint checks. Do not add
+a second raw-descriptor or executable-code upload route. Container definitions
+remain a host policy decision.
+
+Use a bounded unary operation for the existing buffered publication path. Preserve
+the 1 MiB intent limit, the host's 8 MiB document assembly limit and the existing
+10 MiB transport envelope ceiling. Establish a checked aggregate upload budget
+before allocating copies; per-field bounds alone cannot bound the request. Test
+empty, exact-limit and oversized envelopes and limit admission before expensive
+validation. This operation does not claim support for unbounded upload streaming.
+Large-payload transport needs a separate resource and cancellation contract rather
+than silently buffering arbitrary content or weakening provider limits.
+
+A completed response contains exactly one existing committed or rejected receipt.
+Only durable terminal rejection uses the rejected alternative. Authentication,
+capacity, timeout, cancellation, operation-key conflicts and transient provider errors remain
+transport errors. An ambiguous timeout does not establish rollback: retry the same
+operation ID, command, mode choices and complete uploads under current authority.
+Validate receipt shape and exact request/account/principal/member binding before
+delivery, reusing the shared codecs; a valid protobuf alone is not commit proof.
+
+The reusable Java publication interface belongs above byte storage and below the
+transport. Both direct calls and the gRPC adapter must use the same bounded input
+validation, current authorization, backend selection and execution facade. Keep
+SQL/provider SDK dependencies out of that interface. The adapter translates
+request/response and cancellation; it must not implement recovery or admission.
+
+Acceptance requires real PostgreSQL and object storage on both invocation paths:
+valid publication, typed rejection, opaque mode, receipt replay, altered retry,
+missing/extra payloads, checksum mismatch, revoked credentials/grants/ACLs,
+deadlines before and after commit, and shutdown with accepted calls. The host must
+stop new transport admission while accepted publication calls retain their schema,
+provider and SQL resources until completion or separately proven disposal.
+Successful local calls do not qualify public transport availability.
+
+Transport review refinements: a verified revision-precondition failure can be a
+durable rejection, so use the recorded outcome rather than exception category.
+Add a lost-final-reply test returning the original committed receipt. Upload
+attributes must be fixed or host-derived, never new client metadata outside the
+canonical intent. A host-owned selector for the container definition and immutable
+drive/profile snapshots is required before mounting typed publication; occurrence
+schema scopes alone do not supply those inputs.
+
+Require complete indexed upload bodies on every Publish call, including receipt
+retries. Validate coverage, aggregate size and checksums in the shared facade
+before calling execution. The current runtime can return terminal receipts before
+checking supplied modes or bodies; it does not establish this new facade's rule.
+The facade must also compare mode choices against the retained journal for an
+existing operation, under current authority, before terminal delivery. Missing
+mode evidence must not trigger guessed defaults or a new write. A later explicit
+receipt-query operation may omit upload bodies, but Publish does not.
+
+The 10 MiB limit is the transport's per-message parser ceiling. Shared admission
+can limit accepted requests and retained bytes but cannot retroactively prevent
+protobuf parsing. Keep parser, intent, payload, assembly and response budgets
+separate and test each boundary. This staged contract is not service availability.
+
+The terminal-mode comparison needs a read-only journal operation tied to immutable
+preparation/mode records, exact command identity and authorized receipt replay.
+The existing live-owner mode check is not suitable after lease expiry. Validating
+terminal delivery must not renew an owner or reserve another execution. This
+comparison is a prerequisite for mounting the staged service. Sol reviewed the
+unmounted contract and identified this implementation requirement.
