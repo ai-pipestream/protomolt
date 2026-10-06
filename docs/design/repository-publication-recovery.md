@@ -972,6 +972,51 @@ nothing, and the occupied generation-zero preparation cannot be overwritten or i
 seeds reused. Both paths must preserve predecessor attempts, historical source pins,
 schema retention and tombstones while checking current READ and admission policy.
 
+##### Reduce new pre-owner windows at initial admission
+
+The current journaled session path creates this gap through separate transactions:
+`DocumentPublicationRegistration.registerOpen` acquires the claim/binding and saves
+preparation, binds modes, then `DocumentPublicationSession.admit` creates the
+operation and first owner. Mode binding also reloads preparation in separate
+transactions. Recovery design must consider removing this split, rather than only
+adding recovery machinery around it.
+
+The next proposed implementation slice composes initial claim, coordinator binding,
+preparation, modes, operation and owner in one short SQL transaction. Encode and
+bound preparation, command and modes before locking; perform no provider or schema
+I/O in the transaction. Recheck current caller authorization and placement under
+the established lock order. Reuse the existing guards and factor transaction-local
+helpers rather than duplicating their SQL or weakening standalone journal APIs.
+
+The retained session fixes the claim token, owner nonce, upload identities and mode
+choices before attempting the transaction. An uncertain acknowledgment keeps those
+identities; retry confirms exact committed state without lease renewal. Cancellation
+after commit stays visible, and terminal results still require authorized replay.
+Registration scope must span the composed operation so local drain cannot attest
+while its owner admission remains in flight.
+
+Acceptance requires rollback faults after each durable substep; lost commit
+acknowledgment; cancellation before and after commit; concurrent exact/conflicting
+registration; policy revocation at admission; local drain racing the composed call;
+and a real process kill before and after commit. Assert absence of all new rows on
+rollback and the complete exact tuple on commit, then measure transaction counts
+and latency separately on RustFS. SQL atomicity alone does not establish performance.
+
+This prevents new partial initial admissions only through the composed session
+path. Existing registrations and callers of standalone private primitives remain
+explicit recovery inputs. Do not delete their generation-zero evidence, mint a
+fictional predecessor owner, or report the pre-owner recovery requirement complete.
+The choice between a preparation identity independent of owner generation and a
+separate bootstrap transition still needs review before extending that recovery path.
+
+Sol's source review agrees with atomic initial admission as the next bounded
+implementation. V84 already requires modes before owner insertion; the sequence
+above preserves that rule. Before commit there is no new journaled registration;
+after commit there is a real generation-one owner eligible for the existing
+post-owner recovery protocols. This does not resolve legacy generation-zero rows:
+V85 abandonment is permanent and V93 requires an existing owner. Their recovery
+must remain separately specified and tested.
+
 #### Atomic generation-install implementation boundary
 
 Do not chain `DocumentPublicationPreparationJournal.save`,
