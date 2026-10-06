@@ -6305,3 +6305,17 @@ quiescence and are not mounted as RPCs. Existing hard close still cancels normal
 No protobuf name, field, Any URL, receipt format, provider capability or SQL contract
 changes in this increment. Host-wide local closure and per-operation V90 markers
 still need explicit composition before durable LOCAL_DRAINED or takeover activation.
+
+### Stable journaled drain snapshot and restoration identity
+
+**Extended private Java behavior:** `DocumentPublicationSessions.drainRegistrations`
+retains its first post-barrier identity snapshot across retries and terminal cache
+eviction. `resumeStarted` places coordinator verification and restoration reservation
+inside the registration barrier. Failed journaled restoration keeps its exact owner
+and bounded command capacity; shutdown releases loaded restoration resources without
+discarding that identity. Exact same-owner retries remain available before close.
+
+**Unchanged:** protobuf definitions, RPC availability, receipts, schema artifacts,
+claim transfer semantics and SQL migrations. This increment records no V91 marker
+and grants no successor authority. The private host still needs complete lifecycle
+composition and qualification, including service-owned schema workers.

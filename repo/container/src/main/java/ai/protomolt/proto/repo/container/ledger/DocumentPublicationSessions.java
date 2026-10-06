@@ -30,6 +30,9 @@ final class DocumentPublicationSessions implements AutoCloseable {
     private int activeCalls;
     private final DocumentPublicationScopeCalls registrations = new DocumentPublicationScopeCalls();
     private final Map<RepositoryOperationLedger.Key, Entry> entries = new HashMap<>();
+    // Captured only after registration admission closes and its accepted calls drain.
+    // Never refresh from the cache: accepted calls may subsequently evict terminal entries.
+    private java.util.List<RepositoryCoordinatorDrain.Identity> drainIdentities;
 
     private static final class Entry {
         final DocumentPublicationCommand command;
@@ -244,11 +247,15 @@ final class DocumentPublicationSessions implements AutoCloseable {
                 observed.requireNotTerminated();
                 return observed.result().orElseThrow();
             }
-            tx.inTransaction(em -> {
-                RepositoryCoordinatorBinding.requireResume(em, owner.executionClaim().orElseThrow(), coordinator);
-                return null;
-            });
-            var entry = reserveRestoration(owner, command);
+            final Entry entry;
+            // Drain cannot snapshot between accepting restoration authority and retaining it.
+            try (var registration = registrations.enter()) {
+                tx.inTransaction(em -> {
+                    RepositoryCoordinatorBinding.requireResume(em, owner.executionClaim().orElseThrow(), coordinator);
+                    return null;
+                });
+                entry = reserveRestoration(owner, command);
+            }
             boolean terminal = false;
             try {
                 if (entry.restoration == null) {
@@ -266,7 +273,7 @@ final class DocumentPublicationSessions implements AutoCloseable {
                 synchronized (this) {
                     entry.recovering = false;
                     release(owner.key(), entry, terminal);
-                    if (entry.restoration == null && entry.users == 0) remove(owner.key(), entry);
+                    if (journalBudget == null && entry.restoration == null && entry.users == 0) remove(owner.key(), entry);
                 }
             }
         }
@@ -283,7 +290,7 @@ final class DocumentPublicationSessions implements AutoCloseable {
             commandBytes += entry.commandBytes;
         } else {
             requireCommand(entry, command);
-            if (entry.users != 0 || entry.recovering || entry.session != null || entry.restoration == null)
+            if (entry.users != 0 || entry.recovering || entry.session != null || entry.restorationOwner == null)
                 throw new RepositoryException(RepositoryException.Code.CONFLICT, "Publication session is in use");
             if (!owner.equals(entry.restorationOwner))
                 throw new RepositoryException(RepositoryException.Code.CONFLICT, "Retained restoration owner changed");
@@ -476,8 +483,9 @@ final class DocumentPublicationSessions implements AutoCloseable {
         if (!registrations.awaitIdle(wait)) return new DrainProgress(false, 0, 0);
         final java.util.List<RepositoryCoordinatorDrain.Identity> identities;
         synchronized (this) {
-            identities = entries.values().stream().filter(entry -> entry.session != null)
-                    .flatMap(entry -> entry.session.drainIdentity().stream()).toList();
+            if (drainIdentities == null) drainIdentities = entries.values().stream()
+                    .flatMap(entry -> drainIdentity(entry).stream()).toList();
+            identities = drainIdentities;
         }
         int confirmed = 0, unresolved = 0;
         for (var identity : identities) {
@@ -493,8 +501,23 @@ final class DocumentPublicationSessions implements AutoCloseable {
     private void releaseClosedRestorations() {
         if (!closed || activeCalls != 0) return;
         for (var item : Map.copyOf(entries).entrySet()) {
-            if (item.getValue().restoration != null) remove(item.getKey(), item.getValue());
+            var entry = item.getValue();
+            if (entry.restoration == null) continue;
+            if (journalBudget == null) remove(item.getKey(), entry);
+            else {
+                // Release borrowed resources without discarding nonterminal claim identity.
+                entry.restoration.close();
+                entry.restoration = null;
+            }
         }
+    }
+
+    private Optional<RepositoryCoordinatorDrain.Identity> drainIdentity(Entry entry) {
+        if (entry.session != null) return entry.session.drainIdentity();
+        if (entry.restorationOwner == null) return Optional.empty();
+        var claim = entry.restorationOwner.executionClaim().orElseThrow();
+        return Optional.of(new RepositoryCoordinatorDrain.Identity(claim.key(), claim.commandSha256(),
+                claim.epoch(), claim.token(), coordinator));
     }
 
     /**

@@ -113,6 +113,53 @@ class DocumentJournaledSessionsIT {
         }
     }
 
+    @Test void drainSnapshotSurvivesAnAcceptedAbandonmentEvictingTheSession() throws Exception {
+        try (var c = context(POSTGRES); var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var input = input(c);
+            var source = DocumentJdbcFaults.beforeCommit(c.pool(), connection -> {
+                try (var statement = connection.prepareStatement("SELECT count(*) FROM repository_operation_owners WHERE operation_id=?")) {
+                    statement.setObject(1, input.command().operationId());
+                    try (var rows = statement.executeQuery()) {
+                        rows.next();
+                        if (rows.getInt(1) != 0) throw new java.sql.SQLException("owner commit refused", "08006");
+                    }
+                }
+            });
+            var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
+            var firstCheck = new AtomicBoolean(true);
+            var control = new RepositoryReadControl() {
+                public boolean isCancelled() {
+                    if (firstCheck.compareAndSet(true, false)) {
+                        entered.countDown();
+                        try {
+                            if (!release.await(10, TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                        } catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt(); throw new AssertionError(interrupted);
+                        }
+                    }
+                    return false;
+                }
+                public long remainingNanos() { return Long.MAX_VALUE; }
+            };
+            try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                    Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"));
+                    var r = resources(new Tx(emf), 1, input.bytes())) {
+                assertThatThrownBy(() -> execute(r.sessions(), input, input.modes(), NONE)).hasStackTraceContaining("owner commit refused");
+                assertThat(count(c, "repository_operation_owners", input)).isZero();
+                var abandoning = workers.submit(() -> r.sessions().abandonRetained(CALLER, input.command(), control));
+                try {
+                    assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+                    var snapshot = r.sessions().drainRegistrations(Duration.ZERO, key -> CALLER, NONE);
+                    assertThat(snapshot).isEqualTo(new DocumentPublicationSessions.DrainProgress(true, 1, 0));
+                    release.countDown();
+                    assertThat(abandoning.get(5, TimeUnit.SECONDS)).isTrue();
+                    assertThat(r.sessions().retainedSessions()).isZero();
+                    assertThat(r.sessions().drainRegistrations(Duration.ZERO, key -> CALLER, NONE)).isEqualTo(snapshot);
+                } finally { release.countDown(); }
+            }
+        }
+    }
+
     @Test void drainRequiresSuppliedPrivateAuthorityAndRetriesARealLostMarkerReply() throws Exception {
         try (var c = context(POSTGRES)) {
             var input = input(c); var armed = new AtomicBoolean();
@@ -196,6 +243,34 @@ class DocumentJournaledSessionsIT {
                 assertThat(foreign.sessions().retainedSessions()).isZero();
                 assertIdentity(c, input, identity);
                 assertThat(count(c, "document_part_attempts", input)).isZero();
+            }
+        }
+    }
+
+    @Test void failedSameIncarnationRestorationRetainsItsIdentityForDrain() throws Exception {
+        try (var c = context(POSTGRES)) {
+            var input = input(c);
+            try (var r = resources(c.tx(), 1, input.bytes(), Duration.ofSeconds(1))) {
+                pending(r.sessions(), input);
+                var original = identity(c, input);
+                var key = new RepositoryOperationLedger.Key("account", "principal", input.command().operationId());
+                var claim = new RepositoryExecutionClaimLedger.Claim(key, input.command().sha256(), 1,
+                        (UUID) original[0], (java.time.Instant) original[1]);
+                claim = new RepositoryExecutionClaimLedger(c.tx()).renew(claim, LEASE);
+                c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(1.1)").getSingleResult());
+                var owner = new RepositoryOperationLedger(c.tx()).takeOver(key, input.command(), 1, UUID.randomUUID(), LEASE, claim);
+                assertThat(r.sessions().retireSuperseded(CALLER, input.command(), NONE)).isTrue();
+                assertThat(r.sessions().retainedSessions()).isZero();
+                assertThatThrownBy(() -> r.sessions().resumeStarted(CALLER, input.command(), owner, NONE))
+                        .hasMessage("Retained assessment execution is not configured");
+                assertThat(r.sessions().retainedSessions()).isEqualTo(1);
+                // A retry may fail for the same reason, but must not lose the owned identity.
+                assertThatThrownBy(() -> r.sessions().resumeStarted(CALLER, input.command(), owner, NONE))
+                        .hasMessage("Retained assessment execution is not configured");
+                r.sessions().close();
+                assertThat(r.sessions().drainRegistrations(Duration.ZERO, k -> CALLER, NONE))
+                        .isEqualTo(new DocumentPublicationSessions.DrainProgress(true, 1, 0));
+                assertThat(count(c, "repository_coordinator_drains", input)).isEqualTo(1);
             }
         }
     }

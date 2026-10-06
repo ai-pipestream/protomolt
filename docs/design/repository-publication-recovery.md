@@ -858,3 +858,24 @@ must establish complete runtime and service-owned schema-worker drain before tha
 integration is enabled. Tests of this ledger are SQL protocol qualification, not
 proof that a host or a remote storage provider is quiescent.
 See [SQL qualification](../evidence/repository/2026-10-06-local-drain/README.md).
+
+### Retaining drain identities through session shutdown
+
+The manager captures its immutable identity list once the registration barrier
+closes and drains. A repeated drain uses that same list: an accepted operation can
+finish and be evicted after capture without removing its identity from the shutdown
+obligation. Exact SQL confirmation still runs on every attempt.
+
+Restoration admission uses the same barrier around coordinator verification and
+local reservation. Its identity comes from the verified owner claim and this
+manager's incarnation, not from a later SQL lookup. A failed journaled restoration
+retains its bounded entry even when no payload scope was created. An exact retry is
+allowed. Shutdown closes a loaded restoration's payload scope but preserves the
+owner identity for the snapshot. Non-journaled resource release remains unchanged.
+
+SQL regression covers a real pre-owner rollback followed by accepted abandonment
+and cache eviction during drain, and a same-incarnation owner takeover followed by
+failed restoration and retry. Both bugs were reproduced before the fixes. A held
+restoration reservation race and loaded journaled restoration cleanup still require
+qualification before whole-host V91 activation. The host must additionally drain
+its schema workers; this change does not record local-drain attestations.

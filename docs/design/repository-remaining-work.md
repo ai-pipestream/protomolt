@@ -22,10 +22,16 @@ confirmation survives transfer. Runtime/service invocation remains disabled unti
 all owned workers, including abandoned schema loads, are proven drained. Preserve
 the independent recovery-only cleanup fence and all retention guards.
 
-The next private host integration must retain an immutable, bounded snapshot of
-the exact nonterminal identities after the registration barrier drains. Do not
-reconstruct these identities from a later SQL query or current claim: terminal
-sessions can be evicted while workers drain. Retain the snapshot across retries.
+The journaled manager now retains an immutable, bounded snapshot of exact
+nonterminal identities after the registration barrier drains. It reuses the
+snapshot across retries, even when an accepted operation subsequently becomes
+terminal and leaves the session cache. Restoration authority checks and reservation
+share that barrier; failed journaled restoration retains its exact owner identity
+and bounded command capacity. Closing a loaded restoration releases its borrowed
+resources while retaining that identity. Before host attestation, still qualify a
+held restoration reservation and a loaded journaled restoration's resource release.
+Do not reconstruct these identities from a later SQL query or current claim.
+The next private host integration must consume the retained snapshot.
 After publication sessions, scopes, uploads and readers drain, wait for the
 host-owned `ManagedSchemaAccess`, including abandoned provider loads, before
 recording V91 for every captured identity. A partial attestation batch must retain

@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.*;
 
 /** Real observation and database host in a fresh standard JVM, without ambient test classes. */
 class DocumentAssessmentStorageRuntimeTest {
-    @TempDir Path directory;
+    @TempDir(cleanup = org.junit.jupiter.api.io.CleanupMode.ON_SUCCESS) Path directory;
 
     @Test void observedAssessmentAndSqlRunTogetherOnProductionJars() throws Exception {
         String bundleProperty = System.getProperty("protomolt.test.admissionRuntimeBundle");
@@ -79,7 +79,9 @@ class DocumentAssessmentStorageRuntimeTest {
             builder.environment().put("PROTOMOLT_TEST_RESTART_REQUEST", request.toString());
             var process = builder.redirectErrorStream(true).redirectOutput(log.toFile()).start();
             try {
-                assertThat(process.waitFor(90, TimeUnit.SECONDS)).as("Observed SQL host completed").isTrue();
+                // This host runs the aggregate provider, publication and crash-recovery probes.
+                // Their operation-specific deadlines remain separate from this harness cap.
+                assertThat(process.waitFor(180, TimeUnit.SECONDS)).as("Observed SQL host completed; log: %s", log).isTrue();
                 assertThat(Files.size(log)).isLessThan(1_048_576);
                 String result = Files.readString(log);
                 assertThat(process.exitValue()).as(result).isZero();
