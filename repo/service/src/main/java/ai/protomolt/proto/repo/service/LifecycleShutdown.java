@@ -16,7 +16,8 @@ final class LifecycleShutdown {
             long remaining = budget - (System.nanoTime() - started);
             try {
                 if (worker.isAlive() && (remaining <= 0 || !worker.join(Duration.ofNanos(remaining))))
-                    throw new IllegalStateException("Repository lifecycle worker did not terminate: " + worker.getName()
+                    throw new RepositoryDrainTimeoutException(RepositoryDrainTimeoutException.Phase.LIFECYCLE_WORKER,
+                            "Repository lifecycle worker did not terminate: " + worker.getName()
                             + "; resources retained, retry close after the worker stops");
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();

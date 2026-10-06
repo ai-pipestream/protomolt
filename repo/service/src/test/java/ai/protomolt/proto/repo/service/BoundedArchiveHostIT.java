@@ -136,7 +136,9 @@ class BoundedArchiveHostIT {
             assertThatThrownBy(() -> archive.putEntry(CALLER, request)).isInstanceOfSatisfying(RepositoryException.class,
                     e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.RESOURCE_EXHAUSTED));
             assertThatThrownBy(() -> host.close(java.time.Duration.ofMillis(100)))
-                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("Archive puts still active");
+                    .isInstanceOfSatisfying(RepositoryDrainTimeoutException.class,
+                            e -> assertThat(e.phase()).isEqualTo(RepositoryDrainTimeoutException.Phase.ARCHIVE_PUT))
+                    .hasMessageContaining("Archive puts still active");
             assertThat(closes.get()).isZero();
             assertThat(budget.reservedBytes()).isPositive();
             assertThatThrownBy(() -> archive.putEntry(CALLER, request)).isInstanceOfSatisfying(RepositoryException.class,

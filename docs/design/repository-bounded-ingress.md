@@ -224,3 +224,15 @@ The production launcher and child-process SIGTERM case are still pending. The
 current injected pause is after Redis completes its command, not a delayed network
 write. The process test must qualify its actual provider boundary and shutdown
 hook; it must not infer crash or power-loss durability from this host test.
+
+### Distinguishing a retryable drain timeout
+
+`RepositoryDrainTimeoutException` now identifies a timed wait that expired in the
+lifecycle-worker, archive-RPC, archive-put or archive-read phase. It is package-private
+and remains an `IllegalStateException` for existing embedding callers. Interruption
+retains its interrupt flag and separate exception; resource-release failures propagate
+unchanged. The launcher must catch only the direct timeout type from its shutdown
+close attempt after successful startup, never classify message text or suppressed
+startup failures. This type does not imply that all transports are still open:
+the second idle check follows transport shutdown. Shared storage remains retained
+until the relevant drain succeeds.

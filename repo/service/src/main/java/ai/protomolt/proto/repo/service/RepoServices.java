@@ -871,13 +871,16 @@ public final class RepoServices implements AutoCloseable {
         String phase = "Archive RPC";
         try {
             if (archiveIngress != null && !archiveIngress.awaitIdle(timeout))
-                throw new IllegalStateException("Archive RPCs still active; shared resources retained");
+                throw new RepositoryDrainTimeoutException(RepositoryDrainTimeoutException.Phase.ARCHIVE_RPC,
+                        "Archive RPCs still active; shared resources retained");
             phase = "Archive put";
             if (archiveAdmission != null && !archiveAdmission.awaitIdle(timeout))
-                throw new IllegalStateException("Archive puts still active; shared resources retained");
+                throw new RepositoryDrainTimeoutException(RepositoryDrainTimeoutException.Phase.ARCHIVE_PUT,
+                        "Archive puts still active; shared resources retained");
             phase = "Archive reader";
             if (managedArchive != null && !managedArchive.reader.awaitIdle(timeout))
-                throw new IllegalStateException("Managed archive reads still active; shared resources retained");
+                throw new RepositoryDrainTimeoutException(RepositoryDrainTimeoutException.Phase.ARCHIVE_READ,
+                        "Managed archive reads still active; shared resources retained");
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException(phase + " drain interrupted; shared resources retained", interrupted);

@@ -129,6 +129,7 @@ class ManagedArchiveReadShutdownIT {
                         closer.interrupt();
                         assertThat(closeFailure.get(5, TimeUnit.SECONDS))
                                 .isInstanceOf(IllegalStateException.class)
+                                .isNotInstanceOf(RepositoryDrainTimeoutException.class)
                                 .hasMessageContaining("Archive reader drain interrupted")
                                 .hasCauseInstanceOf(InterruptedException.class);
                         assertThat(interruptPreserved).isTrue();
@@ -138,7 +139,9 @@ class ManagedArchiveReadShutdownIT {
                     }
                 } else {
                     var failure = catchThrowable(() -> host.close(Duration.ofSeconds(1)));
-                    assertThat(failure).isInstanceOf(IllegalStateException.class).hasMessageContaining("resources retained");
+                    assertThat(failure).isInstanceOfSatisfying(RepositoryDrainTimeoutException.class,
+                            e -> assertThat(e.phase()).isEqualTo(RepositoryDrainTimeoutException.Phase.ARCHIVE_READ))
+                            .hasMessageContaining("resources retained");
                     assertThat(failure).hasMessageContaining("archive reads still active");
                 }
                 assertThat(providerClosed).isFalse();

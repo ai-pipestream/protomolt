@@ -9,6 +9,13 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 
 class LifecycleShutdownTest {
+    @Test void releaseFailureIsNotReclassifiedAsDrainTimeout() {
+        var failure = new IllegalStateException("provider close failed");
+        assertThatThrownBy(() -> LifecycleShutdown.stopBeforeRelease(List.of(), Duration.ofSeconds(1),
+                () -> { throw failure; }))
+                .isSameAs(failure).isNotInstanceOf(RepositoryDrainTimeoutException.class);
+    }
+
     @Test void timeoutRetainsResourcesUntilUncooperativeWorkerActuallyStops() throws Exception {
         var entered = new CountDownLatch(1);
         var finish = new CountDownLatch(1);
@@ -25,7 +32,9 @@ class LifecycleShutdownTest {
         try {
             assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
             assertThatThrownBy(() -> LifecycleShutdown.stopBeforeRelease(List.of(worker), Duration.ofMillis(50), () -> released.set(true)))
-                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("resources retained");
+                    .isInstanceOfSatisfying(RepositoryDrainTimeoutException.class,
+                            e -> assertThat(e.phase()).isEqualTo(RepositoryDrainTimeoutException.Phase.LIFECYCLE_WORKER))
+                    .hasMessageContaining("resources retained");
             assertThat(released).isFalse();
             assertThat(worker.isAlive()).isTrue();
         } finally { finish.countDown(); worker.join(5000); }
@@ -47,6 +56,7 @@ class LifecycleShutdownTest {
         try {
             Thread.currentThread().interrupt();
             assertThatThrownBy(() -> LifecycleShutdown.stopBeforeRelease(List.of(worker), Duration.ofSeconds(1), () -> released.set(true)))
+                    .isNotInstanceOf(RepositoryDrainTimeoutException.class)
                     .hasCauseInstanceOf(InterruptedException.class);
             assertThat(Thread.currentThread().isInterrupted()).isTrue();
             assertThat(released).isFalse();

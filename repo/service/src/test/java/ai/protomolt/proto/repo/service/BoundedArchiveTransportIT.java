@@ -189,7 +189,9 @@ class BoundedArchiveTransportIT {
                 var closing = executor.submit(() -> f.host.close(java.time.Duration.ofMillis(100)));
                 assertThatThrownBy(() -> closing.get(2, TimeUnit.SECONDS))
                         .isInstanceOf(ExecutionException.class).cause()
-                        .isInstanceOf(IllegalStateException.class).hasMessageContaining("Archive RPCs still active");
+                        .isInstanceOfSatisfying(RepositoryDrainTimeoutException.class,
+                                e -> assertThat(e.phase()).isEqualTo(RepositoryDrainTimeoutException.Phase.ARCHIVE_RPC))
+                        .hasMessageContaining("Archive RPCs still active");
                 assertThat(f.closes.get()).isZero();
                 assertThat(f.budget.reservedBytes()).isEqualTo(reserved);
                 assertThatThrownBy(() -> f.archive.getArchive(GetArchiveRequest.getDefaultInstance()))
