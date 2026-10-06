@@ -186,6 +186,58 @@ class DocumentPublicationContractTest {
         check(schema.clone().setTypeName(".example.Case").build(), false);
     }
 
+    private static PublicationHistoricalReuse historical() {
+        return PublicationHistoricalReuse.newBuilder().setSource(address()).setRevisionId(UUID)
+                .setRevisionOrdinal(0).setSourceSlot(core().getSlot()).setObject(reuse().getObject()).build();
+    }
+
+    @Test void historicalSelectionIsExactAndBoundedForGeneratedAndDynamicMessages() throws Exception {
+        check(historical(), true);
+        check(historical().toBuilder().clearSource().build(), false);
+        check(historical().toBuilder().clearRevisionId().build(), false);
+        check(historical().toBuilder().setRevisionId("latest").build(), false);
+        check(historical().toBuilder().setRevisionId("ABCDEF00-0000-4000-8000-000000000001").build(), false);
+        check(historical().toBuilder().setRevisionOrdinal(-1).build(), false);
+        check(historical().toBuilder().setRevisionOrdinal(9999).build(), true);
+        check(historical().toBuilder().setRevisionOrdinal(10000).build(), false);
+        check(historical().toBuilder().clearSourceSlot().build(), false);
+        check(historical().toBuilder().clearObject().build(), false);
+        for (var field : NodeAddress.getDescriptor().getFields())
+            check(historical().toBuilder().setSource(address().toBuilder().setField(field, " \t")).build(), false);
+        // A well-shaped nonexistent revision/object remains a handler membership check.
+        check(historical().toBuilder().setRevisionId("10000000-0000-4000-8000-000000000099")
+                .setObject(reuse().getObject().toBuilder().setSha256("b".repeat(64))).build(), true);
+    }
+
+    @Test void historicalSelectionPreservesAccountSlotAndExclusiveContent() throws Exception {
+        var part = core().toBuilder().setHistoricalReuse(historical()).build();
+        assertThat(part.hasUpload()).isFalse();
+        assertThat(part.hasReuse()).isFalse();
+        check(part, true);
+        check(intent().toBuilder().setMembers(0, member().toBuilder().setParts(0, part)).build(), true);
+        check(part.toBuilder().setSlot(slot(DocumentPart.DOCUMENT_PART_PARSED, "")).build(), false);
+        var foreign = historical().toBuilder().setSource(address().toBuilder().setAccountId("other"));
+        check(intent().toBuilder().setMembers(0, member().toBuilder().setParts(0,
+                part.toBuilder().setHistoricalReuse(foreign))).build(), false);
+        var selectedUpload = part.toBuilder().setUpload(upload()).build();
+        assertThat(selectedUpload.hasHistoricalReuse()).isFalse();
+        check(selectedUpload, true);
+        assertThat(DocumentPublicationPart.getDescriptor().findFieldByName("historical_reuse").getNumber()).isEqualTo(5);
+        assertThat(Any.pack(historical()).getTypeUrl())
+                .isEqualTo("type.googleapis.com/ai.protomolt.proto.repo.v1.PublicationHistoricalReuse");
+    }
+
+    @Test void historicalProjectionExposesBoundsAndRuntimeOnlyConstraints() {
+        var schema = new ObjectMapper().valueToTree(ProtoJsonSchemaGenerator.create()
+                .generateRooted(PublicationHistoricalReuse.getDescriptor()));
+        var ordinal = schema.at("/properties/revisionOrdinal");
+        assertThat(ordinal.has("minimum")).isTrue();
+        assertThat(ordinal.path("minimum").asInt()).isZero();
+        assertThat(ordinal.path("exclusiveMaximum").asInt()).isEqualTo(10000);
+        assertThat(schema.path("required").toString()).contains("source", "sourceSlot", "object");
+        assertThat(schema.path("x-protomolt-cel").toString()).contains("publication-historical-address");
+    }
+
     @Test void metadataBoundsApplyToKeysAndValues() throws Exception {
         check(member().toBuilder().putMetadata("label", "value").build(), true);
         check(member().toBuilder().putMetadata("", "value").build(), false);

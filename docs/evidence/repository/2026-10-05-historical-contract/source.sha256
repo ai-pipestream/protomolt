@@ -1,0 +1,4 @@
+3088eebb4e81059cd576522260477e883e6906f43ab85a8a150061469bbb8b0d  repo/proto/src/main/proto/ai/protomolt/proto/repo/v1/document_publication.proto
+7ba1e31147c0119fe1a9c8acee4d037dc9c9003a3bedb997b4feaf7c45e8db82  repo/proto/src/test/java/ai/protomolt/proto/repo/proto/DocumentPublicationContractTest.java
+b0a14d8d230633ae923e7faf866b7204684aaf7e9fa7046730ed03b8eb076590  repo/spi/src/main/java/ai/protomolt/proto/repo/spi/DocumentPublicationCommand.java
+d3a317d1968e5923ea899de3452ac5109a683a220731989ea9839494b66edca4  repo/spi/src/test/java/ai/protomolt/proto/repo/spi/DocumentPublicationCommandTest.java

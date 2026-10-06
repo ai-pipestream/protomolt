@@ -146,6 +146,10 @@ public final class DocumentPublicationCommand {
             }
             var slots = new HashSet<DocumentPublicationSlot>();
             for (var part : member.getPartsList()) {
+                // Contract staging must not route a new content arm through existing
+                // upload/reuse assumptions before historical admission and commit exist.
+                if (part.hasHistoricalReuse())
+                    throw new UnsupportedOperationException("Historical reuse execution is not implemented");
                 if (!slots.add(part.getSlot())) throw new IllegalArgumentException("Duplicate publication slot");
                 long size = 0;
                 if (part.hasUpload()) size = part.getUpload().getSizeBytes();

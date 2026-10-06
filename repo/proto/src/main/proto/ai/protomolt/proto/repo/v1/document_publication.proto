@@ -18,7 +18,7 @@ message DocumentPublicationIntent {
   option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "publication-account"
     message: "all destinations and sources must belong to the command account"
-    expression: "this.members.all(m, m.destination.address.account_id == this.account_id && m.ownership.account_id == this.account_id && m.sources.all(s, s.address.account_id == this.account_id) && m.parts.all(p, !has(p.reuse) || p.reuse.source.address.account_id == this.account_id))"
+    expression: "this.members.all(m, m.destination.address.account_id == this.account_id && m.ownership.account_id == this.account_id && m.sources.all(s, s.address.account_id == this.account_id) && m.parts.all(p, (!has(p.reuse) || p.reuse.source.address.account_id == this.account_id) && (!has(p.historical_reuse) || p.historical_reuse.source.account_id == this.account_id)))"
   };
   // Version 1 canonicalization is immutable once used for durable admission.
   uint32 encoding_version = 1 [(ai.protomolt.proto.validate.v1.field).uint32.const = 1];
@@ -146,7 +146,12 @@ message DocumentPublicationPart {
   option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "publication-content"
     message: "one content declaration is required"
-    expression: "has(this.upload) || has(this.reuse) || has(this.empty)"
+    expression: "has(this.upload) || has(this.reuse) || has(this.empty) || has(this.historical_reuse)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-historical-slot"
+    message: "historical reuse must preserve the source slot"
+    expression: "!has(this.historical_reuse) || this.slot == this.historical_reuse.source_slot"
   };
   // Position in the repeated list remains semantic for chunk assembly.
   DocumentPublicationSlot slot = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
@@ -158,7 +163,30 @@ message DocumentPublicationPart {
     PublicationReuse reuse = 3;
     // True means an explicit EMPTY slot, not pending hydration or a tombstone.
     bool empty = 4 [(ai.protomolt.proto.validate.v1.field).bool.const = true];
+    // Reserved execution path: command admission refuses this until restore is wired.
+    // Exact history selection is independent of the destination's current revision.
+    PublicationHistoricalReuse historical_reuse = 5;
   }
+}
+
+// Exact retained revision selection, not a current-source revision dependency.
+// Shape validity does not establish membership, READ permission or retention.
+message PublicationHistoricalReuse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-historical-address"
+    message: "all four historical address coordinates must be nonblank"
+    expression: "this.source.doc_id.matches('.*\\\\S.*') && this.source.graph_address_id.matches('.*\\\\S.*') && this.source.account_id.matches('.*\\\\S.*') && this.source.graph_id.matches('.*\\\\S.*')"
+  };
+  // Current source READ is checked independently of historical ownership.
+  NodeAddress source = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Immutable revision UUID, never a current mutation revision or provider version.
+  string revision_id = 2 [(ai.protomolt.proto.validate.v1.field).string = {uuid: true, pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}];
+  // Full manifest ordinal, including positions occupied by empty/deleted slots.
+  int32 revision_ordinal = 3 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 0, lt: 10000}];
+  // Must match the selected manifest position and the destination slot.
+  DocumentPublicationSlot source_slot = 4 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Handler verifies all coordinates against the original retained object binding.
+  PublicationObjectIdentity object = 5 [(ai.protomolt.proto.validate.v1.field).required = true];
 }
 
 // Claims about new bytes, checked against provider verification before commit.

@@ -245,6 +245,27 @@ class DocumentPublicationCommandTest {
         refuses(bounded.build(), "Aggregate publication part/source limit");
     }
 
+    @Test void historicalContractCannotReachUnimplementedExecutionOrLegacyReuse() {
+        var m = member("m");
+        var selected = PublicationHistoricalReuse.newBuilder().setSource(m.getDestination().getAddress())
+                .setRevisionId(OTHER).setRevisionOrdinal(0).setSourceSlot(m.getParts(0).getSlot())
+                .setObject(PublicationObjectIdentity.newBuilder().setObjectId(ID).setBackendGeneration("generation")
+                        .setStorageRealm("realm").setNamespace("ns").setObjectKey("original-key")
+                        .setSha256(SHA).setSizeBytes(7).setContentType("application/protobuf"));
+        var supplied = intent().toBuilder().setMembers(0, m.toBuilder()
+                .setDestination(m.getDestination().toBuilder().setExpectedMutationRevision(3))
+                .setParts(0, m.getParts(0).toBuilder().setHistoricalReuse(selected))).build();
+        assertThat(ai.protomolt.proto.validate.ProtoValidator.create().validate(supplied).valid()).isTrue();
+        assertThatThrownBy(() -> command(supplied)).isInstanceOf(UnsupportedOperationException.class)
+                .hasMessage("Historical reuse execution is not implemented");
+        // Unknown fields must still be refused before an unsupported arm can hide them.
+        var unknown = selected.clone().setUnknownFields(UnknownFieldSet.newBuilder().addField(99,
+                UnknownFieldSet.Field.newBuilder().addVarint(1).build()).build());
+        assertThatThrownBy(() -> command(supplied.toBuilder().setMembers(0, supplied.getMembers(0).toBuilder()
+                .setParts(0, m.getParts(0).toBuilder().setHistoricalReuse(unknown))).build()))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Unknown");
+    }
+
     @Test void aggregateByteOverflowAndWireBudgetAreRejectedBeforeAdmission() {
         var huge = part(DocumentPart.DOCUMENT_PART_CHUNKS, "set").toBuilder()
                 .setUpload(PublicationUpload.newBuilder().setSizeBytes(Long.MAX_VALUE).setSha256(SHA).setContentType("x"));

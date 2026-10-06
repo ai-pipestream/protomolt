@@ -132,3 +132,14 @@ preserves those extension points. It does not define frozen graphs, child identi
 collision behavior, checked-in restrictions, JCR sessions/workspaces, or strong
 reference restoration. Those belong to the optional content-repository extension;
 base storage gains no JCR dependency or compliance claim.
+
+## Contract staging checkpoint
+
+`PublicationHistoricalReuse` and the `historical_reuse` content arm (tag 5) now
+exist. Real runtime validation covers generated and dynamic messages; JSON Schema
+exposes ordinal bounds and required message fields, while CEL remains runtime-only.
+The canonical command deliberately refuses this arm until shared execution handles
+it. Existing v1 golden bytes/hash fixtures pass unchanged; older consumers will
+reject the new field. Before activation, review command version and consumer
+capability negotiation rather than assuming additive wire compatibility establishes
+executable compatibility. [Evidence](../evidence/repository/2026-10-05-historical-contract/README.md).

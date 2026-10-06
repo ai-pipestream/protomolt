@@ -6231,3 +6231,22 @@ precedes upload-backend/schema resolution. The S3 client itself is already open;
 the counters do not establish zero client construction or all possible provider I/O.
 Ordinary host registration, partial-registration restart, abandonment cleanup,
 scoped absent-destination creation and API-key transport remain separate requirements.
+
+### Historical selector contract staging
+
+**New message:** `PublicationHistoricalReuse` names the exact source address,
+canonical revision UUID, full manifest ordinal, preserved slot and immutable
+`PublicationObjectIdentity`. **Extended message:** `DocumentPublicationPart` adds
+`historical_reuse` at content tag 5. Existing names/tags/imports and Any URLs are
+unchanged; the new message has its own URL. Account and slot checks use runtime CEL.
+**Unchanged operations:** no service or RPC is added; current-source reuse, revision
+conditions, receipts and canonical command v1 bytes remain unchanged.
+
+**Explicitly unavailable execution:** `DocumentPublicationCommand` refuses the new
+arm before legacy upload/reuse aggregation. Existing golden command bytes and hashes
+pass. Older consumers reject the arm as unknown; activation needs an explicit
+command-version/consumer capability review and complete historical admission,
+assessment, retention and commit wiring. It must not silently fall back to current
+reuse or a fresh upload. The [restore design](repository-historical-restore.md)
+defines remaining handler obligations. [Contract evidence](../evidence/repository/2026-10-05-historical-contract/README.md)
+records runtime validation, JSON Schema coverage, compilation, lint and compatibility.

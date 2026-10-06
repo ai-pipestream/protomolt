@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.proto.DocumentPublicationContractTest" tests="16" skipped="0" failures="0" errors="0" timestamp="2026-10-06T01:31:43.092Z" hostname="krick" time="2.608">
+  <properties/>
+  <testcase name="metadataBoundsApplyToKeysAndValues()" classname="ai.protomolt.proto.repo.proto.DocumentPublicationContractTest" time="1.027"/>
+  <testcase name="explicitRowKindAndLifecyclePolicyAreConsistent()" classname="ai.protomolt.proto.repo.proto.DocumentPublicationContractTest" time="0.187"/>
+  <testcase name="requiresOwnershipAndLogicalDrive()" classname="ai.protomolt.proto.repo.proto.DocumentPublicationContractTest" time="0.078"/>
+  <testcase name="requiresVersionScopeAndMembers()" classname="ai.protomolt.proto.repo.proto.DocumentPublicationContractTest" time="0.688"/>
+  <testcase name="oneofWireShapeAndAnyNameAreStable()" classname="ai.protomolt.proto.repo.proto.DocumentPublicationContractTest" time="0.01"/>
+  <testcase name="acceptsUploadReuseEmptyAndExplicitRevision()" classname="ai.protomolt.proto.repo.proto.DocumentPublicationContractTest" time="0.06"/>
+  <testcase name="historicalProjectionExposesBoundsAndRuntimeOnlyConstraints()" classname="ai.protomolt.proto.repo.proto.DocumentPublicationContractTest" time="0.171"/>
+  <testcase name="schemaBindsTypeAndExactClosure()" classname="ai.protomolt.proto.repo.proto.DocumentPublicationContractTest" time="0.005"/>
+  <testcase name="historicalSelectionIsExactAndBoundedForGeneratedAndDynamicMessages()" classname="ai.protomolt.proto.repo.proto.DocumentPublicationContractTest" time="0.049"/>
+  <testcase name="uploadClaimsHaveBoundsButDoNotProveActualBytes()" classname="ai.protomolt.proto.repo.proto.DocumentPublicationContractTest" time="0.003"/>
+  <testcase name="coreAndPartSelectionAreExplicit()" classname="ai.protomolt.proto.repo.proto.DocumentPublicationContractTest" time="0.009"/>
+  <testcase name="accountMustMatchDestinationsOwnershipAndSources()" classname="ai.protomolt.proto.repo.proto.DocumentPublicationContractTest" time="0.016"/>
+  <testcase name="historicalSelectionPreservesAccountSlotAndExclusiveContent()" classname="ai.protomolt.proto.repo.proto.DocumentPublicationContractTest" time="0.009"/>
+  <testcase name="explicitPreconditionAndAllAddressCoordinatesAreRequired()" classname="ai.protomolt.proto.repo.proto.DocumentPublicationContractTest" time="0.002"/>
+  <testcase name="retainedIdentityRequiresExactOriginalCoordinates()" classname="ai.protomolt.proto.repo.proto.DocumentPublicationContractTest" time="0.006"/>
+  <testcase name="schemaProjectionExposesBoundsAndMarksRuntimeCel()" classname="ai.protomolt.proto.repo.proto.DocumentPublicationContractTest" time="0.012"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+]]></system-err>
+</testsuite>
